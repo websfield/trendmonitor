@@ -1,0 +1,35 @@
+{
+  "name": "ugc-intelligence-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Manager UI + operator dashboard for UGC Intelligence (Phase 9). Types are GENERATED from docs/initial/schemas/*.json — never hand-written, never widened.",
+  "scripts": {
+    "gen:types": "node scripts/gen-types.mjs",
+    "prebuild": "npm run gen:types",
+    "pretypecheck": "npm run gen:types",
+    "pretest": "npm run gen:types",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.4.8",
+    "@testing-library/react": "^16.0.1",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "jsdom": "^25.0.0",
+    "lodash": "^4.17.21",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2",
+    "vitest": "^2.0.5"
+  }
+}

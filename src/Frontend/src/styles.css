@@ -1,0 +1,235 @@
+/* Minimal styling. Honesty of the surfaces does not depend on colour: every
+   degraded/blocked/warning state also carries text + an icon glyph. Colour here
+   is reinforcement only. Focus is always visible; touch targets are >= 24px. */
+:root {
+  --risk: #b3261e;
+  --warn: #8a5a00;
+  --ok: #1a6b3c;
+  --ink: #1a1a1a;
+  --muted: #4a4a4a;
+  --line: #cfcfcf;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0 1.5rem;
+}
+
+th,
+td {
+  border: 1px solid var(--line);
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  background: #f4f4f4;
+}
+
+button,
+select,
+input,
+textarea {
+  font: inherit;
+  min-height: 24px;
+}
+
+button {
+  min-height: 32px;
+  padding: 0.35rem 0.8rem;
+  cursor: pointer;
+  border: 1px solid var(--ink);
+  background: #fff;
+  border-radius: 4px;
+}
+
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #0b5fff;
+  outline-offset: 2px;
+}
+
+.btn-approve {
+  background: #eafaf0;
+  border-color: var(--ok);
+  font-weight: 600;
+}
+
+/* Primary action buttons meet the audit's stricter 44px touch-target bar
+   (approve, override submit, sign-off submit all carry .btn-primary). The
+   general button min-height (32px) is unchanged for secondary controls. */
+.btn-primary {
+  min-height: 44px;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Banners */
+.banner {
+  border: 1px solid var(--line);
+  border-left-width: 6px;
+  padding: 0.6rem 0.8rem;
+  margin: 0.6rem 0;
+  border-radius: 4px;
+}
+.banner--degraded {
+  border-left-color: var(--warn);
+  background: #fff8ec;
+}
+.banner--advisory {
+  border-left-color: var(--warn);
+  background: #fff8ec;
+}
+.banner--stale {
+  border-left-color: var(--risk);
+  background: #fdeceb;
+}
+
+/* Chips */
+.band-chip,
+.breaker-chip,
+.warrant-chip,
+.arm-tag,
+.blocked-badge,
+.suspected-badge,
+.provenance {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.band-chip--compliance_risk {
+  border-color: var(--risk);
+  color: var(--risk);
+  font-weight: 600;
+}
+.band-chip--borderline {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.band-chip--clear_pass {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.breaker-chip--armed {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.breaker-chip--tripped,
+.breaker-chip--cold {
+  color: var(--risk);
+  border-color: var(--risk);
+}
+
+.score-withheld {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.suspected-badge {
+  background: #f0eefe;
+  border-color: #6a5acd;
+  color: #4b3fa7;
+}
+
+.suspected-caveat,
+.tier-note,
+.prevalence-caveat,
+.wc-provenance {
+  background: #f6f6f6;
+  padding: 0.4rem 0.6rem;
+  border-left: 4px solid var(--muted);
+  margin: 0.4rem 0;
+}
+
+.suspected-leak-warning {
+  color: var(--risk);
+  font-weight: 600;
+}
+
+.blocked-badge {
+  border-color: var(--risk);
+  color: var(--risk);
+  font-weight: 600;
+}
+.missing-grant {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.empty-state {
+  border: 1px dashed var(--line);
+  padding: 1rem;
+  border-radius: 6px;
+  margin: 0.6rem 0;
+}
+.empty-state--unreachable {
+  border-style: solid;
+  border-color: var(--risk);
+  background: #fdeceb;
+}
+.empty-state__heading {
+  font-weight: 600;
+  margin: 0 0 0.3rem;
+}
+
+.field {
+  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-width: 40rem;
+}
+
+nav a[aria-current='page'],
+nav button[aria-current='page'] {
+  font-weight: 700;
+  text-decoration: underline;
+}

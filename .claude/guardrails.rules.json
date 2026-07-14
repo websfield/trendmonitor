@@ -1,0 +1,130 @@
+{
+  "_README": "Rules consumed by .claude/hooks/guardrails.js (PreToolUse on Edit/Write/MultiEdit). The rules below are the UNIVERSAL baseline — safe for any project. Run /bootstrap-claude-pack to append project-specific rules (e.g. vendor-isolation, idempotency keys, no-card-data, module boundaries). Schema is documented at the top of guardrails.js. severity: 'block' (exit 2, Claude must change course) or 'warn' (exit 0 + message). A rule fires only when ALL of its present conditions match.",
+  "rules": [
+    {
+      "id": "secret-private-key-literal",
+      "severity": "block",
+      "notFilePattern": "(\\.env\\.example$|\\.sample$|\\.template$|guardrails\\.rules\\.json$)",
+      "bodyPattern": "-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
+      "message": "Private key literal in file body. Never commit private keys. Use a secret manager or an env var with a .env.example placeholder."
+    },
+    {
+      "id": "secret-aws-access-key",
+      "severity": "block",
+      "notFilePattern": "(\\.env\\.example$|\\.sample$|\\.template$|guardrails\\.rules\\.json$)",
+      "bodyPattern": "AKIA[0-9A-Z]{16}",
+      "message": "AWS access key id literal detected. Move it to an env var / secret manager; never commit credentials."
+    },
+    {
+      "id": "secret-generic-api-key-assignment",
+      "severity": "warn",
+      "notFilePattern": "(\\.env\\.example$|\\.sample$|\\.template$|guardrails\\.rules\\.json$|(^|/)[^/]*(\\.test\\.|\\.spec\\.|[._-]mock|[._-]fixture)|(^|/)(__tests__|tests?|specs?|mocks?|fixtures?)/)",
+      "flags": "i",
+      "bodyPattern": "(api[_-]?key|secret|token|password|passwd)\\s*[:=]\\s*[\"'][A-Za-z0-9_\\-]{16,}[\"']",
+      "message": "Looks like a hardcoded credential. Read secrets from env vars; keep only placeholders in committed files."
+    },
+    {
+      "id": "secret-stripe-live-or-test-key",
+      "severity": "block",
+      "notFilePattern": "(\\.env\\.example$|\\.sample$|\\.template$|guardrails\\.rules\\.json$)",
+      "bodyPattern": "(sk_(test|live)_[A-Za-z0-9]{16,}|rk_(test|live)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{16,})",
+      "message": "Stripe secret / restricted / webhook-signing key literal. Never commit Stripe secrets — env vars + .env.example placeholders only."
+    },
+    {
+      "id": "edit-under-vendored-deps",
+      "severity": "warn",
+      "filePattern": "(^|/)(node_modules|vendor|\\.venv|site-packages|dist|build)/",
+      "message": "Editing a vendored / generated directory. Changes here are not under source control and will be overwritten. Edit the source, not the build output."
+    },
+    {
+      "id": "lockfile-hand-edit",
+      "severity": "warn",
+      "filePattern": "(package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|Cargo\\.lock|poetry\\.lock|Gemfile\\.lock)$",
+      "message": "Hand-editing a lockfile. Prefer the package manager (install/add/remove) so the lockfile stays consistent with the manifest."
+    },
+    {
+      "id": "ci-workflow-change",
+      "severity": "warn",
+      "filePattern": "(^|/)\\.github/workflows/.*\\.ya?ml$",
+      "message": "Editing a CI workflow. Confirm the change is intended — CI config affects every future build and can leak secrets if misconfigured."
+    },
+    {
+      "id": "shortcut-marker-no-trigger",
+      "severity": "warn",
+      "notFilePattern": "((^|/)(keeping-it-lean|shortcut-ledger)|guardrails\\.rules\\.json$)",
+      "bodyPattern": "(#|//)\\s*SHORTCUT:",
+      "absentPattern": "upgrade:",
+      "message": "A SHORTCUT: marker without an 'upgrade:' trigger is exactly the deferral that rots into permanent. Name the ceiling and the trigger to revisit, e.g. '// SHORTCUT: in-memory list. ceiling: O(n) scan. upgrade: index it when the set grows.' See the keeping-it-lean skill; harvest with /shortcut-ledger."
+    },
+    {
+      "id": "ugc-epsilon-zero",
+      "severity": "block",
+      "notFilePattern": "(guardrails\\.rules\\.json$|(^|/)docs/.*\\.md$|(^|/)\\.claude/(skills|agents)/)",
+      "flags": "i",
+      "bodyPattern": "(epsilon|exploration_(rate|share|budget))[\"']?\\s*[:=]\\s*0(\\.0+)?(?![\\d.])",
+      "message": "Exploration budget ε can never be zero or configurable to zero — floor is 0.10, ceiling 0.30 (ADR-0003, CLAUDE.md rule 6). 'A configuration option that can be set to zero will be set to zero.'"
+    },
+    {
+      "id": "ugc-auto-approve",
+      "severity": "warn",
+      "filePattern": "\\.(cs|py|ts|tsx|sql|json|ya?ml)$",
+      "notFilePattern": "(guardrails\\.rules\\.json$|(^|/)docs/initial/)",
+      "flags": "i",
+      "bodyPattern": "auto[_-]?approv",
+      "message": "No auto-approval exists in this system, ever (REQ-021, won't-change): every APPROVED requires a real human click recorded as human_approved_at. If this is a comment stating the prohibition, fine — otherwise stop."
+    },
+    {
+      "id": "ugc-model-clears-veto",
+      "severity": "warn",
+      "filePattern": "\\.(cs|py|ts|tsx|sql)$",
+      "flags": "i",
+      "bodyPattern": "(clear|dismiss|waive|override)[_a-z]*[_-]?veto|veto[_-]?(cleared|dismissed|waived)",
+      "message": "Only a named human resolution path may clear a veto; model output may never influence veto computation in any direction (REQ-011, rubric-vps-v1 Lane 1). Any code path where model output clears/downgrades a veto is a P1."
+    },
+    {
+      "id": "ugc-organic-implies-paid",
+      "severity": "warn",
+      "filePattern": "\\.(cs|py|ts|tsx|sql)$",
+      "flags": "i",
+      "bodyPattern": "organic[_-]?publish[\\s\\S]{0,80}paid[_-]?amplification|paid[_-]?amplification[\\s\\S]{0,80}organic[_-]?publish",
+      "message": "organic_publish NEVER implies paid_amplification — no inference path, no config (V4 / ECHO H2). Gate B requires an unexpired paid_amplification grant WITH evidence_uri; a grant without evidence is not a grant."
+    },
+    {
+      "id": "ugc-organic-plus-boosted",
+      "severity": "warn",
+      "filePattern": "\\.(cs|py|ts|tsx|sql)$",
+      "flags": "i",
+      "bodyPattern": "organic\\s*\\+\\s*boosted|boosted\\s*\\+\\s*organic",
+      "message": "Organic and boosted performance are recorded as separate series and NEVER summed (REQ-030, measurement-discipline skill)."
+    },
+    {
+      "id": "ugc-random-holdout",
+      "severity": "warn",
+      "filePattern": "\\.py$",
+      "bodyPattern": "train_test_split",
+      "message": "Calibration and pattern evaluation use TEMPORAL holdouts, never random splits — same-campaign posts share brief/product/audience, so a random split leaks (eval-and-calibration-plan.md). If this split is not on time, stop."
+    },
+    {
+      "id": "ugc-contract-schema-edit",
+      "severity": "warn",
+      "filePattern": "(^|/)docs/initial/schemas/(rubric|events|mechanisms)-v1\\.json$",
+      "message": "This is a versioned machine-readable contract. A semantic change bumps the version (never mutates v1 in place silently), must keep rubric-vps-v1.md / integration-contract.md consistent, and passes the boundaries gate (CLAUDE.md rule 9)."
+    },
+    {
+      "id": "ugc-cross-tenant",
+      "severity": "warn",
+      "filePattern": "\\.(cs|py|ts|tsx|sql)$",
+      "flags": "i",
+      "bodyPattern": "ignore[_-]?query[_-]?filters|cross[_-]?tenant|tenant[_-]?id\\s*[:=]\\s*(null|none)\\b",
+      "message": "Tenant A's outcome data never informs Tenant B's scoring — enforced at the repository layer with no widening override and no admin path (tech-spec §Multi-tenancy, compliance-notes). This is not a configuration option."
+    },
+    {
+      "id": "ugc-mean-for-baseline",
+      "severity": "warn",
+      "filePattern": "\\.(cs|py)$",
+      "flags": "i",
+      "bodyPattern": "baseline[\\s\\S]{0,100}\\b(mean|stddev|std_dev|variance)\\b|\\b(mean|stddev|std_dev)\\b[\\s\\S]{0,100}baseline",
+      "message": "Creator and trend baselines use median + MAD, never mean/stddev — engagement distributions are heavy-tailed (tech-spec CreatorBaseline, rubric-vps-v1). Verify this statistic choice is deliberate."
+    }
+  ]
+}

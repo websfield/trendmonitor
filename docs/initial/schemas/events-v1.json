@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract": "OutcomeEvent",
+  "contract_version": "1.3.0",
+  "direction": "C2 emits; C1 and C3 consume independently",
+  "transport": "append-only log, at-least-once, idempotency-keyed",
+  "sole_writer": "component-2",
+
+  "changelog": {
+    "1.3.0": [
+      "ADDED an optional human_approved_at to VerdictOverridden, and gave the event an explicit properties block naming its snake_case wire keys. An override into APPROVED is a human approval and must carry the real human-click timestamp, exactly as VerdictIssued does (REQ-021, no auto-approval); an override into any non-APPROVED verdict carries null. Populated only when override_verdict == APPROVED. Optional (not in required) because the field is meaningless for the common non-APPROVED override; the persistence boundary (ComplianceEventEmitter) rejects an APPROVED override whose human_approved_at is null, so the invariant is enforced in code, not by schema requiredness. Closes audit 2026-07-14 finding #1. Additive; no field renamed, removed, or re-typed."
+    ],
+    "1.2.0": [
+      "ADDED rng_seed and sampler_version to AmplificationAllocated, both in the required array. The explore arm draws from a Beta posterior via Thompson sampling; a Beta draw is floating-point and library-dependent, so an allocation is reproducible from the event log only if the seed AND the sampler library version travel with it. An allocation that cannot be re-derived is not auditable, and the REQ-039 counterfactual cannot be reconstructed against it. Required from inception (greenfield: no historical AmplificationAllocated event exists to invalidate) because an optional seed is a seed that will be omitted. Additive; no field renamed, removed, or re-typed."
+    ],
+    "1.1.0": [
+      "ADDED EXCLUDED_FROM_AI_SCORING to VerdictIssued.verdict enum. V6 (minor_creator) resolves on_fail to EXCLUDED_FROM_AI_SCORING (rubric-v1.json:20), a routing state distinct from REJECTED: a minor's submission is excluded entirely from AI scoring, a different act with a different record. Without this value a V6-excluded minor could only be misrecorded as one of the four REQ-015 verdicts. Additive to the enum; no field renamed, removed, or re-typed."
+    ]
+  },
+
+  "envelope": {
+    "type": "object",
+    "required": ["event_id", "event_type", "idempotency_key", "tenant_id",
+                 "occurred_at", "recorded_at", "payload"],
+    "properties": {
+      "event_id":        { "type": "string", "format": "uuid" },
+      "event_type":      { "enum": ["SubmissionScored", "VerdictIssued", "VerdictOverridden",
+                                    "PostPublished", "PerformanceSnapshot",
+                                    "AmplificationAllocated", "AmplificationSignedOff",
+                                    "RightsGrantChanged"] },
+      "idempotency_key": { "type": "string",
+                           "description": "hash(event_type, entity_id, logical_timestamp). Consumers dedupe on this. A double-counted outcome inflates an effect size." },
+      "tenant_id":       { "type": "string", "format": "uuid" },
+      "occurred_at":     { "type": "string", "format": "date-time" },
+      "recorded_at":     { "type": "string", "format": "date-time" },
+      "payload":         { "type": "object" }
+    }
+  },
+
+  "invariants": [
+    "No event carries a raw media URI. Events reference feature_record_id only, so that de-identification after the rights window does not invalidate the log.",
+    "arm is stamped on AmplificationAllocated and propagates to every subsequent PerformanceSnapshot for that live_post_id.",
+    "breaker_state_at_score travels with the score. It is never reconstructed from flag history.",
+    "Every metric carries provenance and as_of. Proxy is never aggregated as Measured.",
+    "C1 and C3 are consumers only. Neither writes to this stream."
+  ],
+
+  "events": {
+    "SubmissionScored": {
+      "consumed_by": ["component-1", "component-3"],
+      "required": ["submission_id", "feature_record_id", "cohort_key",
+                   "version_triple", "breaker_state_at_score", "vps", "bas"],
+      "properties": {
+        "submission_id":     { "type": "string", "format": "uuid" },
+        "feature_record_id": { "type": "string", "format": "uuid" },
+        "cohort_key": {
+          "type": "object",
+          "required": ["tenant_id", "vertical", "platform", "rubric_version", "pattern_library_version"],
+          "description": "The calibration cohort key. Library promotion changes this key and resets the window."
+        },
+        "version_triple": {
+          "type": "object",
+          "required": ["extractor_version", "rubric_version", "pattern_library_version"],
+          "description": "Pinned at score time. Re-running against the same triple yields the same number."
+        },
+        "breaker_state_at_score": { "enum": ["armed", "tripped", "cold", "shadow"] },
+        "shadow_scores": {
+          "type": "array",
+          "description": "Present only when breaker_state_at_score = shadow. Challenger library scores, stored, never surfaced.",
+          "items": { "type": "object",
+                     "required": ["pattern_library_version", "vps", "criteria"] }
+        },
+        "vps": { "type": "number", "minimum": 0, "maximum": 100 },
+        "bas": { "type": "number", "minimum": 0, "maximum": 100 },
+        "criteria": {
+          "type": "object",
+          "description": "Per-criterion 0-100 with evidence and degraded flag",
+          "patternProperties": {
+            "^(hook_strength|scroll_stop_power|completion_likelihood|pacing|emotional_specificity|text_readability|authenticity_register|shareability)$": {
+              "type": "object",
+              "required": ["score", "degraded"],
+              "properties": {
+                "score":    { "type": "number", "minimum": 0, "maximum": 100 },
+                "degraded": { "type": "boolean" },
+                "evidence": { "type": "string" }
+              }
+            }
+          }
+        },
+        "retrieved_pattern_ids": { "type": "array", "items": { "type": "string" },
+                                   "description": "The evidence a score was anchored on. Makes the score explainable and auditable." },
+        "audio_present": { "type": "boolean" },
+        "anomalous":     { "type": "boolean",
+                           "description": "Model returned out-of-range. Clamped, logged, EXCLUDED from calibration dataset." },
+        "provenance":    { "const": "Estimated" }
+      }
+    },
+
+    "VerdictIssued": {
+      "consumed_by": ["component-1", "component-3"],
+      "required": ["submission_id", "verdict", "vetoes_fired", "decided_by"],
+      "properties": {
+        "verdict":       { "enum": ["APPROVED", "APPROVED_WITH_NOTES", "REVISIONS_REQUIRED", "REJECTED", "NEEDS_REVIEW", "EXCLUDED_FROM_AI_SCORING"] },
+        "vetoes_fired":  { "type": "array", "items": { "enum": ["V1", "V2", "V3", "V4", "V5", "V6"] } },
+        "suspected_vetoes": { "type": "array",
+                              "description": "Model-raised, surfaced to a human, NEVER read by veto computation." },
+        "hook_gate_fired":  { "type": "boolean" },
+        "decided_by":       { "const": "deterministic_verdict_engine" },
+        "human_approved_at": { "type": ["string", "null"], "format": "date-time",
+                               "description": "REQ-021. No auto-approval. APPROVED without this is invalid." }
+      }
+    },
+
+    "VerdictOverridden": {
+      "consumed_by": ["component-1", "component-3"],
+      "required": ["submission_id", "original_verdict", "override_verdict", "reason", "reviewer_id"],
+      "description": "A first-class calibration input, not an exception path. High override rate in a cohort means the rubric is wrong.",
+      "properties": {
+        "submission_id":    { "type": "string", "format": "uuid" },
+        "original_verdict": { "enum": ["APPROVED", "APPROVED_WITH_NOTES", "REVISIONS_REQUIRED", "REJECTED", "NEEDS_REVIEW", "EXCLUDED_FROM_AI_SCORING"] },
+        "override_verdict": { "enum": ["APPROVED", "APPROVED_WITH_NOTES", "REVISIONS_REQUIRED", "REJECTED", "NEEDS_REVIEW", "EXCLUDED_FROM_AI_SCORING"] },
+        "reason":           { "type": "string" },
+        "reviewer_id":      { "type": "string" },
+        "human_approved_at": { "type": ["string", "null"], "format": "date-time",
+                               "description": "REQ-021 (1.3.0). Set only when override_verdict == APPROVED: the real human-click timestamp. An APPROVED override with this null is rejected at the persistence boundary. Null for every non-APPROVED override." }
+      }
+    },
+
+    "PostPublished": {
+      "consumed_by": ["component-1", "component-3"],
+      "required": ["submission_id", "live_post_id", "published_at", "platform"],
+      "properties": {
+        "live_disclosure_verified": { "type": "boolean",
+                                      "description": "REQ-034. The compliant artefact and the published artefact are different objects." }
+      }
+    },
+
+    "PerformanceSnapshot": {
+      "consumed_by": ["component-1", "component-3"],
+      "required": ["live_post_id", "horizon", "engagement_rate", "denominator", "provenance", "as_of", "series"],
+      "properties": {
+        "horizon":         { "enum": ["t24h", "t48h", "t7d"] },
+        "engagement_rate": { "type": "number" },
+        "denominator":     { "enum": ["reach", "impressions", "followers"],
+                             "description": "Declared and period-stable. Rates on different denominators are not compared." },
+        "series":          { "enum": ["organic", "boosted"],
+                             "description": "Separate series. NEVER summed." },
+        "arm":             { "enum": ["exploit", "explore", null],
+                             "description": "Propagated from AmplificationAllocated. Null if unamplified. The most valuable field in the system." },
+        "provenance":      { "enum": ["Measured", "User-provided", "Proxy"] },
+        "as_of":           { "type": "string", "format": "date-time",
+                             "description": "True collection time, not intended horizon. Log lag makes these differ." },
+        "outperformance_ratio":  { "type": ["number", "null"] },
+        "insufficient_baseline": { "type": "boolean",
+                                   "description": "creator.trailing_posts_n < 8. Never imputed from creator tier." }
+      }
+    },
+
+    "AmplificationAllocated": {
+      "consumed_by": ["component-1", "component-3"],
+      "required": ["live_post_id", "arm", "spend", "aws", "rationale", "epsilon", "rng_seed", "sampler_version"],
+      "properties": {
+        "arm":       { "enum": ["exploit", "explore"],
+                       "description": "Explore-arm outcomes are the ONLY unconfounded evidence C1 receives. Dropping this tag converts the exploration budget into a donation." },
+        "spend":     { "type": "number" },
+        "aws":       { "type": "number", "minimum": 0, "maximum": 100 },
+        "aws_terms": { "type": "object",
+                       "description": "Per-term contribution. vps_normalised weight is 0 when breaker tripped." },
+        "epsilon":   { "type": "number", "minimum": 0.10, "maximum": 0.30,
+                       "description": "Cannot be 0. ADR-0003." },
+        "rng_seed":  { "type": "integer",
+                       "description": "REQUIRED (1.2.0). The seed of the injected RNG the Thompson draw used. Makes the allocation re-derivable from the event log; an allocation without one is unreproducible and its REQ-039 counterfactual cannot be reconstructed." },
+        "sampler_version": { "type": "string",
+                       "description": "REQUIRED (1.2.0). The sampler library version. A Beta draw is floating-point and library-dependent, so the seed alone guarantees reproducibility only within one environment." },
+        "sampling_policy": { "enum": ["proportional_exploit", "thompson", "uniform_random_no_baseline"] },
+        "confidence_band": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "rationale": { "type": "string" }
+      }
+    },
+
+    "AmplificationSignedOff": {
+      "consumed_by": ["component-3"],
+      "required": ["allocation_id", "reviewer_id", "signed_off_at"],
+      "properties": {
+        "modifications": { "type": "array",
+                           "description": "REQ-037. Nothing reaches a client before this event exists." }
+      }
+    },
+
+    "RightsGrantChanged": {
+      "consumed_by": ["component-1"],
+      "required": ["submission_id", "grant_type", "change", "evidence_uri"],
+      "properties": {
+        "grant_type": { "enum": ["organic_publish", "paid_amplification", "website_reuse", "email_reuse", "perpetuity"] },
+        "change":     { "enum": ["created", "expired", "revoked"] },
+        "evidence_uri": { "type": "string",
+                          "description": "A grant without evidence is not a grant. organic_publish NEVER implies paid_amplification." }
+      }
+    }
+  },
+
+  "contract_c_breaker_state": {
+    "direction": "C3 writes; C2 reads. C2 has no write path.",
+    "cohort_key": ["tenant_id", "vertical", "platform", "rubric_version", "pattern_library_version"],
+    "states": {
+      "armed":   { "condition": "rolling spearman >= 0.35 on n >= 60 held out",
+                   "c2_behaviour": "VPS surfaced with band; weight 0.15 in AWS" },
+      "tripped": { "condition": "rolling spearman below threshold",
+                   "c2_behaviour": "VPS stored not surfaced; weight 0 in AWS; redistributed to measured terms" },
+      "cold":    { "condition": "n < 60, or no library, or compatibility triple mismatch",
+                   "c2_behaviour": "same as tripped; reason differs and is surfaced" },
+      "shadow":  { "condition": "champion/challenger evaluation in progress",
+                   "c2_behaviour": "dual-score; champion surfaces; both stored" }
+    },
+    "rules": [
+      "Automatic to trip. Manual, with a recorded reason, to arm.",
+      "Fail closed: unreachable C3 or cache stale beyond 60s TTL => treat cohort as cold.",
+      "No configuration in C2 overrides a breaker. A breaker switchable from the component it governs is a comment.",
+      "REQ-038 client behaviour is a direct read of this state, not a second decision."
+    ]
+  },
+
+  "contract_d_library_verdict": {
+    "direction": "C1 requests shadow; C3 issues verdict. C1 cannot publish without it.",
+    "verdicts": ["promote", "reject", "extend_shadow"],
+    "rules": [
+      "Challenger must beat incumbent on the SAME held-out submissions. Paired comparison controls for the quarter.",
+      "extend_shadow is the common outcome and costs only doubled model spend.",
+      "reject is recorded against the candidate and its mining run.",
+      "On promote, C3 resets the calibration window. Breaker drops to cold until n rebuilds.",
+      "Publication cadence is bounded below by calibration accumulation (~quarterly), NOT by mining cadence (nightly)."
+    ]
+  }
+}

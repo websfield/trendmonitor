@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Phase R4a (audit findings #3/#7). The ASP.NET host that runs C4, the Knowledge API, as a distinct
+    executable/process (ADR-0007 §5/§6): it does not share a process with C1.
+
+    C4's WHOLE read grant is one artefact-store prefix. This host references ONLY the KnowledgeApi library
+    and the Artefacts assembly (through which the one mechanism-prefix reader is obtained). It references:
+      * NO event log (UgcIntelligence.Events / .Writer)  — C4 emits nothing and reads no OutcomeEvent.
+      * NO breaker (UgcIntelligence.Contracts / IBreakerReader) — "C4 reads no breaker" (ADR-0007 §3).
+      * NO C1/C2/C3 assembly.
+    The host-separation test proves these absences at the composition-root level.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\UgcIntelligence.KnowledgeApi\UgcIntelligence.KnowledgeApi.csproj" />
+    <ProjectReference Include="..\..\ControlPlane\UgcIntelligence.Artefacts\UgcIntelligence.Artefacts.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

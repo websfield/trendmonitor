@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\ControlPlane\UgcIntelligence.Domain\UgcIntelligence.Domain.csproj" />
+    <ProjectReference Include="..\..\ControlPlane\UgcIntelligence.Contracts.Mechanisms\UgcIntelligence.Contracts.Mechanisms.csproj" />
+    <ProjectReference Include="..\..\ControlPlane\UgcIntelligence.Artefacts\UgcIntelligence.Artefacts.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

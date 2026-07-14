@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.Domain\UgcIntelligence.Domain.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.Contracts\UgcIntelligence.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.Contracts.Mechanisms\UgcIntelligence.Contracts.Mechanisms.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.Events\UgcIntelligence.Events.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.Events.Writer\UgcIntelligence.Events.Writer.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.Artefacts\UgcIntelligence.Artefacts.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.C2.Api\UgcIntelligence.C2.Api.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.C2.Host\UgcIntelligence.C2.Host.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.C3.Calibration\UgcIntelligence.C3.Calibration.csproj" />
+    <ProjectReference Include="..\..\src\KnowledgeApi\UgcIntelligence.KnowledgeApi\UgcIntelligence.KnowledgeApi.csproj" />
+    <ProjectReference Include="..\..\src\ControlPlane\UgcIntelligence.Artefacts.Writer\UgcIntelligence.Artefacts.Writer.csproj" />
+  </ItemGroup>
+
+</Project>

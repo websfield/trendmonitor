@@ -1,0 +1,24 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/ControlPlane/">
+    <Project Path="src/ControlPlane/UgcIntelligence.Artefacts.Writer/UgcIntelligence.Artefacts.Writer.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.Artefacts/UgcIntelligence.Artefacts.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.C2.Api/UgcIntelligence.C2.Api.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.C2.Host/UgcIntelligence.C2.Host.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.C3.Calibration/UgcIntelligence.C3.Calibration.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.C3.Host/UgcIntelligence.C3.Host.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.Contracts.Mechanisms/UgcIntelligence.Contracts.Mechanisms.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.Contracts/UgcIntelligence.Contracts.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.Domain/UgcIntelligence.Domain.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.Events.Writer/UgcIntelligence.Events.Writer.csproj" />
+    <Project Path="src/ControlPlane/UgcIntelligence.Events/UgcIntelligence.Events.csproj" />
+  </Folder>
+  <Folder Name="/src/KnowledgeApi/">
+    <Project Path="src/KnowledgeApi/UgcIntelligence.KnowledgeApi/UgcIntelligence.KnowledgeApi.csproj" />
+    <Project Path="src/KnowledgeApi/UgcIntelligence.KnowledgeApi.Host/UgcIntelligence.KnowledgeApi.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/Architecture/">
+    <Project Path="tests/Architecture/UgcIntelligence.Architecture.Tests.csproj" />
+  </Folder>
+</Solution>

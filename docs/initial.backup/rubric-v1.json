@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "rubric_version": "1.0.0",
+  "status": "provisional",
+  "provisional_until": "calibrated against >=60 posts per (vertical, platform) cohort",
+
+  "vetoes": [
+    { "id": "V1", "name": "disclosure",      "evaluated_by": "deterministic", "gate": ["A", "B"], "on_fail": "REJECTED" },
+    { "id": "V2", "name": "claim_integrity", "evaluated_by": "deterministic", "gate": ["A"],      "on_fail": "REJECTED" },
+    { "id": "V3", "name": "brand_safety",    "evaluated_by": "deterministic", "gate": ["A", "B"], "on_fail": "REJECTED" },
+    { "id": "V4", "name": "rights_record",   "evaluated_by": "deterministic", "gate": ["A", "B"], "on_fail": "REJECTED",
+      "required_grant": { "A": "organic_publish", "B": "paid_amplification" } },
+    { "id": "V5", "name": "technical_spec",  "evaluated_by": "deterministic", "gate": ["A"],      "on_fail": "REJECTED" },
+    { "id": "V6", "name": "minor_creator",   "evaluated_by": "deterministic", "gate": ["A", "B"], "on_fail": "EXCLUDED_FROM_AI_SCORING" }
+  ],
+
+  "bas": {
+    "range": [0, 100],
+    "components": [
+      { "key": "talking_points_covered",  "weight": 0.35, "evaluated_by": "hybrid" },
+      { "key": "mandatory_inclusions",    "weight": 0.25, "evaluated_by": "deterministic" },
+      { "key": "prohibited_content_absent","weight": 0.20, "evaluated_by": "deterministic" },
+      { "key": "format_spec_met",         "weight": 0.10, "evaluated_by": "deterministic" },
+      { "key": "tone_register_match",     "weight": 0.10, "evaluated_by": "model" }
+    ],
+    "gates": [
+      { "condition": "bas < 60", "verdict_floor": "REVISIONS_REQUIRED" }
+    ]
+  },
+
+  "vps": {
+    "range": [0, 100],
+    "composition": "weighted_arithmetic_mean",
+    "rounding": "floor",
+    "criteria": [
+      { "key": "hook_strength",        "weight": 0.20, "audio_dependent": true  },
+      { "key": "scroll_stop_power",    "weight": 0.18, "audio_dependent": false },
+      { "key": "completion_likelihood","weight": 0.18, "audio_dependent": true  },
+      { "key": "pacing",               "weight": 0.14, "audio_dependent": false },
+      { "key": "emotional_specificity","weight": 0.14, "audio_dependent": true  },
+      { "key": "text_readability",     "weight": 0.10, "audio_dependent": false },
+      { "key": "authenticity_register","weight": 0.06, "audio_dependent": false },
+      { "key": "shareability",         "weight": 0.00, "audio_dependent": false, "diagnostic_only": true }
+    ],
+    "hard_gates": [
+      { "criterion": "hook_strength", "condition": "< 50", "verdict_floor": "REVISIONS_REQUIRED",
+        "applies_when_degraded": true }
+    ],
+    "thresholds": {
+      "strong": 80, "approve": 70, "fix_lowest": 60, "regenerate": 0
+    },
+    "degradation": {
+      "trigger": "audio_present == false",
+      "effect": "flag audio_dependent criteria degraded=true; widen composite confidence band",
+      "suppresses_hard_gate": false
+    }
+  },
+
+  "aws": {
+    "range": [0, 100],
+    "gate": "B",
+    "hard_gates": [
+      { "key": "paid_rights_unexpired",      "on_fail": "EXCLUDED", "reason_code": "blocked_rights" },
+      { "key": "live_disclosure_verified",   "on_fail": "EXCLUDED", "reason_code": "blocked_disclosure" },
+      { "key": "creator_brand_safety_clear", "on_fail": "EXCLUDED", "reason_code": "blocked_brand_safety" },
+      { "key": "provenance_not_proxy_only",  "on_fail": "UNRANKABLE", "reason_code": "insufficient_evidence" }
+    ],
+    "terms": [
+      { "key": "outperformance_percentile", "weight": 0.45,
+        "definition": "percentile rank within campaign cohort of (post_er_24h / creator.median_er_24h)",
+        "undefined_when": "creator.trailing_posts_n < 8",
+        "on_undefined": "redistribute weight to cohort_percentile; flag insufficient_baseline" },
+      { "key": "cohort_percentile",  "weight": 0.20,
+        "definition": "percentile rank of raw post_er_24h within campaign cohort" },
+      { "key": "vps_normalised",     "weight": 0.15,
+        "zeroed_when": "calibration_circuit_breaker_tripped(vertical, platform)",
+        "on_zeroed": "redistribute weight to outperformance_percentile and cohort_percentile" },
+      { "key": "creator_standing",   "weight": 0.10, "source": "c3_ace", "veto_capped": true },
+      { "key": "audience_overlap_fit","weight": 0.10, "default_provenance": "Estimated" }
+    ],
+    "statistics": {
+      "central_tendency": "median",
+      "dispersion": "median_absolute_deviation",
+      "rationale": "engagement rates are heavy-tailed; means are dragged by prior viral posts",
+      "denominator": { "must_be_declared": true, "must_be_period_stable": true,
+                       "allowed": ["reach", "impressions", "followers"] },
+      "organic_boosted": "recorded as separate series, never summed"
+    }
+  },
+
+  "budget_allocation": {
+    "epsilon_default": 0.18,
+    "exploit": { "share": "1 - epsilon", "method": "proportional to (aws - aws_floor) over top-n eligible" },
+    "explore": { "share": "epsilon", "method": "see adr/0003" },
+    "arm_tag_required": true,
+    "rounding": "platform minimum spend increment; residual to top exploit candidate",
+    "must_sum_exactly_to_budget": true
+  },
+
+  "provenance_labels": ["Measured", "User-provided", "Estimated", "Proxy"],
+  "provenance_rules": [
+    "every vps and aws value is labelled Estimated",
+    "a Proxy value is never displayed, aggregated, or compared as Measured",
+    "every metric carries an as_of date"
+  ],
+
+  "untrusted_inputs": ["transcript", "onscreen_text", "caption", "exemplar_post_content"],
+  "model_authority": {
+    "may": ["score criteria", "raise suspected_veto", "propose revision note"],
+    "may_never": ["clear a veto", "assign a verdict", "allocate budget", "override a hard gate"]
+  }
+}

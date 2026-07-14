@@ -1,0 +1,18 @@
+{
+  "_README": "The single fixture table both the C# and the Python provenance suites read. If the two planes ever disagree about which provenance may enter an effect-size calculation, one of them is laundering a Proxy value and the parity test goes red. ADR-0001, REQ-008.",
+  "admits_to_measured_outcome": [
+    { "provenance": "Measured",      "admitted": true,  "why": "Read from a first-party analytics surface." },
+    { "provenance": "User-provided", "admitted": true,  "why": "Client-supplied export. Trusted, unverified, but a real observation." },
+    { "provenance": "Estimated",     "admitted": false, "why": "Every VPS, AWS, and effect size is Estimated. An estimate is never an input to another estimate." },
+    { "provenance": "Proxy",         "admitted": false, "why": "The exemplar corpus's engagement signal. ADR-0001: a Proxy value never enters an effect-size calculation." }
+  ],
+  "exploration_rate": [
+    { "value": 0.0,  "accepted": false, "why": "A configuration option that can be set to zero will be set to zero." },
+    { "value": -0.05,"accepted": false, "why": "Negative exploration is not a thing." },
+    { "value": 0.05, "accepted": false, "why": "Below the 0.10 floor." },
+    { "value": 0.10, "accepted": true,  "why": "Floor, inclusive." },
+    { "value": 0.18, "accepted": true,  "why": "ADR-0003 default." },
+    { "value": 0.30, "accepted": true,  "why": "Ceiling, inclusive." },
+    { "value": 0.31, "accepted": false, "why": "Above the ceiling." }
+  ]
+}

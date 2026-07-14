@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract": "MechanismLibraryVersion",
+  "contract_version": "1.0.0",
+  "decided_by": ["adr/0006-mechanisms-and-the-warrant-ladder.md", "adr/0007-the-knowledge-api-boundary.md"],
+  "direction": "C1 publishes; C4 reads. One way. C2 never reads this contract at all.",
+  "transport": "immutable content-addressed artefact in blob storage; pointer table holds active_version per (vertical, platform)",
+  "sole_writer": "component-1",
+  "sole_reader": "component-4",
+
+  "what_this_is": [
+    "A Mechanism is a falsifiable hypothesis about WHY a content structure recurs among high performers.",
+    "It is mined from the tenant-neutral public exemplar corpus and from trend signals. It is NEVER mined from any tenant's outcome data.",
+    "It is therefore tenant-neutral BY CONSTRUCTION, not by a scoping check. C4 holds no tenant data, so C4 cannot leak any.",
+    "A Mechanism carries NO effect size and makes NO numeric prediction. See `forbidden_fields`.",
+    "A Pattern (see rubric-v1.json, tech-spec) is the different, tenant-scoped object that DOES carry an effect size, is estimated on internal outcome data conditioned on `arm`, and feeds VPS retrieval. A Mechanism is the prior. A Pattern is the likelihood. They are never merged."
+  ],
+
+  "forbidden_fields": {
+    "description": "These keys must never appear on a Mechanism. `additionalProperties: false` on the mechanism object enforces this: adding one breaks schema validation rather than silently shipping a laundered number.",
+    "keys": ["effect_size", "effect_ci", "effect_ci_low", "effect_ci_high", "lift", "vps", "aws", "spearman", "predicted_performance", "arm"],
+    "why": "The exemplar corpus's engagement signal is Proxy on every platform that matters (ADR-0001, Tier 3). ADR-0001 forbids a Proxy value from entering an effect-size calculation. A Mechanism reporting a lift would be exactly that laundering, wearing a new name.",
+    "why_arm": "`arm` is reserved, systemwide, for the amplification arm (exploit|explore) on AmplificationAllocated and PerformanceSnapshot — 'the most valuable field in the system' (events-v1.json). A Mechanism has an `ingestion_arm`, which is a different concept about a different budget. The field names must never converge."
+  },
+
+  "ingestion_arm_is_not_the_amplification_arm": {
+    "amplification_arm": { "field": "arm", "values": ["exploit", "explore"],
+      "lives_on": ["AmplificationAllocated", "PerformanceSnapshot"],
+      "budget": "client amplification spend", "governed_by": "ADR-0003, epsilon in [0.10, 0.30]" },
+    "ingestion_arm": { "field": "ingestion_arm", "values": ["trend_directed", "uniform", "mixed"],
+      "lives_on": ["Mechanism", "ExemplarPost"],
+      "budget": "exemplar corpus ingestion effort", "governed_by": "the eval plan's REQ-005f coupling gate" },
+    "rule": "These are two different words that happen to rhyme. No Mechanism ever carries `arm`; no AmplificationAllocated ever carries `ingestion_arm`. A future author writing a bare `arm` on a mechanism is the hazard this block exists to name. No mechanism-derived value is ever an input to a budget allocation (ADR-0007)."
+  },
+
+  "number_travels_without_its_label": {
+    "the_tension": "ADR-0006 refuses a Proxy-labelled `effect_size` on the grounds that 'a number that exists gets copied into a slide, and the label does not come with it.' `prevalence_ratio` is also a number, and 2.45 reads like a 2.45x multiplier once detached from its wrapper. The asymmetry deserves an answer rather than silence.",
+    "the_answer": "Two different risks, and only one of them is a provenance violation. An `effect_size` mined over Proxy engagement would be a Proxy VALUE aggregated into a magnitude — ADR-0001's hard invariant, breached at the point of computation, before anyone copies anything. `prevalence_ratio` is a ratio of two deterministic COUNTS over a proxy-SELECTED set; no Proxy value is aggregated, displayed, or compared as Measured, so the hard invariant holds no matter where the number travels.",
+    "the_residual_risk": "What remains is misreading, not laundering: a reader may take 2.45 for a lift. This is mitigated but NOT eliminated. Mitigations: the field is never named `lift` or `effect_size`; `warrant`, `never_tested_against`, and the `Proxy-selected, Measured-evaluated` label ride on every response; and the forbidden-verb lexicon bars `causes|lifts|drives|predicts` from every statement. The residual risk is accepted and named here rather than argued away, because a mechanism with no quantity at all could not be falsified, and falsifiability is the entire point."
+  },
+
+  "library_manifest": {
+    "type": "object",
+    "required": ["mechanism_library_version", "vertical", "platform", "cut_at", "published_at",
+                 "compatible_extractor_versions", "corpus_snapshot_sha256", "mechanisms", "sha256"],
+    "additionalProperties": false,
+    "properties": {
+      "mechanism_library_version": { "type": "string", "examples": ["beauty.tiktok.m3"],
+                                     "description": "No tenant_id. There is no tenant axis on this key." },
+      "vertical":   { "type": "string" },
+      "platform":   { "type": "string" },
+      "cut_at":     { "type": "string", "format": "date-time" },
+      "published_at": { "type": "string", "format": "date-time" },
+      "supersedes": { "type": ["string", "null"] },
+      "compatible_extractor_versions": {
+        "type": "array", "items": { "type": "string" },
+        "description": "A predicate evaluated over extractor 3.2 FeatureRecords does not evaluate over 4.0. C4 serves the mechanism; anyone re-evaluating the predicate must honour this." },
+      "corpus_snapshot_sha256": { "type": "string",
+        "description": "The exact exemplar corpus the prevalences were counted over. Recomputable. This is what makes a falsification reproducible." },
+      "mechanisms": { "type": "array", "items": { "$ref": "#/$defs/mechanism" } },
+      "exemplar_index_uri": { "type": "string" },
+      "sha256": { "type": "string" }
+    }
+  },
+
+  "$defs": {
+    "mechanism": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "statement", "feature_predicate", "falsifier", "warrant", "evidence",
+                   "provenance", "ingestion_arm", "ratified_by", "ratified_at", "ratification_note",
+                   "valid_from", "valid_to"],
+      "allOf": [
+        {
+          "if":   { "properties": { "warrant": { "const": "contrasted" } }, "required": ["warrant"] },
+          "then": { "properties": { "evidence": { "properties": { "temporal_slices": { "minItems": 2 } },
+                                                  "required": ["temporal_slices"] } },
+                    "description": "A `contrasted` mechanism MUST carry >= 2 temporal slices: the slice it was mined on, and a disjoint slice the asymmetry survived. A single-slice `contrasted` is a description of its own mining window and must fail validation, not merely violate prose. Disjointness itself (slice[i].to <= slice[i+1].from) is asserted by the synthesiser and re-checked at ratification; JSON Schema cannot express the cross-item comparison." }
+        }
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+
+        "statement": {
+          "type": "string",
+          "description": "The WHY, in prose. 'A first-person problem-statement delivered to camera inside 1.2s resolves a curiosity gap while signalling in-group membership, which is why it holds the scroll where a product shot does not.' Model-DRAFTED, human-RATIFIED, never machine-consumed. No downstream computation reads this field."
+        },
+
+        "feature_predicate": {
+          "type": "object",
+          "description": "Machine-evaluable condition over a FeatureRecord. This is the only part of a Mechanism that a machine may read. It is what makes the statement falsifiable rather than a story."
+        },
+
+        "falsifier": {
+          "type": "string",
+          "description": "REQUIRED. The observation that would sink this mechanism, stated before the evidence is gathered. A mechanism without a stated falsifier is not a mechanism, it is a caption. Mirrors the eval plan: 'If none of these tests can fail, none of them are tests.'"
+        },
+
+        "warrant": {
+          "enum": ["conjectured", "recurrent", "contrasted", "falsified", "retired"],
+          "description": "See warrant_ladder. Only `recurrent` and `contrasted` are served as active by C4. `falsified` is retained in the artefact for auditability and is never served as active."
+        },
+
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["n_exemplars", "n_creators", "n_cohorts", "n_trends",
+                       "prevalence_in_top_decile", "prevalence_in_contrast_set", "prevalence_ratio",
+                       "contrast_set_definition", "temporal_slices"],
+          "properties": {
+            "n_exemplars": { "type": "integer", "minimum": 0 },
+            "n_creators":  { "type": "integer", "minimum": 0,
+                             "description": "Independent creators. Ten posts by one creator is one creator, not ten data points." },
+            "n_cohorts":   { "type": "integer", "minimum": 0,
+                             "description": "Distinct (vertical, platform) pairs the predicate independently recurs in, counted by cross-referencing other mechanism libraries. This is a RECURRENCE COUNT, not a pooling instruction: prevalences are computed strictly within this library's own cohort, and are never pooled across cohorts, because two (vertical, platform) populations are not one population." },
+            "n_trends":    { "type": "integer", "minimum": 0,
+                             "description": "Count of UNRELATED trends whose exemplars carry this predicate. This is the operationalisation of 'trends are disposable, mechanisms compound' (ADR-0004). A predicate seen only inside one trend's posts is that trend wearing a lab coat." },
+
+            "prevalence_in_top_decile": { "type": "number", "minimum": 0, "maximum": 1,
+              "description": "Fraction of top-decile exemplar FeatureRecords satisfying the predicate. A COUNT over a proxy-SELECTED set, not an aggregation of proxy VALUES. The predicate itself is evaluated deterministically from media. Computed WITHIN this library's own cohort — never pooled across cohorts." },
+            "prevalence_in_contrast_set": { "type": "number", "minimum": 0, "maximum": 1,
+              "description": "Same predicate, same cohort, over the retained contrast set (see contrast_set_definition). If this is 0, prevalence_ratio is UNDEFINED, not infinite: the mechanism stays `conjectured` and the zero is surfaced. A predicate absent from every non-winner is more likely a corpus artefact than a discovery." },
+            "prevalence_ratio": { "type": "number", "minimum": 0,
+              "description": "prevalence_in_top_decile / prevalence_in_contrast_set, within this cohort. A DESCRIPTIVE ASYMMETRY on a proxy-selected sample. It is not a lift, not an effect size, not a risk ratio, and not causal. It is confounded by everything the corpus did not observe. It is served with `warrant` and `never_tested_against` attached precisely because a bare ratio, detached from its wrapper, reads like a multiplier — see number_travels_without_its_label." },
+
+            "contrast_set_definition": { "type": "string",
+              "description": "Named explicitly, because a prevalence without a comparison group is a number with no meaning. v1: the same creators' posts that did NOT reach their own top decile, extracted and retained alongside the top-decile corpus (C1 §1.5). Same creators controls for audience; same platform controls for format norms; nothing controls for the content nobody made." },
+
+            "temporal_slices": {
+              "type": "array", "minItems": 1,
+              "items": { "type": "object", "required": ["from", "to", "prevalence_ratio"] },
+              "description": "Ordered, non-overlapping: slice[i].to <= slice[i+1].from. Mined on slice 1, checked on slice 2. A `contrasted` mechanism MUST carry >= 2 (enforced by the allOf/if-then above), because a pattern that holds only in the window it was mined from is a description of that window. Disjointness is a cross-item comparison JSON Schema cannot express; it is enforced by the synthesiser and re-checked at ratification." }
+          }
+        },
+
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["corpus_selection", "predicate_evaluation", "label"],
+          "properties": {
+            "corpus_selection":    { "const": "Proxy",
+              "description": "Top-decile membership was decided using keyless public engagement reads. Proxy, always, per ADR-0001." },
+            "predicate_evaluation":{ "const": "Measured",
+              "description": "The predicate is evaluated deterministically over the FeatureRecord extracted from the media itself. This is a real observation about the artefact." },
+            "label": { "const": "Proxy-selected, Measured-evaluated",
+              "description": "The distinction that keeps this honest. No Proxy value is displayed, aggregated, or compared as Measured anywhere in this contract." }
+          }
+        },
+
+        "never_tested_against": {
+          "const": "content that was attempted and failed",
+          "description": "Shipped on every mechanism and on every API response. The exemplar corpus is a sample of winners (C1 §1.5). This field is the standing admission of survivorship bias, and it is not removable."
+        },
+
+        "occasioned_by_trend_ids": {
+          "type": "array", "items": { "type": "string", "format": "uuid" },
+          "description": "Which trend(s) pointed the corpus builder here. A trend dies; the mechanism it occasioned does not. The archived trend remains queryable." },
+
+        "ingestion_arm": {
+          "enum": ["trend_directed", "uniform", "mixed"],
+          "description": "Which exemplar-ingestion policy surfaced this mechanism. Propagated from the exemplars that ground it; `mixed` where they span both. This is the stratifier for the eval plan's 'does trend-directed ingestion earn its coupling?' gate (REQ-005f). NOT the amplification `arm` — see ingestion_arm_is_not_the_amplification_arm below."
+        },
+
+        "ratified_by": { "type": "string", "format": "uuid",
+          "description": "A named human ratified the `statement`. Model-drafted prose does not leave this system through an external API on a model's say-so. Same discipline as REQ-021 and REQ-037: a real human click." },
+        "ratified_at": { "type": "string", "format": "date-time" },
+        "ratification_note": { "type": "string", "minLength": 1,
+          "description": "REQUIRED, non-empty. Why this statement was accepted, in the ratifier's own words. Symmetric with the breaker's arming rule (Contract C: 'automatic to trip, manual WITH A RECORDED REASON to arm'). A click with no reason decays into a rubber stamp, which is exactly what REQ-021's triage sorter exists to prevent for approvals. Ratification volume and latency per cohort are reported to the operator as the decay signal." },
+
+        "superseded_by": { "type": ["string", "null"], "format": "uuid" },
+        "valid_from":    { "type": "string", "format": "date" },
+        "valid_to":      { "type": "string", "format": "date" }
+      }
+    }
+  },
+
+  "warrant_ladder": {
+    "description": "What you are permitted to SAY, given what you have OBSERVED. Every rung above `contrasted` requires internal outcome data and is therefore out of scope by design (ADR-0006). Naming them is how the ceiling stays visible instead of being quietly forgotten.",
+    "rungs": [
+      { "warrant": "conjectured", "requires": "a predicate proposed from the corpus or a trend",
+        "may_say": "a shape somebody noticed",
+        "served_by_c4": false },
+
+      { "warrant": "recurrent",
+        "requires": "n_creators >= 8 AND n_cohorts >= 2 AND n_trends >= 2",
+        "may_say": "recurs among high performers across unrelated trends",
+        "served_by_c4": true,
+        "why_n_trends": "Two unrelated trends is the minimum evidence that the structure outlives any one format. One trend is a trend." },
+
+      { "warrant": "contrasted",
+        "requires": "recurrent AND prevalence_ratio >= 2.0 on the mining slice AND prevalence_ratio >= 1.5 on a temporally disjoint slice",
+        "may_say": "recurs among high performers AND is materially absent from the same creators' non-performers, on a slice it was not mined from",
+        "may_never_say": "causes, lifts, predicts, drives, or any word implying an effect size",
+        "served_by_c4": true },
+
+      { "warrant": "falsified",
+        "requires": "a previously `contrasted` mechanism whose asymmetry did not survive a corpus refresh",
+        "served_by_c4": false,
+        "retained": "in the artefact, for auditability, forever" },
+
+      { "warrant": "deconfounded_within_tenant",
+        "requires": "explore-arm internal outcome data (ADR-0003)",
+        "status": "OUT OF SCOPE BY DESIGN",
+        "why": "Reaching this rung means a tenant's outcome data informed a tenant-neutral artefact. The tenancy invariant (compliance-notes.md, 'The separation invariant') is not negotiable and this rung is the price of it. A Pattern reaches this rung; it stays inside its tenant." },
+
+      { "warrant": "interventional",
+        "requires": "a deliberate stratified test: explore-budget allocations stratified on the predicate rather than on rank-uncertainty",
+        "status": "OUT OF SCOPE BY DESIGN",
+        "why": "Costs statistical power against the Thompson objective ADR-0003 chose, and at agency volume (hundreds of posts per year) would rarely have power to detect anything. Named so that nobody believes the API is making a causal claim it has not earned." }
+    ],
+    "promotion_and_demotion": {
+      "rule": "Automatic to demote. Human to promote.",
+      "demote": "On every corpus refresh, prevalence_ratio is recomputed on the new temporal slice. A `contrasted` mechanism whose asymmetry vanishes auto-demotes to `falsified` and is withdrawn from C4 the same cycle. No human step.",
+      "promote": "A named human ratifies the `statement` before any rung is served. Promotion never happens on a timer.",
+      "why_asymmetric": "Identical in shape to the circuit breaker in Contract C, and for the identical reason: the pressure to widen a threshold arrives at exactly the moment the threshold is telling the truth."
+    },
+    "who_gates_this": {
+      "c3_calibration_monitor": "NO ROLE.",
+      "why": "C3's authority is calibration: it referees numeric predictions against measured outcomes. A Mechanism makes no numeric prediction and touches no outcome data, so there is nothing for C3 to referee. Giving C3 a veto here would be authority theatre. Its two authorities (breaker, library promotion) are unchanged and unextended.",
+      "consequence": "C4 has ZERO dependency on C3. It does not read Contract C. It cannot, because it serves nothing a breaker governs."
+    }
+  },
+
+  "contract_e_mechanism_library_version": {
+    "direction": "C1 publishes an immutable artefact. C4 reads it. One way.",
+    "rules": [
+      "Immutability. A published mechanism library version is never modified. A mechanism falsified in m4 still resolves in m3, because an API response served under m3 must remain reconstructible. Rollback is repointing active_version, not editing an artefact.",
+      "C4 never reads C1's internals, the Pattern Library, the OutcomeEvent log, or any tenant table. It reads one artefact-store prefix and nothing else.",
+      "C2 never reads this contract. A mechanism has no place in a score: it carries Proxy-selected evidence and no calibrated prediction, and VPS must remain reproducible from its pinned (extractor x rubric x pattern_library) triple. The rule that trends never enter VPS (ADR-0004) extends, unchanged in spirit, to mechanisms.",
+      "No mechanism, and nothing derived from one, is ever an input to a veto (V1-V6), a verdict, an AWS term, or a budget allocation.",
+      "Every C4 response carries: warrant, provenance.label, never_tested_against, mechanism_library_version, and sha256.",
+      "C4 emits no events. Contract B has exactly one writer and it is C2 (events-v1.json). C4 is read-only end to end."
+    ]
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "rubric_version": "1.1.0",
+  "status": "provisional",
+  "provisional_until": "calibrated against >=60 posts per (vertical, platform) cohort",
+  "changelog": {
+    "1.1.0": [
+      "RENAMED aws.terms.creator_standing.source from 'c3_ace' to 'ace_creator_score'. 'c3' meant the C-cubed framework (Creator/Content/Campaign), but ADR-0005 later named the Calibration Monitor 'C3'. The old value read as 'this AWS term is sourced from Component 3', which would be a boundary violation: C3 writes only a breaker flag and a library verdict, and C2 has no read path to it beyond Contract C. Naming only; no weight, gate, threshold, or behaviour changed.",
+      "ADDED scoring_inputs_forbidden. Records, machine-readably, that no trend signal and no mechanism enters VPS or AWS at any weight (ADR-0004, ADR-0006)."
+    ]
+  },
+
+  "vetoes": [
+    { "id": "V1", "name": "disclosure",      "evaluated_by": "deterministic", "gate": ["A", "B"], "on_fail": "REJECTED" },
+    { "id": "V2", "name": "claim_integrity", "evaluated_by": "deterministic", "gate": ["A"],      "on_fail": "REJECTED" },
+    { "id": "V3", "name": "brand_safety",    "evaluated_by": "deterministic", "gate": ["A", "B"], "on_fail": "REJECTED" },
+    { "id": "V4", "name": "rights_record",   "evaluated_by": "deterministic", "gate": ["A", "B"], "on_fail": "REJECTED",
+      "required_grant": { "A": "organic_publish", "B": "paid_amplification" } },
+    { "id": "V5", "name": "technical_spec",  "evaluated_by": "deterministic", "gate": ["A"],      "on_fail": "REJECTED" },
+    { "id": "V6", "name": "minor_creator",   "evaluated_by": "deterministic", "gate": ["A", "B"], "on_fail": "EXCLUDED_FROM_AI_SCORING" }
+  ],
+
+  "bas": {
+    "range": [0, 100],
+    "components": [
+      { "key": "talking_points_covered",  "weight": 0.35, "evaluated_by": "hybrid" },
+      { "key": "mandatory_inclusions",    "weight": 0.25, "evaluated_by": "deterministic" },
+      { "key": "prohibited_content_absent","weight": 0.20, "evaluated_by": "deterministic" },
+      { "key": "format_spec_met",         "weight": 0.10, "evaluated_by": "deterministic" },
+      { "key": "tone_register_match",     "weight": 0.10, "evaluated_by": "model" }
+    ],
+    "gates": [
+      { "condition": "bas < 60", "verdict_floor": "REVISIONS_REQUIRED" }
+    ]
+  },
+
+  "vps": {
+    "range": [0, 100],
+    "composition": "weighted_arithmetic_mean",
+    "rounding": "floor",
+    "criteria": [
+      { "key": "hook_strength",        "weight": 0.20, "audio_dependent": true  },
+      { "key": "scroll_stop_power",    "weight": 0.18, "audio_dependent": false },
+      { "key": "completion_likelihood","weight": 0.18, "audio_dependent": true  },
+      { "key": "pacing",               "weight": 0.14, "audio_dependent": false },
+      { "key": "emotional_specificity","weight": 0.14, "audio_dependent": true  },
+      { "key": "text_readability",     "weight": 0.10, "audio_dependent": false },
+      { "key": "authenticity_register","weight": 0.06, "audio_dependent": false },
+      { "key": "shareability",         "weight": 0.00, "audio_dependent": false, "diagnostic_only": true }
+    ],
+    "hard_gates": [
+      { "criterion": "hook_strength", "condition": "< 50", "verdict_floor": "REVISIONS_REQUIRED",
+        "applies_when_degraded": true }
+    ],
+    "thresholds": {
+      "strong": 80, "approve": 70, "fix_lowest": 60, "regenerate": 0
+    },
+    "degradation": {
+      "trigger": "audio_present == false",
+      "effect": "flag audio_dependent criteria degraded=true; widen composite confidence band",
+      "suppresses_hard_gate": false
+    }
+  },
+
+  "aws": {
+    "range": [0, 100],
+    "gate": "B",
+    "hard_gates": [
+      { "key": "paid_rights_unexpired",      "on_fail": "EXCLUDED", "reason_code": "blocked_rights" },
+      { "key": "live_disclosure_verified",   "on_fail": "EXCLUDED", "reason_code": "blocked_disclosure" },
+      { "key": "creator_brand_safety_clear", "on_fail": "EXCLUDED", "reason_code": "blocked_brand_safety" },
+      { "key": "provenance_not_proxy_only",  "on_fail": "UNRANKABLE", "reason_code": "insufficient_evidence" }
+    ],
+    "terms": [
+      { "key": "outperformance_percentile", "weight": 0.45,
+        "definition": "percentile rank within campaign cohort of (post_er_24h / creator.median_er_24h)",
+        "undefined_when": "creator.trailing_posts_n < 8",
+        "on_undefined": "redistribute weight to cohort_percentile; flag insufficient_baseline" },
+      { "key": "cohort_percentile",  "weight": 0.20,
+        "definition": "percentile rank of raw post_er_24h within campaign cohort" },
+      { "key": "vps_normalised",     "weight": 0.15,
+        "zeroed_when": "calibration_circuit_breaker_tripped(vertical, platform)",
+        "on_zeroed": "redistribute weight to outperformance_percentile and cohort_percentile" },
+      { "key": "creator_standing",   "weight": 0.10, "source": "ace_creator_score",
+        "source_note": "The C-cubed framework's ACE (creator) score. NOT Component 3. C2 has no read path into C3 beyond Contract C.",
+        "veto_capped": true },
+      { "key": "audience_overlap_fit","weight": 0.10, "default_provenance": "Estimated" }
+    ],
+    "statistics": {
+      "central_tendency": "median",
+      "dispersion": "median_absolute_deviation",
+      "rationale": "engagement rates are heavy-tailed; means are dragged by prior viral posts",
+      "denominator": { "must_be_declared": true, "must_be_period_stable": true,
+                       "allowed": ["reach", "impressions", "followers"] },
+      "organic_boosted": "recorded as separate series, never summed"
+    }
+  },
+
+  "budget_allocation": {
+    "epsilon_default": 0.18,
+    "exploit": { "share": "1 - epsilon", "method": "proportional to (aws - aws_floor) over top-n eligible" },
+    "explore": { "share": "epsilon", "method": "see adr/0003" },
+    "arm_tag_required": true,
+    "rounding": "platform minimum spend increment; residual to top exploit candidate",
+    "must_sum_exactly_to_budget": true
+  },
+
+  "provenance_labels": ["Measured", "User-provided", "Estimated", "Proxy"],
+  "provenance_rules": [
+    "every vps and aws value is labelled Estimated",
+    "a Proxy value is never displayed, aggregated, or compared as Measured",
+    "every metric carries an as_of date"
+  ],
+
+  "untrusted_inputs": ["transcript", "onscreen_text", "caption", "exemplar_post_content",
+                       "trend_submission_rationale", "mechanism_statement"],
+  "model_authority": {
+    "may": ["score criteria", "raise suspected_veto", "propose revision note", "draft a mechanism statement"],
+    "may_never": ["clear a veto", "downgrade a veto", "weight or influence a veto",
+                  "assign a verdict", "allocate budget", "override a hard gate",
+                  "ratify a mechanism", "assign or promote a mechanism warrant"]
+  },
+
+  "scoring_inputs_forbidden": {
+    "description": "Inputs that may never enter VPS or AWS at any weight, under any configuration. Enforced in application code, not by convention.",
+    "trend_signal": "ADR-0004. A scorer whose inputs change nightly cannot be evaluated on a temporally held-out split. Trend adherence enters BAS only as a deterministic check against a format named in the brief's stored text.",
+    "mechanism": "ADR-0006. A Mechanism's evidence is Proxy-SELECTED (ADR-0001, Tier 3) and it carries no calibrated prediction. Retrieving one into a score would launder Proxy provenance into a number a client sees, and would break the reproducibility of a VPS from its pinned (extractor x rubric x pattern_library) triple.",
+    "mechanism_statement": "Model-drafted prose. Untrusted as an input to any computation, exactly as a creator caption is."
+  }
+}

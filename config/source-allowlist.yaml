@@ -1,0 +1,29 @@
+# Source allowlist — a versioned config artefact, reviewed like code.
+#
+# The allowlist review asks TWO questions of every source's terms:
+#   1. permit_ingestion     — may we fetch and process this source's media at all?
+#   2. permit_redistribution — may we re-serve the media (its URI/blob) downstream?
+#
+# Where ingestion is permitted but redistribution is not, a record is flagged `no_redistribute`,
+# and C4 (Phase 8) serves prevalence counts WITHOUT the URI. A source not listed here is refused
+# at acquisition — a refusal, not a warning. Bump `version` on every change (docs-first, ADR-gated).
+
+version: "2026-07-11.1"
+
+sources:
+  - host: exemplars.public-cc0.example
+    permit_ingestion: true
+    permit_redistribution: true
+    note: CC0 public-domain exemplar mirror; terms permit both ingestion and redistribution.
+
+  - host: research-partner.example
+    permit_ingestion: true
+    permit_redistribution: false
+    note: >-
+      Data-use agreement permits analysis/ingestion but forbids re-serving the media.
+      Records flagged no_redistribute; C4 serves counts without the URI.
+
+  - host: clienthub.internal
+    permit_ingestion: true
+    permit_redistribution: true
+    note: First-party submissions surface; internal, first-party rights.

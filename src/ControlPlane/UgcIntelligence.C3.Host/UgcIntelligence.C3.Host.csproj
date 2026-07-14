@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Phase R4a (audit findings #3/#7). The ASP.NET host that runs C3's calibration/breaker logic as a
+    distinct executable/process (ADR-0007 §6).
+
+    C3's host is a READER/AUTHORITY. It references C3.Calibration, whose only event-log grant is the
+    read-side (UgcIntelligence.Events, IOutcomeEventReader). It references NEITHER UgcIntelligence.Events.Writer
+    (Contract B has exactly one writer and it is C2) NOR any C1 assembly. C3 is the sole breaker/library
+    authority; it computes state, it does not write the log. The host-separation test proves both grants.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\UgcIntelligence.C3.Calibration\UgcIntelligence.C3.Calibration.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,51 @@
+{
+  "_README": "Consumed by .claude/hooks/post-edit-check.js (PostToolUse). Each entry maps a changed-file regex to a verification command run from `cwd`. The FIRST command-bearing match wins (only one command runs per edit), so order specific patterns before broad ones AND chain multiple checks into one command with '&&'. Note-only entries (no `command`) just print a reminder and let scanning continue.",
+  "checks": [
+    {
+      "match": "\\.cs$",
+      "command": "dotnet build UgcIntelligence.slnx -v q --nologo && dotnet test tests/Architecture --nologo -v q",
+      "cwd": ".",
+      "label": "control plane builds + architecture suite green",
+      "timeoutMs": 300000
+    },
+    {
+      "match": "(^|/)src/IntelligencePlane/.*\\.py$|(^|/)tests/architecture/.*\\.py$",
+      "command": "uv run --with ruff ruff check src/IntelligencePlane tests/architecture && uv run --with pytest pytest tests/architecture",
+      "cwd": ".",
+      "label": "intelligence plane lints + tests green",
+      "timeoutMs": 300000
+    },
+    {
+      "match": "(^|/)tests/fixtures/provenance-parity\\.json$",
+      "command": "dotnet test tests/Architecture --nologo -v q --filter FullyQualifiedName~ProvenanceParityTests && uv run --with pytest pytest tests/architecture -k parity",
+      "cwd": ".",
+      "label": "C#/Python provenance parity holds",
+      "timeoutMs": 300000
+    },
+    {
+      "match": "(^|/)src/Frontend/.*\\.(ts|tsx|css|json)$",
+      "command": "npm --prefix src/Frontend run typecheck && npm --prefix src/Frontend test",
+      "cwd": ".",
+      "label": "frontend typechecks + honesty suite green",
+      "timeoutMs": 300000
+    },
+    {
+      "match": "(^|/)docs/initial/.*\\.json$",
+      "command": "node -e \"['docs/initial/schemas/rubric-v1.json','docs/initial/schemas/events-v1.json','docs/initial/schemas/mechanisms-v1.json'].forEach(f=>JSON.parse(require('fs').readFileSync(f,'utf8')))\"",
+      "cwd": ".",
+      "label": "contract schemas parse",
+      "timeoutMs": 15000
+    },
+    {
+      "match": "(^|/)\\.claude/(guardrails\\.rules|workspaces)\\.json$",
+      "command": "node -e \"['.claude/guardrails.rules.json','.claude/workspaces.json'].forEach(f=>JSON.parse(require('fs').readFileSync(f,'utf8')))\"",
+      "cwd": ".",
+      "label": "pack config parses",
+      "timeoutMs": 15000
+    },
+    {
+      "match": "(^|/)docs/initial/.*\\.md$",
+      "note": "Design doc changed — the doc set IS the product right now. If this edit touches an invariant, update the owning ADR + integration-contract.md + the schema JSONs in the same change (CLAUDE.md rule 9), and keep REQ-xxx / ADR citations intact."
+    }
+  ]
+}

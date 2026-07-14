@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Phase R4a (audit findings #3/#7). The ASP.NET host that runs C2's existing class-library logic
+    as a distinct executable/process — the runtime safety property ADR-0007 §6 asserts.
+
+    It references ONLY C2.Api (and, transitively, C2.Api's own grants: Domain, Contracts, the sole
+    event Writer, Artefacts). It references NO C1 assembly and NO KnowledgeApi (C4) assembly, and no
+    Mechanism type is in scope. The host-separation test proves this at the composition-root level.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\UgcIntelligence.C2.Api\UgcIntelligence.C2.Api.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

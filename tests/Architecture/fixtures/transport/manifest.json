@@ -1,0 +1,14 @@
+{
+  "artefact_relative_path": "patterns/15/157fe6142282273fd2198e0070a3357fd624515804c5cf77e7c33f3173d4d23a.json",
+  "cohort_key": "beauty.tiktok",
+  "compatible_extractor_versions": [
+    "3.2.x"
+  ],
+  "note": "Real C1 (Python) writer output for R4b transport. Do not hand-edit; regenerate via produce_transport_fixture.py.",
+  "pattern_library_version": "beauty.tiktok.v7",
+  "platform": "tiktok",
+  "prefix": "patterns",
+  "sha256": "157fe6142282273fd2198e0070a3357fd624515804c5cf77e7c33f3173d4d23a",
+  "tenant_id": "000000a1-0000-0000-0000-000000000001",
+  "vertical": "beauty"
+}

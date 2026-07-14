@@ -1,0 +1,70 @@
+{
+  "_README": "claude-jig settings. The hooks below wire the three portable engines: guardrails.js (pre-write blocking/warning), post-edit-check.js (post-write typecheck/lint/build), and session-start.js (read-only orientation — prints the pack status + recommended next step at session start so anyone knows what to do; fail-open, never blocks). The permission allow/deny lists are a conservative starting point — widen `allow` to match your toolchain (the bootstrap command will suggest entries from your repo). NOTE: `permissions.defaultMode` is set to `plan`, so sessions start in plan mode — remove that key if you don't want it. If this project already had a settings.json, the installer left it untouched and these settings landed as settings.pack.json; merge the `hooks` block in (or run /go or /bootstrap-claude-pack) or the hooks stay dormant. Project-specific tuning lives in .claude/guardrails.rules.json and .claude/workspaces.json, not here.",
+  "env": {
+    "BASH_DEFAULT_TIMEOUT_MS": "120000",
+    "BASH_MAX_TIMEOUT_MS": "300000",
+    "BASH_MAX_OUTPUT_LENGTH": "150000"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)"
+    ],
+    "deny": [
+      "Read(./secrets/**)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*secrets*)",
+      "Bash(rm -rf:*)",
+      "Bash(sudo:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git push --force:*)"
+    ],
+    "defaultMode": "plan"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guardrails.js\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-check.js\"",
+            "timeout": 180
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.js\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
