@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/index/output.json",
+  "title": "IndexResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "jobId",
+    "assetId",
+    "indexId",
+    "indexPath",
+    "indexerVersion",
+    "momentCount",
+    "momentsPath",
+    "subStages",
+    "boundsCheck",
+    "cacheHits",
+    "warnings"
+  ],
+  "properties": {
+    "jobId": { "type": "string", "minLength": 1 },
+    "assetId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "indexId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "indexPath": { "type": "string", "minLength": 1 },
+    "indexerVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "momentCount": { "type": "integer", "minimum": 0 },
+    "momentsPath": { "type": "string", "minLength": 1 },
+    "subStages": {
+      "type": "array",
+      "description": "One entry per sub-stage, including the ones that were skipped. A caller reading only the artefact collections cannot tell an empty result from work that never ran; this array is what makes the difference legible.",
+      "items": {
+        "title": "IndexSubStageSummary",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "reason", "cacheHit", "durationMs"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "transcript",
+              "shots",
+              "scenes",
+              "ocr",
+              "visual_descriptions",
+              "audio_events",
+              "quality_flags",
+              "moment_extraction"
+            ]
+          },
+          "status": { "type": "string", "enum": ["completed", "skipped", "failed"] },
+          "reason": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+          "cacheHit": { "type": "boolean" },
+          "durationMs": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "boundsCheck": {
+      "title": "BoundsCheckSummary",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checked", "ok", "violations"],
+      "description": "Result of running `range-check.ts` — the single implementation — over every generated Moment. `checked` is reported alongside `ok` deliberately: 'zero violations' is only meaningful next to how many ranges were examined, and a run that checked nothing must not read as a clean run. This is the Phase 0 'zero invalid source ranges' criterion, measured.",
+      "properties": {
+        "checked": { "type": "integer", "minimum": 0 },
+        "ok": { "type": "boolean" },
+        "violations": {
+          "type": "array",
+          "items": {
+            "title": "BoundsViolation",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "code", "message"],
+            "properties": {
+              "index": { "type": "integer", "minimum": 0 },
+              "code": { "type": "string", "minLength": 1 },
+              "message": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "cacheHits": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many sub-stages were served from checkpoint. Cache-hit rate is the single cheapest lever on both cost and latency (tech-spec §13) and should be visible from the first real job."
+    },
+    "warnings": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

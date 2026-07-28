@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/propose/input.json",
+  "title": "ProposeRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jobId", "variants"],
+  "properties": {
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The job whose Moment Graph is proposed against."
+    },
+    "variants": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "How many distinct CreativeBriefs to propose (REQ-002). REQ-036 permits returning fewer with a reason, as the refusal variant."
+    },
+    "recordedModelPath": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "Test/fixture only: a recorded provider-response file replayed over an injected transport. Never a network call."
+    },
+    "queryVectorPath": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "Optional pre-computed retrieval query vector ({model,modelVersion,dimensions,vector}). When absent, the Python embed_query entrypoint computes it."
+    }
+  }
+}

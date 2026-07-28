@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/style-profile-v1.json",
+  "title": "StyleProfile",
+  "schemaVersion": "1.0.0",
+  "description": "A client's brand invariants (PRD REQ-060/061; decisions.md D-26): the hard half only — colours, fonts, logo rules, prohibitions, and tone. Phase 0 is invariants, hand-authored per client, injected into propose/plan prompts and caption rendering. LEARNED tendencies (pacing, hook preference, caption density) with confidence-by-field are deliberately out of scope until Phase 1 (REQ-061 second half) — a schema that cannot hold a learned tendency cannot silently treat a preference as an invariant. Versioned and user-approved (PRD §5.180); `approval` null marks a draft placeholder still awaiting the D-26 owner inputs.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-28",
+      "changeKind": "breaking",
+      "reason": "Initial v1 (Phase 3, tech-spec §15 step 5). Invariants only by construction: no confidence fields and no learned-preference block exist to fill, so a Phase 0 profile cannot overreach into Phase 1 territory. `prohibitedClaims` here are brand-level (every job for this account inherits them), distinct from JobBrief.prohibitedClaims which are per-job."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "styleProfileId",
+    "envelope",
+    "accountId",
+    "profileVersion",
+    "approval",
+    "colours",
+    "fonts",
+    "logoRules",
+    "toneOfVoice",
+    "prohibitedClaims",
+    "prohibitedTreatments"
+  ],
+  "properties": {
+    "styleProfileId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "envelope": { "$ref": "./common/envelope-v1.json" },
+    "accountId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The account this profile governs — the same stable owner-issued identifier as JobBrief.accountId (D-36). A profile is selected for a job by matching this."
+    },
+    "profileVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of THIS client's profile content (distinct from the schema's version). A RenderManifest records the exact profileVersion it rendered against (REQ-080 determinism)."
+    },
+    "approval": {
+      "title": "ProfileApproval",
+      "description": "User approval (PRD §5.180 'user-approved'), or null for a draft/placeholder profile. A tagged nullable so 'approved by a named human at a time' and 'placeholder awaiting owner inputs (D-26)' are distinct — an unapproved profile is usable for implementation fixtures but is surfaced as a draft.",
+      "oneOf": [
+        {
+          "title": "ApprovedBy",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["approvedByName", "approvedAt"],
+          "properties": {
+            "approvedByName": { "type": "string", "minLength": 1 },
+            "approvedAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "colours": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Brand colour invariants (REQ-060/061). Injected into caption and background treatment; a hard invariant, not a learned tendency.",
+      "items": {
+        "title": "BrandColour",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "hex", "role"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "hex": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "sRGB hex. Six digits, no alpha — brand colours are opaque." },
+          "role": { "type": "string", "enum": ["primary", "secondary", "accent", "background", "text"] }
+        }
+      }
+    },
+    "fonts": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Brand font invariants (REQ-060). Each records whether commercial rights are on file — a brand font without recorded rights cannot be used in a render (PRD §10.8.4); Inter (OFL, D-29) is the fallback.",
+      "items": {
+        "title": "BrandFont",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["family", "role", "rightsRecorded"],
+        "properties": {
+          "family": { "type": "string", "minLength": 1 },
+          "role": { "type": "string", "enum": ["heading", "body", "caption"] },
+          "rightsRecorded": { "type": "boolean", "description": "True only if commercial-use rights are on file. False means the renderer must fall back to the OFL default rather than use this family." }
+        }
+      }
+    },
+    "logoRules": {
+      "title": "LogoRules",
+      "description": "Logo usage invariants (REQ-060 'logo use / logo rules').",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mustAppear", "allowedPlacements", "prohibitedTreatments"],
+      "properties": {
+        "mustAppear": { "type": "boolean", "description": "Whether every output for this brand must carry the logo." },
+        "allowedPlacements": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["top_left", "top_right", "bottom_left", "bottom_right", "centre"] },
+          "description": "Where the logo may sit. Empty is only valid when mustAppear is false; the style resolver checks that."
+        },
+        "prohibitedTreatments": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Things never done to the logo (recolour, stretch, rotate, drop-shadow …)."
+        }
+      }
+    },
+    "toneOfVoice": {
+      "title": "ToneOfVoice",
+      "description": "Editorial voice invariants (REQ-060 'tone of voice, casing, emoji use'). The hard half only — descriptors plus mechanical rules a caption pass can enforce.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["descriptors", "casing", "emojiUse", "allowProfanity"],
+      "properties": {
+        "descriptors": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Voice adjectives injected into prompts (e.g. `plain-spoken`, `warm`, `no hype`)."
+        },
+        "casing": { "type": "string", "enum": ["sentence", "title", "lower", "brand_specified"] },
+        "emojiUse": { "type": "string", "enum": ["none", "sparing", "liberal"] },
+        "allowProfanity": { "type": "boolean" }
+      }
+    },
+    "prohibitedClaims": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Claims THIS BRAND may never make, on any job (REQ-061 legal wording / prohibited claims). A prohibited claim appearing in an EDL is a NON-WAIVABLE deterministic block (D-35/D-37). Brand-level; a job may add more via JobBrief.prohibitedClaims but may not remove these."
+    },
+    "prohibitedTreatments": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Editorial treatments this brand forbids (REQ-060 'explicit prohibitions') — e.g. `no fear-based hooks`, `no fake urgency`. Surfaced to the critic; those expressible as a deterministic rule may be promoted per D-37."
+    }
+  }
+}

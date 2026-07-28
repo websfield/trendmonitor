@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/narrative-function.json",
+  "title": "NarrativeFunction",
+  "description": "Ordered narrative roles a MasterStoryPlan composes, and the candidate roles a Moment may serve (PRD REQ-033, REQ-018). Members are REQ-033's list verbatim — 'promise, context, proof, escalation, demonstration, objection, payoff, invitation, or CTA'. REQ-033 explicitly refuses to force every format into a fixed five-role arc, so this is an unordered vocabulary, not a sequence.",
+  "type": "string",
+  "enum": [
+    "promise",
+    "context",
+    "proof",
+    "escalation",
+    "demonstration",
+    "objection",
+    "payoff",
+    "invitation",
+    "cta"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "storyPlanId": "01J9SP2B3C4D5E6F7G8H9K0M5S",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-28T02:10:00Z",
+    "createdBy": { "kind": "skill", "skill": "plan", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-mixed",
+  "creativeBriefId": "01J8ZK4M5N6P7Q8R9S2T3V4W5X",
+  "parentStoryPlanId": null,
+  "beats": [
+    {
+      "beatId": "beat-1",
+      "order": 0,
+      "function": "promise",
+      "momentId": "01J9MA2B3C4D5E6F7G8H9K0M1N",
+      "rationale": "Opens on the raw timeline to set the before state",
+      "basis": { "kind": "observed_fact", "observed": "Cluttered multi-track timeline visible on screen" },
+      "optional": false,
+      "alternateMomentIds": ["01J9MC2B3C4D5E6F7G8H9K0M3Q"]
+    },
+    {
+      "beatId": "beat-2",
+      "order": 1,
+      "function": "payoff",
+      "momentId": "01J9MB2B3C4D5E6F7G8H9K0M2P",
+      "rationale": "The finished vertical cut is the payoff",
+      "basis": { "kind": "model_judgement", "inference": "Reads as a satisfying resolution of the opening clutter" },
+      "optional": false,
+      "alternateMomentIds": []
+    }
+  ],
+  "dependencies": [
+    { "fromBeatId": "beat-2", "toBeatId": "beat-1", "relation": "requires_setup" }
+  ],
+  "alternateHooks": [
+    { "hookFamily": "problem_first", "openingBeatId": "beat-1", "rationale": "Lead with the mess before the reveal" }
+  ],
+  "modelProvenance": {
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-5",
+    "promptTemplateId": "plan-story",
+    "promptTemplateVersion": "1.0.0"
+  }
+}

@@ -4,7 +4,7 @@
 
 ## State of the repo
 
-**Built and tested; not production-deployed.** As of 2026-07-14 all 10 master-plan phases (0–9) plus the audit-remediation phases (R0–R6) have landed: a C# control plane (`src/ControlPlane/`, `src/KnowledgeApi/` — ~14 projects incl. three ASP.NET hosts for C2/C3/C4), a Python intelligence plane (`src/IntelligencePlane/`), and a React/TS frontend (`src/Frontend/`). Suites are green: C# ~454 architecture tests, Python ~261, frontend typecheck clean (vitest execution blocked by a corrupted local npm env — a known residual). The real Python↔C# artefact/breaker transport is built and wired behind config. **Still not deployed:** no CI, no `Dockerfile`, no orchestration, and — a standing gap — **no git repository / no backup** (`git init` remains the cheapest first step; it needs an explicit owner action). ADR-0008 records the durable-store deferral. The design document set in `docs/initial/` stays authoritative for the invariants; the schemas are now at `events-v1.json` 1.3.0.
+**Built and tested; not production-deployed.** As of 2026-07-14 all 10 master-plan phases (0–9) plus the audit-remediation phases (R0–R6) have landed: a C# control plane (`src/ControlPlane/`, `src/KnowledgeApi/` — ~14 projects incl. three ASP.NET hosts for C2/C3/C4), a Python intelligence plane (`src/IntelligencePlane/`), and a React/TS frontend (`src/Frontend/`). Suites are green: C# ~454 architecture tests, Python ~261, frontend typecheck clean and frontend vitest green as of 2026-07-28 (10 files / 86 tests — the earlier corrupted-npm-env residual is closed). The real Python↔C# artefact/breaker transport is built and wired behind config. **Still not deployed:** no CI, no `Dockerfile`, no orchestration, and — a standing gap — **no git repository / no backup** (`git init` remains the cheapest first step; it needs an explicit owner action). ADR-0008 records the durable-store deferral. The design document set in `docs/initial/` stays authoritative for the invariants; the schemas are now at `events-v1.json` 1.3.0.
 
 **Resolved drift (2026-07-10)**: the authoritative set is `docs/initial/`, which uses the `{adr,schemas}/` subfolder tree its links assume. The superseded flat first draft lives at `docs/initial.backup/` (rubric 1.0.0, `c3_ace`, three components, no mechanisms schema) — do not cite it. Earlier pack config pointed the entry gate, the post-edit check, and the `ugc-contract-schema-edit` guardrail at nonexistent paths (`docs/final/...`, `docs/initial/rubric-v1.json`); all four pointers were repaired.
 
@@ -23,7 +23,7 @@ They share five contracts (A–E) and one stateless versioned Extraction Service
 
 - **Control plane**: .NET/C# (existing ClientHub API) — identity, tenancy, campaigns, submissions, rights, every deterministic decision. No LLM in any decision path.
 - **Intelligence plane**: Python — `yt-dlp`, `ffmpeg`/`ffprobe`, Whisper, scene detection, OCR; `scipy`/`statsmodels` for calibration stats.
-- **Jobs**: Hangfire. **Frontend**: React/TS manager queue. **Model**: LLM-as-judge, Sonnet-class, schema-constrained output. **Storage**: Postgres-style relational + blob storage (sha256 content-addressed artefacts).
+- **Jobs**: Hangfire for .NET-side jobs; the nightly trend scan is a Python entrypoint + external cron (ADR-0009). **Frontend**: React/TS manager queue. **Model**: LLM-as-judge, Sonnet-class, schema-constrained output. **Storage**: Postgres-style relational + blob storage (sha256 content-addressed artefacts).
 
 ## Critical Paths (confirmed 2026-07-10)
 
@@ -46,11 +46,11 @@ Considered, not proposed at bootstrap: doc-link hygiene (mechanical, `/sync-docs
 ## Commands
 
 - Validate contract schemas: `node -e "['docs/initial/schemas/rubric-v1.json','docs/initial/schemas/events-v1.json','docs/initial/schemas/mechanisms-v1.json'].forEach(f=>JSON.parse(require('fs').readFileSync(f,'utf8')))"`
-- Build/test now exist and are green: `dotnet build UgcIntelligence.slnx`, `dotnet test tests/Architecture` (~454), `uv run --with pytest pytest tests/architecture` (~261), `uv run --with ruff ruff check src/IntelligencePlane tests/architecture`, `npm --prefix src/Frontend run typecheck`. `npm --prefix src/Frontend test` (vitest) is environment-blocked (corrupted local npm install — needs `npm ci`). Full list in CLAUDE.md §Commands.
+- Build/test now exist and are green: `dotnet build UgcIntelligence.slnx`, `dotnet test tests/Architecture` (~454), `uv run --with pytest pytest tests/architecture` (~261), `uv run --with ruff ruff check src/IntelligencePlane tests/architecture`, `npm --prefix src/Frontend run typecheck`, `npm --prefix src/Frontend test` (vitest — green as of 2026-07-28, 86 tests). Full list in CLAUDE.md §Commands.
 
 ## Production surfaces (evidence-based; code built, not production-deployed)
 
-- **Test + coverage command**: exists and green — C# `dotnet test tests/Architecture` (~454), Python `pytest tests/architecture` (~261), frontend typecheck clean (vitest env-blocked). The eval plan's regime is largely implemented (adversarial compliance suite, temporal-holdout calibration, fairness audit REQ-054); the still-outstanding piece per the audit is a repeatable coverage-report command and CI wiring (see below).
+- **Test + coverage command**: exists and green — C# `dotnet test tests/Architecture` (~454), Python `pytest tests/architecture` (~261), frontend typecheck clean and vitest green (86 tests, as of 2026-07-28). The eval plan's regime is largely implemented (adversarial compliance suite, temporal-holdout calibration, fairness audit REQ-054); the still-outstanding piece per the audit is a repeatable coverage-report command and CI wiring (see below).
 - **Logging/observability**: the append-only OutcomeEvent log (`UgcIntelligence.Events.AppendOnlyEventLog`, `events-v1.json` 1.3.0) is built and is the system of record for every decision; breaker state is served by the C3 host at `/api/calibration/{vertical}/{platform}`. Still in-memory/local (no durable store — ADR-0008); library-staleness alarm and override-rate-by-cohort dashboards are per the tech spec.
 - **CI gates**: none found (no `.github/`, no CI config).
 - **Migration tool + reversibility**: none found. Planned: Postgres-style schema per tech-spec erDiagram; de-identification of FeatureRecords after the rights window is a required scheduled job (compliance-notes).

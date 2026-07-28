@@ -1,0 +1,105 @@
+{
+  "$comment": "Committed source-bounds corpus with expected verdicts (Phase 2 task 10). ONE corpus, driven from BOTH sides: the TypeScript suite calls range-check.ts directly, and the Python indexer suite drives the same cases through the `cutdown range-check` CLI. Because there is exactly one implementation, a divergence between the two suites is a wiring bug, never a rounding disagreement — which is the whole reason a second Python implementation was rejected. This corpus is the evidence behind the Phase 0 exit criterion 'zero invalid source ranges in final renders'.",
+  "asset": {
+    "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V",
+    "duration": { "ticks": 300, "timebase": { "num": 1, "den": 30 } }
+  },
+  "cases": [
+    {
+      "name": "in-bounds-mid-asset",
+      "why": "The ordinary case: a range comfortably inside the asset.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 30, "endTicks": 120, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": true, "codes": [] }
+    },
+    {
+      "name": "ends-exactly-at-duration",
+      "why": "The range is half-open, so end == duration consumes the whole asset and reads nothing past it. An off-by-one here would reject every full-length range.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 0, "endTicks": 300, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": true, "codes": [] }
+    },
+    {
+      "name": "minimal-one-tick-range",
+      "why": "The smallest legal range. Proves the non-empty rule is > and not >=.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 10, "endTicks": 11, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": true, "codes": [] }
+    },
+    {
+      "name": "one-tick-past-the-end",
+      "why": "The exit criterion in miniature. A single tick past the duration is the defect that reaches a render as a black frame or a decode error.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 0, "endTicks": 301, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": false, "codes": ["EXCEEDS_SOURCE_DURATION"] }
+    },
+    {
+      "name": "starts-at-the-duration",
+      "why": "A range beginning where the asset ends contains no media at all.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 300, "endTicks": 330, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": false, "codes": ["EXCEEDS_SOURCE_DURATION"] }
+    },
+    {
+      "name": "empty-range",
+      "why": "endTicks == startTicks. JSON Schema provably cannot express this (draft 2020-12 has no cross-property inequality and tech-spec §3 forbids if/then/else), so it can only be caught here.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 90, "endTicks": 90, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": false, "codes": ["EMPTY_OR_INVERTED_RANGE"] }
+    },
+    {
+      "name": "inverted-range",
+      "why": "endTicks < startTicks. Same unexpressible inequality, opposite direction.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 120, "endTicks": 30, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": false, "codes": ["EMPTY_OR_INVERTED_RANGE"] }
+    },
+    {
+      "name": "audio-timebase-exactly-full-length",
+      "why": "48 kHz ticks ARE sample counts. 480000 samples == 10 s == the whole 300-tick @30fps asset. Cross-timebase comparison must be exact.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 0, "endTicks": 480000, "timebase": { "num": 1, "den": 48000 } },
+      "expect": { "ok": true, "codes": [] }
+    },
+    {
+      "name": "audio-timebase-one-sample-over",
+      "why": "A SINGLE sample past the end, across differing timebases. This is the case a float comparison silently passes — the reason the implementation cross-multiplies with BigInt.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 0, "endTicks": 480001, "timebase": { "num": 1, "den": 48000 } },
+      "expect": { "ok": false, "codes": ["EXCEEDS_SOURCE_DURATION"] }
+    },
+    {
+      "name": "wrong-asset",
+      "why": "A range is only meaningful against its own asset; checking it against another's duration would be a coincidence, not a validation.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T3W", "startTicks": 0, "endTicks": 90, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": false, "codes": ["ASSET_ID_MISMATCH"] }
+    },
+    {
+      "name": "negative-start",
+      "why": "Ticks are counts and cannot be negative.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": -1, "endTicks": 90, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": false, "codes": ["NEGATIVE_TICKS"] }
+    },
+    {
+      "name": "fractional-tick",
+      "why": "A fractional tick is a category error — it means someone did float-seconds arithmetic upstream, which is exactly what the rational timebase exists to prevent.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 0, "endTicks": 90.5, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": false, "codes": ["NON_INTEGER_TICKS"] }
+    },
+    {
+      "name": "malformed-range-missing-ticks",
+      "why": "The untrusted path this module exists for: a model-proposed range that is not structurally a range at all. A missing tick is a STRUCTURAL defect, not a fractional one — reporting NON_INTEGER_TICKS would send the reader hunting for float arithmetic that was never involved.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": false, "codes": ["MALFORMED_RANGE"] }
+    },
+    {
+      "name": "unsafe-integer-ticks",
+      "why": "Above 2^53 the value was destroyed by JSON.parse before any comparison ran, so an out-of-bounds range was reported clean. The checker refuses an unrepresentable tick rather than comparing a number it knows is already wrong.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 0, "endTicks": 9007199254740993, "timebase": { "num": 1, "den": 30 } },
+      "expect": { "ok": false, "codes": ["NON_INTEGER_TICKS"] }
+    },
+    {
+      "name": "zero-denominator-timebase",
+      "why": "Must be reported as an invalid timebase, never reach a division. A validator that divides by zero cannot be run over generated output.",
+      "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 0, "endTicks": 90, "timebase": { "num": 1, "den": 0 } },
+      "expect": { "ok": false, "codes": ["INVALID_TIMEBASE"] }
+    }
+  ],
+  "unknownDurationCase": {
+    "name": "unknown-duration-fails-closed",
+    "why": "An asset whose preflight established no duration gives no bound to prove against. The only safe verdict is refusal — passing would let an unbounded range through on the strength of missing information.",
+    "range": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "startTicks": 0, "endTicks": 90, "timebase": { "num": 1, "den": 30 } },
+    "expect": { "ok": false, "codes": ["UNKNOWN_SOURCE_DURATION"] }
+  }
+}

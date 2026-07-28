@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/corruption-status.json",
+  "title": "CorruptionStatus",
+  "description": "Media integrity verdict from preflight decode (PRD REQ-004). `suspect` means decode emitted recoverable errors; `corrupt` means the asset failed to decode. Both are non-waivable packaging blockers (decisions.md D-35), and `corrupt` fails the whole atomic ingest so no partial job inventory lands.",
+  "type": "string",
+  "enum": ["clean", "suspect", "corrupt"]
+}

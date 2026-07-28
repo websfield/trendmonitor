@@ -1,0 +1,420 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/source-index-v1.json",
+  "title": "SourceIndex",
+  "schemaVersion": "1.0.0",
+  "description": "The multimodal index of ONE source asset (PRD §5 object table; REQ-010 through REQ-015 and REQ-019). Immutable per asset hash + indexer version. Authored in Phase 1 so the shape is fixed before Phase 2 fills it in sub-stage by sub-stage — every sub-stage's output has a home here from the start, which is what keeps the 'last ten outputs need no breaking contract change' exit criterion reachable. Every collection is REQUIRED and may be empty; emptiness is a finding (this asset has no OCR text), and the reason a collection is empty lives in the matching `subStages` entry, never in an absent property.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-21",
+      "changeKind": "breaking",
+      "reason": "Initial v1. Records every detector threshold and model version inline (REQ-012 requires thresholds recorded with the index) via a key/value parameter array rather than a free-form object, because tech-spec §3's two-generator subset forbids patternProperties and schema-valued additionalProperties. Carries an explicit timebaseMap so REQ-019's VFR normalisation is data, not an assumption."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "indexId",
+    "envelope",
+    "jobId",
+    "assetId",
+    "sourceContentHash",
+    "indexerVersion",
+    "timebaseMap",
+    "subStages",
+    "transcript",
+    "speakerTurns",
+    "shots",
+    "scenes",
+    "ocr",
+    "visualDescriptions",
+    "audioEvents",
+    "qualityFlags"
+  ],
+  "properties": {
+    "indexId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "envelope": { "$ref": "./common/envelope-v1.json" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "assetId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "sourceContentHash": {
+      "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+      "description": "The hash of the asset this index describes. Together with `indexerVersion` and each sub-stage's recorded model config, this is the REQ-005 cache key: reusing footage repeats no unchanged work."
+    },
+    "indexerVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Version of the indexer as a whole. decisions.md D-31 requires Moment granularity changes to be recorded as an indexer version bump — this is that field."
+    },
+    "timebaseMap": {
+      "title": "TimebaseMap",
+      "description": "REQ-019's explicit normalisation record: 'Variable-frame-rate sources are normalised or mapped explicitly.' For a CFR source, `entries` is empty and the linear relation between the two timebases is exact and sufficient. For a VFR source, `entries` carries the observed presentation timestamps so a normalized tick can be resolved back to a real source frame — without this, every downstream range on a VFR clip is a guess.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "sourceTimebase", "normalizedTimebase", "entries"],
+      "properties": {
+        "mode": { "$ref": "../enums/frame-rate-mode.json" },
+        "sourceTimebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "normalizedTimebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "entries": {
+          "type": "array",
+          "items": {
+            "title": "TimebaseMapEntry",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sourceTicks", "normalizedTicks"],
+            "properties": {
+              "sourceTicks": { "type": "integer", "minimum": 0 },
+              "normalizedTicks": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "subStages": {
+      "type": "array",
+      "description": "One entry per internal sub-stage (tech-spec §6.5: transcript, shots/scenes, OCR, visual descriptions, audio events, quality flags, Moment extraction). `index` is ONE public skill; this array is where its internal structure becomes inspectable without widening the public surface. A `skipped` or `failed` entry with a stated reason is how the index stays honest about what it does not know — e.g. the `--no-vlm` path records descriptions as skipped-with-reason and NEVER fabricates one.",
+      "items": { "$ref": "#/$defs/SubStageRecord" }
+    },
+    "transcript": {
+      "oneOf": [{ "$ref": "#/$defs/Transcript" }, { "type": "null" }],
+      "description": "Null only when the asset has no audio at all. A silent clip that WAS transcribed yields a Transcript with empty segments — not null."
+    },
+    "speakerTurns": { "type": "array", "items": { "$ref": "#/$defs/SpeakerTurn" } },
+    "shots": { "type": "array", "items": { "$ref": "#/$defs/Shot" } },
+    "scenes": { "type": "array", "items": { "$ref": "#/$defs/Scene" } },
+    "ocr": { "type": "array", "items": { "$ref": "#/$defs/OcrObservation" } },
+    "visualDescriptions": { "type": "array", "items": { "$ref": "#/$defs/VisualDescription" } },
+    "audioEvents": { "type": "array", "items": { "$ref": "#/$defs/AudioEvent" } },
+    "qualityFlags": { "type": "array", "items": { "$ref": "#/$defs/QualityFlag" } }
+  },
+  "$defs": {
+    "EngineRecord": {
+      "title": "EngineRecord",
+      "description": "Which engine produced a set of observations, at which version, with which parameters. REQ-012 requires thresholds 'recorded with the index'; REQ-005 requires model configuration in the cache key. Parameters are a key/value ARRAY rather than a free-form object because tech-spec §3's schema subset forbids patternProperties — the array form also generates cleanly in both languages.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "parameters"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "title": "EngineParameter",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "value"],
+            "properties": {
+              "key": { "type": "string", "minLength": 1 },
+              "value": { "type": "string", "description": "Stringified so the record is language-neutral and hashable; the engine owns interpretation." }
+            }
+          }
+        }
+      }
+    },
+    "SubStageRecord": {
+      "title": "SubStageRecord",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "reason", "engine", "startedAt", "completedAt"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "transcript",
+            "shots",
+            "scenes",
+            "ocr",
+            "visual_descriptions",
+            "audio_events",
+            "quality_flags",
+            "moment_extraction"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "skipped", "failed"],
+          "description": "`failed` keeps the index resumable: other sub-stages proceed and a later run completes this one (tech-spec §8). It never silently becomes `completed`."
+        },
+        "reason": {
+          "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+          "description": "REQUIRED to be non-null when status is `skipped` or `failed` — enforced by the assembler, not by schema (no if/then/else in the subset). This is the field the `--no-vlm` fixture asserts on."
+        },
+        "engine": { "oneOf": [{ "$ref": "#/$defs/EngineRecord" }, { "type": "null" }] },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+      }
+    },
+    "Transcript": {
+      "title": "Transcript",
+      "description": "REQ-010: segment- and word-level timestamps, language, confidence, and a stable mapping to source timecode. The verbatim transcript is preserved SEPARATELY from cleaned caption text throughout — `verbatimText`/`displayText` appear as a pair at every level, because a caption that silently drops a disfluency changes what the speaker said, and the rights/quotation gate (decisions.md D-37, quote token order) checks against the verbatim side.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "languageConfidence", "verbatimText", "segments"],
+      "properties": {
+        "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+        "languageConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "verbatimText": {
+          "type": "string",
+          "description": "The whole verbatim transcript as one string. Redundant with the segments by design: it is the artefact a human reads and the one a quotation check tokenises."
+        },
+        "segments": { "type": "array", "items": { "$ref": "#/$defs/TranscriptSegment" } }
+      }
+    },
+    "TranscriptSegment": {
+      "title": "TranscriptSegment",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "segmentId",
+        "startTicks",
+        "endTicks",
+        "timebase",
+        "verbatimText",
+        "displayText",
+        "confidence",
+        "speakerTurnId",
+        "words"
+      ],
+      "properties": {
+        "segmentId": { "type": "string", "minLength": 1 },
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "verbatimText": { "type": "string" },
+        "displayText": { "type": "string", "description": "Cleaned caption text. May differ from verbatim only by disfluency removal and punctuation — never by meaning." },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "speakerTurnId": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+        "words": { "type": "array", "items": { "$ref": "#/$defs/TranscriptWord" } }
+      }
+    },
+    "TranscriptWord": {
+      "title": "TranscriptWord",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startTicks",
+        "endTicks",
+        "timebase",
+        "verbatim",
+        "confidence",
+        "lowConfidence",
+        "properNounCandidate"
+      ],
+      "properties": {
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "verbatim": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "lowConfidence": {
+          "type": "boolean",
+          "description": "True when confidence < the D-28 threshold (0.6). decisions.md D-28 sets no automated caption pass/fail at Phase 0 — every caption is human-reviewed — so this flag exists to DIRECT reviewer attention, not to gate."
+        },
+        "properNounCandidate": {
+          "type": "boolean",
+          "description": "D-28 requires all proper nouns flagged for reviewer attention: a misspelt name is the caption error that most damages an account, and ASR confidence alone does not catch it."
+        }
+      }
+    },
+    "SpeakerTurn": {
+      "title": "SpeakerTurn",
+      "description": "REQ-011 at its Phase-0 subset (decisions.md D-17): segment-level speaker TURNS with optional manual naming, low-confidence marking, and correction lineage. Real diarisation is deferred, so `inferredLabel` is a positional label (`speaker_1`), never an identity claim. A correction NEVER overwrites the inference — both are kept, with author and timestamp, so a wrong correction is traceable.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "turnId",
+        "startTicks",
+        "endTicks",
+        "timebase",
+        "inferredLabel",
+        "inferredConfidence",
+        "lowConfidence",
+        "correction"
+      ],
+      "properties": {
+        "turnId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "STABLE across re-runs of the same asset+indexer version — a `--speaker-map` file keys on this, so an unstable ID would silently reassign names. Phase 2 derives it deterministically from turn ordinal and start tick."
+        },
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "inferredLabel": { "type": "string", "minLength": 1 },
+        "inferredConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "lowConfidence": {
+          "type": "boolean",
+          "description": "REQ-011: 'Low-confidence diarisation must be visibly marked.' Carried through to the review payload."
+        },
+        "correction": {
+          "oneOf": [
+            {
+              "title": "SpeakerCorrection",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "author", "correctedAt"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "author": { "type": "string", "minLength": 1 },
+                "correctedAt": { "type": "string", "format": "date-time" }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "Shot": {
+      "title": "Shot",
+      "description": "REQ-012 hard cuts, fades, and camera changes. `transitionIn`/`transitionOut` are recorded separately so a fade-to-black between two shots is not misread as one hard cut, and the detector's thresholds ride along in `engine`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shotId",
+        "startTicks",
+        "endTicks",
+        "timebase",
+        "transitionIn",
+        "transitionOut",
+        "keyframeTicks",
+        "confidence",
+        "engine"
+      ],
+      "properties": {
+        "shotId": { "type": "string", "minLength": 1 },
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "transitionIn": { "$ref": "../enums/shot-transition-kind.json" },
+        "transitionOut": { "$ref": "../enums/shot-transition-kind.json" },
+        "keyframeTicks": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The representative frame OCR and visual description sample from — recorded so those sub-stages are reproducible."
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "engine": { "$ref": "#/$defs/EngineRecord" }
+      }
+    },
+    "Scene": {
+      "title": "Scene",
+      "description": "REQ-012's 'longer semantic scenes': adjacent shots grouped by transcript, visual, and temporal continuity. `groupingSignals` records WHICH continuity signals justified the grouping, so a Phase 2 fixture can prove a fade and a camera change do not collapse into one unbounded scene.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sceneId",
+        "shotIds",
+        "startTicks",
+        "endTicks",
+        "timebase",
+        "groupingSignals",
+        "engine"
+      ],
+      "properties": {
+        "sceneId": { "type": "string", "minLength": 1 },
+        "shotIds": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "groupingSignals": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["transcript_continuity", "visual_continuity", "temporal_proximity", "speaker_continuity"] }
+        },
+        "engine": { "$ref": "#/$defs/EngineRecord" }
+      }
+    },
+    "OcrObservation": {
+      "title": "OcrObservation",
+      "description": "REQ-013 on-screen text WITH time ranges. Bounding boxes are normalized 0–1 against DISPLAY dimensions (rotation already applied), so a caption-safe-zone check in Phase 4 can compare them to the platform overlay without knowing the source's rotation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ocrId", "startTicks", "endTicks", "timebase", "text", "confidence", "boundingBox", "shotId", "engine"],
+      "properties": {
+        "ocrId": { "type": "string", "minLength": 1 },
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "text": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "boundingBox": { "$ref": "#/$defs/NormalizedRect" },
+        "shotId": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+        "engine": { "$ref": "#/$defs/EngineRecord" }
+      }
+    },
+    "NormalizedRect": {
+      "title": "NormalizedRect",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "minimum": 0, "maximum": 1 },
+        "height": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "VisualDescription": {
+      "title": "VisualDescription",
+      "description": "REQ-013's requirement to describe silent or visually important footage at SHOT and MOMENT level, not only isolated sampled frames. `keyframeCount` records how many frames the VLM actually saw — PRD §10.7 minimisation means selective keyframes only, and the count is what makes that claim auditable. Produced by a model, so `engine` records model ID and version (PRD §10.6).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["descriptionId", "scope", "shotId", "startTicks", "endTicks", "timebase", "text", "keyframeCount", "engine"],
+      "properties": {
+        "descriptionId": { "type": "string", "minLength": 1 },
+        "scope": { "type": "string", "enum": ["shot", "moment"] },
+        "shotId": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "text": { "type": "string", "minLength": 1 },
+        "keyframeCount": { "type": "integer", "minimum": 1 },
+        "engine": { "$ref": "#/$defs/EngineRecord" }
+      }
+    },
+    "AudioEvent": {
+      "title": "AudioEvent",
+      "description": "REQ-015 editorial audio events. The requirement's teeth: 'The engine must not treat volume alone as emotional importance.' `engine` therefore records the producing detector, and an `energy_change` event whose engine is the RMS track alone is a Phase 2 test failure — the classifier (decisions.md D-20, PANNs CNN14) must corroborate it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventId", "kind", "startTicks", "endTicks", "timebase", "confidence", "engine"],
+      "properties": {
+        "eventId": { "type": "string", "minLength": 1 },
+        "kind": { "$ref": "../enums/audio-event-kind.json" },
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "engine": { "$ref": "#/$defs/EngineRecord" }
+      }
+    },
+    "QualityFlag": {
+      "title": "QualityFlag",
+      "description": "One REQ-014 technical-quality observation over a time range. `threshold` records the exact number that fired, so a threshold change is visible in the artefact rather than buried in a code diff — the same 'numbers are data' discipline as the technical QA ruleset (tech-spec §12.1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["flagId", "kind", "startTicks", "endTicks", "timebase", "severity", "score", "threshold", "engine"],
+      "properties": {
+        "flagId": { "type": "string", "minLength": 1 },
+        "kind": { "$ref": "../enums/quality-flag-kind.json" },
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "severity": { "type": "string", "enum": ["info", "warning", "severe"] },
+        "score": { "type": "number", "description": "The measured value, in the detector's own units." },
+        "threshold": {
+          "title": "QualityThreshold",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "value", "comparison"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "value": { "type": "number" },
+            "comparison": { "type": "string", "enum": ["greater_than", "less_than"] }
+          }
+        },
+        "engine": { "$ref": "#/$defs/EngineRecord" }
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "indexId": "01HQZX3F5G7K9M2N4P6R8S0W3B",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T05:20:00Z",
+    "createdBy": { "kind": "skill", "skill": "index", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-1",
+  "assetId": "01HQZX3F5G7K9M2N4P6R8S0V2A",
+  "sourceContentHash": {
+    "algorithm": "sha256",
+    "value": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+  },
+  "indexerVersion": "1.0.0",
+  "timebaseMap": {
+    "mode": "cfr",
+    "sourceTimebase": { "num": 1, "den": 15360 },
+    "normalizedTimebase": { "num": 1, "den": 15360 },
+    "entries": []
+  },
+  "subStages": [
+    {
+      "name": "vibes_analysis",
+      "status": "completed",
+      "reason": null,
+      "engine": null,
+      "startedAt": "2026-07-21T05:20:01Z",
+      "completedAt": "2026-07-21T05:20:02Z"
+    }
+  ],
+  "transcript": null,
+  "speakerTurns": [],
+  "shots": [],
+  "scenes": [],
+  "ocr": [],
+  "visualDescriptions": [],
+  "audioEvents": [],
+  "qualityFlags": [],
+  "extraUndeclaredField": "closed objects must reject this"
+}

@@ -1,0 +1,33 @@
+{
+  "styleProfileId": "01J9ST2B3C4D5E6F7G8H9K0M7V",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-28T02:30:00Z",
+    "createdBy": { "kind": "human", "name": "Fred Wang" }
+  },
+  "accountId": "acct-social-soup-001",
+  "profileVersion": "1.0.0",
+  "approval": { "approvedByName": "Fred Wang", "approvedAt": "2026-07-28T02:31:00Z" },
+  "colours": [
+    { "name": "Soup Red", "hex": "#E23B2E", "role": "primary" },
+    { "name": "Ink", "hex": "#141414", "role": "text" },
+    { "name": "Paper", "hex": "#FAFAFA", "role": "background" }
+  ],
+  "fonts": [
+    { "family": "Inter", "role": "caption", "rightsRecorded": true },
+    { "family": "Söhne", "role": "heading", "rightsRecorded": false }
+  ],
+  "logoRules": {
+    "mustAppear": true,
+    "allowedPlacements": ["bottom_right", "bottom_left"],
+    "prohibitedTreatments": ["recolour", "stretch", "rotate"]
+  },
+  "toneOfVoice": {
+    "descriptors": ["plain-spoken", "practical", "no hype"],
+    "casing": "sentence",
+    "emojiUse": "sparing",
+    "allowProfanity": false
+  },
+  "prohibitedClaims": ["guaranteed views", "algorithm hack", "get rich"],
+  "prohibitedTreatments": ["no fear-based hooks", "no fake urgency"]
+}

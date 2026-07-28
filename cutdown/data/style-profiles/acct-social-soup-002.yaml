@@ -1,0 +1,38 @@
+# StyleProfile — PLACEHOLDER (decisions.md D-26)
+#
+# Brand invariants ONLY (REQ-060/061 hard half). PLACEHOLDER values until the
+# real D-26 owner inputs arrive; `approval: null` marks it a draft. A second
+# distinct client profile so `plan`/`propose` prompt injection is exercised
+# against more than one brand voice.
+styleProfileId: "01J9ST2B3C4D5E6F7G8H9K0M8W"
+envelope:
+  schemaVersion: "1.0.0"
+  createdAt: "2026-07-28T03:05:00Z"
+  createdBy:
+    kind: human
+    name: "Cutdown Phase 0 (placeholder author)"
+accountId: "acct-social-soup-002"
+profileVersion: "1.0.0"
+approval: null
+colours:
+  - { name: "Deep Teal", hex: "#0E5A5A", role: primary }
+  - { name: "Sand", hex: "#EDE3D3", role: background }
+  - { name: "Charcoal", hex: "#22252A", role: text }
+fonts:
+  - { family: "Inter", role: caption, rightsRecorded: true }
+  - { family: "Fraunces", role: heading, rightsRecorded: false }
+logoRules:
+  mustAppear: false
+  allowedPlacements: [top_left]
+  prohibitedTreatments: [recolour, stretch]
+toneOfVoice:
+  descriptors: [warm, curious, "community-first"]
+  casing: sentence
+  emojiUse: liberal
+  allowProfanity: false
+prohibitedClaims:
+  - "clinically proven"
+  - "number one"
+prohibitedTreatments:
+  - "no doom-scrolling framing"
+  - "no manufactured scarcity"

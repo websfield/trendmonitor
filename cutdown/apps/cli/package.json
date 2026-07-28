@@ -1,0 +1,26 @@
+{
+  "name": "@cutdown/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Cutdown CLI \u2014 the operator surface for Stage A (tech-spec \u00a77).",
+  "bin": {
+    "cutdown": "./dist/src/main.js"
+  },
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/renderer-core": "workspace:*",
+    "@cutdown/workflow-local": "workspace:*",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/resources": "2.9.0",
+    "@opentelemetry/sdk-trace-node": "2.9.0",
+    "@opentelemetry/semantic-conventions": "1.43.0",
+    "json-schema-to-typescript": "15.0.4",
+    "ulid": "3.0.2",
+    "yaml": "2.9.0",
+    "@opentelemetry/core": "2.9.0"
+  }
+}

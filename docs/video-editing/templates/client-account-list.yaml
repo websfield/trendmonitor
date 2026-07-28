@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Cutdown — Client / Account List
+#
+# WHO FILLS THIS IN: the Cutdown project owner (you), not the developer.
+# WHY: every JobBrief carries a stable `accountId` (decisions.md D-36) so
+# `cutdown status --phase0` can correctly count "20 approved outputs across
+# 3 accounts" (PRD §15's Phase 0 exit criterion #1). This file is where
+# those three accounts get named, once, before any job references them.
+#
+# PRD §15's Phase 0 target is 2–3 Social Soup clients — add one block below
+# per client. This is also exactly the list the style-profile questionnaires
+# should exist for: one client here = one filled-in
+# style-profile-questionnaire.yaml for the same accountId.
+# ─────────────────────────────────────────────────────────────────────────
+
+accounts:
+
+  - # A short, stable, lowercase-with-dashes identifier. Once a client's
+    # jobs start using this ID, NEVER change it — changing the display
+    # name below is fine and expected; changing this ID silently would
+    # make status-reporting think it's a new, different account
+    # (developer-guide.md §3, decisions.md D-36).
+    accountId: ""
+
+    # The name people would actually recognise. Safe to update any time —
+    # it's cosmetic only, unlike accountId above.
+    displayName: ""
+
+    # Whose footage this is, in plain terms — confirms Social Soup (or the
+    # client directly) actually has the right to use it. This is a
+    # sentence, not a legal document; the real rights records live
+    # alongside each source video file when it's ingested (a
+    # "<filename>.rights.yaml" sidecar per tech-spec.md §7 — the developer
+    # sets those up per file, this is just the account-level context).
+    footageOwnership: ""
+    # Example: "All footage is filmed by Social Soup's own crew under our
+    # standard production agreement with Acme Fitness; talent releases on
+    # file for every person appearing on camera."
+
+    # Primary platform and region this account's content is actually for.
+    # NOTE: Phase 0's editorial pipeline is hard-coded to one fixture —
+    # TikTok, organic, 9:16, Australia (decisions.md D-3) — regardless of
+    # what you write here. If a client's real first use case is something
+    # else, flag it below; it doesn't block Phase 0 build work, but the
+    # developer needs to know before the first REAL (non-fixture) job runs
+    # for this account.
+    primaryPlatform: ""     # e.g. "TikTok"
+    primaryRegion: ""        # e.g. "AU"
+    mismatchWithPhase0Fixture: false   # true if primaryPlatform/Region above isn't TikTok/AU
+
+    # Who approves this account's outputs. This is the name that will
+    # appear on every `cutdown approve --by <name>` decision recorded for
+    # this account's jobs (decisions.md D-9) — a real accountable person,
+    # not a role or a team name.
+    approverName: ""
+    approverContact: ""    # email or phone — however the developer should reach you/them
+
+    # Does a filled-in style-profile-questionnaire.yaml exist yet for this
+    # account, under the SAME accountId as above?
+    styleProfileSubmitted: false
+
+    # Have the real source video files for this account's first job(s)
+    # been delivered, each with a completed rights sidecar? If not yet,
+    # that's fine — Phase 0 build work proceeds on placeholder footage
+    # regardless (decisions.md D-27) — but PHASE_0_EXIT_EARNED (as opposed
+    # to the developer's implementation-complete milestone, D-38) cannot
+    # be claimed for this account until this is true.
+    realFootageDelivered: false
+
+  # ── copy the block above for each additional client (2–3 total) ──────
+  - accountId: ""
+    displayName: ""
+    footageOwnership: ""
+    primaryPlatform: ""
+    primaryRegion: ""
+    mismatchWithPhase0Fixture: false
+    approverName: ""
+    approverContact: ""
+    styleProfileSubmitted: false
+    realFootageDelivered: false
+
+# ─────────────────────────────────────────────────────────────────────────
+# FOR THE DEVELOPER (not the owner) — do not treat this as schema:
+#   - This file is a handoff artefact, not `job-brief-v1` itself — every
+#     real JobBrief still declares its own `accountId`, this is just where
+#     that value comes from and gets kept consistent across jobs.
+#   - `mismatchWithPhase0Fixture: true` on any account is informational
+#     only for Phase 0 (build proceeds against the D-3 fixture regardless)
+#     but is exactly the input the Phase 1 platform-registry work
+#     (REQ-051) will need first.
+#   - Cross-check: every `accountId` here should have a matching
+#     `style-profile-questionnaire.yaml` copy with the same `accountId`
+#     once `styleProfileSubmitted: true`.
+# ─────────────────────────────────────────────────────────────────────────

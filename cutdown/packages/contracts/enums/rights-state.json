@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/rights-state.json",
+  "title": "RightsState",
+  "description": "Resolved rights posture for one asset. PRD REQ-003: 'Unknown material is flagged rather than assumed cleared' — so an absent rights record resolves to `unknown`, never to `cleared`. `unknown`, `restricted`, and `expired` are all non-waivable packaging blockers (decisions.md D-35).",
+  "type": "string",
+  "enum": ["cleared", "unknown", "restricted", "expired"]
+}

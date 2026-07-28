@@ -1,0 +1,74 @@
+{
+  "momentId": "01HQZX3F5G7K9M2N4P6R8S0X2A",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T05:30:00Z",
+    "createdBy": { "kind": "skill", "skill": "index", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-1",
+  "assetId": "01HQZX3F5G7K9M2N4P6R8S0V2A",
+  "sourceIndexId": "01HQZX3F5G7K9M2N4P6R8S0W2A",
+  "sourceRange": {
+    "assetId": "01HQZX3F5G7K9M2N4P6R8S0V2A",
+    "startTicks": 0,
+    "endTicks": 46080,
+    "timebase": { "num": 1, "den": 15360 }
+  },
+  "durationSeconds": 3.0,
+  "segmentation": {
+    "method": "speaker_turn_x_shot_boundary",
+    "speakerTurnIds": ["turn-0001"],
+    "shotIds": ["shot-0001"],
+    "indexerVersion": "1.0.0",
+    "granularityBounds": { "minSeconds": 3, "maxSeconds": 30 }
+  },
+  "transcript": {
+    "verbatimText": "So the first thing you do is you umm you drop all the footage in one folder.",
+    "displayText": "So the first thing you do is you drop all the footage in one folder.",
+    "wordCount": 16,
+    "segmentIds": ["seg-0001"],
+    "lowConfidenceWordCount": 1
+  },
+  "visualSummary": {
+    "value": null,
+    "absentReason": "Visual-description sub-stage skipped (--no-vlm); no description was generated and none is invented."
+  },
+  "speakers": [
+    { "turnId": "turn-0001", "label": "Fred Wang", "isCorrected": true, "lowConfidence": false }
+  ],
+  "entities": [
+    { "text": "footage", "kind": "other", "confidence": 0.8, "source": "transcript" },
+    { "text": "STEP 1", "kind": "other", "confidence": 0.91, "source": "ocr" }
+  ],
+  "keywords": ["footage", "folder", "workflow"],
+  "energyCues": [
+    { "kind": "energy_change", "intensity": 0.71, "audioEventIds": ["audio-0002"] }
+  ],
+  "technicalQuality": {
+    "flagKinds": [],
+    "worstSeverity": "none",
+    "usable": true
+  },
+  "rights": { "state": "cleared", "concerns": [] },
+  "candidateNarrativeFunctions": [
+    {
+      "function": "context",
+      "confidence": 0.74,
+      "rationale": "Opens by establishing the setup step before any claim is made.",
+      "source": "heuristic"
+    },
+    {
+      "function": "demonstration",
+      "confidence": 0.55,
+      "rationale": "Describes an action the viewer is meant to copy.",
+      "source": "model"
+    }
+  ],
+  "sourceDependencies": [],
+  "embedding": {
+    "model": "bge-small-en-v1.5",
+    "modelVersion": "1.5",
+    "dimensions": 4,
+    "vector": [0.0131, -0.2044, 0.5510, 0.0087]
+  }
+}

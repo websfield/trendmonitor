@@ -1,0 +1,57 @@
+{
+  "assetId": "01HQZX3F5G7K9M2N4P6R8S0V5D",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T04:33:00Z",
+    "createdBy": { "kind": "skill", "skill": "ingest", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-2",
+  "relativePath": "ugly.mp4",
+  "assetKind": "video",
+  "sourceClassification": "fixture",
+  "contentHash": { "algorithm": "sha256", "value": "NOT-A-HASH" },
+  "byteSize": 150206,
+  "storedPath": "source/x.mp4",
+  "rights": {
+    "state": "unknown",
+    "owner": null,
+    "supplier": null,
+    "permittedPlatforms": null,
+    "territories": null,
+    "campaignStart": null,
+    "campaignEnd": null,
+    "expiryDate": null,
+    "talentReleaseStatus": "unknown",
+    "locationReleaseStatus": "unknown",
+    "musicStatus": "unknown",
+    "editingPermitted": null,
+    "paidAmplificationPermitted": null,
+    "evidenceUri": null,
+    "notes": null
+  },
+  "preflight": {
+    "inspected": true,
+    "container": { "formatName": "mov,mp4", "formatLongName": "QuickTime / MOV" },
+    "duration": { "ticks": 61440, "timebase": { "num": 1, "den": 15360 } },
+    "video": {
+      "codecName": "h264",
+      "profile": "High",
+      "pixelFormat": "yuv420p",
+      "codedWidth": 640,
+      "codedHeight": 360,
+      "displayWidth": 360,
+      "displayHeight": 640,
+      "rotationDegrees": 45,
+      "averageFrameRate": { "num": 400, "den": 19 },
+      "realFrameRate": { "num": 30, "den": 1 },
+      "frameRateMode": "vfr",
+      "timebase": { "num": 1, "den": 15360 },
+      "frameCount": 79,
+      "color": { "space": "bt2020nc", "primaries": "bt2020", "transfer": "smpte2084", "range": "tv" },
+      "hdr": { "isHdr": true, "detectedFormat": "pq" }
+    },
+    "audioTracks": [],
+    "corruption": { "status": "clean", "detail": null, "decodeErrorCount": 0 }
+  },
+  "proxy": null
+}

@@ -1,0 +1,30 @@
+{
+  "styleProfileId": "01J9ST2B3C4D5E6F7G8H9K0M7V",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-28T02:30:00Z",
+    "createdBy": { "kind": "human", "name": "Fred Wang" }
+  },
+  "accountId": "acct-social-soup-001",
+  "profileVersion": "1.0.0",
+  "approval": null,
+  "colours": [
+    { "name": "Soup Red", "hex": "red", "role": "primary" }
+  ],
+  "fonts": [
+    { "family": "Inter", "role": "caption", "rightsRecorded": true }
+  ],
+  "logoRules": {
+    "mustAppear": false,
+    "allowedPlacements": [],
+    "prohibitedTreatments": []
+  },
+  "toneOfVoice": {
+    "descriptors": ["plain-spoken"],
+    "casing": "sentence",
+    "emojiUse": "none",
+    "allowProfanity": false
+  },
+  "prohibitedClaims": [],
+  "prohibitedTreatments": []
+}

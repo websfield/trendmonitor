@@ -27,6 +27,7 @@ __all__ = [
     "Stage",
     "classify_stage",
     "days_remaining",
+    "days_remaining_adjusted",
     "ema",
 ]
 
@@ -120,10 +121,19 @@ def _band_from_est(est: float) -> Band:
 def days_remaining(stage: Stage, resolved_samples: Sequence[float]) -> DaysRemaining:
     """The days-remaining band for a trend at ``stage``, given resolved samples on its platform.
 
-    ``resolved_samples`` are observed remaining-days figures from trends already resolved on that
-    platform. Until there are ``MIN_RESOLUTIONS`` (20) of them, ``est`` stays ``None`` and the band
-    is read from the stage alone — a numeric days-remaining before 20 resolutions would be
-    spurious precision. At 20+ the estimate is the robust median with a MAD interval.
+    ``resolved_samples`` are **full observed lifetimes** (first_seen → resolution close) of trends
+    already resolved on that platform — the Phase 4 ``ResolvedSampleBook`` records lifetimes, not
+    remaining-days figures. A consumer estimating *remaining* days for a currently-live signal
+    MUST age-adjust: ``est_remaining = max(0, median_lifetime - signal_age_days)`` (Phase 6 R2
+    acceptance) — serving the raw median lifetime as "days remaining" overstates the window by the
+    querying signal's age and loosens the ``go`` lead-time guard in exactly the wrong direction.
+    **The same applies to the band**: at 20+ samples the returned ``band`` here derives from the
+    raw lifetime median, and ``compute_verdict`` gates on the band independently of ``est`` — so a
+    consumer must re-derive the band from the age-adjusted remaining estimate, never use this
+    band raw (Phase 6 R2 acceptance, its own test).
+    Until there are ``MIN_RESOLUTIONS`` (20) samples, ``est`` stays ``None`` and the band is read
+    from the stage alone — a numeric days-remaining before 20 resolutions would be spurious
+    precision. At 20+ the estimate is the robust median with a MAD interval.
     """
     if len(resolved_samples) < MIN_RESOLUTIONS:
         return DaysRemaining(band=_band_from_stage(stage), est=None, lower=None, upper=None)
@@ -135,4 +145,29 @@ def days_remaining(stage: Stage, resolved_samples: Sequence[float]) -> DaysRemai
         est=med,
         lower=med - mad,
         upper=med + mad,
+    )
+
+
+def days_remaining_adjusted(
+    stage: Stage, resolved_samples: Sequence[float], *, age_days: float
+) -> DaysRemaining:
+    """The **verdict-safe** days-remaining: lifetime samples age-adjusted to remaining days.
+
+    ``resolved_samples`` are full lifetimes (see :func:`days_remaining`), so for a signal already
+    ``age_days`` old both the estimate AND the band must be re-derived from
+    ``max(0, lifetime - age_days)`` — serving the raw lifetime median (or its band) as "days
+    remaining" overstates the window by the signal's age and loosens the ``go`` lead-time guard
+    through either field (Phase 6 R2; measurement gate 2026-07-16). Below ``MIN_RESOLUTIONS``
+    the band stays stage-derived and ``est`` stays ``None``, exactly as in
+    :func:`days_remaining`.
+    """
+    raw = days_remaining(stage, resolved_samples)
+    if raw.est is None:
+        return raw
+    remaining = max(0.0, raw.est - age_days)
+    return DaysRemaining(
+        band=_band_from_est(remaining),
+        est=remaining,
+        lower=max(0.0, (raw.lower if raw.lower is not None else raw.est) - age_days),
+        upper=max(0.0, (raw.upper if raw.upper is not None else raw.est) - age_days),
     )

@@ -49,6 +49,8 @@ A Mechanism is a hypothesis. A Pattern is that hypothesis tested against one ten
 | [adr/0001](adr/0001-trend-signal-sourcing.md) | Where data comes from, and why a `Proxy` value never enters an effect size |
 | [adr/0003](adr/0003-exploration-budget.md) | Why 18% of every amplification budget funds content the model ranks low |
 | [adr/0004](adr/0004-trend-detection-and-submission.md) | Why trends never touch the score, and why human submission is structural |
+| [adr/0008](adr/0008-durable-outcome-and-artefact-store.md) | The durable outcome-event and artefact store, and the erasure tension (records a deferral with exit criteria) |
+| [adr/0009](adr/0009-trend-monitor-runtime.md) | Why the nightly trend monitor is a Python entrypoint behind a scheduling port, not a Hangfire job |
 | [rubric-vps-v1.md](rubric-vps-v1.md) | The actual scoring: vetoes, VPS, BAS, AWS |
 | [schemas/rubric-v1.json](schemas/rubric-v1.json) | Machine-readable rubric |
 | [schemas/events-v1.json](schemas/events-v1.json) | Machine-readable event and breaker contracts |

@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/source-asset-v1.json",
+  "title": "SourceAsset",
+  "schemaVersion": "1.0.0",
+  "description": "One ingested asset: original media plus hash, technical metadata, ownership, consent, licence (PRD §5 object table). Carries the complete PRD REQ-004 preflight surface — container, codec, frame rate, VFR behaviour, timebase, rotation, colour space, HDR, audio tracks, sample rate, corruption, duration — inspected BEFORE indexing. The original file is never modified: `proxy` records the derived 720p-fit copy (decisions.md D-25) and `contentHash` addresses the untouched original.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-21",
+      "changeKind": "breaking",
+      "reason": "Initial v1. Models preflight as three always-present, individually-nullable sub-objects (video/audio/corruption) rather than an assetKind-discriminated union: a still image legitimately has no video-stream timing and no audio, and 'null because not applicable' must be distinguishable from 'null because preflight did not run'. Carries sourceClassification (decisions.md D-36) so a fixture can never be counted as Phase 0 exit evidence."
+    },
+    {
+      "changedAt": "2026-07-21",
+      "changeKind": "breaking",
+      "reason": "Renamed ProxyRecipe.maxHeight to shortEdgeMaxPixels. D-25's \"720p-fit\" bounds the SHORT edge; the old name asserted height and was wrong for every portrait source — the exact orientation Phase 0 produces. Burned deliberately while zero real ContentPackages exist, per developer-guide §4 ('burn breaking changes early, not late'): the 'last ten outputs required no breaking contract change' exit criterion counts approved REAL packages, of which there are none, so this rename costs nothing today and would cost a migration later."
+    },
+    {
+      "changedAt": "2026-07-21",
+      "changeKind": "editorial",
+      "reason": "Corrected VideoStreamInfo.rotationDegrees from 'clockwise' to counter-clockwise. The original wording was simply wrong about ffprobe's convention; the VALUES produced were always ffprobe-native, so no producer or consumer behaviour changes and nothing on disk is invalidated — which is why this is editorial rather than breaking. Recorded because the error was undetectable at Phase 0 (only the dimension swap consumes it, and 90/270 swap identically) and would have surfaced as a 180°-wrong render much later."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assetId",
+    "envelope",
+    "jobId",
+    "relativePath",
+    "assetKind",
+    "sourceClassification",
+    "contentHash",
+    "byteSize",
+    "storedPath",
+    "rights",
+    "preflight",
+    "proxy"
+  ],
+  "properties": {
+    "assetId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "envelope": { "$ref": "./common/envelope-v1.json" },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The job this asset was ingested into. Human-chosen (e.g. `test-1`), not a ULID — it is the directory name under `project-data/jobs/`."
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path relative to the ingest root, in normalized forward-slash form. This is the identity used in error messages and in a job-level rights manifest's keys — REQ-001's discovery order is normalized relative-path order, so this value is also the sort key that makes ingest deterministic."
+    },
+    "assetKind": { "$ref": "../enums/asset-kind.json" },
+    "sourceClassification": { "$ref": "../enums/source-classification.json" },
+    "contentHash": {
+      "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+      "description": "sha256 of the ORIGINAL bytes (PRD REQ-005). Together with indexer version and model config this keys every expensive index artefact, so re-ingesting the same footage repeats no work."
+    },
+    "byteSize": { "type": "integer", "minimum": 0 },
+    "storedPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Hash-named location under `project-data/jobs/<job-id>/source/` (tech-spec §9.1). Originals are immutable once written."
+    },
+    "rights": { "$ref": "./common/rights-record-v1.json" },
+    "preflight": {
+      "title": "PreflightReport",
+      "description": "The complete REQ-004 inspection. Every sub-object is REQUIRED to be present; a sub-object is null only when genuinely not applicable to the asset kind (a .srt subtitle has no video and no audio), and `inspected` records that preflight actually ran.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inspected",
+        "container",
+        "duration",
+        "video",
+        "audioTracks",
+        "corruption"
+      ],
+      "properties": {
+        "inspected": {
+          "type": "boolean",
+          "description": "True once ffprobe (or the text-asset reader) completed. A SourceAsset with `inspected: false` never reaches the job inventory — ingest is atomic."
+        },
+        "container": {
+          "oneOf": [
+            {
+              "title": "ContainerInfo",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["formatName", "formatLongName"],
+              "properties": {
+                "formatName": { "type": "string" },
+                "formatLongName": { "type": "string" }
+              }
+            },
+            { "type": "null" }
+          ],
+          "description": "Null for non-media assets (subtitle, brand reference)."
+        },
+        "duration": {
+          "oneOf": [
+            { "$ref": "./common/timecode-v1.json#/$defs/MediaTime" },
+            { "type": "null" }
+          ],
+          "description": "Exact duration in rational ticks. This is the upper bound `range-check.ts` validates every Moment and EDL range against — the mechanism behind the 'zero invalid source ranges' exit criterion. Null for assets with no time dimension."
+        },
+        "video": {
+          "oneOf": [{ "$ref": "#/$defs/VideoStreamInfo" }, { "type": "null" }],
+          "description": "Null for audio-only, subtitle, and brand-reference assets. Present for image assets (a still is a one-frame video stream to ffprobe)."
+        },
+        "audioTracks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AudioStreamInfo" },
+          "description": "REQ-004 requires audio tracks (plural) and sample rate. An EMPTY array is a positive finding — 'this asset has no audio' — and is what the silent-b-roll fixture asserts. It is never conflated with a null preflight."
+        },
+        "corruption": {
+          "oneOf": [{ "$ref": "#/$defs/CorruptionReport" }, { "type": "null" }]
+        }
+      }
+    },
+    "proxy": {
+      "oneOf": [{ "$ref": "#/$defs/ProxyRecord" }, { "type": "null" }],
+      "description": "The derived proxy (decisions.md D-25), or null when the asset kind has no proxy. The original is never destroyed (REQ-004)."
+    }
+  },
+  "$defs": {
+    "VideoStreamInfo": {
+      "title": "VideoStreamInfo",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "codecName",
+        "profile",
+        "pixelFormat",
+        "codedWidth",
+        "codedHeight",
+        "displayWidth",
+        "displayHeight",
+        "rotationDegrees",
+        "averageFrameRate",
+        "realFrameRate",
+        "frameRateMode",
+        "timebase",
+        "frameCount",
+        "color",
+        "hdr"
+      ],
+      "properties": {
+        "codecName": { "type": "string" },
+        "profile": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "pixelFormat": { "type": "string" },
+        "codedWidth": { "type": "integer", "minimum": 1 },
+        "codedHeight": { "type": "integer", "minimum": 1 },
+        "displayWidth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Width AFTER applying rotation metadata. Editorial code reads display dimensions only; using coded dimensions on a rotated phone clip silently produces a sideways crop."
+        },
+        "displayHeight": { "type": "integer", "minimum": 1 },
+        "rotationDegrees": {
+          "type": "integer",
+          "enum": [0, 90, 180, 270],
+          "description": "Rotation to apply when displaying, expressed COUNTER-CLOCKWISE — ffprobe's native convention, read from Display Matrix side data (`side_data_list[].rotation`). Direction settled empirically, not from documentation: a half-red/half-blue clip stamped `-display_rotation:v:0 90` lands its LEFT edge at the BOTTOM after autorotation, which is 90° counter-clockwise. This matters because nothing at Phase 0 can observe the difference — only `displayWidth`/`displayHeight` consume it, and 90 and 270 swap dimensions identically — so a renderer that actually applies rotation would be 180° wrong with no earlier test catching it. The legacy container `rotate` tag is CLOCKWISE-positive and is negated on the fallback path (FFmpeg 8 cannot produce that tag, so that branch is untested)."
+        },
+        "averageFrameRate": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" },
+        "realFrameRate": {
+          "$ref": "./common/timecode-v1.json#/$defs/Timebase",
+          "description": "ffprobe's `r_frame_rate`. A material difference from `averageFrameRate` is the primary VFR signal."
+        },
+        "frameRateMode": { "$ref": "../enums/frame-rate-mode.json" },
+        "timebase": {
+          "$ref": "./common/timecode-v1.json#/$defs/Timebase",
+          "description": "The stream's own time base. Every SourceRange into this asset is expressed in THIS timebase, so no float conversion is ever needed (REQ-019)."
+        },
+        "frameCount": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }],
+          "description": "Null when the container does not declare it and a full decode was not performed."
+        },
+        "color": {
+          "title": "ColorInfo",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["space", "primaries", "transfer", "range"],
+          "properties": {
+            "space": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+            "primaries": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+            "transfer": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+            "range": { "oneOf": [{ "type": "string" }, { "type": "null" }] }
+          }
+        },
+        "hdr": {
+          "title": "HdrInfo",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["isHdr", "detectedFormat"],
+          "description": "HDR is DETECTED and RECORDED at Phase 0 but not converted — tone-mapping is REQ-089, product Phase 1. Recording it now means the Phase 1 conversion work can find its inputs without a re-ingest.",
+          "properties": {
+            "isHdr": { "type": "boolean" },
+            "detectedFormat": {
+              "oneOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "e.g. `pq` / `hlg`, inferred from the transfer characteristic."
+            }
+          }
+        }
+      }
+    },
+    "AudioStreamInfo": {
+      "title": "AudioStreamInfo",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "streamIndex",
+        "codecName",
+        "sampleRate",
+        "channels",
+        "channelLayout",
+        "timebase",
+        "durationTicks"
+      ],
+      "properties": {
+        "streamIndex": { "type": "integer", "minimum": 0 },
+        "codecName": { "type": "string" },
+        "sampleRate": { "type": "integer", "minimum": 1 },
+        "channels": { "type": "integer", "minimum": 1 },
+        "channelLayout": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "timebase": {
+          "$ref": "./common/timecode-v1.json#/$defs/Timebase",
+          "description": "For audio this is `{num: 1, den: sampleRate}`, so ticks ARE sample counts — one representation for frames and samples (see timecode-v1)."
+        },
+        "durationTicks": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "CorruptionReport": {
+      "title": "CorruptionReport",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "detail", "decodeErrorCount"],
+      "properties": {
+        "status": { "$ref": "../enums/corruption-status.json" },
+        "detail": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "decodeErrorCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ProxyRecord": {
+      "title": "ProxyRecord",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "storedPath",
+        "contentHash",
+        "proxyProfileVersion",
+        "recipe",
+        "timebase"
+      ],
+      "description": "The 720p-fit H.264 CRF 23 + AAC 128k constant-frame-rate proxy (decisions.md D-25). Proxy only — there is no mezzanine tier at Phase 0. Draft renders read this; final renders re-read the source-hashed original (D-34).",
+      "properties": {
+        "storedPath": { "type": "string", "minLength": 1 },
+        "contentHash": { "$ref": "./common/timecode-v1.json#/$defs/ContentHash" },
+        "proxyProfileVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "Recorded in the SourceIndex per D-25 so a recipe change invalidates the cache rather than silently mixing proxy generations."
+        },
+        "recipe": {
+          "title": "ProxyRecipe",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["shortEdgeMaxPixels", "videoCodec", "crf", "audioCodec", "audioBitrateKbps", "constantFrameRate"],
+          "properties": {
+            "shortEdgeMaxPixels": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "D-25's \"720p-fit\" bound, applied to the SHORT edge — not to height. Reading it as height ≤ 720 would scale a 1080×1920 portrait source to 405×720, a third of the pixels, for a product whose entire Phase 0 output is 9:16 vertical. Short-edge gives 720×1280 portrait and 1280×720 landscape. The two readings coincide for landscape, which is exactly why the misnomer would have survived unnoticed."
+            },
+            "videoCodec": { "type": "string" },
+            "crf": { "type": "integer", "minimum": 0, "maximum": 51 },
+            "audioCodec": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+            "audioBitrateKbps": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }] },
+            "constantFrameRate": { "$ref": "./common/timecode-v1.json#/$defs/Timebase" }
+          }
+        },
+        "timebase": {
+          "$ref": "./common/timecode-v1.json#/$defs/Timebase",
+          "description": "The proxy's own (constant) timebase. VFR sources are normalized here; the SourceIndex carries the explicit source-to-proxy mapping REQ-019 demands."
+        }
+      }
+    }
+  }
+}

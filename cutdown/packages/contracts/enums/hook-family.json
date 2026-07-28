@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/hook-family.json",
+  "title": "HookFamily",
+  "description": "The editorial axis a proposed opening tests (PRD REQ-030/REQ-031). Members are the six variant axes named in the research memo's Hook Lab section — outcome-first vs problem-first, proof-first vs personality-first, utility-first vs curiosity-first. REQ-031 requires variants to differ by *hypothesis*, not by clip order; this enum is what makes 'distinct' checkable rather than asserted. Consumed from Phase 3 (`creative-brief-v1`); registered here so the enum registry has one home.",
+  "type": "string",
+  "enum": [
+    "outcome_first",
+    "problem_first",
+    "proof_first",
+    "personality_first",
+    "utility_first",
+    "curiosity_first"
+  ]
+}

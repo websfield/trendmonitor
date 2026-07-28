@@ -425,6 +425,12 @@ The property worth naming: **nothing in the critical path of a creator submissio
 
 ---
 
+## Runtime note: the trend monitor (a scheduled C1-internal job)
+
+The trend monitor ([ADR-0009](adr/0009-trend-monitor-runtime.md)) is a nightly scan hosted as a Python entrypoint (`python -m c1_pattern_engine.detector.run`) triggered by an external scheduler — not by Hangfire, which stays on the .NET submission path. It sits **entirely inside C1's boundary**: it writes `TrendSignal`s and verdict records to C1's own durable store, and it crosses no contract in this document — it calls no other component, no other component calls it, it writes no `OutcomeEvent` (C2 remains the sole event writer), and it reads no breaker. Its one permitted external effect is the ADR-0004 §1 coupling: a `rising`+`go` verdict on a **public-scope** signal raises corpus-ingestion priority inside C1. If the monitor is down, nothing else notices — briefs get written the old way; the failure-semantics row for "C1 down" already covers it.
+
+---
+
 ## What crosses the boundary, and what never does
 
 **Crosses C1 → C2:** a pinned, immutable set of patterns and an exemplar index. Nothing else. Not trend signals, not mechanisms, not submitter reputations, not mining diagnostics.

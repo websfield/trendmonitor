@@ -8,7 +8,7 @@
 # and C4 (Phase 8) serves prevalence counts WITHOUT the URI. A source not listed here is refused
 # at acquisition — a refusal, not a warning. Bump `version` on every change (docs-first, ADR-gated).
 
-version: "2026-07-11.1"
+version: "2026-07-16.1"
 
 sources:
   - host: exemplars.public-cc0.example
@@ -27,3 +27,35 @@ sources:
     permit_ingestion: true
     permit_redistribution: true
     note: First-party submissions surface; internal, first-party rights.
+
+# --- Trend-path allowlist (ADR-0009 invariant 6; Phase 7 R4) -----------------------------------
+#
+# STRUCTURALLY DISJOINT from `sources:` above, deliberately: `sources:` grants exemplar-MEDIA
+# rights read by extraction/acquire.py; `trend_sources:` permits keyless VOLUME reads only.
+# Adding a host here grants no media-ingestion right, ever — the D5 legal gate
+# (corpora/exemplar.py `ingest_live`) stays closed regardless of anything in this section.
+#
+# Deny-by-default; no config flag, env var, or per-source setting may bypass it. Each entry pins
+# the HOST the bytes actually go to plus the URL template the fetcher may construct ({term} is
+# strictly percent-encoded into its slot; {start}/{end} are ISO dates). tiktok_creative_center is
+# deliberately ABSENT: it is a human-in-the-loop surface (ADR-0001/0004), never crawled.
+
+trend_sources:
+  - name: wikipedia_pageviews
+    host: wikimedia.org
+    url_template: "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia/all-access/user/{term}/daily/{start}/{end}"
+  - name: hacker_news
+    host: hn.algolia.com
+    url_template: "https://hn.algolia.com/api/v1/search_by_date?query={term}&tags=story&hitsPerPage=1000&numericFilters=created_at_i>{start_epoch}"
+  - name: reddit
+    host: www.reddit.com
+    url_template: "https://www.reddit.com/search.rss?q={term}&sort=new&limit=100"
+  - name: google_trends
+    host: trends.google.com
+    url_template: "https://trends.google.com/trending/rss?geo=US"
+  - name: youtube_trending
+    host: www.youtube.com
+    url_template: "https://www.youtube.com/feeds/videos.xml?search_query={term}"
+  - name: rss_news
+    host: news.google.com
+    url_template: "https://news.google.com/rss/search?q={term}"

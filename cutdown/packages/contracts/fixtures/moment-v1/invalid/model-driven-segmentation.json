@@ -1,0 +1,42 @@
+{
+  "momentId": "01HQZX3F5G7K9M2N4P6R8S0X4C",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T05:32:00Z",
+    "createdBy": { "kind": "skill", "skill": "index", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-1",
+  "assetId": "01HQZX3F5G7K9M2N4P6R8S0V2A",
+  "sourceIndexId": "01HQZX3F5G7K9M2N4P6R8S0W2A",
+  "sourceRange": {
+    "assetId": "01HQZX3F5G7K9M2N4P6R8S0V2A",
+    "startTicks": 0,
+    "endTicks": 46080,
+    "timebase": { "num": 1, "den": 15360 }
+  },
+  "durationSeconds": 3.0,
+  "segmentation": {
+    "method": "llm_chose_the_boundaries",
+    "speakerTurnIds": [],
+    "shotIds": [],
+    "indexerVersion": "1.0.0",
+    "granularityBounds": { "minSeconds": 3, "maxSeconds": 30 }
+  },
+  "transcript": {
+    "verbatimText": "anything",
+    "displayText": "anything",
+    "wordCount": 1,
+    "segmentIds": [],
+    "lowConfidenceWordCount": 0
+  },
+  "visualSummary": { "value": null, "absentReason": "skipped" },
+  "speakers": [],
+  "entities": [],
+  "keywords": [],
+  "energyCues": [],
+  "technicalQuality": { "flagKinds": [], "worstSeverity": "none", "usable": true },
+  "rights": { "state": "cleared", "concerns": [] },
+  "candidateNarrativeFunctions": [],
+  "sourceDependencies": [],
+  "embedding": null
+}

@@ -1,0 +1,22 @@
+{
+  "name": "cutdown",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cutdown — editorial engine runtime. Self-rooted workspace (tech-spec §2); independent of the UGC Intelligence system in ../src (tech-spec §14).",
+  "engines": {
+    "node": ">=20.9.0 <23",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.28.2",
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "test": "pnpm -r --no-bail run test",
+    "cutdown": "node apps/cli/dist/src/main.js"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "typescript": "5.9.3"
+  }
+}

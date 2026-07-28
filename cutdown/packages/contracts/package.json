@@ -1,0 +1,22 @@
+{
+  "name": "@cutdown/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "JSON Schema contracts \u2014 the single source of truth. TS and Python types are generated from schemas/, never hand-written (tech-spec \u00a73, decisions.md D-24).",
+  "exports": {
+    ".": "./dist/src/index.js",
+    "./generated": "./dist/generated/typescript/index.js"
+  },
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "ulid": "3.0.2"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "15.0.4"
+  }
+}

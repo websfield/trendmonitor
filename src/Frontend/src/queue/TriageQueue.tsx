@@ -86,13 +86,18 @@ export function TriageQueue({
                   <span data-testid={`queue-verdict-${item.submission_id}`}>{item.verdict}</span>
                 </td>
                 <td>
-                  <span data-testid={`queue-reason-${item.submission_id}`}>{item.risk_reason}</span>
-                  {item.suspected_vetoes.length > 0 ? (
-                    <span className="queue__suspected">
-                      {' '}
-                      Model-raised suspicion (not acted on): {item.suspected_vetoes.join(', ')}.
-                    </span>
-                  ) : null}
+                  {/* The suspected-veto flag lives INSIDE the reason element: the
+                      "why it needs attention" cell must carry both the deterministic
+                      risk reason and the model-raised flag as one readable unit. */}
+                  <span data-testid={`queue-reason-${item.submission_id}`}>
+                    {item.risk_reason}
+                    {item.suspected_vetoes.length > 0 ? (
+                      <span className="queue__suspected">
+                        {' '}
+                        Model-raised suspicion (not acted on): {item.suspected_vetoes.join(', ')}.
+                      </span>
+                    ) : null}
+                  </span>
                 </td>
                 <td>
                   {/* The ONLY action from the queue is to open. Approval happens

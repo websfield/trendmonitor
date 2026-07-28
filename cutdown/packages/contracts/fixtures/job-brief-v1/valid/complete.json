@@ -1,0 +1,28 @@
+{
+  "briefId": "01HQZX3F5G7K9M2N4P6R8S0T2V",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T04:00:00Z",
+    "createdBy": { "kind": "human", "name": "Fred Wang" }
+  },
+  "parentBriefId": null,
+  "accountId": "acct-social-soup-001",
+  "accountDisplayName": "Social Soup — Demo Account",
+  "audience": "Australian small-business owners aged 28-45 who already run their own socials",
+  "objective": "education_utility",
+  "platforms": ["tiktok"],
+  "distributionMode": "organic",
+  "durationRange": { "minSeconds": 20, "maxSeconds": 45 },
+  "locale": "en-AU",
+  "brandOrCampaign": "Cutdown Phase 0 proving corpus",
+  "contentPromise": "Show exactly how a multi-camera shoot becomes one short vertical cut, start to finish",
+  "cta": { "kind": "cta", "text": "Follow for the rest of the workflow" },
+  "variantCount": 3,
+  "funnelStage": "consideration",
+  "offer": null,
+  "proofRequirements": ["Show the actual timeline, not a mockup"],
+  "keyMessages": ["The edit is the product, not the footage"],
+  "prohibitedClaims": ["guaranteed views", "algorithm hack"],
+  "riskTolerance": "low",
+  "notes": "Fixture brief for the Phase 0 entry gate. Exercises every REQ-002 required field plus the full optional block."
+}

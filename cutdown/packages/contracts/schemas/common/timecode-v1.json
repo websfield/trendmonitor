@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/common/timecode-v1.json",
+  "title": "Timecode",
+  "description": "Rational timecode primitives. tech-spec §3 fixes this convention with high blast radius: timecode is a `{num, den}` timebase plus integer tick counts — NEVER float seconds. Float seconds accumulate error across cut/concat arithmetic, and PRD REQ-019 ('no generated EDL may reference media outside the source range') is only decidable with exact integers. Audio uses the same shape with `timebase = {num: 1, den: sampleRate}`, so sample counts and frame counts share one representation.",
+  "type": "object",
+  "$defs": {
+    "Timebase": {
+      "title": "Timebase",
+      "description": "Seconds per tick, as an exact rational: `seconds = ticks * num / den`. Matches FFmpeg's `time_base` convention. Example: 30000/1001 fps video has `{num: 1001, den: 30000}`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["num", "den"],
+      "properties": {
+        "num": { "type": "integer", "minimum": 1 },
+        "den": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "MediaTime": {
+      "title": "MediaTime",
+      "description": "An exact instant or duration: `ticks` counted in `timebase`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ticks", "timebase"],
+      "properties": {
+        "ticks": { "type": "integer", "minimum": 0 },
+        "timebase": { "$ref": "#/$defs/Timebase" }
+      }
+    },
+    "SourceRange": {
+      "title": "SourceRange",
+      "description": "A half-open range [startTicks, endTicks) into one source asset, in one timebase. Half-open so adjacent ranges abut without overlapping by one tick. `range-check.ts` is the SINGLE implementation that validates these against the asset's preflighted duration (Phase 2 task 10); `cutdown index` runs it over every generated Moment and Phase 3's `validate` reuses it for EDL ranges — the mechanism behind the 'zero invalid source ranges' Phase 0 exit criterion.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "startTicks", "endTicks", "timebase"],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "ULID of the SourceAsset this range indexes into."
+        },
+        "startTicks": { "type": "integer", "minimum": 0 },
+        "endTicks": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Exclusive end. `endTicks > startTicks` is enforced by range-check.ts, not by JSON Schema — draft 2020-12 cannot express a cross-property inequality, and tech-spec §3 forbids `if/then/else`."
+        },
+        "timebase": { "$ref": "#/$defs/Timebase" }
+      }
+    },
+    "ContentHash": {
+      "title": "ContentHash",
+      "description": "Content address for an artefact or media file (PRD REQ-005). sha256 is the only algorithm at Phase 0; the field is present so a future algorithm is an additive change.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "type": "string", "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "Ulid": {
+      "title": "Ulid",
+      "description": "Object identity (tech-spec §3: 'object IDs are ULIDs'). Crockford base32, 26 chars, lexicographically sortable by creation time.",
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    }
+  }
+}

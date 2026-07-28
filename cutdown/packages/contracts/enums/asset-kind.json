@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/asset-kind.json",
+  "title": "AssetKind",
+  "description": "The six asset classes a multi-asset job accepts, verbatim from PRD REQ-001: 'multiple video, audio, image, logo, subtitle, and brand-reference files per job'. `ingest` rejects any directory member it cannot classify into one of these, naming the relative path — the closed list is what makes that rejection deterministic.",
+  "type": "string",
+  "enum": ["video", "audio", "image", "logo", "subtitle", "brand_reference"]
+}

@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/creative-brief-v1.json",
+  "title": "CreativeBrief",
+  "schemaVersion": "1.0.0",
+  "description": "One proposed angle for a job (PRD REQ-030): an audience promise, a hook family, a narrative archetype, evidence-linked proof points, the value delivered, CTA logic, the selected candidate Moments, and known limitations. `propose` returns N of these; REQ-031 requires them to differ by creative thesis, so each carries `distinctness` metadata recording moment overlap and angle. Immutable revision (PRD §5): a revision is a new object with `parentCreativeBriefId` set, never an in-place edit. The model PROPOSES this brief; nothing here is a blocking decision — D-37 keeps model output advisory. REQ-036 refusals are NOT a CreativeBrief; they are the `propose` skill's separate refusal output variant.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-28",
+      "changeKind": "breaking",
+      "reason": "Initial v1 (Phase 3, tech-spec §15 step 5). Models REQ-034 evidence-linking as a required `factOrJudgement` discriminator on every proof point so 'observed fact' and 'model judgement' can never be collapsed, and REQ-031 distinctness as structured data (shared-moment fraction + angle label) so 'deliberately distinct' is checkable rather than asserted. Carries model provenance (PRD §10.6)."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "creativeBriefId",
+    "envelope",
+    "jobId",
+    "sourceBriefId",
+    "parentCreativeBriefId",
+    "audiencePromise",
+    "creativeThesis",
+    "hookFamily",
+    "narrativeArchetype",
+    "value",
+    "proofPoints",
+    "selectedMoments",
+    "cta",
+    "distinctness",
+    "knownLimitations",
+    "modelProvenance"
+  ],
+  "properties": {
+    "creativeBriefId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "envelope": { "$ref": "./common/envelope-v1.json" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "sourceBriefId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+      "description": "The JobBrief this angle was proposed against (PRD lineage §3). The audience/objective/promise this brief serves come from that JobBrief."
+    },
+    "parentCreativeBriefId": {
+      "oneOf": [
+        { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+        { "type": "null" }
+      ],
+      "description": "The CreativeBrief revision this supersedes, or null for the first (REQ-039 revision-without-reindexing lineage)."
+    },
+    "audiencePromise": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What THIS angle promises the viewer (REQ-030). REQ-031 lets variants differ on promise OR thesis; the pair below records both so distinctness is auditable."
+    },
+    "creativeThesis": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The angle's core argument (REQ-030 'angle'). REQ-031: variants must differ here or in `audiencePromise` — not merely in clip order or caption colour."
+    },
+    "hookFamily": {
+      "$ref": "../enums/hook-family.json",
+      "description": "Which opening hypothesis this angle tests (REQ-032 Hook Lab). The enum is what makes 'distinct hook' checkable (REQ-031)."
+    },
+    "narrativeArchetype": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The story shape this angle uses (REQ-030 'narrative archetype'). Free text, not an enum: archetypes are an open vocabulary at Phase 0 and REQ-033 refuses a fixed arc."
+    },
+    "value": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The emotional or practical value delivered (REQ-030 'emotional or practical value / desired feeling')."
+    },
+    "proofPoints": {
+      "type": "array",
+      "description": "Claims this angle makes and the on-screen evidence for each (REQ-034 evidence-linked decisions). Every proof point links to the Moments that evidence it; the deterministic editorial gate (D-37) later blocks an EDL whose required-evidence links do not resolve, so this list has teeth.",
+      "items": {
+        "title": "ProofPoint",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "evidenceMomentIds", "basis"],
+        "properties": {
+          "claim": { "type": "string", "minLength": 1 },
+          "evidenceMomentIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+            "description": "Moments that evidence the claim. minItems 1: a proof point with no evidence is not a proof point."
+          },
+          "basis": {
+            "title": "ProofBasis",
+            "description": "REQ-034: rationales must distinguish observed facts from model judgement. A tagged union, not a boolean, so the rationale text is bound to the kind — an 'observed_fact' names what was seen on screen, a 'model_judgement' names the inference.",
+            "type": "object",
+            "oneOf": [
+              {
+                "title": "ObservedFact",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "observed"],
+                "properties": {
+                  "kind": { "type": "string", "const": "observed_fact" },
+                  "observed": { "type": "string", "minLength": 1, "description": "What is literally present in the footage (spoken words, on-screen text, a shown action)." }
+                }
+              },
+              {
+                "title": "ModelJudgement",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "inference"],
+                "properties": {
+                  "kind": { "type": "string", "const": "model_judgement" },
+                  "inference": { "type": "string", "minLength": 1, "description": "The model's interpretation — advisory only (D-37), never a blocking signal." }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "selectedMoments": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The candidate Moments this angle draws on (REQ-030 'selected source moments'). Each names the narrative function it is proposed to serve — a candidate role, not a committed one; the story planner (`plan`) chooses.",
+      "items": {
+        "title": "SelectedMoment",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["momentId", "candidateFunction", "rationale"],
+        "properties": {
+          "momentId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+          "candidateFunction": { "$ref": "../enums/narrative-function.json" },
+          "rationale": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "cta": {
+      "title": "CtaLogic",
+      "description": "This angle's CTA, or an explicit declaration of none (REQ-030 'CTA logic'). Same tagged-union shape as JobBrief.cta so 'we chose no CTA' and 'nobody decided' stay distinct.",
+      "type": "object",
+      "oneOf": [
+        {
+          "title": "NoCta",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "type": "string", "const": "none" } }
+        },
+        {
+          "title": "PrimaryCta",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "text"],
+          "properties": {
+            "kind": { "type": "string", "const": "cta" },
+            "text": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "distinctness": {
+      "title": "Distinctness",
+      "description": "REQ-031: the system records overlap in source moments and semantic angle so 'deliberately distinct' is data, not a claim. Computed by `propose` across the returned set; peer references let a reviewer see which briefs are near-duplicates.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["peerBriefLabels", "sharedMomentFraction", "semanticAngleLabel"],
+      "properties": {
+        "peerBriefLabels": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Stable labels of the sibling briefs this one was compared against within the same `propose` run (e.g. `angle-1`, `angle-2`). Labels not IDs, because siblings are all minted in one run and their IDs are not known to each other at generation time."
+        },
+        "sharedMomentFraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of this brief's selected Moments that also appear in at least one peer brief. High overlap with a distinct thesis is fine; high overlap with a similar thesis is the REQ-031 smell the critic surfaces."
+        },
+        "semanticAngleLabel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A short human-readable label for this brief's angle, used for quick side-by-side distinctness reading."
+        }
+      }
+    },
+    "knownLimitations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "What this angle cannot fully deliver from the available footage (REQ-030 'known limitations'). An honest limitation here is the constructive half of REQ-036: fewer-with-a-reason beats a padded weak cut."
+    },
+    "modelProvenance": { "$ref": "./common/model-provenance-v1.json" }
+  }
+}

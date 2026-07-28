@@ -1,0 +1,42 @@
+# Phase 7: Live Fetch Adapters + Trend-path Allowlist
+
+## Objective
+Swap the fake `RawVolumeFetch` for **concrete keyless-source fetchers** behind the unchanged port, and add allowlist enforcement on the trend ingestion path. This is the biggest/riskiest phase — the external-integration surface the pre-mortem warns about. Security gate applies.
+
+## Prerequisites
+- [ ] Phase 5 runnable on fake fetchers (the port contract is proven).
+- [ ] Read `adapters/base.py` (`RawVolumeFetch` `:78`, `_KeylessAdapter` `:94`, `AdapterDark` `:105`), `config/source-allowlist.yaml`, `extraction/acquire.py:62` (the existing host-allowlist enforcer), `substrate/provenance.py`.
+
+## Requirements Checklist
+- [ ] R1: A concrete `RawVolumeFetch` per keyless source (`google_trends, reddit, youtube_trending, wikipedia_pageviews, hacker_news, rss_news`) returning `Mapping[date,float]` of **observed days only** (a gap is an absent key — never 0/None). Each fetcher **documents its unit/denominator and stability** (Google Trends = window-relative 0–100 index renormalized per fetch; Wikipedia = absolute pageviews; …) — robust z is scale-invariant so per-fetch rescaling is tolerable, but volumes are never arithmetically combined across sources (standing test, Phase 3 R3). **TikTok Creative Center stays human-in-the-loop — no automated crawler** (ADR-0001/0004), and the reconciled allowlist must not quietly permit it for automated fetch (explicit test: no `RawVolumeFetch` exists for `tiktok_creative_center`). Acceptance: each fetcher parses its source into daily volumes; a network/parse failure raises → `AdapterDark` (never a fabricated series).
+- [ ] R2: **Every live read stays `Provenance.PROXY`** — the `_KeylessAdapter` invariant (`base.py:116`) is unchanged; no fetcher constructs a `Measured`/`Estimated` value. Acceptance: `test_corroboration_not_provenance` green; a test asserts every live-fetch observation is Proxy.
+- [ ] R3: **A shared HTTP utility** (client + timeout + retry/backoff + rate-limit) — prefer stdlib `urllib`; any new dependency justified per CLAUDE.md rule 5. Transport hardening is part of the contract: **https-only with default certificate verification** (no `ssl` context loosening); **redirects are disabled (the preferred, simpler branch), or every redirect target's host is re-validated against the *requesting source's own pinned host* — not merely "any allowlisted host" — with a redirect cap** (`urllib` follows cross-host redirects by default — an open redirect on an allowlisted source must not become an SSRF pivot); **a hard response-size cap with bounded decompression** (a fast, huge, or gzip-bombed response → `AdapterDark`, not OOM — timeouts alone don't catch it). Acceptance: transient failure retries then degrades to `AdapterDark`; no unbounded retry; tests for the redirect constraint and the size cap. Operational note (not a gate): the nightly load is ~registry-cap × 6 sources; the rate-limiter should pace within each source's published etiquette — chronic rate-limiting degrades honestly to `AdapterDark` + a coverage gap, never a breach.
+- [ ] R4: **Trend-path allowlist enforcement — host-pinned, deny-by-default, no override.** The reconciled allowlist pins the **host (and URL template) per trend source**, not just the source name — a name-level allowlist can't see where the bytes go. The shared HTTP utility validates the **final constructed URL's host** against the allowlist immediately before the request (the `extraction/acquire.py:97-104` pattern). Deny-by-default; **no config flag, env var, or per-source setting may bypass it**. Enforcement happens at **fetcher-construction/config-resolution time** (before `build_adapter`), so a non-allowlisted source refuses loudly at configure time — excluded from the run and surfaced as a coverage gap (one refused source never aborts the whole scan, consistent with Phase 5 R4) — rather than being laundered into a silent `AdapterDark` by the blanket except. **The trend-path allowlist gates keyless *volume* fetch only: the D5 legal gate stays closed** — `ingest_live`/`LiveIngestionBlocked` (`corpora/exemplar.py:152-173`) and `extraction/acquire.py`'s existing enforcement + tests are unchanged by the schema extension. **The reconciled schema is structurally disjoint from the exemplar-media rights schema**: trend sources live under a separate top-level key (`trend_sources:`) or a separate file — never under the `sources:` key `extraction/acquire.py:62-76` reads as `permit_ingestion` media-rights, so adding a trend host can never silently widen exemplar-media ingestion rights. The loader uses `yaml.safe_load` (matching `acquire.py:64`). Acceptance: a non-allowlisted source is refused (raises, like `SourceNotAllowlistedError`), tested **through the entrypoint path** not just the enforcer unit; a host-mismatch (constructed URL off the pinned host) is refused; D5-gate tests unchanged and green; **a new test proves a trend-source host is refused by `extraction.acquire` for exemplar acquisition against the real reconciled `config/source-allowlist.yaml`** (the structural-disjointness proof, not just documentation). Document the reconciliation of the two disjoint allowlist concepts (see codebase review §5) in the ADR/contract.
+- [ ] R5: **Untrusted-input hygiene — requests and responses.** Requests: terms are attacker-influenceable (`HUMAN_SUBMISSION`-origin admissions) and are **strictly percent-encoded with `urllib.parse.quote(term, safe="")`** — bare `quote` leaves `/` unescaped, so `../../` would survive it — into URLs; the constructed URL is re-checked against the pinned host; a hostile-term test (`../../`, a full `https://evil.example` URL, CR/LF) proves **the constructed URL's path still matches the pinned template with the term confined to its slot** (not merely host-pinned) or the request is refused. Responses: parsed volumes are numeric-only and never interpolated into prompts/decisions; **XML/RSS parsing forbids DTD/external-entity/entity-expansion processing** (name the parser: `defusedxml` — justified as the security exception under CLAUDE.md rule 5 — or an explicit expat entity guard), with an entity-expansion payload test asserting `AdapterDark`, not a hang; **no URL found in a response body is ever fetched** — a feed item never causes a follow-up request (test: no URL from a parsed payload reaches the HTTP utility). Acceptance: security-reviewer confirms no injection path; parse is defensive (bad payload → `AdapterDark`, not a crash).
+- [ ] R6: **No secrets** — keyless sources need none; if any source later needs a key, its name (not value) is recorded in `RUNBOOK.md`, via env. Acceptance: no credential in code/config.
+- [ ] R7: Live fetchers are **swappable behind the same port** — the entrypoint chooses fake vs live by config; the spine/entrypoint code is unchanged. Acceptance: switching config runs live without touching `run_scan.py`.
+
+## Implementation Tasks
+1. [ ] Add an HTTP utility (stdlib-first) with timeout/retry/rate-limit.
+2. [ ] Add one concrete fetcher per source (parse → daily volumes), each failing to `AdapterDark`.
+3. [ ] Add trend-path allowlist load+enforce; reconcile schema; document in ADR.
+4. [ ] Config switch fake↔live at the entrypoint.
+5. [ ] Tests: Proxy invariant on live shape (mocked HTTP), allowlist refusal, dark-on-failure, defensive parse. **Mock the network — no real external calls in the test suite.**
+
+## Files to Create/Modify
+| File | Action | Purpose |
+|---|---|---|
+| `src/IntelligencePlane/c1_pattern_engine/adapters/http.py` | Create | Shared HTTP client (timeout/retry/rate-limit) |
+| `src/IntelligencePlane/c1_pattern_engine/adapters/fetchers.py` | Create | Concrete `RawVolumeFetch` per source |
+| `src/IntelligencePlane/c1_pattern_engine/adapters/allowlist.py` | Create | Trend-path allowlist load + enforce |
+| `config/source-allowlist.yaml` | Modify | Reconciled schema covering keyless sources |
+| `tests/Architecture/test_trend_fetchers.py` | Create | Proxy, allowlist, dark, defensive-parse (mocked HTTP) |
+
+## Verification Steps
+1. [ ] Every live-fetch observation is Proxy; failures degrade to `AdapterDark`.
+2. [ ] Non-allowlisted source refused; allowlist reconciliation documented.
+3. [ ] No real network in tests; `python -m ...detector.run` with live config runs unchanged spine.
+
+## Completion Criteria
+- [ ] Measurement + Boundaries + **Security** gates PASS; guard tests green; entry gate no new failures.
+- [ ] Dependency additions (if any) justified in the plan/ADR.

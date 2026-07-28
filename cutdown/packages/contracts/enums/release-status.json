@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/release-status.json",
+  "title": "ReleaseStatus",
+  "description": "Talent- and location-release status on a rights record (PRD REQ-003). `not_required` is a positive assertion by the supplier; `unknown` is the fail-closed default when no record exists — the two are never collapsed.",
+  "type": "string",
+  "enum": ["obtained", "not_required", "missing", "unknown"]
+}

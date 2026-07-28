@@ -1,7 +1,7 @@
 """The tracked-term registry (P7-T1).
 
 A *tracked term* is a string the keyless scanner (P7-T3) computes a robust-z against. Terms enter
-from five origins, carry a deterministic priority, and are capped at 250 per
+from six origins, carry a deterministic priority, and are capped at 250 per
 ``(vertical, platform)``. When the cap is hit the lowest-priority term is evicted **to cold
 storage, not to nothing** — and a term unseen for 90 days evicts the same way. Cold storage is
 append-only and queryable; nothing here is ever deleted.
@@ -26,13 +26,19 @@ EVICTION_DAYS = 90
 
 
 class AdmissionOrigin(StrEnum):
-    """The five ways a term earns a place in the registry."""
+    """The six ways a term earns a place in the registry."""
 
     SCHEDULED_SCAN = "scheduled_scan"
     """The keyless scanner saw volume worth tracking."""
 
     HUMAN_SUBMISSION = "human_submission"
     """A manager/client/resolver put a candidate trend on the board (REQ-005a)."""
+
+    TREND_DETECTED = "trend_detected"
+    """A rising+go ``TrendVerdict`` on a PUBLIC-scope signal directed the corpus at this format
+    (Phase 8 R1). Distinct from ``MECHANISM_OCCASION``: that records "a mechanism named this
+    trend"; this records "an observed-volume trend earned a human-relevant go verdict". Ranks
+    above a mechanism (corroborated by volume *and* a go), below a human submission."""
 
     MECHANISM_OCCASION = "mechanism_occasion"
     """A mechanism named this trend in ``occasioned_by_trend_ids`` — the corpus builder wants it."""
@@ -45,10 +51,13 @@ class AdmissionOrigin(StrEnum):
 
 
 # Deterministic origin weights. Human intent outranks the scanner; an editorial seed is the
-# first thing evicted when the cap bites.
+# first thing evicted when the cap bites. TREND_DETECTED (0.8) sits above a mechanism occasion
+# (0.7) and below a client brief (0.9) — a go-verdicted volume trend outranks a hypothesis but
+# not a human's stated brief (Phase 8 R1, ADR-0004 §3).
 _ORIGIN_WEIGHT: dict[AdmissionOrigin, float] = {
     AdmissionOrigin.HUMAN_SUBMISSION: 1.0,
     AdmissionOrigin.CLIENT_BRIEF: 0.9,
+    AdmissionOrigin.TREND_DETECTED: 0.8,
     AdmissionOrigin.MECHANISM_OCCASION: 0.7,
     AdmissionOrigin.SCHEDULED_SCAN: 0.5,
     AdmissionOrigin.EDITORIAL_SEED: 0.2,
@@ -65,6 +74,10 @@ class TrackedTerm:
     origin: AdmissionOrigin
     admitted_at: datetime
     last_activity_at: datetime
+    kind: str = "topic"
+    """What the term names (mirrors ``detector.signals.Kind``; plain ``str`` here so the registry
+    stays import-free of the detector). ``"topic"`` is the honest default for scan/config-seeded
+    terms — an open-web volume series cannot distinguish a sound from a format."""
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -96,20 +109,34 @@ class TermRegistry:
         self._active: dict[tuple[str, str, str], TrackedTerm] = {}
         self._cold: list[TrackedTerm] = []
 
-    def admit(self, term: TrackedTerm) -> TrackedTerm:
+    def admit(self, term: TrackedTerm, *, upgrade_origin: bool = False) -> TrackedTerm:
         """Admit or refresh a term. Enforces the per-bucket cap by evicting the lowest priority.
 
         Re-admitting an existing key refreshes ``last_activity_at`` (and never trips the cap).
+        The existing ``origin`` and ``kind`` are kept — a refresh is activity, not a correction;
+        re-labelling a term's kind or origin is a deliberate act, not a side effect of re-seeing it.
+
+        ``upgrade_origin=True`` is that one deliberate act (the Phase 8 trend-direction coupling): a
+        refresh may **raise** the term's origin to a higher-priority one — never lower it — so a
+        rising+go verdict promotes a ``SCHEDULED_SCAN`` term to ``TREND_DETECTED`` while never
+        downgrading a ``HUMAN_SUBMISSION`` term. Monotonic by weight; ``kind`` is still kept.
         """
         existing = self._active.get(term.key)
         if existing is not None:
+            origin = existing.origin
+            if (
+                upgrade_origin
+                and _ORIGIN_WEIGHT[term.origin] > _ORIGIN_WEIGHT[existing.origin]
+            ):
+                origin = term.origin  # deliberate upward re-label only; never a downgrade
             refreshed = TrackedTerm(
                 term=existing.term,
                 vertical=existing.vertical,
                 platform=existing.platform,
-                origin=existing.origin,
+                origin=origin,
                 admitted_at=existing.admitted_at,
                 last_activity_at=term.last_activity_at,
+                kind=existing.kind,
             )
             self._active[term.key] = refreshed
             return refreshed

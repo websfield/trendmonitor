@@ -1,0 +1,17 @@
+{
+  "name": "@cutdown/skill-plan",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "plan skill — MasterStoryPlan + PlatformEDL generation (REQ-033/050/052).",
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/editorial": "workspace:*",
+    "@cutdown/skill-runtime": "workspace:*",
+    "ulid": "3.0.2",
+    "yaml": "2.9.0"
+  }
+}

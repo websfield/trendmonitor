@@ -1,0 +1,104 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Cutdown — Style Profile Questionnaire
+#
+# WHO FILLS THIS IN: the client, or whoever at Social Soup knows their brand
+# best (account manager, producer). No technical knowledge required.
+# HOW LONG: about 30 minutes per client (developer-guide.md §3).
+#
+# WHAT THIS BECOMES: this file's answers get converted by the developer into
+# a schema-validated `style-profile-v1.json` instance (decisions.md D-26).
+# Phase 0 deliberately asks for HARD INVARIANTS ONLY — things that must
+# never drift for this brand. It does NOT ask about pacing, hook style, or
+# other "learned" preferences — those come later (Phase 1, REQ-062/065) once
+# the system has enough real output to learn from responsibly.
+#
+# HOW TO SUBMIT: fill in every field below (delete the guidance comments if
+# you like, or leave them — they're ignored), attach any logo/font files
+# mentioned, and send the whole folder back. One copy of this file per
+# client — copy it and rename to <client-slug>.yaml before you start.
+# ─────────────────────────────────────────────────────────────────────────
+
+# A short, stable, lowercase-with-dashes name for this client — used
+# internally to link this profile to their account and their jobs.
+# Once chosen, do not change it (see client-account-list.yaml's accountId).
+# Example: "acme-fitness"
+accountId: ""
+
+# The name people would actually recognise — shown on internal review
+# screens only, never published. Example: "Acme Fitness Studios"
+displayName: ""
+
+# ── Brand colours ──────────────────────────────────────────────────────
+# List every colour that matters, with a plain-English role. Hex codes are
+# ideal; "the blue from our logo" is fine if that's all you have — the
+# developer will pin it down.
+brandColors:
+  primary: ""        # e.g. "#1A1A2E" — main brand colour, used most often
+  accent: ""          # e.g. "#E94560" — for highlights, CTAs, emphasis
+  textOnVideo: ""      # colour used for on-screen captions/titles, if brand-specific
+  # Add more named roles here if you have them, e.g. "secondary:", "background:"
+
+# ── Fonts ───────────────────────────────────────────────────────────────
+# Phase 0 defaults to a free, pre-licensed font (Inter) for every client
+# unless you tell us otherwise here. If you have a licensed brand font you
+# want used, name it AND attach proof of licence/usage rights — without
+# that, we cannot legally burn it into video (decisions.md D-29).
+hasLicensedBrandFont: false   # true / false
+brandFontName: ""              # only if hasLicensedBrandFont: true
+brandFontLicenceAttached: false  # confirm you've attached the licence file/proof
+
+# ── Logo ────────────────────────────────────────────────────────────────
+# Attach the actual logo file alongside this questionnaire (PNG with
+# transparency is strongly preferred — see the note below on why).
+logoFileAttached: false
+logoUsageRules: |
+  # Plain-English rules for where/how the logo may appear on video.
+  # Example:
+  #   - Always bottom-right corner, never covering a face or key text.
+  #   - Never stretched, rotated, or recoloured.
+  #   - Minimum 5% of frame width for legibility.
+
+# NOTE on the logo file: send it as a PNG (or similar) with a real
+# transparent background if you have one — a logo without transparency
+# will still work, it just gets classified slightly differently on our
+# side (decisions.md D-40), and transparency lets us place it over any
+# background cleanly.
+
+# ── Things that must never appear (prohibitions) ───────────────────────
+# Words, claims, imagery, topics, or competitors that must NEVER show up
+# in any video for this brand — spoken, on-screen text, or implied. Be as
+# specific as you can; this is a hard rule the system enforces, not a
+# suggestion.
+prohibitions:
+  - ""   # e.g. "Never say 'guaranteed results' or similar absolute claims"
+  - ""   # e.g. "Never mention competitor names"
+  - ""   # e.g. "No profanity, even censored"
+
+# ── Tone of voice ───────────────────────────────────────────────────────
+# A short, plain description of how this brand sounds when it talks.
+# Not a style guide — a sentence or two an editor could actually use.
+tone: ""
+# Example: "Direct and confident, no corporate jargon. Light humour is
+# welcome but never sarcastic. Speaks to the customer as a peer, not down
+# to them."
+
+# ── Casing & on-screen text conventions ────────────────────────────────
+caseStyle: ""        # e.g. "Sentence case" / "Title Case" / "ALL CAPS for emphasis only"
+emojiAllowed: false   # true / false — are emoji acceptable in captions/on-screen text?
+
+# ── Anything else load-bearing? ─────────────────────────────────────────
+# Anything that doesn't fit above but that an editor absolutely must know
+# to avoid an embarrassing mistake. Leave blank if nothing.
+otherNotes: ""
+
+# ─────────────────────────────────────────────────────────────────────────
+# FOR THE DEVELOPER (not the client) — do not ask the client to fill this:
+#   - Convert this instance to cutdown/data/style-profiles/<accountId>.yaml
+#     once the style-profile-v1 schema exists (tech-spec.md §15 step 5).
+#   - `hasLicensedBrandFont: true` with no licence attached is a hold —
+#     escalate per decisions.md D-16/D-29's licence-obligation rule before
+#     using anything other than the Inter default.
+#   - This file's `accountId` MUST match the one used in
+#     client-account-list.yaml for the same client — one identity, two
+#     documents.
+# ─────────────────────────────────────────────────────────────────────────

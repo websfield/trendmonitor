@@ -1,0 +1,46 @@
+# ADR-0009: The Trend-Monitor Runtime — a Python Entrypoint Behind a Scheduling Port
+
+**Status:** Accepted
+**Date:** 2026-07-16
+**Deciders:** Fred
+**Related:** [ADR-0001](0001-trend-signal-sourcing.md) · [ADR-0004](0004-trend-detection-and-submission.md) · [ADR-0006](0006-mechanisms-and-the-warrant-ladder.md) · [integration-contract.md](../integration-contract.md) §Runtime note
+**Raised by:** the trend-monitor-runtime build (shaping brief 2026-07-16; `DECISIONS.md` entries of the same date)
+
+---
+
+## Context
+
+ADR-0004 designed the trend subsystem; the detector's stages (robust-z detection, lifecycle, tenant-scoped verdicts, coverage reporting, the human submission loop) are built and unit-tested in the Python intelligence plane. What was never built is the **runtime**: nothing schedules a scan, fetches live volumes, persists signals across nights, or feeds ingestion priority.
+
+The tech spec's architecture diagram names **Hangfire** as the job runner. Hangfire is a .NET scheduler; the trend scan is pure intelligence-plane work — statistics over fetched volume series, producing advisory `TrendSignal`s and never a decision. Hosting it in Hangfire would force a .NET→Python cross-plane call for a job with no control-plane logic in it, and would add a scheduler-framework dependency to a path that needs none.
+
+## Decision
+
+**The trend scan runs as an idempotent Python entrypoint — `python -m c1_pattern_engine.detector.run` — behind a thin scheduling port. Cadence is an external concern: OS cron or a container scheduler invokes it nightly. One invocation = one scan.**
+
+- The entrypoint loads a durable state root (signal store, identity index, resolved samples, term registry, verdict ledger), runs the pipeline (fetch → group → z → detect → assemble → store → verdict → coverage), persists, and exits. No in-process timer or loop.
+- **This diverges from the tech spec's named Hangfire runner deliberately.** Hangfire remains the right host for genuinely .NET-side jobs (submission enqueue, outcome snapshots, staleness alarms). It is simply not on the trend-scan path.
+- Deployment of the cron trigger itself is deferred with the rest of deployment (`RUNBOOK.md` records the honest state); the entrypoint is runnable and testable locally now.
+
+## Invariants the runtime must preserve
+
+Each is a standing rule with an enforcing test or mechanism; the runtime adds no exception to any of them.
+
+1. **Trends never touch a score** (REQ-005e, ADR-0004 §1). No `TrendSignal` value enters VPS/BAS/AWS/veto/verdict/budget at any weight. Guard tests: `tests/Architecture/test_trends.py::test_trend_never_enters_vps`, `test_publication_authority.py::test_no_scoring_adjacent_python_module_reaches_a_trend_or_miner_output`, `test_pattern_miner.py::test_trend_never_enters_vps`.
+2. **Every keyless read is `Proxy`** (ADR-0001). Corroboration upgrades confidence, never provenance. Enforced structurally at `adapters/base.py:116` (constructor invariant); guard test `test_trends.py::test_corroboration_not_provenance`; `MeasuredOutcome` bars Proxy from effect sizes (`substrate/provenance.py:126`).
+3. **`ingestion_arm` never converges with the amplification `arm`** (ADR-0003, ADR-0006). The one permitted coupling — a `rising`+`go` verdict raising ingestion priority — moves corpus *direction* only; it never touches `miner/arm.py` or a mechanism's warrant. Guard tests: `test_synthesiser.py::test_ingestion_arm_stratified_report`, `test_mechanism_provenance.py::test_arm_is_absent_from_the_mechanism_dataclass`.
+4. **The feed is manager/client/resolver-facing, never creator-facing** (ADR-0004 §5, REQ-005g). Guard test: `test_trends.py::test_creator_role_denied`.
+5. **The per-tenant verdict-input supplier is config/artefact-only — forever.** C1 never grows a read path into ClientHub operational data (the "convenience read replica" the integration contract names as how the decoupling dies); if real tenant briefs are ever needed, they arrive as a pushed/exported artefact.
+6. **The trend-path allowlist gates keyless *volume* fetch only.** It is host-pinned, deny-by-default, with no config/env/per-source override, and **structurally disjoint** from the exemplar-media rights schema (a separate top-level key such as `trend_sources:`, or a separate file — never the `sources:` key `extraction/acquire.py` reads as `permit_ingestion` media rights) — so adding a trend source can never widen exemplar-media ingestion rights. The D5 legal gate (`ingest_live`/`LiveIngestionBlocked`, `corpora/exemplar.py`) stays closed. TikTok Creative Center stays human-in-the-loop, never crawled (ADR-0001, ADR-0004).
+7. **Tenancy holds at the repository layer.** Internal-scope signals are returned only to queries carrying their `tenant_id`; the shared resolved-samples pool and the ingestion coupling consume public-scope material only. Guard test: `test_trends.py::test_internal_signal_is_tenant_scoped`, plus the store-level and coupling-refusal tests this build adds.
+8. **Fail closed.** A dark adapter, sparse window, corrupt store, or partial failure degrades to fewer signals plus a *stated* coverage gap — never a fabricated series, never a silently-empty store. Coverage honesty is pinned: the default tracked-platform set names the blind platforms (`tiktok`, `instagram_reels`) as gaps rather than omitting them (ADR-0004's "most likely way this component quietly misleads someone").
+9. **Detection origin and confidence are separate axes.** A signal carries a `detection_origin` (`automated` | `human_sourced`) recording how it *came to exist*; `confidence` records what has since corroborated it. Coverage's automated-vs-human split keys on **origin, never on the confidence rung** — an automated signal a human predated is upgraded to `human_corroborated` and still counts as *automated* coverage. Keying on confidence silently reclassifies it and understates automated reach. Origin is a **birth property**, immutable for the life of a signal id: nightly re-detection regenerates the same `uuid5` and must not relabel a submission-born signal `automated` (enforced in `TrendSignalStore.add`). Guard tests: `test_trend_submission_merge.py::test_upgraded_automated_signal_still_counts_as_automated_coverage`, `::test_detection_origin_survives_automated_re_detection`.
+10. **The two resolution pools are censored differently, on purpose.** Both close on an observed volume decline; they differ in the **start anchor** — `automated` from the volume-run start, `human` from the submitter's first sighting — so a human-anchored lifetime *includes the lead time* and merging the pools would add that lead to every automated estimate. The `human` pool takes observed declines only (a born signal's aging-out is a *censored* observation — never re-detected, `valid_to` never moved, so the duration would be the horizon **constant**, giving `MAD = 0` and a zero-width interval published on a presumption); the `automated` pool also takes archive closes as deliberate upper bounds. The asymmetry biases the human estimate short, which *tightens* the `go` lead-time guard — the conservative direction. **Do not symmetrise them.** Guard tests: `test_trend_submission_merge.py::test_born_signal_archive_never_enters_the_resolution_pool`, `::test_declining_born_signal_resolves_into_the_human_pool_not_automated`, `::test_days_remaining_selects_the_pool_matching_the_signals_origin`.
+11. **Submission-born signals are staff-scoped.** Only `manager`/`resolver` submissions may mint public, tenant-neutral state (a `TermRegistry` admission or a born `TrendSignal`); a `client` submission is tenant-originated and is refused fail-closed, because the registry and exemplar corpus have no tenant axis (REQ-060). This **supersedes REQ-005a's** client-submission clause (amended 2026-07-22); restoring it requires an internal-scope (tenant-private) submission rule first — tracked in `ops-todos.md` item 8b. The NDJSON submission book is *untrusted input* (its replay bypasses `SubmissionBook.resolve`), so this rule, resolver independence (REQ-005b), and stage validity are each re-asserted **at the point of use** in the merge, never assumed from the writer. Guard tests: `test_trend_submission_merge.py::test_client_submission_never_mints_public_state`, `::test_self_resolution_on_the_replay_path_is_skipped`, `::test_client_open_submission_is_absent_from_shared_coverage_counts`.
+
+## Consequences
+
+- The trend subsystem stays independently buildable and shippable (ADR-0004's stated property) — the runtime adds no coupling to C2/C3/C4: it is a scheduled C1-internal job that calls no other component and is called by none.
+- Cross-run state (signals, identity index, resolved samples, term registry, verdict ledger) needs a durable backing under one state root; that store is C1-local and holds no tenant outcome data beyond internal-scope signals already governed by invariant 7. ADR-0008's exit criteria are unaffected (no outcome events are written here — C2 remains the sole event writer).
+- "Nightly" is real but locally hosted until deployment lands; `RUNBOOK.md` documents the cron invocation and keeps the honest "nothing deployed yet" state.
+- The tech spec's diagram remains correct for the submission path (enqueue → Hangfire → Intelligence Svc); its trend-scan scheduling expectation is superseded by this ADR.

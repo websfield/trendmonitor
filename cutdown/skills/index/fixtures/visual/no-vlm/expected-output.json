@@ -1,0 +1,11 @@
+{
+  "subStage": {
+    "completedAt": "2026-07-21T00:00:00Z",
+    "engine": null,
+    "name": "visual_descriptions",
+    "reason": "visual descriptions disabled (--no-vlm); the D-21 spend ceiling is owner-set and not yet configured",
+    "startedAt": "2026-07-21T00:00:00Z",
+    "status": "skipped"
+  },
+  "visualDescriptions": []
+}

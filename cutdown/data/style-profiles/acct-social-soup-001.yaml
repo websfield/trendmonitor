@@ -1,0 +1,46 @@
+# StyleProfile — PLACEHOLDER (decisions.md D-26)
+#
+# Brand invariants ONLY (REQ-060/061 hard half): colours, fonts, logo rules,
+# prohibitions, tone. Learned tendencies (pacing, hook preference, caption
+# density) are Phase 1 and have no home in style-profile-v1 by construction.
+#
+# These are PLACEHOLDER values, hand-authored to exercise the pipeline until the
+# real D-26 owner inputs arrive. `approval: null` marks it a draft — usable for
+# implementation fixtures, surfaced as unapproved, never treated as owner-ratified.
+# Matches the accountId of the Phase 0 proving-corpus JobBrief fixture.
+styleProfileId: "01J9ST2B3C4D5E6F7G8H9K0M7V"
+envelope:
+  schemaVersion: "1.0.0"
+  createdAt: "2026-07-28T03:00:00Z"
+  createdBy:
+    kind: human
+    name: "Cutdown Phase 0 (placeholder author)"
+accountId: "acct-social-soup-001"
+profileVersion: "1.0.0"
+approval: null
+colours:
+  - { name: "Soup Red", hex: "#E23B2E", role: primary }
+  - { name: "Ink", hex: "#141414", role: text }
+  - { name: "Paper", hex: "#FAFAFA", role: background }
+  - { name: "Citrus", hex: "#F2A900", role: accent }
+fonts:
+  - { family: "Inter", role: caption, rightsRecorded: true }
+  - { family: "Inter", role: body, rightsRecorded: true }
+  - { family: "Inter", role: heading, rightsRecorded: true }
+logoRules:
+  mustAppear: true
+  allowedPlacements: [bottom_right, bottom_left]
+  prohibitedTreatments: [recolour, stretch, rotate, "drop-shadow"]
+toneOfVoice:
+  descriptors: [plain-spoken, practical, "no hype"]
+  casing: sentence
+  emojiUse: sparing
+  allowProfanity: false
+prohibitedClaims:
+  - "guaranteed views"
+  - "algorithm hack"
+  - "get rich quick"
+prohibitedTreatments:
+  - "no fear-based hooks"
+  - "no fake urgency"
+  - "no engagement bait"

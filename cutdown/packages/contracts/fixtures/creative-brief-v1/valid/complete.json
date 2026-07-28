@@ -1,0 +1,48 @@
+{
+  "creativeBriefId": "01J8ZK4M5N6P7Q8R9S2T3V4W5X",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-28T02:00:00Z",
+    "createdBy": { "kind": "skill", "skill": "propose", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-mixed",
+  "sourceBriefId": "01HQZX3F5G7K9M2N4P6R8S0T2V",
+  "parentCreativeBriefId": null,
+  "audiencePromise": "See the whole multi-camera edit come together in under a minute",
+  "creativeThesis": "The edit, not the footage, is the craft — show the timeline doing the work",
+  "hookFamily": "outcome_first",
+  "narrativeArchetype": "before-and-after reveal",
+  "value": "A working editor's satisfaction at watching raw takes resolve into one clean cut",
+  "proofPoints": [
+    {
+      "claim": "The final cut uses only real timeline moves, no mockups",
+      "evidenceMomentIds": ["01J9MA2B3C4D5E6F7G8H9K0M1N"],
+      "basis": { "kind": "observed_fact", "observed": "The editor's screen shows the actual NLE timeline with clips being trimmed" }
+    }
+  ],
+  "selectedMoments": [
+    {
+      "momentId": "01J9MA2B3C4D5E6F7G8H9K0M1N",
+      "candidateFunction": "proof",
+      "rationale": "Clearest shot of the timeline actually being edited"
+    },
+    {
+      "momentId": "01J9MB2B3C4D5E6F7G8H9K0M2P",
+      "candidateFunction": "payoff",
+      "rationale": "The finished vertical cut playing back"
+    }
+  ],
+  "cta": { "kind": "cta", "text": "Follow for the rest of the workflow" },
+  "distinctness": {
+    "peerBriefLabels": ["angle-2", "angle-3"],
+    "sharedMomentFraction": 0.5,
+    "semanticAngleLabel": "craft-of-the-edit"
+  },
+  "knownLimitations": ["No audio of the editor narrating; captions carry the explanation"],
+  "modelProvenance": {
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-5",
+    "promptTemplateId": "propose-angles",
+    "promptTemplateVersion": "1.0.0"
+  }
+}

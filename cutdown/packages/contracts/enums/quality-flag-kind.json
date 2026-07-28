@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/quality-flag-kind.json",
+  "title": "QualityFlagKind",
+  "description": "The twelve technical-quality signals of PRD REQ-014, one enum member per listed item: blur, shake, under/overexposure, black or frozen frames, occlusion, poor crop, low resolution, duplicate frames, audio clipping, noise, speech intelligibility, silence. The Phase 2 coverage matrix asserts every member has an implementation plus a positive and a negative fixture — keeping the member count equal to REQ-014's item count is what makes 'all named quality fields, not a sample' countable.",
+  "type": "string",
+  "enum": [
+    "blur",
+    "shake",
+    "exposure",
+    "black_or_frozen_frame",
+    "occlusion",
+    "poor_crop",
+    "low_resolution",
+    "duplicate_frames",
+    "audio_clipping",
+    "audio_noise",
+    "speech_intelligibility",
+    "silence"
+  ]
+}

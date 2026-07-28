@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/plan/output.json",
+  "title": "PlanResult",
+  "type": "object",
+  "oneOf": [
+    {
+      "title": "Planned",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "jobId", "storyPlanId", "storyPlanPath", "edlId", "edlPath", "validation"],
+      "properties": {
+        "kind": { "type": "string", "const": "planned" },
+        "jobId": { "type": "string", "minLength": 1 },
+        "storyPlanId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+        "storyPlanPath": { "type": "string", "minLength": 1 },
+        "edlId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+        "edlPath": { "type": "string", "minLength": 1 },
+        "validation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ok", "clipsChecked"],
+          "description": "The deterministic resolveEdl result. ok is always true here — an invalid EDL is never written.",
+          "properties": {
+            "ok": { "type": "boolean" },
+            "clipsChecked": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    {
+      "title": "Skipped",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "code", "reason"],
+      "properties": {
+        "kind": { "type": "string", "const": "skipped" },
+        "code": { "type": "string", "const": "MODEL_NOT_CONFIGURED" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    }
+  ]
+}

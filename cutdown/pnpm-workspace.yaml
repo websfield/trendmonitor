@@ -1,0 +1,8 @@
+# Workspace root is HERE, not the repo root (tech-spec §2, decisions.md D-23).
+# Nothing above cutdown/ references this file, and it references nothing above itself —
+# that is what makes the Stage C extraction a directory copy rather than a refactor.
+packages:
+  - apps/*
+  - packages/*
+  - skills/*
+  - workflows/*

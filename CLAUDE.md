@@ -2,9 +2,11 @@
 
 *This file is the contract every agent and command in the pack obeys, and it rides in **every session's context** — keep it honest and lean (~100 lines). A stale rule misleads every downstream agent; a low-value line dilutes the rules that matter. If a line doesn't change how an agent behaves, move it to a skill or doc and point to it.*
 
+Checkpoints: on
+
 ## What you are building
 
-**UGC Intelligence for ClientHub** — four components: a Pattern Engine (C1, produces beliefs), a Scoring & Amplification service (C2, acts on beliefs at two gates: submission approval and post-publication amplification), a Calibration Monitor (C3, referees — sole breaker + pattern-promotion authority), and a Knowledge API (C4, serves beliefs — read-only, holds no tenant data). **The product is not what is viral, but why:** C1 mines tenant-neutral `Mechanism` claims (falsifiable, no effect size, human-ratified) from the public exemplar corpus; C4 serves them. **Code has landed across three planes:** .NET/C# control plane (`src/ControlPlane/`, `src/KnowledgeApi/`) for every deterministic decision, Python intelligence plane (`src/IntelligencePlane/` — extraction/mining/stats), React/TS frontend (`src/Frontend/`); Hangfire jobs still planned. The doc set stays authoritative — start at `docs/initial/README.md` and `docs/initial/integration-contract.md`.
+**UGC Intelligence for ClientHub** — four components: a Pattern Engine (C1, produces beliefs), a Scoring & Amplification service (C2, acts on beliefs at two gates: submission approval and post-publication amplification), a Calibration Monitor (C3, referees — sole breaker + pattern-promotion authority), and a Knowledge API (C4, serves beliefs — read-only, holds no tenant data). **The product is not what is viral, but why:** C1 mines tenant-neutral `Mechanism` claims (falsifiable, no effect size, human-ratified) from the public exemplar corpus; C4 serves them. **Code has landed across three planes:** .NET/C# control plane (`src/ControlPlane/`, `src/KnowledgeApi/`) for every deterministic decision, Python intelligence plane (`src/IntelligencePlane/` — extraction/mining/stats), React/TS frontend (`src/Frontend/`); the nightly trend monitor runs as a Python entrypoint behind an external-cron scheduling port (ADR-0009), Hangfire remaining for .NET-side jobs (still planned). The doc set stays authoritative — start at `docs/initial/README.md` and `docs/initial/integration-contract.md`.
 
 ## Golden rules (any project — keep these even if you rewrite everything else)
 
@@ -35,6 +37,7 @@
 > Mistakes that actually happened in this project, distilled into rules so they never happen twice. When a reviewer gate, a person, or a failed run catches a mistake worth remembering, add **one line** here (agents: offer first, never append silently). Keep only high-value entries, at most ~10 — when it's full, merge or retire the weakest, or promote a proven lesson into a Non-negotiable rule above or (if a diff pattern can catch it) a guardrail in `.claude/guardrails.rules.json`.
 > Format: `YYYY-MM-DD — <rule an agent can obey> (why: <the mistake, in one clause>)`
 
+- 2026-07-21 — A dependency install is proven by **importing** each package, never by the installer's exit code — and at a uv/pnpm **workspace root**, syncing installs only the root project unless you pass `--all-packages` (why: `uv sync` exited 0 having installed nothing, then a second run reported success while three OpenCV distributions silently clobbered one `cv2/` directory and broke three engines at import).
 - 2026-07-14 — A semantic schema bump (`events-v1.json` / `rubric-v1.json` / `mechanisms-v1.json`) must update the C# contract-mirror constant (e.g. `VerdictIssuedContract.Version`) **and** its assertion tests in the *same* change, then run `dotnet test` — a "docs-only" bump is not docs-only (why: R0 bumped events-v1.json to 1.3.0 and left 2 C# version-assertion tests red until R1 caught it).
 
 ## Commands
@@ -51,7 +54,7 @@ npm --prefix src/Frontend test                      # UI honesty suite + compone
 
 ## Where things live
 
-- **Authoritative doc set → `docs/initial/`** — PRD, tech specs (UGC / trend / knowledge), ADRs 0001–0007 in `adr/`, component specs (C1/C2/C4), eval plan, compliance notes. Layout matches the links.
+- **Authoritative doc set → `docs/initial/`** — PRD, tech specs (UGC / trend / knowledge), ADRs 0001–0009 in `adr/`, component specs (C1/C2/C4), eval plan, compliance notes. Layout matches the links.
 - `docs/initial.backup/` is the **superseded first draft**, kept for provenance. Do not cite it, do not edit it, and do not trust its links (flat layout; links assume subfolders). Two known defects are corrected in the authoritative set: `Proxy` outcomes entering an effect-size calculation, and a `c3_ace` field name that collides with Component 3.
 - Machine-readable contracts → `docs/initial/schemas/` — `rubric-v1.json` (vetoes, VPS/BAS/AWS weights), `events-v1.json` (event envelope, breaker states, Contracts B–D), `mechanisms-v1.json` (Mechanism, warrant ladder, Contract E).
 - The integration spine → `docs/initial/integration-contract.md` — Contracts A–E, failure semantics. Read this before proposing any cross-component change.

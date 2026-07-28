@@ -1,0 +1,212 @@
+{
+  "indexId": "01HQZX3F5G7K9M2N4P6R8S0W2A",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T05:00:00Z",
+    "createdBy": { "kind": "skill", "skill": "index", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-1",
+  "assetId": "01HQZX3F5G7K9M2N4P6R8S0V2A",
+  "sourceContentHash": {
+    "algorithm": "sha256",
+    "value": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+  },
+  "indexerVersion": "1.0.0",
+  "timebaseMap": {
+    "mode": "cfr",
+    "sourceTimebase": { "num": 1, "den": 15360 },
+    "normalizedTimebase": { "num": 1, "den": 15360 },
+    "entries": []
+  },
+  "subStages": [
+    {
+      "name": "transcript",
+      "status": "completed",
+      "reason": null,
+      "engine": {
+        "name": "faster-whisper",
+        "version": "distil-large-v3-int8",
+        "parameters": [
+          { "key": "language", "value": "en" },
+          { "key": "word_timestamps", "value": "true" }
+        ]
+      },
+      "startedAt": "2026-07-21T05:00:01Z",
+      "completedAt": "2026-07-21T05:00:20Z"
+    },
+    {
+      "name": "shots",
+      "status": "completed",
+      "reason": null,
+      "engine": {
+        "name": "PySceneDetect",
+        "version": "0.6",
+        "parameters": [
+          { "key": "detector", "value": "ContentDetector" },
+          { "key": "threshold", "value": "27.0" }
+        ]
+      },
+      "startedAt": "2026-07-21T05:00:20Z",
+      "completedAt": "2026-07-21T05:00:25Z"
+    },
+    {
+      "name": "visual_descriptions",
+      "status": "skipped",
+      "reason": "Run with --no-vlm: the D-21 Phase 0 spend ceiling is not set, so no VLM call was made. Descriptions are absent, not fabricated.",
+      "engine": null,
+      "startedAt": "2026-07-21T05:00:25Z",
+      "completedAt": null
+    }
+  ],
+  "transcript": {
+    "language": "en-AU",
+    "languageConfidence": 0.98,
+    "verbatimText": "So the first thing you do is you umm you drop all the footage in one folder.",
+    "segments": [
+      {
+        "segmentId": "seg-0001",
+        "startTicks": 0,
+        "endTicks": 46080,
+        "timebase": { "num": 1, "den": 15360 },
+        "verbatimText": "So the first thing you do is you umm you drop all the footage in one folder.",
+        "displayText": "So the first thing you do is you drop all the footage in one folder.",
+        "confidence": 0.93,
+        "speakerTurnId": "turn-0001",
+        "words": [
+          {
+            "startTicks": 0,
+            "endTicks": 3072,
+            "timebase": { "num": 1, "den": 15360 },
+            "verbatim": "So",
+            "confidence": 0.97,
+            "lowConfidence": false,
+            "properNounCandidate": false
+          },
+          {
+            "startTicks": 30720,
+            "endTicks": 33792,
+            "timebase": { "num": 1, "den": 15360 },
+            "verbatim": "umm",
+            "confidence": 0.41,
+            "lowConfidence": true,
+            "properNounCandidate": false
+          }
+        ]
+      }
+    ]
+  },
+  "speakerTurns": [
+    {
+      "turnId": "turn-0001",
+      "startTicks": 0,
+      "endTicks": 46080,
+      "timebase": { "num": 1, "den": 15360 },
+      "inferredLabel": "speaker_1",
+      "inferredConfidence": 0.62,
+      "lowConfidence": false,
+      "correction": {
+        "name": "Fred Wang",
+        "author": "Fred Wang",
+        "correctedAt": "2026-07-21T05:10:00Z"
+      }
+    }
+  ],
+  "shots": [
+    {
+      "shotId": "shot-0001",
+      "startTicks": 0,
+      "endTicks": 30720,
+      "timebase": { "num": 1, "den": 15360 },
+      "transitionIn": "hard_cut",
+      "transitionOut": "hard_cut",
+      "keyframeTicks": 15360,
+      "confidence": 0.88,
+      "engine": {
+        "name": "PySceneDetect",
+        "version": "0.6",
+        "parameters": [{ "key": "threshold", "value": "27.0" }]
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "sceneId": "scene-0001",
+      "shotIds": ["shot-0001"],
+      "startTicks": 0,
+      "endTicks": 30720,
+      "timebase": { "num": 1, "den": 15360 },
+      "groupingSignals": ["transcript_continuity", "speaker_continuity"],
+      "engine": {
+        "name": "cutdown-scene-grouping",
+        "version": "1.0.0",
+        "parameters": [{ "key": "maxGapSeconds", "value": "1.5" }]
+      }
+    }
+  ],
+  "ocr": [
+    {
+      "ocrId": "ocr-0001",
+      "startTicks": 3072,
+      "endTicks": 15360,
+      "timebase": { "num": 1, "den": 15360 },
+      "text": "STEP 1",
+      "confidence": 0.91,
+      "boundingBox": { "x": 0.1, "y": 0.05, "width": 0.3, "height": 0.08 },
+      "shotId": "shot-0001",
+      "engine": {
+        "name": "PaddleOCR",
+        "version": "PP-OCRv4",
+        "parameters": [{ "key": "lang", "value": "en" }]
+      }
+    }
+  ],
+  "visualDescriptions": [],
+  "audioEvents": [
+    {
+      "eventId": "audio-0001",
+      "kind": "speech",
+      "startTicks": 0,
+      "endTicks": 46080,
+      "timebase": { "num": 1, "den": 15360 },
+      "confidence": 0.95,
+      "engine": {
+        "name": "silero-vad",
+        "version": "4.0",
+        "parameters": [{ "key": "threshold", "value": "0.5" }]
+      }
+    },
+    {
+      "eventId": "audio-0002",
+      "kind": "energy_change",
+      "startTicks": 20000,
+      "endTicks": 24000,
+      "timebase": { "num": 1, "den": 15360 },
+      "confidence": 0.71,
+      "engine": {
+        "name": "PANNs-CNN14",
+        "version": "1.0",
+        "parameters": [
+          { "key": "corroboratedBy", "value": "librosa-rms-delta" },
+          { "key": "note", "value": "REQ-015: classifier-led, never volume alone" }
+        ]
+      }
+    }
+  ],
+  "qualityFlags": [
+    {
+      "flagId": "qf-0001",
+      "kind": "silence",
+      "startTicks": 46080,
+      "endTicks": 61440,
+      "timebase": { "num": 1, "den": 15360 },
+      "severity": "info",
+      "score": -62.4,
+      "threshold": { "name": "silenceDbfs", "value": -50, "comparison": "less_than" },
+      "engine": {
+        "name": "silero-vad",
+        "version": "4.0",
+        "parameters": [{ "key": "minSilenceMs", "value": "500" }]
+      }
+    }
+  ]
+}

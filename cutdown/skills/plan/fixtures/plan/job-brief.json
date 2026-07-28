@@ -1,0 +1,16 @@
+{
+  "briefId": "01HQZX3F5G7K9M2N4P6R8S0T40",
+  "envelope": { "schemaVersion": "1.0.0", "createdAt": "2026-07-28T00:00:00Z", "createdBy": { "kind": "human", "name": "Fred Wang" } },
+  "parentBriefId": null,
+  "accountId": "acct-fixture-001",
+  "audience": "Australian small-business owners aged 28-45",
+  "objective": "education_utility",
+  "platforms": ["tiktok"],
+  "distributionMode": "organic",
+  "durationRange": { "minSeconds": 20, "maxSeconds": 45 },
+  "locale": "en-AU",
+  "brandOrCampaign": "Pricing transparency launch",
+  "contentPromise": "a clear before/after of the pricing change",
+  "cta": { "kind": "none" },
+  "variantCount": 2
+}

@@ -1,0 +1,76 @@
+{
+  "assetId": "01HQZX3F5G7K9M2N4P6R8S0V3B",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T04:31:00Z",
+    "createdBy": { "kind": "skill", "skill": "ingest", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-3",
+  "relativePath": "broll-silent.mp4",
+  "assetKind": "video",
+  "sourceClassification": "fixture",
+  "contentHash": {
+    "algorithm": "sha256",
+    "value": "c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6"
+  },
+  "byteSize": 6407,
+  "storedPath": "source/c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6.mp4",
+  "rights": {
+    "state": "unknown",
+    "owner": null,
+    "supplier": null,
+    "permittedPlatforms": null,
+    "territories": null,
+    "campaignStart": null,
+    "campaignEnd": null,
+    "expiryDate": null,
+    "talentReleaseStatus": "unknown",
+    "locationReleaseStatus": "unknown",
+    "musicStatus": "unknown",
+    "editingPermitted": null,
+    "paidAmplificationPermitted": null,
+    "evidenceUri": null,
+    "notes": "No rights sidecar accompanied this asset. REQ-003: unknown material is flagged, never assumed cleared."
+  },
+  "preflight": {
+    "inspected": true,
+    "container": { "formatName": "mov,mp4,m4a,3gp,3g2,mj2", "formatLongName": "QuickTime / MOV" },
+    "duration": { "ticks": 61440, "timebase": { "num": 1, "den": 15360 } },
+    "video": {
+      "codecName": "h264",
+      "profile": "High",
+      "pixelFormat": "yuv420p",
+      "codedWidth": 640,
+      "codedHeight": 360,
+      "displayWidth": 640,
+      "displayHeight": 360,
+      "rotationDegrees": 0,
+      "averageFrameRate": { "num": 30, "den": 1 },
+      "realFrameRate": { "num": 30, "den": 1 },
+      "frameRateMode": "cfr",
+      "timebase": { "num": 1, "den": 15360 },
+      "frameCount": 120,
+      "color": { "space": "bt709", "primaries": "bt709", "transfer": "bt709", "range": "tv" },
+      "hdr": { "isHdr": false, "detectedFormat": null }
+    },
+    "audioTracks": [],
+    "corruption": { "status": "clean", "detail": null, "decodeErrorCount": 0 }
+  },
+  "proxy": {
+    "storedPath": "proxy/c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6c3d4e5f6.mp4",
+    "contentHash": {
+      "algorithm": "sha256",
+      "value": "d4e5f607d4e5f607d4e5f607d4e5f607d4e5f607d4e5f607d4e5f607d4e5f607"
+    },
+    "proxyProfileVersion": "1.0.0",
+    "recipe": {
+      "shortEdgeMaxPixels": 720,
+      "videoCodec": "libx264",
+      "crf": 23,
+      "audioCodec": null,
+      "audioBitrateKbps": null,
+      "constantFrameRate": { "num": 30, "den": 1 }
+    },
+    "timebase": { "num": 1, "den": 15360 }
+  }
+}

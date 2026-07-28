@@ -1,0 +1,19 @@
+{
+  "name": "@cutdown/skill-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The tech-spec §6.2 execution contract, implemented once. Every skill's main() is a thin wrapper over runSkillMain().",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "ulid": "3.0.2"
+  }
+}

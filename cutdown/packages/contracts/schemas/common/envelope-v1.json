@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/common/envelope-v1.json",
+  "title": "Envelope",
+  "description": "Metadata every generated object instance carries (tech-spec §3, PRD §5.1). IMPORTANT: `createdAt` and `createdBy` are envelope metadata EXCLUDED from the content hash that keys caching and identity — otherwise two identical re-runs would hash differently and the REQ-005 cache would never hit. `schemaVersion` IS inside the hash, because it is semantic. `contentHash` on the enclosing object is computed by `hashContent()` in this package, which is the single implementation of that exclusion rule.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "createdAt", "createdBy"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of the schema this instance was written against."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC instant. Excluded from the content hash."
+    },
+    "createdBy": {
+      "$ref": "#/$defs/Creator",
+      "description": "Excluded from the content hash."
+    }
+  },
+  "$defs": {
+    "Creator": {
+      "title": "Creator",
+      "description": "Who produced this instance. A tagged union (tech-spec §3: `oneOf` plus a `const` discriminator) so a human-authored artefact can never be silently attributed to a skill, or the reverse.",
+      "type": "object",
+      "oneOf": [
+        {
+          "title": "SkillCreator",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "skill", "skillVersion"],
+          "properties": {
+            "kind": { "type": "string", "const": "skill" },
+            "skill": { "type": "string", "minLength": 1 },
+            "skillVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" }
+          }
+        },
+        {
+          "title": "HumanCreator",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "type": "string", "const": "human" },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The named human. `cutdown approve --by <name>` writes this; decisions.md D-9 requires approval to be a human act recorded with a name."
+            }
+          }
+        }
+      ]
+    }
+  }
+}

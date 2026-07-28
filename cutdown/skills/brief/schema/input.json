@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/brief/input.json",
+  "title": "BriefRequest",
+  "description": "Request for the `brief` skill. The brief document itself is passed as an opaque object and validated against job-brief-v1 by the skill — not declared inline here, so there is exactly one place the JobBrief shape is defined.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jobId", "brief"],
+  "properties": {
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The job this brief opens. Becomes a directory name under project-data/jobs/."
+    },
+    "sourcePath": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "Where the brief was read from, recorded for provenance. Null when authored in-memory (e.g. by the .claude mirror from a conversational ask)."
+    },
+    "brief": {
+      "type": "object",
+      "description": "The candidate JobBrief. Validated against job-brief-v1; envelope and briefId are filled in if absent."
+    }
+  }
+}

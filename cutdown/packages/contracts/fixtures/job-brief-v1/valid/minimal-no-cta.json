@@ -1,0 +1,19 @@
+{
+  "briefId": "01HQZX3F5G7K9M2N4P6R8S0T3W",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T04:05:00Z",
+    "createdBy": { "kind": "skill", "skill": "brief", "skillVersion": "1.0.0" }
+  },
+  "accountId": "acct-social-soup-002",
+  "audience": "Existing followers who already know the brand",
+  "objective": "community",
+  "platforms": ["tiktok"],
+  "distributionMode": "organic",
+  "durationRange": { "minSeconds": 10, "maxSeconds": 30 },
+  "locale": "en-AU",
+  "brandOrCampaign": "Community check-in",
+  "contentPromise": "Answer the question three people asked in the comments this week",
+  "cta": { "kind": "none" },
+  "variantCount": 1
+}

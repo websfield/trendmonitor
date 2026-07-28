@@ -13,7 +13,9 @@
 
 **REQ-005** [Must] The system runs a scheduled scan across the configured keyless sources, computing a robust z-score for each tracked term against its own trailing 28-day baseline, and raises a `TrendCandidate` where `z > 3` is sustained across two or more consecutive daily observations. Single-day spikes do not raise candidates.
 
-**REQ-005a** [Must] Any authenticated user with a manager, client, or resolver role can submit a candidate trend, supplying platform, vertical, evidence URIs, a predicted lifecycle stage at T+14d as a probability distribution over `{rising, peak, declining}`, and a free-text rationale. A submitter may hold at most `max_open_positions` (default 5) unresolved submissions concurrently.
+**REQ-005a** [Must] Any authenticated user with a **manager or resolver** role can submit a candidate trend, supplying platform, vertical, `kind`, `label` (the trend's term), evidence URIs, a predicted lifecycle stage at T+14d as a probability distribution over `{rising, peak, declining}`, and a free-text rationale. A submitter may hold at most `max_open_positions` (default 5) unresolved submissions concurrently.
+
+> **Amended 2026-07-22 (was "manager, client, or resolver").** A submission mints **public, tenant-neutral** state — a `TermRegistry` admission and, on a platform with no automated series, a `TrendSignal` every tenant can read — but a *client* submission is tenant-originated, and the registry and exemplar corpus have no tenant axis (REQ-060). Publishing one would be a tenancy widening requiring no override, only an absent check. Client submissions are therefore refused fail-closed; restoring them requires an internal-scope (tenant-private) submission rule first. See [ADR-0009](adr/0009-trend-monitor-runtime.md) invariant 11 and `ops-todos.md` item 8b. The feed *read* gate is unchanged and remains manager/client/resolver (REQ-005g) — a client may still **view** trends, just not submit them.
 
 **REQ-005b** [Must] Every submission resolves at T+14d and again at T+30d. Where an automated source observes the trend, the detector resolves it. Where no automated source exists, a named resolver records the outcome with evidence, provenance `User-provided`. A submitter may never resolve their own submission; such a resolution is void and is logged.
 
@@ -232,6 +234,8 @@ GET    /api/trends/leaderboard                        → shrunk_weight, n_resol
 GET    /internal/trends/scan                          → scheduled; raises candidates
 POST   /internal/trends/{id}/fit-decay                → refits days_remaining curve for a platform
 ```
+
+> **Scheduling host ([ADR-0009](adr/0009-trend-monitor-runtime.md), 2026-07-16).** The scheduled scan is hosted as a Python entrypoint — `python -m c1_pattern_engine.detector.run`, one invocation = one nightly run — triggered by an external scheduler (OS cron / container schedule), not by the Hangfire runner named in the UGC tech spec's diagram (which stays on the .NET submission path). The `/internal/trends/scan` surface above describes the job's semantics; the entrypoint is its current host.
 
 ---
 

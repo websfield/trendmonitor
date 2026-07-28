@@ -1,0 +1,11 @@
+# Negative fixture: names a turn this transcript does not contain.
+# This is the "transcript was re-indexed and the turn IDs moved" case — accepting
+# it would attach every OTHER name in the file to the wrong stretch of speech,
+# so it must be a validation failure (exit 2), not a skipped entry.
+author: reviewer@example.com
+correctedAt: "2026-07-21T10:00:00Z"
+corrections:
+  - turnId: turn-0001
+    name: Ada Lovelace
+  - turnId: turn-9999
+    name: Nobody At All

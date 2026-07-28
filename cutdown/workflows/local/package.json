@@ -1,0 +1,13 @@
+{
+  "name": "@cutdown/workflow-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Phase 0 durable local workflow runner (tech-spec §8, decisions.md D-11/D-45): a hand-rolled two-table SQLite state machine that PROJECTS the authoritative run-log.jsonl. No queue library. index.db is a rebuildable projection, never the source of truth.",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "scripts": {
+    "test": "node --test dist/tests/"
+  }
+}

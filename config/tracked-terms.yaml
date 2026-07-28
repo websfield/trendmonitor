@@ -1,0 +1,16 @@
+# Tracked-term seeds for the nightly trend scan (Phase 5 R1/R5 — non-secret by construction:
+# these are public search terms only; credentials never live here or anywhere on this path).
+#
+# Seeding semantics: a row seeds the registry ONLY if the persisted registry doesn't already
+# hold that (term, vertical, platform) key — persisted admissions (e.g. Phase 8's TREND_DETECTED
+# terms) always survive and are never clobbered by this file. `platform` is the aspirational
+# tracking bucket; a signal's platform always comes from the source that observed it, never from
+# this bucket (Phase 3 R5 coverage honesty).
+#
+# kind ∈ {format, sound, hashtag, topic, aesthetic}; defaults to topic (the honest default — an
+# open-web volume series can't distinguish a sound from a format).
+
+terms:
+  - { term: "glass skin", vertical: beauty, platform: tiktok, kind: topic }
+  - { term: "dopamine decor", vertical: fmcg, platform: tiktok, kind: aesthetic }
+  - { term: "quiet luxury", vertical: fashion, platform: instagram_reels, kind: aesthetic }

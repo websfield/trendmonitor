@@ -1,0 +1,24 @@
+{
+  "edlId": "01HQZX3F5G7K9M2N4P6R8S0T60",
+  "envelope": { "schemaVersion": "1.0.0", "createdAt": "2026-07-28T00:00:00Z", "createdBy": { "kind": "skill", "skill": "plan", "skillVersion": "1.0.0" } },
+  "jobId": "validate-fixture",
+  "storyPlanId": "01HQZX3F5G7K9M2N4P6R8S0T4V",
+  "parentEdlId": null,
+  "platform": "tiktok",
+  "objective": "education_utility",
+  "distributionMode": "organic",
+  "locale": "en-AU",
+  "targetDurationRange": { "minSeconds": 20, "maxSeconds": 45 },
+  "canvas": { "width": 720, "height": 1280, "aspectRatio": "9:16" },
+  "aspectTreatment": { "mode": "subject_reframe", "rationale": "keep the founder centred" },
+  "hookFamily": "proof_first",
+  "clips": [
+    { "clipId": "clip-1", "order": 0, "momentId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "assetId": "01HQZX3F5G7K9M2N4P6R8S0T36", "sourceRange": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T36", "startTicks": 0, "endTicks": 300, "timebase": { "num": 1, "den": 30 } }, "narrativeFunction": "proof", "rationale": "the evidence clip", "caption": { "kind": "none" } },
+    { "clipId": "clip-2", "order": 1, "momentId": "01HQZX3F5G7K9M2N4P6R8S0T30", "assetId": "01HQZX3F5G7K9M2N4P6R8S0T36", "sourceRange": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T36", "startTicks": 300, "endTicks": 600, "timebase": { "num": 1, "den": 30 } }, "narrativeFunction": "payoff", "rationale": "the resolution clip", "caption": { "kind": "none" } }
+  ],
+  "audioMode": "native_audio_plan",
+  "disclosures": { "paidPartnership": false, "aiGeneratedOrAltered": false, "ownedBusinessPromotion": false },
+  "metadata": { "title": "The price cut, explained", "description": null },
+  "coverFrame": { "kind": "none" },
+  "modelProvenance": { "provider": "anthropic", "modelId": "claude-sonnet-5", "promptTemplateId": "plan-edl", "promptTemplateVersion": "1.0.0" }
+}

@@ -1,0 +1,31 @@
+{
+  "storyPlanId": "01J9SP2B3C4D5E6F7G8H9K0M5S",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-28T02:10:00Z",
+    "createdBy": { "kind": "skill", "skill": "plan", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-mixed",
+  "creativeBriefId": "01J8ZK4M5N6P7Q8R9S2T3V4W5X",
+  "parentStoryPlanId": null,
+  "beats": [
+    {
+      "beatId": "beat-1",
+      "order": 0,
+      "function": "promise",
+      "momentId": "01J9MA2B3C4D5E6F7G8H9K0M1N",
+      "rationale": "Opens on the raw timeline",
+      "basis": { "observed": "Cluttered timeline visible" },
+      "optional": false,
+      "alternateMomentIds": []
+    }
+  ],
+  "dependencies": [],
+  "alternateHooks": [],
+  "modelProvenance": {
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-5",
+    "promptTemplateId": "plan-story",
+    "promptTemplateVersion": "1.0.0"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/common/model-provenance-v1.json",
+  "title": "ModelProvenance",
+  "description": "Records WHICH model and WHICH prompt template produced a model-touched editorial artefact (PRD §10.6; decisions.md D-21). Every CreativeBrief, MasterStoryPlan, and PlatformEDL carries this because a Phase 3 acceptance criterion is that 'every editorial artefact records model ID + prompt-template version'. A shared $def rather than three inline copies for the same reason envelope/timecode are shared: one definition cannot drift into three. This is provenance metadata, not a decision input — D-37 keeps model output advisory; recording the model here does not make it authoritative.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "modelId", "promptTemplateId", "promptTemplateVersion"],
+  "properties": {
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider key (Phase 0 default `anthropic`, decisions.md D-21). Provider swap is config, never a schema change — the field is a string, not an enum, so a new provider is data."
+    },
+    "modelId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Exact model identifier the gateway called (e.g. `claude-sonnet-5`). Recorded verbatim so an artefact is reproducible against the model that made it."
+    },
+    "promptTemplateId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier of the prompt template used (e.g. `propose-angles`). Which template, separate from which version, so a template rename is visible."
+    },
+    "promptTemplateVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of the prompt template. A prompt change that alters output shape or meaning bumps this, so a regression is traceable to a template revision."
+    }
+  }
+}

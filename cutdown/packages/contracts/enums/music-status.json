@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/music-status.json",
+  "title": "MusicStatus",
+  "description": "Music rights posture for one asset (PRD REQ-003). Recorded at Phase 0 even though decisions.md D-2 forbids *adding* a music track — source footage can still contain music, and that is a rights fact the package must carry.",
+  "type": "string",
+  "enum": ["none", "licensed", "platform_native", "unlicensed", "unknown"]
+}

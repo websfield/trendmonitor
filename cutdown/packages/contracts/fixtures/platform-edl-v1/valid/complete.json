@@ -1,0 +1,70 @@
+{
+  "edlId": "01J9ED2B3C4D5E6F7G8H9K0M6T",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-28T02:20:00Z",
+    "createdBy": { "kind": "skill", "skill": "plan", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-mixed",
+  "storyPlanId": "01J9SP2B3C4D5E6F7G8H9K0M5S",
+  "parentEdlId": null,
+  "platform": "tiktok",
+  "objective": "education_utility",
+  "distributionMode": "organic",
+  "locale": "en-AU",
+  "targetDurationRange": { "minSeconds": 20, "maxSeconds": 45 },
+  "canvas": { "width": 720, "height": 1280, "aspectRatio": "9:16" },
+  "aspectTreatment": { "mode": "subject_reframe", "rationale": "Keep the editor and screen in frame; blurred fill would hide the timeline" },
+  "hookFamily": "outcome_first",
+  "clips": [
+    {
+      "clipId": "clip-1",
+      "order": 0,
+      "momentId": "01J9MA2B3C4D5E6F7G8H9K0M1N",
+      "assetId": "01J9AS2B3C4D5E6F7G8H9K0M4R",
+      "sourceRange": {
+        "assetId": "01J9AS2B3C4D5E6F7G8H9K0M4R",
+        "startTicks": 0,
+        "endTicks": 300,
+        "timebase": { "num": 1, "den": 30 }
+      },
+      "narrativeFunction": "promise",
+      "rationale": "The cluttered timeline sets up the before-state",
+      "caption": { "kind": "text", "displayText": "One shoot. Six angles. One cut." }
+    },
+    {
+      "clipId": "clip-2",
+      "order": 1,
+      "momentId": "01J9MB2B3C4D5E6F7G8H9K0M2P",
+      "assetId": "01J9AS2B3C4D5E6F7G8H9K0M4R",
+      "sourceRange": {
+        "assetId": "01J9AS2B3C4D5E6F7G8H9K0M4R",
+        "startTicks": 300,
+        "endTicks": 900,
+        "timebase": { "num": 1, "den": 30 }
+      },
+      "narrativeFunction": "payoff",
+      "rationale": "The finished vertical cut playing back is the payoff",
+      "caption": {
+        "kind": "quote",
+        "displayText": "the edit is the product",
+        "verbatimSourceText": "honestly the edit is the product not the footage",
+        "speakerLabel": "Editor"
+      }
+    }
+  ],
+  "audioMode": "native_audio_plan",
+  "disclosures": { "paidPartnership": false, "aiGeneratedOrAltered": false, "ownedBusinessPromotion": false },
+  "metadata": { "title": "How one shoot becomes one vertical cut", "description": "A start-to-finish look at the edit." },
+  "coverFrame": {
+    "kind": "moment_frame",
+    "momentId": "01J9MB2B3C4D5E6F7G8H9K0M2P",
+    "atTick": { "ticks": 450, "timebase": { "num": 1, "den": 30 } }
+  },
+  "modelProvenance": {
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-5",
+    "promptTemplateId": "plan-edl",
+    "promptTemplateVersion": "1.0.0"
+  }
+}

@@ -1,0 +1,11 @@
+# Positive fixture: a well-formed speaker map naming two inferred turns.
+# `author` and `correctedAt` are declared once and inherited by every entry;
+# entry two overrides the author to prove per-entry override works.
+author: reviewer@example.com
+correctedAt: "2026-07-21T10:00:00Z"
+corrections:
+  - turnId: turn-0001
+    name: Ada Lovelace
+  - turnId: turn-0002
+    name: Grace Hopper
+    author: second-reviewer@example.com

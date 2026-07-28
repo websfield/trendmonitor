@@ -1,0 +1,23 @@
+{
+  "creativeBriefId": "01HQZX3F5G7K9M2N4P6R8S0T50",
+  "envelope": { "schemaVersion": "1.0.0", "createdAt": "2026-07-28T00:00:00Z", "createdBy": { "kind": "skill", "skill": "propose", "skillVersion": "1.0.0" } },
+  "jobId": "plan-fixture",
+  "sourceBriefId": "01HQZX3F5G7K9M2N4P6R8S0T40",
+  "parentCreativeBriefId": null,
+  "audiencePromise": "You will see exactly what changed in the price and why.",
+  "creativeThesis": "Transparency about the price cut earns trust faster than a discount claim.",
+  "hookFamily": "proof_first",
+  "narrativeArchetype": "reveal",
+  "value": "reassurance",
+  "proofPoints": [
+    { "claim": "The price was cut in half.", "evidenceMomentIds": ["01HQZX3F5G7K9M2N4P6R8S0T2V"], "basis": { "kind": "observed_fact", "observed": "Founder says 'we cut the price in half'." } }
+  ],
+  "selectedMoments": [
+    { "momentId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "candidateFunction": "proof", "rationale": "the core evidence" },
+    { "momentId": "01HQZX3F5G7K9M2N4P6R8S0T30", "candidateFunction": "payoff", "rationale": "the fair-plan resolution" }
+  ],
+  "cta": { "kind": "none" },
+  "distinctness": { "peerBriefLabels": ["angle-2"], "sharedMomentFraction": 0.5, "semanticAngleLabel": "price transparency" },
+  "knownLimitations": [],
+  "modelProvenance": { "provider": "anthropic", "modelId": "claude-sonnet-5", "promptTemplateId": "propose-angles", "promptTemplateVersion": "1.0.0" }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@cutdown/skill-ingest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ingest skill — atomic multi-asset discovery, classification, preflight, hashing, and proxy generation.",
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/renderer-core": "workspace:*",
+    "@cutdown/skill-runtime": "workspace:*",
+    "ulid": "3.0.2",
+    "yaml": "2.9.0"
+  }
+}

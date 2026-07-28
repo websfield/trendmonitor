@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/platform-edl-v1.json",
+  "title": "PlatformEDL",
+  "schemaVersion": "1.0.0",
+  "description": "The frame-accurate child timeline for ONE platform, objective, duration, locale, and aspect treatment (PRD REQ-050). Derived from a MasterStoryPlan; a distinct EDL per requested platform (REQ-050). Every clip carries an exact `SourceRange` validated by range-check.ts (the 'zero invalid source ranges' exit-criterion mechanism), the Moment it came from, its narrative role, and — where it captions speech — the quote provenance the D-37 quotation gate needs. Retains domain metadata OTIO cannot express: narrative role, hook hypothesis, platform objective, caption treatment, rationale (PRD §5.190). Immutable revision. The model PROPOSES ranges; deterministic `validate` code owns every blocking decision (D-37).",
+  "changelog": [
+    {
+      "changedAt": "2026-07-28",
+      "changeKind": "breaking",
+      "reason": "Initial v1 (Phase 3, tech-spec §15 step 5). Caption entries carry a `quote` tagged union so a quoted caption always ships the verbatim source text + speaker it must be checked against — the D-37 quote gate tokenises the verbatim side, so a shortened display caption can never launder a misquote past it. `aspectTreatment` uses an enum with no centre_crop member (REQ-052). Disclosures + audioMode are present so the deterministic disclosure/rights gates have inputs."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "edlId",
+    "envelope",
+    "jobId",
+    "storyPlanId",
+    "parentEdlId",
+    "platform",
+    "objective",
+    "distributionMode",
+    "locale",
+    "targetDurationRange",
+    "canvas",
+    "aspectTreatment",
+    "hookFamily",
+    "clips",
+    "audioMode",
+    "disclosures",
+    "metadata",
+    "coverFrame",
+    "modelProvenance"
+  ],
+  "properties": {
+    "edlId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "envelope": { "$ref": "./common/envelope-v1.json" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "storyPlanId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+      "description": "The MasterStoryPlan this EDL renders for one platform (PRD lineage §3)."
+    },
+    "parentEdlId": {
+      "oneOf": [
+        { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+        { "type": "null" }
+      ],
+      "description": "The revision this supersedes, or null for the first (REQ-039)."
+    },
+    "platform": {
+      "$ref": "../enums/platform.json",
+      "description": "The single target platform (REQ-050). At Phase 0 only `tiktok` resolves to a capability fixture (D-3); `plan` fails explicitly on any other."
+    },
+    "objective": { "$ref": "../enums/objective.json" },
+    "distributionMode": { "$ref": "../enums/distribution-mode.json" },
+    "locale": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+      "description": "BCP-47 language[-region]; Phase 0 is en-AU (D-4)."
+    },
+    "targetDurationRange": {
+      "title": "DurationRange",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minSeconds", "maxSeconds"],
+      "description": "The output duration window this EDL targets (REQ-050). The capability gate checks it against the platform fixture's duration pin (D-3: 5–180 s for TikTok organic AU). maxSeconds >= minSeconds enforced in the resolver, not schema (§3 forbids if/then/else).",
+      "properties": {
+        "minSeconds": { "type": "integer", "minimum": 1 },
+        "maxSeconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "canvas": {
+      "title": "Canvas",
+      "description": "The output frame (REQ-052). 9:16 720x1280 for TikTok organic AU (PRD §11 minResolution).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "aspectRatio"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "aspectRatio": { "type": "string", "pattern": "^[0-9]+:[0-9]+$", "description": "Human-readable ratio, e.g. `9:16`. The resolver checks it against the platform fixture's preferredAspectRatios." }
+      }
+    },
+    "aspectTreatment": {
+      "title": "AspectTreatmentChoice",
+      "description": "How the canvas is filled (REQ-052). The enum has no centre_crop member, so blind centre-cropping is unrepresentable; the rationale records why this treatment fits the footage.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "rationale"],
+      "properties": {
+        "mode": { "$ref": "../enums/aspect-treatment.json" },
+        "rationale": { "type": "string", "minLength": 1 }
+      }
+    },
+    "hookFamily": {
+      "$ref": "../enums/hook-family.json",
+      "description": "Which hook hypothesis this cut opens with (carried down from the CreativeBrief/plan for A/B provenance)."
+    },
+    "clips": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The ordered timeline. Each clip is one Moment-derived source range placed on the child timeline, in intended play order. `sourceRange` is validated against the asset's preflighted duration by range-check.ts — the single bounds validator, reused here exactly as `index` uses it over Moments.",
+      "items": {
+        "title": "EdlClip",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["clipId", "order", "momentId", "assetId", "sourceRange", "narrativeFunction", "rationale", "caption"],
+        "properties": {
+          "clipId": { "type": "string", "minLength": 1, "description": "Timeline-local clip identifier (e.g. `clip-1`)." },
+          "order": { "type": "integer", "minimum": 0, "description": "Play position; the resolver asserts a contiguous permutation." },
+          "momentId": {
+            "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+            "description": "The Moment this clip realises. Rights, speakers, and verbatim transcript for the quote/rights gates are read from this Moment."
+          },
+          "assetId": {
+            "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+            "description": "The SourceAsset the range indexes into. Must equal the Moment's assetId and the sourceRange.assetId; the resolver checks all three agree."
+          },
+          "sourceRange": {
+            "$ref": "./common/timecode-v1.json#/$defs/SourceRange",
+            "description": "The exact half-open range into the source. Validated by range-check.ts against the asset's preflighted duration — an out-of-bounds range is a NON-WAIVABLE block (D-35/D-37), never clamped."
+          },
+          "narrativeFunction": { "$ref": "../enums/narrative-function.json" },
+          "rationale": { "type": "string", "minLength": 1 },
+          "caption": {
+            "title": "ClipCaption",
+            "description": "The editorial caption decision for this clip (the render is Phase 4; the DECISION and its quote provenance live here). A tagged union so a clip with no caption, a text-led caption, and a spoken-quote caption are distinct — the quote variant always carries the verbatim source text + speaker the D-37 gate checks against.",
+            "type": "object",
+            "oneOf": [
+              {
+                "title": "NoCaption",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind"],
+                "properties": { "kind": { "type": "string", "const": "none" } }
+              },
+              {
+                "title": "TextCaption",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "displayText"],
+                "properties": {
+                  "kind": { "type": "string", "const": "text" },
+                  "displayText": { "type": "string", "minLength": 1, "description": "Author-written on-screen text that does not quote speech (a title, a promise). Checked against JobBrief prohibited claims like any other text." }
+                }
+              },
+              {
+                "title": "QuoteCaption",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "displayText", "verbatimSourceText", "speakerLabel"],
+                "properties": {
+                  "kind": { "type": "string", "const": "quote" },
+                  "displayText": { "type": "string", "minLength": 1, "description": "The caption as shown, possibly shortened. The D-37 gate requires its quoted tokens to be an in-order subsequence of `verbatimSourceText` — a shortening that reorders or interpolates meaning is blocked (REQ-037)." },
+                  "verbatimSourceText": { "type": "string", "minLength": 1, "description": "The exact spoken words from the Moment transcript this caption quotes. The resolver checks it matches the referenced Moment's verbatim transcript." },
+                  "speakerLabel": { "type": "string", "minLength": 1, "description": "Who is quoted. The gate checks it against the Moment's speakers[].label; an UNCORRECTED speaker label is an unverified identity the critic flags." }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "audioMode": {
+      "$ref": "../enums/audio-mode.json",
+      "description": "REQ-056 audio-rights mode. A `cross_platform_cleared` or `byo_licensed` mode requires the rights gate to find recorded evidence; `native_audio_plan` defers the track to native publishing."
+    },
+    "disclosures": {
+      "title": "Disclosures",
+      "description": "Platform disclosure flags (REQ-058). The deterministic disclosure gate requires a paid-partnership disclosure when distributionMode is `paid`, and an AI-media disclosure when the edit materially alters media — a missing required disclosure is a NON-WAIVABLE block (D-35).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paidPartnership", "aiGeneratedOrAltered", "ownedBusinessPromotion"],
+      "properties": {
+        "paidPartnership": { "type": "boolean", "description": "Whether this output discloses a paid partnership." },
+        "aiGeneratedOrAltered": { "type": "boolean", "description": "Whether AI-generated or materially altered media is disclosed (maps to TikTok `is_aigc`, PRD §11)." },
+        "ownedBusinessPromotion": { "type": "boolean" }
+      }
+    },
+    "metadata": {
+      "title": "EdlMetadata",
+      "description": "Minimal search/publishing metadata (REQ-050 'metadata'; REQ-054 full package is Phase 1). Title and optional description are checked against JobBrief prohibited claims like any other text.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "description"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] }
+      }
+    },
+    "coverFrame": {
+      "title": "CoverFrame",
+      "description": "The chosen cover / validated first frame (REQ-055), or an explicit none. Tagged union so 'no cover chosen yet' and 'this Moment at this instant' are distinct.",
+      "type": "object",
+      "oneOf": [
+        {
+          "title": "NoCover",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "type": "string", "const": "none" } }
+        },
+        {
+          "title": "MomentCover",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "momentId", "atTick"],
+          "properties": {
+            "kind": { "type": "string", "const": "moment_frame" },
+            "momentId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+            "atTick": {
+              "$ref": "./common/timecode-v1.json#/$defs/MediaTime",
+              "description": "The instant within the source the cover frame is taken from. Validated against the asset's bounds like any other range endpoint."
+            }
+          }
+        }
+      ]
+    },
+    "modelProvenance": { "$ref": "./common/model-provenance-v1.json" }
+  }
+}

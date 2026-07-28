@@ -1,0 +1,52 @@
+# TikTok organic 9:16 AU — the Phase 0 platform capability fixture (decisions.md D-3).
+#
+# This is the PRD §11 "Platform Capability Registry" worked example, VERBATIM, with
+# exactly ONE offline pin: the example's `duration: {mode: account_capability_lookup}`
+# is replaced with `duration: {minSeconds: 5, maxSeconds: 180}` (D-3). Phase 0 jobs are
+# short-form; the real per-account bound needs a connector that does not exist yet.
+#
+# `safeZoneAsset` is DECLARED (verbatim) but consumed only by Phase 4 QA — the Phase 3
+# `validate` gate ignores it. `plan` reads `platform`, `media.duration`,
+# `media.minResolution`, and `media.preferredAspectRatios` to build the deterministic
+# PlatformCapability the EDL is checked against.
+schemaVersion: platform-capability/1.0
+platform: tiktok
+surface: organic-video
+region: AU
+effectiveFrom: 2026-07-01
+verifiedAt: 2026-07-20
+verifiedBy: curator@example.com
+officialSources:
+  - https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide
+  - https://ads.tiktok.com/business/en-US/creative-codes
+media:
+  preferredAspectRatios: ["9:16"]
+  minResolution: { width: 720, height: 1280 }
+  acceptedContainers: [mp4, mov, webm]
+  acceptedVideoCodecs: [h264, h265, vp8, vp9]
+  duration:
+    minSeconds: 5      # D-3 offline pin: replaces {mode: account_capability_lookup}
+    maxSeconds: 180
+  safeZoneAsset: overlays/tiktok/organic-video/2026-07.json   # Phase 4 QA only; Phase 3 validate ignores it
+creativeGuidance:
+  openingEvaluationWindow: account_learned
+  supportsNativeAudioPlan: true
+publishing:
+  connector: tiktok-content-posting-v2
+  requiresAppAuditForPublicDirectPost: true
+  requiredUserReviewFields:
+    - privacy
+    - comments
+    - duet
+    - stitch
+    - branded_content
+  aiDisclosureField: is_aigc
+analytics:
+  availableFields: []        # populated by connector capability discovery
+music:
+  permittedModes:
+    - cross_platform_cleared
+    - byo_licensed
+    - native_commercial_library
+status: active
+nextReviewAt: 2026-08-20

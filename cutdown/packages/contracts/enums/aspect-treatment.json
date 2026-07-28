@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/aspect-treatment.json",
+  "title": "AspectTreatment",
+  "description": "How a PlatformEDL fills the target canvas when source and target aspect ratios differ (PRD REQ-052). REQ-052 forbids blind centre-cropping, so `centre_crop` is deliberately NOT a member — the vocabulary makes the prohibited treatment unrepresentable rather than merely discouraged. `subject_reframe` is subject-aware reframing; `letterbox` is intentional bars; `blurred_background`/`branded_background` fill the margins; `split_screen` composes multiple sources.",
+  "type": "string",
+  "enum": [
+    "subject_reframe",
+    "letterbox",
+    "blurred_background",
+    "branded_background",
+    "split_screen"
+  ]
+}

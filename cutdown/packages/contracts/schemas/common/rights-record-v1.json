@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/common/rights-record-v1.json",
+  "title": "RightsRecord",
+  "description": "Rights and consent for one asset (PRD REQ-003), verbatim coverage: who owns or supplied it, permitted platforms, territories, campaign/expiry dates, talent and location release status, music status, and whether editing and paid amplification are permitted. REQ-003's closing rule is load-bearing: 'Unknown material is flagged rather than assumed cleared' — so `unknownRecord()` in this package produces `state: \"unknown\"` with every detail null, and there is no code path that defaults an absent record to `cleared`. Referenced by SourceAsset now and by the ContentPackage rights manifest from Phase 5.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "state",
+    "owner",
+    "supplier",
+    "permittedPlatforms",
+    "territories",
+    "campaignStart",
+    "campaignEnd",
+    "expiryDate",
+    "talentReleaseStatus",
+    "locationReleaseStatus",
+    "musicStatus",
+    "editingPermitted",
+    "paidAmplificationPermitted",
+    "evidenceUri",
+    "notes"
+  ],
+  "properties": {
+    "state": {
+      "$ref": "../../enums/rights-state.json",
+      "description": "Resolved posture. Derived by the ingest skill from the declared fields plus the ingest-time clock (an asset past `expiryDate` resolves to `expired` regardless of what the sidecar declared) — never copied blindly from the sidecar."
+    },
+    "owner": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "Who owns the material. Null only when state is `unknown`."
+    },
+    "supplier": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "Who supplied it, when different from the owner."
+    },
+    "permittedPlatforms": {
+      "oneOf": [
+        {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "../../enums/platform.json" }
+        },
+        { "type": "null" }
+      ],
+      "description": "Platforms this asset may be published to. An empty array means 'explicitly none' and is NOT the same as null ('not recorded')."
+    },
+    "territories": {
+      "oneOf": [
+        { "type": "array", "items": { "type": "string", "minLength": 2 } },
+        { "type": "null" }
+      ],
+      "description": "ISO 3166-1 alpha-2 territory codes where use is permitted."
+    },
+    "campaignStart": {
+      "oneOf": [{ "type": "string", "format": "date" }, { "type": "null" }]
+    },
+    "campaignEnd": {
+      "oneOf": [{ "type": "string", "format": "date" }, { "type": "null" }]
+    },
+    "expiryDate": {
+      "oneOf": [{ "type": "string", "format": "date" }, { "type": "null" }],
+      "description": "After this date the asset resolves to `expired`. Rights expiry is a NON-WAIVABLE packaging blocker (decisions.md D-35)."
+    },
+    "talentReleaseStatus": { "$ref": "../../enums/release-status.json" },
+    "locationReleaseStatus": { "$ref": "../../enums/release-status.json" },
+    "musicStatus": { "$ref": "../../enums/music-status.json" },
+    "editingPermitted": {
+      "oneOf": [{ "type": "boolean" }, { "type": "null" }],
+      "description": "Whether the supplier permits editing. Null (not recorded) is treated as 'no' by the packaging gate — Cutdown's entire output is edited material, so an unrecorded editing right cannot be assumed."
+    },
+    "paidAmplificationPermitted": {
+      "oneOf": [{ "type": "boolean" }, { "type": "null" }],
+      "description": "Whether paid amplification is permitted. Deliberately separate from `editingPermitted` and from `permittedPlatforms`: a grant to publish organically never implies a grant to run paid media against the same asset."
+    },
+    "evidenceUri": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "Pointer to the underlying evidence (signed release, licence, contract). A claim of `cleared` with a null evidenceUri is recorded as-declared but is surfaced by the packaging gate as unevidenced."
+    },
+    "notes": {
+      "oneOf": [{ "type": "string" }, { "type": "null" }]
+    }
+  }
+}

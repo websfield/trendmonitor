@@ -1,0 +1,14 @@
+{
+  "name": "@cutdown/style",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Style profile resolver — loads a client's brand invariants (style-profile-v1) and projects them for prompt/caption injection (decisions.md D-26).",
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "yaml": "2.9.0"
+  }
+}

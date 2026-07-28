@@ -1,0 +1,50 @@
+# uv workspace root for Cutdown's Python side.
+# Independent of the repo-root pyproject.toml (tech-spec §2, developer-guide §1) —
+# nothing above cutdown/ references this file.
+[project]
+name = "cutdown-workspace"
+version = "0.1.0"
+description = "Cutdown Python workspace root (contract models + indexer workers)."
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pydantic>=2.9",
+    "datamodel-code-generator>=0.26",
+    "pytest>=8.3",
+]
+
+[tool.uv]
+package = false
+
+# Every OpenCV distribution installs into the same `cv2/` package directory, so
+# two different upstream versions in one environment leave a half-written module
+# that fails at import (`AttributeError: partially initialized module 'cv2'`).
+# scenedetect (D-18) requires `opencv-python` and paddlex (D-19) requires
+# `opencv-contrib-python`, so the environment necessarily contains more than one
+# distribution — they are pinned to a single upstream version, with contrib (the
+# superset) as the declared dependency of the indexer worker.
+override-dependencies = [
+    "opencv-python==4.10.0.84",
+    "opencv-python-headless==4.10.0.84",
+    "opencv-contrib-python==4.10.0.84",
+]
+
+[tool.uv.workspace]
+members = ["workers/*"]
+exclude = ["project-data/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/contracts/tests", "workers"]
+# No single test may wedge the entry gate. Media decoding and model loading both
+# have real hang modes, and a stalled suite reports nothing at all — which reads
+# the same as "still running" until someone gives up on it.
+timeout = 300
+markers = [
+    # Tests that download or run a real ML model. Registered so an unknown-mark
+    # warning never trains anyone to ignore pytest warnings, and so the fast
+    # suite can be selected with `-m "not slow"` during ordinary development.
+    "slow: downloads or runs a real model (deselect with -m 'not slow')",
+]
+pythonpath = ["packages/contracts/generated/python", "workers/indexer-python/src"]

@@ -1,6 +1,6 @@
 # RUNBOOK
 
-> The operating manual a competent stranger (or the founder six months from now) uses to run, deploy, and *recover* this system. Written by `/bootstrap-claude-pack` on 2026-07-10; refreshed 2026-07-14 (phases R4a/R4b). **A built, tested codebase with three runnable ASP.NET hosts exists, and the cross-process transport is built and wired behind config — but nothing is production-deployed (no CI, no container, no pipeline), and the repo is still not under version control.** Each section states what exists honestly and names the remaining gap. The `operability-critic` audits this file; do not let it imply safety that hasn't been built.
+> The operating manual a competent stranger (or the founder six months from now) uses to run, deploy, and *recover* this system. Written by `/bootstrap-claude-pack` on 2026-07-10; refreshed 2026-07-14 (phases R4a/R4b). **A built, tested codebase with three runnable ASP.NET hosts exists, and the cross-process transport is built and wired behind config — but nothing is production-deployed (no CI, no container, no pipeline). The repo is under local git version control (initial commit `587a0d6`); no remote backup yet.** Each section states what exists honestly and names the remaining gap. The `operability-critic` audits this file; do not let it imply safety that hasn't been built.
 
 ## Deploy (how a change goes live)
 
@@ -37,11 +37,38 @@ ASPNETCORE_URLS=http://localhost:5411 dotnet run --project src/KnowledgeApi/UgcI
 
 **Secrets — never in `appsettings.json` or code:** LLM provider API key (APP-8 decision, Phase 3), social-platform API keys, DB/blob connection strings, and the R4b inter-host endpoint URLs. These arrive via environment variables / a secret manager when R4b lands. Record each name (never its value) here as it is introduced.
 
-**Frontend (manager UI):** a React/TS SPA under `src/Frontend/` (triage queue, verdict/override panel, amplification sign-off, operator calibration dashboard). Build/serve with the standard Vite toolchain; `npm --prefix src/Frontend run typecheck` is green, but `npm test` (vitest) is currently blocked by a corrupted local npm install (`npm ci` to repair). It talks to C2's HTTP surface once that host is deployed.
+**Frontend (manager UI):** a React/TS SPA under `src/Frontend/` (triage queue, verdict/override panel, amplification sign-off, operator calibration dashboard). Build/serve with the standard Vite toolchain; `npm --prefix src/Frontend run typecheck` is green, and `npm --prefix src/Frontend test` (vitest) runs green as of 2026-07-28 — 10 test files / 86 tests pass (the earlier corrupted-npm-env block is resolved). It talks to C2's HTTP surface once that host is deployed.
 
 **Remaining gap (deployment, not code):** a deploy command/pipeline, environments, container images, turning on the R4b transport config (`C3:CalibrationBaseAddress`, shared `ArtefactStore:Root`), and who may trigger a release.
 
-**Known unbuilt seams (tracked, not misleading):** the Hangfire job runner is named in the tech spec but has no `src/` code yet (jobs land when built); the `ArtefactStore` is local-filesystem-backed and needs a networked/blob backing for cross-host serving (folded into ADR-0008's durable-store step).
+**Known unbuilt seams (tracked, not misleading):** the Hangfire job runner is named in the tech spec but has no `src/` code yet (jobs land when built) — **and it was never the trend-scan host**: per ADR-0009 the nightly trend monitor is a Python entrypoint (`python -m c1_pattern_engine.detector.run`) triggered by external cron (deployment of the cron trigger itself is still deferred with the rest of deployment); Hangfire remains for genuinely .NET-side jobs (submission enqueue, outcome snapshots, staleness alarms). The `ArtefactStore` is local-filesystem-backed and needs a networked/blob backing for cross-host serving (folded into ADR-0008's durable-store step).
+
+## The nightly trend scan (built and runnable locally; cron deployment still deferred)
+
+One invocation = one scan (the ADR-0009 scheduling port — no in-process timer; cadence is the
+scheduler's job):
+
+```bash
+uv run python -m c1_pattern_engine.detector.run \
+  --state-root .trend-monitor \
+  --terms config/tracked-terms.yaml \
+  --fetchers fake            # 'live' = the six keyless adapters behind the host-pinned allowlist
+# --as-of 2026-07-16T00:00:00+00:00   # omit for now-UTC; tests/replays always pass it
+# --tenants config/tenant-briefs.yaml # absent file → signals + coverage only, no verdicts
+# --submissions <state-root>/submissions.ndjson   # absent file → no submission merge
+```
+
+Environment (non-secret): `TREND_MONITOR_STATE_ROOT`, `TREND_MONITOR_TERMS_FILE`,
+`TREND_MONITOR_AS_OF`, `TREND_MONITOR_TENANTS_FILE`, `TREND_MONITOR_SUBMISSIONS_FILE`.
+The intended production trigger is a daily cron (tech spec: 06:00 AEST)
+invoking exactly the command above — **deploying that cron is part of the deferred deployment
+gap**, consistent with this runbook's honest state. Re-running the same `--as-of` is idempotent;
+a corrupt state file refuses to run (never silently starts empty) — restore it or move it aside
+deliberately.
+
+**No live source has ever been contacted from this code** — the whole test suite is network-free by
+design, so `--fetchers live` is unverified against the real internet. That check, the cron install,
+and the rest of the human-only work are tracked in [`ops-todos.md`](ops-todos.md).
 
 ## Rollback (how to undo a bad deploy — named *before* it's needed)
 
@@ -76,6 +103,6 @@ Known-required configuration when code lands (from the docs): LLM provider API k
 
 ## Backup & restore
 
-**None found — and there is no durable runtime data yet.** The durable assets today are the design docs and the source code; they are **not under version control** (this directory is not a git repository — that is itself a gap: `git init` is the single cheapest backup step available today).
+**Durable runtime data now exists in one place:** the trend-monitor state root (default `.trend-monitor/trend-monitor-state.json`, gitignored — it may hold tenant-scoped signals). Backing it up = copying that file; restoring = putting it back (the loader refuses a corrupt file rather than silently starting empty). The design docs and source code are under **local git** (initial commit `587a0d6`); the remaining gap is a remote (push somewhere off this machine — the single cheapest backup step still available).
 
 When the system exists, the durable data will be: the relational store (submissions, verdicts, rights grants, baselines), the event log, and the content-addressed library artefacts. **Restore has never been tested** — record here the backup job, its schedule, and the date of the last *successful restore test* before Phase 1 goes live. A backup whose restore was never tested is a hope, not a backup.

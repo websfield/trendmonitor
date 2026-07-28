@@ -50,7 +50,12 @@ def coverage_report(
     auto_by: dict[str, int] = {}
     human_by: dict[str, int] = {}
     for s in live:
-        if s.confidence == "human_corroborated":
+        # Split on the detection-ORIGIN label, never the confidence rung (Phase 9 R3): an
+        # automated-detected signal a human predated is upgraded to `human_corroborated` confidence
+        # but is still automated-sourced coverage. Keying on confidence would silently reclassify
+        # it as human-sourced and understate automated reach — origin and confidence are separate
+        # axes (the conflation Phase 4 R3 fixed for resolved samples).
+        if s.detection_origin == "human_sourced":
             human_by[s.platform] = human_by.get(s.platform, 0) + 1
         else:
             auto_by[s.platform] = auto_by.get(s.platform, 0) + 1
@@ -62,15 +67,20 @@ def coverage_report(
         open_subs = open_by.get(platform, 0)
         sources = sources_by.get(platform, ())
         gap = automated == 0 and human == 0 and len(sources) == 0
+        # An OPEN submission is a candidate awaiting resolution, not an observation, so it does not
+        # close a gap — but it is named in both notes, because "a human is already watching here"
+        # changes what the reader should do about the gap.
+        watching = f" {open_subs} open submission(s) awaiting resolution." if open_subs else ""
         if gap:
             note = (
                 f"COVERAGE GAP: no live signal and no live source on {platform}. "
                 "This is a gap in observation, not evidence that nothing is happening here."
+                + watching
             )
         else:
             note = (
                 f"{automated} automated + {human} human-sourced signal(s), "
-                f"{len(sources)} live source(s)."
+                f"{len(sources)} live source(s)." + watching
             )
         rows.append(
             PlatformCoverage(

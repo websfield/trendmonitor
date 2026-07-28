@@ -1,0 +1,11 @@
+# Negative fixture: two names for one turn.
+# There is no correct resolution — last-wins would silently pick one — so this is
+# a validation failure. Note the format is a LIST precisely so a duplicate
+# survives parsing long enough to be caught; a YAML mapping would collapse it.
+author: reviewer@example.com
+correctedAt: "2026-07-21T10:00:00Z"
+corrections:
+  - turnId: turn-0001
+    name: Ada Lovelace
+  - turnId: turn-0001
+    name: Someone Else

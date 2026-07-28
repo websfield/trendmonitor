@@ -1,0 +1,16 @@
+{
+  "name": "@cutdown/skill-propose",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "propose skill — CreativeBrief angle generation (REQ-030/031/034/036).",
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/editorial": "workspace:*",
+    "@cutdown/skill-runtime": "workspace:*",
+    "ulid": "3.0.2"
+  }
+}

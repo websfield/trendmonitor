@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/distribution-mode.json",
+  "title": "DistributionMode",
+  "description": "Organic or paid mode (PRD REQ-002). Kept separate from `objective` because REQ-122 forbids comparing paid and organic posts as equivalent — a single blended enum would make that error unrepresentable-as-wrong.",
+  "type": "string",
+  "enum": ["organic", "paid"]
+}

@@ -22,7 +22,8 @@ on :func:`fixture_exemplar_corpus`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from math import ceil
@@ -55,6 +56,7 @@ __all__ = [
     "build_exemplar_corpus",
     "fixture_exemplar_corpus",
     "ingest_live",
+    "occasion_exemplar",
 ]
 
 CONTRAST_SET_DEFINITION_V1 = (
@@ -170,6 +172,32 @@ def ingest_live(source: str, allowlist: SourceAllowlist) -> list[ExemplarPost]:
         )
     raise LiveIngestionBlocked(
         "Live ingestion is not implemented in Phase 8; the allowlist gate is the point."
+    )
+
+
+def occasion_exemplar(post: ExemplarPost, trend_ids: Iterable[UUID]) -> ExemplarPost:
+    """Production ingestion tag (Phase 8 R2): mark an exemplar ingested **because** specific
+    rising+go trends directed the corpus at its format — ``ingestion_arm = TREND_DIRECTED`` and
+    ``occasioned_by_trend_ids = (…)``. Empty ``trend_ids`` leaves the post untouched (it was not
+    trend-directed). This is the real ingestion path, not the fixture's hardcoded ``_post``.
+
+    Uses :func:`dataclasses.replace`, so ``ExemplarPost.__post_init__`` re-validates the Proxy
+    engagement invariant. It does **not** touch the amplification ``arm`` (``IngestionArm`` is a
+    separate axis — mechanisms-v1.json ``ingestion_arm_is_not_the_amplification_arm``) and does
+    **not** unblock D5 — :func:`ingest_live` still raises ``LiveIngestionBlocked``.
+
+    **Caller contract (tenancy):** this low-level tagger has no scope guard of its own — it stamps
+    whatever ``trend_ids`` it is handed. The only trend id it may ever receive is a **public**-scope
+    ``TrendDirection.trend_id`` from :func:`detector.coupling.apply_trend_direction` (which refuses
+    internal-scope signals). When the production ingestion path is wired (a future phase), that seam
+    must assert the same, so the shared-corpus tenant boundary (REQ-060, CLAUDE.md rule 8) is never
+    carried by an upstream caller alone.
+    """
+    ids = tuple(dict.fromkeys(trend_ids))  # dedupe, preserve first-seen order
+    if not ids:
+        return post
+    return replace(
+        post, ingestion_arm=IngestionArm.TREND_DIRECTED, occasioned_by_trend_ids=ids
     )
 
 

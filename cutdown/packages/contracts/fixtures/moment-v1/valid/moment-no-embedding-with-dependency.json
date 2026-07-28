@@ -1,0 +1,54 @@
+{
+  "momentId": "01HQZX3F5G7K9M2N4P6R8S0X3B",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T05:31:00Z",
+    "createdBy": { "kind": "skill", "skill": "index", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-1",
+  "assetId": "01HQZX3F5G7K9M2N4P6R8S0V2A",
+  "sourceIndexId": "01HQZX3F5G7K9M2N4P6R8S0W2A",
+  "sourceRange": {
+    "assetId": "01HQZX3F5G7K9M2N4P6R8S0V2A",
+    "startTicks": 46080,
+    "endTicks": 61440,
+    "timebase": { "num": 1, "den": 15360 }
+  },
+  "durationSeconds": 1.0,
+  "segmentation": {
+    "method": "speaker_turn_x_shot_boundary",
+    "speakerTurnIds": [],
+    "shotIds": ["shot-0001"],
+    "indexerVersion": "1.0.0",
+    "granularityBounds": { "minSeconds": 3, "maxSeconds": 30 }
+  },
+  "transcript": {
+    "verbatimText": "",
+    "displayText": "",
+    "wordCount": 0,
+    "segmentIds": [],
+    "lowConfidenceWordCount": 0
+  },
+  "visualSummary": {
+    "value": "Static wide shot of the desk; no speech, no on-screen text.",
+    "absentReason": null
+  },
+  "speakers": [],
+  "entities": [],
+  "keywords": [],
+  "energyCues": [],
+  "technicalQuality": {
+    "flagKinds": ["silence"],
+    "worstSeverity": "info",
+    "usable": true
+  },
+  "rights": {
+    "state": "unknown",
+    "concerns": ["No rights sidecar accompanied the source asset."]
+  },
+  "candidateNarrativeFunctions": [],
+  "sourceDependencies": [
+    { "momentId": "01HQZX3F5G7K9M2N4P6R8S0X2A", "relation": "requires_setup" }
+  ],
+  "embedding": null
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/index/input.json",
+  "title": "IndexRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jobId", "assetId"],
+  "properties": {
+    "jobId": { "type": "string", "minLength": 1 },
+    "assetId": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "The ingested SourceAsset to index. Indexing is per-asset: a multi-asset job indexes each asset separately so one unindexable asset cannot cost the whole job its work."
+    },
+    "speakerMapPath": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "Optional YAML mapping stable speaker-turn IDs to corrected names (REQ-011). An unknown turn ID or a duplicate correction is a validation failure; the original inference is preserved alongside the correction either way."
+    },
+    "noVlm": {
+      "type": "boolean",
+      "description": "Skip the visual-description sub-stage. Defaults to TRUE — the fail-closed choice while the decisions.md D-21 spend ceiling is unset, since the alternative default would spend a client's money without a ceiling in place. A skipped sub-stage records status `skipped` with a reason and produces no descriptions; it never fabricates one."
+    },
+    "force": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "transcript",
+              "shots",
+              "scenes",
+              "ocr",
+              "visual_descriptions",
+              "audio_events",
+              "quality_flags",
+              "moment_extraction"
+            ]
+          }
+        }
+      ],
+      "description": "Sub-stages to re-run even when a valid checkpoint exists. Named rather than a blanket boolean so re-running OCR does not discard an expensive transcript."
+    }
+  }
+}

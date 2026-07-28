@@ -1,0 +1,29 @@
+# Runtime and sensitive outputs only.
+#
+# NOT ignored, deliberately (tech-spec §3, developer-guide §1):
+#   packages/contracts/generated/**   — generated contract types are committed
+#   pnpm-lock.yaml, uv.lock           — both lockfiles are committed and frozen
+# `build:contracts --check` and the pinned-local render proof are only reproducible
+# because those trees are tracked. Do not add them here.
+
+# Real job state: client footage, rights-sensitive media (tech-spec §9.1)
+project-data/
+
+# Secrets: model API keys (developer-guide §2)
+.env
+.env.*
+!.env.example
+
+# Build output and caches
+dist/
+*.tsbuildinfo
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local scratch
+*.local

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/objective.json",
+  "title": "Objective",
+  "description": "The declared job objective. Members are the seven rows of PRD §12.2 'Objective scorecards' verbatim — that table is what makes an objective meaningful (it names the primary metric candidates and guardrails), so the enum tracks it rather than inventing a parallel vocabulary. PRD REQ-002 requires exactly one per job; REQ-123 requires it declared before generation.",
+  "type": "string",
+  "enum": [
+    "discovery",
+    "education_utility",
+    "community",
+    "authority_trust",
+    "organic_conversion",
+    "paid_acquisition",
+    "retention_loyalty"
+  ]
+}

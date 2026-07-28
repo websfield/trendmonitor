@@ -1,0 +1,17 @@
+{
+  "name": "@cutdown/skill-validate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "validate skill — deterministic editorial gate + advisory LLM critic (REQ-037, D-37).",
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/editorial": "workspace:*",
+    "@cutdown/qa": "workspace:*",
+    "@cutdown/skill-runtime": "workspace:*",
+    "yaml": "2.9.0"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/platform.json",
+  "title": "Platform",
+  "description": "Target publishing platforms (PRD REQ-050). Phase 0 resolves capabilities for `tiktok` only, from the D-3 hard-coded fixture; the remaining members exist so a Phase 1 PlatformCapability registry is an additive change, not a schema bump.",
+  "type": "string",
+  "enum": ["tiktok", "instagram_reels", "youtube_shorts", "linkedin"]
+}

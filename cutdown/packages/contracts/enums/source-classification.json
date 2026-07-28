@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/source-classification.json",
+  "title": "SourceClassification",
+  "description": "Whether an asset is real client footage or a permissioned fixture (decisions.md D-36). `cutdown status --phase0` counts only packages whose every source asset is `real`; this field is the sole mechanism preventing fixture runs from being reported as Phase 0 exit evidence (D-27/D-38).",
+  "type": "string",
+  "enum": ["real", "fixture"]
+}

@@ -1,0 +1,31 @@
+{
+  "assetId": "01HQZX3F5G7K9M2N4P6R8S0V4C",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T04:32:00Z",
+    "createdBy": { "kind": "skill", "skill": "ingest", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-1",
+  "relativePath": "clean.mp4",
+  "assetKind": "video",
+  "sourceClassification": "fixture",
+  "contentHash": {
+    "algorithm": "sha256",
+    "value": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+  },
+  "byteSize": 289290,
+  "storedPath": "source/a1b2c3d4.mp4",
+  "rights": {
+    "state": "cleared",
+    "owner": "Someone"
+  },
+  "preflight": {
+    "inspected": true,
+    "container": { "formatName": "mov,mp4", "formatLongName": "QuickTime / MOV" },
+    "duration": { "ticks": 75000, "timebase": { "num": 1, "den": 15360 } },
+    "video": null,
+    "audioTracks": [],
+    "corruption": { "status": "clean", "detail": null, "decodeErrorCount": 0 }
+  },
+  "proxy": null
+}

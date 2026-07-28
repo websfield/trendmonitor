@@ -1,0 +1,18 @@
+{
+  "briefId": "01HQZX3F5G7K9M2N4P6R8S0T4X",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-21T04:10:00Z",
+    "createdBy": { "kind": "skill", "skill": "brief", "skillVersion": "1.0.0" }
+  },
+  "audience": "Anyone",
+  "objective": "discovery",
+  "platforms": ["tiktok"],
+  "distributionMode": "organic",
+  "durationRange": { "minSeconds": 10, "maxSeconds": 30 },
+  "locale": "en-AU",
+  "brandOrCampaign": "No account",
+  "contentPromise": "Something",
+  "cta": { "kind": "none" },
+  "variantCount": 1
+}

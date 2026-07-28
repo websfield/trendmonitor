@@ -1,0 +1,19 @@
+{
+  "note": "Captured propose response, 2 angles over the 3 fixture Moments. Replayed by tests/propose.test.ts over an injected transport — never fetched at test time.",
+  "responses": [
+    {
+      "id": "msg_recorded_propose_0001",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"angles\":[{\"audiencePromise\":\"You will see exactly what changed in the price and why.\",\"creativeThesis\":\"Transparency about the price cut earns trust faster than a discount claim.\",\"hookFamily\":\"proof_first\",\"narrativeArchetype\":\"reveal\",\"value\":\"reassurance\",\"semanticAngleLabel\":\"price transparency\",\"proofPoints\":[{\"claim\":\"The price was cut in half.\",\"evidenceMomentIds\":[\"01HQZX3F5G7K9M2N4P6R8S0T2V\"],\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Founder says 'we cut the price in half'.\"}}],\"selectedMoments\":[{\"momentId\":\"01HQZX3F5G7K9M2N4P6R8S0T2V\",\"candidateFunction\":\"proof\",\"rationale\":\"the core evidence of the change\"},{\"momentId\":\"01HQZX3F5G7K9M2N4P6R8S0T30\",\"candidateFunction\":\"context\",\"rationale\":\"sets up why price mattered\"},{\"momentId\":\"01HQZX3F5G7K9M2N4P6R8S0T31\",\"candidateFunction\":\"payoff\",\"rationale\":\"the fair-plan resolution\"}],\"cta\":{\"kind\":\"none\"},\"knownLimitations\":[\"no on-screen figure for the exact old price\"]},{\"audiencePromise\":\"Hear why a founder tore up the pricing and started over.\",\"creativeThesis\":\"A founder-led rebuild story frames the cut as principle, not promotion.\",\"hookFamily\":\"personality_first\",\"narrativeArchetype\":\"founder_story\",\"value\":\"credibility\",\"semanticAngleLabel\":\"founder rebuild\",\"proofPoints\":[{\"claim\":\"The plan was rebuilt to be fair.\",\"evidenceMomentIds\":[\"01HQZX3F5G7K9M2N4P6R8S0T31\"],\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Founder says 'we rebuilt the plan from scratch to make it fair'.\"}}],\"selectedMoments\":[{\"momentId\":\"01HQZX3F5G7K9M2N4P6R8S0T30\",\"candidateFunction\":\"context\",\"rationale\":\"the customer pressure that prompted it\"},{\"momentId\":\"01HQZX3F5G7K9M2N4P6R8S0T31\",\"candidateFunction\":\"payoff\",\"rationale\":\"the rebuild resolution\"}],\"cta\":{\"kind\":\"none\"},\"knownLimitations\":[\"no direct proof of the price figure in this angle\"]}]}"
+        }
+      ],
+      "usage": { "input_tokens": 1420, "output_tokens": 512 }
+    }
+  ]
+}

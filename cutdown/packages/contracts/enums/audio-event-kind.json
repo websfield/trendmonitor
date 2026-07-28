@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/audio-event-kind.json",
+  "title": "AudioEventKind",
+  "description": "Editorial audio events (PRD REQ-015), verbatim: speech, music, applause, laughter, crowd reactions, impacts, silence, and material energy changes. REQ-015 forbids treating volume alone as emotional importance — `energy_change` is therefore always produced by the classifier track (decisions.md D-20: PANNs CNN14), never by the RMS track on its own, and carries the producing detector in `detector`.",
+  "type": "string",
+  "enum": [
+    "speech",
+    "music",
+    "applause",
+    "laughter",
+    "crowd_reaction",
+    "impact",
+    "silence",
+    "energy_change"
+  ]
+}

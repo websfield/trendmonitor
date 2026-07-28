@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/brief/output.json",
+  "title": "BriefResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["briefId", "jobId", "briefPath", "contentHash", "warnings"],
+  "properties": {
+    "briefId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "briefPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the committed brief, relative to the job directory."
+    },
+    "contentHash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "type": "string", "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Non-blocking observations — e.g. a platform requested that has no Phase 0 capability fixture. Warnings never prevent the brief from committing; only a schema or cross-field failure does."
+    }
+  }
+}

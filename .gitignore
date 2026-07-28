@@ -15,6 +15,8 @@ node_modules/
 node_modules_broken*/
 dist/
 *.tsbuildinfo
+# ---- Trend monitor durable state (may hold tenant-scoped signals — never commit) ----
+.trend-monitor/
 # ---- Editor / OS ----
 .vs/
 .idea/
@@ -27,3 +29,5 @@ Thumbs.db
 !.env.example
 *.pem
 *.key
+# ---- Codebase map (generated, not tracked) ----
+.codebase-map/

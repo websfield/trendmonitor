@@ -1,0 +1,8 @@
+# Negative fixture: no author anywhere.
+# A correction without an attributable author is untraceable — the whole point of
+# keeping the inference alongside the correction is that a WRONG correction can
+# be traced to whoever made it.
+correctedAt: "2026-07-21T10:00:00Z"
+corrections:
+  - turnId: turn-0001
+    name: Ada Lovelace

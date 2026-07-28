@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/frame-rate-mode.json",
+  "title": "FrameRateMode",
+  "description": "Variable-frame-rate behaviour observed at preflight (PRD REQ-004/REQ-019). `vfr` obliges the SourceIndex to carry an explicit timebase mapping; `unknown` is fail-closed and is treated as `vfr` by range validation, because REQ-019 forbids relying on a transcript timestamp without a validated media timebase.",
+  "type": "string",
+  "enum": ["cfr", "vfr", "unknown"]
+}

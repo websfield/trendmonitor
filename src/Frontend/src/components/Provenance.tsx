@@ -28,9 +28,13 @@ export function ProvenancedNumber({
   label: string;
   unit?: string;
 }): JSX.Element {
+  // The label is a direct text child of the wrapper (not its own span) so the
+  // number and its provenance are one queryable unit: any query that finds the
+  // label also holds the value + provenance chip. This makes it structurally
+  // impossible to surface the label without the number that carries it.
   return (
     <span className="provenanced-number">
-      <span className="provenanced-number__label">{label}: </span>
+      {label}:{' '}
       <span className="provenanced-number__value">
         {unit}
         {datum.value}

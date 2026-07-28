@@ -1,0 +1,19 @@
+{
+  "note": "Captured advisory critic response. Replayed by tests/validate.test.ts over an injected transport — never fetched at test time. Every finding is advisory (D-37) and can never become a blocker.",
+  "responses": [
+    {
+      "id": "msg_recorded_critic_0001",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"findings\":[{\"lens\":\"coherence\",\"severity\":\"medium\",\"note\":\"The payoff clip lands before the viewer feels the problem; consider a one-line setup.\",\"cite\":\"clip-2\"},{\"lens\":\"style_fit\",\"severity\":\"low\",\"note\":\"Tone is a touch formal for the plain-spoken brand voice.\"},{\"lens\":\"first_frame\",\"severity\":\"high\",\"note\":\"The opening frame is a mid-sentence talking head; a stronger first frame would lift retention.\",\"cite\":\"clip-1\"}]}"
+        }
+      ],
+      "usage": { "input_tokens": 640, "output_tokens": 190 }
+    }
+  ]
+}

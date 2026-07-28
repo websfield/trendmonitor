@@ -1,0 +1,15 @@
+state: cleared
+owner: "Cutdown fixture corpus"
+supplier: "Synthetic (ffmpeg lavfi)"
+permittedPlatforms: [tiktok, instagram_reels, youtube_shorts, linkedin]
+territories: ["AU"]
+campaignStart: "2026-01-01"
+campaignEnd: null
+expiryDate: null
+talentReleaseStatus: not_required
+locationReleaseStatus: not_required
+musicStatus: none
+editingPermitted: true
+paidAmplificationPermitted: true
+evidenceUri: "file:../LICENSE-FIXTURES.md"
+notes: "Hand-written plain-text cue file authored for this fixture corpus; no third-party rights attach."

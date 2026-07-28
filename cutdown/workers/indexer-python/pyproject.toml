@@ -1,0 +1,65 @@
+# Cutdown indexer worker — the Python side of the `index` skill (tech-spec §6.5).
+# A uv workspace member of cutdown/pyproject.toml; never installed from the repo root.
+#
+# Engine choices are settled law and must not be swapped without a decisions.md
+# append (developer-guide §5 escalation protocol):
+#   faster-whisper        D-17  transcript + segment-level speaker turns
+#   scenedetect           D-18  hard cuts / fades / camera changes
+#   paddleocr             D-19  on-screen text over per-shot keyframes
+#   silero-vad + panns    D-20  voice activity + classified audio events
+#   sentence-transformers D-22  bge-small-en-v1.5 transcript embeddings (384 dims)
+[project]
+name = "cutdown-indexer"
+version = "0.1.0"
+description = "Cutdown index skill worker: transcript, shots/scenes, OCR, visual, audio events, quality flags, Moments."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # --- transcript (D-17) ---
+    "faster-whisper>=1.2",
+    # --- shots & scenes (D-18) ---
+    "scenedetect>=0.7",
+    # ONE OpenCV distribution, pinned. scenedetect pulls `opencv-python` and
+    # paddlex pulls `opencv-contrib-python`; every distribution installs into the
+    # same `cv2/` directory, so mixing builds leaves a half-written module that
+    # fails at import with a missing-attribute error. contrib is the superset
+    # that satisfies both consumers; the sibling distributions are pinned to the
+    # same upstream version by `override-dependencies` in the workspace root.
+    "opencv-contrib-python==4.10.0.84",
+    # --- OCR (D-19) ---
+    "paddleocr>=3.7",
+    "paddlepaddle>=3.3",
+    # --- audio events (D-20) ---
+    "silero-vad>=6.2",
+    "panns-inference>=0.1.1",
+    "torch>=2.13",
+    "torchaudio>=2.11",
+    "librosa>=0.11",
+    "soundfile>=0.12",
+    # --- Moment embeddings (D-22) ---
+    "sentence-transformers>=5.6",
+    # --- shared ---
+    "numpy>=2.3",
+    "pydantic>=2.9",
+    # Declared explicitly rather than relied on transitively: `speaker_map.py`
+    # parses the `--speaker-map` YAML directly, and a dependency that is present
+    # only because something else happens to pull it in disappears the day that
+    # something else drops it.
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    # A hanging test is worse than a failing one: it stalls the entry gate with
+    # no verdict at all, and "still running" is indistinguishable from "wedged".
+    # Media decoding and model loading both have real hang modes, so every test
+    # gets a deadline.
+    "pytest-timeout>=2.3",
+]
+
+[tool.uv]
+# The worker is a runnable entrypoint set (tech-spec §6.2 spawns `uv run ...`
+# argv arrays), not a distributable library, so uv installs its DEPENDENCIES
+# without building it as a package. Building it would publish `src` as a
+# top-level module name, which every other worker would then collide with.
+package = false

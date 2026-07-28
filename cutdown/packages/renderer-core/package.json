@@ -1,0 +1,16 @@
+{
+  "name": "@cutdown/renderer-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "RendererAdapter interface and the single sanctioned FFmpeg entrypoint. No package outside this one spawns ffmpeg/ffprobe (tech-spec \u00a711).",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*"
+  }
+}

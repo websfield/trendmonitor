@@ -1,0 +1,89 @@
+{
+  "subStage": {
+    "completedAt": "2026-07-21T00:00:00Z",
+    "engine": {
+      "name": "anthropic",
+      "parameters": [
+        { "key": "keyframePolicy", "value": "shot-keyframe-plus-cadence-v1" },
+        { "key": "maxKeyframes", "value": "3" },
+        { "key": "maxOutputTokens", "value": "512" },
+        { "key": "modelId", "value": "claude-sonnet-5" },
+        { "key": "provider", "value": "anthropic" },
+        { "key": "secondsPerExtraKeyframe", "value": "5.0" }
+      ],
+      "version": "claude-sonnet-5"
+    },
+    "name": "visual_descriptions",
+    "reason": null,
+    "startedAt": "2026-07-21T00:00:00Z",
+    "status": "completed"
+  },
+  "visualDescriptions": [
+    {
+      "descriptionId": "visdesc-0001",
+      "endTicks": 2000,
+      "engine": {
+        "name": "anthropic",
+        "parameters": [
+          { "key": "keyframePolicy", "value": "shot-keyframe-plus-cadence-v1" },
+          { "key": "maxKeyframes", "value": "3" },
+          { "key": "maxOutputTokens", "value": "512" },
+          { "key": "modelId", "value": "claude-sonnet-5" },
+          { "key": "provider", "value": "anthropic" },
+          { "key": "secondsPerExtraKeyframe", "value": "5.0" }
+        ],
+        "version": "claude-sonnet-5"
+      },
+      "keyframeCount": 1,
+      "scope": "shot",
+      "shotId": "shot-0001",
+      "startTicks": 0,
+      "text": "Wide establishing shot of an empty commercial kitchen, stainless steel benches lit from a window on the left. No people in frame.",
+      "timebase": { "den": 1000, "num": 1 }
+    },
+    {
+      "descriptionId": "visdesc-0002",
+      "endTicks": 14000,
+      "engine": {
+        "name": "anthropic",
+        "parameters": [
+          { "key": "keyframePolicy", "value": "shot-keyframe-plus-cadence-v1" },
+          { "key": "maxKeyframes", "value": "3" },
+          { "key": "maxOutputTokens", "value": "512" },
+          { "key": "modelId", "value": "claude-sonnet-5" },
+          { "key": "provider", "value": "anthropic" },
+          { "key": "secondsPerExtraKeyframe", "value": "5.0" }
+        ],
+        "version": "claude-sonnet-5"
+      },
+      "keyframeCount": 3,
+      "scope": "shot",
+      "shotId": "shot-0002",
+      "startTicks": 2000,
+      "text": "Medium shot of a cook in a white jacket plating a dish at the pass; the framing pushes in slightly across the shot. On-screen text reads PREP in the lower third.",
+      "timebase": { "den": 1000, "num": 1 }
+    },
+    {
+      "descriptionId": "visdesc-0003",
+      "endTicks": 20000,
+      "engine": {
+        "name": "anthropic",
+        "parameters": [
+          { "key": "keyframePolicy", "value": "shot-keyframe-plus-cadence-v1" },
+          { "key": "maxKeyframes", "value": "3" },
+          { "key": "maxOutputTokens", "value": "512" },
+          { "key": "modelId", "value": "claude-sonnet-5" },
+          { "key": "provider", "value": "anthropic" },
+          { "key": "secondsPerExtraKeyframe", "value": "5.0" }
+        ],
+        "version": "claude-sonnet-5"
+      },
+      "keyframeCount": 2,
+      "scope": "shot",
+      "shotId": "shot-0003",
+      "startTicks": 14000,
+      "text": "Close-up of the finished plate on a dark bench, hands withdrawing from frame. Shallow depth of field, warm key light from the right.",
+      "timebase": { "den": 1000, "num": 1 }
+    }
+  ]
+}

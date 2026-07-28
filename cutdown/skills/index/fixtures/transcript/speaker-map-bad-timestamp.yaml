@@ -1,0 +1,8 @@
+# Negative fixture: `correctedAt` is not an ISO-8601 date-time.
+# Caught at the boundary rather than deep in the assembler, where the schema's
+# `format: date-time` would reject it far from the file that caused it.
+author: reviewer@example.com
+correctedAt: "last tuesday"
+corrections:
+  - turnId: turn-0001
+    name: Ada Lovelace

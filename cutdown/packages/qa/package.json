@@ -1,0 +1,17 @@
+{
+  "name": "@cutdown/qa",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic editorial QA gates (Phase 3, Task 7). The LLM critic is advisory evidence only; every BLOCKING decision is computed here in versioned, deterministic code (decisions.md D-37). Blockers are non-waivable (D-35).",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/editorial": "workspace:*"
+  }
+}

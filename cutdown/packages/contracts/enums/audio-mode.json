@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/audio-mode.json",
+  "title": "AudioMode",
+  "description": "The audio-rights mode of an output (PRD REQ-056). Every output declares exactly one. `cross_platform_cleared` = a track licensed for the intended commercial uses and territories; `byo_licensed` = a user-supplied track with recorded rights; `native_audio_plan` = export dialogue/SFX and add a platform-library track during native publishing. A track cleared on one platform is NOT presumed portable to another — the mode records the plan, and the deterministic rights gate checks a cleared/BYO track carries evidence.",
+  "type": "string",
+  "enum": [
+    "cross_platform_cleared",
+    "byo_licensed",
+    "native_audio_plan"
+  ]
+}

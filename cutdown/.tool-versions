@@ -1,0 +1,9 @@
+# Pinned toolchain — developer-guide.md §1, as amended by decisions.md D-39.
+# These are the versions present on the Phase 0 pinned local environment (D-33);
+# the tier-1 render-determinism proof (tech-spec §12) records the ffmpeg build string below.
+nodejs 20.9.0
+pnpm 10.28.2
+python 3.12
+# ffmpeg is not asdf-managed on the Windows dev machine; the required build is:
+#   ffmpeg 8.0.1-full_build (gyan.dev) — libass present (`subtitles` and `ass` filters)
+# `cutdown ingest` preflight asserts the libass filters exist and fails fast if not.

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/funnel-stage.json",
+  "title": "FunnelStage",
+  "description": "Optional funnel stage on a JobBrief (PRD REQ-002 optional-field list).",
+  "type": "string",
+  "enum": ["awareness", "consideration", "decision", "retention"]
+}

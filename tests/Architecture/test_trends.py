@@ -95,6 +95,8 @@ def make_submission(
     rationale: Untrusted[str] | None = None,
     forecast: dict[str, float] | None = None,
     submitted_at: datetime = NOW,
+    label: str = "quiet luxury",
+    kind: str = "aesthetic",
 ) -> TrendSubmission:
     return TrendSubmission(
         id=uuid4(),
@@ -102,6 +104,8 @@ def make_submission(
         role="manager",
         platform="tiktok",
         vertical="fashion",
+        label=label,
+        kind=kind,
         evidence_uris=(Untrusted("https://example.test/evidence"),),
         forecast=forecast or {"rising": 0.6, "peak": 0.3, "declining": 0.1},
         rationale=rationale or Untrusted("looks like an emerging sound"),

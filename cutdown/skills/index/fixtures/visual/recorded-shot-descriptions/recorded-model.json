@@ -1,0 +1,50 @@
+{
+  "provider": "anthropic",
+  "modelId": "claude-sonnet-5",
+  "recordedAt": "2026-07-21T00:00:00Z",
+  "note": "One Messages API response per shot, replayed in shot order by the fake transport in tests/test_visual.py. Never fetched at test time.",
+  "responses": [
+    {
+      "id": "msg_recorded_0001",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"description\": \"Wide establishing shot of an empty commercial kitchen, stainless steel benches lit from a window on the left. No people in frame.\"}"
+        }
+      ],
+      "usage": { "input_tokens": 812, "output_tokens": 41 }
+    },
+    {
+      "id": "msg_recorded_0002",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"description\": \"Medium shot of a cook in a white jacket plating a dish at the pass; the framing pushes in slightly across the shot. On-screen text reads PREP in the lower third.\"}"
+        }
+      ],
+      "usage": { "input_tokens": 1904, "output_tokens": 48 }
+    },
+    {
+      "id": "msg_recorded_0003",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"description\": \"Close-up of the finished plate on a dark bench, hands withdrawing from frame. Shallow depth of field, warm key light from the right.\"}"
+        }
+      ],
+      "usage": { "input_tokens": 1350, "output_tokens": 38 }
+    }
+  ]
+}

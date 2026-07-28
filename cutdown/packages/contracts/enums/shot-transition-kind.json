@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/shot-transition-kind.json",
+  "title": "ShotTransitionKind",
+  "description": "How one shot gives way to the next (PRD REQ-012: 'hard cuts, fades, camera changes'). `camera_change` covers a continuous take whose framing moves enough to read as a new shot; it is detected separately from a hard cut so a Phase 2 fixture can prove the two do not collapse into one unbounded scene.",
+  "type": "string",
+  "enum": ["hard_cut", "fade", "camera_change", "unknown"]
+}

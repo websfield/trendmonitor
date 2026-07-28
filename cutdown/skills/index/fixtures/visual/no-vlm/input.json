@@ -1,0 +1,37 @@
+{
+  "options": {
+    "enableVlm": false
+  },
+  "shots": [
+    {
+      "shotId": "shot-0001",
+      "startTicks": 0,
+      "endTicks": 2000,
+      "timebase": { "num": 1, "den": 1000 },
+      "transitionIn": "hard_cut",
+      "transitionOut": "hard_cut",
+      "keyframeTicks": 1000,
+      "confidence": 0.94,
+      "engine": {
+        "name": "scenedetect",
+        "version": "0.7.0",
+        "parameters": [{ "key": "detector", "value": "ContentDetector" }]
+      }
+    },
+    {
+      "shotId": "shot-0002",
+      "startTicks": 2000,
+      "endTicks": 14000,
+      "timebase": { "num": 1, "den": 1000 },
+      "transitionIn": "hard_cut",
+      "transitionOut": "fade",
+      "keyframeTicks": 5000,
+      "confidence": 0.91,
+      "engine": {
+        "name": "scenedetect",
+        "version": "0.7.0",
+        "parameters": [{ "key": "detector", "value": "ContentDetector" }]
+      }
+    }
+  ]
+}

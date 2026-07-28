@@ -20,6 +20,7 @@ from uuid import UUID
 
 __all__ = [
     "Confidence",
+    "DetectionOrigin",
     "Kind",
     "LifecycleStage",
     "Scope",
@@ -31,6 +32,7 @@ Scope = Literal["public", "internal"]
 Kind = Literal["format", "sound", "hashtag", "topic", "aesthetic"]
 LifecycleStage = Literal["candidate", "rising", "peak", "declining", "archived"]
 Confidence = Literal["single_source", "corroborated", "human_corroborated"]
+DetectionOrigin = Literal["automated", "human_sourced"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +53,13 @@ class TrendSignal:
     confidence: Confidence
     valid_to: date
     archived_at: datetime | None = None
+    detection_origin: DetectionOrigin = "automated"
+    """How this signal came to exist — an **origin label**, orthogonal to the ``confidence`` rung
+    (Phase 9 R3). ``automated`` = raised by the keyless volume scanner; ``human_sourced`` = a
+    submission-born signal on a platform with no automated series. Coverage's automated/human split
+    keys on THIS, never on ``confidence``: an automated signal upgraded to ``human_corroborated``
+    (a human predated its detection) stays ``automated`` coverage — origin and confidence are
+    separate axes (the conflation Phase 4 R3 fixed for resolved samples, applied here)."""
 
     def __post_init__(self) -> None:
         # Rule 8: an internal trend is tenant-scoped and never crosses; a public one has no tenant.

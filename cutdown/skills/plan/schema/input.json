@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/plan/input.json",
+  "title": "PlanRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jobId", "creativeBriefId", "platform"],
+  "properties": {
+    "jobId": { "type": "string", "minLength": 1 },
+    "creativeBriefId": { "type": "string", "minLength": 1, "description": "The approved CreativeBrief to plan." },
+    "platform": { "type": "string", "minLength": 1, "description": "Target platform. Phase 0 refuses anything but `tiktok` (D-3)." },
+    "recordedModelPath": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "Test/fixture only: recorded provider responses (story plan then EDL) replayed over an injected transport."
+    },
+    "boundsPath": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "Optional file with an array of {assetId, duration} AssetBounds. When absent, bounds are read from the job's SourceAsset preflight."
+    }
+  }
+}

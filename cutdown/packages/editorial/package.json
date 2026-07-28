@@ -1,0 +1,17 @@
+{
+  "name": "@cutdown/editorial",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Editorial stage core (Phase 3): the provider-neutral model gateway, brief resolver, Moment retrieval, and the deterministic propose/plan/EDL scaffolding the propose/plan skills call. The model PROPOSES; deterministic code here VALIDATES and owns every blocking decision (decisions.md D-37).",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "scripts": {
+    "test": "node --test dist/tests/"
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/skill-runtime": "workspace:*"
+  }
+}

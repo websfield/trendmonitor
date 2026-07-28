@@ -282,8 +282,12 @@ const firstPersonMechanism: Mechanism = {
   ingestion_arm: 'trend_directed',
   ratified_by: '00000000-0000-0000-0000-0000000000f1',
   ratified_at: '2026-07-08T14:00:00Z',
+  // NOTE: the ratification note is served verbatim into the panel, so it must
+  // itself obey the forbidden-verb lexicon (no causes/lifts/drives/predicts, and
+  // no "caus*" family word such as "causal"). Phrase the human's approval reason
+  // descriptively rather than restating the rule with the very word it forbids.
   ratification_note:
-    'Accepted: the asymmetry survives a disjoint slice and the statement avoids causal verbs. The predicate is deterministically evaluable.',
+    'Accepted: the asymmetry survives a disjoint slice and the statement stays descriptive, naming a falsifier rather than asserting a mechanism of action. The predicate is deterministically evaluable.',
   valid_from: '2026-07-08',
   valid_to: '2026-10-08',
 };

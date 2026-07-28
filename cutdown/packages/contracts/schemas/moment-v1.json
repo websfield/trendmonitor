@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/moment-v1.json",
+  "title": "Moment",
+  "schemaVersion": "1.0.0",
+  "description": "A selectable, semantically coherent source range with content, quality, rights, and candidate-role features (PRD §5 object table, REQ-018). Immutable per source-index version. The assembled set is the Moment Graph. Every REQ-018 field below is REQUIRED — a field with nothing to say carries an explicit null plus a stated reason rather than being absent, so 'we did not look' and 'we looked and found nothing' stay distinguishable. Produced by DETERMINISTIC segmentation (decisions.md D-31: speaker-turn × shot-boundary intersection, 3–30 s); a model may enrich narrative-function tags only, and never decides the boundaries.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-21",
+      "changeKind": "breaking",
+      "reason": "Initial v1. Carries the per-Moment transcript embedding inline (decisions.md D-22) so Phase 3's retrieval reads stored vectors in pure TypeScript and never shells out to Python for the corpus side. Records segmentation provenance so D-31's 'segmentation is never model-driven' is auditable from the artefact, not just asserted in the spec."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "momentId",
+    "envelope",
+    "jobId",
+    "assetId",
+    "sourceIndexId",
+    "sourceRange",
+    "durationSeconds",
+    "segmentation",
+    "transcript",
+    "visualSummary",
+    "speakers",
+    "entities",
+    "keywords",
+    "energyCues",
+    "technicalQuality",
+    "rights",
+    "candidateNarrativeFunctions",
+    "sourceDependencies",
+    "embedding"
+  ],
+  "properties": {
+    "momentId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "envelope": { "$ref": "./common/envelope-v1.json" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "assetId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "sourceIndexId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+      "description": "The SourceIndex revision this Moment was derived from. Moments are immutable per source-index version (PRD §5), so a re-index produces new Moments rather than mutating these."
+    },
+    "sourceRange": {
+      "$ref": "./common/timecode-v1.json#/$defs/SourceRange",
+      "description": "REQ-018's 'exact source range'. Validated against the asset's preflighted duration by `range-check.ts` — the single implementation, run by `cutdown index` over every generated Moment. This is the mechanism behind the 'zero invalid source ranges' Phase 0 exit criterion."
+    },
+    "durationSeconds": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Convenience projection of sourceRange for human reading and for the D-31 3–30 s granularity assertion. NOT authoritative — sourceRange's integer ticks are. Never used for arithmetic that feeds a render."
+    },
+    "segmentation": {
+      "title": "SegmentationProvenance",
+      "description": "How this Moment's boundaries were chosen. decisions.md D-31 fixes deterministic segmentation and forbids model-driven boundaries; recording the method and the contributing boundary IDs is what makes that rule checkable against a produced artefact rather than only against the code.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "speakerTurnIds", "shotIds", "indexerVersion", "granularityBounds"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "speaker_turn_x_shot_boundary",
+          "description": "A `const`, not an enum: at Phase 0 there is exactly one sanctioned method, and adding a second is a deliberate schema change reviewed against D-31."
+        },
+        "speakerTurnIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "shotIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "indexerVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "granularityBounds": {
+          "title": "GranularityBounds",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minSeconds", "maxSeconds"],
+          "description": "The 3–30 s target window in force when this Moment was cut (D-31). Recorded per Moment so retuning granularity against real footage is visible in the data.",
+          "properties": {
+            "minSeconds": { "type": "number", "exclusiveMinimum": 0 },
+            "maxSeconds": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      }
+    },
+    "transcript": {
+      "title": "MomentTranscript",
+      "description": "REQ-018's 'transcript' for this range. Verbatim and display text are kept apart for the same reason as in SourceIndex: the deterministic quotation gate (D-37 — quote token order and speaker identity) tokenises the VERBATIM side, so a cleaned caption can never launder a misquote past it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verbatimText", "displayText", "wordCount", "segmentIds", "lowConfidenceWordCount"],
+      "properties": {
+        "verbatimText": { "type": "string" },
+        "displayText": { "type": "string" },
+        "wordCount": { "type": "integer", "minimum": 0 },
+        "segmentIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "lowConfidenceWordCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many words fell below the D-28 confidence threshold. A Moment full of low-confidence words is a poor quotation candidate, and the critic surfaces that."
+        }
+      }
+    },
+    "visualSummary": {
+      "$ref": "#/$defs/NullableText",
+      "description": "REQ-018's 'visual summary'. Null-with-reason when the VLM sub-stage was skipped (e.g. `--no-vlm` before the D-21 spend ceiling is set) — NEVER a fabricated description."
+    },
+    "speakers": {
+      "type": "array",
+      "items": {
+        "title": "MomentSpeaker",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["turnId", "label", "isCorrected", "lowConfidence"],
+        "properties": {
+          "turnId": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "minLength": 1, "description": "The corrected name if one exists, otherwise the inferred positional label." },
+          "isCorrected": { "type": "boolean", "description": "Whether `label` came from a human correction. The editorial gate treats an UNCORRECTED label as an unverified speaker identity." },
+          "lowConfidence": { "type": "boolean" }
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "title": "MomentEntity",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "kind", "confidence", "source"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["person", "organisation", "product", "place", "claim", "metric", "other"] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "source": { "type": "string", "enum": ["transcript", "ocr", "visual"], "description": "Which modality asserted it — an on-screen price read by OCR and a spoken price are different evidence." }
+        }
+      }
+    },
+    "keywords": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "energyCues": {
+      "type": "array",
+      "description": "REQ-018's 'emotion or energy cues'. Sourced from the REQ-015 audio-event track, so REQ-015's rule rides along: volume alone is never emotional importance, and `audioEventIds` names the classifier events that justified the cue.",
+      "items": {
+        "title": "EnergyCue",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "intensity", "audioEventIds"],
+        "properties": {
+          "kind": { "$ref": "../enums/audio-event-kind.json" },
+          "intensity": { "type": "number", "minimum": 0, "maximum": 1 },
+          "audioEventIds": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "technicalQuality": {
+      "title": "MomentQuality",
+      "description": "REQ-018's 'technical quality' rollup for this range, projected from the SourceIndex's REQ-014 flags. `usable` is advisory only — an unusable-looking Moment is still offered to the editorial stage with its reasons attached, because the human, not the score, decides.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["flagKinds", "worstSeverity", "usable"],
+      "properties": {
+        "flagKinds": { "type": "array", "uniqueItems": true, "items": { "$ref": "../enums/quality-flag-kind.json" } },
+        "worstSeverity": { "type": "string", "enum": ["none", "info", "warning", "severe"] },
+        "usable": { "type": "boolean" }
+      }
+    },
+    "rights": {
+      "title": "MomentRights",
+      "description": "REQ-018's 'rights flags', inherited from the owning SourceAsset. Inherited rather than restated: a Moment cannot be more permissively licensed than the footage it is cut from, and duplicating the full record would let the two drift.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "concerns"],
+      "properties": {
+        "state": { "$ref": "../enums/rights-state.json" },
+        "concerns": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "candidateNarrativeFunctions": {
+      "type": "array",
+      "description": "REQ-018's 'possible narrative functions' — CANDIDATES, plural and non-exclusive. The story planner chooses; this list only says what the Moment could serve. Optional LLM enrichment (D-31) may populate it, which is the one model contribution to a Moment and never touches its boundaries.",
+      "items": {
+        "title": "CandidateNarrativeFunction",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["function", "confidence", "rationale", "source"],
+        "properties": {
+          "function": { "$ref": "../enums/narrative-function.json" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "rationale": { "type": "string" },
+          "source": { "type": "string", "enum": ["heuristic", "model"], "description": "`model` entries are advisory evidence (D-37) and can never become a blocking signal." }
+        }
+      }
+    },
+    "sourceDependencies": {
+      "type": "array",
+      "description": "REQ-018's 'source dependencies': other Moments this one needs in order to make sense — a payoff that is meaningless without its setup, an answer without its question. The story planner uses these to avoid cutting a Moment loose from the context that makes it true, which is also what the deterministic 'required context' editorial gate (D-37) checks.",
+      "items": {
+        "title": "MomentDependency",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["momentId", "relation"],
+        "properties": {
+          "momentId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+          "relation": { "type": "string", "enum": ["requires_setup", "answers", "proves", "continues", "contradicts"] }
+        }
+      }
+    },
+    "embedding": {
+      "oneOf": [
+        {
+          "title": "MomentEmbedding",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "modelVersion", "dimensions", "vector"],
+          "description": "Transcript-text embedding computed during Phase 2 Moment extraction (decisions.md D-22: bge-small-en-v1.5, 384 dims, local). Stored ON the Moment so Phase 3's retrieval does brute-force cosine in pure TypeScript over vectors already on disk — the Stage B move to pgvector is then a re-embed, not a redesign. REQ-017's frame/clip embeddings are deliberately out of Phase 0 scope.",
+          "properties": {
+            "model": { "type": "string", "minLength": 1 },
+            "modelVersion": { "type": "string", "minLength": 1 },
+            "dimensions": { "type": "integer", "minimum": 1, "maximum": 2000, "description": "Capped at 2000: tech-spec §9.2 notes pgvector index types cap around that, so an embedding model chosen now cannot make the Stage B migration impossible." },
+            "vector": { "type": "array", "items": { "type": "number" } }
+          }
+        },
+        { "type": "null" }
+      ]
+    }
+  },
+  "$defs": {
+    "NullableText": {
+      "title": "NullableText",
+      "description": "Text that may legitimately be unavailable, carrying the REASON it is unavailable. This shape is why the Phase 2 acceptance criterion 'every Moment field populated or explicitly null-with-reason' is schema-enforceable rather than a review convention.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "absentReason"],
+      "properties": {
+        "value": { "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }] },
+        "absentReason": {
+          "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+          "description": "Non-null exactly when `value` is null. Enforced by the assembler (the subset forbids if/then/else) and asserted by fixture."
+        }
+      }
+    }
+  }
+}
