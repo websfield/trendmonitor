@@ -1,0 +1,15 @@
+# Repo-root line-ending rules.
+#
+# `cutdown/.gitattributes` covers `cutdown/**` only, which left the GENERATED skill
+# mirror uncovered: it lives at `.claude/skills/cutdown-*/SKILL.md`, above the cutdown
+# workspace. With `core.autocrlf=true` those files would still arrive CRLF on a fresh
+# clone, and `cutdown skills sync` decides both ownership (the generated banner anchor)
+# and staleness (`--check`) by comparing text — so every mirror would be misclassified
+# as hand-written and `--check` would be permanently stale on a tree nobody touched.
+#
+# `normaliseNewlines` in `apps/cli/src/commands/skills-sync.ts` also defends both
+# comparisons. For files under `cutdown/`, that is a fallback for checkouts predating
+# the attributes file. For the mirror, it was the ONLY protection until this file
+# existed.
+*.md    text eol=lf
+*.json  text eol=lf

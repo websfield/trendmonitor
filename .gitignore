@@ -17,6 +17,14 @@ dist/
 *.tsbuildinfo
 # ---- Trend monitor durable state (may hold tenant-scoped signals — never commit) ----
 .trend-monitor/
+# ---- Cutdown job working directories (real creator footage + campaign data — never commit) ----
+# `work/` holds ingested source media, proxies, renders and campaign exports for real
+# jobs. Two independent reasons it can never be tracked: the media is licensed creator
+# footage whose rights records live beside it (golden rule 3 / rights invariant), and the
+# campaign exports (`comments.json`, `posts.json`) carry third-party personal data. It is
+# also ~200 MB per campaign. The evidence that a job RAN belongs in `cutdown/docs/` and in
+# the ContentPackage record — never the media itself.
+work/
 # ---- Editor / OS ----
 .vs/
 .idea/

@@ -1,0 +1,20 @@
+# Cutdown's OWN ruff configuration.
+#
+# This file exists to stop config leakage, not to state a style preference: cutdown is
+# self-rooted (tech-spec §14 — the UGC Intelligence gates and style rules do not apply),
+# but ruff resolves configuration by walking UP from each checked file, so without a
+# config here the repo root's `[tool.ruff]` (the UGC selection: E, F, I, UP, B, SIM, RUF)
+# silently governed cutdown's Python. Phase 6 found 185 findings under that foreign
+# standard — none of them defects, all of them another project's style guide.
+#
+# The selection below is the correctness core. Widening it is a deliberate decision for
+# a later phase, not a side effect of where this directory happens to sit in the repo.
+
+line-length = 120
+target-version = "py312"
+
+[lint]
+# Pyflakes (real defects: unused imports/variables, undefined names) + pycodestyle's
+# error classes. Style families (import order, naming, modernisation) are deliberately
+# absent — five phases of reviewed Python were not written under them.
+select = ["E4", "E7", "E9", "F"]

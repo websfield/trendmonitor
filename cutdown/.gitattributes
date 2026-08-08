@@ -1,0 +1,44 @@
+# Line endings are load-bearing in this workspace, so they are pinned rather than
+# left to each clone's `core.autocrlf`.
+#
+# NOTE ON SCOPE: this file governs `cutdown/**` only. The GENERATED mirror it talks
+# about lives at `.claude/skills/cutdown-*/SKILL.md`, ABOVE this directory, and is
+# covered by the repo-root `.gitattributes` instead — a distinction the first version
+# of this header got wrong, claiming protection it did not provide.
+#
+# `cutdown skills sync` GENERATES `.claude/skills/cutdown-*/SKILL.md` and
+# `skills/registry.json`, and it decides two things by comparing text:
+#
+#   1. ownership — a mirror is safe to prune only if its body starts with the
+#      generated banner anchor (`---\nname: `), and
+#   2. staleness — `--check` passes only if the file on disk equals what the
+#      generator would write.
+#
+# This repo has `core.autocrlf=true`. Without the rules below, a fresh clone gets
+# CRLF in the working tree while the generator emits LF, so EVERY generated mirror
+# would be misclassified as hand-written (never pruned, reported as a problem) and
+# `skills sync --check` would be permanently stale on a tree nobody had touched.
+#
+# The comparisons in `skills-sync.ts` are ALSO newline-insensitive — this file plus the
+# repo-root one fix the cause for their respective halves, that fixes the symptom, and
+# neither alone is enough: an attributes file cannot retroactively fix an existing
+# checkout.
+* text=auto eol=lf
+
+# Content-addressed and byte-compared: never translated.
+*.json  text eol=lf
+*.md    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.ts    text eol=lf
+*.js    text eol=lf
+
+# Media fixtures and anything hashed with sha256 must round-trip byte-exactly.
+*.mp4   binary
+*.mov   binary
+*.wav   binary
+*.m4a   binary
+*.png   binary
+*.jpg   binary
+*.ttf   binary
+*.otf   binary
