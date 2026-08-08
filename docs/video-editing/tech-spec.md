@@ -263,7 +263,15 @@ project-data/jobs/<job-id>/
   edl/
   renders/          draft/ and final/ tiers, versioned
   packages/         ContentPackage output (incl. rights manifest + QA report)
-  reviews/          ReviewDecision records from `cutdown approve` (approver, timestamp, decision)
+  reviews/          ReviewDecision records from `cutdown approve`, ONE FILE PER DECISION,
+                    named `<reviewDecisionId>.json` — and nothing else. This directory is a
+                    NAMESPACE, not a folder: `resolveApprovalForManifest` treats every
+                    `<ulid>.json` directly inside it as a candidate decision, and any one it
+                    cannot read makes the whole approval `indeterminate` (fail closed —
+                    the missing file could be the rejection that supersedes an approval).
+                    Anything else a step wants to write here goes in a SUBDIRECTORY:
+    reviews/gates/    `validate`'s `<edlId>-gate.json` and `<edlId>-critic.json` (§step 5)
+    reviews/pending/  the review payload a draft render leaves for a reviewer (REQ-110)
   requests/         Request payloads authored by callers (the .claude mirror writes here)
   traces/           OTel spans (file exporter — §13)
   run-log.jsonl     Authoritative skill-invocation record (§5, §8)

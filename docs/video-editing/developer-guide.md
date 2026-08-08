@@ -71,3 +71,15 @@ All four PRD §15 Phase 0 exit criteria, computed by `cutdown status --phase0`, 
 4. rights records + QA reports accompany every delivered package.
 
 Reporting honestly against these — including "not met yet" — is the job. A green claim the artefacts can't back is the one failure mode this doc set can't survive.
+
+## 7. Phase 6 handover addendum (2026-08-02 — facts from the proving run)
+
+`PIPELINE_IMPLEMENTATION_COMPLETE` was earned on 2026-08-02 by the fixture proving run (job `e2e-mixed-1`; full record in `cutdown/docs/proving-run-placeholder.md`, real-footage path `BLOCKED-ON-D-27/D-36` per `proving-run-real.md`). Operational facts a developer or operator should know that the earlier sections don't state:
+
+- **CPU throughput (D-17 status):** on the pinned Windows machine, whole-asset indexing is dominated by OCR (~150 s for a 27 s clip), not ASR — whisper transcribes short clips faster than real time on CPU. The D-17 revisit trigger is not approached at Phase 0 clip lengths.
+- **Editorial needs footage with enough Moments.** REQ-036's deterministic floor is `max(3, JobBrief.variantCount × 2)` rankable (embedding-bearing) Moments; a 5 s single-utterance clip yields exactly one. The committed e2e corpus (`data/golden-sets/e2e/`) exists because of this; use `promo-take.mp4` (7 Moments) or richer footage when driving the editorial stages.
+- **Captions quote the ASR, not the script.** Quote fidelity binds `displayText ⊆ verbatimSourceText ⊆ Moment.transcript.verbatimText` over the *transcribed* words (whisper heard "tape" where the script said "take"); author recorded fixtures and revision notes from the committed transcript artefact.
+- **QA warnings fail the gate unless waived by name** (D-35): `pass` needs zero findings; any unwaived warning reads `fail`; a waiver is scoped to one `planHash`, so the draft and final tiers of the same EDL need separate waivers.
+- **Exit codes differ by surface:** `cutdown render` (CLI verb) exits 4 on a QA-gate `fail`; `cutdown skills run render` exits 0 with the verdict in the result JSON. Scripts must read `gateStatus`, not the exit code, on the skills-run surface.
+- **Crash recovery is two commands:** a killed index resumes from sub-stage checkpoints (`cutdown index …` again); a killed render leaves an orphan directory the runner's gate refuses fail-closed (`QA_REPORT_UNREADABLE`) — re-run the render, then `cutdown run <job>` advances. Nothing in the run log is ever rewritten.
+- **`--audio-events` takes the index artefact directly** since D-51 (source-tick `{audioEvents}` projected onto the output timeline; `{events}` with output-relative ms also accepted).
