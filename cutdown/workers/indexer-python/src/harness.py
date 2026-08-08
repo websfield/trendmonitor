@@ -104,7 +104,23 @@ class ModelUnavailableError(SubStageError):
 # TypeScript guard protects the CLI path, but this worker is documented as
 # directly invocable (`uv run ... main.py --input <request.json>`), so a guard
 # that lives only in the caller is a guard with a documented bypass.
-_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+#: `\Z`, NOT `$`. Python's `$` also matches just before a trailing newline, while
+#: JavaScript's (without `/m`) matches only at end of input — so the mirror in
+#: `apps/cli/src/paths.ts` REJECTED `"abc\n"` while this one ACCEPTED it. A
+#: triplicated guard whose copies disagree is the failure class this project has
+#: logged repeatedly, and it disagreed in the one mirror reachable without the
+#: CLI (`uv run ... main.py --input`), which is the entire reason it exists.
+#: `tests/safe-id-cases.json` is the shared fixture that now pins all three.
+_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+#: Windows reserved DEVICE names — see `WINDOWS_RESERVED_DEVICE` in
+#: `@cutdown/skill-runtime` for the full reasoning and the measurements. Short
+#: version: not a traversal. `nul` is confirmed on the D-33 machine to name the
+#: null device, so a job directory called `nul` accepts `mkdir` and then fails
+#: EVERY child write with "no such file or directory" on a path that appears to
+#: exist. The rest are refused for portability across Windows builds and APIs,
+#: not because a write silently vanishes here.
+_WINDOWS_RESERVED_DEVICE = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|\Z)", re.IGNORECASE)
 
 #: FFmpeg reads `concat:`, `http:`, `subfile:` and friends as protocols rather
 #: than filenames. A drive letter (`C:\...`) is deliberately NOT matched — it is
@@ -125,6 +141,17 @@ def assert_safe_id(value: str, label: str) -> str:
             "UNSAFE_IDENTIFIER",
             f"Invalid {label} {value!r}. Use letters, digits, dot, dash or underscore "
             "(max 64 chars); it becomes a path segment.",
+            details={"field": label},
+            exit_code=EXIT_INPUT_VALIDATION,
+        )
+    if _WINDOWS_RESERVED_DEVICE.match(value):
+        raise SubStageError(
+            "UNSAFE_IDENTIFIER",
+            f"Invalid {label} {value!r}: it names a device in the Windows reserved "
+            "namespace, and it becomes a path segment. `nul` is the worst case — the "
+            "directory appears to be created and then every write inside it fails with "
+            "'no such file or directory' — and the rest are unreliable across Windows "
+            "builds and APIs. Choose another value.",
             details={"field": label},
             exit_code=EXIT_INPUT_VALIDATION,
         )
@@ -286,6 +313,49 @@ class SubStageResult:
     cache_hit: bool
     duration_ms: int
     warnings: list[str] = field(default_factory=list)
+
+
+#: Set once a progress write has failed, so a broken observability channel warns
+#: exactly once instead of spamming stderr per keyframe.
+_progress_write_failed = False
+
+
+def append_progress(ctx: SubStageContext, sub_stage: str, current: int, total: int, note: str = "") -> None:
+    """Append one heartbeat line to `index/progress.jsonl` — observability, never state.
+
+    Long sub-stages (OCR is minutes-per-asset on real footage) otherwise produce
+    NOTHING observable until their atomic artefact lands, which reads as a hang.
+    This file is the liveness channel an operator can tail: one JSON line per unit
+    of work, appended with an immediate flush.
+
+    It is deliberately NOT an artefact: nothing reads it back, it carries no cache
+    key, it is not part of any contract, and a failure to write it must never cost
+    the work it reports on — a progress write failing after 60 minutes of OCR
+    would turn the observability channel into the outage. Hence best-effort with a
+    single stderr warning on first failure.
+    """
+    global _progress_write_failed
+    try:
+        ctx.index_dir.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(
+            {
+                "ts": _now_iso(),
+                "assetId": ctx.asset_id,
+                "subStage": sub_stage,
+                "current": current,
+                "total": total,
+                "note": note,
+            },
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        with open(ctx.index_dir / "progress.jsonl", "a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+            handle.flush()
+    except OSError as error:
+        if not _progress_write_failed:
+            _progress_write_failed = True
+            print(f"warning: progress heartbeat unwritable ({error}); work continues without it", file=sys.stderr)
 
 
 def append_run_log(ctx: SubStageContext, entry: dict[str, Any]) -> None:

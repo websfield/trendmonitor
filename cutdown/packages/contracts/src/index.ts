@@ -8,10 +8,14 @@
  */
 
 export * from './paths.js';
+export * from './artefact-paths.js';
 export * from './subset-lint.js';
 export * from './ajv.js';
 export * from './hash.js';
 export * from './range-check.js';
+export * from './reviews.js';
+export * from './contract-set.js';
 export * from './generate.js';
 export * from './check-generated.js';
 export * from './validate.js';
+export { PLATFORM_EDL_SCHEMA_VERSION } from './versions.js';

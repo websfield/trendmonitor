@@ -178,6 +178,10 @@ export interface EdlClip {
   narrativeFunction: NarrativeFunction;
   rationale: string;
   caption: ClipCaption;
+  /**
+   * The editorial transition decision for this clip's boundaries (D-52). Optional and null-safe so every pre-existing EDL remains valid; absent means hard cut. Fades are the only Phase 0 vocabulary - duration-preserving by design, so caption cue times and QA duration math are unaffected. A fade still changes the EDL and its content hashes like any other edit decision; what stays invariant is the draft-to-final plan-hash chain, since both tiers render the same faded EDL.
+   */
+  transition?: null | ClipTransition;
 }
 /**
  * The exact half-open range into the source. Validated by range-check.ts against the asset's preflighted duration — an out-of-bounds range is a NON-WAIVABLE block (D-35/D-37), never clamped.
@@ -225,6 +229,19 @@ export interface QuoteCaption {
    * Who is quoted. The gate checks it against the Moment's speakers[].label; an UNCORRECTED speaker label is an unverified identity the critic flags.
    */
   speakerLabel: string;
+}
+/**
+ * Both fields optional; an empty object is a hard cut. The renderer refuses a pair whose sum exceeds the clip's duration (FADE_LONGER_THAN_CLIP) rather than layering fades over each other.
+ */
+export interface ClipTransition {
+  /**
+   * Fade from black (video) and silence (audio) over this many milliseconds at the clip's head. Duration-preserving: the clip occupies exactly the same output frames as a hard cut.
+   */
+  fadeInMs?: number;
+  /**
+   * Fade to black/silence over this many milliseconds at the clip's tail. Paired with the next clip's fadeInMs it reads as a dip-to-black join.
+   */
+  fadeOutMs?: number;
 }
 /**
  * Platform disclosure flags (REQ-058). The deterministic disclosure gate requires a paid-partnership disclosure when distributionMode is `paid`, and an AI-media disclosure when the edit materially alters media — a missing required disclosure is a NON-WAIVABLE block (D-35).

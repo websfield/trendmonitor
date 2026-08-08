@@ -1,0 +1,19 @@
+{
+  "kind": "rendered",
+  "jobId": "e2e-mixed-1",
+  "edlId": "01KZ09QH84KC5S7P298MWCHFNG",
+  "tier": "final",
+  "renderId": "01KZ09WNNNY64GMZA0GKRR70H1",
+  "renderManifestId": "01KZ09WEBQWZCAMZJ6GMPEG224",
+  "manifestPath": "renders/final/01KZ09WEBQWZCAMZJ6GMPEG224/manifest.json",
+  "renderPath": "renders/final/01KZ09WEBQWZCAMZJ6GMPEG224/render.json",
+  "outputPath": "renders/final/01KZ09WEBQWZCAMZJ6GMPEG224/output.mp4",
+  "qaReportPath": "renders/final/01KZ09WEBQWZCAMZJ6GMPEG224/qa-report.json",
+  "gateStatus": "fail",
+  "blockerCount": 0,
+  "warningCount": 1,
+  "waivedCount": 0,
+  "skippedCheckCount": 2,
+  "planHash": "0c43e5069cadd44b909b671d8569be7dd855578a9451e2719cd3484d5f36eb6c",
+  "reviewPayloadPath": null
+}

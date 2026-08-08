@@ -1,0 +1,52 @@
+{
+  "renderId": "01KZ09WNNNY64GMZA0GKRR70H1",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:57:10.197Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "render",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "edlId": "01KZ09QH84KC5S7P298MWCHFNG",
+  "renderManifestId": "01KZ09WEBQWZCAMZJ6GMPEG224",
+  "tier": "final",
+  "releaseState": "draft",
+  "outputPath": "renders/final/01KZ09WEBQWZCAMZJ6GMPEG224/output.mp4",
+  "contentHash": {
+    "algorithm": "sha256",
+    "value": "8e1991549a37a222f9d496957ba5e7657d72333e058d094c3462d949b7315100"
+  },
+  "duration": {
+    "ticks": 168960,
+    "timebase": {
+      "num": 1,
+      "den": 15360
+    }
+  },
+  "dimensions": {
+    "width": 720,
+    "height": 1280
+  },
+  "loudness": {
+    "kind": "measured",
+    "integratedLufs": -14.4,
+    "truePeakDbtp": -3.7,
+    "loudnessRangeLu": 3.2
+  },
+  "captions": {
+    "assPath": "renders/final/01KZ09WEBQWZCAMZJ6GMPEG224/captions.ass",
+    "srtPath": "renders/final/01KZ09WEBQWZCAMZJ6GMPEG224/captions.srt",
+    "vttPath": "renders/final/01KZ09WEBQWZCAMZJ6GMPEG224/captions.vtt",
+    "cueCount": 3
+  },
+  "renderer": {
+    "name": "renderer-ffmpeg",
+    "rendererVersion": "1.0.0",
+    "ffmpegVersion": "ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers"
+  },
+  "determinismTier": 1,
+  "visibleVersionIdentifier": null
+}

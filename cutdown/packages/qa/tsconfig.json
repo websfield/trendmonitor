@@ -4,9 +4,19 @@
     "rootDir": ".",
     "outDir": "./dist"
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts"
+  ],
   "references": [
-    { "path": "../../packages/contracts" },
-    { "path": "../../packages/editorial" }
+    {
+      "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/editorial"
+    },
+    {
+      "path": "../renderer-core"
+    }
   ]
 }

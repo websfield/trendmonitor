@@ -9,7 +9,7 @@ outputSchema: ./schema/output.json
 contractsUsed:
   - source-index-v1
   - moment-v1
-sideEffects: [reads-project-data, writes-project-data, calls-model]
+sideEffects: [reads-project-data, writes-project-data, network]
 timeoutSeconds: 7200
 ---
 

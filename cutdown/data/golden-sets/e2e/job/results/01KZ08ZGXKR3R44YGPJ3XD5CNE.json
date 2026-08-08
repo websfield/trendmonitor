@@ -1,0 +1,12 @@
+{
+  "kind": "planned",
+  "jobId": "e2e-mixed-1",
+  "storyPlanId": "01KZ08ZJ7NXEEXZ8PCPMM0C6FR",
+  "storyPlanPath": "story-plans/01KZ08ZJ7NXEEXZ8PCPMM0C6FR.json",
+  "edlId": "01KZ08ZJ8MGTRS8XE919GKWHME",
+  "edlPath": "edl/01KZ08ZJ8MGTRS8XE919GKWHME.json",
+  "validation": {
+    "ok": true,
+    "clipsChecked": 3
+  }
+}

@@ -6,6 +6,8 @@ import {
   inputArgs,
   runFfmpeg,
   assertSafeInputPath,
+  assertDeterministicArgv,
+  determinismArgs,
   FfmpegError,
   EXIT_INPUT_VALIDATION,
   type RunOptions,
@@ -196,8 +198,7 @@ export async function generateProxy(
       // would make "does this asset have audio?" unanswerable from the proxy.
       ['-an'];
 
-  await runFfmpeg(
-    [
+  const encodeArgv = [
       '-nostdin',
       '-y',
       ...inputArgs(sourcePath),
@@ -225,18 +226,25 @@ export async function generateProxy(
       // tier 1): without these the encoder stamps `creation_time` and build
       // metadata, so two identical re-runs produce different bytes, different
       // hashes, and a REQ-005 cache that never hits.
-      '-fflags',
-      '+bitexact',
-      '-flags',
-      '+bitexact',
-      '-map_metadata',
-      '-1',
+      //
+      // Taken from `determinismArgs()` rather than spelled out here. The
+      // hand-written copy that used to sit in this spot carried `-fflags`,
+      // `-flags` and `-map_metadata` but NOT `-flags:a +bitexact` or `-threads`
+      // — and this encode emits AAC whenever the source has audio, so the AAC
+      // encoder's build identifier went into a hash the whole REQ-005 cache is
+      // keyed on. It is the same defect that was just fixed one layer up, in the
+      // shared helper, surviving in a hand-rolled duplicate: exactly the
+      // "guard the class, not the field" failure this project has logged before.
+      ...determinismArgs(),
       '-movflags',
       '+faststart',
       outputPath,
-    ],
-    options,
-  );
+  ];
+  // The proxy is content-addressed, so its pins are load-bearing in the same way
+  // a render's are — assert them rather than trusting the list above stays right.
+  assertDeterministicArgv(encodeArgv);
+
+  await runFfmpeg(encodeArgv, options);
 
   // The proxy's own timebase is read back from the encoded file rather than
   // predicted. The muxer chooses it (MP4 defaults to 1/15360, not 1/rate), and

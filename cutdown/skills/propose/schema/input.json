@@ -4,12 +4,16 @@
   "title": "ProposeRequest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["jobId", "variants"],
+  "required": [
+    "jobId",
+    "variants"
+  ],
   "properties": {
     "jobId": {
       "type": "string",
       "minLength": 1,
-      "description": "The job whose Moment Graph is proposed against."
+      "description": "The job whose Moment Graph is proposed against. Becomes a directory name under `project-data/jobs/`. The pattern is defence in depth \u2014 `jobDir()` in @cutdown/skill-runtime guards and containment-checks it regardless of caller, because a skill's `entrypoint` is a documented direct invocation.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
     },
     "variants": {
       "type": "integer",
@@ -18,11 +22,27 @@
       "description": "How many distinct CreativeBriefs to propose (REQ-002). REQ-036 permits returning fewer with a reason, as the refusal variant."
     },
     "recordedModelPath": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Test/fixture only: a recorded provider-response file replayed over an injected transport. Never a network call."
     },
     "queryVectorPath": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Optional pre-computed retrieval query vector ({model,modelVersion,dimensions,vector}). When absent, the Python embed_query entrypoint computes it."
     }
   }

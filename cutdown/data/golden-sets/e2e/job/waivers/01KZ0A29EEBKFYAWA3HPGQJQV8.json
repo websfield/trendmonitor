@@ -1,0 +1,18 @@
+{
+  "waiverId": "01KZ0A29EEBKFYAWA3HPGQJQV8",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T06:40:00Z",
+    "createdBy": { "kind": "human", "name": "Fred Wang" }
+  },
+  "jobId": "e2e-mixed-1",
+  "renderId": "01KZ09WNNNY64GMZA0GKRR70H1",
+  "findingIds": ["unexpected_silence:audio:9421-11106"],
+  "approvedBy": "Fred Wang (owner; recorded during the /go full-automation proving session, 2026-08-02)",
+  "reason": "Same finding as draft waiver 01KZ09T0CFWQED598FDDXWAA37, re-scoped to the FINAL tier's plan hash (a waiver is plan-scoped by design, and the final tier is a different plan). The 1.69 s sub--60 dBFS span is the synthetic fixture's own inter-utterance silence, not a defect in the cut. Waived for the fixture proving run only.",
+  "waivedAt": "2026-08-02T06:40:00Z",
+  "planHash": {
+    "algorithm": "sha256",
+    "value": "0c43e5069cadd44b909b671d8569be7dd855578a9451e2719cd3484d5f36eb6c"
+  }
+}

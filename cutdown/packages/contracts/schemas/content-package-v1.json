@@ -1,0 +1,762 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/content-package-v1.json",
+  "title": "ContentPackage",
+  "schemaVersion": "1.0.0",
+  "description": "The delivered output and every piece of evidence that entitles it to exist (PRD REQ-088 Phase-0 subset, decisions.md D-36, tech-spec \u00a715 step 8). This object is where two of the four Phase 0 exit criteria become measurable \u2014 'at least 20 approved real outputs across 3 accounts' and 'rights records and QA reports accompany every delivered package' \u2014 so every field it carries is an evidence field, and `cutdown status --phase0` reads NOTHING else. Three design rules follow. (1) Evidence is recorded by ID, not by copy: the approval, the QA report and the render are named so a reader can go and check, and a package cannot assert a verdict its source artefact does not. (2) The Phase-0 subset is explicit \u2014 REQ-088's post copy, hashtags, alt text, first comment, platform derivatives, clean/stem audio and OpenTimelineIO export are product Phase 1 (REQ-054) and are ABSENT from this schema rather than present-and-null, so a Phase 1 addition is a compatible change and nobody can read an empty field as 'none needed'. (3) `additionalProperties: false` throughout: a package that grew a field is a contract change with a changelog entry, never a convention.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-30",
+      "changeKind": "breaking",
+      "reason": "Initial v1 (Phase 5, task 2; REQ-088 Phase-0 subset, D-36). `contractSet` records each schema's MAJOR version alongside its content hash because that pair is what makes exit criterion 3 ('last 10 outputs require no breaking contract change') computable from the packages themselves: tech-spec \u00a73 fixes a semantic change as a major bump, so a major that moved between two packages IS the breaking change, and a hash that moved under an unchanged major is a compatible or editorial one."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contentPackageId",
+    "envelope",
+    "jobId",
+    "accountId",
+    "releaseState",
+    "sourceClassification",
+    "approval",
+    "lineage",
+    "master",
+    "captions",
+    "cover",
+    "rightsManifest",
+    "disclosures",
+    "aiAlterationRecord",
+    "qa",
+    "rangeValidation",
+    "contractSet",
+    "provenance"
+  ],
+  "properties": {
+    "contentPackageId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+    },
+    "envelope": {
+      "$ref": "./common/envelope-v1.json"
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "accountId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The STABLE owner-issued account id, copied from the JobBrief (decisions.md D-36). Copied rather than referenced because exit criterion 1 groups outputs by account, and a grouping that had to resolve a reference through a revisable brief could be changed after the fact. The display name is deliberately NOT here: renaming an account must never split its count."
+    },
+    "releaseState": {
+      "$ref": "../enums/package-release-state.json",
+      "description": "REQ-105. Phase 0 emits `editorially_approved` or `rights_approved` only; the skill refuses to write `publish_ready` or `published`, which it cannot substantiate, and `draft` is not a state a completed package can hold."
+    },
+    "sourceClassification": {
+      "$ref": "../enums/source-classification.json",
+      "description": "`real` ONLY when every source asset in the lineage is `real` (D-36). One fixture asset makes the whole package a fixture \u2014 the alternative would let a mixed job contribute to Phase 0 exit evidence on the strength of its real half. This single field is what keeps fixture runs out of `PHASE_0_EXIT_EARNED`."
+    },
+    "approval": {
+      "title": "PackageApproval",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewDecisionId",
+        "decidedBy",
+        "decidedAt",
+        "subjectDraftRenderId",
+        "subjectRenderManifestId"
+      ],
+      "description": "The ReviewDecision that authorised this package's final render. The package references the approval; the approval never references the package (review-decision-v1 has no field for one) \u2014 that asymmetry is the lineage direction the exit criteria are computed along.",
+      "properties": {
+        "reviewDecisionId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "decidedBy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The named human, copied so a delivered package travels with the name on it (D-9)."
+        },
+        "decidedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "subjectDraftRenderId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "subjectRenderManifestId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+          "description": "The DRAFT manifest that was approved. `lineage.approvedDraftManifestId` must equal this, and the final manifest must declare it \u2014 three places agreeing is what makes an approval hard to detach from what it approved."
+        }
+      }
+    },
+    "lineage": {
+      "title": "PackageLineage",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "briefId",
+        "creativeBriefId",
+        "storyPlanId",
+        "edlId",
+        "finalRenderId",
+        "finalRenderManifestId",
+        "approvedDraftManifestId",
+        "editorialPlanHash",
+        "planHash"
+      ],
+      "description": "The chain this package descends from, resolvable in both directions without a cycle (each object names its parents; none names its children).",
+      "properties": {
+        "briefId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "creativeBriefId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "storyPlanId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "edlId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "finalRenderId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "finalRenderManifestId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "approvedDraftManifestId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "editorialPlanHash": {
+          "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+          "description": "Computed from the EDL, so any editorial change at all moves it. The draft and final manifests must carry the SAME value \u2014 that equality is what 'the delivered cut is the cut that was approved' reduces to, and the package records it so the claim survives without re-reading both manifests."
+        },
+        "planHash": {
+          "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+          "description": "The FINAL render's plan hash. Differs from the draft's by design (tier, media and encode settings differ); recorded because it is the scope any QA waiver on this render was granted against."
+        }
+      }
+    },
+    "master": {
+      "title": "PackageMaster",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "contentHash",
+        "byteSize",
+        "container",
+        "durationMs",
+        "dimensions",
+        "burnedInCaptions"
+      ],
+      "description": "The final-tier video master (REQ-088 first item). Phase 0 delivers ONE master; REQ-088's 'requested platform derivatives' is Phase 1 and is absent rather than an empty list.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Package-relative path, e.g. `master.mp4`. Package-relative rather than job-relative so the directory is deliverable by copying it."
+        },
+        "contentHash": {
+          "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+          "description": "sha256 of the FILE BYTES, copied from the Render record. A reader can verify the delivered file is the render that was gated."
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "container": {
+          "type": "string",
+          "minLength": 1
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "dimensions": {
+          "title": "PackageDimensions",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "width",
+            "height"
+          ],
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "burnedInCaptions": {
+          "type": "boolean",
+          "description": "Whether captions are burned into the master. REQ-104 requires a caption FILE even when open captions are used, which is why `captions` below is required regardless of this flag."
+        }
+      }
+    },
+    "captions": {
+      "title": "PackageCaptions",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "srtPath",
+        "vttPath",
+        "cueCount"
+      ],
+      "description": "The sidecar caption pair (REQ-088, REQ-104). Required even for a burned-in master: REQ-104's rule is that a caption file exists even when open captions are used, and an accessibility affordance that depends on a boolean elsewhere in the object is one refactor away from vanishing.",
+      "properties": {
+        "srtPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vttPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cueCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many cues the sidecars carry. Zero is legitimate (a cut with no speech) and is distinguishable from a missing file only because the paths above are required."
+        }
+      }
+    },
+    "cover": {
+      "title": "PackageCover",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coverImagePath",
+        "firstFramePath",
+        "coverSource"
+      ],
+      "description": "Cover image and first-frame preview (REQ-088, REQ-055).",
+      "properties": {
+        "coverImagePath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "firstFramePath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "coverSource": {
+          "title": "CoverSource",
+          "description": "WHERE the cover came from \u2014 a tagged union, because a cover defaulted to the first frame must never be presentable as a chosen one. REQ-055 is about a validated, deliberate first frame; a silent default would be the opposite of that while looking identical on disk.",
+          "type": "object",
+          "oneOf": [
+            {
+              "title": "DeclaredCover",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "momentId",
+                "atOutputMs"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "declared"
+                },
+                "momentId": {
+                  "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+                },
+                "atOutputMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Where in the OUTPUT timeline the declared cover instant landed."
+                }
+              }
+            },
+            {
+              "title": "DefaultedCover",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "defaulted_to_first_frame"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "rightsManifest": {
+      "title": "PackageRightsManifest",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rightsManifestId",
+        "assets",
+        "weakestState",
+        "allEvidenced"
+      ],
+      "description": "The rights and originality record for every asset the cut uses (REQ-088, REQ-103, D-36). Packaging refuses `unknown`, `restricted` and `expired` outright (non-waivable, D-35) \u2014 so a committed package's `weakestState` is always `cleared`. It is recorded anyway: the exit criterion is 'rights records accompany every delivered package', and a field only present when it would be bad news is a field nobody can audit.",
+      "properties": {
+        "rightsManifestId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "assets": {
+          "type": "array",
+          "minItems": 1,
+          "description": "One entry per source asset in the cut. `minItems: 1` because a package with no source assets is not a package.",
+          "items": {
+            "title": "PackageRightsEntry",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "assetId",
+              "relativePath",
+              "sourceClassification",
+              "contentHash",
+              "rights"
+            ],
+            "properties": {
+              "assetId": {
+                "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+              },
+              "relativePath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceClassification": {
+                "$ref": "../enums/source-classification.json"
+              },
+              "contentHash": {
+                "$ref": "./common/timecode-v1.json#/$defs/ContentHash"
+              },
+              "rights": {
+                "$ref": "./common/rights-record-v1.json",
+                "description": "The FULL record, copied. A reference would let the delivered package's rights basis change after delivery; REQ-113 requires a previously approved version to stay reproducible, and that has to include what it was cleared on."
+              }
+            }
+          }
+        },
+        "weakestState": {
+          "$ref": "../enums/rights-state.json",
+          "description": "The weakest state across `assets`. Always `cleared` in a committed package, by refusal rather than by construction."
+        },
+        "allEvidenced": {
+          "type": "boolean",
+          "description": "Whether every asset's record carries an `evidenceUri`. A `cleared` claim with no evidence pointer is recorded as-declared but flagged here \u2014 'a grant without evidence is not a grant' is the rule, and Phase 0's honest position is to surface the gap rather than either silently accept it or block a permissioned fixture corpus that has no signed releases to point at."
+        }
+      }
+    },
+    "disclosures": {
+      "title": "PackageDisclosures",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paidPartnership",
+        "aiGeneratedOrAltered",
+        "ownedBusinessPromotion",
+        "thirdPartyPromotion",
+        "affiliateRelationship",
+        "regulatedCategory"
+      ],
+      "description": "REQ-163 commercial disclosure, record-level. The first three are copied from the EDL (which the deterministic disclosure gate already enforced); the last three are the REQ-163 categories the EDL does not model at Phase 0 and are recorded as explicit `false`-with-no-mechanism rather than omitted \u2014 an absent field would read as 'not applicable' when the truth is 'not captured yet'.",
+      "properties": {
+        "paidPartnership": {
+          "type": "boolean"
+        },
+        "aiGeneratedOrAltered": {
+          "type": "boolean"
+        },
+        "ownedBusinessPromotion": {
+          "type": "boolean"
+        },
+        "thirdPartyPromotion": {
+          "type": "boolean",
+          "description": "REQ-163. Phase 0 has no intake field for this, so `package` writes `false` and `capturedAtIntake` below says it was not asked. Do not read a `false` here as a supplier's assertion."
+        },
+        "affiliateRelationship": {
+          "type": "boolean",
+          "description": "REQ-163; see `thirdPartyPromotion`."
+        },
+        "regulatedCategory": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "REQ-163's regulated-category flag. Null means not captured, not 'none' \u2014 the JobBrief has no field for it at Phase 0."
+        }
+      }
+    },
+    "aiAlterationRecord": {
+      "title": "AiAlterationRecord",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operations",
+        "materialAlteration",
+        "capturedAtIntake"
+      ],
+      "description": "REQ-164, record-level: what the pipeline did to the material, kept apart from what a platform is told. REQ-164's own distinction is load-bearing \u2014 selection, reframing, captioning and colour correction are NOT realistic synthetic alteration \u2014 and Phase 0 performs only the first kind, so `materialAlteration` is computed rather than declared.",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "The alteration classes this render actually performed, from a closed set. Every one is a REQ-164 'simple' operation at Phase 0; the enum is inline rather than a shared registry because it describes what THIS pipeline does, not a cross-object vocabulary.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "selection",
+              "reframing",
+              "captioning",
+              "colour_correction",
+              "loudness_normalisation",
+              "synthetic_generation",
+              "voice_translation"
+            ]
+          }
+        },
+        "materialAlteration": {
+          "type": "boolean",
+          "description": "True only when `operations` contains an alteration REQ-164 calls realistic synthetic alteration (`synthetic_generation`, `voice_translation`). Phase 0 performs neither, so this is `false` \u2014 and it is computed from `operations` rather than set, so it cannot drift from what happened."
+        },
+        "capturedAtIntake": {
+          "type": "boolean",
+          "description": "Whether the disclosure categories above were asked of the supplier at intake. `false` at Phase 0 for the categories the JobBrief does not model \u2014 which is exactly the fact a compliance reviewer needs, and the reason the fields are not simply omitted."
+        }
+      }
+    },
+    "qa": {
+      "title": "PackageQa",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qaReportId",
+        "gateStatus",
+        "rulesetVersion",
+        "blockerCount",
+        "warningCount",
+        "waivers"
+      ],
+      "description": "The FINAL render's technical QA verdict (REQ-088, D-35). Packaging accepts `pass` or `pass_with_waivers` and refuses `fail`; a waiver naming a blocker was already rejected upstream, so a committed package can never carry a waived blocker.",
+      "properties": {
+        "qaReportId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+        },
+        "gateStatus": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "pass_with_waivers"
+          ],
+          "description": "`fail` is deliberately NOT a member. A failed gate cannot be packaged, so the schema does not admit the value \u2014 which is stronger than a code check, because it makes the state unrepresentable."
+        },
+        "rulesetVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "blockerCount": {
+          "type": "integer",
+          "const": 0,
+          "description": "Fixed at zero by the contract. Blockers are non-waivable (D-35), so a package carrying one is not a thing that can exist."
+        },
+        "warningCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "waivers": {
+          "type": "array",
+          "description": "Warning waivers applied, in full. `status --phase0` counts waived packages separately (D-35), so the record has to travel with the package rather than being resolvable only from the job directory.",
+          "items": {
+            "title": "PackageWaiver",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "waiverId",
+              "approvedBy",
+              "reason",
+              "waivedAt",
+              "findingIds"
+            ],
+            "properties": {
+              "waiverId": {
+                "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+              },
+              "approvedBy": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "waivedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "findingIds": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "rangeValidation": {
+      "title": "PackageRangeValidation",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qaReportId",
+        "checkId",
+        "status",
+        "rangeCount",
+        "violationCount"
+      ],
+      "description": "Exit criterion 2 \u2014 'zero invalid source ranges in final renders' \u2014 made per-package and addressable (D-36's 'final-render range-validation ID'). It is recorded by reference to the QA check record that produced it rather than as a fresh artefact: `checkSourceRange` is the single implementation (tech-spec \u00a712), the final render's `plan()` refuses an out-of-bounds range before any encode, and the QA report's `source_range_validity` row is that refusal's receipt. A second artefact restating it would be a second place for the criterion to disagree with itself.",
+      "properties": {
+        "qaReportId": {
+          "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+          "description": "The report holding the check record. Equal to `qa.qaReportId`; restated so this object is readable on its own."
+        },
+        "checkId": {
+          "type": "string",
+          "const": "source_range_validity"
+        },
+        "status": {
+          "type": "string",
+          "const": "ran",
+          "description": "Fixed at `ran`. A skipped or errored range check is not evidence, and packaging refuses it \u2014 so `skipped` and `errored` are unrepresentable here rather than merely unexpected."
+        },
+        "rangeCount": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many source ranges were validated \u2014 one per EDL clip. Recorded because 'zero violations' over zero ranges is not the claim the exit criterion makes, and a count is the only thing that tells them apart."
+        },
+        "violationCount": {
+          "type": "integer",
+          "const": 0
+        }
+      }
+    },
+    "contractSet": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The exact contract schemas as committed AT PACKAGING TIME (D-36), ordered by `schemaId` so two packages are directly comparable. Packaging time, not per-artefact authoring time: an EDL written last week and packaged today records today's schemas. That is the right input for criterion 3, which asks whether the contracts moved BETWEEN delivered outputs \u2014 but it is not a claim about which schema version each individual parent artefact was written against. This is what makes exit criterion 3 \u2014 'the last 10 outputs require no breaking contract change' \u2014 computable from the packages themselves: tech-spec \u00a73 fixes a semantic change as a major-version bump, so a `majorVersion` that moved between two packages IS a breaking change, and a `contentHash` that moved under an unchanged major is a compatible or editorial one.",
+      "items": {
+        "title": "ContractSetEntry",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaId",
+          "majorVersion",
+          "schemaVersion",
+          "contentHash"
+        ],
+        "properties": {
+          "schemaId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The schema's `$id`, e.g. `https://cutdown.local/contracts/schemas/platform-edl-v1.json`."
+          },
+          "majorVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "schemaVersion": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          },
+          "contentHash": {
+            "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+            "description": "sha256 of the schema FILE as committed. A description-only edit moves this and not `majorVersion`, which is exactly the distinction criterion 3 needs."
+          }
+        }
+      }
+    },
+    "provenance": {
+      "title": "PackageProvenance",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "renderer",
+        "ffmpegVersion",
+        "determinismTier",
+        "qaRulesetVersion",
+        "modelProvenance",
+        "styleProfile",
+        "platformCapability",
+        "fonts"
+      ],
+      "description": "REQ-088's final item: version, model, renderer, rules, style and capability provenance. Restated in full rather than referenced (PRD \u00a710.6) \u2014 a delivered package travels away from the job directory, and provenance that only resolves inside it is provenance that stops existing at the moment somebody asks.",
+      "properties": {
+        "renderer": {
+          "title": "PackageRenderer",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "ffmpegVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "determinismTier": {
+          "type": "integer",
+          "const": 1,
+          "description": "tech-spec \u00a712: Phase 0 claims tier 1 only \u2014 byte-identical on the pinned local environment (D-33). Cross-machine identity is not claimed."
+        },
+        "qaRulesetVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelProvenance": {
+          "$ref": "./common/model-provenance-v1.json",
+          "description": "The editorial model that produced the EDL, copied from it. A package whose cut was model-proposed says so."
+        },
+        "styleProfile": {
+          "oneOf": [
+            {
+              "title": "AppliedStyleProfile",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "styleProfileId",
+                "accountId"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "applied"
+                },
+                "styleProfileId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "accountId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "title": "NoStyleProfile",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ],
+          "description": "Tagged union so 'no brand style was applied' carries its reason instead of looking like an omission."
+        },
+        "platformCapability": {
+          "title": "PackagePlatformCapability",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "platform",
+            "surface",
+            "overlayVersion"
+          ],
+          "description": "Which capability fixture and safe-zone overlay version the cut was validated against (decisions.md D-3 fixes one at Phase 0). A caption judged safe against a July overlay is not judged safe against a December one, and the package has to say which.",
+          "properties": {
+            "platform": {
+              "$ref": "../enums/platform.json"
+            },
+            "surface": {
+              "type": "string",
+              "minLength": 1
+            },
+            "overlayVersion": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "fonts": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Every font the render burned in, by sha256 (decisions.md D-29). The hash is the licence basis as much as the pixel basis: a substituted font would change both, which is why the renderer refuses a mismatch rather than substituting.",
+          "items": {
+            "title": "PackageFont",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "family",
+              "role",
+              "contentHash",
+              "licenceNote"
+            ],
+            "properties": {
+              "family": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "heading",
+                  "body",
+                  "caption"
+                ]
+              },
+              "contentHash": {
+                "$ref": "./common/timecode-v1.json#/$defs/ContentHash"
+              },
+              "licenceNote": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

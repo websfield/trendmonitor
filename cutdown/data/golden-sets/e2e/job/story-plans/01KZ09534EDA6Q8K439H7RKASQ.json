@@ -1,0 +1,76 @@
+{
+  "storyPlanId": "01KZ09534EDA6Q8K439H7RKASQ",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:44:17.551Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "plan",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "creativeBriefId": "01KZ094GA7JPW9G8594G3G2VNC",
+  "parentStoryPlanId": null,
+  "beats": [
+    {
+      "beatId": "beat-1",
+      "order": 0,
+      "function": "promise",
+      "momentId": "MX3Q268ASZ5GJBE47PFJDHSV44",
+      "rationale": "open on the plan for the shoot",
+      "basis": {
+        "kind": "observed_fact",
+        "observed": "Narrator introduces the plan for the cafe shoot."
+      },
+      "optional": false,
+      "alternateMomentIds": []
+    },
+    {
+      "beatId": "beat-2",
+      "order": 1,
+      "function": "demonstration",
+      "momentId": "RHQAP623G6EFYPH06TVM19J5HV",
+      "rationale": "show the caption check before delivery",
+      "basis": {
+        "kind": "observed_fact",
+        "observed": "Narrator describes the captions being burned in and checked against the audio."
+      },
+      "optional": false,
+      "alternateMomentIds": []
+    },
+    {
+      "beatId": "beat-3",
+      "order": 2,
+      "function": "payoff",
+      "momentId": "Z9SEP854V2383S300WDYZVX373",
+      "rationale": "land on the delivered cut",
+      "basis": {
+        "kind": "observed_fact",
+        "observed": "Narrator states the finished cut is delivered with captions."
+      },
+      "optional": false,
+      "alternateMomentIds": []
+    }
+  ],
+  "dependencies": [
+    {
+      "fromBeatId": "beat-3",
+      "toBeatId": "beat-1",
+      "relation": "requires_setup"
+    }
+  ],
+  "alternateHooks": [
+    {
+      "hookFamily": "proof_first",
+      "openingBeatId": "beat-2",
+      "rationale": "open on the cutdown step itself"
+    }
+  ],
+  "modelProvenance": {
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-5",
+    "promptTemplateVersion": "1.0.0",
+    "promptTemplateId": "plan-story"
+  }
+}

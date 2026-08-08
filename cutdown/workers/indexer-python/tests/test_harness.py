@@ -8,15 +8,18 @@ errors that leave a failed sub-stage resumable rather than permanently "done".
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from harness import (
+    EXIT_INPUT_VALIDATION,
     EXIT_RUNTIME,
     ModelUnavailableError,
     SubStageContext,
     SubStageError,
+    assert_safe_id,
     compute_cache_key,
     hash_file,
     main_guard,
@@ -41,6 +44,121 @@ def read_run_log(ctx: SubStageContext) -> list[dict]:
     if not ctx.run_log.exists():
         return []
     return [json.loads(line) for line in ctx.run_log.read_text(encoding="utf-8").splitlines() if line]
+
+
+class TestSafeIdentifiers:
+    """`assert_safe_id` is this worker's OWN guard, and it had no tests.
+
+    It is duplicated from `apps/cli/src/paths.ts` deliberately — the worker is
+    documented as directly invocable (`uv run ... main.py --input <request.json>`),
+    so a guard living only in the caller is a guard with a documented bypass. An
+    untested duplicate is the next stage of the same problem: the two copies drift
+    and nothing notices.
+    """
+
+    def test_traversal_shapes_are_refused(self) -> None:
+        for bad in ["..", "../..", "a/../b", "a/b", "a\\b", "/abs", "job..1"]:
+            with pytest.raises(SubStageError) as caught:
+                assert_safe_id(bad, "jobId")
+            assert caught.value.code == "UNSAFE_IDENTIFIER"
+            assert caught.value.exit_code == EXIT_INPUT_VALIDATION
+
+    def test_an_id_may_not_start_with_a_dot_dash_or_underscore(self) -> None:
+        for bad in [".hidden", "-lead", "_lead", ""]:
+            with pytest.raises(SubStageError):
+                assert_safe_id(bad, "jobId")
+
+    def test_a_windows_reserved_DEVICE_name_is_refused(self) -> None:
+        # Not a traversal. `nul` genuinely misbehaves on the D-33 platform — see
+        # `TestWindowsDeviceNamesReallyMisbehave`, which measures it rather than
+        # asserting it in prose — and the rest are refused for portability across
+        # Windows builds and APIs. `nul.json` is included because the stem is what
+        # the reserved namespace keys on.
+        for bad in ["nul", "NUL", "con", "Aux", "com1", "LPT9", "nul.json"]:
+            with pytest.raises(SubStageError) as caught:
+                assert_safe_id(bad, "jobId")
+            assert caught.value.code == "UNSAFE_IDENTIFIER"
+            assert "Windows reserved namespace" in caught.value.message
+
+    def test_ordinary_ids_are_accepted(self) -> None:
+        # The acceptance half: a guard that refuses everything passes every
+        # rejection test ever written. `nul-check`/`falcon` also prove the device
+        # rule anchors at the stem instead of matching anywhere in the string.
+        for good in [
+            "01HQZX3F5G7K9M2N4P6R8S0T2V",
+            "idx-1",
+            "job_1.a",
+            "nul-check",
+            "falcon",
+            "com10",
+        ]:
+            assert assert_safe_id(good, "jobId") == good
+
+
+class TestSafeIdMirrorsAgree:
+    """THE SHARED FIXTURE — one case list, three mirrors, one verdict each.
+
+    `assert_safe_id` here, `assertSafeId` in `@cutdown/skill-runtime`, and
+    `assertSafeJobId` in `apps/cli` are deliberate duplicates: each entrypoint is
+    independently invocable, so a guard living only in the caller is a guard with
+    a documented bypass. Three copies with three separate test suites is how they
+    drift — and they HAD drifted. Python's `$` also matches just before a
+    trailing newline while JavaScript's does not, so `"abc\\n"` was ACCEPTED
+    here and REJECTED by both TypeScript mirrors, in the one copy reachable
+    without the CLI. `_SAFE_ID` now anchors with `\\Z`, and this fixture is what
+    stops the next divergence being found by a security review instead of a test.
+    """
+
+    CASES = json.loads(
+        (
+            Path(__file__).resolve().parents[3]
+            / "packages"
+            / "skill-runtime"
+            / "tests"
+            / "safe-id-cases.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    def test_every_rejected_case_is_rejected_here_too(self) -> None:
+        for bad in self.CASES["reject"]:
+            with pytest.raises(SubStageError, match="Invalid jobId"):
+                assert_safe_id(bad, "jobId")
+
+    def test_every_accepted_case_is_accepted_here_too(self) -> None:
+        for good in self.CASES["accept"]:
+            assert assert_safe_id(good, "jobId") == good
+
+    def test_the_trailing_newline_case_specifically(self) -> None:
+        # Named on its own because it is the divergence that actually happened,
+        # and a regression would otherwise hide inside a 40-case loop.
+        with pytest.raises(SubStageError):
+            assert_safe_id("abc\n", "jobId")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="measures Win32 device-namespace behaviour")
+class TestWindowsDeviceNamesReallyMisbehave:
+    """The claim in `assert_safe_id`'s comment, MEASURED rather than restated.
+
+    The guard's justification is a factual assertion about the platform, and this
+    project's rule is that a comment claiming a property is not the property. The
+    first version of that comment said every reserved name silently discards
+    writes; measuring showed only `nul` misbehaves, and it fails LOUDLY on a
+    child write rather than silently. The comment now says that — and this test
+    is what keeps it true.
+    """
+
+    def test_a_nul_directory_accepts_mkdir_then_fails_every_child_write(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "nul").mkdir()
+        with pytest.raises(OSError):
+            (tmp_path / "nul" / "brief.json").write_text("payload", encoding="utf-8")
+
+    def test_an_ordinary_name_in_the_same_place_works(self, tmp_path: Path) -> None:
+        # The control: proves the failure above is the device name, not tmp_path.
+        (tmp_path / "nul-check").mkdir()
+        (tmp_path / "nul-check" / "brief.json").write_text("payload", encoding="utf-8")
+        assert (tmp_path / "nul-check" / "brief.json").read_text(encoding="utf-8") == "payload"
 
 
 class TestCacheKeying:
@@ -240,3 +358,45 @@ class TestTraceContext:
         run_sub_stage(ctx, "transcript", lambda: {"v": 1})
         started = [e for e in read_run_log(ctx) if e.get("status") == "started"]
         assert started[0]["traceparent"] == ctx.traceparent
+
+
+class TestProgressHeartbeat:
+    """`append_progress` — the liveness channel for minutes-long sub-stages.
+
+    Observability, never state: the file is append-only JSONL an operator can
+    tail, and a write failure must cost a warning, never the work.
+    """
+
+    def test_appends_one_valid_json_line_per_call(self, ctx: SubStageContext) -> None:
+        from harness import append_progress
+
+        append_progress(ctx, "ocr", 1, 35, "shot-0001")
+        append_progress(ctx, "ocr", 2, 35, "shot-0002")
+
+        path = ctx.index_dir / "progress.jsonl"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2
+        first = json.loads(lines[0])
+        assert first["subStage"] == "ocr"
+        assert first["assetId"] == ctx.asset_id
+        assert (first["current"], first["total"], first["note"]) == (1, 35, "shot-0001")
+        assert "ts" in first
+        second = json.loads(lines[1])
+        assert second["current"] == 2
+
+    def test_a_write_failure_warns_once_and_never_raises(
+        self, ctx: SubStageContext, monkeypatch, capsys
+    ) -> None:
+        import harness as harness_module
+        from harness import append_progress
+
+        monkeypatch.setattr(harness_module, "_progress_write_failed", False)
+
+        def refuse(*_args, **_kwargs):
+            raise OSError("disk says no")
+
+        monkeypatch.setattr(harness_module.Path, "mkdir", refuse)
+        append_progress(ctx, "ocr", 1, 10, "shot-0001")  # must not raise
+        append_progress(ctx, "ocr", 2, 10, "shot-0002")  # and must not warn again
+        err = capsys.readouterr().err
+        assert err.count("progress heartbeat unwritable") == 1

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "ingest skill — atomic multi-asset discovery, classification, preflight, hashing, and proxy generation.",
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
     "@cutdown/contracts": "workspace:*",

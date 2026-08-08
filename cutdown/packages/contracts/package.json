@@ -9,7 +9,7 @@
     "./generated": "./dist/generated/typescript/index.js"
   },
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
     "ajv": "8.20.0",

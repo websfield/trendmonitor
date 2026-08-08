@@ -1,0 +1,164 @@
+{
+  "qaReportId": "01KZ0A5J2GG3QCHS6ZPK880F9H",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T04:02:01.424Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "render",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "renderId": "01KZ0A5HDN18C24RDN0K438RRY",
+  "renderManifestId": "01KZ0A5AE7HF578Z4FH08ZA7ED",
+  "tier": "final",
+  "rulesetVersion": "1.0.0",
+  "gateStatus": "pass_with_waivers",
+  "checksRun": [
+    {
+      "checkId": "missing_media",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "container_corruption",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "source_range_validity",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "output_dimensions",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "output_duration",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "codec_profile",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "black_frames",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "frozen_frames",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "duplicate_frames",
+      "status": "skipped",
+      "reason": "Frame-duplication counting did not run."
+    },
+    {
+      "checkId": "crop_failure",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "unexpected_silence",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "audio_clipping",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "loudness_target",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "true_peak",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "av_sync_drift",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_file_present",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_overflow",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_readability",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_timing",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_safe_zone",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_spelling",
+      "status": "skipped",
+      "reason": "No en-AU dictionary is vendored at Phase 0 (D-4 sets the locale to en-AU). Spelling is surfaced for human review through caption_name_flag rather than reported clean."
+    },
+    {
+      "checkId": "caption_name_flag",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "non_speech_cue_review",
+      "status": "ran",
+      "reason": null
+    }
+  ],
+  "findings": [
+    {
+      "findingId": "unexpected_silence:audio:9421-11106",
+      "checkId": "unexpected_silence",
+      "severity": "warning",
+      "waivable": true,
+      "object": "audio",
+      "message": "1.69 s below -60 dBFS, longer than the 1.5 s allowance.",
+      "fix": "Check whether a clip was cut from a silent passage, or whether the audio chain dropped a segment.",
+      "timeRange": {
+        "startTicks": 9421,
+        "endTicks": 11106,
+        "timebase": {
+          "num": 1,
+          "den": 1000
+        }
+      }
+    }
+  ],
+  "planHash": {
+    "algorithm": "sha256",
+    "value": "0c43e5069cadd44b909b671d8569be7dd855578a9451e2719cd3484d5f36eb6c"
+  },
+  "waiverIds": [
+    "01KZ0A29EEBKFYAWA3HPGQJQV8"
+  ],
+  "waivedFindingIds": [
+    "unexpected_silence:audio:9421-11106"
+  ]
+}

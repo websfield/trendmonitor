@@ -76,7 +76,10 @@ export function parseStyleProfile(document: string, sourceLabel = '<inline>'): S
   try {
     candidate = parseYaml(document);
   } catch (err) {
-    throw new StyleProfileError('PROFILE_UNPARSEABLE', `Style profile ${sourceLabel} is not valid YAML/JSON: ${(err as Error).message}`);
+    // The parser's message QUOTES the offending document, and `sourceLabel` is a
+    // caller-supplied path — so echoing it turns this into a file-read oracle
+    // (~10 bytes per attempt). The path and the fact of the failure are enough.
+    throw new StyleProfileError('PROFILE_UNPARSEABLE', `Style profile ${sourceLabel} is not valid YAML/JSON.`);
   }
 
   const validate = styleValidator();
@@ -98,7 +101,7 @@ export function loadStyleProfile(path: string): StyleProfile {
   try {
     text = readFileSync(path, 'utf8');
   } catch (err) {
-    throw new StyleProfileError('PROFILE_UNREADABLE', `Could not read style profile at ${path}: ${(err as Error).message}`);
+    throw new StyleProfileError('PROFILE_UNREADABLE', `Could not read style profile at ${path}.`);
   }
   return parseStyleProfile(text, path);
 }

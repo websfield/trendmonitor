@@ -25,7 +25,7 @@ from fractions import Fraction
 from pathlib import Path
 
 import pytest
-from harness import SubStageContext
+from harness import SubStageContext, SubStageError
 from quality import (
     AUDIO_SAMPLE_RATE,
     ENGINE_NAME,
@@ -37,9 +37,12 @@ from quality import (
     SUB_STAGE,
     Rule,
     Span,
+    VideoInfo,
     analyse,
+    analyse_asset,
     build_spans,
     engine_record,
+    iter_luma_frames,
     model_config,
     probe,
     run,
@@ -459,6 +462,38 @@ class TestMissingStreams:
         }
         assert kinds_in(analyse(FIXTURES / "silence.wav")) & video_kinds == set()
 
+    def test_an_unexamined_modality_is_NAMED_not_silently_omitted(self) -> None:
+        # The residual this closes: "no audio flags" and "no audio stream" were
+        # indistinguishable in the artefact, and the ledger read
+        # `completed, reason: null` for both. `source-index-v1.json` requires the
+        # reason an empty collection is empty to live in the sub-stage entry.
+        _, reason = analyse_asset(INGEST / "broll-silent.mp4")
+        assert reason is not None
+        assert "audio (no audio stream)" in reason
+        assert "video" not in reason  # the picture WAS examined; only audio was not
+
+    def test_an_audio_only_file_names_video_as_the_unexamined_modality(self) -> None:
+        _, reason = analyse_asset(FIXTURES / "silence.wav")
+        assert reason is not None
+        assert "video (no decodable video stream)" in reason
+
+    def test_an_asset_with_both_modalities_records_NO_reason(self) -> None:
+        # The control. A reason emitted unconditionally would pass both tests
+        # above while claiming every asset was half-examined.
+        _, reason = analyse_asset(INGEST / "clean.mp4")
+        assert reason is None
+
+    def test_the_reason_reaches_the_artefact_the_orchestrator_reads(self) -> None:
+        # `main.py` honours a nested `subStage` record ahead of the top level;
+        # a reason that never reaches that key would be a comment, not a ledger
+        # entry.
+        from quality import _quality_artefact
+
+        artefact = _quality_artefact(INGEST / "broll-silent.mp4")
+        assert artefact["subStage"]["status"] == "completed"
+        assert "no audio stream" in artefact["subStage"]["reason"]
+        assert "subStage" not in _quality_artefact(INGEST / "clean.mp4")
+
     def test_a_static_take_is_reported_as_frozen(self) -> None:
         # The other side of the same clip: broll-silent.mp4 is a genuinely static
         # frame, so the frozen detector SHOULD fire. Without this, the test above
@@ -485,6 +520,42 @@ class TestErrors:
         with pytest.raises(SubStageError) as caught:
             analyse(broken)
         assert caught.value.code in {"MEDIA_PROBE_FAILED", "MEDIA_DECODE_FAILED"}
+
+    def test_a_NON_ZERO_ffmpeg_exit_is_raised_instead_of_being_discarded(
+        self, tmp_path: Path
+    ) -> None:
+        # Named for what it proves, not for the motivating scenario. This fixture
+        # fails at input OPEN, so it yields zero frames rather than a truncated
+        # series — and in production it could not even reach here, because
+        # `analyse_asset` probes first and `_run` raises MEDIA_PROBE_FAILED.
+        #
+        # What it does pin is the behaviour that was missing: a non-zero exit is
+        # surfaced rather than swallowed. The honest limit, which the docstring on
+        # `iter_luma_frames` also states: ffmpeg exits 0 on truncated INPUT
+        # (`probe.ts`), so this catches the decode-fails band, not every possible
+        # short series. Evidence, not a guarantee.
+        broken = tmp_path / "broken.mp4"
+        broken.write_bytes(b"this is not media")
+        info = VideoInfo(16, 16, Fraction(30, 1))
+
+        with pytest.raises(SubStageError) as caught:
+            list(iter_luma_frames(broken, info))
+        assert caught.value.code == "MEDIA_DECODE_FAILED"
+        assert caught.value.details["exitCode"] != 0
+        # stderr is captured, not left to fill the pipe and deadlock the decode.
+        assert caught.value.details["stderr"] != ""
+
+    def test_a_consumer_that_STOPS_EARLY_is_not_reported_as_a_decode_failure(
+        self,
+    ) -> None:
+        # The control for the test above. Stopping early kills ffmpeg on purpose,
+        # so its non-zero status is expected — treating that as a fault would
+        # make every partial read (and every `next()` in a test) an error.
+        info, _ = probe(INGEST / "clean.mp4")
+        assert info is not None
+        frames = iter_luma_frames(INGEST / "clean.mp4", info)
+        assert next(frames).shape == (info.height, info.width)
+        frames.close()  # raises out of the generator's `finally` if we got this wrong
 
 
 class TestHarnessIntegration:
@@ -515,12 +586,22 @@ class TestHarnessIntegration:
         stored = json.loads(result.artefact_path.read_text(encoding="utf-8"))
         assert stored == result.artefact
 
-    def test_the_artefact_holds_only_the_quality_flags_collection(
+    def test_the_artefact_holds_only_the_collection_and_its_ledger_record(
         self, ctx: SubStageContext
     ) -> None:
-        # The artefact is spliced into SourceIndex.qualityFlags, whose schema is
-        # closed; an extra key here becomes a schema violation there.
-        assert set(run(ctx, FIXTURES / "blur.mp4").artefact) == {"qualityFlags"}
+        # The collection is spliced into SourceIndex.qualityFlags, whose schema is
+        # closed — so the key set here stays closed too, and a stray key fails.
+        #
+        # `subStage` is the ONE permitted companion: the orchestrator reads it
+        # (`main.py`, "a sub-stage's own account of itself always wins") and
+        # splices only the named collection into the index, so it never reaches
+        # the closed schema. `visual` has emitted this shape since Phase 2.
+        # `blur.mp4` is video-only, so the record is present here naming audio as
+        # unexamined.
+        artefact = run(ctx, FIXTURES / "blur.mp4").artefact
+        assert set(artefact) <= {"qualityFlags", "subStage"}
+        assert "qualityFlags" in artefact
+        assert artefact["subStage"]["reason"].startswith("quality flags cover only part")
 
 
 class TestAdvisoryOnly:

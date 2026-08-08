@@ -585,3 +585,106 @@ export function resetCapabilityCache(): void {
   cachedVersion = undefined;
   cachedCapabilities = undefined;
 }
+
+// ---------------------------------------------------------------------------
+// Determinism pins (tech-spec §12 tier 1, D-33)
+// ---------------------------------------------------------------------------
+
+/**
+ * The only determinism tier Phase 0 claims: **byte-identical, same machine**
+ * (tech-spec §12). Tiers 2 and 3 belong to the Remotion path, which does not
+ * exist yet (D-16). Writing a cross-machine byte-identity test is spec-forbidden
+ * — x264's assembly dispatch is CPU-feature-dependent, so the claim would be
+ * false the first time it ran on different silicon.
+ */
+export const DETERMINISM_TIER = 1;
+
+/**
+ * Fixed thread count for every deterministic encode.
+ *
+ * `1`, not `N`. libx264's frame-level threading splits the picture into slices
+ * whose *boundaries* depend on the thread count, and the rate-control state each
+ * slice sees depends on scheduling. `-threads 1` removes both sources of
+ * nondeterminism at once. A pinned `threads=4` is byte-identical to itself on
+ * one machine but silently is not across machines with different core counts —
+ * pinning to 1 makes the manifest field mean the same thing everywhere, which is
+ * the property a recorded knob is supposed to have.
+ */
+export const DETERMINISTIC_THREADS = 1;
+
+/**
+ * The exact knobs whose absence makes two identical renders differ.
+ *
+ * These are not "hygiene". Without `-map_metadata -1` FFmpeg copies the source's
+ * `creation_time` into the output; without `+bitexact` it stamps the encoder
+ * build string and a `Lavf` version into the container; without a pinned
+ * `-threads` the slice layout drifts. Each one alone is enough to defeat a
+ * byte-comparison, which is why they travel together as one array rather than
+ * being remembered individually at call sites.
+ */
+export function determinismArgs(threads: number = DETERMINISTIC_THREADS): readonly string[] {
+  if (!Number.isInteger(threads) || threads < 1) {
+    throw inputError(
+      'INVALID_THREAD_COUNT',
+      `Thread count must be a positive integer; received ${String(threads)}.`,
+      { threads },
+    );
+  }
+  return [
+    '-threads',
+    String(threads),
+    '-fflags',
+    '+bitexact',
+    '-flags',
+    '+bitexact',
+    // The AAC encoder writes its own build identifier into the bitstream
+    // unless told not to; `-flags` alone does not reach it.
+    '-flags:a',
+    '+bitexact',
+    '-map_metadata',
+    '-1',
+  ];
+}
+
+/**
+ * Assert an argv actually carries every tier-1 pin.
+ *
+ * This exists because the determinism test would otherwise be able to pass for
+ * the wrong reason: two renders of a *short* clip can come out byte-identical by
+ * luck even with `creation_time` stamped, if both encodes land in the same
+ * wall-clock second. A test that only compares bytes therefore proves nothing
+ * about the pins — it proves the machine was fast. Checking the argv separately
+ * is what makes the byte comparison mean what it claims.
+ */
+export function assertDeterministicArgv(args: readonly string[]): void {
+  const hasPair = (flag: string, value: string): boolean =>
+    args.some((arg, i) => arg === flag && args[i + 1] === value);
+
+  const missing: string[] = [];
+  // Presence is not enough: `-threads 0` is ffmpeg's "pick a number from the
+  // machine", which is precisely the non-determinism the pin exists to remove —
+  // and `determinismArgs` already refuses `threads < 1`, so an argv that reached
+  // here with `0` came from somewhere that bypassed it.
+  const threadsAt = args.indexOf('-threads');
+  const threadCount = threadsAt === -1 ? null : Number(args[threadsAt + 1]);
+  if (threadsAt === -1) missing.push('-threads');
+  else if (!Number.isInteger(threadCount) || (threadCount ?? 0) < 1) missing.push('-threads <positive integer>');
+  if (!hasPair('-fflags', '+bitexact')) missing.push('-fflags +bitexact');
+  if (!hasPair('-flags', '+bitexact')) missing.push('-flags +bitexact');
+  // The AAC encoder writes its own build identifier into the bitstream unless
+  // told not to, and `-flags` does not reach it — so an argv carrying every
+  // OTHER pin still produces two non-identical files whenever the FFmpeg build
+  // changes. This assertion was missing while the docblock above claimed to
+  // check "every tier-1 pin"; a comment claiming a property is not the property.
+  if (!hasPair('-flags:a', '+bitexact')) missing.push('-flags:a +bitexact');
+  if (!hasPair('-map_metadata', '-1')) missing.push('-map_metadata -1');
+
+  if (missing.length > 0) {
+    throw inputError(
+      'NON_DETERMINISTIC_ARGV',
+      `Render argv is missing tier-1 determinism pins (tech-spec §12, D-33): ${missing.join(', ')}. ` +
+        `Two runs of this command are not guaranteed byte-identical, so the render cannot be reproduced.`,
+      { missing },
+    );
+  }
+}

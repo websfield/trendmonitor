@@ -1,0 +1,39 @@
+{
+  "note": "Phase 6 e2e proving-run recorded plan responses: [0] MasterStoryPlan, [1] PlatformEDL. Ranges are the real Moment ranges from indexId RPZ2S8F58Q10Y02T8E6VBBWDTB; captions quote the real ASR verbatims. Replayed over the injected transport.",
+  "responses": [
+    {
+      "id": "msg_e2e_plan_story",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"beats\":[{\"beatId\":\"beat-1\",\"order\":0,\"function\":\"promise\",\"momentId\":\"MX3Q268ASZ5GJBE47PFJDHSV44\",\"rationale\":\"open on the plan for the shoot\",\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Narrator introduces the plan for the cafe shoot.\"},\"optional\":false,\"alternateMomentIds\":[]},{\"beatId\":\"beat-2\",\"order\":1,\"function\":\"demonstration\",\"momentId\":\"RHQAP623G6EFYPH06TVM19J5HV\",\"rationale\":\"show the caption check before delivery\",\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Narrator describes the captions being burned in and checked against the audio.\"},\"optional\":false,\"alternateMomentIds\":[]},{\"beatId\":\"beat-3\",\"order\":2,\"function\":\"payoff\",\"momentId\":\"Z9SEP854V2383S300WDYZVX373\",\"rationale\":\"land on the delivered cut\",\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Narrator states the finished cut is delivered with captions.\"},\"optional\":false,\"alternateMomentIds\":[]}],\"dependencies\":[{\"fromBeatId\":\"beat-3\",\"toBeatId\":\"beat-1\",\"relation\":\"requires_setup\"}],\"alternateHooks\":[{\"hookFamily\":\"proof_first\",\"openingBeatId\":\"beat-2\",\"rationale\":\"open on the cutdown step itself\"}]}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    },
+    {
+      "id": "msg_e2e_plan_edl",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"clips\":[{\"clipId\":\"clip-1\",\"order\":0,\"momentId\":\"MX3Q268ASZ5GJBE47PFJDHSV44\",\"assetId\":\"01KZ087TS6X67NY8JDQE3A16KD\",\"sourceRange\":{\"assetId\":\"01KZ087TS6X67NY8JDQE3A16KD\",\"startTicks\":0,\"endTicks\":50688,\"timebase\":{\"num\":1,\"den\":15360}},\"narrativeFunction\":\"promise\",\"rationale\":\"the plan, stated to camera\",\"caption\":{\"kind\":\"quote\",\"displayText\":\"Here is the plan for the cafe shoot\",\"verbatimSourceText\":\"Here is the plan for the cafe shoot we are filming today.\",\"speakerLabel\":\"speaker_1\"}},{\"clipId\":\"clip-2\",\"order\":1,\"momentId\":\"RHQAP623G6EFYPH06TVM19J5HV\",\"assetId\":\"01KZ087TS6X67NY8JDQE3A16KD\",\"sourceRange\":{\"assetId\":\"01KZ087TS6X67NY8JDQE3A16KD\",\"startTicks\":236982,\"endTicks\":296228,\"timebase\":{\"num\":1,\"den\":15360}},\"narrativeFunction\":\"demonstration\",\"rationale\":\"the caption check step\",\"caption\":{\"kind\":\"quote\",\"displayText\":\"the captions were burned in\",\"verbatimSourceText\":\"After that the captions were burned in and checked against the audio.\",\"speakerLabel\":\"speaker_4\"}},{\"clipId\":\"clip-3\",\"order\":2,\"momentId\":\"Z9SEP854V2383S300WDYZVX373\",\"assetId\":\"01KZ087TS6X67NY8JDQE3A16KD\",\"sourceRange\":{\"assetId\":\"01KZ087TS6X67NY8JDQE3A16KD\",\"startTicks\":355474,\"endTicks\":414720,\"timebase\":{\"num\":1,\"den\":15360}},\"narrativeFunction\":\"payoff\",\"rationale\":\"the delivered result\",\"caption\":{\"kind\":\"quote\",\"displayText\":\"you get the finished cut\",\"verbatimSourceText\":\"At the end you get the finished cut delivered with captions and all.\",\"speakerLabel\":\"speaker_5\"}}],\"aspectTreatment\":{\"mode\":\"blurred_background\",\"rationale\":\"16:9 source on a 9:16 canvas; a blurred fill keeps the full frame visible without reframing the subject (D-47 forbids subject_reframe at Phase 0)\"},\"audioMode\":\"native_audio_plan\",\"disclosures\":{\"paidPartnership\":false,\"aiGeneratedOrAltered\":false,\"ownedBusinessPromotion\":false},\"metadata\":{\"title\":\"From cafe shoot to finished cut\",\"description\":null},\"coverFrame\":{\"kind\":\"moment_frame\",\"momentId\":\"MX3Q268ASZ5GJBE47PFJDHSV44\",\"atTick\":{\"ticks\":15360,\"timebase\":{\"num\":1,\"den\":15360}}}}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

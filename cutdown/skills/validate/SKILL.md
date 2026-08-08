@@ -28,10 +28,10 @@ is advisory evidence only (decisions.md D-37). The two are kept apart by design.
    StyleProfile and CreativeBrief, and the TikTok capability fixture.
 2. Runs `runDeterministicGates` — quote fidelity, prohibited claims, required
    evidence & context, rights, disclosures, capability, and every source range.
-   Writes the result to `reviews/<edlId>-gate.json`.
+   Writes the result to `reviews/gates/<edlId>-gate.json`.
 3. Runs the LLM critic over coherence / first-frame / redundancy / context /
    abrupt-audio / caption-overload / style-fit / originality / policy /
-   platform-readiness, and writes it to `reviews/<edlId>-critic.json`.
+   platform-readiness, and writes it to `reviews/gates/<edlId>-critic.json`.
 4. Returns both paths and the overall `gateStatus`, which comes **only** from the
    deterministic blockers. A critic finding NEVER becomes a blocker.
 

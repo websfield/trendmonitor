@@ -4,17 +4,50 @@
   "title": "PlanRequest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["jobId", "creativeBriefId", "platform"],
+  "required": [
+    "jobId",
+    "creativeBriefId",
+    "platform"
+  ],
   "properties": {
-    "jobId": { "type": "string", "minLength": 1 },
-    "creativeBriefId": { "type": "string", "minLength": 1, "description": "The approved CreativeBrief to plan." },
-    "platform": { "type": "string", "minLength": 1, "description": "Target platform. Phase 0 refuses anything but `tiktok` (D-3)." },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Becomes a directory name under `project-data/jobs/`. The pattern is defence in depth \u2014 `jobDir()` in @cutdown/skill-runtime guards and containment-checks it regardless of caller, because a skill's `entrypoint` is a documented direct invocation."
+    },
+    "creativeBriefId": {
+      "type": "string",
+      "description": "The approved CreativeBrief to plan. Must be a ULID: it becomes a FILENAME under the job (and, for outputs, a directory that is created on the way), so a traversing value would read or write inside another job. The skill asserts it again before joining, because a skill's `entrypoint` is a documented direct invocation and a schema-only guard has the same bypass shape the Phase 2 HIGH had.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "platform": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Target platform. Phase 0 refuses anything but `tiktok` (D-3)."
+    },
     "recordedModelPath": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Test/fixture only: recorded provider responses (story plan then EDL) replayed over an injected transport."
     },
     "boundsPath": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Optional file with an array of {assetId, duration} AssetBounds. When absent, bounds are read from the job's SourceAsset preflight."
     }
   }

@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, conint, constr
 
+from ._internal import Platform
 from .common import envelope_v1, timecode_v1
 
 
@@ -56,13 +57,6 @@ class Objective(StrEnum):
     organic_conversion = 'organic_conversion'
     paid_acquisition = 'paid_acquisition'
     retention_loyalty = 'retention_loyalty'
-
-
-class Platform(StrEnum):
-    tiktok = 'tiktok'
-    instagram_reels = 'instagram_reels'
-    youtube_shorts = 'youtube_shorts'
-    linkedin = 'linkedin'
 
 
 class DistributionMode(StrEnum):

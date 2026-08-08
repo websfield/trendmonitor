@@ -1,0 +1,18 @@
+{
+  "name": "@cutdown/skill-package",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "package skill — assembles the ContentPackage from a final render, but only with an approval, a passing final QA report, and complete rights evidence (REQ-088 Phase-0 subset, D-35/D-36, tech-spec §15 step 8).",
+  "scripts": {
+    "test": "node --test \"dist/tests/**/*.test.js\""
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/qa": "workspace:*",
+    "@cutdown/renderer-core": "workspace:*",
+    "@cutdown/skill-runtime": "workspace:*",
+    "ulid": "3.0.2",
+    "yaml": "2.9.0"
+  }
+}

@@ -9,6 +9,7 @@
     { "path": "../../packages/contracts" },
     { "path": "../../packages/editorial" },
     { "path": "../../packages/qa" },
-    { "path": "../../packages/skill-runtime" }
+    { "path": "../../packages/skill-runtime" },
+    { "path": "../../packages/style" }
   ]
 }

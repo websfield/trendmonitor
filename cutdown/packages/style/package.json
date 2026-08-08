@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
   "description": "Style profile resolver — loads a client's brand invariants (style-profile-v1) and projects them for prompt/caption injection (decisions.md D-26).",
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
     "@cutdown/contracts": "workspace:*",

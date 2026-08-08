@@ -1,0 +1,6 @@
+{
+  "jobId": "e2e-mixed-1",
+  "draftRenderId": "01KZ09T87MFMEDXTTXGRHTNET4",
+  "decidedBy": "Fred Wang (owner; fixture proving-run approval recorded under the /go full-automation instruction, 2026-08-02)",
+  "notes": "Reviewed the draft render, its QA report (pass_with_waivers; the single unexpected_silence warning carries waiver 01KZ09T0CFWQED598FDDXWAA37 with a stated fixture-ambience reason) and the assembled review payload. Fixture footage only (sourceClassification=fixture); this approval exercises the machinery and earns no Phase 0 exit evidence (D-38)."
+}

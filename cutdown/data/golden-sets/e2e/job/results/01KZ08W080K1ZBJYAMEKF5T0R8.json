@@ -1,0 +1,19 @@
+{
+  "kind": "briefs",
+  "jobId": "e2e-mixed-1",
+  "count": 2,
+  "briefs": [
+    {
+      "creativeBriefId": "01KZ08WGMVDCJBA0WGEG00QSQ3",
+      "path": "creative-briefs/01KZ08WGMVDCJBA0WGEG00QSQ3.json",
+      "semanticAngleLabel": "pipeline walkthrough",
+      "sharedMomentFraction": 0
+    },
+    {
+      "creativeBriefId": "01KZ08WGMYY3FC88FP5GYJMAF5",
+      "path": "creative-briefs/01KZ08WGMYY3FC88FP5GYJMAF5.json",
+      "semanticAngleLabel": "quality checks explained",
+      "sharedMomentFraction": 0
+    }
+  ]
+}

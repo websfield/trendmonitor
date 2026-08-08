@@ -17,5 +17,13 @@ export { ProjectionDb } from './db.js';
 export type { JobRow, JobStatus, InvocationRow } from './db.js';
 export { PIPELINE, STATES } from './pipeline.js';
 export type { JobState, PipelineStep } from './pipeline.js';
+export { createQaTransitionGate, gatingTierFor, openGate, requiresApproval } from './gates.js';
+export type {
+  TransitionGate,
+  GateDecision,
+  QaGateEnv,
+  QaGateReport,
+  ReviewDecisionState,
+} from './gates.js';
 export { analyze, parseRunLog } from './runlog.js';
 export type { SkillInvocationEntry, Analysis } from './runlog.js';

@@ -1,0 +1,125 @@
+{
+  "payloadVersion": "1.0.0",
+  "assembledAt": "2026-08-02T03:54:48.309Z",
+  "jobId": "e2e-mixed-1",
+  "accountId": "acct-social-soup-001",
+  "draftRenderId": "01KZ09RAG3HCY3EQYGPPCQY0TA",
+  "renderManifestId": "01KZ09R46GEZ9BWYDFYRCQG2JS",
+  "edlId": "01KZ09QH84KC5S7P298MWCHFNG",
+  "creativeBriefId": "01KZ094GA7JPW9G8594G3G2VNC",
+  "outputPath": "renders/draft/01KZ09R46GEZ9BWYDFYRCQG2JS/output.mp4",
+  "captions": {
+    "assPath": "renders/draft/01KZ09R46GEZ9BWYDFYRCQG2JS/captions.ass",
+    "srtPath": "renders/draft/01KZ09R46GEZ9BWYDFYRCQG2JS/captions.srt",
+    "vttPath": "renders/draft/01KZ09R46GEZ9BWYDFYRCQG2JS/captions.vtt",
+    "cueCount": 3
+  },
+  "angle": "Showing the pipeline end to end proves the edit is the product.",
+  "audiencePromise": "See the cafe shoot plan become one finished vertical cut.",
+  "hookHypothesis": {
+    "hookFamily": "outcome_first",
+    "narrativeArchetype": "process_reveal"
+  },
+  "moments": [
+    {
+      "momentId": "MX3Q268ASZ5GJBE47PFJDHSV44",
+      "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+      "clipId": "clip-1",
+      "narrativeFunction": "promise",
+      "rationale": "the plan, stated to camera",
+      "sourceRange": {
+        "startTicks": 0,
+        "endTicks": 50688,
+        "timebase": {
+          "num": 1,
+          "den": 15360
+        }
+      },
+      "verbatim": {
+        "value": null,
+        "reason": "Moment MX3Q268ASZ5GJBE47PFJDHSV44 is not in this job's Moment Graph, so its transcript cannot be shown"
+      },
+      "rightsState": {
+        "value": "cleared"
+      }
+    },
+    {
+      "momentId": "RHQAP623G6EFYPH06TVM19J5HV",
+      "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+      "clipId": "clip-2",
+      "narrativeFunction": "demonstration",
+      "rationale": "the caption check step",
+      "sourceRange": {
+        "startTicks": 236982,
+        "endTicks": 296228,
+        "timebase": {
+          "num": 1,
+          "den": 15360
+        }
+      },
+      "verbatim": {
+        "value": null,
+        "reason": "Moment RHQAP623G6EFYPH06TVM19J5HV is not in this job's Moment Graph, so its transcript cannot be shown"
+      },
+      "rightsState": {
+        "value": "cleared"
+      }
+    },
+    {
+      "momentId": "Z9SEP854V2383S300WDYZVX373",
+      "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+      "clipId": "clip-3",
+      "narrativeFunction": "payoff",
+      "rationale": "the delivered result",
+      "sourceRange": {
+        "startTicks": 355474,
+        "endTicks": 414720,
+        "timebase": {
+          "num": 1,
+          "den": 15360
+        }
+      },
+      "verbatim": {
+        "value": null,
+        "reason": "Moment Z9SEP854V2383S300WDYZVX373 is not in this job's Moment Graph, so its transcript cannot be shown"
+      },
+      "rightsState": {
+        "value": "cleared"
+      }
+    }
+  ],
+  "targetMetric": {
+    "value": "education_utility (objective; Phase 0 records no numeric target — REQ-120 analytics import is Phase 1)"
+  },
+  "rights": {
+    "weakestState": {
+      "value": "cleared"
+    },
+    "assetStates": [
+      {
+        "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+        "state": "cleared"
+      }
+    ],
+    "unknownAssetIds": [],
+    "disclosures": {
+      "paidPartnership": false,
+      "aiGeneratedOrAltered": false,
+      "ownedBusinessPromotion": false
+    }
+  },
+  "decisionRationale": [
+    "Distinctness: shares 0.3333333333333333 of its moments with sibling variants (pipeline walkthrough).",
+    "Known limitation: No real cafe footage; the fixture is a synthetic test pattern with narration.",
+    "Proof: Captions are checked against the audio before delivery. — evidenced by moment(s) RHQAP623G6EFYPH06TVM19J5HV ([object Object]).",
+    "Proof: The finished cut is delivered with captions. — evidenced by moment(s) Z9SEP854V2383S300WDYZVX373 ([object Object])."
+  ],
+  "qa": {
+    "value": {
+      "gateStatus": "fail",
+      "blockerCount": 0,
+      "warningCount": 1,
+      "waivedFindingIds": []
+    }
+  }
+}

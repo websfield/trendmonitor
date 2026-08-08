@@ -1,0 +1,16 @@
+{
+  "name": "@cutdown/skill-approve",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "approve skill — records one named human's immutable ReviewDecision about a reviewed draft render (D-9, REQ-152, tech-spec §15 step 8).",
+  "scripts": {
+    "test": "node --test \"dist/tests/**/*.test.js\""
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/qa": "workspace:*",
+    "@cutdown/skill-runtime": "workspace:*",
+    "ulid": "3.0.2"
+  }
+}

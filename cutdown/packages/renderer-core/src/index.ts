@@ -35,7 +35,43 @@ export {
   assertLibass,
   resetCapabilityCache,
   type FfmpegCapabilities,
+  // Determinism (tech-spec §12 tier 1, D-33)
+  DETERMINISM_TIER,
+  DETERMINISTIC_THREADS,
+  determinismArgs,
+  assertDeterministicArgv,
 } from './ffmpeg.js';
+
+export type {
+  RendererAdapter,
+  RenderPlan,
+  RenderCommand,
+  PlannedFile,
+  PlanContext,
+  ExecuteOptions,
+  RenderManifest,
+  Render,
+} from './adapter.js';
+
+export {
+  buildRenderManifest,
+  withFfmpegVersion,
+  assertFinalMatchesApprovedDraft,
+  loadFontRegistry,
+  resolveFonts,
+  libassFontsDir,
+  RENDERER_VERSION,
+  DEFAULT_TARGET_LOUDNESS_LUFS,
+  DEFAULT_MAX_TRUE_PEAK_DBTP,
+  DRAFT_CRF,
+  FINAL_CRF,
+  type FontRegistry,
+  type FontRegistryEntry,
+  type ResolvedFont,
+  type FontReference,
+  type BuildManifestInput,
+  type ManifestComparison,
+} from './manifest.js';
 
 export {
   preflight,
@@ -78,3 +114,4 @@ export {
 } from './proxy.js';
 
 export { probeAlpha, isAlphaCapable, type AlphaProbe } from './alpha.js';
+export { extractStillFrame, type StillFrame } from './stills.js';

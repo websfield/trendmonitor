@@ -1,0 +1,45 @@
+{
+  "accountId": "acct-social-soup-001",
+  "accountDisplayName": "Social Soup — Demo Account",
+  "audience": "Australian small-business owners aged 28-45 who already run their own socials",
+  "objective": "education_utility",
+  "platforms": [
+    "tiktok"
+  ],
+  "distributionMode": "organic",
+  "durationRange": {
+    "minSeconds": 3,
+    "maxSeconds": 15
+  },
+  "locale": "en-AU",
+  "brandOrCampaign": "Cutdown Phase 0 proving corpus",
+  "contentPromise": "Turn the mixed-asset fixture shoot into one captioned vertical TikTok cut, end to end",
+  "cta": {
+    "kind": "none"
+  },
+  "variantCount": 2,
+  "funnelStage": "consideration",
+  "offer": null,
+  "proofRequirements": [
+    "Show the actual fixture footage, not a mockup"
+  ],
+  "keyMessages": [
+    "The pipeline is proven by the package it delivers"
+  ],
+  "prohibitedClaims": [
+    "guaranteed views",
+    "algorithm hack"
+  ],
+  "riskTolerance": "low",
+  "notes": "Phase 6 end-to-end proving run over the mixed-job-valid ingest golden set. Skills-only public surface; sourceClassification fixture.",
+  "briefId": "01KZ07MB75ZTMTCV21R42YTY9A",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:17:40.198Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "brief",
+      "skillVersion": "1.0.0"
+    }
+  }
+}

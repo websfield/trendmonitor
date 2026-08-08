@@ -749,11 +749,14 @@ class TestProbe:
 
 
 class TestSilentBrollNegativeControl:
-    """`broll-silent.mp4`: silence events, and NO speech events."""
+    """`broll-silent.mp4`: no events at all, and the ledger says why (D-53)."""
 
-    def test_silent_broll_yields_silence(self) -> None:
-        events = compute_audio_events(SILENT)["audioEvents"]
-        assert [e["kind"] for e in events] == ["silence"]
+    def test_a_stream_less_asset_yields_no_events(self) -> None:
+        # D-53: an AudioEvent is a detection an engine made after measuring
+        # samples. This asset has no audio STREAM, so no engine measured
+        # anything, and the collection is empty rather than carrying a
+        # manufactured whole-asset `silence` at confidence 1.0.
+        assert compute_audio_events(SILENT)["audioEvents"] == []
 
     def test_silent_broll_yields_no_speech(self) -> None:
         # The negative half of the pair. A detector that reported speech here
@@ -761,11 +764,14 @@ class TestSilentBrollNegativeControl:
         events = compute_audio_events(SILENT)["audioEvents"]
         assert "speech" not in {e["kind"] for e in events}
 
-    def test_the_silence_spans_the_whole_asset_in_ticks(self) -> None:
-        event = compute_audio_events(SILENT)["audioEvents"][0]
-        assert event["startTicks"] == 0
-        assert event["endTicks"] == seconds_to_ticks(4.0) == 64000
-        assert event["timebase"] == {"num": 1, "den": 16000}
+    def test_the_empty_collection_carries_the_reason_it_is_empty(self) -> None:
+        # The half that keeps the empty array from being indistinguishable from
+        # "we looked at audio and found nothing" — `source-index-v1.json`:
+        # "the reason a collection is empty lives in the matching `subStages`
+        # entry, never in an absent property".
+        record = compute_audio_events(SILENT)["subStage"]
+        assert record["status"] == "completed"
+        assert "no audio stream" in record["reason"]
 
     def test_no_model_is_loaded_for_a_stream_less_asset(self) -> None:
         # This is what keeps the negative control in the FAST suite and makes it
@@ -877,6 +883,14 @@ class TestPannsRealModel:
 
         assert len(panns_inference.labels) == AUDIOSET_CLASS_COUNT
 
+    def test_an_asset_that_has_audio_carries_no_stream_less_reason(self) -> None:
+        # The negative half of D-53's ledger note. Without this, a reason
+        # hard-coded onto every result would satisfy the stream-less test while
+        # telling every caller that a perfectly audible asset has no audio.
+        # It lives here rather than beside its partner because the only
+        # audio-BEARING asset in this suite is a model-gated one.
+        assert "subStage" not in compute_audio_events(CLEAN)
+
     def test_clean_produces_a_well_formed_artefact(self) -> None:
         events = compute_audio_events(CLEAN)["audioEvents"]
         assert events
@@ -926,9 +940,13 @@ class TestSubStageIntegration:
         assert run_audio_events(ctx, SILENT).cache_hit is True
 
     def test_the_artefact_holds_the_audio_events_key(self, ctx: SubStageContext) -> None:
+        # `subStage` is the one permitted companion key: the orchestrator reads it
+        # for the ledger and splices only `audioEvents` into the closed SourceIndex
+        # schema. SILENT is stream-less, so D-53's reason is present here.
         artefact = run_audio_events(ctx, SILENT).artefact
-        assert set(artefact) == {"audioEvents"}
+        assert set(artefact) <= {"audioEvents", "subStage"}
         assert isinstance(artefact["audioEvents"], list)
+        assert "no audio stream" in artefact["subStage"]["reason"]
 
     def test_a_model_unavailable_failure_leaves_the_stage_resumable(
         self, ctx: SubStageContext, monkeypatch: pytest.MonkeyPatch

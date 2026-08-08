@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/revise/input.json",
+  "title": "ReviseRequest",
+  "description": "A reviewer's free-form note about a rendered cut. The note is prose on purpose (REQ-112) \u2014 turning it into structured constraints IS the skill.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "jobId",
+    "renderId",
+    "notes"
+  ],
+  "properties": {
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Becomes a directory name under `project-data/jobs/`. The pattern is defence in depth \u2014 `jobDir()` in @cutdown/skill-runtime guards and containment-checks it regardless of caller, because a skill's `entrypoint` is a documented direct invocation."
+    },
+    "renderId": {
+      "type": "string",
+      "description": "The render the note is about. The EDL to revise is read from it, so a note can never be applied to a cut the reviewer did not watch. Must be a ULID: it becomes a FILENAME under the job (and, for outputs, a directory that is created on the way), so a traversing value would read or write inside another job. The skill asserts it again before joining, because a skill's `entrypoint` is a documented direct invocation and a schema-only guard has the same bypass shape the Phase 2 HIGH had.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The reviewer's words, verbatim. Every emitted constraint's `sourceText` must be a substring of this, which is what makes the interpretation checkable."
+    },
+    "recordedModelPath": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Test/fixture only: a recorded interpretation replayed over an injected transport (tech-spec \u00a76.6 constrained fixtures)."
+    }
+  }
+}

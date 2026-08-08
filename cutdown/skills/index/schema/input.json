@@ -4,25 +4,43 @@
   "title": "IndexRequest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["jobId", "assetId"],
+  "required": [
+    "jobId",
+    "assetId"
+  ],
   "properties": {
-    "jobId": { "type": "string", "minLength": 1 },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Becomes a directory name under `project-data/jobs/`. The pattern is defence in depth \u2014 `jobDir()` in @cutdown/skill-runtime guards and containment-checks it regardless of caller, because a skill's `entrypoint` is a documented direct invocation."
+    },
     "assetId": {
       "type": "string",
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
       "description": "The ingested SourceAsset to index. Indexing is per-asset: a multi-asset job indexes each asset separately so one unindexable asset cannot cost the whole job its work."
     },
     "speakerMapPath": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Optional YAML mapping stable speaker-turn IDs to corrected names (REQ-011). An unknown turn ID or a duplicate correction is a validation failure; the original inference is preserved alongside the correction either way."
     },
     "noVlm": {
       "type": "boolean",
-      "description": "Skip the visual-description sub-stage. Defaults to TRUE — the fail-closed choice while the decisions.md D-21 spend ceiling is unset, since the alternative default would spend a client's money without a ceiling in place. A skipped sub-stage records status `skipped` with a reason and produces no descriptions; it never fabricates one."
+      "description": "Skip the visual-description sub-stage. Defaults to TRUE \u2014 the fail-closed choice while the decisions.md D-21 spend ceiling is unset, since the alternative default would spend a client's money without a ceiling in place. A skipped sub-stage records status `skipped` with a reason and produces no descriptions; it never fabricates one."
     },
     "force": {
       "oneOf": [
-        { "type": "null" },
+        {
+          "type": "null"
+        },
         {
           "type": "array",
           "items": {
@@ -41,6 +59,36 @@
         }
       ],
       "description": "Sub-stages to re-run even when a valid checkpoint exists. Named rather than a blanket boolean so re-running OCR does not discard an expensive transcript."
+    },
+    "skip": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ocr"
+            ]
+          }
+        }
+      ],
+      "description": "Sub-stages to skip by operator request. Only `ocr` is skippable: it is the one stage nothing downstream requires (captions and retrieval are transcript-driven; Moment entities lose their ocr-source entries), and on real footage it is ~90% of indexing cost. The ledger records the skip with its reason — a skipped stage never reads as 'looked and found nothing'. An explicit skip WINS over an explicit force of the same stage (the --no-vlm-beats---vlm precedent)."
+    },
+    "ocrThreads": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        }
+      ],
+      "description": "CPU threads for the PaddleOCR engine. The shipped default (1) buys byte-identical re-runs — thread count changes float reduction order, so >1 trades that reproducibility for roughly 2× wall-clock (measured: 31 s/frame at 1 thread, 17 s at 8). The value enters the engine config and therefore the REQ-005 cache key: changing it re-indexes rather than serving a checkpoint produced under different ordering."
     }
   }
 }

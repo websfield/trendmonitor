@@ -1,0 +1,1 @@
+{"audioEvents":[{"confidence":0.5,"endTicks":73696,"engine":{"name":"silero-vad","parameters":[{"key":"minSilenceMs","value":"100"},{"key":"minSpeechMs","value":"250"},{"key":"sampleRate","value":"16000"},{"key":"speechProbability","value":"0.5"}],"version":"6.2.1"},"eventId":"audio-event-0001","kind":"speech","startTicks":3616,"timebase":{"den":16000,"num":1}}]}

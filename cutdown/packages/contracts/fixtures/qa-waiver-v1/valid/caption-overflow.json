@@ -1,0 +1,23 @@
+{
+  "waiverId": "01J9QW2B3C4D5E6F7G8H9K0P1F",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-29T06:00:00Z",
+    "createdBy": {
+      "kind": "human",
+      "name": "Phase 0 operator (fixture)"
+    }
+  },
+  "jobId": "test-mixed",
+  "renderId": "01J9RD2B3C4D5E6F7G8H9K0N2B",
+  "findingIds": [
+    "caption_safe_zone:cue-3:23040-30720"
+  ],
+  "approvedBy": "Phase 0 operator (fixture)",
+  "reason": "Cue 3 overlaps the TikTok caption safe zone by 4 px on a 720-wide draft; the final render re-lays it out at 1080 and the overlap disappears. Accepted for review purposes only.",
+  "waivedAt": "2026-07-29T06:00:00Z",
+  "planHash": {
+    "algorithm": "sha256",
+    "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+}

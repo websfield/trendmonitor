@@ -1,0 +1,14 @@
+{
+  "kind": "decided",
+  "jobId": "e2e-mixed-1",
+  "reviewDecisionId": "01KZ09V3Q9DSQD80VTYXMCVJ1J",
+  "decisionPath": "reviews/01KZ09V3Q9DSQD80VTYXMCVJ1J.json",
+  "outcome": "approved",
+  "nextState": "final-rendering",
+  "subjectDraftRenderId": "01KZ09T87MFMEDXTTXGRHTNET4",
+  "subjectRenderManifestId": "01KZ09T1Z4KCFAJYR3EV8R2NV7",
+  "subjectEdlId": "01KZ09QH84KC5S7P298MWCHFNG",
+  "decidedBy": "Fred Wang (owner; fixture proving-run approval recorded under the /go full-automation instruction, 2026-08-02)",
+  "supersededDecisionIds": [],
+  "qaGateStatus": "pass_with_waivers"
+}

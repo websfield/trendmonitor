@@ -45,7 +45,7 @@ class BrandColour(BaseModel):
     role: Role
 
 
-class Role1(StrEnum):
+class Role3(StrEnum):
     heading = 'heading'
     body = 'body'
     caption = 'caption'
@@ -56,7 +56,7 @@ class BrandFont(BaseModel):
         extra='forbid',
     )
     family: constr(min_length=1)
-    role: Role1
+    role: Role3
     rightsRecorded: bool = Field(
         ...,
         description='True only if commercial-use rights are on file. False means the renderer must fall back to the OFL default rather than use this family.',

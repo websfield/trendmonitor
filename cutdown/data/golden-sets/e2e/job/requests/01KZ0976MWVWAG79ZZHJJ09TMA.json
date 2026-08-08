@@ -1,0 +1,9 @@
+{
+  "jobId": "e2e-mixed-1",
+  "edlId": "01KZ09535H7N92R02C9JX8K1ZH",
+  "tier": "draft",
+  "approvedDraftManifestId": null,
+  "styleProfilePath": "C:/projects/ai.playground/trendMonitor/cutdown/data/style-profiles/acct-social-soup-001.yaml",
+  "waiverPaths": [],
+  "audioEventsPath": "C:/projects/ai.playground/trendMonitor/cutdown/project-data/jobs/e2e-mixed-1/index/audio_events-150ada0c49b1e6d8.json"
+}

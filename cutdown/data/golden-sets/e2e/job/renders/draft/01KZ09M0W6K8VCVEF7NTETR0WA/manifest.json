@@ -1,0 +1,76 @@
+{
+  "renderManifestId": "01KZ09M0W6K8VCVEF7NTETR0WA",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:52:26.758Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "render",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "edlId": "01KZ09535H7N92R02C9JX8K1ZH",
+  "parentManifestId": null,
+  "tier": "draft",
+  "editorialPlanHash": {
+    "algorithm": "sha256",
+    "value": "f1e2ee1eab7e991aebd054d1d504e71241bb28dfceaac7f6878541968ff58de5"
+  },
+  "approvedDraftManifestId": null,
+  "releaseState": "draft",
+  "renderer": {
+    "name": "renderer-ffmpeg",
+    "rendererVersion": "1.0.0",
+    "ffmpegVersion": "ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers"
+  },
+  "media": {
+    "source": "proxy"
+  },
+  "fonts": [
+    {
+      "family": "Inter",
+      "role": "caption",
+      "hash": {
+        "algorithm": "sha256",
+        "value": "78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3"
+      },
+      "licenceNote": "OFL 1.1 (Inter v4.1)"
+    }
+  ],
+  "output": {
+    "container": "mp4",
+    "width": 720,
+    "height": 1280,
+    "frameRate": {
+      "num": 1,
+      "den": 30
+    }
+  },
+  "encoderSettings": {
+    "videoCodec": "h264",
+    "pixelFormat": "yuv420p",
+    "crf": 26,
+    "threads": 1,
+    "bitexact": true,
+    "stripCreationTime": true,
+    "audioCodec": "aac",
+    "audioBitrateKbps": 128
+  },
+  "audioMix": {
+    "normalize": true,
+    "targetLoudnessLufs": -14,
+    "maxTruePeakDbtp": -1,
+    "hasAudio": true
+  },
+  "captions": {
+    "assPath": "renders/draft/01KZ09M0W6K8VCVEF7NTETR0WA/captions.ass",
+    "srtPath": "renders/draft/01KZ09M0W6K8VCVEF7NTETR0WA/captions.srt",
+    "vttPath": "renders/draft/01KZ09M0W6K8VCVEF7NTETR0WA/captions.vtt",
+    "captionPlanHash": {
+      "algorithm": "sha256",
+      "value": "d25ee0e8a2d702c29aa502909441dc5970f37d1cdd1ee95203da49be8bfcfe6b"
+    }
+  },
+  "platformOverlayVersion": "2026-07"
+}

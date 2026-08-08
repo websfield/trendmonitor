@@ -1,0 +1,94 @@
+{
+  "assetId": "01KZ07NARC0AK5PYNSG3H5DHYQ",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:18:12.493Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "ingest",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "relativePath": "hero-still.jpg",
+  "assetKind": "image",
+  "sourceClassification": "fixture",
+  "contentHash": {
+    "algorithm": "sha256",
+    "value": "8d30d47579e3bf092ab400c1a8daaaea9810edb57c9328457878a0e0e4438e34"
+  },
+  "byteSize": 40615,
+  "storedPath": "source/8d30d47579e3bf092ab400c1a8daaaea9810edb57c9328457878a0e0e4438e34.jpg",
+  "rights": {
+    "state": "unknown",
+    "owner": null,
+    "supplier": null,
+    "permittedPlatforms": null,
+    "territories": null,
+    "campaignStart": null,
+    "campaignEnd": null,
+    "expiryDate": null,
+    "talentReleaseStatus": "unknown",
+    "locationReleaseStatus": "unknown",
+    "musicStatus": "unknown",
+    "editingPermitted": null,
+    "paidAmplificationPermitted": null,
+    "evidenceUri": null,
+    "notes": "No rights record accompanied hero-still.jpg. REQ-003: unknown material is flagged, never assumed cleared."
+  },
+  "preflight": {
+    "inspected": true,
+    "container": {
+      "formatName": "image2",
+      "formatLongName": "image2 sequence"
+    },
+    "duration": {
+      "ticks": 1,
+      "timebase": {
+        "num": 1,
+        "den": 25
+      }
+    },
+    "video": {
+      "codecName": "mjpeg",
+      "profile": "Baseline",
+      "pixelFormat": "yuvj420p",
+      "codedWidth": 1280,
+      "codedHeight": 720,
+      "displayWidth": 1280,
+      "displayHeight": 720,
+      "rotationDegrees": 0,
+      "averageFrameRate": {
+        "num": 25,
+        "den": 1
+      },
+      "realFrameRate": {
+        "num": 25,
+        "den": 1
+      },
+      "frameRateMode": "cfr",
+      "timebase": {
+        "num": 1,
+        "den": 25
+      },
+      "frameCount": null,
+      "color": {
+        "space": "bt470bg",
+        "primaries": null,
+        "transfer": null,
+        "range": "pc"
+      },
+      "hdr": {
+        "isHdr": false,
+        "detectedFormat": null
+      }
+    },
+    "audioTracks": [],
+    "corruption": {
+      "status": "clean",
+      "detail": null,
+      "decodeErrorCount": 0
+    }
+  },
+  "proxy": null
+}

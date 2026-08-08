@@ -1,0 +1,18 @@
+{
+  "waiverId": "01KZ09T0CFWQED598FDDXWAA37",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T06:10:00Z",
+    "createdBy": { "kind": "human", "name": "Fred Wang" }
+  },
+  "jobId": "e2e-mixed-1",
+  "renderId": "01KZ09RAG3HCY3EQYGPPCQY0TA",
+  "findingIds": ["unexpected_silence:audio:9421-11106"],
+  "approvedBy": "Fred Wang (owner; recorded during the /go full-automation proving session, 2026-08-02)",
+  "reason": "The 1.69 s span below -60 dBFS is the synthetic fixture's own inter-utterance silence gap (flite narration separated by 1.6 s of generated silence) crossing the clip-2/clip-3 junction. It is ambience intrinsic to the golden-set footage, not a defect in the cut; real footage carries room tone and will not reproduce it. Waived for the fixture proving run only.",
+  "waivedAt": "2026-08-02T06:10:00Z",
+  "planHash": {
+    "algorithm": "sha256",
+    "value": "2a2573587becbcd179d8033059e9839b86572693892c43edaefdd32bfb658aea"
+  }
+}

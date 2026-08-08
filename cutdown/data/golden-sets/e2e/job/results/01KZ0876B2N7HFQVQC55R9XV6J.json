@@ -1,0 +1,19 @@
+{
+  "jobId": "e2e-mixed-1",
+  "inventoryId": "01KZ087S92WQNX6SVGCB73FHRH",
+  "assetCount": 1,
+  "assets": [
+    {
+      "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+      "relativePath": "promo-take.mp4",
+      "assetKind": "video",
+      "rightsState": "cleared",
+      "storedPath": "source/58fb3b9819a30be024eff82503691dcfeef5637790f533eecee26389445e0561.mp4",
+      "proxyPath": "proxy/58fb3b9819a30be024eff82503691dcfeef5637790f533eecee26389445e0561.mp4",
+      "cacheHit": false
+    }
+  ],
+  "warnings": [],
+  "cacheHits": 0,
+  "ffmpegVersion": "ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers"
+}

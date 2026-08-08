@@ -1,0 +1,64 @@
+{
+  "edlId": "01KZ09QH84KC5S7P298MWCHFNG",
+  "gateStatus": "pass",
+  "blockers": [],
+  "advisories": [
+    {
+      "rule": "quote-fidelity",
+      "severity": "advisory",
+      "source": "deterministic",
+      "code": "QUOTE_SPEAKER_UNVERIFIED",
+      "message": "Clip clip-1 quotes speaker \"speaker_1\" whose identity is uncorrected (isCorrected=false) on Moment MX3Q268ASZ5GJBE47PFJDHSV44; an unverified identity per moment-v1 — surfaced, never blocking.",
+      "cite": {
+        "clipId": "clip-1",
+        "momentId": "MX3Q268ASZ5GJBE47PFJDHSV44",
+        "field": "caption.speakerLabel",
+        "matched": "speaker_1"
+      }
+    },
+    {
+      "rule": "quote-fidelity",
+      "severity": "advisory",
+      "source": "deterministic",
+      "code": "QUOTE_SPEAKER_UNVERIFIED",
+      "message": "Clip clip-2 quotes speaker \"speaker_4\" whose identity is uncorrected (isCorrected=false) on Moment RHQAP623G6EFYPH06TVM19J5HV; an unverified identity per moment-v1 — surfaced, never blocking.",
+      "cite": {
+        "clipId": "clip-2",
+        "momentId": "RHQAP623G6EFYPH06TVM19J5HV",
+        "field": "caption.speakerLabel",
+        "matched": "speaker_4"
+      }
+    },
+    {
+      "rule": "quote-fidelity",
+      "severity": "advisory",
+      "source": "deterministic",
+      "code": "QUOTE_SPEAKER_UNVERIFIED",
+      "message": "Clip clip-3 quotes speaker \"speaker_5\" whose identity is uncorrected (isCorrected=false) on Moment Z9SEP854V2383S300WDYZVX373; an unverified identity per moment-v1 — surfaced, never blocking.",
+      "cite": {
+        "clipId": "clip-3",
+        "momentId": "Z9SEP854V2383S300WDYZVX373",
+        "field": "caption.speakerLabel",
+        "matched": "speaker_5"
+      }
+    },
+    {
+      "rule": "disclosures",
+      "severity": "advisory",
+      "source": "deterministic",
+      "code": "AI_MEDIA_DISCLOSURE_UNASSERTED",
+      "message": "disclosures.aiGeneratedOrAltered is false and no material-alteration signal is available; at Phase 0 this is advisory only, surfaced for human review, never a block.",
+      "cite": {
+        "field": "disclosures.aiGeneratedOrAltered"
+      }
+    }
+  ],
+  "checked": {
+    "clips": 3,
+    "quoteCaptions": 3,
+    "viewerVisibleTextFields": 4,
+    "proofRequirements": 1,
+    "proofPoints": 2,
+    "schemaBlocked": false
+  }
+}

@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/render-manifest-v1.json",
+  "title": "RenderManifest",
+  "schemaVersion": "1.0.0",
+  "description": "The immutable, deterministic execution spec for one render of one PlatformEDL (PRD REQ-080/087, §5 object table): exact renderer + versions, fonts by content hash, media tier, output settings, the bit-exact determinism knobs (D-33 tier-1), the audio-mix plan (with loudness/true-peak TARGETS), the caption-file triplet by reference, and the platform overlay version. Two tiers (D-34): a `draft` renders from proxy media with a visible version identifier; a `final` renders from source-hashed originals. Both carry the SAME `editorialPlanHash` (they realise one editorial plan); a `final` manifest links its `approvedDraftManifestId` and may differ from the draft only in tier/media/encode fields. Immutable revision. MEASURED loudness/true-peak of the produced render are reported on the render result / QA report, not here — this is the plan, not the measurement.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-28",
+      "changeKind": "breaking",
+      "reason": "Initial v1 (Phase 4, tech-spec §15 step 6). Fonts are referenced by sha256 (not name) so a render refuses on a hash mismatch rather than silently substituting (rights integrity). `encoderSettings` pins exactly the knobs the tier-1 double-render byte-identity proof depends on (threads, bitexact, stripped creation_time, pixel format), so 'deterministic within documented limits' is a property of the manifest, not a hope."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "renderManifestId",
+    "envelope",
+    "jobId",
+    "edlId",
+    "parentManifestId",
+    "tier",
+    "editorialPlanHash",
+    "approvedDraftManifestId",
+    "releaseState",
+    "renderer",
+    "media",
+    "fonts",
+    "output",
+    "encoderSettings",
+    "audioMix",
+    "captions",
+    "platformOverlayVersion"
+  ],
+  "properties": {
+    "renderManifestId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "envelope": { "$ref": "./common/envelope-v1.json" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "edlId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+      "description": "The PlatformEDL this manifest renders (PRD lineage §3)."
+    },
+    "parentManifestId": {
+      "oneOf": [
+        { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+        { "type": "null" }
+      ],
+      "description": "The manifest revision this supersedes, or null for the first (REQ-039)."
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["draft", "final"],
+      "description": "D-34: `draft` renders from proxy media with a visible version identifier for review; `final` renders from source-hashed originals for delivery. Exit criterion 2 ('zero invalid source ranges in final renders') binds to `final`."
+    },
+    "editorialPlanHash": {
+      "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+      "description": "sha256 of the editorial plan (the resolved EDL) this render realises. The draft and final manifests for one plan carry the SAME value — that identity is what makes 'the final differs from the approved draft only in media/encode' checkable."
+    },
+    "approvedDraftManifestId": {
+      "oneOf": [
+        { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+        { "type": "null" }
+      ],
+      "description": "For a `final` manifest, the draft manifest whose approved ReviewDecision authorises this final render (REQ-152 order). Null for a `draft`. The approval subject must match; the resolver checks it."
+    },
+    "releaseState": {
+      "type": "string",
+      "enum": ["draft", "editorially_approved"],
+      "description": "REQ-105 groundwork. A `draft`-tier render is `draft`; a `final` becomes `editorially_approved` only via the approval flow (Phase 5). Recorded here so the release state travels with the render."
+    },
+    "renderer": {
+      "title": "RendererIdentity",
+      "description": "Exact renderer and toolchain versions (PRD §10.6). Phase 0 is `renderer-ffmpeg` (D-16); Remotion is an owner escalation and cannot appear here at Phase 0.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "rendererVersion", "ffmpegVersion"],
+      "properties": {
+        "name": { "type": "string", "const": "renderer-ffmpeg", "description": "A `const`: Phase 0 has exactly one sanctioned renderer (D-16). A second is a deliberate schema change." },
+        "rendererVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "ffmpegVersion": { "type": "string", "minLength": 1, "description": "The exact FFmpeg build string the tier-1 determinism proof pins (D-33), e.g. `8.0.1-full_build (gyan.dev)`." }
+      }
+    },
+    "media": {
+      "title": "MediaTier",
+      "description": "Which media this tier renders from. `draft` = proxy (cheap, D-25); `final` = source_original (source-hashed, full quality). The two tiers name the same clips; only this source differs.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": { "type": "string", "enum": ["proxy", "source_original"] }
+      }
+    },
+    "fonts": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Fonts referenced by content hash (PRD §10.6/§10.8.4). A render refuses on a hash mismatch rather than substituting silently — a substituted font is a rights and a determinism break. Inter (OFL, D-29) is the Phase 0 default.",
+      "items": {
+        "title": "FontReference",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["family", "role", "hash", "licenceNote"],
+        "properties": {
+          "family": { "type": "string", "minLength": 1 },
+          "role": { "type": "string", "enum": ["heading", "body", "caption"] },
+          "hash": { "$ref": "./common/timecode-v1.json#/$defs/ContentHash" },
+          "licenceNote": { "type": "string", "minLength": 1, "description": "Recorded licence basis (e.g. `OFL` for Inter; a brand font needs recorded commercial rights)." }
+        }
+      }
+    },
+    "output": {
+      "title": "OutputSettings",
+      "description": "The output container and frame geometry (PRD REQ-050 canvas; §10.6). Codec/encoder knobs live in `encoderSettings`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["container", "width", "height", "frameRate"],
+      "properties": {
+        "container": { "type": "string", "enum": ["mp4", "mov"] },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "frameRate": {
+          "$ref": "./common/timecode-v1.json#/$defs/Timebase",
+          "description": "Constant output frame rate as an exact rational (e.g. 30000/1001). CFR output (D-25); VFR is normalised upstream."
+        }
+      }
+    },
+    "encoderSettings": {
+      "title": "EncoderSettings",
+      "description": "The exact knobs the tier-1 byte-identical determinism proof pins (tech-spec §12, D-33): pinned thread count, bit-exact flags, stripped creation_time, pinned pixel format and codecs. Two renders with identical inputs and identical settings on the pinned local environment must be byte-identical — these fields are why that is decidable.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["videoCodec", "pixelFormat", "crf", "threads", "bitexact", "stripCreationTime", "audioCodec", "audioBitrateKbps"],
+      "properties": {
+        "videoCodec": { "type": "string", "enum": ["h264"], "description": "x264 is bit-exact under the pinned constraints (tech-spec §12.1)." },
+        "pixelFormat": { "type": "string", "minLength": 1, "description": "e.g. `yuv420p`. Pinned so the decode/encode path is reproducible." },
+        "crf": { "type": "integer", "minimum": 0, "maximum": 51, "description": "Constant Rate Factor. Draft and final may differ here; recorded so the encode is reproducible." },
+        "threads": { "type": "integer", "minimum": 1, "description": "Fixed thread count — x264 is only bit-exact at a pinned `threads=N` (tech-spec §12.1)." },
+        "bitexact": { "type": "boolean", "description": "Whether `-fflags +bitexact -flags +bitexact` were applied. Tier-1 determinism requires true." },
+        "stripCreationTime": { "type": "boolean", "description": "Whether `creation_time`/`-map_metadata -1` stripped nondeterministic timestamps. Tier-1 requires true." },
+        "audioCodec": { "type": "string", "enum": ["aac"] },
+        "audioBitrateKbps": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "audioMix": {
+      "title": "AudioMixPlan",
+      "description": "The dialogue-first audio-mix PLAN (REQ-085): normalisation intent and the loudness/true-peak TARGETS the render aims for. No added music (D-2). The MEASURED loudness/true-peak of the produced render are reported on the render result / QA report, not here.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["normalize", "targetLoudnessLufs", "maxTruePeakDbtp", "hasAudio"],
+      "properties": {
+        "normalize": { "type": "boolean", "description": "Whether loudness normalisation is applied (no clipping, REQ-085)." },
+        "targetLoudnessLufs": { "type": "number", "description": "Integrated-loudness target in LUFS (negative, e.g. -14)." },
+        "maxTruePeakDbtp": { "type": "number", "description": "True-peak ceiling in dBTP (negative, e.g. -1)." },
+        "hasAudio": { "type": "boolean", "description": "False for a source with no audio stream — an explicit state, not an omission (REQ-085 audio-less source is explicit)." }
+      }
+    },
+    "captions": {
+      "title": "CaptionArtefacts",
+      "description": "The caption-file triplet by relative path (REQ-083): burned-in ASS plus sidecar SRT and WebVTT. Verbatim vs display text is kept separate upstream (the EDL quote captions); these are the rendered files. `captionPlanHash` binds the caption content to this render.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assPath", "srtPath", "vttPath", "captionPlanHash"],
+      "properties": {
+        "assPath": { "type": "string", "minLength": 1, "description": "Burn-in subtitle (libass ASS) relative path under the render dir." },
+        "srtPath": { "type": "string", "minLength": 1 },
+        "vttPath": { "type": "string", "minLength": 1 },
+        "captionPlanHash": { "$ref": "./common/timecode-v1.json#/$defs/ContentHash" }
+      }
+    },
+    "platformOverlayVersion": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The dated safe-zone/overlay fixture version this render was composed against (REQ-055 safe zones), e.g. `2026-07`. Recorded so a later overlay change is a visible re-render, not a silent drift."
+    }
+  }
+}

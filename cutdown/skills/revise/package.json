@@ -1,0 +1,16 @@
+{
+  "name": "@cutdown/skill-revise",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "revise skill — interpret free-form review notes into structured constraints and regenerate the NARROWEST affected object, reusing the source index (REQ-039/REQ-112/REQ-113).",
+  "scripts": {
+    "test": "node --test \"dist/tests/**/*.test.js\""
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/editorial": "workspace:*",
+    "@cutdown/skill-runtime": "workspace:*",
+    "ulid": "3.0.2"
+  }
+}

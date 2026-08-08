@@ -84,12 +84,40 @@ importers:
       '@cutdown/editorial':
         specifier: workspace:*
         version: link:../editorial
+      '@cutdown/renderer-core':
+        specifier: workspace:*
+        version: link:../renderer-core
+      ulid:
+        specifier: 3.0.2
+        version: 3.0.2
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
 
   packages/renderer-core:
     dependencies:
       '@cutdown/contracts':
         specifier: workspace:*
         version: link:../contracts
+      ulid:
+        specifier: 3.0.2
+        version: 3.0.2
+
+  packages/renderer-ffmpeg:
+    dependencies:
+      '@cutdown/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@cutdown/renderer-core':
+        specifier: workspace:*
+        version: link:../renderer-core
+      ulid:
+        specifier: 3.0.2
+        version: 3.0.2
+    devDependencies:
+      '@cutdown/qa':
+        specifier: workspace:*
+        version: link:../qa
 
   packages/skill-runtime:
     dependencies:
@@ -115,6 +143,21 @@ importers:
         specifier: 2.9.0
         version: 2.9.0
 
+  skills/approve:
+    dependencies:
+      '@cutdown/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@cutdown/qa':
+        specifier: workspace:*
+        version: link:../../packages/qa
+      '@cutdown/skill-runtime':
+        specifier: workspace:*
+        version: link:../../packages/skill-runtime
+      ulid:
+        specifier: 3.0.2
+        version: 3.0.2
+
   skills/brief:
     dependencies:
       '@cutdown/contracts':
@@ -135,6 +178,27 @@ importers:
       '@cutdown/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@cutdown/renderer-core':
+        specifier: workspace:*
+        version: link:../../packages/renderer-core
+      '@cutdown/skill-runtime':
+        specifier: workspace:*
+        version: link:../../packages/skill-runtime
+      ulid:
+        specifier: 3.0.2
+        version: 3.0.2
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
+
+  skills/package:
+    dependencies:
+      '@cutdown/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@cutdown/qa':
+        specifier: workspace:*
+        version: link:../../packages/qa
       '@cutdown/renderer-core':
         specifier: workspace:*
         version: link:../../packages/renderer-core
@@ -181,6 +245,48 @@ importers:
         specifier: 3.0.2
         version: 3.0.2
 
+  skills/render:
+    dependencies:
+      '@cutdown/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@cutdown/editorial':
+        specifier: workspace:*
+        version: link:../../packages/editorial
+      '@cutdown/qa':
+        specifier: workspace:*
+        version: link:../../packages/qa
+      '@cutdown/renderer-core':
+        specifier: workspace:*
+        version: link:../../packages/renderer-core
+      '@cutdown/renderer-ffmpeg':
+        specifier: workspace:*
+        version: link:../../packages/renderer-ffmpeg
+      '@cutdown/skill-runtime':
+        specifier: workspace:*
+        version: link:../../packages/skill-runtime
+      '@cutdown/style':
+        specifier: workspace:*
+        version: link:../../packages/style
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
+
+  skills/revise:
+    dependencies:
+      '@cutdown/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@cutdown/editorial':
+        specifier: workspace:*
+        version: link:../../packages/editorial
+      '@cutdown/skill-runtime':
+        specifier: workspace:*
+        version: link:../../packages/skill-runtime
+      ulid:
+        specifier: 3.0.2
+        version: 3.0.2
+
   skills/validate:
     dependencies:
       '@cutdown/contracts':
@@ -195,6 +301,9 @@ importers:
       '@cutdown/skill-runtime':
         specifier: workspace:*
         version: link:../../packages/skill-runtime
+      '@cutdown/style':
+        specifier: workspace:*
+        version: link:../../packages/style
       yaml:
         specifier: 2.9.0
         version: 2.9.0

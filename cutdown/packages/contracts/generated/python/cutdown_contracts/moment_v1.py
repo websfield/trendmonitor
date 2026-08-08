@@ -18,6 +18,7 @@ from pydantic import (
 )
 
 from . import creative_brief_v1
+from ._internal import RightsState
 from .common import envelope_v1, timecode_v1
 
 
@@ -117,6 +118,14 @@ class WorstSeverity(StrEnum):
     severe = 'severe'
 
 
+class MomentRights(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    state: RightsState
+    concerns: list[constr(min_length=1)]
+
+
 class Source1(StrEnum):
     heuristic = 'heuristic'
     model = 'model'
@@ -182,13 +191,6 @@ class QualityFlagKind(StrEnum):
     silence = 'silence'
 
 
-class RightsState(StrEnum):
-    cleared = 'cleared'
-    unknown = 'unknown'
-    restricted = 'restricted'
-    expired = 'expired'
-
-
 class NullableText(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -216,14 +218,6 @@ class MomentQuality(BaseModel):
     flagKinds: list[QualityFlagKind]
     worstSeverity: WorstSeverity
     usable: bool
-
-
-class MomentRights(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    state: RightsState
-    concerns: list[constr(min_length=1)]
 
 
 class MomentDependency(BaseModel):

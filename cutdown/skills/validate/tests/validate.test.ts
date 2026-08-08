@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, describe, before, after } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -150,5 +150,145 @@ describe('unconfigured gateway: the deterministic gate still runs, the critic is
     assert.equal(out['gateStatus'], 'pass');
     assert.equal(out['critic'].status, 'skipped');
     assert.match(out['critic'].reason as string, /not configured|spend ceiling|key/i);
+  });
+});
+
+/**
+ * The Phase 5 round-2 security HIGH, as a test.
+ *
+ * `edlId` is caller-supplied and became BOTH a read path (`edl/<id>.json`) and two
+ * WRITE paths (`reviews/gates/<id>-gate.json`, `reviews/<id>-critic.json`) — and
+ * `writeJsonAtomic` mkdir -p's the parent. Unguarded, `../<other-job>/edl/<x>` read
+ * another job's EDL and then wrote a gate result inside that job's directory,
+ * creating directories on the way: job isolation broken from a documented surface
+ * (the CLI verb AND the `.claude/skills/cutdown-validate` mirror, whose whole job is
+ * turning free text into this request).
+ *
+ * The `jobId` guard landed in round 1 and this sibling field was routed around it —
+ * the same "adjacent field" shape as the Phase 4 gate findings.
+ */
+describe('a traversing edlId is refused before it reads or writes anything', () => {
+  const JOB = 'validate-traversal';
+  const VICTIM = 'validate-victim';
+
+  before(() => {
+    seedJob(JOB);
+    seedJob(VICTIM);
+  });
+
+  test('refuses a forward-slash traversal', () => {
+    const outcome = runValidate({ jobId: JOB, edlId: `../${VICTIM}/edl/01HQZX3F5G7K9M2N4P6R8S0T99` });
+    assert.notEqual(outcome.status, 0, 'a traversing id must never be accepted');
+    assert.ok(!existsSync(join(workspace, 'project-data', 'jobs', VICTIM, 'edl', '01HQZX3F5G7K9M2N4P6R8S0T99-gate.json')));
+  });
+
+  test('refuses a backslash traversal — win32 normalises both separators', () => {
+    const outcome = runValidate({ jobId: JOB, edlId: ['..', VICTIM, 'edl', 'x'].join(String.fromCharCode(92)) });
+    assert.notEqual(outcome.status, 0);
+  });
+
+  test('refuses an id that is not a ULID at all', () => {
+    // The schema pattern catches this first (exit 2); the in-code `assertSafeId` is
+    // the second line, for the direct-entrypoint caller.
+    const outcome = runValidate({ jobId: JOB, edlId: 'not-a-ulid' });
+    assert.notEqual(outcome.status, 0);
+  });
+
+  test('writes NOTHING into the victim job', () => {
+    // The load-bearing assertion: the victim's directories are exactly as seeded.
+    assert.deepEqual(readdirSync(join(workspace, 'project-data', 'jobs', VICTIM)).sort(), ['brief', 'edl', 'moments']);
+  });
+
+  test('still accepts a legitimate ULID edlId', () => {
+    // The guard must not have broken the ordinary path — the Phase 4 round-2 lesson
+    // was a fix that made a whole legitimate asset class unprocessable.
+    const edlId = writeEdl(JOB, () => undefined);
+    const out = readOutput(runValidate({ jobId: JOB, edlId, recordedModelPath: RECORDED, boundsPath: BOUNDS }));
+    assert.equal(out['edlId'], edlId);
+  });
+
+  test('an ABSENT story plan still produces a gate report; a PRESENT-but-invalid one refuses', () => {
+    // `loadCreativeBrief`'s docstring claims "best-effort in ABSENCE only" — and until
+    // round 4 that claim had no test, which is the shape that let both round-3 BLOCKs
+    // through a green gate. Both halves are asserted here because they pull in opposite
+    // directions: absence must NOT block (the cross-check is optional), while a file
+    // that fails its own contract must, since `creativeBriefId` is read out of it and
+    // joined into a path.
+    const edlId = writeEdl(JOB, () => undefined);
+
+    // Absence: no story-plans/ directory at all.
+    const absent = readOutput(runValidate({ jobId: JOB, edlId, recordedModelPath: RECORDED, boundsPath: BOUNDS }));
+    assert.ok(['pass', 'fail'].includes(absent['gateStatus'] as string), 'an optional cross-check cannot decide the gate');
+
+    // Present but contract-invalid: a story plan missing every required field.
+    const storyPlansDir = join(workspace, 'project-data', 'jobs', JOB, 'story-plans');
+    const edl = JSON.parse(
+      readFileSync(join(workspace, 'project-data', 'jobs', JOB, 'edl', `${edlId}.json`), 'utf8'),
+    ) as { storyPlanId: string };
+    mkdirSync(storyPlansDir, { recursive: true });
+    writeFileSync(join(storyPlansDir, `${edl.storyPlanId}.json`), JSON.stringify({ storyPlanId: edl.storyPlanId }));
+
+    const invalid = runValidate({ jobId: JOB, edlId, recordedModelPath: RECORDED, boundsPath: BOUNDS });
+    assert.equal(invalid.status, 3, 'a stored artefact that fails its own contract is a NAMED refusal');
+    assert.match(invalid.stderr, /STORY_PLAN_INVALID/);
+    assert.match(invalid.stderr, /master-story-plan-v1/, 'and it names which contract it failed');
+    rmSync(storyPlansDir, { recursive: true, force: true });
+  });
+
+  test('refuses a RECORDED-FIXTURE override path outside the skill directory', () => {
+    // Round-3 security MEDIUM, with round-4's correction folded in.
+    //
+    // `recordedModelPath` and `boundsPath` are recorded-fixture overrides whose only
+    // documented home is `skills/validate/fixtures/`, so containment is right for
+    // them. `styleProfilePath` is deliberately NOT in this list — see the next test.
+    const edlId = writeEdl(JOB, () => undefined);
+    // A REAL file with a marker in it, so the "does not quote the content" assertion
+    // below can actually fail. Pointing at a non-existent path would make it vacuous.
+    const secret = join(workspace, '.env');
+    writeFileSync(secret, 'ANTHROPIC_API_KEY=sk-ant-SECRETLEAKCANARY', 'utf8');
+    for (const field of ['recordedModelPath', 'boundsPath'] as const) {
+      const result = runValidate({ jobId: JOB, edlId, [field]: secret });
+      assert.equal(result.status, 2, `${field} must be refused as a CALLER error, not read and then failed on`);
+      assert.match(result.stderr, /PATH_ESCAPES_ROOT/, `${field} names the containment failure`);
+      assert.doesNotMatch(
+        result.stderr,
+        /SECRETLEAKCANARY/,
+        `${field}: the refusal must not quote the content of the file it was pointed at`,
+      );
+    }
+  });
+
+  test('ACCEPTS a shipped StyleProfile outside the skill directory, and still leaks nothing', () => {
+    // Round-4 security MEDIUM: my round-3 fix contained `styleProfilePath` along with
+    // the two fixture overrides, but it is not one of them. It is a documented
+    // production option (`cutdown validate --style-profile <file>`), its real profiles
+    // ship at `cutdown/data/style-profiles/*.yaml`, and its prohibitedClaims feed the
+    // BLOCKING prohibited-claim gate — so containing it refused every legitimate
+    // profile and the gate then ran with fewer prohibitions than the brand declares.
+    // A guard that breaks the ordinary path is the Phase-4 lesson, twice learned.
+    const edlId = writeEdl(JOB, () => undefined);
+    const shipped = join(CUTDOWN_ROOT, 'data', 'style-profiles', 'acct-social-soup-001.yaml');
+    assert.ok(existsSync(shipped), 'the shipped profile this option exists to load');
+
+    const accepted = runValidate({ jobId: JOB, edlId, recordedModelPath: RECORDED, boundsPath: BOUNDS, styleProfilePath: shipped });
+    assert.doesNotMatch(
+      accepted.stderr,
+      /PATH_ESCAPES_ROOT/,
+      'a shipped YAML profile is a legitimate input, not a traversal attempt',
+    );
+    assert.equal(accepted.status, 0, `the documented invocation must succeed: ${accepted.stderr.slice(0, 400)}`);
+
+    // The oracle is closed the other way instead: the load goes through
+    // `@cutdown/style`, which validates against style-profile-v1 and reports
+    // instancePath/params only — never instance values.
+    const secret = join(workspace, '.env');
+    writeFileSync(secret, 'ANTHROPIC_API_KEY=sk-ant-SECRETLEAKCANARY', 'utf8');
+    const refused = runValidate({ jobId: JOB, edlId, recordedModelPath: RECORDED, boundsPath: BOUNDS, styleProfilePath: secret });
+    assert.notEqual(refused.status, 0, 'a non-profile file is still refused');
+    assert.doesNotMatch(
+      refused.stderr,
+      /SECRETLEAKCANARY/,
+      'and the refusal never quotes the content of the file it was pointed at',
+    );
   });
 });

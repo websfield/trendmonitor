@@ -1,0 +1,22 @@
+{
+  "note": "Schwarzkopf Wave 1 showcase - recorded critic response. Advisory only (D-37).",
+  "responses": [
+    {
+      "id": "msg_showcase_critic_0001",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"findings\":[{\"lens\":\"coherence\",\"severity\":\"low\",\"note\":\"Two adjacent music-led beats (clips 5-6) without dialogue; consider interleaving a spoken beat between them on a future revision.\",\"cite\":\"clip-6\"},{\"lens\":\"style_fit\",\"severity\":\"low\",\"note\":\"Caption stats use different units (views vs engagement rate); consistent units would read cleaner.\"},{\"lens\":\"first_frame\",\"severity\":\"medium\",\"note\":\"The cover frame lands mid-gesture on the hook; a frame with the product visible may retain better.\",\"cite\":\"clip-1\"}]}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "note": "Phase 6 e2e proving-run recorded critic response. Advisory only (D-37): these findings can never change gateStatus.",
+  "responses": [
+    {
+      "id": "msg_e2e_critic_0001",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"findings\":[{\"lens\":\"first_frame\",\"severity\":\"medium\",\"note\":\"The opening frame is a synthetic test pattern; on real footage choose a frame with the subject visible.\",\"cite\":\"clip-1\"},{\"lens\":\"style_fit\",\"severity\":\"low\",\"note\":\"Narration is procedural; the brand voice leans conversational. Fine for a fixture proving run.\"}]}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

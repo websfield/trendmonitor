@@ -1,0 +1,12 @@
+{
+  "briefId": "01KZ07MB75ZTMTCV21R42YTY9A",
+  "jobId": "e2e-mixed-1",
+  "briefPath": "brief/01KZ07MB75ZTMTCV21R42YTY9A.json",
+  "contentHash": {
+    "algorithm": "sha256",
+    "value": "7e6fa3e5c28b4aa7fa28517805dad90995b3e314694c72c54caddbb53add53c9"
+  },
+  "warnings": [
+    "This brief declares no CTA. That is an explicit editorial choice and is carried through to packaging."
+  ]
+}

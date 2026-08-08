@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/package/output.json",
+  "title": "PackageResult",
+  "description": "Where the package landed and what it claims. A summary of the committed ContentPackage — the artefact under `packages/<id>/package.json` is the record; this is what a caller prints.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "jobId",
+    "contentPackageId",
+    "packagePath",
+    "releaseState",
+    "sourceClassification",
+    "reviewDecisionId",
+    "finalRenderId",
+    "qaGateStatus",
+    "warningWaiverCount",
+    "rightsWeakestState",
+    "rightsAllEvidenced",
+    "rangeCount",
+    "contractSetSize",
+    "files"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "packaged" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "contentPackageId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "packagePath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Job-relative path to the package DIRECTORY, e.g. `packages/<contentPackageId>`."
+    },
+    "releaseState": {
+      "type": "string",
+      "enum": ["editorially_approved", "rights_approved"],
+      "description": "REQ-105, computed. The two states Phase 0 can substantiate; `publish_ready` and `published` are not emitted, so they are not members here either."
+    },
+    "sourceClassification": { "type": "string", "enum": ["real", "fixture"] },
+    "reviewDecisionId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "finalRenderId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "qaGateStatus": { "type": "string", "enum": ["pass", "pass_with_waivers"] },
+    "warningWaiverCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Counted separately from the gate status because D-35 requires waived packages to be reportable apart from clean ones."
+    },
+    "rightsWeakestState": { "type": "string", "enum": ["cleared"] },
+    "rightsAllEvidenced": { "type": "boolean" },
+    "rangeCount": { "type": "integer", "minimum": 1 },
+    "contractSetSize": { "type": "integer", "minimum": 1 },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Package-relative names of every file in the delivered directory, so a caller can verify the bundle without opening it.",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

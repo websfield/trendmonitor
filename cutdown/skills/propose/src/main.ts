@@ -4,6 +4,7 @@ import { join, relative } from 'node:path';
 import { ulid } from 'ulid';
 
 import {
+  assertContained,
   fail,
   jobDir,
   reject,
@@ -175,6 +176,15 @@ async function run(request: ProposeRequest, ctx: SkillContext): Promise<ProposeR
   }
 
   // Rank against the brief. A query vector may be supplied (offline/tests) or computed by Python.
+  // Contained to the skill directory, matching `revise`. These are RECORDED-FIXTURE
+  // overrides for offline runs — the only documented use is `skills/<name>/fixtures/`
+  // — and unbounded they let a caller name any file on the machine, whose parse
+  // failure was then echoed back with the first bytes of content quoted: a file-read
+  // oracle demonstrated against `cutdown/.env`. Neither the containment nor the
+  // silenced parser message is optional; each closes half of it.
+  if (request.queryVectorPath) assertContained(ctx.skillDir, request.queryVectorPath, 'The query vector path');
+  if (request.recordedModelPath) assertContained(ctx.skillDir, request.recordedModelPath, 'The recorded model path');
+
   const query = request.queryVectorPath ? loadQueryVector(request.queryVectorPath) : embedQuery(queryText(brief));
   let ranked: RankedMoment[];
   try {

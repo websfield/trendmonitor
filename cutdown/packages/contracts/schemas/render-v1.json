@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/render-v1.json",
+  "title": "Render",
+  "schemaVersion": "1.0.0",
+  "description": "The RESULT of executing one RenderManifest (PRD REQ-080/085/087, §5 object table) — what the manifest planned, this records was actually produced. The split matters: the manifest carries loudness/true-peak TARGETS, this carries the MEASURED values from the encoded file, and conflating them is how an unmeasured render comes to look compliant. `releaseState` (REQ-105) travels on the render so a `draft` can never be mistaken for an approved final. `determinismTier` is a `const 1` because tech-spec §12 permits exactly one determinism claim at Phase 0 (byte-identical, pinned local environment, D-33); tiers 2-3 belong to the Remotion path, which does not exist.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-29",
+      "changeKind": "breaking",
+      "reason": "Initial v1 (Phase 4, tech-spec §15 step 6). `loudness` is a TAGGED UNION rather than a nullable number pair: an audio-less source and a source whose loudness measurement failed are different facts, and a bare null makes them indistinguishable from `-inf LUFS`. REQ-085 requires the value to be reported, and 'reported' has to include reporting that it could not be measured, with the reason."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "renderId",
+    "envelope",
+    "jobId",
+    "edlId",
+    "renderManifestId",
+    "tier",
+    "releaseState",
+    "outputPath",
+    "contentHash",
+    "duration",
+    "dimensions",
+    "loudness",
+    "captions",
+    "renderer",
+    "determinismTier",
+    "visibleVersionIdentifier"
+  ],
+  "properties": {
+    "renderId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "envelope": { "$ref": "./common/envelope-v1.json" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "edlId": { "$ref": "./common/timecode-v1.json#/$defs/Ulid" },
+    "renderManifestId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+      "description": "The manifest this render executed. Every reproduction detail lives there; this object never restates a knob the manifest already pins."
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["draft", "final"],
+      "description": "D-34. Exit criterion 2 ('zero invalid source ranges in final renders') binds to `final`; `package` (Phase 5) bundles `final` only."
+    },
+    "releaseState": {
+      "type": "string",
+      "enum": ["draft", "editorially_approved"],
+      "description": "REQ-105. Set to `editorially_approved` only by the Phase 5 approval flow, never by the renderer."
+    },
+    "outputPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Job-relative path to the encoded file, e.g. `renders/draft/<manifestId>/output.mp4`. Job-relative rather than absolute so an artefact stays valid when the job directory moves."
+    },
+    "contentHash": {
+      "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+      "description": "sha256 of the encoded FILE BYTES (not the object). This is the value the tier-1 double-render determinism proof compares."
+    },
+    "duration": {
+      "$ref": "./common/timecode-v1.json#/$defs/MediaTime",
+      "description": "Measured duration of the produced file, read back from the encoded output rather than summed from the EDL — a sum is the plan, not the result."
+    },
+    "dimensions": {
+      "title": "RenderDimensions",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "description": "Measured output geometry, read back from the file. QA compares it against the manifest and the platform minResolution.",
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "loudness": {
+      "title": "LoudnessReport",
+      "description": "MEASURED integrated loudness and true peak (REQ-085), or an explicit statement that they could not be measured and why. A tagged union so 'this render has no audio' can never be read as 'this render measured 0 LUFS'.",
+      "type": "object",
+      "oneOf": [
+        {
+          "title": "LoudnessMeasured",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "integratedLufs", "truePeakDbtp", "loudnessRangeLu"],
+          "properties": {
+            "kind": { "type": "string", "const": "measured" },
+            "integratedLufs": { "type": "number", "description": "EBU R128 integrated loudness of the produced file." },
+            "truePeakDbtp": { "type": "number", "description": "True peak in dBTP. The QA ruleset's `maxTruePeakDbtp` (default -1) is checked against THIS value." },
+            "loudnessRangeLu": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "title": "LoudnessUnavailable",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": { "type": "string", "const": "unavailable" },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Why no measurement exists — e.g. `source has no audio stream`. Required: an unexplained absence is the failure mode this union exists to prevent."
+            }
+          }
+        }
+      ]
+    },
+    "captions": {
+      "title": "RenderedCaptions",
+      "description": "The emitted caption triplet (REQ-083/104), job-relative. A caption FILE is always emitted alongside the burn-in — REQ-104's standing requirement — so these three are required, not optional.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assPath", "srtPath", "vttPath", "cueCount"],
+      "properties": {
+        "assPath": { "type": "string", "minLength": 1 },
+        "srtPath": { "type": "string", "minLength": 1 },
+        "vttPath": { "type": "string", "minLength": 1 },
+        "cueCount": { "type": "integer", "minimum": 0, "description": "Number of caption cues emitted. Zero is legal (a clip with no speech and no text captions) and is recorded rather than inferred from an empty file." }
+      }
+    },
+    "renderer": {
+      "title": "RendererIdentity",
+      "description": "Restated from the manifest ON PURPOSE (PRD §10.6): a delivered render travels with its provenance even when separated from its manifest. The resolver asserts the two agree.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "rendererVersion", "ffmpegVersion"],
+      "properties": {
+        "name": { "type": "string", "const": "renderer-ffmpeg" },
+        "rendererVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "ffmpegVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "determinismTier": {
+      "type": "integer",
+      "const": 1,
+      "description": "tech-spec §12: Phase 0 claims tier 1 only — byte-identical on the pinned local environment (D-33). A `const` so a later renderer cannot quietly assert a stronger claim than the spec allows."
+    },
+    "visibleVersionIdentifier": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "D-34: a `draft` render carries a burned-in version identifier so a review copy can never be mistaken for a deliverable; a `final` carries null. The renderer asserts the tier/identifier agreement (JSON Schema cannot express a cross-property rule; tech-spec §3 forbids if/then/else)."
+    }
+  }
+}

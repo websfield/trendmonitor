@@ -8,10 +8,13 @@
     ".": "./dist/src/index.js"
   },
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
     "@cutdown/contracts": "workspace:*",
-    "@cutdown/editorial": "workspace:*"
+    "@cutdown/editorial": "workspace:*",
+    "@cutdown/renderer-core": "workspace:*",
+    "ulid": "3.0.2",
+    "yaml": "2.9.0"
   }
 }

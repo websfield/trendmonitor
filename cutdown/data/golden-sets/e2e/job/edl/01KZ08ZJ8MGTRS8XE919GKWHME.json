@@ -1,0 +1,131 @@
+{
+  "edlId": "01KZ08ZJ8MGTRS8XE919GKWHME",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:41:16.437Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "plan",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "storyPlanId": "01KZ08ZJ7NXEEXZ8PCPMM0C6FR",
+  "parentEdlId": null,
+  "platform": "tiktok",
+  "objective": "education_utility",
+  "distributionMode": "organic",
+  "locale": "en-AU",
+  "targetDurationRange": {
+    "minSeconds": 3,
+    "maxSeconds": 15
+  },
+  "canvas": {
+    "width": 720,
+    "height": 1280,
+    "aspectRatio": "9:16"
+  },
+  "aspectTreatment": {
+    "mode": "blurred_background",
+    "rationale": "16:9 source on a 9:16 canvas; a blurred fill keeps the full frame visible without reframing the subject (D-47 forbids subject_reframe at Phase 0)"
+  },
+  "hookFamily": "outcome_first",
+  "clips": [
+    {
+      "clipId": "clip-1",
+      "order": 0,
+      "momentId": "MX3Q268ASZ5GJBE47PFJDHSV44",
+      "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+      "sourceRange": {
+        "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+        "startTicks": 0,
+        "endTicks": 50688,
+        "timebase": {
+          "num": 1,
+          "den": 15360
+        }
+      },
+      "narrativeFunction": "promise",
+      "rationale": "the plan, stated to camera",
+      "caption": {
+        "kind": "quote",
+        "displayText": "Here is the plan for the cafe shoot",
+        "verbatimSourceText": "Here is the plan for the cafe shoot we are filming today.",
+        "speakerLabel": "speaker_1"
+      }
+    },
+    {
+      "clipId": "clip-2",
+      "order": 1,
+      "momentId": "2DTMRS95NA6WJMD9KYMJZBWECJ",
+      "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+      "sourceRange": {
+        "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+        "startTicks": 177737,
+        "endTicks": 236982,
+        "timebase": {
+          "num": 1,
+          "den": 15360
+        }
+      },
+      "narrativeFunction": "demonstration",
+      "rationale": "the cutdown step",
+      "caption": {
+        "kind": "quote",
+        "displayText": "we cut the whole tape down to one short vertical clip",
+        "verbatimSourceText": "Then we cut the whole tape down to one short vertical clip for the feed.",
+        "speakerLabel": "speaker_3"
+      }
+    },
+    {
+      "clipId": "clip-3",
+      "order": 2,
+      "momentId": "Z9SEP854V2383S300WDYZVX373",
+      "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+      "sourceRange": {
+        "assetId": "01KZ087TS6X67NY8JDQE3A16KD",
+        "startTicks": 355474,
+        "endTicks": 414720,
+        "timebase": {
+          "num": 1,
+          "den": 15360
+        }
+      },
+      "narrativeFunction": "payoff",
+      "rationale": "the delivered result",
+      "caption": {
+        "kind": "quote",
+        "displayText": "you get the finished cut with captions",
+        "verbatimSourceText": "At the end you get the finished cut delivered with captions and all.",
+        "speakerLabel": "speaker_5"
+      }
+    }
+  ],
+  "audioMode": "native_audio_plan",
+  "disclosures": {
+    "paidPartnership": false,
+    "aiGeneratedOrAltered": false,
+    "ownedBusinessPromotion": false
+  },
+  "metadata": {
+    "title": "From cafe shoot to finished cut",
+    "description": null
+  },
+  "coverFrame": {
+    "kind": "moment_frame",
+    "momentId": "MX3Q268ASZ5GJBE47PFJDHSV44",
+    "atTick": {
+      "ticks": 15360,
+      "timebase": {
+        "num": 1,
+        "den": 15360
+      }
+    }
+  },
+  "modelProvenance": {
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-5",
+    "promptTemplateVersion": "1.0.0",
+    "promptTemplateId": "plan-edl"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "note": "Captured interpretation of an ANGLE-level note. `selectTarget` must widen to creative-brief, and Phase 0's revise must REFUSE rather than half-perform a wide revision.",
+  "responses": [
+    {
+      "id": "msg_recorded_revise_wide",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"constraints\": [{\"kind\": \"angle\", \"subject\": \"output\", \"instruction\": \"Lead with the price objection instead of the time saving\", \"sourceText\": \"the whole angle is wrong\"}], \"unresolved\": []}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 520,
+        "output_tokens": 110
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "kind": "packaged",
+  "jobId": "e2e-mixed-1",
+  "contentPackageId": "01KZ0A62WTAXFAYS9M1WK6PRKM",
+  "packagePath": "packages/01KZ0A62WTAXFAYS9M1WK6PRKM",
+  "releaseState": "rights_approved",
+  "sourceClassification": "fixture",
+  "reviewDecisionId": "01KZ09V3Q9DSQD80VTYXMCVJ1J",
+  "finalRenderId": "01KZ0A5HDN18C24RDN0K438RRY",
+  "qaGateStatus": "pass_with_waivers",
+  "warningWaiverCount": 1,
+  "rightsWeakestState": "cleared",
+  "rightsAllEvidenced": true,
+  "rangeCount": 3,
+  "contractSetSize": 14,
+  "files": [
+    "captions.srt",
+    "captions.vtt",
+    "cover.png",
+    "edl.json",
+    "first-frame.png",
+    "master.mp4",
+    "package.json",
+    "qa-report.json"
+  ]
+}

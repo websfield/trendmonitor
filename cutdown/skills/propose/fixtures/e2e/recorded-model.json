@@ -1,0 +1,22 @@
+{
+  "note": "Phase 6 e2e proving-run recorded propose response over job e2e-mixed-1's real Moment Graph (indexId RPZ2S8F58Q10Y02T8E6VBBWDTB). Replayed over the injected transport; never a network call.",
+  "responses": [
+    {
+      "id": "msg_e2e_propose_0001",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"angles\":[{\"audiencePromise\":\"See the cafe shoot plan become one finished vertical cut.\",\"creativeThesis\":\"Showing the pipeline end to end proves the edit is the product.\",\"hookFamily\":\"outcome_first\",\"narrativeArchetype\":\"process_reveal\",\"value\":\"confidence that the workflow delivers\",\"semanticAngleLabel\":\"pipeline walkthrough\",\"proofPoints\":[{\"claim\":\"Captions are checked against the audio before delivery.\",\"evidenceMomentIds\":[\"RHQAP623G6EFYPH06TVM19J5HV\"],\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Narrator says 'After that the captions were burned in and checked against the audio.'\"}},{\"claim\":\"The finished cut is delivered with captions.\",\"evidenceMomentIds\":[\"Z9SEP854V2383S300WDYZVX373\"],\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Narrator says 'At the end you get the finished cut delivered with captions and all.'\"}}],\"selectedMoments\":[{\"momentId\":\"MX3Q268ASZ5GJBE47PFJDHSV44\",\"candidateFunction\":\"promise\",\"rationale\":\"opens with the plan for the shoot\"},{\"momentId\":\"RHQAP623G6EFYPH06TVM19J5HV\",\"candidateFunction\":\"demonstration\",\"rationale\":\"the caption check step, stated to camera\"},{\"momentId\":\"Z9SEP854V2383S300WDYZVX373\",\"candidateFunction\":\"payoff\",\"rationale\":\"the delivered result\"}],\"cta\":{\"kind\":\"none\"},\"knownLimitations\":[\"No real cafe footage; the fixture is a synthetic test pattern with narration.\"]},{\"audiencePromise\":\"Understand what happens to your footage between shoot and feed.\",\"creativeThesis\":\"Explaining the checks builds trust in the finished clip.\",\"hookFamily\":\"utility_first\",\"narrativeArchetype\":\"explainer\",\"value\":\"practical understanding of the workflow\",\"semanticAngleLabel\":\"quality checks explained\",\"proofPoints\":[{\"claim\":\"Captions are checked against the audio.\",\"evidenceMomentIds\":[\"RHQAP623G6EFYPH06TVM19J5HV\"],\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Narrator says 'After that the captions were burned in and checked against the audio.'\"}}],\"selectedMoments\":[{\"momentId\":\"SZTNHT6JKWZ686Q6THY5TEV5M8\",\"candidateFunction\":\"context\",\"rationale\":\"setting the scene establishes what the camera sees\"},{\"momentId\":\"RHQAP623G6EFYPH06TVM19J5HV\",\"candidateFunction\":\"demonstration\",\"rationale\":\"the caption check step\"}],\"cta\":{\"kind\":\"none\"},\"knownLimitations\":[\"The checks are narrated, not shown on screen; no interface footage exists in the fixture.\"]}]}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

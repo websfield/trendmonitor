@@ -1,0 +1,76 @@
+{
+  "renderManifestId": "01KZ0A5AE7HF578Z4FH08ZA7ED",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T04:01:53.608Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "render",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "edlId": "01KZ09QH84KC5S7P298MWCHFNG",
+  "parentManifestId": null,
+  "tier": "final",
+  "editorialPlanHash": {
+    "algorithm": "sha256",
+    "value": "5842c8402c120809b8ce79d33b32a8fed7ba9d087dd8aeabb1b0bf811f5f31ba"
+  },
+  "approvedDraftManifestId": "01KZ09T1Z4KCFAJYR3EV8R2NV7",
+  "releaseState": "draft",
+  "renderer": {
+    "name": "renderer-ffmpeg",
+    "rendererVersion": "1.0.0",
+    "ffmpegVersion": "ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers"
+  },
+  "media": {
+    "source": "source_original"
+  },
+  "fonts": [
+    {
+      "family": "Inter",
+      "role": "caption",
+      "hash": {
+        "algorithm": "sha256",
+        "value": "78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3"
+      },
+      "licenceNote": "OFL 1.1 (Inter v4.1)"
+    }
+  ],
+  "output": {
+    "container": "mp4",
+    "width": 720,
+    "height": 1280,
+    "frameRate": {
+      "num": 1,
+      "den": 30
+    }
+  },
+  "encoderSettings": {
+    "videoCodec": "h264",
+    "pixelFormat": "yuv420p",
+    "crf": 20,
+    "threads": 1,
+    "bitexact": true,
+    "stripCreationTime": true,
+    "audioCodec": "aac",
+    "audioBitrateKbps": 192
+  },
+  "audioMix": {
+    "normalize": true,
+    "targetLoudnessLufs": -14,
+    "maxTruePeakDbtp": -1,
+    "hasAudio": true
+  },
+  "captions": {
+    "assPath": "renders/final/01KZ0A5AE7HF578Z4FH08ZA7ED/captions.ass",
+    "srtPath": "renders/final/01KZ0A5AE7HF578Z4FH08ZA7ED/captions.srt",
+    "vttPath": "renders/final/01KZ0A5AE7HF578Z4FH08ZA7ED/captions.vtt",
+    "captionPlanHash": {
+      "algorithm": "sha256",
+      "value": "914995e3edf46ff8de52b1c411d49c90a2a12a8486ab7ce0c0325aa3c575c485"
+    }
+  },
+  "platformOverlayVersion": "2026-07"
+}

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/render/input.json",
+  "title": "RenderRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "jobId",
+    "edlId",
+    "tier"
+  ],
+  "properties": {
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Becomes a directory name under `project-data/jobs/`. The pattern is defence in depth \u2014 `jobDir()` in @cutdown/skill-runtime guards and containment-checks it regardless of caller, because a skill's `entrypoint` is a documented direct invocation."
+    },
+    "edlId": {
+      "type": "string",
+      "description": "The PlatformEDL to render. Must be a ULID: it becomes a FILENAME under the job (and, for outputs, a directory that is created on the way), so a traversing value would read or write inside another job. The skill asserts it again before joining, because a skill's `entrypoint` is a documented direct invocation and a schema-only guard has the same bypass shape the Phase 2 HIGH had.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "final"
+      ],
+      "description": "D-34. `final` requires an approved draft; there is no flag that waives that."
+    },
+    "approvedDraftManifestId": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Required for `final`: the draft manifest whose approval authorises this render. The skill verifies the approval record exists and names this manifest. It must be a ULID: the value becomes a directory name (`renders/draft/<id>/manifest.json`), so a traversing value would read a manifest outside the job. The skill asserts it again before joining, because a skill's `entrypoint` is a documented direct invocation."
+    },
+    "styleProfilePath": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Optional StyleProfile supplying caption colours and the brand background."
+    },
+    "waiverPaths": {
+      "type": "array",
+      "description": "QaWaiver records to apply to this render's warnings (D-35). A waiver naming a blocker is rejected, not ignored.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "audioEventsPath": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Optional indexed audio events, so meaningful non-speech moments can be surfaced for caption review (REQ-104). Absent means that check records `skipped` with a reason rather than reporting clean."
+    }
+  }
+}

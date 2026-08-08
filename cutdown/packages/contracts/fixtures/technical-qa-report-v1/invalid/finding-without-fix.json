@@ -1,0 +1,49 @@
+{
+  "qaReportId": "01J9QR2B3C4D5E6F7G8H9K0P4J",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-29T06:15:00Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "render",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "test-mixed",
+  "renderId": "01J9RD2B3C4D5E6F7G8H9K0N2B",
+  "renderManifestId": "01J9RM2B3C4D5E6F7G8H9K0N1A",
+  "tier": "draft",
+  "rulesetVersion": "1.0.0",
+  "gateStatus": "fail",
+  "checksRun": [
+    {
+      "checkId": "unexpected_silence",
+      "status": "ran",
+      "reason": null
+    }
+  ],
+  "findings": [
+    {
+      "findingId": "unexpected_silence:output:0-46080",
+      "checkId": "unexpected_silence",
+      "severity": "blocker",
+      "waivable": false,
+      "object": "output",
+      "message": "3.0 s of silence below -60 dBFS at the head of the output, outside any declared hold.",
+      "timeRange": {
+        "startTicks": 0,
+        "endTicks": 46080,
+        "timebase": {
+          "num": 1,
+          "den": 15360
+        }
+      }
+    }
+  ],
+  "waiverIds": [],
+  "waivedFindingIds": [],
+  "planHash": {
+    "algorithm": "sha256",
+    "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+}

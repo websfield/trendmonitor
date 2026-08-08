@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, RootModel, conint, constr
 
 from . import creative_brief_v1, job_brief_v1
+from ._internal import Platform
 from .common import envelope_v1, model_provenance_v1, timecode_v1
 
 
@@ -74,6 +75,20 @@ class ClipCaption(RootModel[NoCaption | TextCaption | QuoteCaption]):
         ...,
         description='The editorial caption decision for this clip (the render is Phase 4; the DECISION and its quote provenance live here). A tagged union so a clip with no caption, a text-led caption, and a spoken-quote caption are distinct — the quote variant always carries the verbatim source text + speaker the D-37 gate checks against.',
         title='ClipCaption',
+    )
+
+
+class ClipTransition(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    fadeInMs: conint(ge=40, le=2000) | None = Field(
+        None,
+        description="Fade from black (video) and silence (audio) over this many milliseconds at the clip's head. Duration-preserving: the clip occupies exactly the same output frames as a hard cut.",
+    )
+    fadeOutMs: conint(ge=40, le=2000) | None = Field(
+        None,
+        description="Fade to black/silence over this many milliseconds at the clip's tail. Paired with the next clip's fadeInMs it reads as a dip-to-black join.",
     )
 
 
@@ -157,6 +172,10 @@ class EdlClip(BaseModel):
         description='The editorial caption decision for this clip (the render is Phase 4; the DECISION and its quote provenance live here). A tagged union so a clip with no caption, a text-led caption, and a spoken-quote caption are distinct — the quote variant always carries the verbatim source text + speaker the D-37 gate checks against.',
         title='ClipCaption',
     )
+    transition: ClipTransition | None = Field(
+        None,
+        description="The editorial transition decision for this clip's boundaries (D-52). Optional and null-safe so every pre-existing EDL remains valid; absent means hard cut. Fades are the only Phase 0 vocabulary - duration-preserving by design, so caption cue times and QA duration math are unaffected. A fade still changes the EDL and its content hashes like any other edit decision; what stays invariant is the draft-to-final plan-hash chain, since both tiers render the same faded EDL.",
+    )
 
 
 class MomentCover(BaseModel):
@@ -194,7 +213,7 @@ class PlatformEDL(BaseModel):
         ...,
         description='The revision this supersedes, or null for the first (REQ-039).',
     )
-    platform: job_brief_v1.Platform = Field(
+    platform: Platform = Field(
         ...,
         description='The single target platform (REQ-050). At Phase 0 only `tiktok` resolves to a capability fixture (D-3); `plan` fails explicitly on any other.',
     )

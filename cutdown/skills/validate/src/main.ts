@@ -4,9 +4,15 @@ import { join, relative } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 
 import {
+  assertContained,
+  assertSafeId,
+  contractSchemaId,
   fail,
+  readContractJson,
   jobDir,
+  resolveJobRelative,
   runSkillMain,
+  validateContract,
   writeJsonAtomic,
   type SkillContext,
 } from '@cutdown/skill-runtime';
@@ -19,14 +25,16 @@ import {
   type TransportResponse,
 } from '@cutdown/editorial';
 import { assembleGateResult, runDeterministicGates, type CriticFinding, type DeterministicGateResult } from '@cutdown/qa';
+import { loadStyleProfile as loadStyleProfileFile } from '@cutdown/style';
 import type { AssetBounds } from '@cutdown/contracts';
-import type { CreativeBriefV1, JobBriefV1, MomentV1, PlatformEdlV1, StyleProfileV1 } from '@cutdown/contracts/generated';
+import type { CreativeBriefV1, JobBriefV1, MasterStoryPlanV1, MomentV1, PlatformEdlV1, StyleProfileV1 } from '@cutdown/contracts/generated';
 
 type JobBrief = JobBriefV1.JobBrief;
 type Moment = MomentV1.Moment;
 type PlatformEDL = PlatformEdlV1.PlatformEDL;
 type StyleProfile = StyleProfileV1.StyleProfile;
 type CreativeBrief = CreativeBriefV1.CreativeBrief;
+type MasterStoryPlan = MasterStoryPlanV1.MasterStoryPlan;
 
 const SKILL = 'validate';
 const VERSION = '1.0.0';
@@ -82,9 +90,23 @@ function readJsonIfExists<T>(path: string): T | undefined {
 }
 
 function loadEdl(root: string, edlId: string): PlatformEDL {
+  // The id becomes a FILENAME. Unguarded, `../<other-job>/edl/<x>` read another job's
+  // EDL — and the two writes below then landed inside that job's directory, creating
+  // directories on the way. Guarded here as well as patterned in the input schema,
+  // because `entrypoint` is a documented direct invocation.
+  assertSafeId(edlId, 'EDL id');
   const path = join(root, 'edl', `${edlId}.json`);
   if (!existsSync(path)) throw fail('EDL_NOT_FOUND', `No PlatformEDL ${edlId} at ${path}; run \`cutdown plan\` first.`);
-  return JSON.parse(readFileSync(path, 'utf8')) as PlatformEDL;
+  // Contract-validated on read, not cast. `storyPlanId` is `$ref: Ulid` in
+  // platform-edl-v1 and becomes a FILENAME in `loadCreativeBrief` below, so
+  // validating the artefact here guards that field — and every other id on it —
+  // without a per-field assertion anyone can forget to add to the next sibling.
+  return readContractJson<PlatformEDL>(
+    path,
+    contractSchemaId('platform-edl-v1'),
+    'EDL_INVALID',
+    `PlatformEDL ${edlId}`,
+  );
 }
 
 function loadJobBrief(root: string): JobBrief {
@@ -95,26 +117,81 @@ function loadJobBrief(root: string): JobBrief {
   return JSON.parse(readFileSync(join(dir, latest), 'utf8')) as JobBrief;
 }
 
+/**
+ * Every committed Moment in the job, CONTRACT-VALIDATED per record.
+ *
+ * Validated because `moment-v1.assetId` is `$ref: Ulid` and it becomes a FILENAME
+ * (`assets/<assetId>.json`). This was the FIFTH recurrence of the same defect, found
+ * in round 4 — and found in a file the round-3 fix had already edited, which is the
+ * whole argument for validating artefacts at the boundary instead of hunting fields
+ * one reviewer finding at a time.
+ *
+ * Per ELEMENT, not per file: these files hold an array, and the array is not itself a
+ * contract object, so a whole-document validation would prove nothing about the ids.
+ */
 function loadMoments(root: string): Moment[] {
   const dir = join(root, 'moments');
   if (!existsSync(dir)) return [];
   const moments: Moment[] = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.json')).sort()) {
-    const parsed = JSON.parse(readFileSync(join(dir, file), 'utf8')) as unknown;
-    if (Array.isArray(parsed)) moments.push(...(parsed as Moment[]));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    } catch {
+      // Not echoed: the parser message quotes the file's first bytes.
+      throw fail('MOMENTS_INVALID', `The Moment file moments/${file} is not valid JSON.`);
+    }
+    if (!Array.isArray(parsed)) continue;
+    parsed.forEach((record, i) => {
+      moments.push(
+        validateContract<Moment>(
+          record,
+          contractSchemaId('moment-v1'),
+          'MOMENTS_INVALID',
+          `Moment ${String(i)} in moments/${file}`,
+        ),
+      );
+    });
   }
   return moments;
 }
 
-/** Resolve the CreativeBrief behind an EDL via its story plan (best-effort — optional cross-check). */
+/**
+ * Resolve the CreativeBrief behind an EDL via its story plan (best-effort — optional cross-check).
+ *
+ * Best-effort in ABSENCE only. A file that is present but fails its contract is a
+ * refusal, not a silent `undefined`: `creativeBriefId` is read out of the story plan
+ * and joined into a path on the next line, and this cross-check exists to catch
+ * editorial divergence — skipping it because the plan was malformed would drop the
+ * check precisely when something is already wrong.
+ */
 function loadCreativeBrief(root: string, edl: PlatformEDL): CreativeBrief | undefined {
-  const story = readJsonIfExists<{ creativeBriefId?: string }>(join(root, 'story-plans', `${edl.storyPlanId}.json`));
-  if (!story?.creativeBriefId) return undefined;
-  return readJsonIfExists<CreativeBrief>(join(root, 'creative-briefs', `${story.creativeBriefId}.json`));
+  const storyPlanPath = join(root, 'story-plans', `${edl.storyPlanId}.json`);
+  if (!existsSync(storyPlanPath)) return undefined;
+  const story = readContractJson<MasterStoryPlan>(
+    storyPlanPath,
+    contractSchemaId('master-story-plan-v1'),
+    'STORY_PLAN_INVALID',
+    `MasterStoryPlan ${edl.storyPlanId}`,
+  );
+  const briefPath = join(root, 'creative-briefs', `${story.creativeBriefId}.json`);
+  if (!existsSync(briefPath)) return undefined;
+  return readContractJson<CreativeBrief>(
+    briefPath,
+    contractSchemaId('creative-brief-v1'),
+    'CREATIVE_BRIEF_INVALID',
+    `CreativeBrief ${story.creativeBriefId}`,
+  );
 }
 
 function loadStyleProfile(root: string, jobBrief: JobBrief, styleProfilePath?: string | null): StyleProfile | undefined {
-  if (styleProfilePath) return JSON.parse(readFileSync(styleProfilePath, 'utf8')) as StyleProfile;
+  // Through `@cutdown/style`, not a bare `JSON.parse`. Three things were wrong with
+  // the parse: the shipped profiles are YAML, so `--style-profile
+  // data/style-profiles/<acct>.yaml` — the documented invocation — never parsed at all;
+  // nothing validated the result against `style-profile-v1`, so a malformed profile
+  // silently contributed zero prohibitedClaims to a BLOCKING gate; and the echoed
+  // SyntaxError quoted the file's first bytes back to a caller who chose the path.
+  if (styleProfilePath) return loadStyleProfileFile(styleProfilePath);
   const dir = join(root, 'style-profiles');
   if (!existsSync(dir)) return undefined;
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
@@ -191,6 +268,25 @@ async function run(request: ValidateRequest, ctx: SkillContext): Promise<Validat
   const jobBrief = loadJobBrief(root);
   const moments = loadMoments(root);
   const capability = loadCapability(ctx);
+  // Two DIFFERENT classes of path, and the round-3 fix wrongly treated them as one.
+  //
+  // `recordedModelPath` and `boundsPath` are RECORDED-FIXTURE overrides for offline
+  // runs whose only documented home is `skills/validate/fixtures/`, so containment to
+  // the skill directory is exactly right — unbounded, they named any file on the
+  // machine and the echoed parse failure quoted its first bytes.
+  //
+  // `styleProfilePath` is NOT one of those. It is a documented production option
+  // (`cutdown validate --style-profile <file>`), its real profiles ship at
+  // `cutdown/data/style-profiles/*.yaml`, and its prohibitedClaims feed the BLOCKING
+  // prohibited-claim gate. Containing it to the skill directory refused every real
+  // profile with `PATH_ESCAPES_ROOT`, so the gate ran with fewer prohibitions than the
+  // brand declares — a guard that broke the ordinary path, which is the Phase-4 lesson
+  // this project already wrote down. Its oracle is closed the other way instead: the
+  // load goes through `@cutdown/style`, which validates against `style-profile-v1` and
+  // reports no instance values.
+  if (request.boundsPath) assertContained(ctx.skillDir, request.boundsPath, 'The bounds path');
+  if (request.recordedModelPath) assertContained(ctx.skillDir, request.recordedModelPath, 'The recorded model path');
+
   const styleProfile = loadStyleProfile(root, jobBrief, request.styleProfilePath);
   const creativeBrief = loadCreativeBrief(root, edl);
 
@@ -252,8 +348,22 @@ async function run(request: ValidateRequest, ctx: SkillContext): Promise<Validat
   // 3. Persist the TWO outputs separately, then reference both. gateStatus is the
   // deterministic verdict only — the assembled result cannot promote a critic finding.
   const full = assembleGateResult({ deterministic, criticAdvisories });
-  const gatePathAbs = join(root, 'reviews', `${request.edlId}-gate.json`);
-  const criticPathAbs = join(root, 'reviews', `${request.edlId}-critic.json`);
+  // `reviews/gates/`, NOT `reviews/`.
+  //
+  // tech-spec §9.1 documents `reviews/` as holding "ReviewDecision records from
+  // `cutdown approve`", and these are gate reports, not decisions — writing them there
+  // has been a spec violation since Phase 3. It became an outage in Phase 5: the
+  // decision resolver reads that directory, so every validated job carried two
+  // non-decision files and the fail-closed `indeterminate` arm then barred it from
+  // ever reaching a final render or a package.
+  //
+  // A subdirectory keeps the gate result associated with review (it IS review
+  // material, alongside `reviews/pending/`) while putting it outside the namespace
+  // `approve` owns. Still built through the resolver: these are WRITES, and
+  // `writeJsonAtomic` mkdir -p's the parent, so a traversing id would create
+  // directories in another job as a side effect of validating.
+  const gatePathAbs = resolveJobRelative(root, `reviews/gates/${request.edlId}-gate.json`, 'The gate output path');
+  const criticPathAbs = resolveJobRelative(root, `reviews/gates/${request.edlId}-critic.json`, 'The critic output path');
   writeJsonAtomic(gatePathAbs, {
     edlId: request.edlId,
     gateStatus: deterministic.gateStatus,

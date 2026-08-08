@@ -1,0 +1,66 @@
+{
+  "jobId": "e2e-mixed-1",
+  "inventoryId": "01KZ07N9Q0FV1Z2KSXPR2R20ZY",
+  "assetCount": 6,
+  "assets": [
+    {
+      "assetId": "01KZ07N9Z3KTZFWC12FZYPMNS0",
+      "relativePath": "brand-logo.png",
+      "assetKind": "logo",
+      "rightsState": "cleared",
+      "storedPath": "source/12f3cccab4eabc8fb6134dcab02505def2f369311b0089d48d2d27f11e9b937c.png",
+      "proxyPath": null,
+      "cacheHit": false
+    },
+    {
+      "assetId": "01KZ07NA11EXM2SQJYT9J9TA8B",
+      "relativePath": "brand-style-sheet.md",
+      "assetKind": "brand_reference",
+      "rightsState": "cleared",
+      "storedPath": "source/b1ba7d983dca96faf0e7ba617bc8273a2debef7008b09cd1c317c4d18f9c7e8f.md",
+      "proxyPath": null,
+      "cacheHit": false
+    },
+    {
+      "assetId": "01KZ07NAKW18AQVA4T4PZSSH3M",
+      "relativePath": "café shot.mp4",
+      "assetKind": "video",
+      "rightsState": "cleared",
+      "storedPath": "source/dfb8daf232001956781e0e01570a4183e3322529ab5167d5946b24ddf521e934.mp4",
+      "proxyPath": "proxy/dfb8daf232001956781e0e01570a4183e3322529ab5167d5946b24ddf521e934.mp4",
+      "cacheHit": false
+    },
+    {
+      "assetId": "01KZ07NAM2ER633ZCBSGJX8ENY",
+      "relativePath": "captions.srt",
+      "assetKind": "subtitle",
+      "rightsState": "cleared",
+      "storedPath": "source/b489764a2bd1a23929926919d551f8ac1de6db6568c9f0bf5cb030e4987a77b9.srt",
+      "proxyPath": null,
+      "cacheHit": false
+    },
+    {
+      "assetId": "01KZ07NARC0AK5PYNSG3H5DHYQ",
+      "relativePath": "hero-still.jpg",
+      "assetKind": "image",
+      "rightsState": "unknown",
+      "storedPath": "source/8d30d47579e3bf092ab400c1a8daaaea9810edb57c9328457878a0e0e4438e34.jpg",
+      "proxyPath": null,
+      "cacheHit": false
+    },
+    {
+      "assetId": "01KZ07NAWQ4PDQG3TH5DHM73VM",
+      "relativePath": "voiceover-bed.m4a",
+      "assetKind": "audio",
+      "rightsState": "cleared",
+      "storedPath": "source/3ec23f6b5c9a4edc5f367ccea5b085b6a4349668dfb7779f2af99de5bec59821.m4a",
+      "proxyPath": null,
+      "cacheHit": false
+    }
+  ],
+  "warnings": [
+    "hero-still.jpg: no rights sidecar or manifest entry — landed as `rights: unknown`. This is a non-waivable packaging blocker (D-35) until a record is supplied."
+  ],
+  "cacheHits": 0,
+  "ffmpegVersion": "ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers"
+}

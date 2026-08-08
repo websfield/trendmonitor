@@ -307,6 +307,50 @@ def _collection(artefact: Any, key: str) -> list[dict[str, Any]]:
     return []
 
 
+#: Sub-stages an operator may skip. Deliberately just `ocr` for now: it is the
+#: one stage whose output nothing downstream *requires* (Moment entities lose
+#: their ocr-source entries; captions and retrieval are transcript-driven), and
+#: on real footage it is ~90% of indexing cost under the shipped single-threaded
+#: config. Widening this list is a decision, not a default.
+OPERATOR_SKIPPABLE = frozenset({"ocr"})
+
+#: The reason recorded when the operator skips a stage — the sub-stage ledger
+#: refuses a skip without one, and "did we look?" must stay answerable.
+_OPERATOR_SKIP_REASON = (
+    "skipped by operator request (skip: {name}); this job's editorial path does not consume its output"
+)
+
+
+def resolve_ocr_stage(
+    skip: set[str], force: set[str], ocr_threads: int | None
+) -> tuple[bool, str | None, dict[str, Any]]:
+    """Decide whether OCR runs, and with what config overrides.
+
+    `force` is accepted but unused BY DESIGN: skip-wins-over-force means the
+    decision never consults it (the caller applies force separately, and only
+    on the run path this function has already approved). It stays in the
+    signature so the contract "this function saw both flags and skip won" is
+    explicit at the call site — do not "simplify" it away.
+
+    Returns (run, skip_reason, config_overrides). An explicit skip WINS over an
+    explicit force — the same precedent as `--no-vlm` beating `--vlm`: the
+    opt-out is the flag an operator reaches for deliberately, and honouring the
+    opt-in over it would run a multi-minute stage against an explicit no.
+
+    `ocr_threads` becomes `cpu_threads` in the engine config, which sits in the
+    REQ-005 cache key — so a thread-count change re-indexes rather than serving
+    a checkpoint produced under different reduction ordering. The shipped
+    default stays 1 (byte-identical re-runs); >1 trades that reproducibility
+    for wall-clock and says so in the schema.
+    """
+    if "ocr" in skip:
+        return False, _OPERATOR_SKIP_REASON.format(name="ocr"), {}
+    overrides: dict[str, Any] = {}
+    if ocr_threads is not None:
+        overrides["cpu_threads"] = int(ocr_threads)
+    return True, None, overrides
+
+
 def index_asset(request: dict[str, Any]) -> dict[str, Any]:
     job_id = request["jobId"]
     asset_id = request["assetId"]
@@ -314,6 +358,38 @@ def index_asset(request: dict[str, Any]) -> dict[str, Any]:
     # Fail closed: the VLM stage is skipped unless explicitly enabled, because
     # the D-21 spend ceiling is owner-set and not yet in place.
     no_vlm = request.get("noVlm", True)
+    raw_skip = request.get("skip")
+    if raw_skip is not None and not isinstance(raw_skip, list):
+        # A string would set-explode into characters and the refusal would name
+        # ['c','o','r'] — fail closed with a message that reads correctly.
+        raise SubStageError(
+            "SKIP_NOT_SKIPPABLE",
+            f"skip must be a list of sub-stage names or null, got {type(raw_skip).__name__}.",
+            exit_code=EXIT_INPUT_VALIDATION,
+        )
+    skip = set(raw_skip or [])
+    unknown_skip = skip - OPERATOR_SKIPPABLE
+    if unknown_skip:
+        raise SubStageError(
+            "SKIP_NOT_SKIPPABLE",
+            f"skip names sub-stage(s) that cannot be operator-skipped: {sorted(unknown_skip)}. "
+            f"Skippable: {sorted(OPERATOR_SKIPPABLE)}.",
+            exit_code=EXIT_INPUT_VALIDATION,
+        )
+    ocr_threads = request.get("ocrThreads")
+    # Guarded here as well as in the schema and the CLI: a skill's `entrypoint`
+    # is a documented direct invocation, and nothing runs Ajv on the spawn path —
+    # a caller-only guard is a documented bypass (the Phase 2 lesson). Validated
+    # BEFORE any asset read so a bad value refuses in milliseconds, not after
+    # the transcript has run.
+    if ocr_threads is not None and (
+        isinstance(ocr_threads, bool) or not isinstance(ocr_threads, int) or not 1 <= ocr_threads <= 64
+    ):
+        raise SubStageError(
+            "OCR_THREADS_INVALID",
+            f"ocrThreads must be an integer in [1, 64] or null, got {ocr_threads!r}.",
+            exit_code=EXIT_INPUT_VALIDATION,
+        )
 
     jobs_root = CUTDOWN_ROOT / "project-data" / "jobs"
     job_root = jobs_root / job_id
@@ -387,12 +463,18 @@ def index_asset(request: dict[str, Any]) -> dict[str, Any]:
     scenes_artefact = _stage(summaries, records, "scenes", lambda: scenes_module.run_scenes_sub_stage(
         ctx, shot_list, media_path=media_path, transcript=transcript_body, force="scenes" in force))
 
+    run_ocr, ocr_skip_reason, ocr_overrides = resolve_ocr_stage(skip, force, ocr_threads)
     if shots_ok:
-        ocr_artefact = _stage(summaries, records, "ocr", lambda: ocr_module.run_ocr_sub_stage(
-            ctx, media_path, shots=shot_list,
-            config={**ocr_module.DEFAULT_OCR_CONFIG, "shotsDigest": shots_digest}
-            if hasattr(ocr_module, "DEFAULT_OCR_CONFIG") else {"shotsDigest": shots_digest},
-            force="ocr" in force))
+        if run_ocr:
+            ocr_artefact = _stage(summaries, records, "ocr", lambda: ocr_module.run_ocr_sub_stage(
+                ctx, media_path, shots=shot_list,
+                config={**ocr_module.DEFAULT_OCR_CONFIG, "shotsDigest": shots_digest, **ocr_overrides}
+                if hasattr(ocr_module, "DEFAULT_OCR_CONFIG") else {"shotsDigest": shots_digest, **ocr_overrides},
+                force="ocr" in force))
+        else:
+            # Operator skip — visual descriptions are unaffected; only OCR is
+            # opted out, and the ledger records exactly that with its reason.
+            ocr_artefact = _skipped(summaries, records, "ocr", ocr_skip_reason or "skipped by operator request")
         visual_artefact = _stage(summaries, records, "visual_descriptions", lambda: visual_module.run_visual_descriptions(
             ctx, shot_list, enable_vlm=not no_vlm, force="visual_descriptions" in force))
     else:

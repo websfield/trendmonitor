@@ -1,0 +1,20 @@
+{
+  "name": "@cutdown/skill-render",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "render skill \u2014 draft and final tiers with burned-in open captions, caption sidecars, and technical QA as a hard gate (REQ-080-087/100/104-106, D-34/D-35).",
+  "scripts": {
+    "test": "node --test \"dist/tests/**/*.test.js\""
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/editorial": "workspace:*",
+    "@cutdown/qa": "workspace:*",
+    "@cutdown/renderer-core": "workspace:*",
+    "@cutdown/renderer-ffmpeg": "workspace:*",
+    "@cutdown/skill-runtime": "workspace:*",
+    "@cutdown/style": "workspace:*",
+    "yaml": "2.9.0"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "registryVersion": "1.0.0",
+  "note": "The Phase 0 font registry (decisions.md D-29, PRD §10.8.4, tech-spec §11). Fonts are referenced from a RenderManifest by sha256, NEVER by family name: a name is a request the system resolves however it likes, and a resolver that silently substitutes a fallback breaks both determinism and the rights record at once. The renderer verifies each file against the hash below and REFUSES the render on a mismatch rather than substituting. Source: Inter v4.1 (https://github.com/rsms/inter/releases/tag/v4.1), static TTFs from `extras/ttf/`. Static rather than the variable `InterVariable.ttf` because libass's variable-font support is partial and an instance it cannot resolve renders at a default weight without saying so — a silent visual change is exactly what hashing is meant to prevent.",
+  "licence": {
+    "name": "SIL Open Font License 1.1",
+    "file": "OFL.txt",
+    "grantsCommercialUse": true,
+    "note": "The OFL permits commercial embedding and redistribution as part of a product. A BRAND font is a different matter: StyleProfile fonts carry `rightsRecorded`, and a brand font with no recorded commercial grant must not be added here (PRD §10.8.4)."
+  },
+  "fonts": [
+    {
+      "family": "Inter",
+      "role": "caption",
+      "file": "ttf/Inter-SemiBold.ttf",
+      "postScriptName": "Inter-SemiBold",
+      "libassFamily": "Inter SemiBold",
+      "hash": {
+        "algorithm": "sha256",
+        "value": "78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3"
+      },
+      "licenceNote": "OFL 1.1 (Inter v4.1)",
+      "why": "SemiBold, not Regular. Open captions sit over moving video with no guaranteed contrast behind them; Regular loses legibility against a bright frame at the sizes REQ-084's readability rules allow."
+    },
+    {
+      "family": "Inter",
+      "role": "body",
+      "file": "ttf/Inter-Regular.ttf",
+      "postScriptName": "Inter-Regular",
+      "hash": {
+        "algorithm": "sha256",
+        "value": "40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82"
+      },
+      "licenceNote": "OFL 1.1 (Inter v4.1)"
+    },
+    {
+      "family": "Inter",
+      "role": "heading",
+      "file": "ttf/Inter-Bold.ttf",
+      "postScriptName": "Inter-Bold",
+      "hash": {
+        "algorithm": "sha256",
+        "value": "288316099b1e0a47a4716d159098005eef7c0066921f34e3200393dbdb01947f"
+      },
+      "licenceNote": "OFL 1.1 (Inter v4.1)"
+    }
+  ],
+  "libassFontsDir": "ttf",
+  "libassFontsDirNote": "libass loads EVERY file in its fontsdir and errors on anything that is not a font, so the font FILES live alone in this subdirectory while the registry and licence stay in the parent. Verified against ffmpeg 8.0.1: pointing fontsdir at data/fonts produced \"Error opening memory font fonts.json\"."
+}

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "plan skill — MasterStoryPlan + PlatformEDL generation (REQ-033/050/052).",
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
     "@cutdown/contracts": "workspace:*",

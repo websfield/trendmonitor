@@ -8,9 +8,10 @@
     ".": "./dist/src/index.js"
   },
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
-    "@cutdown/contracts": "workspace:*"
+    "@cutdown/contracts": "workspace:*",
+    "ulid": "3.0.2"
   }
 }

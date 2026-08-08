@@ -1091,25 +1091,38 @@ def compute_audio_events(
     has_audio, duration_seconds = probe_audio_stream(media_path)
 
     if not has_audio:
-        # Silent b-roll has no audio STREAM, not a quiet one. The whole asset is
-        # silence, and saying so is more useful than an empty list — but nothing
-        # here loads a model, which is what keeps this the fast negative control
-        # for speech.
-        total_ticks = seconds_to_ticks(duration_seconds)
-        detections = (
-            [
-                Detection(
-                    start_ticks=0,
-                    end_ticks=total_ticks,
-                    kind="silence",
-                    confidence=1.0,
-                    engine_name=ENGINE_RMS,
-                )
-            ]
-            if total_ticks > 0
-            else []
-        )
-        return {"audioEvents": to_audio_events(detections, engines)}
+        # Silent b-roll has no audio STREAM, not a quiet one — and an AudioEvent
+        # is a DETECTION: a claim some engine made after measuring samples.
+        # Synthesising a whole-asset `silence` here (decisions.md D-53) meant
+        # emitting `confidence: 1.0` under `ENGINE_RMS` for an engine that
+        # processed zero samples — a false provenance claim, and one that
+        # contradicted `quality.py`, which refuses to report `silence` for an
+        # asset with no audio on the grounds that silence is a property of audio
+        # that exists. The honest shape is the one `source-index-v1.json`
+        # prescribes: an EMPTY collection, with the reason it is empty carried in
+        # the sub-stage ledger entry rather than in a manufactured observation.
+        #
+        # Nothing here loads a model, which is what keeps this the fast negative
+        # control for speech.
+        return {
+            "audioEvents": [],
+            "subStage": {
+                "status": "completed",
+                "reason": (
+                    "asset has no audio stream"
+                    + (
+                        f" ({duration_seconds:.3f} s of video only)"
+                        if duration_seconds > 0
+                        # ffprobe reports no duration for some containers, and
+                        # "0.000 s" would read as an empty asset rather than an
+                        # unknown length.
+                        else " (container reports no duration)"
+                    )
+                    + ", so no audio events could be detected — this empty collection "
+                    "is an absence of audio, not an absence of events in audio"
+                ),
+            },
+        }
 
     samples = decode_audio(media_path, AUDIO_SAMPLE_RATE)
     total_ticks = len(samples)

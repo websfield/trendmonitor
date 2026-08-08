@@ -1,0 +1,25 @@
+{
+  "reviewDecisionId": "01J9RV2B3C4D5E6F7G8H9K0P3C",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-30T02:30:00Z",
+    "createdBy": {
+      "kind": "human",
+      "name": "Phase 0 operator (fixture)"
+    }
+  },
+  "jobId": "test-mixed",
+  "subjectDraftRenderId": "01J9RD2B3C4D5E6F7G8H9K0N4D",
+  "subjectEdlId": "01J9ED2B3C4D5E6F7G8H9K0M6T",
+  "subjectRenderManifestId": "01J9RM2B3C4D5E6F7G8H9K0N3C",
+  "subjectPlanHash": {
+    "algorithm": "sha256",
+    "value": "bbbb20980ea9dff6de1420980ea9dff6de1420980ea9dff6de1420980ea9dff6"
+  },
+  "decidedBy": "Phase 0 operator (fixture)",
+  "decidedAt": "2026-07-30T02:30:00Z",
+  "decision": {
+    "outcome": "rejected",
+    "notes": null
+  }
+}

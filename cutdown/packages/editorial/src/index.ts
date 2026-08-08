@@ -13,5 +13,7 @@ export * from './angles.js';
 export * from './story-plan.js';
 export * from './platform-adapt.js';
 export * from './edl-resolve.js';
+export * from './review-payload.js';
+export * from './revise.js';
 export * from './schema.js';
 export * from './util.js';

@@ -5,10 +5,14 @@ import { ulid } from 'ulid';
 import { parse as parseYaml } from 'yaml';
 
 import {
+  assertContained,
+  assertSafeId,
+  contractSchemaId,
   fail,
   jobDir,
   reject,
   runSkillMain,
+  validateContract,
   skillEnvelope,
   writeJsonAtomic,
   type SkillContext,
@@ -26,6 +30,7 @@ import {
   type Transport,
   type TransportResponse,
 } from '@cutdown/editorial';
+import { PLATFORM_EDL_SCHEMA_VERSION } from '@cutdown/contracts';
 import type { AssetBounds } from '@cutdown/contracts';
 import type { CreativeBriefV1, JobBriefV1, MasterStoryPlanV1, MomentV1, PlatformEdlV1 } from '@cutdown/contracts/generated';
 
@@ -82,18 +87,49 @@ function loadJobBrief(root: string): JobBrief {
 }
 
 function loadCreativeBrief(root: string, id: string): CreativeBrief {
+  // The id becomes a filename, so it is guarded here as well as patterned in the
+  // input schema — a schema-only guard has the bypass shape the Phase 2 HIGH had.
+  assertSafeId(id, 'CreativeBrief id');
   const path = join(root, 'creative-briefs', `${id}.json`);
   if (!existsSync(path)) throw fail('CREATIVE_BRIEF_NOT_FOUND', `No CreativeBrief ${id} at ${path}; run \`cutdown propose\` first.`);
   return JSON.parse(readFileSync(path, 'utf8')) as CreativeBrief;
 }
 
+/**
+ * Every committed Moment in the job, CONTRACT-VALIDATED per record.
+ *
+ * Validated because `moment-v1.assetId` is `$ref: Ulid` and it becomes a FILENAME
+ * (`assets/<assetId>.json`). This was the FIFTH recurrence of the same defect, found
+ * in round 4 — and found in a file the round-3 fix had already edited, which is the
+ * whole argument for validating artefacts at the boundary instead of hunting fields
+ * one reviewer finding at a time.
+ *
+ * Per ELEMENT, not per file: these files hold an array, and the array is not itself a
+ * contract object, so a whole-document validation would prove nothing about the ids.
+ */
 function loadMoments(root: string): Moment[] {
   const dir = join(root, 'moments');
   if (!existsSync(dir)) return [];
   const moments: Moment[] = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.json')).sort()) {
-    const parsed = JSON.parse(readFileSync(join(dir, file), 'utf8')) as unknown;
-    if (Array.isArray(parsed)) moments.push(...(parsed as Moment[]));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    } catch {
+      // Not echoed: the parser message quotes the file's first bytes.
+      throw fail('MOMENTS_INVALID', `The Moment file moments/${file} is not valid JSON.`);
+    }
+    if (!Array.isArray(parsed)) continue;
+    parsed.forEach((record, i) => {
+      moments.push(
+        validateContract<Moment>(
+          record,
+          contractSchemaId('moment-v1'),
+          'MOMENTS_INVALID',
+          `Moment ${String(i)} in moments/${file}`,
+        ),
+      );
+    });
   }
   return moments;
 }
@@ -163,6 +199,15 @@ async function run(request: PlanRequest, ctx: SkillContext): Promise<PlanResult>
     const assetId = momentAssetById.get(sm.momentId);
     if (assetId) selectedAssetIds.add(assetId);
   }
+  // Contained to the skill directory, matching `revise`. These are RECORDED-FIXTURE
+  // overrides for offline runs — the only documented use is `skills/<name>/fixtures/`
+  // — and unbounded they let a caller name any file on the machine, whose parse
+  // failure was then echoed back with the first bytes of content quoted: a file-read
+  // oracle demonstrated against `cutdown/.env`. Neither the containment nor the
+  // silenced parser message is optional; each closes half of it.
+  if (request.boundsPath) assertContained(ctx.skillDir, request.boundsPath, 'The bounds path');
+  if (request.recordedModelPath) assertContained(ctx.skillDir, request.recordedModelPath, 'The recorded model path');
+
   const boundsByAsset = loadBounds(root, selectedAssetIds, request.boundsPath);
 
   // 2. Choose the gateway (recorded replay for tests, else the configured live gateway).
@@ -218,7 +263,9 @@ async function run(request: PlanRequest, ctx: SkillContext): Promise<PlanResult>
         const record = parsed as Partial<PlatformEDL>;
         const edl: PlatformEDL = {
           edlId: ulid(),
-          envelope: skillEnvelope(SKILL, VERSION),
+          // The envelope states the contract version the instance is actually
+          // written against; the constant is test-pinned to the schema file.
+          envelope: skillEnvelope(SKILL, VERSION, PLATFORM_EDL_SCHEMA_VERSION),
           jobId: request.jobId,
           storyPlanId: storyPlan.storyPlanId,
           parentEdlId: null,
@@ -278,7 +325,10 @@ function buildEdlPrompt(creativeBrief: CreativeBrief, storyPlan: MasterStoryPlan
     'Rules enforced deterministically after you answer: every clip.sourceRange MUST be within the asset bounds ' +
     '(an out-of-bounds range is rejected, never clamped); clip.order MUST be a contiguous run; clip.assetId MUST ' +
     'equal its Moment\'s asset; a quote caption MUST carry verbatimSourceText and speakerLabel from the Moment. ' +
-    'aspectTreatment.mode must be a permitted non-crop treatment (REQ-052).';
+    'aspectTreatment.mode must be a permitted non-crop treatment (REQ-052). ' +
+    'Each clip MAY carry an optional transition {fadeInMs, fadeOutMs} (integers 40-2000, D-52): a duration-preserving ' +
+    'fade from/to black on video and silence on audio; adjacent fadeOut+fadeIn reads as a dip-to-black join, and the ' +
+    'pair must fit inside the clip. Omit it for a hard cut.';
   const payload = {
     creativeThesis: creativeBrief.creativeThesis,
     hookFamily: creativeBrief.hookFamily,

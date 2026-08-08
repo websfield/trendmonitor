@@ -1,0 +1,21 @@
+{
+  "name": "@cutdown/renderer-ffmpeg",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Phase 0 RendererAdapter: FFmpeg + libass (decisions.md D-16). Frame-accurate cuts, canvas fitting, dialogue-first audio mix, and burned-in open captions with an SRT/WebVTT sidecar pair.",
+  "exports": {
+    ".": "./dist/src/index.js"
+  },
+  "scripts": {
+    "test": "node --test \"dist/tests/**/*.test.js\""
+  },
+  "dependencies": {
+    "@cutdown/contracts": "workspace:*",
+    "@cutdown/renderer-core": "workspace:*",
+    "ulid": "3.0.2"
+  },
+  "devDependencies": {
+    "@cutdown/qa": "workspace:*"
+  }
+}

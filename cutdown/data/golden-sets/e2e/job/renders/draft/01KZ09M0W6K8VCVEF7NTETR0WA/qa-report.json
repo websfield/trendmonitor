@@ -1,0 +1,194 @@
+{
+  "qaReportId": "01KZ09M81YEH4GYJ7TA4A3VRWN",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:52:34.111Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "render",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "renderId": "01KZ09M7CE81935F148MTCQ49M",
+  "renderManifestId": "01KZ09M0W6K8VCVEF7NTETR0WA",
+  "tier": "draft",
+  "rulesetVersion": "1.0.0",
+  "gateStatus": "fail",
+  "checksRun": [
+    {
+      "checkId": "missing_media",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "container_corruption",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "source_range_validity",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "output_dimensions",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "output_duration",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "codec_profile",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "black_frames",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "frozen_frames",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "duplicate_frames",
+      "status": "skipped",
+      "reason": "Frame-duplication counting did not run."
+    },
+    {
+      "checkId": "crop_failure",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "unexpected_silence",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "audio_clipping",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "loudness_target",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "true_peak",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "av_sync_drift",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_file_present",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_overflow",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_readability",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_timing",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_safe_zone",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "caption_spelling",
+      "status": "skipped",
+      "reason": "No en-AU dictionary is vendored at Phase 0 (D-4 sets the locale to en-AU). Spelling is surfaced for human review through caption_name_flag rather than reported clean."
+    },
+    {
+      "checkId": "caption_name_flag",
+      "status": "ran",
+      "reason": null
+    },
+    {
+      "checkId": "non_speech_cue_review",
+      "status": "ran",
+      "reason": null
+    }
+  ],
+  "findings": [
+    {
+      "findingId": "unexpected_silence:audio:9421-11106",
+      "checkId": "unexpected_silence",
+      "severity": "warning",
+      "waivable": true,
+      "object": "audio",
+      "message": "1.69 s below -60 dBFS, longer than the 1.5 s allowance.",
+      "fix": "Check whether a clip was cut from a silent passage, or whether the audio chain dropped a segment.",
+      "timeRange": {
+        "startTicks": 9421,
+        "endTicks": 11106,
+        "timebase": {
+          "num": 1,
+          "den": 1000
+        }
+      }
+    },
+    {
+      "findingId": "caption_overflow:cue-2:3300-7167",
+      "checkId": "caption_overflow",
+      "severity": "warning",
+      "waivable": true,
+      "object": "cue-2",
+      "message": "Wraps to 3 lines; the ruleset allows 2.",
+      "fix": "Shorten the display text in the EDL. The caption is never truncated automatically — a shortened caption is an editorial decision.",
+      "timeRange": {
+        "startTicks": 3300,
+        "endTicks": 7167,
+        "timebase": {
+          "num": 1,
+          "den": 1000
+        }
+      }
+    },
+    {
+      "findingId": "caption_overflow:cue-3:7167-11033",
+      "checkId": "caption_overflow",
+      "severity": "warning",
+      "waivable": true,
+      "object": "cue-3",
+      "message": "Wraps to 3 lines; the ruleset allows 2.",
+      "fix": "Shorten the display text in the EDL. The caption is never truncated automatically — a shortened caption is an editorial decision.",
+      "timeRange": {
+        "startTicks": 7167,
+        "endTicks": 11033,
+        "timebase": {
+          "num": 1,
+          "den": 1000
+        }
+      }
+    }
+  ],
+  "planHash": {
+    "algorithm": "sha256",
+    "value": "9d2faee4573cc083f91f85a189a65ba23e19e8c63247cb80a0667bf8f142a0f9"
+  },
+  "waiverIds": [],
+  "waivedFindingIds": []
+}

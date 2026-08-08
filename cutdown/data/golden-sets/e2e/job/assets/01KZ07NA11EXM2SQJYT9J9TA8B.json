@@ -1,0 +1,55 @@
+{
+  "assetId": "01KZ07NA11EXM2SQJYT9J9TA8B",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:18:11.745Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "ingest",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "relativePath": "brand-style-sheet.md",
+  "assetKind": "brand_reference",
+  "sourceClassification": "fixture",
+  "contentHash": {
+    "algorithm": "sha256",
+    "value": "b1ba7d983dca96faf0e7ba617bc8273a2debef7008b09cd1c317c4d18f9c7e8f"
+  },
+  "byteSize": 1144,
+  "storedPath": "source/b1ba7d983dca96faf0e7ba617bc8273a2debef7008b09cd1c317c4d18f9c7e8f.md",
+  "rights": {
+    "state": "cleared",
+    "owner": "Cutdown fixture corpus",
+    "supplier": "Synthetic (ffmpeg lavfi)",
+    "permittedPlatforms": [
+      "tiktok",
+      "instagram_reels",
+      "youtube_shorts",
+      "linkedin"
+    ],
+    "territories": [
+      "AU"
+    ],
+    "campaignStart": "2026-01-01",
+    "campaignEnd": null,
+    "expiryDate": null,
+    "talentReleaseStatus": "not_required",
+    "locationReleaseStatus": "not_required",
+    "musicStatus": "none",
+    "editingPermitted": true,
+    "paidAmplificationPermitted": true,
+    "evidenceUri": "file:../LICENSE-FIXTURES.md",
+    "notes": "Hand-written style-reference sheet authored for this fixture corpus; no third-party rights attach."
+  },
+  "preflight": {
+    "inspected": true,
+    "container": null,
+    "duration": null,
+    "video": null,
+    "audioTracks": [],
+    "corruption": null
+  },
+  "proxy": null
+}

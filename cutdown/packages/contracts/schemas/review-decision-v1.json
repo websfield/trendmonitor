@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/review-decision-v1.json",
+  "title": "ReviewDecision",
+  "schemaVersion": "1.0.0",
+  "description": "One named human's immutable decision about one reviewed DRAFT render (decisions.md D-9, PRD REQ-152, tech-spec §15 step 8). Three properties are structural rather than procedural. (1) The subject is the reviewed draft render PLUS the exact EDL and RenderManifest revisions it realised — an approval of one plan never authorises another. (2) There is NO package field, and `additionalProperties: false` makes that unforgeable: a decision cannot reference a package, because at the moment of approval no package exists and pointing at a future one would invert the lineage the exit criteria are computed over. (3) The decision itself is a tagged union, so a rejection cannot exist without a reason — an unexplained rejection sends someone back to `revise` with nothing to act on. Decisions are never mutated or superseded in place: a second thought is a second record, and `selectLatestDecision()` in this package is the single deterministic rule for which one is in force.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-30",
+      "changeKind": "breaking",
+      "reason": "Initial v1 (Phase 5, task 1; D-9). Subject ids are named `subjectDraftRenderId` / `subjectEdlId` / `subjectRenderManifestId` rather than the bare `renderId` / `edlId` used elsewhere: the prefix is what makes 'the thing reviewed' unmistakable in a file that also carries the reviewer's own identity, and it removes any temptation to read this object as describing a render of its own."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "reviewDecisionId",
+    "envelope",
+    "jobId",
+    "subjectDraftRenderId",
+    "subjectEdlId",
+    "subjectRenderManifestId",
+    "subjectPlanHash",
+    "decidedBy",
+    "decidedAt",
+    "decision"
+  ],
+  "properties": {
+    "reviewDecisionId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+      "description": "ULID. Because ULIDs are creation-time ordered, this field is also the tiebreaker that makes latest-decision selection a total order when two decisions share a `decidedAt`."
+    },
+    "envelope": {
+      "$ref": "./common/envelope-v1.json",
+      "description": "`createdBy` is a HumanCreator, never a SkillCreator. D-9 makes approval a human act recorded with a name, and the envelope's tagged union is what stops the `approve` skill attributing a decision to itself."
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subjectDraftRenderId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+      "description": "The draft RENDER (one execution) the human actually watched. Distinct from the manifest: a manifest can be executed more than once, and the reviewer looked at one of those files."
+    },
+    "subjectEdlId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+      "description": "The PlatformEDL revision the reviewed render realised. Recorded so a later revision of the EDL (REQ-113 creates a new one, linked to its parent) cannot inherit this approval."
+    },
+    "subjectRenderManifestId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid",
+      "description": "The RenderManifest revision the reviewed render executed. This is the id the final render's `approvedDraftManifestId` must equal, and `assertFinalMatchesApprovedDraft()` compares the two manifests field by field."
+    },
+    "subjectPlanHash": {
+      "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+      "description": "The reviewed render's plan hash — sha256 over the resolved manifest, clip ranges and caption files. Recorded because it is the identity that survives a re-render of the same plan, which is what a human's acceptance actually attaches to (the same reasoning that moved the QaWaiver scope onto this field). Packaging compares this against the final render's QA report so a plan edited between approval and final render cannot slip through on id equality alone."
+    },
+    "decidedBy": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The named human who decided, from `cutdown approve --by <name>`. Not a role, not a system identity, and never defaulted — an approval nobody's name is on is the thing REQ-021-style human-in-the-loop rules exist to prevent."
+    },
+    "decidedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC instant the human decided. Primary sort key for latest-decision selection."
+    },
+    "decision": {
+      "title": "ReviewOutcome",
+      "description": "A tagged union (tech-spec §3: `oneOf` plus a `const` discriminator). Approval may carry optional notes; rejection REQUIRES a reason, because the rejection path leads to `revise` and a revision needs something to interpret.",
+      "type": "object",
+      "oneOf": [
+        {
+          "title": "ReviewApproved",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "notes"],
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "approved",
+              "description": "Advances the job `review → final-rendering`. This is the ONLY value that authorises a final render."
+            },
+            "notes": {
+              "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+              "description": "Optional remarks. An approval needs no justification — the approval IS the judgement — so `null` is a legitimate value rather than a missing one, and it is required-but-nullable so the field can never be silently absent."
+            }
+          }
+        },
+        {
+          "title": "ReviewRejected",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "reason", "notes"],
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "const": "rejected",
+              "description": "Advances the job to `revise` and NOWHERE else. A rejection never authorises a final render, and it is not a terminal state — the revision path is the point."
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Why the draft was rejected. Required by the schema, not by convention: this text is what `revise` interprets into structured constraints, so a rejection without it is a dead end."
+            },
+            "notes": {
+              "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

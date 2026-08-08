@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/render/output.json",
+  "title": "RenderResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "jobId",
+    "edlId",
+    "tier",
+    "renderId",
+    "renderManifestId",
+    "manifestPath",
+    "renderPath",
+    "outputPath",
+    "qaReportPath",
+    "gateStatus",
+    "blockerCount",
+    "warningCount",
+    "waivedCount",
+    "skippedCheckCount",
+    "planHash",
+    "reviewPayloadPath"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "rendered"
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "edlId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "final"
+      ]
+    },
+    "renderId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "renderManifestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifestPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "renderPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "outputPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Job-relative path to the encoded video."
+    },
+    "qaReportPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gateStatus": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "pass_with_waivers",
+        "fail"
+      ],
+      "description": "A `fail` is a RESULT, not a skill error \u2014 the skill still exits 0, and the runner refuses to advance."
+    },
+    "blockerCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "warningCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "waivedCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "skippedCheckCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Checks that did not run. Surfaced in the result, not just buried in the report, so a caller sees at a glance how much of the suite actually executed."
+    },
+    "planHash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewPayloadPath": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Job-relative path to the review payload (REQ-110 data, no UI). Non-null only for a DRAFT render whose payload assembled; null on a final tier and on a draft whose payload could not be built (reason on stderr). Required-but-nullable so the field can never be silently absent."
+    }
+  }
+}

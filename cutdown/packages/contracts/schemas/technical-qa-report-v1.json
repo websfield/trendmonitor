@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/schemas/technical-qa-report-v1.json",
+  "title": "TechnicalQaReport",
+  "schemaVersion": "1.0.0",
+  "description": "The technical QA verdict on one Render (PRD REQ-100/084/104/106, tech-spec §15 step 7). Wired as a HARD GATE: no render reaches review or packaging without one, and a missing or malformed report fails closed. Two structural commitments carry the honesty: (1) `checksRun` is a ledger of EVERY check in the closed enum with its status and, for anything not run, a required reason — so 'nothing was found' can never be confused with 'nothing was looked at'; (2) `gateStatus` is COMPUTED from findings and waivers by deterministic code, never authored — a report claiming `pass` beside an unwaived blocker is a contradiction the resolver rejects.",
+  "changelog": [
+    {
+      "changedAt": "2026-07-29",
+      "changeKind": "breaking",
+      "reason": "Initial v1 (Phase 4, task 8; D-35 gate statuses; D-37 deterministic blockers). Findings carry an OPTIONAL time range but a REQUIRED `fix` string: REQ-106 asks for actionable reports, and a finding a reviewer cannot act on is noise no matter how precisely it is timestamped."
+    },
+    {
+      "changedAt": "2026-07-29",
+      "changeKind": "breaking",
+      "reason": "Added required `waivedFindingIds`. The first cut recorded only `waiverIds`, so nothing downstream could tell WHICH findings a waiver covered — and the runner gate that tried to compute it compared a finding id against a list of waiver ids, a predicate that is always false. Recording the covered finding ids makes `pass_with_waivers` verifiable from the report instead of merely asserted by it."
+    },
+    {
+      "changedAt": "2026-07-29",
+      "changeKind": "breaking",
+      "reason": "Added required `planHash` so a waiver's scope is checkable from the report alone (see qa-waiver-v1 same-date entry)."
+    }
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "qaReportId",
+    "envelope",
+    "jobId",
+    "renderId",
+    "renderManifestId",
+    "tier",
+    "rulesetVersion",
+    "gateStatus",
+    "checksRun",
+    "findings",
+    "waiverIds",
+    "waivedFindingIds",
+    "planHash"
+  ],
+  "properties": {
+    "qaReportId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+    },
+    "envelope": {
+      "$ref": "./common/envelope-v1.json"
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "renderId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+    },
+    "renderManifestId": {
+      "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "final"
+      ]
+    },
+    "rulesetVersion": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The `technical-qa-v1.yaml` ruleset version these thresholds came from (tech-spec §12.1). Thresholds are DATA: changing a number changes behaviour with no code change, and this field is what makes a past verdict re-interpretable against the numbers that actually produced it."
+    },
+    "gateStatus": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "pass_with_waivers",
+        "fail"
+      ],
+      "description": "D-35. `pass` = no findings above info. `pass_with_waivers` = every warning is covered by a valid waiver and there are no blockers. `fail` = at least one blocker, or an uncovered warning. Blockers are NON-WAIVABLE, so no waiver can move a report out of `fail`."
+    },
+    "checksRun": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per check in the closed enum — including the ones that did not run. The Phase 2 lesson this encodes: a sub-stage that omitted a whole modality without recording it made an honest pipeline dishonest one layer up.",
+      "items": {
+        "title": "QaCheckRecord",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "checkId",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "checkId": {
+            "$ref": "../enums/qa-check-id.json"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ran",
+              "skipped",
+              "errored"
+            ],
+            "description": "`skipped` is a deliberate non-applicability (a silence check on an audio-less render); `errored` is a check that tried and failed. Collapsing them would let a broken detector present as an inapplicable one."
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null ONLY when status is `ran`. Anything else requires a reason; the resolver enforces it (tech-spec §3 forbids if/then/else)."
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "Every problem found, most severe first. Empty is a legitimate result — and is distinguishable from 'not checked' only because `checksRun` exists.",
+      "items": {
+        "title": "TechnicalQaFinding",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "findingId",
+          "checkId",
+          "severity",
+          "waivable",
+          "object",
+          "message",
+          "fix",
+          "timeRange"
+        ],
+        "properties": {
+          "findingId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Deterministically derived from (checkId, object, time range) so re-running QA over the SAME render yields the SAME ids — which is what makes a waiver referencing them meaningful."
+          },
+          "checkId": {
+            "$ref": "../enums/qa-check-id.json"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocker",
+              "warning",
+              "info"
+            ],
+            "description": "`blocker` is non-waivable by construction (D-35); `warning` may be waived by a named human; `info` never affects the gate."
+          },
+          "waivable": {
+            "type": "boolean",
+            "description": "Restated alongside severity so a waiver validator never has to re-derive the policy. The gate asserts `waivable === (severity !== 'blocker')`; a finding that disagrees with itself is rejected rather than resolved in either direction."
+          },
+          "object": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What the finding is about — REQ-106's 'object': a clip id, a caption cue index, `output`, or an audio track."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What is wrong, stated as an observation with the measured value and the threshold it breached."
+          },
+          "fix": {
+            "type": "string",
+            "minLength": 1,
+            "description": "REQ-106: what to do about it. Required — an unactionable finding trains people to skim the report."
+          },
+          "timeRange": {
+            "oneOf": [
+              {
+                "title": "QaTimeRange",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "startTicks",
+                  "endTicks",
+                  "timebase"
+                ],
+                "properties": {
+                  "startTicks": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "endTicks": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "timebase": {
+                    "$ref": "./common/timecode-v1.json#/$defs/Timebase"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where in the OUTPUT timeline (REQ-106 'time range'), or null for a whole-file finding such as wrong dimensions. Exact ticks, never float seconds (tech-spec §3)."
+          }
+        }
+      }
+    },
+    "waiverIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "The QaWaiver records consulted when computing `gateStatus`. Recorded even when empty, so 'this passed cleanly' and 'this passed because someone waived two warnings' are distinguishable from the report alone.",
+      "items": {
+        "$ref": "./common/timecode-v1.json#/$defs/Ulid"
+      }
+    },
+    "waivedFindingIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "The FINDING ids those waivers cover — deliberately separate from `waiverIds`, which are the waivers' own identities. Without this a reader of the report cannot tell WHICH warnings were accepted, and any attempt to re-derive `gateStatus` from the report alone has to compare a finding id against a waiver id, which is always false. Recorded so a downstream gate can verify `pass_with_waivers` rather than trust it.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "planHash": {
+      "$ref": "./common/timecode-v1.json#/$defs/ContentHash",
+      "description": "The render plan these findings were produced against. A QaWaiver names the same value; the gate accepts a waiver only when the two agree, which is what stops an acceptance from carrying across an edited plan."
+    }
+  }
+}

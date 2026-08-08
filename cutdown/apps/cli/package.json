@@ -8,7 +8,7 @@
     "cutdown": "./dist/src/main.js"
   },
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
     "@cutdown/contracts": "workspace:*",

@@ -63,6 +63,9 @@ export async function invokeSkill(options: InvokeOptions): Promise<InvokeResult>
   const invocationId = ulid();
 
   const inputPath = options.inputPath ?? join(paths.requests, `${invocationId}.json`);
+  // artefact-path-lint: not-an-artefact — `options.outputPath` is a CLI `--output`
+  // argument, not a field read from a stored artefact, and the joined value is the
+  // FALLBACK, never the option itself.
   const outputPath = options.outputPath ?? join(paths.results, `${invocationId}.json`);
 
   mkdirSync(paths.requests, { recursive: true });

@@ -1,0 +1,184 @@
+{
+  "contentPackageId": "01J9CP2B3C4D5E6F7G8H9K0P1A",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-30T03:00:00Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "package",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "test-mixed",
+  "accountId": "acct-social-soup-001",
+  "releaseState": "rights_approved",
+  "sourceClassification": "fixture",
+  "approval": {
+    "reviewDecisionId": "01J9RV2B3C4D5E6F7G8H9K0P1A",
+    "decidedBy": "Phase 0 operator (fixture)",
+    "decidedAt": "2026-07-30T02:10:00Z",
+    "subjectDraftRenderId": "01J9RD2B3C4D5E6F7G8H9K0N2B",
+    "subjectRenderManifestId": "01J9RM2B3C4D5E6F7G8H9K0N1A"
+  },
+  "lineage": {
+    "briefId": "01J9JB2B3C4D5E6F7G8H9K0M1A",
+    "creativeBriefId": "01J9CB2B3C4D5E6F7G8H9K0M1A",
+    "storyPlanId": "01J9SP2B3C4D5E6F7G8H9K0M5S",
+    "edlId": "01J9ED2B3C4D5E6F7G8H9K0M6T",
+    "finalRenderId": "01J9RD2B3C4D5E6F7G8H9K0N9Z",
+    "finalRenderManifestId": "01J9RM2B3C4D5E6F7G8H9K0N9Z",
+    "approvedDraftManifestId": "01J9RM2B3C4D5E6F7G8H9K0N1A",
+    "editorialPlanHash": {
+      "algorithm": "sha256",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "planHash": {
+      "algorithm": "sha256",
+      "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "master": {
+    "path": "master.mp4",
+    "contentHash": {
+      "algorithm": "sha256",
+      "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "byteSize": 184320,
+    "container": "mp4",
+    "durationMs": 4000,
+    "dimensions": {
+      "width": 720,
+      "height": 1280
+    },
+    "burnedInCaptions": true
+  },
+  "captions": {
+    "srtPath": "captions.srt",
+    "vttPath": "captions.vtt",
+    "cueCount": 3
+  },
+  "cover": {
+    "coverImagePath": "cover.png",
+    "firstFramePath": "first-frame.png",
+    "coverSource": {
+      "kind": "declared",
+      "momentId": "01J9MN2B3C4D5E6F7G8H9K0M1A",
+      "atOutputMs": 1200
+    }
+  },
+  "rightsManifest": {
+    "rightsManifestId": "01J9RG2B3C4D5E6F7G8H9K0P1A",
+    "weakestState": "cleared",
+    "allEvidenced": true,
+    "assets": [
+      {
+        "assetId": "01KY2C5WZM38M23VRGB7H7WFV3",
+        "relativePath": "clean.mp4",
+        "sourceClassification": "fixture",
+        "contentHash": {
+          "algorithm": "sha256",
+          "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "rights": {
+          "state": "cleared",
+          "owner": "Social Soup",
+          "supplier": "Social Soup",
+          "permittedPlatforms": [
+            "tiktok"
+          ],
+          "territories": [
+            "AU"
+          ],
+          "campaignStart": "2026-07-01",
+          "campaignEnd": "2026-12-31",
+          "expiryDate": "2026-12-31",
+          "talentReleaseStatus": "obtained",
+          "locationReleaseStatus": "not_required",
+          "musicStatus": "none",
+          "editingPermitted": true,
+          "paidAmplificationPermitted": false,
+          "evidenceUri": "file:///permissions/clean.mp4.release.pdf",
+          "notes": null
+        }
+      }
+    ]
+  },
+  "disclosures": {
+    "paidPartnership": false,
+    "aiGeneratedOrAltered": false,
+    "ownedBusinessPromotion": true,
+    "thirdPartyPromotion": false,
+    "affiliateRelationship": false,
+    "regulatedCategory": null
+  },
+  "aiAlterationRecord": {
+    "operations": [
+      "selection",
+      "captioning",
+      "loudness_normalisation"
+    ],
+    "materialAlteration": false,
+    "capturedAtIntake": false
+  },
+  "qa": {
+    "qaReportId": "01J9QR2B3C4D5E6F7G8H9K0N1A",
+    "gateStatus": "pass",
+    "rulesetVersion": "1.0.0",
+    "blockerCount": 1,
+    "warningCount": 0,
+    "waivers": []
+  },
+  "rangeValidation": {
+    "qaReportId": "01J9QR2B3C4D5E6F7G8H9K0N1A",
+    "checkId": "source_range_validity",
+    "status": "ran",
+    "rangeCount": 1,
+    "violationCount": 0
+  },
+  "contractSet": [
+    {
+      "schemaId": "https://cutdown.local/contracts/schemas/platform-edl-v1.json",
+      "majorVersion": 1,
+      "schemaVersion": "1.0.0",
+      "contentHash": {
+        "algorithm": "sha256",
+        "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    }
+  ],
+  "provenance": {
+    "renderer": {
+      "name": "renderer-ffmpeg",
+      "version": "1.0.0"
+    },
+    "ffmpegVersion": "8.0.1",
+    "determinismTier": 1,
+    "qaRulesetVersion": "1.0.0",
+    "modelProvenance": {
+      "provider": "anthropic",
+      "modelId": "claude-sonnet-5",
+      "promptTemplateId": "plan-edl",
+      "promptTemplateVersion": "1.0.0"
+    },
+    "styleProfile": {
+      "kind": "none",
+      "reason": "No StyleProfile was supplied for this fixture job."
+    },
+    "platformCapability": {
+      "platform": "tiktok",
+      "surface": "organic-video",
+      "overlayVersion": "2026-07"
+    },
+    "fonts": [
+      {
+        "family": "Inter",
+        "role": "caption",
+        "contentHash": {
+          "algorithm": "sha256",
+          "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        "licenceNote": "SIL Open Font License 1.1"
+      }
+    ]
+  }
+}

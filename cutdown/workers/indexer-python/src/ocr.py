@@ -54,6 +54,7 @@ not recalled).** The 3.x API is not the 2.x API:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -64,6 +65,7 @@ from harness import (
     SubStageContext,
     SubStageError,
     SubStageResult,
+    append_progress,
     run_sub_stage,
 )
 from ids import ordinal_id
@@ -474,7 +476,11 @@ def compute_ocr(
     shots: list[dict[str, Any]] | None = None,
     keyframe_ticks: list[int] | None = None,
     config: dict[str, Any] | None = None,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
+    # `progress` must not raise: it is called inside the recognition loop, and an
+    # exception from it would abort the sub-stage as a non-SubStageError. The real
+    # pipeline binding (`append_progress`) upholds this; a custom caller must too.
     """The sub-stage body: probe, window, extract, recognise, normalize, order.
 
     Takes the `shots` artefact when there is one — that is the real pipeline —
@@ -506,10 +512,16 @@ def compute_ocr(
     height, width = frames[0].shape[:2]
 
     engine = load_ocr_engine(resolved)
-    windowed = [
-        (window, detections_from_paddle_result(_predict_one(engine, frame)))
-        for window, frame in zip(windows, frames, strict=True)
-    ]
+    if progress is not None:
+        progress(0, len(windows), "engine loaded; recognising keyframes")
+    # An explicit loop rather than a comprehension so each recognised keyframe can
+    # emit a heartbeat: this is minutes of CPU per asset on real footage, and a
+    # sub-stage that is silent for its whole runtime reads as a hang.
+    windowed = []
+    for position, (window, frame) in enumerate(zip(windows, frames, strict=True), start=1):
+        windowed.append((window, detections_from_paddle_result(_predict_one(engine, frame))))
+        if progress is not None:
+            progress(position, len(windows), window.shot_id or f"keyframe-{position}")
 
     return {
         "ocr": build_observations(
@@ -543,7 +555,13 @@ def run_ocr_sub_stage(
     return run_sub_stage(
         ctx,
         "ocr",
-        lambda: compute_ocr(media_path, shots=shots, keyframe_ticks=keyframe_ticks, config=resolved),
+        lambda: compute_ocr(
+            media_path,
+            shots=shots,
+            keyframe_ticks=keyframe_ticks,
+            config=resolved,
+            progress=lambda current, total, note: append_progress(ctx, "ocr", current, total, note),
+        ),
         model_config=resolved,
         force=force,
     )

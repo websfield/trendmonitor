@@ -18,6 +18,7 @@
 import { ProjectionDb, type JobRow, type JobStatus } from './db.js';
 import { analyze, type SkillInvocationEntry } from './runlog.js';
 import type { JobState, PipelineStep } from './pipeline.js';
+import type { TransitionGate } from './gates.js';
 
 /**
  * The result of asking the invoker to execute one step.
@@ -42,7 +43,15 @@ export interface RunnerEnv {
   listJobIds(): string[];
 }
 
-export type StopReason = 'completed' | 'blocked' | 'awaiting';
+/**
+ * `gate-blocked` is distinct from `blocked` on purpose. `blocked` means a skill
+ * ran and failed, and the run log records that failure. `gate-blocked` means
+ * nothing ran at all: a precondition for entering the next step is unmet (a
+ * failing or absent QA report), the log is untouched, and re-running after a
+ * fix or a waiver simply produces a different answer. Collapsing the two would
+ * put a failure in the log that never happened.
+ */
+export type StopReason = 'completed' | 'blocked' | 'awaiting' | 'gate-blocked';
 
 export interface RunResult {
   jobId: string;
@@ -51,8 +60,10 @@ export interface RunResult {
   stopReason: StopReason;
   /** Present when stopReason is 'blocked'. */
   error?: unknown;
-  /** Present when stopReason is 'awaiting'. */
+  /** Present when stopReason is 'awaiting' or 'gate-blocked'. */
   reason?: string;
+  /** Present when stopReason is 'gate-blocked' — which precondition refused. */
+  gateCode?: string;
   /** How many steps this advance call drove to completion. */
   advanced: number;
 }
@@ -62,6 +73,18 @@ export class Runner {
     private readonly db: ProjectionDb,
     private readonly env: RunnerEnv,
     private readonly invoker: StepInvoker,
+    /**
+     * Entry precondition per step — at Phase 4, the QA gates (tech-spec §15
+     * step 7).
+     *
+     * **Required, not optional.** It was optional in the first cut, and the
+     * production runner was then constructed with three arguments: the gate
+     * existed, was unit-tested, and was never consulted by `cutdown run`. A
+     * safety gate that a caller can omit by forgetting is not a gate, so the
+     * type system now demands one. A caller that genuinely wants none passes
+     * `openGate` and says so at the call site.
+     */
+    private readonly gate: TransitionGate,
   ) {}
 
   /**
@@ -113,6 +136,23 @@ export class Runner {
       // a.kind is 'pending' or 'blocked'; both mean "a.step is next to run".
       // Running a blocked step is the recovery path (tech-spec §8): a re-run
       // retries it, and only a fresh failure stops the loop.
+
+      // Entry precondition first — checked BEFORE the step runs, so a job that
+      // must not advance never spends the step's cost and never appends to the
+      // authoritative log.
+      const decision = await this.gate(a.step, jobId);
+      if (!decision.allowed) {
+        return {
+          jobId,
+          state: a.step.fromState,
+          status: 'pending',
+          stopReason: 'gate-blocked',
+          gateCode: decision.code,
+          reason: decision.reason,
+          advanced,
+        };
+      }
+
       const outcome = await this.invoker(a.step, jobId, entries);
 
       if (outcome.kind === 'completed') {

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Cutdown — editorial engine runtime. Self-rooted workspace (tech-spec §2); independent of the UGC Intelligence system in ../src (tech-spec §14).",
   "engines": {
-    "node": ">=20.9.0 <23",
+    "node": ">=22.5.0 <25",
     "pnpm": ">=10"
   },
   "packageManager": "pnpm@10.28.2",

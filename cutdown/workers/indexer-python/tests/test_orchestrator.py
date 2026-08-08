@@ -228,3 +228,182 @@ class TestRightsAreInherited:
         # Fail closed: absent rights are never assumed permissive.
         state, _ = rights_for({})
         assert state == "unknown"
+
+
+class TestOperatorSkip:
+    """`skip` / `ocrThreads` — the operator opt-outs added after the first real
+    job spent 161 of its 174 indexing minutes in OCR nothing downstream used."""
+
+    def test_skip_ocr_wins_over_force_ocr(self) -> None:
+        from main import resolve_ocr_stage
+
+        run, reason, overrides = resolve_ocr_stage({"ocr"}, {"ocr"}, None)
+        assert run is False
+        assert reason is not None and "operator request" in reason
+        assert overrides == {}
+
+    def test_default_is_run_with_no_overrides(self) -> None:
+        from main import resolve_ocr_stage
+
+        run, reason, overrides = resolve_ocr_stage(set(), set(), None)
+        assert (run, reason, overrides) == (True, None, {})
+
+    def test_ocr_threads_becomes_a_cpu_threads_override(self) -> None:
+        # The override rides into the engine config, which sits in the REQ-005
+        # cache key — a thread-count change must re-index, never serve a
+        # checkpoint produced under different reduction ordering.
+        from main import resolve_ocr_stage
+
+        run, _reason, overrides = resolve_ocr_stage(set(), set(), 8)
+        assert run is True
+        assert overrides == {"cpu_threads": 8}
+
+    def test_an_unskippable_stage_is_refused_as_input_error(self, tmp_path, monkeypatch) -> None:
+        # Refused BEFORE any asset read: naming `transcript` skippable would let
+        # an operator silently hollow out the Moment Graph.
+        import main as main_module
+
+        monkeypatch.setattr(main_module, "CUTDOWN_ROOT", tmp_path)
+        (tmp_path / "project-data" / "jobs" / "idx-1").mkdir(parents=True)
+        with pytest.raises(SubStageError) as caught:
+            index_asset({"jobId": "idx-1", "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "skip": ["transcript"]})
+        assert caught.value.code == "SKIP_NOT_SKIPPABLE"
+        assert caught.value.exit_code == 2
+        assert "transcript" in caught.value.message
+
+
+class TestOperatorSkipWiring:
+    """index_asset-level proof that the operator flags reach the real calls.
+
+    The pure-helper tests above cannot catch a wiring defect (the 2026-08-02
+    lesson: an option is only alive when a test drives it from its real
+    producer), so these run `index_asset` end to end with every sub-stage
+    runner stubbed on a 2 s asset (the fallback slicer still yields one clamped
+    Moment; the count is incidental — the wiring is what these tests pin).
+    """
+
+    def _write_short_asset(self, root):
+        job = root / "project-data" / "jobs" / "idx-1"
+        (job / "assets").mkdir(parents=True)
+        (job / "source").mkdir(parents=True)
+        (job / "source" / "a.mp4").write_bytes(b"not real media")
+        asset = {
+            "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V",
+            "storedPath": "source/a.mp4",
+            "contentHash": {"algorithm": "sha256", "value": "a" * 64},
+            "rights": {"state": "cleared", "talentReleaseStatus": "not_required"},
+            "preflight": {
+                "duration": {"ticks": 60, "timebase": {"num": 1, "den": 30}},
+                "video": {"frameRateMode": "cfr", "timebase": {"num": 1, "den": 30}},
+            },
+        }
+        (job / "assets" / f"{asset['assetId']}.json").write_text(json.dumps(asset), encoding="utf-8")
+        return job
+
+    def _stub_stages(self, monkeypatch, ocr_calls: list):
+        import audio_events
+        import embed
+        import main as main_module
+        import ocr as ocr_module
+        import quality
+        import scenes as scenes_module
+        import shots as shots_module
+        import transcript as transcript_module
+        import visual as visual_module
+
+        monkeypatch.setattr(
+            transcript_module, "run_transcript_sub_stage",
+            lambda ctx, media, force=False: {"transcript": None, "speakerTurns": []},
+        )
+        monkeypatch.setattr(
+            shots_module, "run_shots_sub_stage", lambda ctx, media, force=False: {"shots": []}
+        )
+        monkeypatch.setattr(
+            scenes_module, "run_scenes_sub_stage",
+            lambda ctx, shots, media_path=None, transcript=None, force=False: {"scenes": []},
+        )
+
+        def fake_ocr(ctx, media, shots=None, config=None, force=False):
+            ocr_calls.append(dict(config or {}))
+            return {"ocr": []}
+
+        monkeypatch.setattr(ocr_module, "run_ocr_sub_stage", fake_ocr)
+        monkeypatch.setattr(
+            visual_module, "run_visual_descriptions",
+            lambda ctx, shots, enable_vlm=False, force=False: {
+                "visualDescriptions": [],
+                "subStage": {"status": "skipped", "reason": "vlm disabled (test stub)"},
+            },
+        )
+        monkeypatch.setattr(
+            audio_events, "run_audio_events", lambda ctx, media, force=False: {"audioEvents": []}
+        )
+        monkeypatch.setattr(quality, "run", lambda ctx, media, force=False: {"qualityFlags": []})
+
+        def no_encoder():
+            raise SubStageError("MODEL_UNAVAILABLE", "no embedding model in the wiring test")
+
+        monkeypatch.setattr(embed, "load_encoder", no_encoder)
+        # Contract validation of the assembled artefacts is covered by the real
+        # e2e runs and the contracts suite; this test proves WIRING, and a
+        # stubbed corpus need not satisfy every minItems in source-index-v1.
+        monkeypatch.setattr(main_module, "_validate", lambda name, obj: None)
+
+    def test_ocr_threads_reaches_the_real_ocr_call(self, tmp_path, monkeypatch) -> None:
+        import main as main_module
+
+        monkeypatch.setattr(main_module, "CUTDOWN_ROOT", tmp_path)
+        self._write_short_asset(tmp_path)
+        ocr_calls: list = []
+        self._stub_stages(monkeypatch, ocr_calls)
+
+        result = index_asset(
+            {"jobId": "idx-1", "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "ocrThreads": 8}
+        )
+
+        assert len(ocr_calls) == 1, "the real run_ocr_sub_stage must be invoked exactly once"
+        assert ocr_calls[0]["cpu_threads"] == 8, "the override must arrive IN the engine config"
+        assert "shotsDigest" in ocr_calls[0], "the override must not displace the shots digest"
+        assert result["boundsCheck"]["ok"] is True, "the committed index must pass the bounds gate"
+
+    def test_skip_ocr_records_the_skip_and_visual_still_runs(self, tmp_path, monkeypatch) -> None:
+        # The near-miss this pins: an earlier draft of the skip branch left
+        # `visual_artefact` unassigned (NameError) on exactly this path.
+        import main as main_module
+
+        monkeypatch.setattr(main_module, "CUTDOWN_ROOT", tmp_path)
+        self._write_short_asset(tmp_path)
+        ocr_calls: list = []
+        self._stub_stages(monkeypatch, ocr_calls)
+
+        result = index_asset(
+            {"jobId": "idx-1", "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "skip": ["ocr"]}
+        )
+
+        assert ocr_calls == [], "a skipped OCR must never invoke the engine"
+        by_name = {s["name"]: s for s in result["subStages"]}
+        assert by_name["ocr"]["status"] == "skipped"
+        assert "operator request" in (by_name["ocr"]["reason"] or "")
+        assert by_name["visual_descriptions"]["status"] == "skipped"  # stub declines with its own reason
+        assert "test stub" in (by_name["visual_descriptions"]["reason"] or ""), "visual stage must still be INVOKED"
+
+    def test_a_non_integer_ocr_threads_is_refused_before_any_stage_runs(self, tmp_path, monkeypatch) -> None:
+        import main as main_module
+
+        monkeypatch.setattr(main_module, "CUTDOWN_ROOT", tmp_path)
+        (tmp_path / "project-data" / "jobs" / "idx-1").mkdir(parents=True)
+        for bad in ("abc", 0, 65, 2.5, True):
+            with pytest.raises(SubStageError) as caught:
+                index_asset({"jobId": "idx-1", "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "ocrThreads": bad})
+            assert caught.value.code == "OCR_THREADS_INVALID", f"ocrThreads={bad!r} must refuse"
+            assert caught.value.exit_code == 2
+
+    def test_a_non_list_skip_is_refused_with_a_readable_message(self, tmp_path, monkeypatch) -> None:
+        import main as main_module
+
+        monkeypatch.setattr(main_module, "CUTDOWN_ROOT", tmp_path)
+        (tmp_path / "project-data" / "jobs" / "idx-1").mkdir(parents=True)
+        with pytest.raises(SubStageError) as caught:
+            index_asset({"jobId": "idx-1", "assetId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "skip": "ocr"})
+        assert caught.value.code == "SKIP_NOT_SKIPPABLE"
+        assert "list" in caught.value.message

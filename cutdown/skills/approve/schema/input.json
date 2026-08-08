@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/approve/input.json",
+  "title": "ApproveRequest",
+  "description": "A decision about one reviewed DRAFT render. `decidedBy` is required with no default \u2014 decisions.md D-9 makes approval a human act recorded with a name, and a defaulted approver would be an unattributable approval.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "jobId",
+    "draftRenderId",
+    "decidedBy"
+  ],
+  "properties": {
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Becomes a directory name under `project-data/jobs/`. The pattern is defence in depth \u2014 `jobDir()` in @cutdown/skill-runtime guards and containment-checks it regardless of caller, because a skill's `entrypoint` is a documented direct invocation."
+    },
+    "draftRenderId": {
+      "type": "string",
+      "description": "The `renderId` of the draft render the human reviewed \u2014 one execution, not a manifest. The skill resolves the manifest, EDL and plan hash from the render artefact rather than trusting the caller for them. Must be a ULID: it becomes a FILENAME under the job (and, for outputs, a directory that is created on the way), so a traversing value would read or write inside another job. The skill asserts it again before joining, because a skill's `entrypoint` is a documented direct invocation and a schema-only guard has the same bypass shape the Phase 2 HIGH had.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "decidedBy": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The named human deciding (`--by`). Not a role, not a system identity."
+    },
+    "reject": {
+      "type": "boolean",
+      "description": "Absent or false records an approval; true records a rejection, which then REQUIRES `reason`."
+    },
+    "reason": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Why the draft was rejected. Required when `reject` is true \u2014 enforced in code, since the schema subset forbids if/then/else (tech-spec \u00a73)."
+    },
+    "notes": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Optional remarks on either outcome."
+    }
+  }
+}

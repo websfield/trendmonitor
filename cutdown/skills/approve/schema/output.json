@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/approve/output.json",
+  "title": "ApproveResult",
+  "description": "What was recorded. `nextState` is stated explicitly because it is the whole point of the decision: an approval advances the job to `final-rendering`, a rejection to `revise` and nowhere else (REQ-152, tech-spec §15 step 8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "jobId",
+    "reviewDecisionId",
+    "decisionPath",
+    "outcome",
+    "nextState",
+    "subjectDraftRenderId",
+    "subjectRenderManifestId",
+    "subjectEdlId",
+    "decidedBy",
+    "supersededDecisionIds"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "decided" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "reviewDecisionId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "decisionPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Job-relative path to the committed ReviewDecision, e.g. `reviews/<reviewDecisionId>.json`."
+    },
+    "outcome": { "type": "string", "enum": ["approved", "rejected"] },
+    "nextState": {
+      "type": "string",
+      "enum": ["final-rendering", "revise"],
+      "description": "`revise` is not a REQ-152 job state — it is the named next ACTION for a rejected draft (`cutdown revise`). Stated as a distinct value rather than reusing a state name so nobody reads a rejection as advancing the state machine."
+    },
+    "subjectDraftRenderId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "subjectRenderManifestId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "subjectEdlId": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "decidedBy": { "type": "string", "minLength": 1 },
+    "supersededDecisionIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Earlier decisions about the SAME manifest that this one now outranks. Reported rather than deleted: history is preserved, and an operator who has just overridden a colleague's call should be told so.",
+      "items": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }
+    },
+    "qaGateStatus": {
+      "oneOf": [{ "type": "string", "enum": ["pass", "pass_with_waivers", "fail"] }, { "type": "null" }],
+      "description": "The reviewed draft's QA verdict. Null only when no report exists — which is refusable for an approval and merely recorded for a rejection."
+    }
+  }
+}

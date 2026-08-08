@@ -7,7 +7,8 @@ from enum import IntEnum, StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, conint, constr
 
-from .common import envelope_v1, rights_record_v1, timecode_v1
+from ._internal import RightsRecord, SourceClassification
+from .common import envelope_v1, timecode_v1
 
 
 class ContainerInfo(BaseModel):
@@ -25,11 +26,6 @@ class AssetKind(StrEnum):
     logo = 'logo'
     subtitle = 'subtitle'
     brand_reference = 'brand_reference'
-
-
-class SourceClassification(StrEnum):
-    real = 'real'
-    fixture = 'fixture'
 
 
 class RotationDegrees(IntEnum):
@@ -219,7 +215,7 @@ class SourceAsset(BaseModel):
         ...,
         description='Hash-named location under `project-data/jobs/<job-id>/source/` (tech-spec §9.1). Originals are immutable once written.',
     )
-    rights: rights_record_v1.RightsRecord
+    rights: RightsRecord
     preflight: PreflightReport = Field(
         ...,
         description='The complete REQ-004 inspection. Every sub-object is REQUIRED to be present; a sub-object is null only when genuinely not applicable to the asset kind (a .srt subtitle has no video and no audio), and `inspected` records that preflight actually ran.',

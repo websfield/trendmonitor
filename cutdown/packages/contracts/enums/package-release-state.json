@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/package-release-state.json",
+  "title": "PackageReleaseState",
+  "description": "REQ-105's explicit release state for a ContentPackage. All five values are declared so a later phase adds behaviour rather than a contract version, but Phase 0 can only substantiate two of them and the `package` skill refuses to emit the rest. `editorially_approved` means a named human approved the draft this package descends from and final QA passed. `rights_approved` additionally means every source asset resolves to `cleared` with evidence. `publish_ready` needs the post copy, hashtags and alt text REQ-088 also lists — REQ-054 puts those in product Phase 1 — so Phase 0 must never claim it. `published` needs a publish action, which is Stage B+ (the Phase 0 runner transitions `packaging → completed` directly and never enters `publishing`). `draft` exists for the render tier's own state and is not a package state a completed package can hold: a package IS the post-approval artefact.",
+  "type": "string",
+  "enum": ["draft", "editorially_approved", "rights_approved", "publish_ready", "published"]
+}

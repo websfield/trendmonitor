@@ -573,3 +573,51 @@ class TestAgainstRealOcr:
 
         again = compute_ocr(CAPTIONS, keyframe_ticks=[12800, 38400])
         assert canonical_json(again) == canonical_json(artefact)
+
+
+class TestProgressCallback:
+    """`compute_ocr(progress=...)` — one heartbeat per recognised keyframe."""
+
+    def test_progress_ticks_once_per_keyframe_plus_engine_load(self, monkeypatch) -> None:
+        import ocr as ocr_module
+        from fractions import Fraction as _Fraction
+        from shots import Timebase as _Timebase, VideoProbe as _VideoProbe
+
+        class _Frame:
+            shape = (1280, 720, 3)
+
+        probe = _VideoProbe(timebase=_Timebase(num=1, den=12800), duration_ticks=64000, avg_frame_rate=_Fraction(30, 1))
+        monkeypatch.setattr(ocr_module, "probe_video", lambda _path: probe)
+        monkeypatch.setattr(ocr_module, "extract_keyframes", lambda _p, windows, _probe: [_Frame() for _ in windows])
+        monkeypatch.setattr(ocr_module, "load_ocr_engine", lambda _config: object())
+        monkeypatch.setattr(ocr_module, "_predict_one", lambda _engine, _frame: object())
+        monkeypatch.setattr(ocr_module, "detections_from_paddle_result", lambda _result: [])
+
+        ticks: list[tuple[int, int, str]] = []
+        result = ocr_module.compute_ocr(
+            CAPTIONS,
+            keyframe_ticks=[12800, 25600, 38400],
+            progress=lambda current, total, note: ticks.append((current, total, note)),
+        )
+
+        assert result == {"ocr": []}
+        assert ticks[0] == (0, 3, "engine loaded; recognising keyframes")
+        assert [t[0] for t in ticks[1:]] == [1, 2, 3]
+        assert all(t[1] == 3 for t in ticks)
+
+    def test_no_callback_still_works(self, monkeypatch) -> None:
+        import ocr as ocr_module
+        from fractions import Fraction as _Fraction
+        from shots import Timebase as _Timebase, VideoProbe as _VideoProbe
+
+        class _Frame:
+            shape = (1280, 720, 3)
+
+        probe = _VideoProbe(timebase=_Timebase(num=1, den=12800), duration_ticks=64000, avg_frame_rate=_Fraction(30, 1))
+        monkeypatch.setattr(ocr_module, "probe_video", lambda _path: probe)
+        monkeypatch.setattr(ocr_module, "extract_keyframes", lambda _p, windows, _probe: [_Frame() for _ in windows])
+        monkeypatch.setattr(ocr_module, "load_ocr_engine", lambda _config: object())
+        monkeypatch.setattr(ocr_module, "_predict_one", lambda _engine, _frame: object())
+        monkeypatch.setattr(ocr_module, "detections_from_paddle_result", lambda _result: [])
+
+        assert ocr_module.compute_ocr(CAPTIONS, keyframe_ticks=[12800]) == {"ocr": []}

@@ -1,0 +1,128 @@
+# Technical QA thresholds — tech-spec §12.1.
+#
+# These numbers are DATA, not constants. §12.1's reasoning, in full: "the numbers
+# are guesses until real footage calibrates them, so they live in a versioned
+# ruleset ... correctable without a code change". The Phase 4 acceptance criterion
+# is exactly that property — changing a threshold here must change QA behaviour
+# with no code change, and there is a test that proves it by editing this file's
+# values in memory and re-running the gate.
+#
+# Every value below is the tech-spec §12.1 SHIPPED DEFAULT unless the comment says
+# otherwise. `rulesetVersion` is recorded on every TechnicalQaReport so a past
+# verdict stays interpretable against the numbers that actually produced it.
+#
+# Severity vocabulary (decisions.md D-35):
+#   blocker  — non-waivable. Source/timebase faults, corrupt or missing media,
+#              rights failures, missing required captions/disclosures, invalid
+#              output. No waiver can clear one; the gate REJECTS a waiver naming a
+#              blocker rather than ignoring it.
+#   warning  — waivable by a named human with a recorded reason.
+#   info     — never affects the gate.
+
+rulesetVersion: "1.1.0"
+effectiveFrom: "2026-08-06"
+
+audio:
+  # §12.1: "true peak < -1 dBTP". A delivery POLICY ceiling — no render may
+  # exceed it, whatever its manifest says.
+  maxTruePeakDbtp: -1.0
+  # How far a render's measured integrated loudness may sit from THE TARGET ITS
+  # OWN MANIFEST DECLARED before `loudness_target` reports it. The target itself
+  # is deliberately not here (decisions.md D-54): it is what one render promised,
+  # the manifest is where that promise is recorded, and a second copy in this file
+  # was read by nothing for the whole of Phase 4 — a control an operator could
+  # edit forever with no effect. A ceiling is policy and lives here; a target is a
+  # per-render declaration and lives in the manifest.
+  loudnessToleranceLu: 1.0
+  # Digital clipping: samples at or above full scale. Distinct from true peak —
+  # a track can clip samples while measuring under -1 dBTP on a coarse meter.
+  clippingSampleThresholdDbfs: -0.1
+  # Silence longer than this, outside a declared hold, is unexpected (REQ-100).
+  # -60 dBFS rather than absolute zero: an encoded "silent" passage carries codec
+  # noise, and a zero-threshold check would never fire on real footage.
+  silenceThresholdDbfs: -60.0
+  maxUnexpectedSilenceSeconds: 1.5
+
+video:
+  # §12.1: "no black/frozen frame runs > 3 frames outside declared holds".
+  maxBlackFrameRun: 3
+  maxFrozenFrameRun: 3
+  # Proportion of frames that may be duplicates of their predecessor. A CFR
+  # normalisation of a VFR source duplicates frames BY DESIGN (D-25), so only the
+  # proportion means anything — reporting every duplicate would fire on every
+  # correctly-normalised VFR render.
+  maxDuplicateFrameRatio: 0.25
+  # Fraction of the canvas that must carry picture when the declared aspect
+  # treatment is a FILL treatment (anything but letterbox).
+  minCanvasCoverage: 0.98
+  # A frame is "black" below this average luma fraction (ffmpeg blackdetect
+  # `pixel_black_th`), and the run must cover this fraction of the picture.
+  blackLumaThreshold: 0.10
+  blackPixelRatio: 0.98
+  # freezedetect noise floor in dB — the difference below which consecutive
+  # frames count as identical.
+  freezeNoiseDb: -60.0
+
+sync:
+  # §12.1: "A/V sync drift < +/-40 ms".
+  maxDriftMilliseconds: 40
+
+captions:
+  # §12.1: "caption <= 2 lines x 42 chars, cue >= 1 s, reading speed <= 17 cps".
+  maxLines: 2
+  maxCharsPerLine: 42
+  minCueDurationSeconds: 1.0
+  maxCharactersPerSecond: 17
+  # A gap below this between adjacent cues reads as a flicker rather than a change.
+  minInterCueGapSeconds: 0.04
+  # Average glyph advance as a fraction of the em, used to estimate the caption
+  # box for the safe-zone check. 0.52 is a little wider than Inter measures, so
+  # the estimate errs toward reporting a violation a pixel measurement might not
+  # confirm — the safe direction for a warning.
+  averageGlyphAdvanceEm: 0.52
+
+output:
+  # Checked against the platform capability fixture, not hard-coded here; these
+  # are the fallback bounds when no fixture is supplied.
+  minWidth: 720
+  minHeight: 1280
+  acceptedContainers: [mp4, mov]
+  acceptedVideoCodecs: [h264]
+  acceptedAudioCodecs: [aac]
+  # How far the produced duration may differ from the EDL's planned duration
+  # before it is a finding. One frame at 30 fps is 33 ms; 100 ms allows for
+  # container rounding without hiding a dropped clip.
+  durationToleranceMilliseconds: 100
+
+severities:
+  # Severity classification. This list may TIGHTEN the policy (add blockers) but
+  # cannot loosen it: `D35_NON_WAIVABLE` in model.ts is a code-level floor, and a
+  # ruleset demoting any of those six is REJECTED at load. D-35 fixes the
+  # non-waivable set as settled policy, and a policy overridable from the file it
+  # governs is a comment, not a control. Thresholds are data; this is not.
+  blocker:
+    - missing_media
+    - container_corruption
+    - source_range_validity
+    - output_dimensions
+    - codec_profile
+    - caption_file_present
+  warning:
+    - output_duration
+    - black_frames
+    - frozen_frames
+    - duplicate_frames
+    - crop_failure
+    - unexpected_silence
+    - audio_clipping
+    - loudness_target
+    - true_peak
+    - av_sync_drift
+    - caption_overflow
+    - caption_readability
+    - caption_timing
+    - caption_safe_zone
+    - caption_spelling
+    - caption_name_flag
+  info:
+    - non_speech_cue_review

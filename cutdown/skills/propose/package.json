@@ -5,7 +5,7 @@
   "type": "module",
   "description": "propose skill — CreativeBrief angle generation (REQ-030/031/034/036).",
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
     "@cutdown/contracts": "workspace:*",

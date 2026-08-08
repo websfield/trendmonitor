@@ -1,0 +1,39 @@
+{
+  "jobId": "e2e-mixed-1",
+  "sourcePath": null,
+  "brief": {
+    "accountId": "acct-social-soup-001",
+    "accountDisplayName": "Social Soup \u00e2\u20ac\u201d Demo Account",
+    "audience": "Australian small-business owners aged 28-45 who already run their own socials",
+    "objective": "education_utility",
+    "platforms": [
+      "tiktok"
+    ],
+    "distributionMode": "organic",
+    "durationRange": {
+      "minSeconds": 5,
+      "maxSeconds": 15
+    },
+    "locale": "en-AU",
+    "brandOrCampaign": "Cutdown Phase 0 proving corpus",
+    "contentPromise": "Turn the mixed-asset fixture shoot into one captioned vertical TikTok cut, end to end",
+    "cta": {
+      "kind": "none"
+    },
+    "variantCount": 2,
+    "funnelStage": "consideration",
+    "offer": null,
+    "proofRequirements": [
+      "Show the actual fixture footage, not a mockup"
+    ],
+    "keyMessages": [
+      "The pipeline is proven by the package it delivers"
+    ],
+    "prohibitedClaims": [
+      "guaranteed views",
+      "algorithm hack"
+    ],
+    "riskTolerance": "low",
+    "notes": "Phase 6 end-to-end proving run over the mixed-job-valid ingest golden set. Skills-only public surface; sourceClassification fixture. Rev 2: durationRange floor raised to the platform minimum (5 s) after the D-37 capability gate blocked the first EDL."
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "safe-zone-overlay/1.0",
+  "platform": "tiktok",
+  "surface": "organic-video",
+  "region": "AU",
+  "effectiveFrom": "2026-07-01",
+  "measuredAt": "2026-07-29",
+  "measuredBy": "Cutdown Phase 0 (hand-measured fixture)",
+  "note": "ONE hand-measured TikTok overlay, per tech-spec §12.1 ('Phase 0 ships one hand-measured TikTok overlay as a fixture'). Rectangles are NORMALISED fractions of the canvas, not pixels, so the same fixture applies to a 720x1280 draft and a 1080x1920 final without a second measurement — a pixel-valued overlay would silently be wrong for one of the two tiers. Values are conservative: where the in-app chrome varies by device or by feature availability, the LARGER obstruction is recorded, because an over-large safe zone costs a caption a few pixels of width while an under-large one puts words behind the UI. This is a fixture, not a registry: the real per-surface overlay set is REQ-051 (product Phase 1), and `status` records that honestly.",
+  "status": "hand_measured_fixture",
+  "canvasAspectRatio": "9:16",
+  "obstructions": [
+    {
+      "id": "right_action_rail",
+      "description": "Avatar, like, comment, bookmark, share and the spinning audio disc, stacked up the right edge.",
+      "rect": { "x": 0.82, "y": 0.34, "width": 0.18, "height": 0.56 }
+    },
+    {
+      "id": "bottom_caption_and_handle",
+      "description": "Creator handle, post caption, and the scrolling audio title along the bottom-left.",
+      "rect": { "x": 0.0, "y": 0.78, "width": 0.82, "height": 0.14 }
+    },
+    {
+      "id": "bottom_navigation",
+      "description": "The app's own bottom tab bar.",
+      "rect": { "x": 0.0, "y": 0.92, "width": 1.0, "height": 0.08 }
+    },
+    {
+      "id": "top_status_and_tabs",
+      "description": "Device status bar plus the Following/For You tab row.",
+      "rect": { "x": 0.0, "y": 0.0, "width": 1.0, "height": 0.11 }
+    }
+  ],
+  "captionSafeArea": {
+    "description": "The rectangle a caption may occupy without intersecting any obstruction above. Derived from the obstruction list rather than measured separately, so the two can never disagree.",
+    "rect": { "x": 0.05, "y": 0.11, "width": 0.77, "height": 0.67 }
+  }
+}

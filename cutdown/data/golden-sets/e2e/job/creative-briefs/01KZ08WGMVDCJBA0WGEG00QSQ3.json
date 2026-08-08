@@ -1,0 +1,78 @@
+{
+  "creativeBriefId": "01KZ08WGMVDCJBA0WGEG00QSQ3",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:39:36.476Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "propose",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "sourceBriefId": "01KZ07MB75ZTMTCV21R42YTY9A",
+  "parentCreativeBriefId": null,
+  "audiencePromise": "See the cafe shoot plan become one finished vertical cut.",
+  "creativeThesis": "Showing the pipeline end to end proves the edit is the product.",
+  "hookFamily": "outcome_first",
+  "narrativeArchetype": "process_reveal",
+  "value": "confidence that the workflow delivers",
+  "proofPoints": [
+    {
+      "claim": "The whole take is cut down to one short vertical clip.",
+      "evidenceMomentIds": [
+        "2DTMRS95NA6WJMD9KYMJZBWECJ"
+      ],
+      "basis": {
+        "kind": "observed_fact",
+        "observed": "Narrator says 'Then we cut the whole tape down to one short vertical clip for the feed.'"
+      }
+    },
+    {
+      "claim": "The finished cut is delivered with captions.",
+      "evidenceMomentIds": [
+        "Z9SEP854V2383S300WDYZVX373"
+      ],
+      "basis": {
+        "kind": "observed_fact",
+        "observed": "Narrator says 'At the end you get the finished cut delivered with captions and all.'"
+      }
+    }
+  ],
+  "selectedMoments": [
+    {
+      "momentId": "MX3Q268ASZ5GJBE47PFJDHSV44",
+      "candidateFunction": "promise",
+      "rationale": "opens with the plan for the shoot"
+    },
+    {
+      "momentId": "2DTMRS95NA6WJMD9KYMJZBWECJ",
+      "candidateFunction": "demonstration",
+      "rationale": "the cutdown step itself"
+    },
+    {
+      "momentId": "Z9SEP854V2383S300WDYZVX373",
+      "candidateFunction": "payoff",
+      "rationale": "the delivered result"
+    }
+  ],
+  "cta": {
+    "kind": "none"
+  },
+  "distinctness": {
+    "peerBriefLabels": [
+      "angle-2"
+    ],
+    "sharedMomentFraction": 0,
+    "semanticAngleLabel": "pipeline walkthrough"
+  },
+  "knownLimitations": [
+    "No real cafe footage; the fixture is a synthetic test pattern with narration."
+  ],
+  "modelProvenance": {
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-5",
+    "promptTemplateId": "propose-angles",
+    "promptTemplateVersion": "1.0.0"
+  }
+}

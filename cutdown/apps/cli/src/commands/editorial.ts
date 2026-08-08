@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { JOBS_ROOT, WORKSPACE_ROOT } from '../paths.js';
@@ -11,8 +11,14 @@ import { invokeSkill } from './skill-invocation.js';
  * `test:skills` and `test:models`.
  */
 
-/** The editorial skills, in pipeline order. */
-export const EDITORIAL_SKILLS = ['propose', 'plan', 'validate'] as const;
+/**
+ * The skills `test:skills` compiles and runs with no argument.
+ *
+ * Phase 5 adds the post-review skills. Not "the editorial skills" any more, but
+ * the name is kept: it is the documented entry-gate command (tech-spec §7/§12),
+ * and renaming it would be a contract change for a comment's benefit.
+ */
+export const EDITORIAL_SKILLS = ['propose', 'plan', 'validate', 'approve', 'package', 'revise'] as const;
 
 /**
  * Find the job that owns an artefact file (e.g. `creative-briefs/<id>.json`).
@@ -23,6 +29,39 @@ export function findJobForArtefact(subdir: string, fileName: string): string | n
   if (!existsSync(JOBS_ROOT)) return null;
   for (const jobId of readdirSync(JOBS_ROOT)) {
     if (existsSync(join(JOBS_ROOT, jobId, subdir, fileName))) return jobId;
+  }
+  return null;
+}
+
+/**
+ * Find the job that owns a RENDER, by its `renderId`.
+ *
+ * A render id is not a path: renders live at `renders/<tier>/<manifestId>/render.json`,
+ * keyed by MANIFEST, so the render id has to be read out of each artefact. `approve`
+ * and `package` are both addressed by render id (that is what an operator has in
+ * hand after `cutdown render`), so both need this.
+ *
+ * Returns null rather than throwing on an unreadable artefact — the caller's next
+ * move is to ask for `--job`, and a broken artefact in an unrelated job must not
+ * stop that.
+ */
+export function findJobForRender(renderId: string): string | null {
+  if (!existsSync(JOBS_ROOT)) return null;
+  for (const jobId of readdirSync(JOBS_ROOT).sort()) {
+    for (const tier of ['draft', 'final']) {
+      const tierRoot = join(JOBS_ROOT, jobId, 'renders', tier);
+      if (!existsSync(tierRoot)) continue;
+      for (const manifestDir of readdirSync(tierRoot).sort()) {
+        const renderPath = join(tierRoot, manifestDir, 'render.json');
+        if (!existsSync(renderPath)) continue;
+        try {
+          const parsed = JSON.parse(readFileSync(renderPath, 'utf8')) as { renderId?: string };
+          if (parsed.renderId === renderId) return jobId;
+        } catch {
+          continue;
+        }
+      }
+    }
   }
   return null;
 }

@@ -1,0 +1,14 @@
+{
+  "kind": "validated",
+  "jobId": "e2e-mixed-1",
+  "edlId": "01KZ09QH84KC5S7P298MWCHFNG",
+  "gateStatus": "pass",
+  "blockerCount": 0,
+  "deterministicAdvisoryCount": 4,
+  "gatePath": "reviews/gates/01KZ09QH84KC5S7P298MWCHFNG-gate.json",
+  "criticPath": "reviews/gates/01KZ09QH84KC5S7P298MWCHFNG-critic.json",
+  "critic": {
+    "status": "ran",
+    "findingCount": 2
+  }
+}

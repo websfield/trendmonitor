@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/meta-schema.json",
+  "title": "SkillFrontmatter",
+  "description": "Validates every `SKILL.md` frontmatter block (tech-spec §6.1). STRICT FROM DAY ONE per decisions.md D-15: every field is validated and unknown keys are REJECTED. The strictness is the point — a skill whose frontmatter carries a typo'd key (`timeoutSecond`, `sideEffect`) would otherwise run with a default nobody chose, and the two callers that derive real behaviour from these fields (the local runner's timeout, the Temporal activity's timeout and heartbeat) would silently disagree with the author's intent. `cutdown skills sync` also fails on any `contractsUsed` entry with no schema file, which makes a contract bump a compile-time-visible event for every skill that reads or writes that object (§6.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "skillVersion",
+    "description",
+    "entrypoint",
+    "execution",
+    "inputSchema",
+    "outputSchema",
+    "contractsUsed",
+    "sideEffects",
+    "timeoutSeconds"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "The skill's canonical name, which must equal its directory name (`skills sync` asserts that separately — a schema cannot see the filesystem). Lower-case kebab so it is safe as a directory name, a CLI verb, and a `.claude` mirror suffix on every platform."
+    },
+    "skillVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of the SKILL, independent of any contract version. Recorded in every structured error and every run-log entry, so a bug report identifies the exact behaviour."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 40,
+      "description": "Invocation-worthy prose: this is what a conversational agent reads to decide whether the skill is the right one (tech-spec §6.3). `minLength: 40` is a deliberate floor — a three-word description makes the `.claude` mirror undiscoverable, and the mirror is the Stage A operator surface from step 9 onward."
+    },
+    "entrypoint": {
+      "type": "array",
+      "minItems": 1,
+      "description": "An argv ARRAY, spawned directly and never through a shell (tech-spec §6.2). Not a string: a string would have to be shell-split, and shell-free spawning is what removes an entire injection class. Not an executable file either — bare executables need shebangs or exec bits that do not exist on Windows, the primary dev machine.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "execution": {
+      "type": "string",
+      "enum": ["sync", "async"],
+      "description": "`async` skills return an operation handle over the Stage C HTTP surface (tech-spec §10). This marker is the ONLY reason the generated OpenAPI can be honest about which routes are 202-and-poll, so marking a long render `sync` would be a lie that costs a contract change later."
+    },
+    "inputSchema": {
+      "type": "string",
+      "pattern": "^\\./",
+      "description": "Path to the request schema, relative to the skill directory. Anchored to `./` so a skill can never reference a schema outside itself by relative traversal."
+    },
+    "outputSchema": {
+      "type": "string",
+      "pattern": "^\\./"
+    },
+    "contractsUsed": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "The contract schemas this skill reads or writes, by bare name (`platform-edl-v1`). `skills sync` fails when any entry has no file under `packages/contracts/schemas/` — that failure is what makes a major bump visible to every dependent skill instead of surfacing three stages later as a malformed artefact (§6.4). `minItems: 1`: a skill that touches no contract is not part of this pipeline.",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*-v[0-9]+$" }
+    },
+    "sideEffects": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Declared so a caller can reason about a skill before running it. An empty array is legitimate and means a pure computation.",
+      "items": { "type": "string", "enum": ["reads-project-data", "writes-project-data", "network"] }
+    },
+    "timeoutSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 21600,
+      "description": "BOTH the local runner and the Temporal activity derive their timeout from this one field (tech-spec §6.1), which is why it is required with no default: two callers reading two different defaults would disagree about when a render is hung. The 6-hour ceiling is a sanity bound, not a policy."
+    },
+    "heartbeatSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Async skills only (a long render exceeds default activity timeouts, so the Temporal wrapper heartbeats on this interval). Optional because a sync skill has nothing to heartbeat; `skills sync` warns when an async skill omits it, since the omission only bites at Stage B."
+    }
+  }
+}

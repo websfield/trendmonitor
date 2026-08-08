@@ -1,0 +1,63 @@
+{
+  "creativeBriefId": "01KZ094GAAQHZ9ZG504A16NBHV",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-08-02T03:43:58.282Z",
+    "createdBy": {
+      "kind": "skill",
+      "skill": "propose",
+      "skillVersion": "1.0.0"
+    }
+  },
+  "jobId": "e2e-mixed-1",
+  "sourceBriefId": "01KZ09406V8MWAJQW420W87AGP",
+  "parentCreativeBriefId": null,
+  "audiencePromise": "Understand what happens to your footage between shoot and feed.",
+  "creativeThesis": "Explaining the checks builds trust in the finished clip.",
+  "hookFamily": "utility_first",
+  "narrativeArchetype": "explainer",
+  "value": "practical understanding of the workflow",
+  "proofPoints": [
+    {
+      "claim": "Captions are checked against the audio.",
+      "evidenceMomentIds": [
+        "RHQAP623G6EFYPH06TVM19J5HV"
+      ],
+      "basis": {
+        "kind": "observed_fact",
+        "observed": "Narrator says 'After that the captions were burned in and checked against the audio.'"
+      }
+    }
+  ],
+  "selectedMoments": [
+    {
+      "momentId": "SZTNHT6JKWZ686Q6THY5TEV5M8",
+      "candidateFunction": "context",
+      "rationale": "setting the scene establishes what the camera sees"
+    },
+    {
+      "momentId": "RHQAP623G6EFYPH06TVM19J5HV",
+      "candidateFunction": "demonstration",
+      "rationale": "the caption check step"
+    }
+  ],
+  "cta": {
+    "kind": "none"
+  },
+  "distinctness": {
+    "peerBriefLabels": [
+      "angle-1"
+    ],
+    "sharedMomentFraction": 0.5,
+    "semanticAngleLabel": "quality checks explained"
+  },
+  "knownLimitations": [
+    "The checks are narrated, not shown on screen; no interface footage exists in the fixture."
+  ],
+  "modelProvenance": {
+    "provider": "anthropic",
+    "modelId": "claude-sonnet-5",
+    "promptTemplateId": "propose-angles",
+    "promptTemplateVersion": "1.0.0"
+  }
+}

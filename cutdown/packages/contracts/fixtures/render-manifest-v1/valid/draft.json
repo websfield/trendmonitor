@@ -1,0 +1,54 @@
+{
+  "renderManifestId": "01J9RM2B3C4D5E6F7G8H9K0N1A",
+  "envelope": {
+    "schemaVersion": "1.0.0",
+    "createdAt": "2026-07-28T05:00:00Z",
+    "createdBy": { "kind": "skill", "skill": "render", "skillVersion": "1.0.0" }
+  },
+  "jobId": "test-mixed",
+  "edlId": "01J9ED2B3C4D5E6F7G8H9K0M6T",
+  "parentManifestId": null,
+  "tier": "draft",
+  "editorialPlanHash": { "algorithm": "sha256", "value": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+  "approvedDraftManifestId": null,
+  "releaseState": "draft",
+  "renderer": { "name": "renderer-ffmpeg", "rendererVersion": "1.0.0", "ffmpegVersion": "8.0.1-full_build (gyan.dev)" },
+  "media": { "source": "proxy" },
+  "fonts": [
+    {
+      "family": "Inter",
+      "role": "caption",
+      "hash": { "algorithm": "sha256", "value": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" },
+      "licenceNote": "OFL"
+    }
+  ],
+  "output": {
+    "container": "mp4",
+    "width": 720,
+    "height": 1280,
+    "frameRate": { "num": 1001, "den": 30000 }
+  },
+  "encoderSettings": {
+    "videoCodec": "h264",
+    "pixelFormat": "yuv420p",
+    "crf": 23,
+    "threads": 1,
+    "bitexact": true,
+    "stripCreationTime": true,
+    "audioCodec": "aac",
+    "audioBitrateKbps": 128
+  },
+  "audioMix": {
+    "normalize": true,
+    "targetLoudnessLufs": -14,
+    "maxTruePeakDbtp": -1,
+    "hasAudio": true
+  },
+  "captions": {
+    "assPath": "renders/draft/01J9RM2B3C4D5E6F7G8H9K0N1A/captions.ass",
+    "srtPath": "renders/draft/01J9RM2B3C4D5E6F7G8H9K0N1A/captions.srt",
+    "vttPath": "renders/draft/01J9RM2B3C4D5E6F7G8H9K0N1A/captions.vtt",
+    "captionPlanHash": { "algorithm": "sha256", "value": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752" }
+  },
+  "platformOverlayVersion": "2026-07"
+}

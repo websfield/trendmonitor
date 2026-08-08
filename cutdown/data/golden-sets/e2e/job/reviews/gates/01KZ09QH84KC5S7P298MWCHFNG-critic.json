@@ -1,0 +1,22 @@
+{
+  "edlId": "01KZ09QH84KC5S7P298MWCHFNG",
+  "critic": {
+    "status": "ran",
+    "findingCount": 2
+  },
+  "findings": [
+    {
+      "source": "critic",
+      "lens": "first_frame",
+      "severity": "medium",
+      "note": "The opening frame is a synthetic test pattern; on real footage choose a frame with the subject visible.",
+      "cite": "clip-1"
+    },
+    {
+      "source": "critic",
+      "lens": "style_fit",
+      "severity": "low",
+      "note": "Narration is procedural; the brand voice leans conversational. Fine for a fixture proving run."
+    }
+  ]
+}

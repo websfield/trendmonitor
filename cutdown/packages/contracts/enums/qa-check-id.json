@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/contracts/enums/qa-check-id.json",
+  "title": "QaCheckId",
+  "description": "The closed set of technical QA checks (PRD REQ-100 / REQ-084 / REQ-104, tech-spec §15 step 7). Enumerated as a contract rather than left as free-form strings for one reason: the Phase 4 acceptance criterion is that EVERY promised check has a positive and a negative fixture, and that is only countable against a closed list. A check that exists in code but not here cannot be reported; a check listed here with no implementation fails the coverage test.",
+  "type": "string",
+  "enum": [
+    "missing_media",
+    "container_corruption",
+    "source_range_validity",
+    "output_dimensions",
+    "output_duration",
+    "codec_profile",
+    "black_frames",
+    "frozen_frames",
+    "duplicate_frames",
+    "crop_failure",
+    "unexpected_silence",
+    "audio_clipping",
+    "loudness_target",
+    "true_peak",
+    "av_sync_drift",
+    "caption_file_present",
+    "caption_overflow",
+    "caption_readability",
+    "caption_timing",
+    "caption_safe_zone",
+    "caption_spelling",
+    "caption_name_flag",
+    "non_speech_cue_review"
+  ]
+}

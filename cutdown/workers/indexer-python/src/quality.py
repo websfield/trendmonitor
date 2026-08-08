@@ -88,6 +88,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+from collections import deque
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
@@ -492,6 +494,19 @@ def engine_record() -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
+#: How long to let ffmpeg reap itself after stdout reaches EOF before deciding it
+#: has hung. Generous: the only work left is teardown, and killing early would
+#: destroy the exit status the decode-integrity check reads.
+_FFMPEG_EXIT_TIMEOUT_SECONDS = 10
+
+#: Only this much stderr is ever reported, so only this much is worth keeping.
+_STDERR_TAIL_CHARS = 2000
+_STDERR_CHUNK_BYTES = 4096
+#: 4 x 4 KiB bounds the drain at 16 KiB while still guaranteeing the retained
+#: tail is available even if every byte decodes to a multi-byte character.
+_STDERR_TAIL_CHUNKS = 4
+
+
 def _run(argv: Sequence[str]) -> bytes:
     try:
         completed = subprocess.run(argv, capture_output=True, check=False)
@@ -539,6 +554,10 @@ def probe(path: Path) -> tuple[VideoInfo | None, bool]:
             "ffprobe",
             "-v",
             "error",
+            # See `iter_luma_frames` — a playlist-shaped container can name a
+            # remote protocol from inside the file, and ffprobe reads it too.
+            "-protocol_whitelist",
+            "file",
             "-show_entries",
             "stream=index,codec_type,width,height,r_frame_rate",
             "-of",
@@ -578,12 +597,49 @@ def iter_luma_frames(path: Path, info: VideoInfo) -> Iterator[np.ndarray]:
     costs nothing: every video metric here is a luma metric. The frames are read
     off a pipe rather than buffered because a long source would otherwise be
     gigabytes of uint8 held for no reason.
+
+    **A short read is not the same as end-of-stream.** A mid-stream decode
+    failure also ends the pipe early, and the frames read before it are a
+    *truncated* series — every run-length detector here would then measure a
+    shorter asset than exists and report it as clean. The exit status is checked
+    rather than discarded, with one honest limit: `probe.ts` records that ffmpeg
+    exits 0 on truncated INPUT, so a clean exit is not proof of a complete
+    series. This catches the band where the decode itself fails; it is evidence,
+    not a guarantee.
+
+    **Who killed the process decides whether its exit code means anything.**
+    The obvious version of this — "kill it if it is still running, then judge the
+    return code" — is wrong, and measurably so: at the short read that ends the
+    loop, ffmpeg has closed stdout but has usually not yet reaped, so
+    `poll() is None` holds on the *happy* path in essentially every run. A kill
+    there makes the return code describe our own `TerminateProcess`, and only its
+    losing a microsecond race to an already-exiting process keeps the value at 0.
+    So the natural-EOF path WAITS for ffmpeg to exit on its own and kills only if
+    it overstays; the early-stop path kills deliberately, and records that it did,
+    because a process we killed can never testify about decode integrity.
+
+    stderr is drained on a thread rather than left in the pipe. `-v error` is
+    usually a few hundred bytes, but a per-frame decode complaint on a damaged
+    source can exceed the OS pipe buffer, and a full stderr pipe blocks ffmpeg
+    forever while this loop waits on stdout — a deadlock that reads exactly like
+    a hang. The drain keeps only a bounded tail: the error retains 2000
+    characters, and the input is untrusted ingested media, so buffering an
+    attacker-sized stderr to discard all but the end of it is a memory sink for
+    nothing.
     """
     argv = [
         "ffmpeg",
         "-v",
         "error",
         "-nostdin",
+        # Mirrors `renderer-core/src/ffmpeg.ts`, which pins this on every input
+        # and fails the run without it. The media is untrusted ingested UGC, and
+        # a playlist-shaped container (HLS/DASH/ffconcat) can name a remote
+        # protocol from inside the FILE. Today's pinned ffmpeg refuses those by
+        # default — but golden rule 9 makes that a version-pinned fact, not an
+        # invariant, and the TypeScript side already refuses to rely on it.
+        "-protocol_whitelist",
+        "file",
         "-i",
         str(path),
         "-map",
@@ -597,21 +653,68 @@ def iter_luma_frames(path: Path, info: VideoInfo) -> Iterator[np.ndarray]:
     frame_bytes = info.width * info.height
     process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert process.stdout is not None
+    assert process.stderr is not None
+    stderr_pipe = process.stderr
+    #: Bounded tail. Only the last 2000 characters are ever reported, so reading
+    #: an unbounded stderr into memory would grow with the attacker's file to
+    #: throw all but the end of it away.
+    captured_stderr: deque[bytes] = deque(maxlen=_STDERR_TAIL_CHUNKS)
+
+    def _drain() -> None:
+        try:
+            while True:
+                chunk = stderr_pipe.read(_STDERR_CHUNK_BYTES)
+                if not chunk:
+                    return
+                captured_stderr.append(chunk)
+        except (ValueError, OSError):  # pipe closed under us during teardown
+            pass
+
+    drainer = threading.Thread(target=_drain, daemon=True)
+    drainer.start()
+
+    stream_ended_on_its_own = False
+    killed_here = False
     try:
         while True:
             buffer = process.stdout.read(frame_bytes)
             if len(buffer) < frame_bytes:
+                stream_ended_on_its_own = True
                 break
             yield np.frombuffer(buffer, dtype=np.uint8).reshape(info.height, info.width)
     finally:
-        # A consumer that stops early (a test reading two frames) must not leave
-        # an ffmpeg holding the pipe open.
-        if process.poll() is None:
-            process.kill()
+        if stream_ended_on_its_own:
+            # stdout is at EOF, so ffmpeg is on its way out; give it a moment to
+            # exit and report ITS OWN status. Killing here would overwrite the
+            # one piece of evidence this whole branch exists to read.
+            try:
+                process.wait(timeout=_FFMPEG_EXIT_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                killed_here = True
+        else:
+            # A consumer that stopped early (a test reading two frames) must not
+            # leave an ffmpeg holding the pipe open.
+            if process.poll() is None:
+                process.kill()
+                killed_here = True
+            process.wait()
         process.stdout.close()
-        if process.stderr is not None:
-            process.stderr.close()
-        process.wait()
+        drainer.join(timeout=5)
+        stderr_pipe.close()
+        if stream_ended_on_its_own and not killed_here and process.returncode != 0:
+            raise SubStageError(
+                "MEDIA_DECODE_FAILED",
+                f"ffmpeg exited {process.returncode} while decoding {path.name}; "
+                "the frame series is truncated and every video measurement taken "
+                "from it would understate the asset",
+                details={
+                    "tool": "ffmpeg",
+                    "exitCode": process.returncode,
+                    "stderr": b"".join(captured_stderr).decode("utf-8", "replace")[-_STDERR_TAIL_CHARS:],
+                },
+            )
 
 
 def read_audio(path: Path) -> np.ndarray:
@@ -627,6 +730,9 @@ def read_audio(path: Path) -> np.ndarray:
             "-v",
             "error",
             "-nostdin",
+            # See `iter_luma_frames` — mirrors the TypeScript renderer's pin.
+            "-protocol_whitelist",
+            "file",
             "-i",
             str(path),
             "-map",
@@ -1087,8 +1193,32 @@ def detect_audio_spans(metrics: AudioMetrics) -> list[tuple[Rule, Span]]:
     return found
 
 
-def analyse(path: Path) -> list[dict[str, Any]]:
-    """Measure one media file and return its QualityFlags, ordered and identified.
+def _examination_reason(*, video_examined: bool, audio_examined: bool) -> str | None:
+    """Name any modality this sub-stage did not look at, or `None` if it saw both.
+
+    An asset with no decodable video stream produces no video flags — and so does
+    a perfectly clean picture. Without this note the two are indistinguishable in
+    the artefact and the ledger reads `completed, reason: null` for both, which is
+    the exact "did we look?" ambiguity `source-index-v1.json` legislates against:
+    "the reason a collection is empty lives in the matching `subStages` entry,
+    never in an absent property".
+    """
+    unexamined: list[str] = []
+    if not video_examined:
+        unexamined.append("video (no decodable video stream)")
+    if not audio_examined:
+        unexamined.append("audio (no audio stream)")
+    if not unexamined:
+        return None
+    return (
+        "quality flags cover only part of this asset — not examined: "
+        + "; ".join(unexamined)
+        + ". The absence of flags for an unexamined modality is not evidence of quality."
+    )
+
+
+def analyse_asset(path: Path) -> tuple[list[dict[str, Any]], str | None]:
+    """Measure one media file: its QualityFlags, plus what was not examined.
 
     Ordering is by real elapsed time and then by kind. Real time — not raw
     `startTicks` — because video ticks and audio ticks live in different
@@ -1141,7 +1271,31 @@ def analyse(path: Path) -> list[dict[str, Any]]:
                 "engine": engine,
             }
         )
-    return flags
+    return flags, _examination_reason(
+        video_examined=video is not None, audio_examined=has_audio
+    )
+
+
+def analyse(path: Path) -> list[dict[str, Any]]:
+    """The flags alone — `analyse_asset` without its examination note."""
+    return analyse_asset(path)[0]
+
+
+def _quality_artefact(media_path: Path) -> dict[str, Any]:
+    """The sub-stage artefact: the flags, and — when a modality was not examined —
+    a nested `subStage` record saying so.
+
+    The nested-record shape is the one `main.py` honours ahead of the top level
+    ("a sub-stage's own account of itself always wins"), and it is what carries
+    the reason into the SourceIndex ledger. The record stays `completed`: the
+    sub-stage did run and did report everything it could measure — what it could
+    not measure is the reason, not a failure.
+    """
+    flags, reason = analyse_asset(media_path)
+    artefact: dict[str, Any] = {"qualityFlags": flags}
+    if reason is not None:
+        artefact["subStage"] = {"status": "completed", "reason": reason}
+    return artefact
 
 
 def run(ctx: SubStageContext, media_path: Path, *, force: bool = False) -> SubStageResult:
@@ -1155,7 +1309,7 @@ def run(ctx: SubStageContext, media_path: Path, *, force: bool = False) -> SubSt
     return run_sub_stage(
         ctx,
         SUB_STAGE,
-        lambda: {"qualityFlags": analyse(media_path)},
+        lambda: _quality_artefact(media_path),
         model_config=model_config(),
         force=force,
     )

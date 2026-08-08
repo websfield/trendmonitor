@@ -1,18 +1,59 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/contracts" },
-    { "path": "./packages/editorial" },
-    { "path": "./packages/qa" },
-    { "path": "./packages/style" },
-    { "path": "./packages/renderer-core" },
-    { "path": "./packages/skill-runtime" },
-    { "path": "./skills/brief" },
-    { "path": "./skills/ingest" },
-    { "path": "./skills/propose" },
-    { "path": "./skills/plan" },
-    { "path": "./skills/validate" },
-    { "path": "./workflows/local" },
-    { "path": "./apps/cli" }
+    {
+      "path": "./packages/contracts"
+    },
+    {
+      "path": "./packages/editorial"
+    },
+    {
+      "path": "./packages/qa"
+    },
+    {
+      "path": "./packages/style"
+    },
+    {
+      "path": "./packages/renderer-core"
+    },
+    {
+      "path": "./packages/renderer-ffmpeg"
+    },
+    {
+      "path": "./packages/skill-runtime"
+    },
+    {
+      "path": "./skills/brief"
+    },
+    {
+      "path": "./skills/ingest"
+    },
+    {
+      "path": "./skills/propose"
+    },
+    {
+      "path": "./skills/plan"
+    },
+    {
+      "path": "./skills/validate"
+    },
+    {
+      "path": "./skills/render"
+    },
+    {
+      "path": "./skills/approve"
+    },
+    {
+      "path": "./skills/package"
+    },
+    {
+      "path": "./skills/revise"
+    },
+    {
+      "path": "./workflows/local"
+    },
+    {
+      "path": "./apps/cli"
+    }
   ]
 }

@@ -4,20 +4,56 @@
   "title": "ValidateRequest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["jobId", "edlId"],
+  "required": [
+    "jobId",
+    "edlId"
+  ],
   "properties": {
-    "jobId": { "type": "string", "minLength": 1 },
-    "edlId": { "type": "string", "minLength": 1, "description": "The PlatformEDL to validate." },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Becomes a directory name under `project-data/jobs/`. The pattern is defence in depth \u2014 `jobDir()` in @cutdown/skill-runtime guards and containment-checks it regardless of caller, because a skill's `entrypoint` is a documented direct invocation."
+    },
+    "edlId": {
+      "type": "string",
+      "description": "The PlatformEDL to validate. Must be a ULID: it becomes a FILENAME under the job (and, for outputs, a directory that is created on the way), so a traversing value would read or write inside another job. The skill asserts it again before joining, because a skill's `entrypoint` is a documented direct invocation and a schema-only guard has the same bypass shape the Phase 2 HIGH had.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
     "recordedModelPath": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Test/fixture only: a recorded critic response replayed over an injected transport."
     },
     "boundsPath": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Optional file with an array of {assetId, duration} AssetBounds. When absent, bounds are read from the job's SourceAsset preflight."
     },
     "styleProfilePath": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Optional StyleProfile whose prohibitedClaims are added to the prohibited-claim gate."
     }
   }

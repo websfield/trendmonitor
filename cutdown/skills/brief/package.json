@@ -5,7 +5,7 @@
   "type": "module",
   "description": "brief skill — JobBrief intake and validation.",
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
     "@cutdown/contracts": "workspace:*",

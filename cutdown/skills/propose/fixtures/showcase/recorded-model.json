@@ -1,0 +1,22 @@
+{
+  "note": "Schwarzkopf Wave 1 showcase - recorded propose response over job schwarzkopf-w1-showcase's real Moment Graphs (6 assets, 48 moments). Replayed over the injected transport; never a network call.",
+  "responses": [
+    {
+      "id": "msg_showcase_propose_0001",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-5",
+      "stop_reason": "end_turn",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"angles\":[{\"audiencePromise\":\"See the campaign's strongest creator moments and their real numbers in one cut.\",\"creativeThesis\":\"The creators' own voices and results sell the campaign better than any summary slide.\",\"hookFamily\":\"curiosity_first\",\"narrativeArchetype\":\"highlight_reel\",\"value\":\"confidence in the campaign's creative and its performance\",\"semanticAngleLabel\":\"wave 1 creator showcase\",\"proofPoints\":[{\"claim\":\"Creators report visibly healthier, shinier hair with the range.\",\"evidenceMomentIds\":[\"FX6V0WYFDZ6ZQ16Z4K8VKW6WRM\"],\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Creator says her hair is looking healthy and shiny despite dryness and fresh foils.\"}},{\"claim\":\"Creators describe the results as salon quality at home.\",\"evidenceMomentIds\":[\"22MKSXM7TBKV574WHK2VFHE62B\"],\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Creator says salon quality results at home, from one hair girly to another.\"}}],\"selectedMoments\":[{\"momentId\":\"GJES8XEY3F3A8BGBPKG12K1TE2\",\"candidateFunction\":\"promise\",\"rationale\":\"the strongest spoken hook in the corpus - a curiosity question straight to camera\"},{\"momentId\":\"6XGREAKW44N7R1HQDYC9FZGQXQ\",\"candidateFunction\":\"context\",\"rationale\":\"top-reach post opens in a real Coles run - grounded and Australian\"},{\"momentId\":\"ERVGKX5D77AXXD6F7NVAGVR57G\",\"candidateFunction\":\"demonstration\",\"rationale\":\"the routine claim from the campaign's highest-engagement-rate creator\"},{\"momentId\":\"FX6V0WYFDZ6ZQ16Z4K8VKW6WRM\",\"candidateFunction\":\"proof\",\"rationale\":\"a before/after style result statement\"},{\"momentId\":\"ZXKXB1Z4S3BVA88T7SHJESKYPK\",\"candidateFunction\":\"demonstration\",\"rationale\":\"music-led beauty shot; visual variety between testimonials\"},{\"momentId\":\"MR0HN26SJYY0XSKH8E82ZF5KWQ\",\"candidateFunction\":\"demonstration\",\"rationale\":\"second aesthetic beat from a 20% engagement-rate post\"},{\"momentId\":\"22MKSXM7TBKV574WHK2VFHE62B\",\"candidateFunction\":\"payoff\",\"rationale\":\"the line that lands the campaign promise\"}],\"cta\":{\"kind\":\"none\"},\"knownLimitations\":[\"Two selected posts are music-led with no usable speech, so they carry name/stat captions rather than quotes.\",\"The ASR renders the brand name inconsistently, so no caption quotes a line containing the brand token.\"]},{\"audiencePromise\":\"Understand why the daily elixir oil was the campaign's breakout product.\",\"creativeThesis\":\"Multiple creators independently spotlighting the same product is the campaign's clearest signal.\",\"hookFamily\":\"utility_first\",\"narrativeArchetype\":\"product_spotlight\",\"value\":\"a product-level insight stakeholders can act on\",\"semanticAngleLabel\":\"daily elixir oil spotlight\",\"proofPoints\":[{\"claim\":\"Creators independently name the daily elixir oil as a favourite.\",\"evidenceMomentIds\":[\"K2D2V5KHRVKT8MSPMB9C4HX8T8\"],\"basis\":{\"kind\":\"observed_fact\",\"observed\":\"Creator calls the daily elixir oil possibly her favourite from the range.\"}}],\"selectedMoments\":[{\"momentId\":\"GJES8XEY3F3A8BGBPKG12K1TE2\",\"candidateFunction\":\"promise\",\"rationale\":\"the hook is about this exact product\"},{\"momentId\":\"HF6MY13MXJEPYY6A1584162T91\",\"candidateFunction\":\"context\",\"rationale\":\"retail availability, stated by the creator\"},{\"momentId\":\"K2D2V5KHRVKT8MSPMB9C4HX8T8\",\"candidateFunction\":\"demonstration\",\"rationale\":\"a second creator's independent endorsement\"},{\"momentId\":\"RNJ2YZWRV2YWE4R85BA9E5398Y\",\"candidateFunction\":\"payoff\",\"rationale\":\"the texture claim that answers the oily-hair objection\"}],\"cta\":{\"kind\":\"none\"},\"knownLimitations\":[\"A product angle needs pack-shot b-roll the corpus does not contain; it leans on spoken claims.\"]}]}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

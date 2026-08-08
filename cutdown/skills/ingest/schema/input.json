@@ -4,22 +4,41 @@
   "title": "IngestRequest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["jobId", "inputPath"],
+  "required": [
+    "jobId",
+    "inputPath"
+  ],
   "properties": {
-    "jobId": { "type": "string", "minLength": 1 },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Becomes a directory name under `project-data/jobs/`. The pattern is defence in depth \u2014 `jobDir()` in @cutdown/skill-runtime guards and containment-checks it regardless of caller, because a skill's `entrypoint` is a documented direct invocation."
+    },
     "inputPath": {
       "type": "string",
       "minLength": 1,
       "description": "Absolute path to a non-recursive directory of assets, or to a single file (REQ-001)."
     },
     "rightsManifestPath": {
-      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Optional job-level rights manifest keyed by normalized relative path. Per-asset `<file>.rights.yaml` sidecars take precedence over it."
     },
     "sourceClassification": {
       "type": "string",
-      "enum": ["real", "fixture"],
-      "description": "decisions.md D-36. Defaults to `fixture` when absent — the fail-closed choice, since a mislabelled fixture understates Phase 0 progress whereas a mislabelled real asset would inflate exit evidence."
+      "enum": [
+        "real",
+        "fixture"
+      ],
+      "description": "decisions.md D-36. Defaults to `fixture` when absent \u2014 the fail-closed choice, since a mislabelled fixture understates Phase 0 progress whereas a mislabelled real asset would inflate exit evidence."
     }
   }
 }

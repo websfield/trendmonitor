@@ -5,13 +5,14 @@
   "type": "module",
   "description": "validate skill — deterministic editorial gate + advisory LLM critic (REQ-037, D-37).",
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   },
   "dependencies": {
     "@cutdown/contracts": "workspace:*",
     "@cutdown/editorial": "workspace:*",
     "@cutdown/qa": "workspace:*",
     "@cutdown/skill-runtime": "workspace:*",
+    "@cutdown/style": "workspace:*",
     "yaml": "2.9.0"
   }
 }

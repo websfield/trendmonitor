@@ -6,9 +6,11 @@ import { parse as parseYaml } from 'yaml';
 import { parse, requirePositional, requireString } from './args.js';
 import { buildContractsCommand, validateContractsCommand } from './commands/contracts.js';
 import { rangeCheckCommand } from './commands/range-check.js';
+import { skillsSyncCommand } from './commands/skills-sync.js';
+import { statusPhase0Command } from './commands/status.js';
 import { invokeSkill, resolveUserPath } from './commands/skill-invocation.js';
 import { runCommand, rebuildIndexCommand } from './commands/run.js';
-import { findJobForArtefact, testModelsCommand, testSkillsCommand } from './commands/editorial.js';
+import { findJobForArtefact, findJobForRender, testModelsCommand, testSkillsCommand } from './commands/editorial.js';
 import { listSkillNames, readSkill } from './skills.js';
 import { shutdownTracing } from './otel.js';
 import { CutdownError, EXIT_UNEXPECTED, reportError } from './errors.js';
@@ -36,11 +38,15 @@ Job commands (operate on a job under project-data/jobs/<job-id>/):
       commits only after EVERY asset validates.
 
   cutdown index <job-id> --asset <asset-id> [--speaker-map <file>] [--vlm]
+                         [--skip ocr] [--ocr-threads N]
       Index one ingested asset: transcript and speaker turns, shots and scenes,
       on-screen text, audio events, quality flags, then the Moment Graph. Every
       sub-stage resumes from its own checkpoint. The visual-description stage is
       SKIPPED unless --vlm is given (D-21 spend ceiling). --force <a,b> re-runs
-      named sub-stages.
+      named sub-stages. --skip ocr opts out of on-screen-text reading (~90% of
+      indexing cost on real footage; recorded in the ledger with its reason, and
+      it wins over --force ocr). --ocr-threads N trades byte-identical re-runs
+      for ~2x OCR speed; the value enters the cache key.
 
   cutdown propose <job-id> --variants N [--recorded-model <file>] [--query-vector <file>]
       Propose N distinct CreativeBrief angles from the job's Moment Graph, or
@@ -56,6 +62,35 @@ Job commands (operate on a job under project-data/jobs/<job-id>/):
       Run the deterministic editorial gate over a PlatformEDL and, separately, the
       advisory LLM critic. Writes two outputs; gateStatus comes only from the
       deterministic blockers (D-37). A 'fail' is a valid result, not an error.
+
+  cutdown render <platform-edl-id> [--job <id>] [--tier draft|final] [--approved-draft <manifest-id>]
+                                   [--style-profile <file>] [--waiver <file>]... [--audio-events <file>]
+      Render one PlatformEDL with burned-in open captions plus SRT/WebVTT sidecars,
+      then run technical QA in the same invocation — no render exists without a
+      report beside it. --tier final REQUIRES an approved draft (D-34); there is no
+      flag that waives that. Exits 4 when the QA gate reads 'fail' (the artefacts
+      still exist), 3 when the render itself failed.
+
+  cutdown approve <draft-render-id> --by "<name>" [--reject --reason "..."] [--notes "..."] [--job <id>]
+      Record one named human's immutable ReviewDecision about a reviewed DRAFT
+      render (decisions.md D-9). An approval is the ONLY thing that authorises a
+      final render; a rejection leads only to 'cutdown revise'. Refuses a
+      final-tier subject, a QA-blocked draft, and a rejection with no reason.
+      Never automated — there is no auto-approval path.
+
+  cutdown package <final-render-id> [--job <id>]
+      Assemble the deliverable ContentPackage: master, caption sidecars, cover +
+      first frame, rights manifest, disclosures, final QA report, range-validation
+      evidence, contract set and provenance. Refuses a draft, an unapproved or
+      rejected render, an editorially divergent final, a failed QA gate, an
+      unwaivable finding, unknown/restricted/expired rights, or missing evidence —
+      each with the IDs cited. The bundle is atomic: no half-package ever lands.
+
+  cutdown revise <render-id> --notes "..." [--job <id>] [--recorded-model <file>]
+      Interpret free-form review notes into structured constraints and regenerate
+      the NARROWEST affected object (REQ-039) — a caption fix never spawns a new
+      CreativeBrief. Every revision links its parent (REQ-113) and no re-index
+      happens.
 
   cutdown range-check --input <file>
       Validate source ranges against an asset's preflighted duration. The single
@@ -86,6 +121,28 @@ Editorial test meta-commands (operate on the codebase):
 Skill plumbing:
   cutdown skills list
   cutdown skills run <name> --input <file> --output <file>
+  cutdown skills sync [--check]   Validate every SKILL.md against the STRICT
+                                  meta-schema (D-15), regenerate skills/registry.json,
+                                  and regenerate the .claude/skills/cutdown-* mirror.
+                                  Fails on a dangling contractsUsed entry — that is
+                                  how a contract bump becomes visible to every
+                                  dependent skill. Idempotent: a second run writes
+                                  nothing. --check compares without writing; --prune
+                                  removes a GENERATED orphan mirror (one whose source
+                                  skill is gone). Without --prune an orphan is only
+                                  reported, and a mirror this command did not write is
+                                  never removed at all.
+
+Status:
+  cutdown status --phase0
+      Compute the four PRD §15 Phase 0 exit criteria from committed ContentPackages
+      and NOTHING else (D-36): approved real outputs by stable accountId, zero
+      invalid source ranges, no breaking contract change across the last ten, and
+      rights + QA evidence on every package. Fixture packages are excluded from the
+      real counts; warning-waived packages are counted separately (D-35);
+      PIPELINE_IMPLEMENTATION_COMPLETE and PHASE_0_EXIT_EARNED are reported
+      separately and never merged (D-38). Always exits 0 — a red criterion is the
+      honest state of an in-progress Phase 0, not a command failure.
 
 Contract commands (operate on the codebase):
   cutdown validate:contracts       Schemas parse; every fixture validates through
@@ -119,6 +176,8 @@ async function dispatch(argv: string[]): Promise<number> {
         'no-vlm': { type: 'boolean' },
         vlm: { type: 'boolean' },
         force: { type: 'string' },
+        skip: { type: 'string' },
+        'ocr-threads': { type: 'string' },
       });
       const jobId = requirePositional(positionals, 0, 'job-id');
       const assetId = requireString(
@@ -128,6 +187,14 @@ async function dispatch(argv: string[]): Promise<number> {
       );
       const speakerMap = options['speaker-map'];
       const forceList = typeof options['force'] === 'string' ? options['force'].split(',') : null;
+      const skipList = typeof options['skip'] === 'string' ? options['skip'].split(',') : null;
+      let ocrThreads: number | null = null;
+      if (typeof options['ocr-threads'] === 'string') {
+        ocrThreads = Number(options['ocr-threads']);
+        if (!Number.isInteger(ocrThreads) || ocrThreads < 1 || ocrThreads > 64) {
+          throw new Error(`--ocr-threads must be an integer in [1, 64], got ${JSON.stringify(options['ocr-threads'])}.`);
+        }
+      }
 
       const outcome = await invokeSkill({
         skillName: 'index',
@@ -147,6 +214,8 @@ async function dispatch(argv: string[]): Promise<number> {
           // against an explicit opt-out.
           noVlm: options['no-vlm'] === true || options['vlm'] !== true,
           force: forceList,
+          skip: skipList,
+          ocrThreads,
         },
       });
       process.stdout.write(`${JSON.stringify(outcome.result, null, 2)}\n`);
@@ -269,6 +338,134 @@ async function dispatch(argv: string[]): Promise<number> {
       return 0;
     }
 
+    case 'render': {
+      const { positionals, options } = parse(rest, {
+        job: { type: 'string' },
+        tier: { type: 'string' },
+        'approved-draft': { type: 'string' },
+        'style-profile': { type: 'string' },
+        waiver: { type: 'string', multiple: true },
+        'audio-events': { type: 'string' },
+      });
+      const edlId = requirePositional(positionals, 0, 'platform-edl-id');
+      const jobId =
+        (typeof options['job'] === 'string' ? options['job'] : undefined) ??
+        findJobForArtefact('edl', `${edlId}.json`) ??
+        undefined;
+      if (!jobId) {
+        throw new Error(`Could not find the job that owns PlatformEDL ${edlId}; pass --job <job-id>.`);
+      }
+      const tier = typeof options['tier'] === 'string' ? options['tier'] : 'draft';
+      if (tier !== 'draft' && tier !== 'final') {
+        throw new Error(`--tier must be "draft" or "final" (decisions.md D-34); received "${tier}".`);
+      }
+      const request: Record<string, unknown> = { jobId, edlId, tier };
+      if (typeof options['approved-draft'] === 'string') request['approvedDraftManifestId'] = options['approved-draft'];
+      if (typeof options['style-profile'] === 'string') request['styleProfilePath'] = resolveUserPath(options['style-profile'], 'Style profile');
+      if (typeof options['audio-events'] === 'string') request['audioEventsPath'] = resolveUserPath(options['audio-events'], 'Audio events');
+      if (Array.isArray(options['waiver'])) {
+        request['waiverPaths'] = (options['waiver'] as string[]).map((p) => resolveUserPath(p, 'QA waiver'));
+      }
+      const outcome = await invokeSkill({ skillName: 'render', jobId, request });
+      process.stdout.write(`${JSON.stringify(outcome.result, null, 2)}\n`);
+      // A failing QA gate is a RESULT, not a CLI error — the artefacts exist and
+      // the report explains why. Exit 4 so a script can tell "gate refused" from
+      // "the render fell over" (3) without parsing the JSON.
+      const gateStatus = (outcome.result as { gateStatus?: string } | undefined)?.gateStatus;
+      return gateStatus === 'fail' ? 4 : 0;
+    }
+
+    case 'approve': {
+      const { positionals, options } = parse(rest, {
+        job: { type: 'string' },
+        by: { type: 'string' },
+        reject: { type: 'boolean' },
+        reason: { type: 'string' },
+        notes: { type: 'string' },
+      });
+      const draftRenderId = requirePositional(positionals, 0, 'draft-render-id');
+      const decidedBy = requireString(
+        options,
+        'by',
+        'Approval is a human act recorded with a name (decisions.md D-9): --by "Your Name".',
+      );
+      const jobId =
+        (typeof options['job'] === 'string' ? options['job'] : undefined) ??
+        findJobForRender(draftRenderId) ??
+        undefined;
+      if (!jobId) {
+        throw new Error(
+          `Could not find the job that owns render ${draftRenderId}; pass --job <job-id>.`,
+        );
+      }
+      const request: Record<string, unknown> = { jobId, draftRenderId, decidedBy };
+      if (options['reject'] === true) request['reject'] = true;
+      if (typeof options['reason'] === 'string') request['reason'] = options['reason'];
+      if (typeof options['notes'] === 'string') request['notes'] = options['notes'];
+      const outcome = await invokeSkill({ skillName: 'approve', jobId, request });
+      process.stdout.write(`${JSON.stringify(outcome.result, null, 2)}\n`);
+      return 0;
+    }
+
+    case 'package': {
+      const { positionals, options } = parse(rest, { job: { type: 'string' } });
+      const finalRenderId = requirePositional(positionals, 0, 'final-render-id');
+      const jobId =
+        (typeof options['job'] === 'string' ? options['job'] : undefined) ??
+        findJobForRender(finalRenderId) ??
+        undefined;
+      if (!jobId) {
+        throw new Error(`Could not find the job that owns render ${finalRenderId}; pass --job <job-id>.`);
+      }
+      const outcome = await invokeSkill({
+        skillName: 'package',
+        jobId,
+        request: { jobId, finalRenderId },
+      });
+      process.stdout.write(`${JSON.stringify(outcome.result, null, 2)}\n`);
+      return 0;
+    }
+
+    case 'revise': {
+      const { positionals, options } = parse(rest, {
+        job: { type: 'string' },
+        notes: { type: 'string' },
+        'recorded-model': { type: 'string' },
+      });
+      const renderId = requirePositional(positionals, 0, 'render-id');
+      const notes = requireString(
+        options,
+        'notes',
+        'The reviewer\'s note in their own words: --notes "tighten the opening".',
+      );
+      const jobId =
+        (typeof options['job'] === 'string' ? options['job'] : undefined) ??
+        findJobForRender(renderId) ??
+        undefined;
+      if (!jobId) {
+        throw new Error(`Could not find the job that owns render ${renderId}; pass --job <job-id>.`);
+      }
+      const request: Record<string, unknown> = { jobId, renderId, notes };
+      if (typeof options['recorded-model'] === 'string') {
+        request['recordedModelPath'] = resolveUserPath(options['recorded-model'], 'Recorded model');
+      }
+      const outcome = await invokeSkill({ skillName: 'revise', jobId, request });
+      process.stdout.write(`${JSON.stringify(outcome.result, null, 2)}\n`);
+      return 0;
+    }
+
+    case 'status': {
+      const { options } = parse(rest, { phase0: { type: 'boolean' } });
+      if (options['phase0'] !== true) {
+        process.stderr.write(
+          'cutdown status needs a scope. The only one at Phase 0 is --phase0, which computes the four ' +
+            'PRD §15 exit criteria from committed ContentPackages (D-36).\n',
+        );
+        return 2;
+      }
+      return statusPhase0Command();
+    }
+
     case 'test:skills': {
       const { positionals } = parse(rest, {});
       return testSkillsCommand(positionals[0]);
@@ -336,6 +533,11 @@ async function dispatchSkills(argv: string[]): Promise<number> {
       );
     }
     return 0;
+  }
+
+  if (sub === 'sync') {
+    const { options } = parse(rest, { check: { type: 'boolean' }, prune: { type: 'boolean' } });
+    return skillsSyncCommand(options['check'] === true, options['prune'] === true);
   }
 
   if (sub === 'run') {

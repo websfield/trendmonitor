@@ -1,0 +1,86 @@
+{
+  "edlId": "01KZ08ZJ8MGTRS8XE919GKWHME",
+  "gateStatus": "fail",
+  "blockers": [
+    {
+      "rule": "capability",
+      "severity": "block",
+      "source": "deterministic",
+      "code": "DURATION_BELOW_MIN",
+      "message": "targetDurationRange.minSeconds (3) is below the platform minimum of 5s (D-3).",
+      "cite": {
+        "field": "capability"
+      }
+    },
+    {
+      "rule": "context-dependency",
+      "severity": "block",
+      "source": "deterministic",
+      "code": "CONTEXT_DEPENDENCY_MISSING",
+      "message": "Clip clip-2's Moment 2DTMRS95NA6WJMD9KYMJZBWECJ requires_setup from Moment V6T1KCX65VZ8FMTXAH2BWPJ7N3, which no clip in the EDL includes; the payoff is cut loose from its setup (REQ-034/D-37).",
+      "cite": {
+        "clipId": "clip-2",
+        "momentId": "V6T1KCX65VZ8FMTXAH2BWPJ7N3"
+      }
+    }
+  ],
+  "advisories": [
+    {
+      "rule": "quote-fidelity",
+      "severity": "advisory",
+      "source": "deterministic",
+      "code": "QUOTE_SPEAKER_UNVERIFIED",
+      "message": "Clip clip-1 quotes speaker \"speaker_1\" whose identity is uncorrected (isCorrected=false) on Moment MX3Q268ASZ5GJBE47PFJDHSV44; an unverified identity per moment-v1 — surfaced, never blocking.",
+      "cite": {
+        "clipId": "clip-1",
+        "momentId": "MX3Q268ASZ5GJBE47PFJDHSV44",
+        "field": "caption.speakerLabel",
+        "matched": "speaker_1"
+      }
+    },
+    {
+      "rule": "quote-fidelity",
+      "severity": "advisory",
+      "source": "deterministic",
+      "code": "QUOTE_SPEAKER_UNVERIFIED",
+      "message": "Clip clip-2 quotes speaker \"speaker_3\" whose identity is uncorrected (isCorrected=false) on Moment 2DTMRS95NA6WJMD9KYMJZBWECJ; an unverified identity per moment-v1 — surfaced, never blocking.",
+      "cite": {
+        "clipId": "clip-2",
+        "momentId": "2DTMRS95NA6WJMD9KYMJZBWECJ",
+        "field": "caption.speakerLabel",
+        "matched": "speaker_3"
+      }
+    },
+    {
+      "rule": "quote-fidelity",
+      "severity": "advisory",
+      "source": "deterministic",
+      "code": "QUOTE_SPEAKER_UNVERIFIED",
+      "message": "Clip clip-3 quotes speaker \"speaker_5\" whose identity is uncorrected (isCorrected=false) on Moment Z9SEP854V2383S300WDYZVX373; an unverified identity per moment-v1 — surfaced, never blocking.",
+      "cite": {
+        "clipId": "clip-3",
+        "momentId": "Z9SEP854V2383S300WDYZVX373",
+        "field": "caption.speakerLabel",
+        "matched": "speaker_5"
+      }
+    },
+    {
+      "rule": "disclosures",
+      "severity": "advisory",
+      "source": "deterministic",
+      "code": "AI_MEDIA_DISCLOSURE_UNASSERTED",
+      "message": "disclosures.aiGeneratedOrAltered is false and no material-alteration signal is available; at Phase 0 this is advisory only, surfaced for human review, never a block.",
+      "cite": {
+        "field": "disclosures.aiGeneratedOrAltered"
+      }
+    }
+  ],
+  "checked": {
+    "clips": 3,
+    "quoteCaptions": 3,
+    "viewerVisibleTextFields": 4,
+    "proofRequirements": 1,
+    "proofPoints": 2,
+    "schemaBlocked": false
+  }
+}

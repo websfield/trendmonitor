@@ -8,6 +8,6 @@
     ".": "./dist/src/index.js"
   },
   "scripts": {
-    "test": "node --test dist/tests/"
+    "test": "node --test \"dist/tests/**/*.test.js\""
   }
 }

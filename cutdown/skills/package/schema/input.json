@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cutdown.local/skills/package/input.json",
+  "title": "PackageRequest",
+  "description": "Names the FINAL render to package. Deliberately minimal: every other input \u2014 the approval, the QA report, the rights records, the lineage, the contract set \u2014 is read from committed artefacts rather than accepted from the caller, because a caller-supplied evidence field is a caller-supplied claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "jobId",
+    "finalRenderId"
+  ],
+  "properties": {
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Becomes a directory name under `project-data/jobs/`. The pattern is defence in depth \u2014 `jobDir()` in @cutdown/skill-runtime guards and containment-checks it regardless of caller, because a skill's `entrypoint` is a documented direct invocation."
+    },
+    "finalRenderId": {
+      "type": "string",
+      "description": "The `renderId` of the final-tier render to deliver. A draft render id is accepted here and REFUSED with its tier named \u2014 telling the operator what is wrong beats pretending the id does not exist. Must be a ULID: it becomes a FILENAME under the job (and, for outputs, a directory that is created on the way), so a traversing value would read or write inside another job. The skill asserts it again before joining, because a skill's `entrypoint` is a documented direct invocation and a schema-only guard has the same bypass shape the Phase 2 HIGH had.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    }
+  }
+}

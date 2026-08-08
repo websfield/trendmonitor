@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test, describe } from 'node:test';
-import { isAbsolute, relative, sep } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { isAbsolute, join, relative, sep } from 'node:path';
 
-import { JOBS_ROOT, assertSafeJobId, jobDir, jobPaths } from '../src/paths.js';
+import { JOBS_ROOT, WORKSPACE_ROOT, assertSafeJobId, jobDir, jobPaths } from '../src/paths.js';
+import { CutdownError } from '../src/errors.js';
 
 /**
  * `assertSafeJobId` is the only thing standing between a job id and a directory
@@ -44,6 +46,48 @@ describe('assertSafeJobId — traversal and escape', () => {
     // the jobs root entirely rather than merely deeper inside it.
     for (const bad of ['C:', 'C:\\tmp', 'C:/tmp', '//server/share', '\\\\server\\share']) {
       assert.throws(() => assertSafeJobId(bad), /Invalid job id/, `must reject ${JSON.stringify(bad)}`);
+    }
+  });
+
+  /**
+   * THE SHARED FIXTURE — see the header comment in `safe-id-cases.json`. The
+   * same file is driven through `assertSafeId` in `@cutdown/skill-runtime` and
+   * through `assert_safe_id` in the Python worker, because these three guards
+   * are deliberate duplicates and they had already drifted apart on a trailing
+   * newline with nothing to catch it.
+   */
+  const CASES = JSON.parse(
+    readFileSync(
+      join(WORKSPACE_ROOT, 'packages', 'skill-runtime', 'tests', 'safe-id-cases.json'),
+      'utf8',
+    ),
+  ) as { accept: string[]; reject: string[] };
+
+  test('agrees with the other two mirrors on every REJECTED id', () => {
+    for (const bad of CASES.reject) {
+      assert.throws(() => assertSafeJobId(bad), `must reject ${JSON.stringify(bad)}`);
+    }
+  });
+
+  test('agrees with the other two mirrors on every ACCEPTED id', () => {
+    for (const good of CASES.accept) {
+      assert.doesNotThrow(() => assertSafeJobId(good), `must accept ${JSON.stringify(good)}`);
+    }
+  });
+
+  test('a rejected id is a STRUCTURED refusal, not a bare Error with a stack', () => {
+    // `reportError` classifies a non-CutdownError as UNEXPECTED_ERROR, exit 1,
+    // with `details.stack` — onto the stream four callers parse. A bad job id is
+    // a caller error (exit 2), and the other two mirrors already said so.
+    try {
+      assertSafeJobId('nul');
+      throw new Error('expected a rejection');
+    } catch (error) {
+      assert.ok(error instanceof CutdownError, `expected CutdownError, got ${String(error)}`);
+      assert.equal(error.code, 'UNSAFE_ID');
+      assert.equal(error.exitCode, 2);
+      const details = error.toStructured().details as Record<string, unknown>;
+      assert.ok(!('stack' in details), 'a refusal must not leak a stack trace to the parsed stream');
     }
   });
 
