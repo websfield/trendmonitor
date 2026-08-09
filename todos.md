@@ -1,0 +1,118 @@
+# todos.md — non-coding decisions
+
+Decisions that engineering cannot make for itself: owner inputs, product definitions, legal/consent questions, and spend authority. Each row says **what it blocks**, **who decides**, and — where work would otherwise stop — **the default the code is being built under** so nothing waits on an unanswered question.
+
+Convention: a decision that is settled here graduates to `docs/video-editing/decisions.md` as a numbered D-row. This file holds only what is *open*.
+
+Last updated: 2026-08-09.
+
+---
+
+## 1. Blocking a Stage 0 task — proceeding under a stated default
+
+### T-1 · What counts as one "output"? ✅ **SETTLED 2026-08-09 — key on the CreativeBrief**
+
+**Owner decision:** an output is **one approved cut per `CreativeBrief`**. A second package for the same CreativeBrief **supersedes** rather than adds. Graduates to `decisions.md` as **D-56** in Stage 0 task 4.
+
+**Immediate consequence:** the real-output count is **1 of 20**, not 2. `01KZ9YK48KBRAX85DJ1P76NYMN` supersedes `01KZ8B40TENCWQ72F061FXK79S` (same `creativeBriefId`), unless both are separately approved for publication. Stage 0 task 13 implements this and `status --phase0` must report 1.
+
+*Context retained below.*
+
+**Blocks:** Stage 0 tasks 3, 8, 13; acceptance criteria A4, A14, A15. Defines "comparable output" for Stage 1 and Stage 6's uplift gate.
+**Decider:** product owner. **Decided.**
+
+Verified on disk: three delivered ContentPackages exist, and **two are real** — `01KZ8B40TENCWQ72F061FXK79S` and `01KZ9YK48KBRAX85DJ1P76NYMN`. Both belong to job `schwarzkopf-w1-showcase`, share `briefId` **and `creativeBriefId`**, and differ in story plan, EDL and final render.
+
+So they are either **two outputs** (two publishable cuts) or **one** (a second attempt at one angle). The answer moves the PRD §15 exit gate by roughly 4× — 20 outputs is either ~5 jobs or ~20 jobs of work.
+
+**Default being built under: an output is keyed on the `CreativeBrief`.** Rationale: REQ-110 defines a variant by its *angle, audience promise and hook hypothesis* — all properties of the CreativeBrief. Two packages from one CreativeBrief are two renders of one angle, not two variants. Under this default the later package supersedes the earlier unless both are separately approved for publication.
+
+**Consequence, stated plainly:** the real-output count drops from **2 of 20 to 1 of 20**. This makes the gate stricter and the reported number more honest, which is the direction of this whole work package — but it is a product call, not an engineering one.
+
+**Cost to reverse:** low, by construction. The rule lives in `output-counting-policy.md` and one resolver; reversing it is a policy edit plus a test update, not a schema change.
+
+---
+
+## 2. Owner inputs — long outstanding, blocking real progress
+
+### T-2 · Set the D-21 spend ceiling
+**Blocks:** `PHASE_3_ACCEPTED_LIVE` (open since Phase 3); Stage 1 live provider benchmarks; **all** of Stage 3's live model execution.
+**Decider:** owner. **Needs:** a number in AUD, and where it is configured.
+Every editorial stage to date has run on recorded fixtures at AUD 0.00. Recorded replies got the pipeline built; they cannot demonstrate editorial quality, because a recorded reply is not a decision. **Stage 3 cannot meaningfully start without this.**
+
+### T-3 · Supply two more accounts, with rights records (D-36)
+**Blocks:** `PHASE_0_EXIT_EARNED` (needs 3 accounts, has 1).
+**Decider:** owner. **Needs:** stable `accountId`s, source classification, and a rights record per asset with an `evidence_uri`.
+
+### T-4 · Accumulate the remaining real outputs
+**Blocks:** `PHASE_0_EXIT_EARNED` (needs 20; has 1 or 2 pending T-1).
+**Decider:** operations. Not an engineering task — it is real production work through the pipeline.
+
+### T-5 · Upgrade the rights basis beyond owner-directed
+**Blocks:** any use beyond internal stakeholder showcase.
+**Decider:** owner / legal.
+The real proving run's rights records cite published partnership posts as `evidenceUri` and note that formal creator agreements are **held by the campaign, not attached**; `paidAmplificationPermitted: false` throughout. Current approval is delegated, not agreement-backed.
+
+---
+
+## 3. Product and strategy
+
+### T-6 · Does cutdown get its own North Star?
+**Blocks:** nothing immediately; weakens every alignment check until answered.
+**Decider:** product owner.
+`NORTH_STAR.md` describes **UGC Intelligence for ClientHub** — compliance gate, amplification scorer, Knowledge API. Cutdown is a second product line with its own PRD and roadmap and is **not in it**. Options: (a) give cutdown its own North Star document; (b) extend the root one to name both lines; (c) accept the PRD as cutdown's governing contract and say so explicitly. I have deliberately not invented one.
+
+### T-7 · Assign the unowned PRD Phase 1 exit obligations
+**Blocks:** claiming PRD Phase 1 complete.
+**Decider:** product owner + operations.
+Five stages are governed by PRD Phase 1, and **none** of them owns these: **≥60 published outputs**, **unit cost known**, **≥3 repeat internal users** (§15), and **cost attribution coverage ≥99%** plus p50/p95 unit cost by source minute / final minute / variant / platform (§14.3). These are operations and instrumentation obligations, not engineering deliverables.
+
+### T-8 · Analytics access and consent
+**Blocks:** Stage 6 entirely.
+**Decider:** owner / legal.
+Needs: whose analytics, under what permission, retained how long. Note the precedent from T-5 — if creator agreements are held by the campaign rather than attached, performance data likely carries the same question. **Resolve before building a connector, not after.**
+
+### T-9 · Are the Social Soup accounts one tenant or many?
+**Blocks:** Stage 6's pooled uplift statistic **and** Stage 7's isolation model — and the two answers must agree.
+**Decider:** product owner.
+PRD §14.2 targets uplift "across multiple accounts" — a pooled statistic. Stage 7 turns accounts into isolated workspaces. The repo already holds the resolved form of this exact question one product line over: *a summary statistic of outcome data is outcome data*. Decide before building the pooled statistic.
+
+---
+
+## 4. Legal / licensing gates
+
+### T-10 · Remotion licence (D-16)
+**Blocks:** Stage 4's Remotion adapter.
+**Decider:** owner / legal. D-16 carries an explicit instruction: **escalate before `npm install remotion`** — the company licence is an owner/legal commitment. Engineering must escalate, not install.
+
+### T-11 · Golden-set asset permissions
+**Blocks:** Stage 1 task 12.
+**Decider:** owner. PRD §13.1 requires golden sets be **versioned and permissioned**; each asset needs a written permission record.
+
+### T-12 · Retention vs reproducibility
+**Blocks:** Stage 7's storage migration design.
+**Decider:** owner / legal.
+A genuine conflict, currently nobody's task: **REQ-113 requires previously approved versions stay reproducible forever**, while retention/deletion (REQ-155/156) requires erasure — for a store holding licensed creator footage and third-party personal data. D-8 currently says "delete nothing automatically". For this store, that tension *is* the design.
+
+---
+
+## 5. Permissions needed from the user (small, but blocking)
+
+### T-13 · Authorise `git push`
+**Blocks:** Stage 0 task 17 acceptance criterion **A7** (CI green on a clean clone).
+The branch is **3 commits ahead of `origin/main`**. CI runs on push, so "CI is green" is unverifiable until the branch is pushed. Per `CLAUDE.md` golden rule 8, pushing waits for explicit confirmation. Everything else in Stage 0 can be built and verified locally first.
+
+### T-14 · Add `cutdown/.env.example` by hand
+**Blocks:** nothing — no code reads it (verified; code reads `.env`, which is git-ignored).
+This session's tooling is denied read access to `.env*` paths, so I will not commit a file whose secret-freedom I cannot verify (golden rule 2). It is the only remaining untracked file. Please eyeball and commit it.
+
+---
+
+## 6. Settled during this work — recorded here, pending graduation to `decisions.md`
+
+| # | Decision | Where it lands |
+|---|---|---|
+| — | `work/` is never tracked — licensed creator footage + third-party personal data + ~200 MB/campaign | committed in `.gitignore` |
+| — | Phase 4–6 committed as three coherent commits, not four invented per-phase ones (the worktree was a cumulative snapshot; splitting it would produce commits that never existed and don't build) | commits `c21c7aa`, `7404a65`, `501f212` |
+| — | The program is expressed in the PRD's roadmap vocabulary; stage numbers are filenames, PRD phases are authority | master plan §0 |
+| — | Planning detail decays with distance; Stages 2–7 carry re-planning triggers rather than invented task tables | master plan §7 |
