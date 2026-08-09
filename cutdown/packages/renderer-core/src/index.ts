@@ -16,6 +16,7 @@ export {
   type SkillErrorPayload,
   type SkillIdentity,
   // Path safety
+  MEDIA_BINARIES,
   PROTOCOL_WHITELIST,
   assertSafeInputPath,
   assertSafeArgv,

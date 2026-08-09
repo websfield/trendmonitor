@@ -1,0 +1,263 @@
+name: cutdown
+
+# ---------------------------------------------------------------------------
+# Why this file exists, and what it deliberately does NOT do.
+#
+# decisions.md D-33 said "no CI at Phase 0", and every determinism and QA claim
+# in tech-spec §12 was pinned to one Windows machine as a consequence. That was
+# honest while the pipeline was being built and is no longer good enough: the
+# claim "a clean clone passes" had never once been tested, and three of the four
+# things this workflow runs (`build:contracts --check`, `skills sync --check`,
+# `validate:contracts`) exist precisely to catch a state that only shows up on a
+# machine that is not the author's. **D-57 supersedes D-33** — by appending, not
+# by editing it.
+#
+# PATH-SCOPED on purpose. This repository holds two independent products
+# (tech-spec §14): UGC Intelligence under `src/`, and Cutdown under `cutdown/`.
+# A Cutdown failure must not gate UGC work and vice versa, so this workflow only
+# fires on Cutdown's own paths. It is not a repo-wide gate and must never grow
+# into one.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+    # Written out twice rather than shared through a YAML anchor: GitHub's
+    # workflow parser does not expand anchors, so `*cutdown-paths` would not be
+    # a shared list — it would be a filter that silently matches nothing, which
+    # is the worst failure a path filter has (the job simply never runs).
+    paths:
+      - 'cutdown/**'
+      - 'docs/video-editing/**'
+      - '.claude/skills/cutdown-*/**'
+      - '.github/workflows/cutdown.yml'
+  pull_request:
+    paths:
+      - 'cutdown/**'
+      - 'docs/video-editing/**'
+      - '.claude/skills/cutdown-*/**'
+      - '.github/workflows/cutdown.yml'
+  workflow_dispatch:
+
+# Least privilege. Without this the workflow inherits the repository's default
+# GITHUB_TOKEN scope, which on many repos is read/write — and this workflow runs
+# third-party actions. It only ever reads the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: cutdown-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The build the Phase 0 machine runs (`.tool-versions`, D-39). Declared here as
+  # the TARGET; the `ffmpeg` step below verifies what actually got installed and
+  # fails on a MAJOR mismatch rather than proving determinism against a build
+  # nobody chose. A patch difference is tolerated and recorded, because the
+  # tier-1 claim is same-machine byte identity (tech-spec §12) — not identity
+  # across builds, which §12 explicitly does not assert.
+  FFMPEG_MAJOR: '8'
+  FFMPEG_TARGET: '8.0.1'
+  # The Linux static build, pinned in one place. `-release-` tracks the current
+  # release series rather than master, so it carries the shipped major with
+  # libass. If the first CI run shows this URL or its major is wrong, THIS is the
+  # line to change — the verify step's remedy points here by name.
+  FFMPEG_LINUX_URL: 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz'
+
+defaults:
+  run:
+    working-directory: cutdown
+
+jobs:
+  # -------------------------------------------------------------------------
+  # The entry gate (tech-spec §12) on a clean clone, both operating systems.
+  # -------------------------------------------------------------------------
+  gate:
+    name: entry gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Never fail-fast: "it broke on Windows only" and "it broke on both" are
+      # different diagnoses, and cancelling the other leg hides which one it is.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # `packageManager` in cutdown/package.json pins pnpm 10.28.2; corepack
+      # reads it. Deliberately not a third-party pnpm action — the version is
+      # already declared in the repo and a second declaration is a second home.
+      - name: Enable corepack (pnpm from packageManager)
+        run: corepack enable
+        working-directory: .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: cutdown/.tool-versions
+          cache: pnpm
+          cache-dependency-path: cutdown/pnpm-lock.yaml
+
+      - name: Install FFmpeg with libass (Linux)
+        if: runner.os == 'Linux'
+        # NOT `apt-get install ffmpeg`: the Ubuntu archive ships whatever major
+        # that release froze (6.x on 24.04), and the verify step below hard-fails
+        # on a major mismatch — so the distro package would make this leg red on
+        # every run. A static release build tracks the current series and carries
+        # libass. Pinned in ONE place (`FFMPEG_LINUX_URL`) so correcting it is a
+        # one-line change, and the verify step names it in the remedy.
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ffmpeg" && cd "$RUNNER_TEMP/ffmpeg"
+          curl -fsSL "$FFMPEG_LINUX_URL" -o ffmpeg.tar.xz
+          tar -xJf ffmpeg.tar.xz --strip-components=1
+          sudo install -m 0755 ffmpeg ffprobe /usr/local/bin/
+        working-directory: .
+
+      - name: Install FFmpeg with libass (Windows)
+        if: runner.os == 'Windows'
+        # `ffmpeg-full` rather than `ffmpeg`: the full build is the one compiled
+        # with libass, and open captions are burned in by libass. A minimal build
+        # renders video and silently no captions, which is the failure mode the
+        # verification step below exists to make impossible.
+        run: choco install ffmpeg-full --no-progress -y
+        working-directory: .
+
+      - name: Verify the FFmpeg build (fails on a major mismatch, records the rest)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD="$(ffmpeg -hide_banner -version | head -n1)"
+          echo "installed: $BUILD"
+          MAJOR="$(printf '%s' "$BUILD" | sed -nE 's/^ffmpeg version [^0-9]*([0-9]+)\..*/\1/p')"
+          if [ "$MAJOR" != "${FFMPEG_MAJOR}" ]; then
+            echo "::error::FFmpeg major ${MAJOR:-unknown} != pinned ${FFMPEG_MAJOR} (target ${FFMPEG_TARGET})." \
+                 "A major difference changes filtergraph and encoder behaviour, so the determinism and QA" \
+                 "gates would be proving something other than what tech-spec §12 describes." \
+                 "Fix: point FFMPEG_LINUX_URL (Linux) or the choco package (Windows) at a ${FFMPEG_MAJOR}.x build," \
+                 "or update FFMPEG_MAJOR in this workflow and tech-spec §12 together — never one without the other."
+            exit 1
+          fi
+          if ! printf '%s' "$BUILD" | grep -q "${FFMPEG_TARGET}"; then
+            echo "::notice::FFmpeg is ${MAJOR}.x but not exactly ${FFMPEG_TARGET}." \
+                 "Tolerated: tech-spec §12's tier-1 claim is byte identity WITHIN one machine," \
+                 "and the RenderManifest records this build string so the difference is never invisible."
+          fi
+          # libass is NOT probed here. `cutdown doctor` (below) does it through
+          # the same `probeCapabilities` the renderer itself calls, and a second
+          # grep-shaped check here would be a claim maintained in two places —
+          # the weaker of which would drift and be believed.
+
+      # `validate:contracts` runs BOTH validators and treats an unavailable Python
+      # side as a FAILURE, not a warning — so the gate leg needs Python with
+      # pydantic. Only the root dev group: `uv sync` without `--all-packages`
+      # installs the root project alone (the 2026-07-21 lesson), which is exactly
+      # what is wanted here. The multi-gigabyte model stack belongs to the
+      # `python-worker` job below.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python (contract validator only)
+        # `--frozen`: `uv.lock` is tracked deliberately (see cutdown/.gitignore),
+        # and a bare `uv sync` may RESOLVE — which both defeats the pin and can
+        # trip the "working tree unchanged" step below, misattributing a stale
+        # lock to the gate mutating the tree. Matches `--frozen-lockfile` on the
+        # pnpm side; the two should never disagree about whether locks are law.
+        run: uv sync --frozen
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: cutdown doctor
+        # Placed before the gate commands on purpose: if the runner is missing a
+        # tool, this says which one in a line, instead of leaving it to be
+        # inferred from a filtergraph error 20 minutes later.
+        run: node apps/cli/dist/src/main.js doctor
+
+      - name: build:contracts --check
+        run: node apps/cli/dist/src/main.js build:contracts --check
+
+      - name: validate:contracts
+        run: node apps/cli/dist/src/main.js validate:contracts
+
+      - name: skills sync --check
+        run: node apps/cli/dist/src/main.js skills sync --check
+
+      - name: test:skills
+        # Named explicitly because tech-spec §12 lists it in the entry gate and
+        # D-57 claims CI runs "the complete entry gate". `pnpm -r test` does
+        # execute every skill package's suite, so this adds no coverage — it makes
+        # the CLAIM true, and keeps it true if the two ever diverge.
+        run: node apps/cli/dist/src/main.js test:skills
+
+      - name: Tests
+        # --no-bail so one failing package does not hide the others: an aggregate
+        # built from a partial run is the false-green this repo has already hit.
+        run: pnpm -r --no-bail run test
+
+      - name: ruff
+        run: uv run --with ruff ruff check --config ruff.toml .
+
+      - name: Working tree is unchanged by the gate
+        # A gate that mutates the tree is a gate that can pass by rewriting its
+        # own inputs. `skills sync` and `build:contracts` both WRITE in their
+        # non---check form, and a future edit could reach the writing path.
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::The entry gate modified the working tree:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+  # -------------------------------------------------------------------------
+  # The Python worker suite, Linux only and deliberately so.
+  # -------------------------------------------------------------------------
+  python-worker:
+    name: indexer worker (python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install FFmpeg with libass
+        # Same pinned static build as the gate job — one source, one version.
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ffmpeg" && cd "$RUNNER_TEMP/ffmpeg"
+          curl -fsSL "$FFMPEG_LINUX_URL" -o ffmpeg.tar.xz
+          tar -xJf ffmpeg.tar.xz --strip-components=1
+          sudo install -m 0755 ffmpeg ffprobe /usr/local/bin/
+        working-directory: .
+
+      # `--all-packages` is load-bearing and is the 2026-07-21 lesson in one flag:
+      # at a uv workspace root, a bare `uv sync` installs ONLY the root project
+      # and exits 0 having installed none of the worker's engines.
+      - name: Install the worker stack
+        run: uv sync --all-packages --frozen
+
+      - name: Prove the engines IMPORT
+        # An installer's exit code is not proof (2026-07-21): three OpenCV
+        # distributions once clobbered one `cv2/` directory while pip reported
+        # success. D-43 pins them to one version; this asserts the pin worked.
+        run: |
+          uv run python -c "import cv2; print('cv2', cv2.__version__)"
+          uv run python -c "import scenedetect, paddle; print('scenedetect+paddle ok')"
+          uv run python -c "import faster_whisper, torch; print('whisper+torch ok')"
+
+      - name: Tests
+        run: uv run --with pytest pytest -q
+
+      - name: ruff
+        run: uv run --with ruff ruff check --config ruff.toml .

@@ -49,7 +49,7 @@ AUDIO_TIMEBASE = {"num": 1, "den": 48000}
 ENGINE_STUB = {"name": "test", "version": "0", "parameters": []}
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def detected_shots(media_path: Path) -> tuple[dict, ...]:
     """Shot detection is deterministic, so decoding each fixture once is enough.
 

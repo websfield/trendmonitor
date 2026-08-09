@@ -213,7 +213,7 @@ def assert_safe_media_path(path: Path, root: Path) -> Path:
             f"Media path {raw!r} is option-shaped and would be read as a flag.",
             exit_code=EXIT_INPUT_VALIDATION,
         )
-    if raw.startswith("\\\\") or raw.startswith("//"):
+    if raw.startswith(("\\\\", "//")):
         raise SubStageError(
             "UNSAFE_MEDIA_PATH",
             f"Media path {raw!r} is a UNC share; FFmpeg would fetch it over SMB.",
@@ -355,7 +355,16 @@ def append_progress(ctx: SubStageContext, sub_stage: str, current: int, total: i
     except OSError as error:
         if not _progress_write_failed:
             _progress_write_failed = True
-            print(f"warning: progress heartbeat unwritable ({error}); work continues without it", file=sys.stderr)
+            # The `file=sys.stderr` is the whole point, and the suppression below
+            # exists to say so. A sub-stage's STDOUT is a contract surface
+            # (tech-spec §6.2) that the caller parses as the result document, so an
+            # operator warning must go to stderr — writing it to stdout would
+            # corrupt the result. Selecting T20 (D-58) is what makes every
+            # remaining print state which stream it uses, and why.
+            print(  # noqa: T201
+                f"warning: progress heartbeat unwritable ({error}); work continues without it",
+                file=sys.stderr,
+            )
 
 
 def append_run_log(ctx: SubStageContext, entry: dict[str, Any]) -> None:

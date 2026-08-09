@@ -16,7 +16,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** `packages/renderer-core/dist/tests` → `cutdown/`. */
 const CUTDOWN_ROOT = join(here, '..', '..', '..', '..');
 
-describe('tier-1 determinism pins (tech-spec §12, D-33)', () => {
+// The proof ENVIRONMENT moved (D-57 supersedes D-33's "no CI exists at Phase 0";
+// CI now runs this same suite on each runner). What is asserted did not: tier 1
+// is byte identity between two renders on ONE machine, never across machines.
+describe('tier-1 determinism pins (tech-spec §12, D-33 as amended by D-57)', () => {
   it('claims tier 1 and nothing stronger', () => {
     strictEqual(DETERMINISM_TIER, 1);
   });

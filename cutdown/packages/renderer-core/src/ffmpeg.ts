@@ -140,6 +140,24 @@ const runtimeError = (
  * `-f null -` sink and `pipe:1` progress stream. Everything else — `concat:`,
  * `http:`, `https:`, `subfile:`, `crypto:`, `data:` — is unreachable.
  */
+/**
+ * The media binaries this module — and, per tech-spec §11, ONLY this module —
+ * may spawn.
+ *
+ * Exported so that other modules can REFUSE to spawn them without naming them
+ * themselves. That indirection is not decoration: §11's enforcing test
+ * (`tests/determinism.test.ts`) detects a file that both imports
+ * `node:child_process` and names one of these in a string literal, so a generic
+ * process-spawning helper elsewhere in the workspace cannot state its own
+ * refusal list without tripping the very rule it is enforcing. Keeping the names
+ * here gives the rule one home, in the file the rule is about.
+ *
+ * `ffplay` is included though nothing spawns it: it is the third binary of the
+ * same distribution, and the set exists to be a boundary rather than an
+ * inventory of what happens to be called today.
+ */
+export const MEDIA_BINARIES: ReadonlySet<string> = new Set(['ffmpeg', 'ffprobe', 'ffplay']);
+
 export const PROTOCOL_WHITELIST = 'file,pipe';
 
 /** Inputs FFmpeg is allowed to be pointed at that are not filesystem paths. */

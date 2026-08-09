@@ -719,6 +719,11 @@ function loadAudioEvents(path: string | null, edl: PlatformEDL): QaNonSpeechEven
   const clips = [...edl.clips]
     .sort((a, b) => a.order - b.order)
     .map((clip) => ({
+      // `assetId` rides along deliberately: a source index is per-asset, so the
+      // events in this file describe ONE asset, and a multi-asset EDL's clips do
+      // not. Dropping it here is what let one asset's events project onto
+      // another's ranges (D-51's remaining half).
+      assetId: clip.assetId,
       startTicks: clip.sourceRange.startTicks,
       endTicks: clip.sourceRange.endTicks,
       timebase: clip.sourceRange.timebase,

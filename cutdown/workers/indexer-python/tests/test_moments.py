@@ -9,6 +9,8 @@ against the generated Pydantic model, the same validator the entry gate runs.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 from cutdown_contracts.moment_v1 import Moment
 
@@ -134,7 +136,7 @@ class TestGranularityWindow:
 
     def test_ranges_tile_without_gaps_or_overlap(self) -> None:
         ranges = segment_ranges([0, 120, 400, 3000], TB)
-        for (_, prev_end), (next_start, _) in zip(ranges, ranges[1:]):
+        for (_, prev_end), (next_start, _) in pairwise(ranges):
             assert prev_end == next_start, "a gap silently loses footage"
         assert ranges[0][0] == 0 and ranges[-1][1] == 3000
 

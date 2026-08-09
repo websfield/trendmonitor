@@ -178,7 +178,7 @@ class TestAudioSetMapping:
 
     def test_the_mapping_covers_every_classifier_owned_kind(self) -> None:
         targets = set(AUDIOSET_TO_KIND.values())
-        assert PANNS_OWNED_KINDS <= targets
+        assert targets >= PANNS_OWNED_KINDS
 
     def test_speech_and_silence_are_mapped_but_not_classifier_owned(self) -> None:
         # Both appear in the table (it describes AudioSet honestly) but are

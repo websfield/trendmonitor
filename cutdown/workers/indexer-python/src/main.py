@@ -295,7 +295,7 @@ def _skipped(
         {"name": name, "status": "skipped", "reason": reason, "cacheHit": False, "durationMs": 0}
     )
     records.append(sub_stage_record(name, "skipped", started_at=now, completed_at=now, reason=reason))
-    return None
+    return
 
 
 def _collection(artefact: Any, key: str) -> list[dict[str, Any]]:
@@ -474,9 +474,17 @@ def index_asset(request: dict[str, Any]) -> dict[str, Any]:
         else:
             # Operator skip — visual descriptions are unaffected; only OCR is
             # opted out, and the ledger records exactly that with its reason.
-            ocr_artefact = _skipped(summaries, records, "ocr", ocr_skip_reason or "skipped by operator request")
-        visual_artefact = _stage(summaries, records, "visual_descriptions", lambda: visual_module.run_visual_descriptions(
-            ctx, shot_list, enable_vlm=not no_vlm, force="visual_descriptions" in force))
+            ocr_artefact = _skipped(
+                summaries, records, "ocr", ocr_skip_reason or "skipped by operator request"
+            )
+        visual_artefact = _stage(
+            summaries,
+            records,
+            "visual_descriptions",
+            lambda: visual_module.run_visual_descriptions(
+                ctx, shot_list, enable_vlm=not no_vlm, force="visual_descriptions" in force
+            ),
+        )
     else:
         ocr_artefact = _skipped(summaries, records, "ocr", shots_reason)
         visual_artefact = _skipped(summaries, records, "visual_descriptions", shots_reason)
@@ -682,7 +690,7 @@ def _validate(model_name: str, instance: dict[str, Any]) -> None:
 
     try:
         Model.model_validate(instance)
-    except Exception as error:  # noqa: BLE001 — surface as a structured contract failure
+    except Exception as error:
         raise SubStageError(
             "CONTRACT_VIOLATION",
             f"Produced {model_name} does not satisfy its schema: {str(error)[:600]}",

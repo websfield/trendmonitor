@@ -307,9 +307,12 @@ def _entities(segments: list[dict[str, Any]], ocr: list[dict[str, Any]]) -> list
 
 
 _STOPWORDS = frozenset(
-    "a an the and or but if then than that this these those i you he she it we they "
-    "is are was were be been being to of in on at for with as by from up out so no not "
-    "do does did have has had will would can could should just really very".split()
+    [
+        "a", "an", "the", "and", "or", "but", "if", "then", "than", "that", "this", "these", "those", "i",
+        "you", "he", "she", "it", "we", "they", "is", "are", "was", "were", "be", "been", "being", "to", "of",
+        "in", "on", "at", "for", "with", "as", "by", "from", "up", "out", "so", "no", "not", "do", "does",
+        "did", "have", "has", "had", "will", "would", "can", "could", "should", "just", "really", "very"
+    ]
 )
 
 

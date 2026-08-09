@@ -7,14 +7,130 @@
 # silently governed cutdown's Python. Phase 6 found 185 findings under that foreign
 # standard — none of them defects, all of them another project's style guide.
 #
-# The selection below is the correctness core. Widening it is a deliberate decision for
-# a later phase, not a side effect of where this directory happens to sit in the repo.
+# WIDENED in product-program Stage 0A (decisions.md D-58). The principle is unchanged and
+# is what decides every line below: **families that find defects are in; families that
+# express taste are out.** Five phases of reviewed Python were not written under a style
+# guide, and rewriting them to satisfy one would produce a large diff with no defect in it.
 
 line-length = 120
 target-version = "py312"
 
+# Generated code is not hand-authored code. `packages/contracts/generated/python/` is
+# written by the committed generator (D-24) and its correctness is proven by
+# `build:contracts --check`, not by a style pass — a finding there could only be
+# "fixed" by editing a file the next generator run overwrites. Under the widened
+# selection this drops **251** findings: 247 E501 (generated Pydantic is wide) and
+# the 4 S105 that are one false positive, bandit reading the QA enum values `pass_`
+# and `pass_with_waivers` as hardcoded passwords.
+#
+# `extend-exclude`, NOT `exclude`: `exclude` REPLACES ruff's built-in default list
+# (`.venv`, `node_modules`, `dist`, …) rather than adding to it. With `exclude`, the
+# clean run was carried entirely by `respect-gitignore` — measured at 238,569
+# findings with `--no-respect-gitignore`, nearly all of them in `.venv/`. A lint
+# scope that holds only because a *different* file happens to ignore the same paths
+# is the 2026-08-02 lesson one turn on: knowing which config produced the green is
+# not the same as that config controlling it.
+extend-exclude = ["packages/contracts/generated/python"]
+
 [lint]
-# Pyflakes (real defects: unused imports/variables, undefined names) + pycodestyle's
-# error classes. Style families (import order, naming, modernisation) are deliberately
-# absent — five phases of reviewed Python were not written under them.
-select = ["E4", "E7", "E9", "F"]
+select = [
+  # --- The correctness core (unchanged) --------------------------------------
+  "E4", "E7", "E9",  # pycodestyle errors: imports, statements, syntax
+  "E501",            # line length — see `line-length` above. Selected in D-58 because
+                     # the setting was declared and enforced by NOTHING (E501 lives in
+                     # E5, which was not selected), so a `line-length` that no tool
+                     # reads is a preference pretending to be a rule. An autofix in
+                     # this very pass then produced a 403-character line.
+  "F",               # Pyflakes: undefined names, unused imports/variables
+
+  # --- Defect families added by D-58 -----------------------------------------
+  "B",      # bugbear: mutable defaults, `zip()` without strict=, loop-variable capture
+  "C4",     # comprehensions: unnecessary generators/casts, wrong container built
+  "PIE",    # unnecessary or duplicated code that usually means an edit went half-done
+  "RET",    # return-path consistency — an inconsistent one hides a missing branch
+  "SIM",    # simplifications that are usually a misread condition (incl. Yoda comparisons)
+  "UP",     # pyupgrade: the floor is py312 (D-46), so a legacy idiom is dead weight
+  "S",      # bandit: this worker shells out to FFmpeg over untrusted media
+  "RUF",    # ruff-specific, chiefly RUF100 — a `noqa` that suppresses nothing
+  "T20",    # stray `print`: stdout is a CONTRACT surface here (tech-spec §6.2)
+  "BLE",    # blind `except Exception`. Selected because 17 BLE001 suppressions were
+            # already in the source, written under the leaked root config and
+            # suppressing a rule cutdown never enabled — RUF100 found them dead. The
+            # honest repair is to make them live: the deliberate blind catches keep
+            # their documented suppression, and the next undocumented one is a finding.
+
+  # --- Free tripwires: zero findings today, so they cost nothing and catch the
+  # --- first instance of a class this codebase has not yet had.
+  "ASYNC",  # blocking calls inside async defs
+  "A",      # shadowing a builtin
+  "LOG",    # logging misuse
+  "G",      # logging format-string defects
+]
+
+ignore = [
+  # `assert` IS the test framework. 1030 of bandit's 1041 findings over the linted
+  # population are pytest assertions; flagging them would bury the 11 that are about
+  # real subprocess and network surface.
+  "S101",
+  # Ambiguous-unicode rules. 9 findings over the linted population (16 including the
+  # excluded generated tree). RUF001 fires on string literals and RUF002/3 on
+  # docstrings and comments; this codebase's prose uses real typography — em dashes,
+  # curly quotes, arrows — and each of the 9 is a deliberate character in explanatory
+  # text or a user-facing message, never a homoglyph in an identifier, which F/E
+  # would catch anyway.
+  "RUF001", "RUF002", "RUF003",
+  # C408 wants `{"a": 1}` over `dict(a=1)`. The three sites are all the same
+  # kwargs-builder idiom — `kwargs = dict(...)` then `kwargs.update(overrides)` —
+  # where the call form reads as what it is. C4's defect-finding members (C401,
+  # C416, C417: building the wrong container, or a comprehension that copies)
+  # stay live; this one member is taste and finds nothing.
+  "C408",
+  # S603 fires on EVERY `subprocess.run([...])` regardless of what is in the list —
+  # it is a prompt to review, not a finding, and this codebase has already answered
+  # it structurally: every spawn passes an argv ARRAY with `shell=False` (the rule
+  # `renderer-core/src/ffmpeg.ts` states and `assertSafeArgv` enforces), and the
+  # untrusted-media path is reviewed per-site. 11 identical prompts would train
+  # people to skim the list this selection exists to make readable.
+  "S603",
+  # S607 (partial executable path) is the deliberate design: `ffmpeg`/`ffprobe` are
+  # resolved from PATH so the operator's pinned build is the one that runs (D-39),
+  # and `cutdown doctor` is the check that the resolved build is the right one.
+  # Hard-coding an absolute path would break every machine but one.
+  "S607",
+]
+
+# Deliberately NOT selected, with the reason — so the next person widening this file
+# does not have to re-derive it:
+#
+#   I    (import sorting)  — pure ordering, and NOT free here: decisions.md D-43 records
+#                            three OpenCV distributions clobbering one `cv2/` directory,
+#                            with paddle/scenedetect import order load-bearing at runtime.
+#                            Reordering imports for tidiness in that codebase risks a real
+#                            break for no defect caught.
+#   PTH  (pathlib)         — a migration, not a check.
+#   D    (docstrings)      — 837 findings, all about presence and phrasing.
+#   N    (naming)          — 6 findings in hand-written code. (An earlier draft of
+#                            this note said 403 — a number measured over a population
+#                            INCLUDING the generated tree this file excludes, where
+#                            397 N815s live. The honest figure did not support the
+#                            original argument, so the argument is restated: six
+#                            findings is too few to be worth renaming reviewed code
+#                            over, not too many.)
+#   PL   (pylint)          — 257 findings, mostly argument/branch counts.
+#   TRY  (tryceratops)     — 42 findings of exception-handling style; the fail-closed
+#                            posture here is deliberate and reviewed per-site.
+#   ARG  (unused args)     — 49 findings, nearly all interface conformance.
+
+[lint.per-file-ignores]
+# Test fixtures deliberately construct edge-case inputs, including deliberately
+# hard-coded credential-shaped strings for refusal tests.
+"**/tests/**" = ["S105", "S106", "S107"]
+
+# `quality.py`'s module docstring carries an ALIGNED markdown table mapping each
+# quality flag to the metric and direction that decides it — the reference a
+# reader of that module needs. Six of its rows exceed 120 columns, and wrapping
+# them breaks the column alignment that makes the table readable at all, for no
+# defect caught. The exemption is the file, not the rule: E501 stays live
+# everywhere else, and it earned its keep in this same pass by catching a
+# 403-character line an autofix had just produced.
+"workers/indexer-python/src/quality.py" = ["E501"]

@@ -913,7 +913,7 @@ def run_vad(samples: np.ndarray) -> list[tuple[int, int]]:
             min_silence_duration_ms=VAD_MIN_SILENCE_MS,
             return_seconds=False,
         )
-    except Exception as error:  # noqa: BLE001 — engine boundary
+    except Exception as error:
         raise ModelUnavailableError(
             ENGINE_VAD, f"silero-vad failed to run: {error}"
         ) from error
@@ -939,7 +939,7 @@ def run_panns(
     try:
         import torch
         from panns_inference import AudioTagging
-    except Exception as error:  # noqa: BLE001 — import itself is the failure mode
+    except Exception as error:
         raise ModelUnavailableError(
             ENGINE_PANNS, f"panns_inference could not be imported: {error}"
         ) from error
@@ -957,7 +957,7 @@ def run_panns(
             ]
         )
         clipwise, _embedding = tagger.inference(batch)
-    except Exception as error:  # noqa: BLE001 — engine boundary
+    except Exception as error:
         raise ModelUnavailableError(
             ENGINE_PANNS, f"PANNs CNN14 inference failed: {error}"
         ) from error

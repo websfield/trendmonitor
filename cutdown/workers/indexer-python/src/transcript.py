@@ -467,7 +467,7 @@ def engine_version() -> str:
         import faster_whisper
 
         return str(faster_whisper.__version__)
-    except Exception as error:  # noqa: BLE001 — an unimportable engine is unavailable
+    except Exception as error:
         raise ModelUnavailableError(
             model=ENGINE_NAME,
             message=f"faster-whisper is not importable: {type(error).__name__}: {error}",
@@ -497,7 +497,7 @@ def has_audio_stream(media_path: Path) -> bool:
     try:
         with av.open(str(media_path)) as container:
             return any(stream.type == "audio" for stream in container.streams)
-    except Exception as error:  # noqa: BLE001 — av raises several error types
+    except Exception as error:
         raise SubStageError(
             code="TRANSCRIPT_MEDIA_UNREADABLE",
             message=f"could not open media for audio inspection: {type(error).__name__}: {error}",
@@ -516,7 +516,7 @@ def load_model(options: TranscriptOptions) -> Any:
     model_name = f"{ENGINE_NAME}/{options.model_size}"
     try:
         from faster_whisper import WhisperModel
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         raise ModelUnavailableError(
             model=model_name,
             message=f"faster-whisper is not importable: {type(error).__name__}: {error}",
@@ -530,7 +530,7 @@ def load_model(options: TranscriptOptions) -> Any:
             download_root=options.download_root,
             local_files_only=options.local_files_only,
         )
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         raise ModelUnavailableError(
             model=model_name,
             message=(
@@ -590,7 +590,7 @@ def transcribe_media(media_path: Path, options: TranscriptOptions, model: Any = 
             word_timestamps=True,
             vad_filter=options.vad_filter,
         )
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         raise SubStageError(
             code="TRANSCRIPT_ENGINE_FAILED",
             message=f"faster-whisper transcribe() failed: {type(error).__name__}: {error}",
@@ -644,7 +644,7 @@ def _consume_segments(segments_iter: Any, options: TranscriptOptions) -> tuple[R
             )
     except SubStageError:
         raise
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         raise SubStageError(
             code="TRANSCRIPT_ENGINE_FAILED",
             message=f"faster-whisper decoding failed: {type(error).__name__}: {error}",

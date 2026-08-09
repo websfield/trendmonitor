@@ -183,7 +183,7 @@ def load_speaker_map(path: Path) -> list[SpeakerCorrection]:
         )
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as error:  # noqa: BLE001 — yaml raises several error types
+    except Exception as error:
         raise SubStageError(
             code=CODE_UNREADABLE,
             message=f"speaker map is not valid YAML: {type(error).__name__}: {error}",

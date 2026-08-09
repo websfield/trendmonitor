@@ -317,7 +317,7 @@ def keyframe_histograms(
         try:
             video.seek(FrameTimecode(float(seconds), video.frame_rate))
             frame = video.read()
-        except Exception as error:  # noqa: BLE001 — a decode failure must not be a traceback
+        except Exception as error:
             raise SubStageError(
                 code="KEYFRAME_READ_FAILED",
                 message=f"could not read the keyframe for {shot['shotId']}: {error}",

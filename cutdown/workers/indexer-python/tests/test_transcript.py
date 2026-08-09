@@ -460,9 +460,9 @@ class TestArtefactShape:
     def test_whitespace_only_words_are_dropped(self) -> None:
         # `verbatim` has minLength 1; an engine whitespace token would produce a
         # schema-invalid word.
-        assert build_words((word("  ", 0.0, 0.1), word("real", 0.1, 0.5)), 0.6) == [
-            w for w in build_words((word("real", 0.1, 0.5),), 0.6)
-        ]
+        assert build_words((word("  ", 0.0, 0.1), word("real", 0.1, 0.5)), 0.6) == list(
+            build_words((word("real", 0.1, 0.5),), 0.6)
+        )
 
 
 class TestEmptyTranscript:

@@ -202,7 +202,7 @@ def shot_windows_from_keyframe_ticks(keyframe_ticks: list[int], *, duration_tick
     end), so the observations still carry a real time range and `shotId` is
     honestly `null` rather than a fabricated `shot-0001`.
     """
-    ordered = sorted(set(int(t) for t in keyframe_ticks))
+    ordered = sorted({int(t) for t in keyframe_ticks})
     if any(t < 0 or t >= duration_ticks for t in ordered):
         raise SubStageError(
             code="KEYFRAME_OUT_OF_RANGE",
@@ -399,7 +399,7 @@ def load_ocr_engine(config: dict[str, Any]) -> Any:
     kwargs["text_rec_score_thresh"] = config["confidence_floor"]
     try:
         return PaddleOCR(**kwargs)
-    except Exception as error:  # noqa: BLE001 — the model-load boundary is the point
+    except Exception as error:
         raise ModelUnavailableError(
             model=model,
             message=f"PaddleOCR weights could not be loaded or downloaded: {type(error).__name__}: {error}",
@@ -457,7 +457,7 @@ def _predict_one(engine: Any, frame: Any) -> Any:
     """`.predict()` on a single frame; 3.x returns a one-element list."""
     try:
         results = engine.predict(frame)
-    except Exception as error:  # noqa: BLE001 — inference failure must be structured
+    except Exception as error:
         raise SubStageError(
             code="OCR_INFERENCE_FAILED",
             message=f"PaddleOCR inference failed: {type(error).__name__}: {error}",

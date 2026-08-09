@@ -63,7 +63,7 @@ VIDEO_TIMEBASE = Timebase(num=1, den=15360)
 ENGINE_STUB = {"name": "test", "version": "0", "parameters": []}
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _detected(media_path: Path) -> str:
     """Detection is deterministic, so each fixture is decoded once per session.
 

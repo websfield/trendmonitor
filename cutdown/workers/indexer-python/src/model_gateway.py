@@ -334,7 +334,15 @@ class HttpTransport:
         if not config.api_key:
             raise ModelNotConfiguredError(f"{ENV_API_KEY} is not set")
 
-        request = urllib.request.Request(
+        # Both urllib calls below carry an S310 suppression (the "audit URL open for
+        # permitted schemes" rule). Written without the directive spelling, because
+        # ruff parses the literal token in prose as a malformed directive and emits
+        # a permanent warning. The audit is answered, once, in `load_config`:
+        # `base_url`'s scheme must be https, or http on an exact loopback host,
+        # PARSED rather than prefix-matched, and operator overrides are applied
+        # BEFORE that check runs. Re-testing the scheme here would give one rule two
+        # homes, which is how two homes come to disagree.
+        request = urllib.request.Request(  # noqa: S310
             url=f"{config.base_url}/v1/messages",
             data=json.dumps(payload).encode("utf-8"),
             headers={
@@ -345,13 +353,17 @@ class HttpTransport:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=config.timeout_seconds) as response:
+            with urllib.request.urlopen(request, timeout=config.timeout_seconds) as response:  # noqa: S310
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             body = ""
             try:
                 body = error.read().decode("utf-8", errors="replace")[:2000]
-            except Exception:
+            except Exception:  # noqa: BLE001 — a best-effort read of a diagnostic body
+                # The error body is decoration on an error we are already raising.
+                # Anything at all going wrong while reading it (a closed socket, a
+                # decode fault, a provider sending no body) must not replace the
+                # real HTTP failure with a second, less informative one.
                 body = ""
             # The provider echoes request headers in some error bodies, so the
             # body is scrubbed before it is allowed anywhere near a log.

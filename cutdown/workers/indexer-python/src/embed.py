@@ -71,7 +71,7 @@ def load_encoder(model_id: str = MODEL_ID) -> Encoder:
 
     try:
         encoder = SentenceTransformer(model_id)
-    except Exception as error:  # noqa: BLE001 — any load failure is the same outcome
+    except Exception as error:
         raise ModelUnavailableError(
             model_id,
             f"could not load {model_id}; the model cache may be empty and the host offline: {error}",

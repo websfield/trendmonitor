@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml';
 
 import { parse, requirePositional, requireString } from './args.js';
 import { buildContractsCommand, validateContractsCommand } from './commands/contracts.js';
+import { doctorCommand } from './commands/doctor.js';
 import { rangeCheckCommand } from './commands/range-check.js';
 import { skillsSyncCommand } from './commands/skills-sync.js';
 import { statusPhase0Command } from './commands/status.js';
@@ -149,6 +150,14 @@ Contract commands (operate on the codebase):
                                    BOTH Ajv and the generated Pydantic models.
   cutdown build:contracts [--check]  Run both generators; --check fails if the
                                    committed generated trees are stale.
+
+Environment:
+  cutdown doctor
+      Check this machine against what the pipeline needs: Node and pnpm versions
+      (from engines), FFmpeg with libass, ffprobe, uv, the hash-pinned caption
+      fonts, and generated-tree freshness. Every check runs — but only the FIRST
+      failure in blocking order is promoted as "fix this one first". Exits 0 when
+      clean, 3 otherwise. Repairs nothing.
 `;
 
 async function dispatch(argv: string[]): Promise<number> {
@@ -220,6 +229,13 @@ async function dispatch(argv: string[]): Promise<number> {
       });
       process.stdout.write(`${JSON.stringify(outcome.result, null, 2)}\n`);
       return 0;
+    }
+
+    case 'doctor': {
+      // No options: a diagnostic with flags is a diagnostic whose output depends
+      // on how it was invoked, which is the opposite of what it is for.
+      parse(rest, {});
+      return await doctorCommand();
     }
 
     case 'range-check': {

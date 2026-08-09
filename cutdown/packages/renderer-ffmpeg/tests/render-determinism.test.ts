@@ -34,8 +34,9 @@ import { FfmpegRendererAdapter, type FfmpegRenderPlan } from '../src/adapter.js'
  * The tier-1 determinism proof (tech-spec §12, decisions.md D-33) and the
  * end-to-end QA gate demonstration, both against real FFmpeg and real media.
  *
- * D-33 makes the pinned local environment the only reproducibility surface
- * Phase 0 has — there is no CI — so this test asserts the ONE claim the spec
+ * D-33 made the pinned local environment the only reproducibility surface
+ * Phase 0 had, and D-57 has since superseded it (CI runs the same suite on each
+ * runner). Neither changes what this test asserts — so this test asserts the ONE claim the spec
  * permits: two renders of the same manifest on THIS machine are byte-identical.
  * It deliberately does not assert cross-machine identity, which §12 names as
  * false (x264's assembly dispatch is CPU-feature-dependent).
@@ -175,7 +176,7 @@ after(() => {
   rmSync(workspace, { recursive: true, force: true });
 });
 
-describe('tier-1 determinism on the pinned local environment (D-33)', () => {
+describe('tier-1 determinism on the machine running this suite (D-33, as amended by D-57)', () => {
   it('renders the same manifest twice to BYTE-IDENTICAL output', async () => {
     const edl = edlWith({ kind: 'text', displayText: 'a stable caption' });
 

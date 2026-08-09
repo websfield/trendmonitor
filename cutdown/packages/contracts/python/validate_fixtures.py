@@ -65,7 +65,12 @@ def check(model: type[BaseModel], instance: dict[str, Any]) -> tuple[bool, str |
 
 def main() -> int:
     if len(sys.argv) != 3:
-        print("usage: validate_fixtures.py <contracts-root> <fixtures-root>", file=sys.stderr)
+        # This module is a standalone CLI script, not a sub-stage — its streams are
+        # its user interface, and usage goes to stderr so a caller piping stdout
+        # gets the report and nothing else. Hence the suppression below.
+        print(  # noqa: T201
+            "usage: validate_fixtures.py <contracts-root> <fixtures-root>", file=sys.stderr
+        )
         return 2
 
     contracts_root = Path(sys.argv[1])
