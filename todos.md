@@ -4,7 +4,7 @@ Decisions that engineering cannot make for itself: owner inputs, product definit
 
 Convention: a decision that is settled here graduates to `docs/video-editing/decisions.md` as a numbered D-row. This file holds only what is *open*.
 
-Last updated: 2026-08-09.
+Last updated: 2026-08-10.
 
 ---
 
@@ -98,9 +98,18 @@ A genuine conflict, currently nobody's task: **REQ-113 requires previously appro
 
 ## 5. Permissions needed from the user (small, but blocking)
 
-### T-13 · Authorise `git push`
+### T-13 · Authorise `git push` ✅ **SETTLED 2026-08-10 — authorised and done**
+
+**Owner decision:** push authorised. `origin/main` is now at **`06c5073`**; the five previously-unpushed commits (through Stage 0A) are on the remote.
+
+**What this unblocked, and what it did not.** The CI workflow added by **D-57** fires on `push` to `main` for the Cutdown paths, so this push is its **first execution ever** — which is the whole point of A7. Two things in that workflow were written but unverifiable from the authoring session and are verified by that run, not by inspection: the **Linux FFmpeg download URL** (`FFMPEG_LINUX_URL`) and **`setup-node`'s `.tool-versions` support**. Both fail loudly with a named remedy rather than degrading, so a red first run is expected-if-anything and cheap to fix.
+
+**A7 is therefore still open** — it is "CI green on a clean clone", not "CI configured". Close it when the run is green; if it is red, the failing step names the line to change.
+
+*Context retained below.*
+
 **Blocks:** Stage 0 task 17 acceptance criterion **A7** (CI green on a clean clone).
-The branch is **3 commits ahead of `origin/main`**. CI runs on push, so "CI is green" is unverifiable until the branch is pushed. Per `CLAUDE.md` golden rule 8, pushing waits for explicit confirmation. Everything else in Stage 0 can be built and verified locally first.
+The branch was **3 commits ahead of `origin/main`** (5 by the time it was pushed). CI runs on push, so "CI is green" was unverifiable until the branch was pushed. Per `CLAUDE.md` golden rule 8, pushing waited for explicit confirmation. Everything else in Stage 0 was built and verified locally first.
 
 ### T-14 · Add `cutdown/.env.example` by hand
 **Blocks:** nothing — no code reads it (verified; code reads `.env`, which is git-ignored).

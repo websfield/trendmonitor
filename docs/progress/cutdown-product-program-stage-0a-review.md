@@ -69,7 +69,7 @@ Other findings worth recording, all fixed:
 
 ## Honest limits
 
-1. **CI has never executed.** The branch is unpushed pending owner authorisation (`todos.md` T-13). The workflow is written, YAML-validated and reviewed; **"CI is green on a clean clone" is unproven**, and acceptance criterion **A7 is not met** — it is not claimed to be. The first run is what verifies the FFmpeg provisioning URL and `setup-node`'s `.tool-versions` support; both fail loudly with a named remedy rather than degrading silently.
+1. **CI's result is not yet known.** *(Updated 2026-08-10.)* The owner authorised the push and it landed — `origin/main` is at **`06c5073`** — so the workflow has now fired for the **first time ever**. Its outcome is **not recorded here**: this session has no `gh` CLI and cannot read the run, so reporting a result would be inventing one. **Acceptance criterion A7 ("CI green on a clean clone") therefore remains open**, and closes on a green run rather than on the workflow existing. Two things in it were written but unverifiable at authoring time and are decided by that run — the Linux `FFMPEG_LINUX_URL` download and `setup-node`'s `.tool-versions` support. Both fail loudly with a named remedy pointing at the line to change, so a red first run is the cheap, expected outcome rather than a setback.
 2. **The counting model is Stage 0B's.** `status --phase0` prints **2/20**; the policy (owner decision T-1) says **1**. The master plan now states the disagreement *and* its consequence explicitly: criterion 3 currently reads green **only** because two correlated packages are counted as two independent outputs, and it is expected to go honestly UNPROVEN when Stage 0B task 13 lands. Stricter and more honest is the right direction.
 3. **D-56 is reserved, not missing.** The plan assigns it to the counting policy (0B task 4); 0A appended D-57/D-58 under the numbers the plan gave them rather than renumbering. Recorded in the log itself.
 4. **Both Cutdown reviewers ran via the `general-purpose` fallback**, carrying their own agent file and rule canon, because the agent registry is snapshotted at session start and they were authored in this very diff. The same fallback the plan review log already used. They should run natively from Stage 0B onward.
@@ -88,7 +88,7 @@ Other findings worth recording, all fixed:
 | # | Criterion | Status |
 |---|---|---|
 | A6 | `--audio-events` on a multi-asset EDL projects only that clip's asset's events, driven by a pipeline-produced artefact | **Met** — driven from two committed real source indexes |
-| A7 | CI passes on a clean clone, both OSes | **Not met — owner-blocked (T-13), not claimed** |
+| A7 | CI passes on a clean clone, both OSes | **Open** — T-13 settled and the branch pushed (`06c5073`), so the workflow has now run for the first time; its result is unread from this session and A7 closes on a green run, not on the workflow existing |
 | A8 | `doctor` names the single most important fix and exits non-zero | **Met** |
 | A9 | `cutdown-master-plan.md` contains no statement contradicted by `proving-run-real.md` | **Met** |
 | A10 | Both reviewers exist; `CLAUDE.md` and tech-spec §14 agree | **Met** |
