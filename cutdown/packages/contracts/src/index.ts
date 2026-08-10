@@ -14,6 +14,7 @@ export * from './ajv.js';
 export * from './hash.js';
 export * from './range-check.js';
 export * from './reviews.js';
+export * from './output-identity.js';
 export * from './contract-set.js';
 export * from './generate.js';
 export * from './check-generated.js';

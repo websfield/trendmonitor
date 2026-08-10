@@ -254,6 +254,29 @@ export function lintSchemaFile(absPath: string, isContract: boolean): SubsetViol
         message: 'Every contract schema declares a semver `schemaVersion` (tech-spec §3).',
       });
     }
+    // A `-vN` filename is the family key's only evidence, so it has to be true.
+    // Contracts only, and only when the file carries a suffix: the four files in
+    // `schemas/common/` are named `-v1` and declare no `schemaVersion` at all
+    // (they are referenced `$defs`, not versioned contracts), and enums carry no
+    // suffix — a blanket rule fires on the commons and says nothing useful. A
+    // contract with no suffix is skipped rather than failed; none exists today,
+    // and demanding one would be a naming rule this lint has no mandate for.
+    const suffix = /-v(\d+)\.json$/.exec(file)?.[1];
+    if (suffix !== undefined && typeof version === 'string' && /^\d+\.\d+\.\d+$/.test(version)) {
+      const named = Number(suffix);
+      const declared = Number(version.split('.')[0]);
+      if (named !== declared) {
+        out.push({
+          file,
+          pointer: '/schemaVersion',
+          rule: 'version-matches-filename',
+          message:
+            `The filename says major ${String(named)} and \`schemaVersion\` "${version}" says major ${String(declared)}. ` +
+            'Contract drift is keyed by family — the `$id` with its `-vN` stripped — while the recorded major comes from `schemaVersion`, so a file that disagrees with its own name makes a v1→v2 migration read as a schema that never moved, and the Phase 0 exit criterion reports "no schema major version moved" across the bump.',
+        });
+      }
+    }
+
     const changelog = parsed['changelog'];
     if (!Array.isArray(changelog) || changelog.length === 0) {
       out.push({

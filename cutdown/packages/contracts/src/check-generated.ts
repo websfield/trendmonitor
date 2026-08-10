@@ -98,7 +98,30 @@ function normalise(text: string): string {
   return text.replace(/\r\n/g, '\n');
 }
 
-export async function checkGenerated(): Promise<DriftReport> {
+/**
+ * Which trees to compare the freshly generated output against. Defaults to the
+ * committed ones, which is what every production caller wants and passes.
+ *
+ * It exists so a TEST can point the comparison at a temp COPY. Manufacturing drift
+ * by writing a stray file into the committed `generated/typescript/` was measured
+ * failing: `node:test` runs the two async tests of one `describe` concurrently, so
+ * the probe was live while the sibling test asserted the trees were current, and a
+ * full `pnpm -r --no-bail run test` returned `fail 1` with
+ * `removed: ["generated/typescript/__drift-probe.ts"]`. The same window is visible
+ * across packages — `apps/cli`'s `doctor` suite calls `checkGenerated` and runs in
+ * parallel under `pnpm -r` — and a crashed run leaves the working tree dirty for
+ * CI's "the gate did not modify the working tree" step (D-57).
+ */
+export interface CheckRoots {
+  /** Stand-in for `generated/typescript/`. */
+  readonly ts?: string;
+  /** Stand-in for `generated/python/cutdown_contracts/`. */
+  readonly py?: string;
+}
+
+export async function checkGenerated(roots: CheckRoots = {}): Promise<DriftReport> {
+  const tsRoot = roots.ts ?? GENERATED_TS_DIR;
+  const pyRoot = roots.py ?? GENERATED_PY_PACKAGE;
   const scratch = mkdtempSync(join(tmpdir(), 'cutdown-contracts-check-'));
   try {
     const tsOut = join(scratch, 'typescript');
@@ -110,11 +133,11 @@ export async function checkGenerated(): Promise<DriftReport> {
     }
     generatePython(pyOut);
 
-    const tsReport = diff(readTree(GENERATED_TS_DIR), freshTs, 'generated/typescript');
+    const tsReport = diff(readTree(tsRoot), freshTs, 'generated/typescript');
     const pyFresh = readTree(pyOut);
     // The committed package has an `__init__.py` banner that `generateAll`
     // prepends after the generator runs; compare it on the same footing.
-    const pyCommitted = readTree(GENERATED_PY_PACKAGE);
+    const pyCommitted = readTree(pyRoot);
     pyCommitted.delete('__init__.py');
     pyFresh.delete('__init__.py');
     const pyReport = diff(pyCommitted, pyFresh, 'generated/python/cutdown_contracts');

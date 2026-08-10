@@ -25,8 +25,12 @@ The project already has one instance on disk, and it is the reason this skill na
 rule so bluntly: in `apps/cli/src/commands/status.ts`, the `no-breaking-contract-change`
 criterion computes `met: window.length >= 2 && …` under a label that says **ten**. Two
 outputs satisfying a ten-output criterion is not a rounding error; it is the criterion
-reporting green having tested 20% of itself. **Status: shipped and OPEN** — the fix is
-Stage 0B task 13, so a review that re-finds it should record it as known, not as new.
+reporting green having tested 20% of itself. **Status: CLOSED 2026-08-10 by Stage 0B
+task 9**, which found the `2` appeared *twice* — in the `met` predicate and in the detail
+branch that selects the "no schema major version moved" sentence — so a fix to one alone
+would have reported `unproven` while printing the sentence denying a bump. The rule is now
+three-way: a *detected* breaking change is `not_met` at any window size; only a clean
+short window is `unproven`.
 
 ## The rules
 
@@ -42,9 +46,8 @@ a numeric zero or a boolean `true`.
   each a finding unless a comment states why absence genuinely means zero *here*.
 - The shape to match is in `apps/cli/src/commands/status.ts`, in the criteria
   `rights-and-qa-evidence` and `no-breaking-contract-change`: "UNPROVEN, not proven by
-  absence". Cited by **criterion id, never by line number** — Stage 0B task 13 rewrites
-  that file, and a rule anchored to a line number is a rule that quietly stops pointing
-  at anything.
+  absence". Cited by **criterion id, never by line number** — Stage 0B rewrote that file,
+  and a rule anchored to a line number is a rule that quietly stops pointing at anything.
 
 ### R2 — A criterion's predicate must match its label
 
@@ -89,8 +92,15 @@ A baseline that includes outputs this system produced measures the system agains
 Cohort and baseline construction states its exclusion rule.
 
 Two packages sharing a `creativeBriefId` are **one** angle rendered twice, not two
-independent samples (owner decision 2026-08-09, `todos.md` T-1). They may not both enter a
-cohort, a count, or an average as independent units.
+independent samples (owner decision 2026-08-09, graduated to `decisions.md` **D-56**; the
+rule's single home is `docs/video-editing/output-counting-policy.md` §1, and `todos.md` T-1
+no longer exists). They may not both enter a cohort, a count, or an average as independent
+units.
+
+An exclusion rule that cannot be **evaluated** is not an exclusion, only a claim. Where the
+record needed to identify this system's own outputs does not exist, the comparison is
+withheld under R7 rather than run on an unverifiable baseline — see
+`output-counting-policy.md` §4.3 and §4.5, which are read together for exactly this reason.
 
 ### R7 — Claims language matches evidence strength
 
@@ -134,11 +144,14 @@ can. A number with no reproduction path is an assertion.
 
 | Anti-pattern | Why it is a finding |
 |---|---|
-| `window.length >= 2` under a label saying ten | R2 — **shipped, OPEN**; fix is Stage 0B task 13. The origin of this skill |
+| `window.length >= 2` under a label saying ten | R2 — **CLOSED** by Stage 0B task 9 (D-56/D-61 landing). The origin of this skill; kept because the *class* recurs — the same stage then had to be told twice that a threshold and the sentence beside it are two sites |
 | A denominator field that is one string for every metric | R3 — cannot support correct aggregation |
 | A union arm carrying provenance that vanishes at first type-narrowing | R4 — the label must survive the type system |
 | "Uplift absent when n<30" expressed as a schema fixture | R7/R8 — `tech-spec.md` §3's subset cannot express it; enforce in `packages/evaluation` with a sole-emitter test |
-| Counting both real packages of one `creativeBriefId` as 2 | R6 — **shipped, OPEN**: `status --phase0` prints 2/20 against a policy that says 1. Settled by owner decision T-1; implemented by Stage 0B task 13 under D-56. One angle, two renders |
+| Counting both real packages of one `creativeBriefId` as 2 | R6 — **CLOSED** by Stage 0B tasks 8/10 under D-56: identity is *derived* from `lineage.creativeBriefId`, so `status --phase0` now prints 1/20. One angle, two renders |
+| A threshold fixed without the sentence printed beside it | R2 — a predicate and its `detail` string are **two** sites. Stage 0B shipped the pair only after a review round caught the second |
+| Changing a criterion's counting *unit* without its *timeline* | R3 — Stage 0B counts criterion 3's threshold in resolved **outputs** but walks drift across every **evidence-complete real package** in the span, because `contractSet` is a property of the package that recorded it. Collapsing the two lets a bump absorbed by repackaging vanish |
+| A span whose population is "the members of the windowed units" rather than "everything inside the span" | R3 — Stage 0B's first fix for the row above derived the drift walk from *output membership*, so a package belonging to an excluded output but sitting temporally **inside** the span was never examined; an `added` and a `removed` in that gap both vanished and the criterion printed "no schema major version moved". A span is defined by its endpoints, not by which units happen to own its members |
 | A pooled cross-account statistic before the tenancy question is settled | R6 + the boundary path; see `cd-tenancy-boundaries` |
 
 ## Worked example

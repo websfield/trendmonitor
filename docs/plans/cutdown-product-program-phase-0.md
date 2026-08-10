@@ -4,6 +4,14 @@
 **Master plan:** `docs/plans/cutdown-product-program-master-plan.md`
 **Objective:** Make every claim the repository makes about itself verifiable — so that `status --phase0`, the roadmap, and git agree, and so the contract-stability clock starts from a schema that will not need breaking again.
 
+> ## ⚠ SUPERSEDED IN PART — read `cutdown-product-program-phase-0b.md` §1 first (2026-08-10)
+>
+> **This file's tasks 3–14 are superseded by `docs/plans/cutdown-product-program-phase-0b.md`**, whose §1 is the authoritative disposition table: it says, for each of tasks 3–14, whether it was **KEPT** (and which 0B task carries it), **DEFERRED** to work package 0B-3, or **RETIRED** — each with the spike finding that decided it. **Tasks 1, 2 and 15–21 shipped in Stage 0A** and are done.
+>
+> **Do not execute the task table below directly.** Nine of those twelve tasks existed to support a *stored* output identity that the delivered packages turn out not to need — `lineage.creativeBriefId` is already required and already present, so identity is derived (see `decisions.md` **D-56**). In particular: **task 5's `content-package-v2.json` is deferred, not live**; tasks 6 (`supersession-record-v1`), 8 (`outputId` assignment) and 12 (cross-package lineage validator) are **retired**; task 12b was kept and promoted to first, and is the reason for **D-61**.
+>
+> **Nothing here is renumbered, restructured or deleted** — the precedent is this file's own task 21 (add a pointer, do not renumber). Task 4's reservation of **D-59** for the `skills serve` transport decision still stands and was **not** consumed by Stage 0B, which took D-61 instead; D-56, D-57 and D-58 have all landed in `decisions.md`.
+
 **Revision 2 (2026-08-08)** — rewritten after the plan-review gate returned **BLOCK**. Round 1 specified an in-place mutation of a published contract (violating tech-spec §3), collided with an existing required field, would have invalidated the two delivered packages that *are* the Phase 0 evidence base, and asserted an acceptance criterion whose evidence cannot exist. Those five defects and their fixes are marked **[R1-fix]** below.
 
 ---

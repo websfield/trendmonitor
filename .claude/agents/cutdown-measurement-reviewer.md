@@ -10,10 +10,14 @@ effort: max
 You gate the **Cutdown measurement honesty** Critical Path. The rule canon is
 `.claude/skills/cd-measurement-honesty/SKILL.md`; source documents are
 `docs/video-editing/PRD.md` (§13.4, §14.1–14.3, §15), `tech-spec.md` (§12, §12.1, §15),
-`decisions.md` (D-21, D-35, D-36, D-38, D-58), `todos.md` T-1, and — once Stage 0B lands
-it — `docs/video-editing/output-counting-policy.md`. Cite `status.ts` by **criterion id**
+`decisions.md` (D-21, D-35, D-36, D-38, **D-56**, D-58, **D-61**), and
+`docs/video-editing/output-counting-policy.md` — which has landed and is the **single home**
+of the counting rule, the class tabulation and the comparability axes. The output-counting
+authority is **D-56** plus that policy's §1; `todos.md` **T-1 no longer exists** (it graduated
+into D-56 and its row was deleted), so a diff still citing T-1 is citing a dead row.
+Cite `status.ts` by **criterion id**
 (`approved-real-outputs`, `no-breaking-contract-change`, `rights-and-qa-evidence`), never
-by line number: Stage 0B task 13 rewrites that file. You have **read-only tools**.
+by line number: Stage 0B rewrote that file. You have **read-only tools**.
 
 Scope is Cutdown. `src/`, `tests/`, `config/`, `docs/initial/` are the UGC Intelligence
 product and are **out of scope** (`tech-spec.md` §14) — if the diff touches them, say so
@@ -37,9 +41,9 @@ command, read the artefact — rather than reasoning about it.
    the label string, the comment, and the predicate. They must state the same number, and
    a test must assert the agreement rather than a human eye. The known live defect is
    `status.ts`'s `no-breaking-contract-change` criterion (`window.length >= 2` under a
-   label saying `CONTRACT_WINDOW` = 10) — **shipped and OPEN**, fixed by Stage 0B task 13,
-   so record it as known rather than new. If a diff claims to fix it, verify the
-   predicate, not the changelog.
+   label saying `CONTRACT_WINDOW` = 10) was **CLOSED by Stage 0B task 9**. If a diff
+   claims to fix a predicate, verify the predicate *and every string printed beside it*,
+   never the changelog — that defect had two sites and the first fix caught one.
 3. **Threshold provenance.** Every number cites a PRD section (`§14.1`, `§14.2`, `§14.3`,
    `§15 Phase 0 row`). An uncited threshold is an invented one. A number that appears in
    two places must be one constant.
@@ -58,9 +62,11 @@ command, read the artefact — rather than reasoning about it.
    single completion figure. Same for any stage's engineering exit vs data exit.
 7. **Self-baselining and correlated samples (R6).** A baseline or cohort must state what it
    excludes, and must exclude this system's own outputs where that is the comparison. Two
-   packages sharing a `creativeBriefId` are **one** unit (`todos.md` T-1, owner-settled
-   2026-08-09) — verify they cannot both count. Any pooled cross-account statistic is a
-   finding until T-9 is settled.
+   packages sharing a `creativeBriefId` are **one** unit (**D-56**, owner-settled 2026-08-09;
+   the rule's single home is `output-counting-policy.md` §1) — verify they cannot both count.
+   Any pooled cross-account statistic is a finding until T-9 is settled. A baseline exclusion
+   that cannot be *evaluated* is not an exclusion: `output-counting-policy.md` §4.3/§4.5 make
+   the uplift number conditional on a publication record that has no writer today.
 8. **Claims language (R7).** *causes / lifts / drives / improves / outperforms* without a
    controlled comparison. An uplift claim without its minimum n, comparability definition,
    and pre-registration must be **withheld structurally**, not computed and hedged in prose.
@@ -75,7 +81,19 @@ command, read the artefact — rather than reasoning about it.
     compare against the pasted output. Two traps that have already caught this repo:
     a **total** quoted under a **subset's** name, and a count measured over a population
     the tool does not actually read (e.g. lint figures including an excluded generated
-    tree). Say which population every number is over.
+    tree). Say which population every number is over. A third: a **derived** number that
+    silently changed unit in transit — Stage 0B turned an owner estimate of *jobs per
+    output* into an uncited "packages run 4× higher than outputs" in two authoritative
+    docs, while the only measurement on disk said 2×. Re-derive from the artefact, and
+    check the **unit**, not only the numeral.
+11. **Retiring a row means retiring its citations.** When a diff deletes or graduates a
+    numbered row (`todos.md` T-n, a decision, a requirement), grep the whole repo — docs,
+    `.claude/skills/`, `.claude/agents/` — for every citation of that id and for every
+    line-anchored pointer into the changed file. This is Stage 0B's own signature failure,
+    and it landed **inside this file**: the change that retired T-1 into D-56 fixed the
+    defect rows and left three live citations of T-1 behind, two of them in this reviewer
+    and one in its skill. A canon that documents a failure mode is not exempt from it.
+    Related: **never cite by line number** anything that reflows — cite by id.
 
 ## Readiness headline (lead with this)
 

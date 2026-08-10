@@ -10,26 +10,7 @@ Last updated: 2026-08-10.
 
 ## 1. Blocking a Stage 0 task — proceeding under a stated default
 
-### T-1 · What counts as one "output"? ✅ **SETTLED 2026-08-09 — key on the CreativeBrief**
-
-**Owner decision:** an output is **one approved cut per `CreativeBrief`**. A second package for the same CreativeBrief **supersedes** rather than adds. Graduates to `decisions.md` as **D-56** in Stage 0 task 4.
-
-**Immediate consequence:** the real-output count is **1 of 20**, not 2. `01KZ9YK48KBRAX85DJ1P76NYMN` supersedes `01KZ8B40TENCWQ72F061FXK79S` (same `creativeBriefId`), unless both are separately approved for publication. Stage 0 task 13 implements this and `status --phase0` must report 1.
-
-*Context retained below.*
-
-**Blocks:** Stage 0 tasks 3, 8, 13; acceptance criteria A4, A14, A15. Defines "comparable output" for Stage 1 and Stage 6's uplift gate.
-**Decider:** product owner. **Decided.**
-
-Verified on disk: three delivered ContentPackages exist, and **two are real** — `01KZ8B40TENCWQ72F061FXK79S` and `01KZ9YK48KBRAX85DJ1P76NYMN`. Both belong to job `schwarzkopf-w1-showcase`, share `briefId` **and `creativeBriefId`**, and differ in story plan, EDL and final render.
-
-So they are either **two outputs** (two publishable cuts) or **one** (a second attempt at one angle). The answer moves the PRD §15 exit gate by roughly 4× — 20 outputs is either ~5 jobs or ~20 jobs of work.
-
-**Default being built under: an output is keyed on the `CreativeBrief`.** Rationale: REQ-110 defines a variant by its *angle, audience promise and hook hypothesis* — all properties of the CreativeBrief. Two packages from one CreativeBrief are two renders of one angle, not two variants. Under this default the later package supersedes the earlier unless both are separately approved for publication.
-
-**Consequence, stated plainly:** the real-output count drops from **2 of 20 to 1 of 20**. This makes the gate stricter and the reported number more honest, which is the direction of this whole work package — but it is a product call, not an engineering one.
-
-**Cost to reverse:** low, by construction. The rule lives in `output-counting-policy.md` and one resolver; reversing it is a policy edit plus a test update, not a schema change.
+*Nothing open.* **T-1 ("what counts as one output?") is settled and has graduated** to `decisions.md` **D-56**; the rule, its class tabulation and the comparability axes have exactly one home, `docs/video-editing/output-counting-policy.md` — do not restate them here.
 
 ---
 
@@ -45,7 +26,7 @@ Every editorial stage to date has run on recorded fixtures at AUD 0.00. Recorded
 **Decider:** owner. **Needs:** stable `accountId`s, source classification, and a rights record per asset with an `evidence_uri`.
 
 ### T-4 · Accumulate the remaining real outputs
-**Blocks:** `PHASE_0_EXIT_EARNED` (needs 20; has 1 or 2 pending T-1).
+**Blocks:** `PHASE_0_EXIT_EARNED` (needs 20 resolved real outputs; has **1** — D-56 settled the unit, so this is no longer "1 or 2").
 **Decider:** operations. Not an engineering task — it is real production work through the pipeline.
 
 ### T-5 · Upgrade the rights basis beyond owner-directed
@@ -111,9 +92,15 @@ A genuine conflict, currently nobody's task: **REQ-113 requires previously appro
 **Blocks:** Stage 0 task 17 acceptance criterion **A7** (CI green on a clean clone).
 The branch was **3 commits ahead of `origin/main`** (5 by the time it was pushed). CI runs on push, so "CI is green" was unverifiable until the branch was pushed. Per `CLAUDE.md` golden rule 8, pushing waited for explicit confirmation. Everything else in Stage 0 was built and verified locally first.
 
-### T-14 · Add `cutdown/.env.example` by hand
-**Blocks:** nothing — no code reads it (verified; code reads `.env`, which is git-ignored).
-This session's tooling is denied read access to `.env*` paths, so I will not commit a file whose secret-freedom I cannot verify (golden rule 2). It is the only remaining untracked file. Please eyeball and commit it.
+### T-14 · Add `cutdown/.env.example` by hand ✅ **SETTLED 2026-08-10 — committed in `310832c`**
+
+**Outcome:** the file is **tracked**. `git ls-files cutdown/.env.example` resolves and `git show --stat 310832c` lists it as a 32-line addition. It is no longer untracked, and nothing here is outstanding.
+
+**Golden rule 2 was satisfied by a second pair of eyes, not by waiving it.** The session that raised this row had its tooling denied read access to `.env*` paths and therefore declined to commit a file whose secret-freedom it could not verify. A Stage 0B reviewer — without that denial — read the committed content and confirmed **no secret leaked**: `ANTHROPIC_API_KEY=` and `CUTDOWN_SPEND_CEILING_AUD=` are **empty placeholders**.
+
+**Blocks:** nothing, and never did — no code reads it (verified; code reads `.env`, which is git-ignored).
+
+> The `docs/progress/cutdown/ledger.md` entry written in `310832c` still says this file is "deliberately NOT committed and still the only untracked file", which the commit it was written in contradicts. That ledger is **append-only** and is corrected by appending, not by editing this row or that one.
 
 ---
 

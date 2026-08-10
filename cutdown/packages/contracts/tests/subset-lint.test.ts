@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { test, describe } from 'node:test';
 
+import { expectedId } from '../src/paths.js';
 import { lintAllSchemas, lintSchemaFile, DRAFT_2020_12 } from '../src/subset-lint.js';
 
 /**
@@ -188,6 +189,64 @@ describe('schema style subset', () => {
       found.some((v) => v.message.includes('changelog')),
       'The "last ten outputs required no breaking contract change" exit criterion is computed from changelog entries.',
     );
+  });
+
+  /**
+   * Write a throwaway CONTRACT and lint it as one.
+   *
+   * The `$id` is computed with `expectedId(path)` rather than written by hand:
+   * that function derives the required id from `relative(CONTRACTS_ROOT, path)`,
+   * so a hand-written id on a temp file outside the contracts root fails
+   * `id-matches-path` and the case never reaches the rule it is about. Writing
+   * the fixture INSIDE `schemas/` is not the alternative — it would race the
+   * live-tree control above, dirty `build:contracts --check`, and trip CI's
+   * "the gate did not modify the working tree" step.
+   */
+  function lintContract(name: string, body: Record<string, unknown>, rule: string): string[] {
+    const path = join(scratch, name);
+    writeFileSync(
+      path,
+      JSON.stringify({
+        $schema: DRAFT_2020_12,
+        $id: expectedId(path),
+        title: 'Case',
+        changelog: [{ changedAt: '2026-08-10T00:00:00.000Z', changeKind: 'editorial', reason: 'fixture' }],
+        type: 'object',
+        additionalProperties: false,
+        properties: {},
+        ...body,
+      }),
+      'utf8',
+    );
+    return lintSchemaFile(path, true)
+      .filter((v) => v.rule === rule)
+      .map((v) => v.message);
+  }
+
+  test('rejects a -vN filename whose declared major is not N', () => {
+    // Measured before this rule existed (spike F-D): a `content-package-v2.json`
+    // declaring 1.0.0 passed `lintAllSchemas()` with ZERO violations, and
+    // `currentContractSet()` recorded it as major 1 — so the file that IS the
+    // v1→v2 migration would have read as a schema that never moved.
+    const found = lintContract('mislabelled-v2.json', { schemaVersion: '1.0.0' }, 'version-matches-filename');
+    assert.equal(found.length, 1, 'a -v2 file declaring 1.0.0 must fail');
+    assert.ok(found[0]?.includes('major 2'), 'the message names the major the FILENAME claims');
+    assert.ok(found[0]?.includes('major 1'), 'and the major the file DECLARES');
+  });
+
+  test('ACCEPTS a -vN filename that agrees with its declared major', () => {
+    const found = lintContract('agreeing-v2.json', { schemaVersion: '2.1.0' }, 'version-matches-filename');
+    assert.equal(found.length, 0, 'a minor bump under the right major is exactly what the rule must allow');
+  });
+
+  test('SKIPS a contract whose filename carries no -vN at all', () => {
+    // Skipped, not failed. No such contract exists today, and turning "unversioned
+    // filename" into a violation would be a naming rule this lint has no mandate
+    // for — while the four `schemas/common/*-v1.json` files, which carry a suffix
+    // and no `schemaVersion`, are why the rule is contracts-only in the first
+    // place. The live-tree control above is what proves both: 0 false positives.
+    const found = lintContract('unsuffixed.json', { schemaVersion: '3.0.0' }, 'version-matches-filename');
+    assert.equal(found.length, 0);
   });
 
   test('rejects a non-2020-12 dialect', () => {
