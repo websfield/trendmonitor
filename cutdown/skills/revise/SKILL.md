@@ -9,6 +9,7 @@ outputSchema: ./schema/output.json
 contractsUsed:
   - platform-edl-v1
   - render-v1
+  - render-v2
   - review-decision-v1
 sideEffects: [reads-project-data, writes-project-data, network]
 timeoutSeconds: 300

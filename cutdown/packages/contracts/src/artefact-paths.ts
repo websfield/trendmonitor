@@ -6,11 +6,13 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
  * `contracts` rather than in `skill-runtime`.
  *
  * These live here because "this field is job-relative" is a **contract** statement,
- * not a skill-runtime concern: `render-v1.outputPath`, `render-v1.captions.*Path` and
- * `source-asset-v1.storedPath` are *described* as job-relative and constrained only
- * by `minLength: 1`, because tightening those patterns would be a breaking change to
- * a Phase 4 contract. The guard therefore lives in code, and it has to be reachable
- * from every package that reads such a field.
+ * not a skill-runtime concern. `render-v2` (Stage 0B-3, D-62) now carries a
+ * job-relative pattern on `outputPath` and `captions.*Path`; `render-v1` records
+ * on disk, `render-manifest-v1.captions.*Path` and `source-asset-v1.storedPath`
+ * remain constrained only by `minLength: 1` (the two deferred families are D-62b,
+ * receiving home: the Stage 5 bump re-plan). The guard stays for ALL of them —
+ * v2's pattern cannot express Windows device names or post-symlink containment —
+ * and it has to be reachable from every package that reads such a field.
  *
  * That last part is why this module exists at all. The guards started in
  * `skill-runtime`, which `renderer-ffmpeg` does not depend on — so the FFmpeg adapter

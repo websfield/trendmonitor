@@ -158,6 +158,22 @@ function assembleBriefs(
   if (!validation.ok) {
     throw new Error(`proposed briefs failed validation: ${validation.violations.map((v) => `[${v.code}] ${v.message}`).join(' | ')}`);
   }
+
+  // Plannability (REQ-034 downstream): `plan` may only cut an angle's OWN
+  // selectedMoments, and the D-37 required-evidence gate then blocks an EDL
+  // missing ANY cited evidence Moment — so evidence outside selectedMoments is a
+  // brief that can never pass the gate. Reject it here, where the repair retry
+  // can still fix it, instead of minting a dead-on-arrival artefact (a live run
+  // reached the gate before this check existed).
+  for (const [i, cb] of candidates.entries()) {
+    const selected = new Set(cb.selectedMoments.map((m) => m.momentId));
+    const strays = [...new Set(cb.proofPoints.flatMap((p) => p.evidenceMomentIds).filter((id) => !selected.has(id)))].sort();
+    if (strays.length > 0) {
+      throw new Error(
+        `angle ${i + 1}: proofPoint evidenceMomentIds [${strays.join(', ')}] are not in that angle's selectedMoments; every evidence Moment must also be a selected Moment or the EDL can never realise it.`,
+      );
+    }
+  }
   return candidates;
 }
 
@@ -235,7 +251,10 @@ async function run(request: ProposeRequest, ctx: SkillContext): Promise<ProposeR
     if (err instanceof ModelNotConfiguredError) {
       return { kind: 'skipped', code: 'MODEL_NOT_CONFIGURED', reason: err.message };
     }
-    throw fail('PROPOSE_MODEL_FAILED', `the model proposal was unusable after one repair retry: ${(err as Error).message}`);
+    // No retry claim here: firstText/transport failures throw BEFORE the repair
+    // loop runs; the gateway's own schema error already says "after one repair
+    // retry" in the one case where that is true.
+    throw fail('PROPOSE_MODEL_FAILED', `the model proposal was unusable: ${(err as Error).message}`);
   }
 
   const written = briefs.map((cb) => {

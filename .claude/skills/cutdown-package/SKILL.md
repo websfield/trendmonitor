@@ -49,7 +49,7 @@ Assemble the deliverable ContentPackage from an approved, QA-passed final render
 | execution | `sync` |
 | timeout | 600s |
 | side effects | reads-project-data, writes-project-data |
-| contracts | job-brief-v1, source-asset-v1, platform-edl-v1, render-manifest-v1, render-v1, technical-qa-report-v1, qa-waiver-v1, review-decision-v1, content-package-v1 |
+| contracts | job-brief-v1, source-asset-v1, platform-edl-v1, render-manifest-v1, render-v1, render-v2, technical-qa-report-v1, qa-waiver-v1, review-decision-v1, content-package-v1 |
 
 Read `cutdown/skills/package/SKILL.md` for the behaviour, the refusals, and
 why each one exists. That file is the source of truth; this one is generated from it.

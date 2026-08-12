@@ -1,4 +1,4 @@
-import type { RenderManifestV1, RenderV1 } from '@cutdown/contracts/generated';
+import type { RenderManifestV1, RenderV2 } from '@cutdown/contracts/generated';
 
 /**
  * The `RendererAdapter` seam (tech-spec §11, PRD REQ-081).
@@ -36,7 +36,11 @@ import type { RenderManifestV1, RenderV1 } from '@cutdown/contracts/generated';
  */
 
 export type RenderManifest = RenderManifestV1.RenderManifest;
-export type Render = RenderV1.Render;
+// The CURRENT major the adapter produces (render-v2 since D-62). The two majors
+// are structurally identical in TypeScript — v2 only adds patterns, which types
+// cannot carry — but an alias claiming v1 for a record stamped 2.0.0 would be a
+// comment claiming a property the artefact does not have.
+export type Render = RenderV2.Render;
 
 /**
  * One subprocess `execute()` will run, with the argv already assembled.

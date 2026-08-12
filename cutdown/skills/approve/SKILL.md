@@ -8,6 +8,7 @@ inputSchema: ./schema/input.json
 outputSchema: ./schema/output.json
 contractsUsed:
   - render-v1
+  - render-v2
   - render-manifest-v1
   - technical-qa-report-v1
   - review-decision-v1

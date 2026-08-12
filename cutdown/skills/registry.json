@@ -19,6 +19,7 @@
       "contractsUsed": [
         "render-manifest-v1",
         "render-v1",
+        "render-v2",
         "review-decision-v1",
         "technical-qa-report-v1"
       ],
@@ -115,6 +116,7 @@
         "qa-waiver-v1",
         "render-manifest-v1",
         "render-v1",
+        "render-v2",
         "review-decision-v1",
         "source-asset-v1",
         "technical-qa-report-v1"
@@ -192,6 +194,7 @@
         "qa-waiver-v1",
         "render-manifest-v1",
         "render-v1",
+        "render-v2",
         "source-asset-v1",
         "style-profile-v1",
         "technical-qa-report-v1"
@@ -217,6 +220,7 @@
       "contractsUsed": [
         "platform-edl-v1",
         "render-v1",
+        "render-v2",
         "review-decision-v1"
       ],
       "sideEffects": [

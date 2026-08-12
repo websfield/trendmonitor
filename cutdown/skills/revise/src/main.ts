@@ -29,7 +29,7 @@ import {
   type Transport,
   type TransportResponse,
 } from '@cutdown/editorial';
-import type { PlatformEdlV1, RenderV1 } from '@cutdown/contracts/generated';
+import type { PlatformEdlV1, RenderV1, RenderV2 } from '@cutdown/contracts/generated';
 
 /**
  * `revise` — the narrowest change that satisfies a reviewer's note
@@ -44,7 +44,11 @@ import type { PlatformEdlV1, RenderV1 } from '@cutdown/contracts/generated';
  */
 
 type PlatformEDL = PlatformEdlV1.PlatformEDL;
-type Render = RenderV1.Render;
+// Both majors flow through this reader (Stage 0B-3, D-62): v1 records on disk
+// and v2 records from the constant-stamped producer. The two generated types are
+// structurally identical (v2 only adds patterns, which types cannot carry), but
+// the union states what is actually read.
+type Render = RenderV1.Render | RenderV2.Render;
 
 const SKILL = 'revise';
 const VERSION = '1.0.0';
@@ -127,7 +131,7 @@ function loadRenderAndEdl(root: string, renderId: string): { render: Render; edl
       const render = JSON.parse(readFileSync(renderPath, 'utf8')) as Render;
       if (render.renderId !== renderId) continue;
       // Read out of an artefact with a bare cast, then joined — the same id
-      // `package` guards. `render-v1` types it as a Ulid, so a value that fails this
+      // `package` guards. the render contract (both majors) types it as a Ulid, so a value that fails this
       // is a corrupt artefact, not a legitimate one.
       assertSafeId(render.edlId, 'The EDL id on the render record');
       const edlPath = join(root, 'edl', `${render.edlId}.json`);

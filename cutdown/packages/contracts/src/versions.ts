@@ -12,3 +12,12 @@
 
 /** platform-edl-v1: 1.1.0 since the D-52 `clips[].transition` addition. */
 export const PLATFORM_EDL_SCHEMA_VERSION = '1.1.0';
+
+/**
+ * render: 2.0.0 since the Stage 0B-3 `render-v2` bump (D-62 — job-relative path
+ * patterns on `outputPath` and `captions.*Path`). The sole producer is
+ * `renderer-ffmpeg`'s adapter, which hand-builds its envelope because it cannot
+ * import `skill-runtime`; it stamps THIS constant, and the drift test pins it to
+ * `render-v2.json` so the next bump cannot miss the producer.
+ */
+export const RENDER_SCHEMA_VERSION = '2.0.0';

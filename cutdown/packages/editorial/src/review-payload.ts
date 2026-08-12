@@ -35,6 +35,7 @@ import type {
   MomentV1,
   PlatformEdlV1,
   RenderV1,
+  RenderV2,
   TechnicalQaReportV1,
 } from '@cutdown/contracts/generated';
 
@@ -42,7 +43,11 @@ type CreativeBrief = CreativeBriefV1.CreativeBrief;
 type JobBrief = JobBriefV1.JobBrief;
 type Moment = MomentV1.Moment;
 type PlatformEDL = PlatformEdlV1.PlatformEDL;
-type Render = RenderV1.Render;
+// Both majors flow through this reader (Stage 0B-3, D-62): v1 records on disk
+// and v2 records from the constant-stamped producer. The two generated types are
+// structurally identical (v2 only adds patterns, which types cannot carry), but
+// the union states what is actually read.
+type Render = RenderV1.Render | RenderV2.Render;
 type TechnicalQaReport = TechnicalQaReportV1.TechnicalQaReport;
 
 /** A value that may legitimately be absent, always with the reason it is absent. */

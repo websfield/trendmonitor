@@ -49,7 +49,7 @@ Interpret a reviewer's free-form note into structured constraints and regenerate
 | execution | `sync` |
 | timeout | 300s |
 | side effects | reads-project-data, writes-project-data, network |
-| contracts | platform-edl-v1, render-v1, review-decision-v1 |
+| contracts | platform-edl-v1, render-v1, render-v2, review-decision-v1 |
 
 Read `cutdown/skills/revise/SKILL.md` for the behaviour, the refusals, and
 why each one exists. That file is the source of truth; this one is generated from it.

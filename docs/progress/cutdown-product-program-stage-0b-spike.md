@@ -149,7 +149,9 @@ Round 3's F12 ("tasks 6/7/8 cannot typecheck before task 9 regenerates the trees
 
 Derived order — **not negotiable, and not a matter of taste:**
 
-1. Write the schema file(s). They must already pass all 18 lint rules — `generateAll` throws before generating if `lintAllSchemas()` returns anything (`generate.ts:155-161`).
+1. Write the schema file(s). They must already pass the subset lint — `generateAll` throws before generating if `lintAllSchemas()` returns anything (`generate.ts:155-161`).
+
+   > **Correction (2026-08-10, found by `cutdown-measurement-reviewer` at the 0B-3 plan gate).** This step originally said "pass all **18** lint rules". No artefact defines an 18: `subset-lint.ts` defines **12** distinct rule ids (measured). The phantom numeral propagated from here into the 0B-3 evidence base and plan before being caught; the gate is stated count-free everywhere, the same way this document's other four false claims were corrected — in place, with the measurement.
 2. `pnpm build` (compiles the CLI; the stale generated tree is still self-consistent, so this succeeds).
 3. `build:contracts` (regenerates both trees, emits the barrel lines).
 4. `pnpm build` again (now `dist/generated/.../index.d.ts` exports the new namespace).

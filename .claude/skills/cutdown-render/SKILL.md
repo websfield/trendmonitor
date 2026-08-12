@@ -49,7 +49,7 @@ Render one PlatformEDL to a draft (proxy) or final (source-original) video with 
 | execution | `async` — long-running; Stage C returns an operation handle |
 | timeout | 1800s |
 | side effects | reads-project-data, writes-project-data |
-| contracts | platform-edl-v1, source-asset-v1, style-profile-v1, render-manifest-v1, render-v1, technical-qa-report-v1, qa-waiver-v1 |
+| contracts | platform-edl-v1, source-asset-v1, style-profile-v1, render-manifest-v1, render-v1, render-v2, technical-qa-report-v1, qa-waiver-v1 |
 
 Read `cutdown/skills/render/SKILL.md` for the behaviour, the refusals, and
 why each one exists. That file is the source of truth; this one is generated from it.

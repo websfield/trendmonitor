@@ -28,7 +28,7 @@
  * | `CUTDOWN_MODEL_BASE_URL`           | `https://api.anthropic.com` | endpoint (swap = config)            |
  * | `CUTDOWN_SPEND_CEILING_AUD`         | (none)                      | D-21 owner-set ceiling; absent=skip |
  * | `CUTDOWN_MODEL_TIMEOUT_SECONDS`     | `60`                        | per-call wall clock                 |
- * | `CUTDOWN_EDITORIAL_MAX_OUTPUT_TOKENS` | `4096`                    | per-call output cap                 |
+ * | `CUTDOWN_EDITORIAL_MAX_OUTPUT_TOKENS` | `16000`                   | per-call output cap                 |
  *
  * `CUTDOWN_SPEND_CEILING_AUD` has NO default on purpose: D-21 records the ceiling
  * as owner-set and not yet set, so an unset ceiling degrades to the skip path
@@ -46,7 +46,11 @@ import { fileURLToPath } from 'node:url';
 export const PROVIDER_ANTHROPIC = 'anthropic';
 export const DEFAULT_MODEL_ID = 'claude-sonnet-5';
 export const DEFAULT_BASE_URL = 'https://api.anthropic.com';
-export const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+// `max_tokens` caps thinking + response text TOGETHER on Claude Sonnet 5, and the
+// model runs adaptive thinking by default when no `thinking` param is sent (this
+// gateway sends none). 4096 let thinking consume the whole budget on a real propose
+// call, returning a content array with zero text blocks.
+export const DEFAULT_MAX_OUTPUT_TOKENS = 16000;
 export const DEFAULT_TIMEOUT_SECONDS = 60;
 
 /** Anthropic Messages API version header — a wire constant, not a model version. */
@@ -412,7 +416,17 @@ export function firstText(response: Record<string, unknown>): string {
     const rec = asRecord(block);
     if (rec && rec['type'] === 'text' && typeof rec['text'] === 'string') parts.push(rec['text']);
   }
-  if (parts.length === 0) throw new ModelSchemaError('provider response contained no text block');
+  if (parts.length === 0) {
+    // Name the stop reason and block shapes in the MESSAGE, not just details —
+    // callers surface only the message, and "no text block" alone hid the real
+    // cause once already (thinking blocks consuming the whole max_tokens budget).
+    const stopReason = typeof response['stop_reason'] === 'string' ? response['stop_reason'] : 'unknown';
+    const blockTypes = blocks.map((block) => String(asRecord(block)?.['type'] ?? 'unknown')).join(', ');
+    throw new ModelSchemaError(
+      `provider response contained no text block (stop_reason=${stopReason}; blocks=[${blockTypes}])`,
+      { stopReason, blockTypes: blocks.map((block) => asRecord(block)?.['type'] ?? 'unknown') },
+    );
+  }
   return parts.join('');
 }
 
@@ -482,6 +496,12 @@ export class ModelGateway {
       const payload = {
         model: this.config.modelId,
         max_tokens: this.config.maxOutputTokens,
+        // Claude Sonnet 5 runs adaptive thinking by default and spends against
+        // the SAME max_tokens budget as the response text; at its default
+        // effort (high) a live propose call thought ~15k tokens and truncated
+        // the JSON mid-string. "medium" bounds thinking spend at roughly the
+        // Sonnet-4.6-at-high tier D-21 named, leaving the budget for the text.
+        output_config: { effort: 'medium' },
         system: params.system,
         messages,
       };
@@ -525,6 +545,12 @@ export class ModelGateway {
         return result;
       } catch (err) {
         lastError = scrub(err instanceof Error ? err.message : String(err), key);
+        // A truncated response (stop_reason=max_tokens) is a budget problem, not
+        // a model-obedience problem — name it so nobody debugs the JSON instead.
+        const stopReason = parsedResponse['stop_reason'];
+        if (typeof stopReason === 'string' && stopReason !== 'end_turn') {
+          lastError += ` (stop_reason=${stopReason})`;
+        }
         if (attempt === 2) break;
         messages = [
           ...messages,
@@ -534,7 +560,9 @@ export class ModelGateway {
       }
     }
 
-    throw new ModelSchemaError('model output failed schema validation after one repair retry', {
+    // The validation error rides in the MESSAGE because callers surface only the
+    // message — a bare "failed schema validation" already cost one blind live run.
+    throw new ModelSchemaError(`model output failed schema validation after one repair retry: ${lastError}`, {
       provider: this.config.provider,
       modelId: this.config.modelId,
       attempts: 2,

@@ -1,0 +1,2317 @@
+Scope: 18 of 19 workspace projects
+workflows/local test$ node --test "dist/tests/**/*.test.js"
+packages/contracts test$ node --test "dist/tests/**/*.test.js"
+workflows/local test: ▶ which steps are gated
+workflows/local test:   ✔ gates entry to review on the DRAFT render (0.877ms)
+workflows/local test:   ✔ gates entry to packaging on the FINAL render (0.1718ms)
+workflows/local test:   ✔ leaves the editorial steps ungated — QA is about renders (0.1804ms)
+workflows/local test:   ✔ does not gate the render steps themselves — a render produces the evidence (0.1973ms)
+workflows/local test: ✔ which steps are gated (2.8905ms)
+workflows/local test: ▶ the gate fails closed
+workflows/local test:   ✔ refuses when no report exists (0.6804ms)
+workflows/local test:   ✔ refuses on blockers, naming them (0.5609ms)
+workflows/local test:   ✔ refuses on unwaived warnings (0.3307ms)
+workflows/local test:   ✔ refuses an unreadable report rather than treating it as absent (0.3599ms)
+workflows/local test:   ✔ refuses a draft report offered at the FINAL gate — one tier's QA never authorises the other (0.4372ms)
+workflows/local test: ✔ the gate fails closed (2.9466ms)
+workflows/local test: ▶ the gate allows what it should
+workflows/local test:   ✔ allows a clean pass (0.5078ms)
+workflows/local test:   ✔ allows pass_with_waivers, and says so (1.171ms)
+workflows/local test:   ✔ gates the FINAL tier independently of the draft (0.2221ms)
+workflows/local test: ✔ the gate allows what it should (2.1244ms)
+workflows/local test: ▶ which step requires an approval
+workflows/local test:   ✔ is the FINAL render, and nothing else (0.3659ms)
+workflows/local test:   ✔ never confuses the two gate kinds — the final render is approval-gated, not QA-gated (0.1433ms)
+workflows/local test: ✔ which step requires an approval (0.7118ms)
+workflows/local test: ▶ the approval gate fails closed
+workflows/local test:   ✔ refuses when no decision is in force (0.3598ms)
+workflows/local test:   ✔ refuses a REJECTION distinctly, quoting the reason and naming `cutdown revise` (0.1963ms)
+workflows/local test:   ✔ refuses an unreadable decision rather than treating it as absent (0.1483ms)
+workflows/local test:   ✔ refuses when the env itself throws (0.1662ms)
+workflows/local test:   ✔ allows a final render when an approval IS in force, naming who approved it (0.1554ms)
+workflows/local test: ✔ the approval gate fails closed (1.2614ms)
+packages/contracts test: ▶ contract families — a new major is a new FILE, not a new $id in an old file
+packages/contracts test:   ✔ a new major of an existing family is breaking (1.8686ms)
+packages/contracts test:   ✔ a brand-new contract is added, not breaking (0.4264ms)
+packages/contracts test:   ✔ a minor bump under one unchanged $id stays compatible (0.3086ms)
+packages/contracts test:   ✔ retiring a major is not invisible (0.3092ms)
+packages/contracts test:   ✔ a whole family disappearing is still removed (0.3308ms)
+packages/contracts test:   ✔ a first-wins family reducer fails here (0.2992ms)
+packages/contracts test:   ✔ an in-place major mutation is still breaking (0.2012ms)
+packages/contracts test:   ✔ a second file claiming a major the family already holds is added, not a v1→v1 bump (0.2084ms)
+packages/contracts test:   ✔ an identical set produces no drift at all (0.8588ms)
+packages/contracts test: ✔ contract families — a new major is a new FILE, not a new $id in an old file (7.0072ms)
+packages/contracts test: ▶ an id with no -vN suffix
+packages/contracts test:   ✔ two unsuffixed ids are two families (0.3168ms)
+packages/contracts test:   ✔ an unsuffixed id still tracks a hash move as compatible (0.1223ms)
+packages/contracts test:   ✔ a -vN id with NO .json extension is still the same family (0.2012ms)
+packages/contracts test:   ✔ an unsuffixed id and its -vN sibling are the same family (0.1042ms)
+packages/contracts test: ✔ an id with no -vN suffix (1.1006ms)
+packages/contracts test: ▶ the drift payload is what a human reads
+packages/contracts test:   ✔ a family bump prints a file that exists, and a version pair that means something (0.3193ms)
+packages/contracts test: ✔ the drift payload is what a human reads (0.4666ms)
+packages/contracts test: ▶ currentContractSet — the input ordering F-B exploits is real
+packages/contracts test:   ✔ the live tree carries the 0B-3 bump: 15 entries, render family {1,2}, breaking v1→v2 vs the pre-bump set (11.5427ms)
+packages/contracts test:   ✔ entries are sorted by schemaId, and each major matches its own schemaVersion (7.557ms)
+packages/contracts test: ✔ currentContractSet — the input ordering F-B exploits is real (19.2655ms)
+packages/contracts test: ▶ content hashing
+packages/contracts test:   ✔ two runs differing ONLY in createdAt hash identically (1.6725ms)
+packages/contracts test:   ✔ two runs differing ONLY in createdBy hash identically (0.4895ms)
+packages/contracts test:   ✔ schemaVersion IS inside the hash — it is semantic, not bookkeeping (0.4001ms)
+packages/contracts test:   ✔ a real content change changes the hash (0.3137ms)
+packages/contracts test:   ✔ key order does not affect the hash (0.3609ms)
+packages/contracts test:   ✔ the hashed payload literally omits the two excluded keys (0.3269ms)
+packages/contracts test:   ✔ hashing does not mutate the input (2.3109ms)
+packages/contracts test: ✔ content hashing (7.6579ms)
+packages/contracts test: ▶ resolveOutputs — one approved cut per CreativeBrief (T-1)
+packages/contracts test:   ✔ two packages of one CreativeBrief count once, and the LATER one survives (3.2484ms)
+packages/contracts test:   ✔ the ULID breaks a timestamp tie, so "latest" is never the array order (0.553ms)
+packages/contracts test:   ✔ an unparseable createdAt can never become the latest (0.368ms)
+packages/contracts test:   ✔ an offset timestamp is compared as an INSTANT, not as a string (0.4125ms)
+packages/contracts test:   ✔ outputs come back in force order, so a caller can take the last N (1.1488ms)
+packages/contracts test: ✔ resolveOutputs — one approved cut per CreativeBrief (T-1) (7.207ms)
+packages/contracts test: ▶ the composite key — every component prevents a named eviction
+packages/contracts test:   ✔ packages in different jobs never merge (0.2232ms)
+packages/contracts test:   ✔ packages under different accountIds never merge (0.169ms)
+packages/contracts test:   ✔ a fixture never supersedes a real output, even when it is later (0.2362ms)
+packages/contracts test:   ✔ a delimiter inside an id cannot forge membership of another group (0.2287ms)
+packages/contracts test: ✔ the composite key — every component prevents a named eviction (1.082ms)
+packages/contracts test: ▶ population — resolution runs over the evidence-complete set
+packages/contracts test:   ✔ an evidence-incomplete package never supersedes a complete one (0.3424ms)
+packages/contracts test:   ✔ an excluded package is NAMED with its gaps, never silently dropped (0.202ms)
+packages/contracts test:   ✔ the filter is INSIDE resolveOutputs, so a caller passing raw packages gets the same answer (0.1496ms)
+packages/contracts test: ✔ population — resolution runs over the evidence-complete set (0.8108ms)
+packages/contracts test: ▶ an unreadable file makes resolution indeterminate
+packages/contracts test:   ✔ any unreadable package makes the whole answer indeterminate (0.1489ms)
+packages/contracts test:   ✔ the indeterminate arm carries the reason, so the operator has something to fix (0.0761ms)
+packages/contracts test: ✔ an unreadable file makes resolution indeterminate (0.2943ms)
+packages/contracts test: ▶ anomalies are reported, never resolved away
+packages/contracts test:   ✔ a creativeBriefId spanning two jobs is reported (0.1544ms)
+packages/contracts test:   ✔ a creativeBriefId spanning two accounts is reported (0.1143ms)
+packages/contracts test:   ✔ a brief spanning both a job and an account is reported twice, once per kind (0.1084ms)
+packages/contracts test:   ✔ the ordinary supersession case reports NO anomaly (0.0907ms)
+packages/contracts test:   ✔ a fixture and a real package sharing a brief is not an anomaly (0.1288ms)
+packages/contracts test: ✔ anomalies are reported, never resolved away (0.7021ms)
+packages/contracts test: ▶ the relocated symbols keep their behaviour
+packages/contracts test:   ✔ comparePackages is a total order over the pair (instant, ULID) (0.1437ms)
+packages/contracts test:   ✔ evidenceGaps reports the one gap that survives contract validation (0.0752ms)
+packages/contracts test:   ✔ outputKeyOf reads the four key components and nothing else (0.1226ms)
+packages/contracts test: ✔ the relocated symbols keep their behaviour (0.4328ms)
+packages/contracts test: ▶ range-check corpus
+packages/contracts test:   ✔ the corpus is non-trivial and covers both verdicts (1.6064ms)
+packages/contracts test:   ✔ every distinct violation code is exercised at least once (0.3774ms)
+packages/contracts test:   ✔ in-bounds-mid-asset — The ordinary case: a range comfortably inside the asset. (1.3365ms)
+packages/contracts test:   ✔ ends-exactly-at-duration — The range is half-open, so end == duration consumes the whole asset and reads nothing past it. An off-by-one here would reject every full-length range. (0.2455ms)
+packages/contracts test:   ✔ minimal-one-tick-range — The smallest legal range. Proves the non-empty rule is > and not >=. (0.176ms)
+packages/contracts test:   ✔ one-tick-past-the-end — The exit criterion in miniature. A single tick past the duration is the defect that reaches a render as a black frame or a decode error. (0.391ms)
+packages/contracts test:   ✔ starts-at-the-duration — A range beginning where the asset ends contains no media at all. (0.2306ms)
+packages/contracts test:   ✔ empty-range — endTicks == startTicks. JSON Schema provably cannot express this (draft 2020-12 has no cross-property inequality and tech-spec §3 forbids if/then/else), so it can only be caught here. (0.2124ms)
+packages/contracts test:   ✔ inverted-range — endTicks < startTicks. Same unexpressible inequality, opposite direction. (0.2112ms)
+packages/contracts test:   ✔ audio-timebase-exactly-full-length — 48 kHz ticks ARE sample counts. 480000 samples == 10 s == the whole 300-tick @30fps asset. Cross-timebase comparison must be exact. (0.3474ms)
+packages/contracts test:   ✔ audio-timebase-one-sample-over — A SINGLE sample past the end, across differing timebases. This is the case a float comparison silently passes — the reason the implementation cross-multiplies with BigInt. (1.3878ms)
+packages/contracts test:   ✔ wrong-asset — A range is only meaningful against its own asset; checking it against another's duration would be a coincidence, not a validation. (0.2221ms)
+packages/contracts test:   ✔ negative-start — Ticks are counts and cannot be negative. (0.1205ms)
+packages/contracts test:   ✔ fractional-tick — A fractional tick is a category error — it means someone did float-seconds arithmetic upstream, which is exactly what the rational timebase exists to prevent. (0.1665ms)
+packages/contracts test:   ✔ malformed-range-missing-ticks — The untrusted path this module exists for: a model-proposed range that is not structurally a range at all. A missing tick is a STRUCTURAL defect, not a fractional one — reporting NON_INTEGER_TICKS would send the reader hunting for float arithmetic that was never involved. (0.2167ms)
+packages/contracts test:   ✔ unsafe-integer-ticks — Above 2^53 the value was destroyed by JSON.parse before any comparison ran, so an out-of-bounds range was reported clean. The checker refuses an unrepresentable tick rather than comparing a number it knows is already wrong. (0.155ms)
+packages/contracts test:   ✔ zero-denominator-timebase — Must be reported as an invalid timebase, never reach a division. A validator that divides by zero cannot be run over generated output. (0.1473ms)
+packages/contracts test:   ✔ unknown-duration-fails-closed — An asset whose preflight established no duration gives no bound to prove against. The only safe verdict is refusal — passing would let an unbounded range through on the strength of missing information. (0.205ms)
+packages/contracts test: ✔ range-check corpus (10.1624ms)
+packages/contracts test: ▶ range-check — the single source-bounds implementation
+packages/contracts test:   ▶ valid ranges
+packages/contracts test:     ✔ a range strictly inside the asset passes (1.6695ms)
+packages/contracts test:     ✔ a range ending EXACTLY at the duration passes — the range is half-open (0.1798ms)
+packages/contracts test:     ✔ the minimal one-tick range passes (0.108ms)
+packages/contracts test:   ✔ valid ranges (2.659ms)
+packages/contracts test:   ▶ the inequality JSON Schema cannot express
+packages/contracts test:     ✔ endTicks == startTicks is an EMPTY range, not a valid one (0.3967ms)
+packages/contracts test:     ✔ endTicks < startTicks is inverted (0.2026ms)
+packages/contracts test:   ✔ the inequality JSON Schema cannot express (0.7923ms)
+packages/contracts test:   ▶ source bounds
+packages/contracts test:     ✔ one tick past the end is caught (0.2287ms)
+packages/contracts test:     ✔ a range starting at the duration is caught (1.1971ms)
+packages/contracts test:     ✔ the violation reports both bound and actual, so the message is actionable (0.5266ms)
+packages/contracts test:   ✔ source bounds (2.3547ms)
+packages/contracts test:   ▶ cross-timebase comparison is exact, never float
+packages/contracts test:     ✔ a 48 kHz audio range is compared correctly against a 30 fps duration (0.3671ms)
+packages/contracts test:     ✔ 29.97 fps ranges compare exactly against a 29.97 duration (0.3469ms)
+packages/contracts test:     ✔ an unsafely-large tick count is REJECTED, not silently rounded (0.2971ms)
+packages/contracts test:     ✔ the largest safe tick count is still accepted (0.2216ms)
+packages/contracts test:   ✔ cross-timebase comparison is exact, never float (1.4807ms)
+packages/contracts test:   ▶ fail closed
+packages/contracts test:     ✔ an unknown (null) duration is a VIOLATION, never a pass (0.2937ms)
+packages/contracts test:     ✔ a range pointing at a different asset is a violation (0.1736ms)
+packages/contracts test:     ✔ a non-integer tick is a violation — ticks are counts, not measurements (0.1616ms)
+packages/contracts test:     ✔ a negative start is a violation (0.1275ms)
+packages/contracts test:     ✔ a zero or negative timebase denominator is a violation, not a divide-by-zero (0.1252ms)
+packages/contracts test:     ✔ a NaN tick is a violation, not a silently-false comparison (0.2556ms)
+packages/contracts test:     ✔ a structurally malformed range is reported, never thrown (0.2015ms)
+packages/contracts test:     ✔ a missing tick is MALFORMED, not NON_INTEGER (0.197ms)
+packages/contracts test:     ✔ null bounds are reported, never thrown (0.3108ms)
+packages/contracts test:     ✔ undefined bounds are reported, never thrown (0.1216ms)
+packages/contracts test:     ✔ null describes itself as null, not as "object" (0.0724ms)
+packages/contracts test:   ✔ fail closed (2.4144ms)
+packages/contracts test:   ▶ the batch entry point is equally unthrowable
+packages/contracts test:     ✔ a null range list is reported, never thrown (0.1393ms)
+packages/contracts test:     ✔ an undefined range list is reported, never thrown (0.053ms)
+packages/contracts test:   ✔ the batch entry point is equally unthrowable (0.2545ms)
+packages/contracts test:   ▶ batch checking over a Moment set
+packages/contracts test:     ✔ every violation is attributed to its own range index (0.1626ms)
+packages/contracts test:     ✔ an all-valid set passes and reports zero violations (0.0913ms)
+packages/contracts test:     ✔ an empty set is vacuously ok but records that nothing was checked (0.0607ms)
+packages/contracts test:   ✔ batch checking over a Moment set (0.3859ms)
+packages/contracts test: ✔ range-check — the single source-bounds implementation (11.13ms)
+packages/contracts test: ▶ schema style subset
+packages/contracts test:   ✔ the real schemas obey their own subset (15.2045ms)
+packages/contracts test:   ✔ rejects an object that is not closed (2.8339ms)
+packages/contracts test:   ✔ rejects if/then/else (1.8413ms)
+packages/contracts test:   ✔ rejects patternProperties (1.7936ms)
+packages/contracts test:   ✔ rejects a schema-valued additionalProperties (an open map) (1.6802ms)
+packages/contracts test:   ✔ rejects anyOf (1.7394ms)
+packages/contracts test:   ✔ rejects a union of objects with no const discriminator (1.8671ms)
+packages/contracts test:   ✔ ACCEPTS a properly tagged union (1.8258ms)
+packages/contracts test:   ✔ ACCEPTS the nullable idiom (X | null) without a discriminator (1.8129ms)
+packages/contracts test:   ✔ rejects an $id that does not match the file path (1.6701ms)
+packages/contracts test:   ✔ rejects a contract schema with no changelog (1.5319ms)
+packages/contracts test:   ✔ rejects a -vN filename whose declared major is not N (1.643ms)
+packages/contracts test:   ✔ ACCEPTS a -vN filename that agrees with its declared major (1.4916ms)
+packages/contracts test:   ✔ SKIPS a contract whose filename carries no -vN at all (1.5923ms)
+packages/contracts test:   ✔ rejects a non-2020-12 dialect (1.5841ms)
+packages/contracts test: ✔ schema style subset (64.3597ms)
+workflows/local test: ✔ advances through available stages, recording run-log and index.db (80.0727ms)
+workflows/local test: ✔ resume: completed stages are not re-run after restart (68.0171ms)
+workflows/local test: ✔ rebuild-index reconstructs job state losslessly after index.db is deleted (96.8908ms)
+workflows/local test: ✔ structured-error exit blocks the job, records the error, and is recoverable (46.2311ms)
+workflows/local test: ✔ a refusing gate stops the job WITHOUT running the step or touching the run log (60.2886ms)
+workflows/local test: ✔ a gate refusing the very first step advances nothing (20.2743ms)
+workflows/local test: ✔ drives §15 steps 8-9 in order: draft QA -> approval -> final render -> final QA -> package (106.5437ms)
+workflows/local test: ℹ tests 26
+workflows/local test: ℹ suites 5
+workflows/local test: ℹ pass 26
+workflows/local test: ℹ fail 0
+workflows/local test: ℹ cancelled 0
+workflows/local test: ℹ skipped 0
+workflows/local test: ℹ todo 0
+workflows/local test: ℹ duration_ms 711.5124
+workflows/local test: Done
+packages/contracts test: ▶ validate:contracts
+packages/contracts test:   ✔ every fixture matches its declared expectation under BOTH validators (890.2787ms)
+packages/contracts test:   ✔ invalid fixtures are genuinely REJECTED, not merely present (213.7921ms)
+packages/contracts test:   ✔ every contract owns at least one valid and one invalid fixture (13.2285ms)
+packages/contracts test: ✔ validate:contracts (1118.2319ms)
+packages/contracts test: ▶ build:contracts --check
+packages/contracts test:   ✔ reports the committed generated trees as current (2758.6109ms)
+packages/contracts test:   ✔ DETECTS a stale generated tree (5133.6478ms)
+packages/contracts test: ✔ build:contracts --check (7892.9291ms)
+packages/contracts test: ✔ PLATFORM_EDL_SCHEMA_VERSION matches the schema file (2.9683ms)
+packages/contracts test: ✔ RENDER_SCHEMA_VERSION matches the current render schema file (0.7586ms)
+packages/contracts test: ℹ tests 113
+packages/contracts test: ℹ suites 23
+packages/contracts test: ℹ pass 113
+packages/contracts test: ℹ fail 0
+packages/contracts test: ℹ cancelled 0
+packages/contracts test: ℹ skipped 0
+packages/contracts test: ℹ todo 0
+packages/contracts test: ℹ duration_ms 9549.7788
+packages/contracts test: Done
+packages/style test$ node --test "dist/tests/**/*.test.js"
+packages/renderer-core test$ node --test "dist/tests/**/*.test.js"
+packages/skill-runtime test$ node --test "dist/tests/**/*.test.js"
+packages/renderer-core test: ▶ contract conformance
+packages/renderer-core test:   ✔ local media types conform to the generated SourceAsset contract (0.9613ms)
+packages/renderer-core test: ✔ contract conformance (1.9674ms)
+packages/renderer-core test: ▶ tier-1 determinism pins (tech-spec §12, D-33 as amended by D-57)
+packages/renderer-core test:   ✔ claims tier 1 and nothing stronger (0.6642ms)
+packages/renderer-core test:   ✔ pins threads to 1, so the manifest field means the same thing everywhere (0.1155ms)
+packages/renderer-core test:   ✔ emits every knob a byte comparison depends on (0.21ms)
+packages/renderer-core test:   ✔ refuses a nonsensical thread count instead of silently defaulting (0.4938ms)
+packages/renderer-core test: ✔ tier-1 determinism pins (tech-spec §12, D-33 as amended by D-57) (2.4002ms)
+packages/renderer-core test: ▶ assertDeterministicArgv — why a byte comparison alone is not proof
+packages/renderer-core test:   ✔ accepts an argv carrying every pin (0.2669ms)
+packages/renderer-core test:   ✔ rejects an argv with no bitexact flags (0.1866ms)
+packages/renderer-core test:   ✔ rejects an argv missing the AUDIO bitexact pin specifically (0.1994ms)
+packages/renderer-core test:   ✔ rejects an argv that leaves creation_time in place (0.1843ms)
+packages/renderer-core test:   ✔ rejects a bitexact flag paired with the wrong value (0.1492ms)
+packages/renderer-core test: ✔ assertDeterministicArgv — why a byte comparison alone is not proof (1.2498ms)
+packages/renderer-core test: ▶ tech-spec §11 — FFmpeg is spawned in exactly one module
+packages/renderer-core test:   ✔ no module other than ffmpeg.ts spawns ffmpeg or ffprobe (83.9242ms)
+packages/renderer-core test:   ✔ the check can actually fail — a module doing both is caught (0.1413ms)
+packages/renderer-core test: ✔ tech-spec §11 — FFmpeg is spawned in exactly one module (84.2052ms)
+packages/skill-runtime test: ▶ artefact-derived paths never reach `join` directly
+packages/skill-runtime test:   ✔ finds source files to scan at all (28.5108ms)
+packages/skill-runtime test:   ✔ every opt-out marker states a reason (54.7522ms)
+packages/skill-runtime test:   ✔ no `join(...)` call interpolates an unguarded artefact path field (62.0604ms)
+packages/skill-runtime test: ✔ artefact-derived paths never reach `join` directly (146.74ms)
+packages/renderer-core test: ▶ input path rejection (tech-spec §11)
+packages/renderer-core test:   ✔ rejects option-shaped, short (1.9565ms)
+packages/renderer-core test:   ✔ rejects option-shaped, filter injection (0.2658ms)
+packages/renderer-core test:   ✔ rejects option-shaped, long (0.1995ms)
+packages/renderer-core test:   ✔ rejects concat protocol (0.2796ms)
+packages/renderer-core test:   ✔ rejects http protocol (SSRF) (0.2347ms)
+packages/renderer-core test:   ✔ rejects https protocol (0.1415ms)
+packages/renderer-core test:   ✔ rejects subfile protocol (0.165ms)
+packages/renderer-core test:   ✔ rejects data protocol (0.152ms)
+packages/renderer-core test:   ✔ rejects relative path (0.2105ms)
+packages/renderer-core test:   ✔ rejects relative traversal (0.3066ms)
+packages/renderer-core test:   ✔ rejects bare filename (0.2057ms)
+packages/renderer-core test:   ✔ rejects empty (0.1582ms)
+packages/renderer-core test:   ✔ accepts an ordinary absolute path, including a Windows drive letter (0.3162ms)
+packages/renderer-core test:   ✔ structured error payload matches the §6.2 shape (1.2066ms)
+packages/renderer-core test: ✔ input path rejection (tech-spec §11) (7.8738ms)
+packages/renderer-core test: ▶ protocol whitelist enforcement
+packages/renderer-core test:   ✔ inputArgs always emits the whitelist immediately before -i (0.2542ms)
+packages/renderer-core test:   ✔ assertSafeArgv rejects a hand-built argv missing the whitelist (0.3337ms)
+packages/renderer-core test:   ✔ assertSafeArgv rejects an option-shaped input smuggled into a hand-built argv (0.1775ms)
+packages/renderer-core test:   ✔ assertSafeArgv rejects a dangling -i (0.1561ms)
+packages/renderer-core test:   ✔ assertSafeArgv accepts a well-formed argv and the pipe sink (0.1539ms)
+packages/renderer-core test:   ✔ the whitelist is re-emitted per input, since it is a per-input option (0.2399ms)
+packages/renderer-core test: ✔ protocol whitelist enforcement (1.6145ms)
+packages/renderer-core test: ▶ filtergraph escaping (tech-spec §11)
+packages/renderer-core test:   ✔ escapes the shell-looking payload as filtergraph text, not shell text (0.5379ms)
+packages/renderer-core test:   ✔ escapes colon (0.2385ms)
+packages/renderer-core test:   ✔ escapes single quote (0.1105ms)
+packages/renderer-core test:   ✔ escapes backslash (0.0728ms)
+packages/renderer-core test:   ✔ escapes open bracket (0.0625ms)
+packages/renderer-core test:   ✔ escapes close bracket (0.0614ms)
+packages/renderer-core test:   ✔ escapes comma (0.0586ms)
+packages/renderer-core test:   ✔ escapes semicolon (0.0607ms)
+packages/renderer-core test:   ✔ escapes equals (0.0626ms)
+packages/renderer-core test:   ✔ a filter-breakout attempt cannot close its option and append a filter (0.2883ms)
+packages/renderer-core test:   ✔ a newline is preserved — multi-line captions are legitimate (0.1088ms)
+packages/renderer-core test:   ✔ a carriage return and other control characters are rejected, not silently stripped (0.3135ms)
+packages/renderer-core test:   ✔ escaping is idempotent in the sense that it never loses the payload (0.2188ms)
+packages/renderer-core test: ✔ filtergraph escaping (tech-spec §11) (2.647ms)
+packages/renderer-core test: ▶ escapeFilterPath — the Windows drive-colon case
+packages/renderer-core test:   ✔ normalises backslashes and escapes the drive colon (0.2262ms)
+packages/renderer-core test:   ✔ POSIX font paths need no colon escaping but still get level-2 treatment (0.096ms)
+packages/renderer-core test:   ✔ a filter path is validated like an input path (0.2217ms)
+packages/style test: ✔ the two committed placeholder profiles load, validate, and resolve by accountId (122.5355ms)
+packages/style test: ✔ an account with no profile resolves to null, not an error (7.968ms)
+packages/style test: ✔ buildStyleContext surfaces prohibited claims and marks an unapproved profile as DRAFT (3.3168ms)
+packages/style test: ✔ cross-field rule: mustAppear=true with empty placements is rejected (schema cannot express it) (2.7468ms)
+packages/style test: ✔ schema-invalid profile (bad hex colour) is rejected by the contract validator (2.2758ms)
+packages/style test: ℹ tests 5
+packages/style test: ℹ suites 0
+packages/style test: ℹ pass 5
+packages/style test: ℹ fail 0
+packages/style test: ℹ cancelled 0
+packages/style test: ℹ skipped 0
+packages/style test: ℹ todo 0
+packages/style test: ℹ duration_ms 618.2833
+packages/style test: Done
+packages/skill-runtime test: ▶ exit codes
+packages/skill-runtime test:   ✔ the four §6.2 codes hold their documented values and are distinct (0.5634ms)
+packages/skill-runtime test: ✔ exit codes (1.397ms)
+packages/skill-runtime test: ▶ fail vs reject
+packages/skill-runtime test:   ✔ reject means "the caller sent something wrong" — exit 2 (0.3701ms)
+packages/skill-runtime test:   ✔ fail means "input was fine, the work was not possible" — exit 3 (0.1351ms)
+packages/skill-runtime test:   ✔ the two do NOT produce the same exit code (0.1428ms)
+packages/skill-runtime test:   ✔ details are carried through, including falsy and empty values (0.7082ms)
+packages/skill-runtime test: ✔ fail vs reject (1.592ms)
+packages/skill-runtime test: ▶ skillEnvelope
+packages/skill-runtime test:   ✔ it stamps the skill as the author, at the current version (2.6496ms)
+packages/skill-runtime test:   ✔ createdAt is a parseable UTC ISO instant (0.52ms)
+packages/skill-runtime test:   ✔ the envelope validates against the contract envelope schema (98.1371ms)
+packages/skill-runtime test: ✔ skillEnvelope (101.7799ms)
+packages/skill-runtime test: ▶ contractValidator
+packages/skill-runtime test:   ✔ it knows the contract schemas by $id, so skills can validate what they emit (54.0331ms)
+packages/skill-runtime test:   ✔ a $ref into a shared enum actually RESOLVES rather than silently passing (62.5532ms)
+packages/skill-runtime test: ✔ contractValidator (116.7976ms)
+packages/skill-runtime test: ▶ jobDir
+packages/skill-runtime test:   ✔ it lands under project-data/jobs/<jobId> (0.5998ms)
+packages/skill-runtime test: ✔ jobDir (0.7157ms)
+packages/skill-runtime test: ▶ writeJsonAtomic
+packages/skill-runtime test:   ✔ it creates missing parent directories (10.6481ms)
+packages/skill-runtime test:   ✔ it leaves NO temp file behind (4.4394ms)
+packages/skill-runtime test:   ✔ the published file is complete, indented, and newline-terminated (3.8284ms)
+packages/skill-runtime test:   ✔ an overwrite fully replaces the previous content (12.6033ms)
+packages/skill-runtime test: ✔ writeJsonAtomic (31.762ms)
+packages/skill-runtime test: ▶ jobDir refuses an id that would escape the jobs root
+packages/skill-runtime test:   ✔ accepts an ordinary job id (1.679ms)
+packages/skill-runtime test:   ✔ refuses forward-slash traversal (0.5454ms)
+packages/skill-runtime test:   ✔ refuses BACKSLASH traversal — the Windows form escapes identically (0.2849ms)
+packages/skill-runtime test:   ✔ refuses a bare `..` (0.2671ms)
+packages/skill-runtime test:   ✔ refuses an absolute path (0.2322ms)
+packages/skill-runtime test:   ✔ refuses a UNC-shaped id (0.3189ms)
+packages/skill-runtime test:   ✔ refuses an id embedding a separator even without `..` (0.2218ms)
+packages/skill-runtime test:   ✔ refuses an empty id and an id starting with a dot (0.2607ms)
+packages/skill-runtime test:   ✔ refuses an id longer than the 64-character bound (0.3694ms)
+packages/skill-runtime test:   ✔ names the id in the refusal, so an operator can see what was rejected (0.4374ms)
+packages/skill-runtime test: ✔ jobDir refuses an id that would escape the jobs root (7.9644ms)
+packages/skill-runtime test: ▶ assertContained is the belt to assertSafeId braces
+packages/skill-runtime test:   ✔ accepts the root itself and a child (0.5094ms)
+packages/skill-runtime test:   ✔ refuses a sibling whose name merely starts with the root (0.3391ms)
+packages/skill-runtime test:   ✔ refuses a parent (0.1862ms)
+packages/skill-runtime test:   ✔ does not depend on the id regex being exhaustive (0.2302ms)
+packages/skill-runtime test: ✔ assertContained is the belt to assertSafeId braces (1.5169ms)
+packages/skill-runtime test: ▶ assertJobRelative guards paths read out of STORED artefacts
+packages/skill-runtime test:   ✔ accepts a job-relative path (0.4208ms)
+packages/skill-runtime test:   ✔ refuses `..` traversal in either separator (0.49ms)
+packages/skill-runtime test:   ✔ refuses an absolute path and a drive-letter path (0.1862ms)
+packages/skill-runtime test:   ✔ refuses a UNC path (0.1252ms)
+packages/skill-runtime test:   ✔ refuses a NUL byte (0.1034ms)
+packages/skill-runtime test:   ✔ refuses an empty value (0.0918ms)
+packages/skill-runtime test:   ✔ refuses a Windows reserved DEVICE name in ANY segment (0.2503ms)
+packages/skill-runtime test:   ✔ still accepts a path whose segments merely CONTAIN a device name (0.072ms)
+packages/skill-runtime test: ✔ assertJobRelative guards paths read out of STORED artefacts (2.1199ms)
+packages/skill-runtime test: ▶ resolveJobRelative is the one call an artefact path should go through
+packages/skill-runtime test:   ✔ resolves a job-relative path under the job root (0.5275ms)
+packages/skill-runtime test:   ✔ refuses a traversing stored path — the delivered-package vector (0.1737ms)
+packages/skill-runtime test: ✔ resolveJobRelative is the one call an artefact path should go through (0.851ms)
+packages/skill-runtime test: ▶ assertSafeId is reusable for any id that becomes a path component
+packages/skill-runtime test:   ✔ accepts ULIDs and ordinary ids (0.136ms)
+packages/skill-runtime test:   ✔ refuses the traversal shapes (0.1717ms)
+packages/skill-runtime test:   ✔ agrees with the other two mirrors on every REJECTED id (1.1593ms)
+packages/skill-runtime test:   ✔ agrees with the other two mirrors on every ACCEPTED id (0.2216ms)
+packages/skill-runtime test: ✔ assertSafeId is reusable for any id that becomes a path component (1.956ms)
+packages/skill-runtime test: ▶ assertJobRelative rejects an alternate-data-stream path
+packages/skill-runtime test:   ✔ refuses a colon in a non-leading segment (0.3411ms)
+packages/skill-runtime test: ✔ assertJobRelative rejects an alternate-data-stream path (0.4501ms)
+packages/skill-runtime test: ▶ assertContainedPhysical follows symlinks; assertContained does not
+packages/skill-runtime test:   ﹣ the LEXICAL check passes a link that points outside the job (0.191ms) # file symlinks need a privilege this machine does not grant
+packages/skill-runtime test:   ﹣ the PHYSICAL check refuses it (0.0656ms) # file symlinks need a privilege this machine does not grant
+packages/skill-runtime test:   ✔ accepts a real file inside the job (2.666ms)
+packages/skill-runtime test:   ✔ has SOME link type available, or the escape property is asserted nowhere (0.1108ms)
+packages/skill-runtime test:   ✔ refuses a READ through a directory junction pointing out of the job (1.1533ms)
+packages/skill-runtime test:   ✔ refuses a WRITE target under a junction, resolving its nearest existing ancestor (1.8246ms)
+packages/skill-runtime test:   ✔ still accepts a legitimate write target that does not exist yet (0.8286ms)
+packages/skill-runtime test: ✔ assertContainedPhysical follows symlinks; assertContained does not (57.2924ms)
+packages/renderer-core test:   ✔ FFmpeg itself accepts the escaped font path and adversarial caption text (392.7763ms)
+packages/renderer-core test: ✔ escapeFilterPath — the Windows drive-colon case (393.9935ms)
+packages/renderer-core test: ▶ spawning
+packages/renderer-core test:   ✔ records the FFmpeg version string for the D-33 determinism proof (176.4239ms)
+packages/renderer-core test:   ✔ libass capability probe returns true on this machine (150.7213ms)
+packages/renderer-core test:   ✔ a timeout is reported distinctly from a non-zero exit (477.4134ms)
+packages/renderer-core test:   ✔ a non-zero exit is a structured runtime failure, not a timeout (163.023ms)
+packages/renderer-core test: ✔ spawning (968.07ms)
+packages/renderer-core test: ▶ the font registry refuses, never substitutes
+packages/renderer-core test:   ✔ resolves the vendored caption font against its recorded hash (13.9303ms)
+packages/renderer-core test:   ✔ points libass at a fonts-ONLY directory (1.2607ms)
+packages/renderer-core test:   ✔ REFUSES a font whose bytes do not match the recorded hash (16.4775ms)
+packages/renderer-core test:   ✔ refuses a role the registry does not carry (1.161ms)
+packages/renderer-core test: ✔ the font registry refuses, never substitutes (34.4629ms)
+packages/renderer-core test: ▶ D-34 tier ordering is enforced where the manifest is BORN
+packages/renderer-core test:   ✔ refuses a final manifest that names no approved draft (0.5273ms)
+packages/renderer-core test:   ✔ refuses a draft manifest that claims an approval (0.1677ms)
+packages/renderer-core test:   ✔ refuses a manifest with no fonts — burned-in text needs a recorded licence (0.1942ms)
+packages/renderer-core test:   ✔ NEVER lets the renderer mark its own output editorially approved (0.52ms)
+packages/renderer-core test:   ✔ selects proxy media for a draft and originals for a final (D-25/D-34) (0.3318ms)
+packages/renderer-core test:   ✔ gives both tiers the SAME editorialPlanHash — they realise one plan (0.3682ms)
+packages/renderer-core test:   ✔ pins every tier-1 determinism knob on the manifest itself (0.2034ms)
+packages/renderer-core test: ✔ D-34 tier ordering is enforced where the manifest is BORN (2.6531ms)
+packages/renderer-core test: ▶ a final render must realise the plan that was approved
+packages/renderer-core test:   ✔ accepts a final differing only in tier, media and encode (0.3658ms)
+packages/renderer-core test:   ✔ catches a STRIPPED draft manifest instead of comparing nothing (round-4 BLOCK) (0.4182ms)
+packages/renderer-core test:   ✔ catches an EDIT after sign-off via the editorial plan hash (0.4223ms)
+packages/renderer-core test:   ✔ catches a caption CONTENT change even though caption paths legitimately differ (0.3371ms)
+packages/renderer-core test:   ✔ catches a geometry change between approval and delivery (0.4038ms)
+packages/renderer-core test:   ✔ catches a font swap between approval and delivery (0.3778ms)
+packages/renderer-core test:   ✔ does NOT complain about the encode settings a final is meant to change (0.3134ms)
+packages/renderer-core test: ✔ a final render must realise the plan that was approved (2.938ms)
+packages/renderer-core test: ▶ D-52 fades and the plan-hash chain — the true property, asserted
+packages/renderer-core test:   ✔ adding a transition CHANGES editorialPlanHash; draft and final of the same EDL share it (2.047ms)
+packages/renderer-core test: ✔ D-52 fades and the plan-hash chain — the true property, asserted (2.2038ms)
+packages/renderer-core test: ▶ pure helpers
+packages/renderer-core test:   ✔ parseRational refuses the degenerate forms rather than coercing them (1.5988ms)
+packages/renderer-core test:   ✔ normaliseRotation lands in the schema enum, including negative values (0.2481ms)
+packages/renderer-core test:   ✔ detectHdr maps transfer characteristics to the two Phase 0 formats (0.2204ms)
+packages/renderer-core test:   ✔ classifyFrameRate treats an unreadable rate as unknown, never as cfr (0.1807ms)
+packages/renderer-core test: ✔ pure helpers (3.3554ms)
+packages/renderer-core test: ▶ clean.mp4 — the control fixture
+packages/renderer-core test:   ✔ CFR 30/1, one 48 kHz audio track, no rotation, not HDR (374.1565ms)
+packages/renderer-core test: ✔ clean.mp4 — the control fixture (374.5147ms)
+packages/renderer-core test: ▶ ugly.mp4 — VFR + rotation + HDR, all at once
+packages/renderer-core test:   ✔ vfr, rotation 90, HDR pq, and display dimensions swapped (372.0144ms)
+packages/renderer-core test: ✔ ugly.mp4 — VFR + rotation + HDR, all at once (372.2936ms)
+packages/renderer-core test: ▶ broll-silent.mp4 — the empty-vs-null distinction
+packages/renderer-core test:   ✔ audioTracks is an empty array, specifically NOT null (392.3577ms)
+packages/renderer-core test: ✔ broll-silent.mp4 — the empty-vs-null distinction (392.642ms)
+packages/renderer-core test: ▶ corruption detection
+packages/renderer-core test:   ✔ a truncated copy of a fixture reports corrupt (195.8661ms)
+packages/renderer-core test:   ✔ an intact fixture reports clean with zero decode errors (213.3238ms)
+packages/renderer-core test: ✔ corruption detection (419.2359ms)
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "SKILL_ARGS_INVALID",
+packages/skill-runtime test:   "message": "fixture expects --input <path> --output <path>. Both --input and --output are required.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/renderer-core test: ▶ non-video assets
+packages/renderer-core test:   ✔ an audio-only container yields a null video and a populated audio track (336.575ms)
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "SKILL_ARGS_INVALID",
+packages/skill-runtime test:   "message": "fixture expects --input <path> --output <path>. Both --input and --output are required.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/renderer-core test:   ✔ a still image probes as a one-frame video stream with no audio (167.4119ms)
+packages/renderer-core test:   ✔ a filename with a space and non-ASCII characters probes correctly (165.072ms)
+packages/renderer-core test: ✔ non-video assets (669.4425ms)
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "SKILL_ARGS_INVALID",
+packages/skill-runtime test:   "message": "fixture expects --input <path> --output <path>. Both --input and --output are required.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "SKILL_ARGS_INVALID",
+packages/skill-runtime test:   "message": "fixture expects --input <path> --output <path>. Unknown option '--verbose'",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/renderer-core test: ▶ fitShortEdge — the D-25 "720p-fit" reading
+packages/renderer-core test:   ✔ landscape caps height, portrait caps width (1.9784ms)
+packages/renderer-core test:   ✔ never upscales (0.3098ms)
+packages/renderer-core test:   ✔ always returns even dimensions — libx264 rejects odd ones under yuv420p (0.4162ms)
+packages/renderer-core test: ✔ fitShortEdge — the D-25 "720p-fit" reading (4.3338ms)
+packages/renderer-core test: ▶ chooseConstantFrameRate
+packages/renderer-core test:   ✔ a VFR source normalises to its base rate, not its average (0.321ms)
+packages/renderer-core test:   ✔ a CFR source keeps its declared rate (0.2177ms)
+packages/renderer-core test: ✔ chooseConstantFrameRate (0.8934ms)
+packages/renderer-core test: ▶ generateProxy against real fixtures
+packages/renderer-core test:   ✔ clean.mp4 → H.264 CRF 23 + AAC 128k, CFR, original untouched (1547.3169ms)
+packages/renderer-core test:   ✔ ugly.mp4 → VFR normalised to CFR and rotation baked upright (1180.8711ms)
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "SKILL_ARGS_INVALID",
+packages/skill-runtime test:   "message": "fixture expects --input <path> --output <path>. Unexpected argument 'extra'. This command does not take positional arguments",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "REQUEST_SCHEMA_INVALID",
+packages/skill-runtime test:   "message": "The request does not satisfy fixture's input schema.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errors": [
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "/value",
+packages/skill-runtime test:         "schemaPath": "#/properties/value/type",
+packages/skill-runtime test:         "keyword": "type",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "type": "string"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must be string"
+packages/skill-runtime test:       }
+packages/skill-runtime test:     ],
+packages/skill-runtime test:     "formatted": "    /value must be string {\"type\":\"string\"}"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/renderer-core test:   ✔ broll-silent.mp4 → the audio-less case carries null, not a fabricated track (817.1702ms)
+packages/renderer-core test:   ✔ refuses to write the proxy over its own source (1.29ms)
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "REQUEST_SCHEMA_INVALID",
+packages/skill-runtime test:   "message": "The request does not satisfy fixture's input schema.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errors": [
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "",
+packages/skill-runtime test:         "schemaPath": "#/required",
+packages/skill-runtime test:         "keyword": "required",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "missingProperty": "value"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must have required property 'value'"
+packages/skill-runtime test:       }
+packages/skill-runtime test:     ],
+packages/skill-runtime test:     "formatted": "    / must have required property 'value' {\"missingProperty\":\"value\"}"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/renderer-core test:   ✔ refuses an asset with no video stream (159.3974ms)
+packages/renderer-core test:   ✔ rejects an option-shaped or relative output path (0.2986ms)
+packages/renderer-core test: ✔ generateProxy against real fixtures (3720.34ms)
+packages/renderer-core test: ℹ tests 95
+packages/renderer-core test: ℹ suites 22
+packages/renderer-core test: ℹ pass 95
+packages/renderer-core test: ℹ fail 0
+packages/renderer-core test: ℹ cancelled 0
+packages/renderer-core test: ℹ skipped 0
+packages/renderer-core test: ℹ todo 0
+packages/renderer-core test: ℹ duration_ms 4341.3687
+packages/renderer-core test: Done
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "REQUEST_SCHEMA_INVALID",
+packages/skill-runtime test:   "message": "The request does not satisfy fixture's input schema.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errors": [
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "",
+packages/skill-runtime test:         "schemaPath": "#/additionalProperties",
+packages/skill-runtime test:         "keyword": "additionalProperties",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "additionalProperty": "surprise"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must NOT have additional properties"
+packages/skill-runtime test:       }
+packages/skill-runtime test:     ],
+packages/skill-runtime test:     "formatted": "    / must NOT have additional properties {\"additionalProperty\":\"surprise\"}"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "REQUEST_SCHEMA_INVALID",
+packages/skill-runtime test:   "message": "The request does not satisfy fixture's input schema.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errors": [
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "/value",
+packages/skill-runtime test:         "schemaPath": "#/properties/value/type",
+packages/skill-runtime test:         "keyword": "type",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "type": "string"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must be string"
+packages/skill-runtime test:       }
+packages/skill-runtime test:     ],
+packages/skill-runtime test:     "formatted": "    /value must be string {\"type\":\"string\"}"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "REQUEST_UNREADABLE",
+packages/skill-runtime test:   "message": "Could not read request at C:\\Users\\FredWang\\AppData\\Local\\Temp\\cutdown-fixture-io-sHu1sA\\does-not-exist.json: ENOENT: no such file or directory, open 'C:\\Users\\FredWang\\AppData\\Local\\Temp\\cutdown-fixture-io-sHu1sA\\does-not-exist.json'",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "REQUEST_UNREADABLE",
+packages/skill-runtime test:   "message": "Could not read request at C:\\Users\\FredWang\\AppData\\Local\\Temp\\cutdown-fixture-io-sHu1sA\\badjson.in.json: Unterminated string in JSON at position 19 (line 1 column 20)",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "FIXTURE_REJECTED",
+packages/skill-runtime test:   "message": "The caller sent something wrong.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "field": "value"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "FIXTURE_FAILED",
+packages/skill-runtime test:   "message": "The work was not possible.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "RESULT_SCHEMA_INVALID",
+packages/skill-runtime test:   "message": "fixture produced a result its own output schema rejects. This is a defect in the skill.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errors": [
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "",
+packages/skill-runtime test:         "schemaPath": "#/required",
+packages/skill-runtime test:         "keyword": "required",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "missingProperty": "echoed"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must have required property 'echoed'"
+packages/skill-runtime test:       },
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "",
+packages/skill-runtime test:         "schemaPath": "#/additionalProperties",
+packages/skill-runtime test:         "keyword": "additionalProperties",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "additionalProperty": "notInTheSchema"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must NOT have additional properties"
+packages/skill-runtime test:       }
+packages/skill-runtime test:     ],
+packages/skill-runtime test:     "formatted": "    / must have required property 'echoed' {\"missingProperty\":\"echoed\"}\n    / must NOT have additional properties {\"additionalProperty\":\"notInTheSchema\"}"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "RESULT_SCHEMA_INVALID",
+packages/skill-runtime test:   "message": "fixture produced a result its own output schema rejects. This is a defect in the skill.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errors": [
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "",
+packages/skill-runtime test:         "schemaPath": "#/required",
+packages/skill-runtime test:         "keyword": "required",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "missingProperty": "echoed"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must have required property 'echoed'"
+packages/skill-runtime test:       },
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "",
+packages/skill-runtime test:         "schemaPath": "#/additionalProperties",
+packages/skill-runtime test:         "keyword": "additionalProperties",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "additionalProperty": "notInTheSchema"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must NOT have additional properties"
+packages/skill-runtime test:       }
+packages/skill-runtime test:     ],
+packages/skill-runtime test:     "formatted": "    / must have required property 'echoed' {\"missingProperty\":\"echoed\"}\n    / must NOT have additional properties {\"additionalProperty\":\"notInTheSchema\"}"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "UNEXPECTED_ERROR",
+packages/skill-runtime test:   "message": "an unwrapped dependency error",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errorType": "TypeError"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "UNEXPECTED_ERROR",
+packages/skill-runtime test:   "message": "an unwrapped dependency error",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errorType": "TypeError"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "UNEXPECTED_ERROR",
+packages/skill-runtime test:   "message": "a bare string",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errorType": "string"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "SKILL_ARGS_INVALID",
+packages/skill-runtime test:   "message": "fixture expects --input <path> --output <path>. Both --input and --output are required.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "REQUEST_SCHEMA_INVALID",
+packages/skill-runtime test:   "message": "The request does not satisfy fixture's input schema.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errors": [
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "/value",
+packages/skill-runtime test:         "schemaPath": "#/properties/value/type",
+packages/skill-runtime test:         "keyword": "type",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "type": "string"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must be string"
+packages/skill-runtime test:       }
+packages/skill-runtime test:     ],
+packages/skill-runtime test:     "formatted": "    /value must be string {\"type\":\"string\"}"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "FIXTURE_REJECTED",
+packages/skill-runtime test:   "message": "The caller sent something wrong.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "field": "value"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "FIXTURE_FAILED",
+packages/skill-runtime test:   "message": "The work was not possible.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9"
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "RESULT_SCHEMA_INVALID",
+packages/skill-runtime test:   "message": "fixture produced a result its own output schema rejects. This is a defect in the skill.",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errors": [
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "",
+packages/skill-runtime test:         "schemaPath": "#/required",
+packages/skill-runtime test:         "keyword": "required",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "missingProperty": "echoed"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must have required property 'echoed'"
+packages/skill-runtime test:       },
+packages/skill-runtime test:       {
+packages/skill-runtime test:         "instancePath": "",
+packages/skill-runtime test:         "schemaPath": "#/additionalProperties",
+packages/skill-runtime test:         "keyword": "additionalProperties",
+packages/skill-runtime test:         "params": {
+packages/skill-runtime test:           "additionalProperty": "notInTheSchema"
+packages/skill-runtime test:         },
+packages/skill-runtime test:         "message": "must NOT have additional properties"
+packages/skill-runtime test:       }
+packages/skill-runtime test:     ],
+packages/skill-runtime test:     "formatted": "    / must have required property 'echoed' {\"missingProperty\":\"echoed\"}\n    / must NOT have additional properties {\"additionalProperty\":\"notInTheSchema\"}"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: {
+packages/skill-runtime test:   "code": "UNEXPECTED_ERROR",
+packages/skill-runtime test:   "message": "an unwrapped dependency error",
+packages/skill-runtime test:   "skill": "fixture",
+packages/skill-runtime test:   "skillVersion": "9.9.9",
+packages/skill-runtime test:   "details": {
+packages/skill-runtime test:     "errorType": "TypeError"
+packages/skill-runtime test:   }
+packages/skill-runtime test: }
+packages/skill-runtime test: ▶ the success path
+packages/skill-runtime test:   ✔ a valid request exits 0, writes the result, and says nothing on stderr (506.4033ms)
+packages/skill-runtime test:   ✔ the result is written atomically — no temp file survives (452.1559ms)
+packages/skill-runtime test:   ✔ the output directory is created if it does not exist (388.9038ms)
+packages/skill-runtime test:   ✔ the context carries the workspace root and the inherited traceparent (402.4593ms)
+packages/skill-runtime test: ✔ the success path (1750.9066ms)
+packages/skill-runtime test: ▶ argument handling — exit 2 before anything is touched
+packages/skill-runtime test:   ✔ a missing --output exits 2 with SKILL_ARGS_INVALID (359.4614ms)
+packages/skill-runtime test:   ✔ a missing --input exits 2 (294.7328ms)
+packages/skill-runtime test:   ✔ no arguments at all exits 2, not 0 (302.8302ms)
+packages/skill-runtime test:   ✔ an unknown flag is refused rather than ignored (307.3019ms)
+packages/skill-runtime test:   ✔ a positional argument is refused — this contract is flags-only (279.7438ms)
+packages/skill-runtime test: ✔ argument handling — exit 2 before anything is touched (1544.5813ms)
+packages/skill-runtime test: ▶ input validation — exit 2, and NOTHING written
+packages/skill-runtime test:   ✔ a request violating the input schema exits 2 and writes no output file (356.5898ms)
+packages/skill-runtime test:   ✔ the validation error NAMES the offending field (336.4551ms)
+packages/skill-runtime test:   ✔ an extra property is rejected — additionalProperties: false has teeth (346.0084ms)
+packages/skill-runtime test:   ✔ a PRE-EXISTING output file is left untouched when the request is rejected (372.0968ms)
+packages/skill-runtime test:   ✔ an unreadable request path exits 2, naming the path (356.2714ms)
+packages/skill-runtime test:   ✔ a malformed JSON request exits 2 as REQUEST_UNREADABLE, not as a crash (457.3411ms)
+packages/skill-runtime test: ✔ input validation — exit 2, and NOTHING written (2225.1336ms)
+packages/skill-runtime test: ▶ skill-raised errors keep their own code and exit status
+packages/skill-runtime test:   ✔ reject() from inside run() surfaces as exit 2 with the skill's code and details (435.9381ms)
+packages/skill-runtime test:   ✔ fail() from inside run() surfaces as exit 3 (421.5127ms)
+packages/skill-runtime test: ✔ skill-raised errors keep their own code and exit status (858.2103ms)
+packages/skill-runtime test: ▶ output validation — the skill is held to its OWN contract
+packages/skill-runtime test:   ✔ a result the output schema rejects exits 3, not 2 (420.0493ms)
+packages/skill-runtime test:   ✔ an invalid result is NEVER written — the malformed artefact must not exist (411.1963ms)
+packages/skill-runtime test: ✔ output validation — the skill is held to its OWN contract (831.4797ms)
+packages/skill-runtime test: ▶ unexpected errors are wrapped, not leaked
+packages/skill-runtime test:   ✔ a plain throw exits 3 with UNEXPECTED_ERROR and the error TYPE preserved (469.9854ms)
+packages/skill-runtime test:   ✔ NO stack trace reaches stderr — four callers parse this stream (442.9622ms)
+packages/skill-runtime test:   ✔ a thrown non-Error still produces a valid structured error (417.6974ms)
+packages/skill-runtime test: ✔ unexpected errors are wrapped, not leaked (1331.1362ms)
+packages/skill-runtime test: ▶ every failure path speaks the full contract shape
+packages/skill-runtime test:   ✔ code, message, skill, and skillVersion are present on every error (2103.1752ms)
+packages/skill-runtime test: ✔ every failure path speaks the full contract shape (2103.2981ms)
+packages/skill-runtime test: ▶ readVersionedContractJson dispatches on the DECLARED major
+packages/skill-runtime test:   ✔ a v1 instance validates against render-v1 (94.7681ms)
+packages/skill-runtime test:   ✔ a v2 instance validates against render-v2 (20.6897ms)
+packages/skill-runtime test:   ✔ an unknown major is refused naming the accepted majors, non-destructively (5.3882ms)
+packages/skill-runtime test:   ✔ a declared-v2 instance with a traversing path is INVALID — not retried against v1 (2.5869ms)
+packages/skill-runtime test:   ✔ a file containing literal `null` is the named refusal, never a TypeError (2.4824ms)
+packages/skill-runtime test:   ✔ two basenames claiming one major are refused loudly, not last-wins (2.6144ms)
+packages/skill-runtime test:   ✔ a missing envelope version is the standard unreadable refusal (2.3707ms)
+packages/skill-runtime test:   ✔ THE PREMISE: a valid v2 instance also passes the v1 validator — dispatch is a choice, not a necessity (0.4834ms)
+packages/skill-runtime test: ✔ readVersionedContractJson dispatches on the DECLARED major (139.4668ms)
+packages/skill-runtime test: ℹ tests 85
+packages/skill-runtime test: ℹ suites 22
+packages/skill-runtime test: ℹ pass 83
+packages/skill-runtime test: ℹ fail 0
+packages/skill-runtime test: ℹ cancelled 0
+packages/skill-runtime test: ℹ skipped 2
+packages/skill-runtime test: ℹ todo 0
+packages/skill-runtime test: ℹ duration_ms 10943.1974
+packages/skill-runtime test: Done
+apps/cli test$ node --test "dist/tests/**/*.test.js"
+packages/editorial test$ node --test "dist/tests/**/*.test.js"
+skills/ingest test$ node --test "dist/tests/**/*.test.js"
+skills/brief test$ node --test "dist/tests/**/*.test.js"
+skills/ingest test: ▶ rights — the artefact records WHY a date was discarded
+skills/ingest test:   ✔ an unreadable date is named in the committed notes, not only in a warning (1.3664ms)
+skills/ingest test:   ✔ an operator note is preserved alongside the appended reason (0.331ms)
+skills/ingest test:   ✔ a clean record gets no appended note (0.2918ms)
+skills/ingest test: ✔ rights — the artefact records WHY a date was discarded (3.2416ms)
+skills/ingest test: ▶ asset classification (REQ-001, D-40)
+skills/ingest test:   ✔ classifies each of the six REQ-001 classes by extension (0.8482ms)
+skills/ingest test:   ✔ a declared assetKind beats every inference (0.1642ms)
+skills/ingest test:   ✔ a declaration rescues an otherwise-unsupported extension (0.107ms)
+skills/ingest test:   ✔ a raster with real transparency is a logo (0.2045ms)
+skills/ingest test:   ✔ an alpha-CAPABLE but fully opaque raster is an image, with a warning (0.1385ms)
+skills/ingest test:   ✔ an unclassifiable member throws, naming the relative path (0.5948ms)
+skills/ingest test: ✔ asset classification (REQ-001, D-40) (3.4059ms)
+skills/ingest test: ▶ rights resolution (REQ-003)
+skills/ingest test:   ✔ an absent record resolves to unknown, never cleared (0.4701ms)
+skills/ingest test:   ✔ unknownRecord() nulls every detail (0.2313ms)
+skills/ingest test:   ✔ a valid cleared record resolves to cleared (0.7902ms)
+skills/ingest test:   ✔ a past expiryDate overrides a declared `cleared` (0.294ms)
+skills/ingest test:   ✔ a past campaignEnd also expires the record (0.2564ms)
+skills/ingest test:   ✔ a future expiryDate does NOT expire the record (0.2367ms)
+skills/ingest test:   ✔ `cleared` without evidenceUri is recorded but flagged (0.185ms)
+skills/ingest test:   ✔ an unrecognised state falls back to unknown, not cleared (0.1872ms)
+skills/ingest test:   ✔ a manifest entry naming a non-existent path is an error (0.3869ms)
+skills/ingest test:   ✔ a manifest missing an entry is allowed — that asset lands unknown (0.2295ms)
+skills/ingest test: ✔ rights resolution (REQ-003) (3.7108ms)
+packages/editorial test: ▶ buildProposePrompt
+packages/editorial test:   ✔ assembles a system turn and a content turn carrying the candidate momentIds (4.3594ms)
+packages/editorial test: ✔ buildProposePrompt (6.1345ms)
+packages/editorial test: ▶ computeDistinctness (REQ-031, computed in code)
+packages/editorial test:   ✔ shared-moment fraction and peer labels are computed across the set (1.4067ms)
+packages/editorial test:   ✔ fully disjoint angles have zero overlap (0.2901ms)
+packages/editorial test: ✔ computeDistinctness (REQ-031, computed in code) (1.9905ms)
+packages/editorial test: ▶ validateProposedCreativeBriefs
+packages/editorial test:   ✔ a schema-valid brief referencing only offered Moments passes (128.2412ms)
+packages/editorial test:   ✔ a brief citing a Moment not in the input is a hard reject (REQ-034) (0.7122ms)
+packages/editorial test:   ✔ a schema-invalid brief is reported as SCHEMA_INVALID (0.5124ms)
+packages/editorial test: ✔ validateProposedCreativeBriefs (129.8905ms)
+packages/editorial test: ▶ assessFootageSufficiency (REQ-036)
+packages/editorial test:   ✔ enough rankable Moments is sufficient (0.8147ms)
+packages/editorial test:   ✔ too few rankable Moments refuses with a narrower suggestion, never padding (0.4218ms)
+packages/editorial test:   ✔ null-embedding Moments do not count toward sufficiency (0.4897ms)
+packages/editorial test: ✔ assessFootageSufficiency (REQ-036) (2.1892ms)
+apps/cli test: ▶ parse — strictness
+apps/cli test:   ✔ an unknown flag STOPS the command rather than being ignored (1.3683ms)
+apps/cli test:   ✔ a string flag with no value is an error, not an empty string (0.2222ms)
+apps/cli test:   ✔ a value that looks like a flag is refused rather than swallowed (0.2397ms)
+apps/cli test:   ✔ a boolean flag given a value is an error (0.2661ms)
+apps/cli test: ✔ parse — strictness (3.0368ms)
+apps/cli test: ▶ parse — shapes the CLI actually uses
+apps/cli test:   ✔ positionals and flags separate cleanly, in either order (0.9208ms)
+apps/cli test:   ✔ --flag=value is equivalent to --flag value, spaces included (0.1535ms)
+apps/cli test:   ✔ a boolean flag is true when present and absent when not (0.1381ms)
+apps/cli test:   ✔ a repeated flag without `multiple` keeps the LAST value (0.1496ms)
+apps/cli test:   ✔ `multiple` collects every occurrence into an array (0.339ms)
+apps/cli test:   ✔ a short alias resolves to the long name (0.6054ms)
+apps/cli test:   ✔ everything after `--` is a positional, even if it looks like a flag (1.2408ms)
+apps/cli test:   ✔ an empty argv yields no positionals and no options (0.1723ms)
+apps/cli test: ✔ parse — shapes the CLI actually uses (4.0848ms)
+apps/cli test: ▶ requireString
+apps/cli test:   ✔ a present non-empty value is returned unchanged (0.1736ms)
+apps/cli test:   ✔ an absent option fails NAMING the flag the operator must add (0.5629ms)
+apps/cli test:   ✔ an EMPTY string is rejected, not passed through (0.2911ms)
+apps/cli test:   ✔ a boolean value is rejected — a flag is not a value (0.1612ms)
+apps/cli test:   ✔ a `multiple` array is rejected rather than silently stringified (0.1645ms)
+apps/cli test: ✔ requireString (1.6446ms)
+apps/cli test: ▶ requirePositional
+apps/cli test:   ✔ a present positional is returned by index (0.1775ms)
+apps/cli test:   ✔ a missing positional fails naming what it should have been (0.1909ms)
+apps/cli test:   ✔ an out-of-range index fails rather than returning undefined (0.1841ms)
+apps/cli test:   ✔ an empty-string positional is treated as missing (0.1243ms)
+apps/cli test: ✔ requirePositional (0.8401ms)
+packages/editorial test: ▶ resolveJobBrief
+packages/editorial test:   ✔ a complete, consistent brief resolves ok (133.9485ms)
+packages/editorial test:   ✔ every missing required field is reported at once, not one per round-trip (88.0354ms)
+packages/editorial test:   ✔ an inverted duration range is a cross-field failure the schema cannot catch (84.247ms)
+packages/editorial test:   ✔ an unsupported platform is a warning (D-3), not a block (63.1683ms)
+packages/editorial test:   ✔ a no-CTA brief is surfaced as an explicit choice (55.1702ms)
+packages/editorial test: ✔ resolveJobBrief (426.6516ms)
+packages/editorial test: ▶ resolveEdl (schema + ranges)
+packages/editorial test:   ✔ a valid EDL with in-bounds ranges resolves ok (172.8368ms)
+packages/editorial test:   ✔ a schema-invalid EDL fails on schema and skips the structural pass (0.6407ms)
+packages/editorial test: ✔ resolveEdl (schema + ranges) (175.2651ms)
+packages/editorial test: ▶ resolveEdlRanges (the single bounds validator, reused)
+packages/editorial test:   ✔ an out-of-bounds range is a NON-WAIVABLE RANGE_INVALID, never clamped (0.8097ms)
+packages/editorial test:   ✔ an asset with no provided bounds fails closed (BOUNDS_MISSING) (0.3198ms)
+packages/editorial test:   ✔ clip.assetId disagreeing with sourceRange.assetId is a mismatch (0.3775ms)
+packages/editorial test:   ✔ the Moment asset must agree with the clip asset when a Moment map is given (3.6104ms)
+packages/editorial test:   ✔ a Moment absent from the provided map is surfaced, not silently ignored (0.381ms)
+packages/editorial test:   ✔ non-contiguous clip order is flagged (0.4688ms)
+packages/editorial test: ✔ resolveEdlRanges (the single bounds validator, reused) (6.6387ms)
+packages/editorial test: ▶ validateEdlSchema
+packages/editorial test:   ✔ a valid EDL passes; a broken one reports errors (1.578ms)
+packages/editorial test: ✔ validateEdlSchema (1.8533ms)
+packages/editorial test: ▶ enablement (D-21 fail-closed)
+packages/editorial test:   ✔ isEnabled requires BOTH a key and a spend ceiling (0.896ms)
+packages/editorial test:   ✔ requireEnabled throws MODEL_NOT_CONFIGURED when no ceiling is set (0.6629ms)
+packages/editorial test:   ✔ completeJson refuses a live call when not enabled (0.6377ms)
+packages/editorial test: ✔ enablement (D-21 fail-closed) (3.4231ms)
+packages/editorial test: ▶ key hygiene
+packages/editorial test:   ✔ the api key never appears in JSON.stringify or console output of the config (0.6281ms)
+packages/editorial test:   ✔ scrub removes any sk-ant- shape even when the exact key is unknown (0.2963ms)
+packages/editorial test:   ✔ a provider error body carrying the key is scrubbed before it reaches the error (0.5238ms)
+packages/editorial test: ✔ key hygiene (1.8032ms)
+packages/editorial test: ▶ base URL scheme guard
+packages/editorial test:   ✔ https is accepted, http on an exact loopback is accepted (0.6144ms)
+packages/editorial test:   ✔ http on a non-loopback host is refused (key would go plaintext) (0.4051ms)
+packages/editorial test: ✔ base URL scheme guard (1.4284ms)
+packages/editorial test: ▶ structured-output discipline (D-32)
+packages/editorial test:   ✔ a valid first response is returned with attempts=1 and token accounting (2.6089ms)
+packages/editorial test:   ✔ one bad response then a good one succeeds with attempts=2 (exactly one repair) (0.615ms)
+packages/editorial test:   ✔ two bad responses raise ModelSchemaError — never a coerced or partial result (0.3029ms)
+packages/editorial test:   ✔ a non-2xx status is a transport error, not a schema error (0.1841ms)
+packages/editorial test: ✔ structured-output discipline (D-32) (3.9952ms)
+packages/editorial test: ▶ parsing helpers
+packages/editorial test:   ✔ stripFence unwraps a ```json fence without altering the bytes inside (0.1265ms)
+packages/editorial test: ✔ parsing helpers (0.2088ms)
+packages/editorial test: ▶ .env loading precedence
+packages/editorial test:   ✔ .env wins over the process environment, and a missing file is not an error (8.9498ms)
+packages/editorial test:   ✔ an unset spend ceiling leaves the config disabled (no default, D-21) (0.8197ms)
+packages/editorial test: ✔ .env loading precedence (9.9549ms)
+packages/editorial test: ▶ assertPhase0Platform (D-3)
+packages/editorial test:   ✔ tiktok passes; anything else fails explicitly (2.0617ms)
+packages/editorial test: ✔ assertPhase0Platform (D-3) (3.2063ms)
+packages/editorial test: ▶ buildPlatformDirectives
+packages/editorial test:   ✔ copies the capability bounds into directives (1.0231ms)
+packages/editorial test: ✔ buildPlatformDirectives (1.1782ms)
+packages/editorial test: ▶ checkCapability
+packages/editorial test:   ✔ a valid EDL against the fixture has no violations (0.4806ms)
+packages/editorial test:   ✔ duration below the pin (D-3 5s) is flagged (0.2971ms)
+packages/editorial test:   ✔ duration above the pin (D-3 180s) is flagged (0.2275ms)
+packages/editorial test:   ✔ an unsupported aspect ratio is flagged (REQ-052) (0.2584ms)
+packages/editorial test:   ✔ an aspect treatment outside the fixture options is flagged (0.2248ms)
+packages/editorial test:   ✔ a platform mismatch is flagged (0.2233ms)
+packages/editorial test: ✔ checkCapability (2.2239ms)
+packages/editorial test: ▶ cosineSimilarity
+packages/editorial test:   ✔ identical direction is 1, orthogonal is 0, opposite is -1 (1.2447ms)
+packages/editorial test:   ✔ a zero vector yields 0 rather than NaN — no direction to compare (0.2885ms)
+packages/editorial test:   ✔ a length mismatch throws — different lengths are not the same space (0.6723ms)
+packages/editorial test: ✔ cosineSimilarity (4.1005ms)
+packages/editorial test: ▶ rankMoments
+packages/editorial test:   ✔ ranks by score descending, ties keep input order (12.6099ms)
+packages/editorial test:   ✔ a null-embedding Moment is ranked last with a reason, never dropped or scored (0.5222ms)
+packages/editorial test:   ✔ topK caps scored moments but never drops the null-embedding ones (0.3708ms)
+packages/editorial test:   ✔ a dimension mismatch throws — refusing to compare different spaces (0.3398ms)
+packages/editorial test:   ✔ a model/version mismatch throws when the query model is known — vectors are not comparable (0.3723ms)
+packages/editorial test: ✔ rankMoments (14.7212ms)
+packages/editorial test: ▶ embedQuery
+packages/editorial test:   ✔ spawns the Python entrypoint argv-style and returns the parsed vector (36.8018ms)
+packages/editorial test:   ✔ a non-zero exit is surfaced, not swallowed (22.5614ms)
+packages/editorial test:   ✔ a malformed output vector is refused (20.5666ms)
+packages/editorial test: ✔ embedQuery (80.7048ms)
+packages/editorial test: ▶ the payload carries every field REQ-110 names
+packages/editorial test:   ✔ copies the angle, promise, hook hypothesis and rationale from committed objects (3.1969ms)
+packages/editorial test:   ✔ orders moments by the EDL clip order, not by array position (0.5293ms)
+packages/editorial test:   ✔ reports the QA verdict without re-deriving it (0.2838ms)
+packages/editorial test: ✔ the payload carries every field REQ-110 names (5.6142ms)
+packages/editorial test: ▶ the payload never fabricates
+packages/editorial test:   ✔ records a null-with-reason for a Moment that is not in the graph (0.3383ms)
+packages/editorial test:   ✔ distinguishes "no transcribed speech" from "Moment missing" (0.3685ms)
+packages/editorial test:   ✔ records a null-with-reason when no QA report exists (0.2523ms)
+packages/editorial test: ✔ the payload never fabricates (1.2668ms)
+packages/editorial test: ▶ the rights summary can never look better than the material
+packages/editorial test:   ✔ reports the WEAKEST state, not the first or the most common (0.425ms)
+packages/editorial test:   ✔ ranks `unknown` BELOW expired and restricted — an absent record is the worst case (REQ-003) (0.2831ms)
+packages/editorial test:   ✔ counts an asset with NO record as unknown, and names it (1.2977ms)
+packages/editorial test:   ✔ refuses to rank an unrecognised rights state rather than defaulting it (2.2264ms)
+packages/editorial test:   ✔ carries the disclosures verbatim (REQ-163/164 record-level) (0.4282ms)
+packages/editorial test: ✔ the rights summary can never look better than the material (5.3881ms)
+packages/editorial test: ▶ the target metric is honest about what Phase 0 has
+packages/editorial test:   ✔ states the objective and says no numeric target exists (0.4292ms)
+packages/editorial test: ✔ the target metric is honest about what Phase 0 has (0.6708ms)
+packages/editorial test: ▶ every constraint kind maps to a target
+packages/editorial test:   ✔ leaves no kind unmapped — an unmapped kind would silently widen or crash (1.4888ms)
+packages/editorial test:   ✔ returns null for an empty constraint list rather than defaulting to a target (0.3354ms)
+packages/editorial test: ✔ every constraint kind maps to a target (3.9939ms)
+packages/editorial test: ▶ the WIDEST constraint decides, and narrower ones ride along
+packages/editorial test:   ✔ a caption note stays at the EDL (0.4171ms)
+packages/editorial test:   ✔ a pacing note widens to the story plan (0.3ms)
+packages/editorial test:   ✔ an angle note widens to the creative brief (0.2181ms)
+packages/editorial test:   ✔ a caption note MIXED with an angle note widens — and says which constraint forced it (0.2605ms)
+packages/editorial test:   ✔ is order-independent — the widest wins whichever way round the list is (0.2549ms)
+packages/editorial test:   ✔ a list of only narrow constraints says no wider object is regenerated (0.27ms)
+packages/editorial test: ✔ the WIDEST constraint decides, and narrower ones ride along (2.3519ms)
+packages/editorial test: ▶ the constraint vocabulary is ordered narrowest-first
+packages/editorial test:   ✔ keeps caption_text first and the brief-level kinds last (1.6418ms)
+packages/editorial test: ✔ the constraint vocabulary is ordered narrowest-first (2.0396ms)
+packages/editorial test: ▶ a caption_text constraint on a non-text caption is refused for the RIGHT reason
+packages/editorial test:   ✔ names the D-37 quote-fidelity binding for a QUOTE caption (2.7722ms)
+packages/editorial test:   ✔ still says "no caption" for a NONE caption, where that is true (0.4249ms)
+packages/editorial test: ✔ a caption_text constraint on a non-text caption is refused for the RIGHT reason (3.488ms)
+packages/editorial test: ▶ the instruction cap (a caption_text instruction is written VERBATIM)
+packages/editorial test:   ✔ accepts an instruction at the cap (0.7463ms)
+packages/editorial test:   ✔ REJECTS one character over — an unbounded instruction is an unbounded caption (0.4855ms)
+packages/editorial test: ✔ the instruction cap (a caption_text instruction is written VERBATIM) (1.4331ms)
+packages/editorial test: ▶ a revision mints its OWN envelope and provenance (REQ-113, PRD §10.6)
+packages/editorial test:   ✔ does not inherit the parent plan call as its own (0.3017ms)
+packages/editorial test: ✔ a revision mints its OWN envelope and provenance (REQ-113, PRD §10.6) (0.4235ms)
+packages/editorial test: ▶ validateStoryPlanSchema
+packages/editorial test:   ✔ a well-formed plan satisfies master-story-plan-v1 (124.4583ms)
+packages/editorial test:   ✔ a malformed plan produces schema errors (0.6576ms)
+packages/editorial test: ✔ validateStoryPlanSchema (127.1968ms)
+packages/editorial test: ▶ validateStoryPlanStructure
+packages/editorial test:   ✔ a plan whose beats use only selected Moments and contiguous order is clean (0.6054ms)
+packages/editorial test:   ✔ a beat filled with an unselected Moment is a violation (0.4274ms)
+packages/editorial test:   ✔ non-contiguous beat order is a violation (0.3952ms)
+packages/editorial test:   ✔ a dependency on a non-existent beat is a violation (0.2896ms)
+packages/editorial test: ✔ validateStoryPlanStructure (2.1276ms)
+packages/editorial test: ℹ tests 89
+packages/editorial test: ℹ suites 32
+packages/editorial test: ℹ pass 89
+packages/editorial test: ℹ fail 0
+packages/editorial test: ℹ cancelled 0
+packages/editorial test: ℹ skipped 0
+packages/editorial test: ℹ todo 0
+packages/editorial test: ℹ duration_ms 1428.4153
+packages/editorial test: Done
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_MISSING_REQUIRED_FIELDS",
+skills/brief test:   "message": "The brief is missing 1 required field(s): accountId. PRD REQ-002 requires an explicit brief — these are never inferred, because an inferred audience or objective silently changes what the whole pipeline optimises for.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [
+skills/brief test:       "accountId"
+skills/brief test:     ],
+skills/brief test:     "formatted": "    / must have required property 'accountId' {\"missingProperty\":\"accountId\"}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_MISSING_REQUIRED_FIELDS",
+skills/brief test:   "message": "The brief is missing 1 required field(s): accountId. PRD REQ-002 requires an explicit brief — these are never inferred, because an inferred audience or objective silently changes what the whole pipeline optimises for.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [
+skills/brief test:       "accountId"
+skills/brief test:     ],
+skills/brief test:     "formatted": "    / must have required property 'accountId' {\"missingProperty\":\"accountId\"}"
+skills/brief test:   }
+skills/brief test: }
+apps/cli test: ▶ cutdown doctor — the CLI verb is wired
+apps/cli test:   ✔ a scrubbed PATH makes the real CLI exit 3 with one promoted fix (1428.4933ms)
+apps/cli test:   ✔ doctor appears in the CLI usage, so it is discoverable (657.3493ms)
+apps/cli test: ✔ cutdown doctor — the CLI verb is wired (2087.0383ms)
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_MISSING_REQUIRED_FIELDS",
+skills/brief test:   "message": "The brief is missing 4 required field(s): accountId, audience, cta, objective. PRD REQ-002 requires an explicit brief — these are never inferred, because an inferred audience or objective silently changes what the whole pipeline optimises for.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [
+skills/brief test:       "accountId",
+skills/brief test:       "audience",
+skills/brief test:       "cta",
+skills/brief test:       "objective"
+skills/brief test:     ],
+skills/brief test:     "formatted": "    / must have required property 'accountId' {\"missingProperty\":\"accountId\"}\n    / must have required property 'audience' {\"missingProperty\":\"audience\"}\n    / must have required property 'objective' {\"missingProperty\":\"objective\"}\n    / must have required property 'cta' {\"missingProperty\":\"cta\"}"
+skills/brief test:   }
+skills/brief test: }
+apps/cli test: ▶ cutdown doctor — a missing tool names its fix
+apps/cli test:   ✔ missing ffmpeg names the fix (12.2879ms)
+apps/cli test:   ✔ ffprobe is checked separately, because a partial install is a real state (12.4752ms)
+apps/cli test:   ✔ with ffmpeg back on PATH the same probe passes — the failure was the environment, not the probe (713.459ms)
+apps/cli test: ✔ cutdown doctor — a missing tool names its fix (739.9329ms)
+apps/cli test: ▶ cutdown doctor — the report promotes exactly one fix
+apps/cli test:   ✔ promotes the FIRST failure in blocking order and lists the rest (0.6854ms)
+apps/cli test:   ✔ a clean run says so and promotes nothing (0.2625ms)
+apps/cli test:   ✔ blocking order is a policy: FFmpeg outranks a stale generated tree (0.2914ms)
+apps/cli test: ✔ cutdown doctor — the report promotes exactly one fix (1.6646ms)
+apps/cli test: ▶ cutdown doctor — version ranges are read, never duplicated
+apps/cli test:   ✔ reads the ranges from the real cutdown/package.json (1.6602ms)
+apps/cli test:   ✔ the node check agrees with the declared range in both directions (2.1971ms)
+apps/cli test:   ✔ an unparseable clause THROWS rather than silently passing (0.9944ms)
+apps/cli test:   ✔ an unparseable clause throws even when an EARLIER clause already failed (0.4281ms)
+apps/cli test:   ✔ a bare major with no operator is REFUSED, because its two readings disagree (0.3237ms)
+apps/cli test:   ✔ comparison is numeric, not lexicographic (0.1892ms)
+apps/cli test: ✔ cutdown doctor — version ranges are read, never duplicated (6.4949ms)
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_MISSING_REQUIRED_FIELDS",
+skills/brief test:   "message": "The brief is missing 11 required field(s): accountId, audience, brandOrCampaign, contentPromise, cta, distributionMode, durationRange, locale, objective, platforms, variantCount. PRD REQ-002 requires an explicit brief — these are never inferred, because an inferred audience or objective silently changes what the whole pipeline optimises for.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [
+skills/brief test:       "accountId",
+skills/brief test:       "audience",
+skills/brief test:       "brandOrCampaign",
+skills/brief test:       "contentPromise",
+skills/brief test:       "cta",
+skills/brief test:       "distributionMode",
+skills/brief test:       "durationRange",
+skills/brief test:       "locale",
+skills/brief test:       "objective",
+skills/brief test:       "platforms",
+skills/brief test:       "variantCount"
+skills/brief test:     ],
+skills/brief test:     "formatted": "    / must have required property 'accountId' {\"missingProperty\":\"accountId\"}\n    / must have required property 'audience' {\"missingProperty\":\"audience\"}\n    / must have required property 'objective' {\"missingProperty\":\"objective\"}\n    / must have required property 'platforms' {\"missingProperty\":\"platforms\"}\n    / must have required property 'distributionMode' {\"missingProperty\":\"distributionMode\"}\n    / must have required property 'durationRange' {\"missingProperty\":\"durationRange\"}\n    / must have required property 'locale' {\"missingProperty\":\"locale\"}\n    / must have required property 'brandOrCampaign' {\"missingProperty\":\"brandOrCampaign\"}\n    / must have required property 'contentPromise' {\"missingProperty\":\"contentPromise\"}\n    / must have required property 'cta' {\"missingProperty\":\"cta\"}\n    / must have required property 'variantCount' {\"missingProperty\":\"variantCount\"}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_MISSING_REQUIRED_FIELDS",
+skills/brief test:   "message": "The brief is missing 1 required field(s): audience. PRD REQ-002 requires an explicit brief — these are never inferred, because an inferred audience or objective silently changes what the whole pipeline optimises for.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [
+skills/brief test:       "audience"
+skills/brief test:     ],
+skills/brief test:     "formatted": "    / must have required property 'audience' {\"missingProperty\":\"audience\"}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    /variantCount must be integer {\"type\":\"integer\"}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    /variantCount must be <= 10 {\"comparison\":\"<=\",\"limit\":10}"
+skills/brief test:   }
+skills/brief test: }
+skills/ingest test: {
+skills/ingest test:   "code": "INGEST_UNSUPPORTED_ASSET",
+skills/ingest test:   "message": "Cannot classify \"notes.xyz\" (extension .xyz) into any of the six REQ-001 asset classes: video, audio, image, logo, subtitle, brand_reference. Declare `assetKind` in its rights sidecar to override, or remove it from the ingest directory.",
+skills/ingest test:   "skill": "ingest",
+skills/ingest test:   "skillVersion": "1.0.0",
+skills/ingest test:   "details": {
+skills/ingest test:     "relativePath": "notes.xyz",
+skills/ingest test:     "extension": ".xyz",
+skills/ingest test:     "atomicity": "No job inventory was committed — the whole ingest failed."
+skills/ingest test:   }
+skills/ingest test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    /variantCount must be >= 1 {\"comparison\":\">=\",\"limit\":1}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    / must NOT have additional properties {\"additionalProperty\":\"audiance\"}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    /objective must be equal to one of the allowed values {\"allowedValues\":[\"discovery\",\"education_utility\",\"community\",\"authority_trust\",\"organic_conversion\",\"paid_acquisition\",\"retention_loyalty\"]}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    /platforms/0 must be equal to one of the allowed values {\"allowedValues\":[\"tiktok\",\"instagram_reels\",\"youtube_shorts\",\"linkedin\"]}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    /distributionMode must be equal to one of the allowed values {\"allowedValues\":[\"organic\",\"paid\"]}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_MISSING_REQUIRED_FIELDS",
+skills/brief test:   "message": "The brief is missing 11 required field(s): accountId, audience, brandOrCampaign, contentPromise, cta, distributionMode, durationRange, locale, objective, platforms, variantCount. PRD REQ-002 requires an explicit brief — these are never inferred, because an inferred audience or objective silently changes what the whole pipeline optimises for.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [
+skills/brief test:       "accountId",
+skills/brief test:       "audience",
+skills/brief test:       "brandOrCampaign",
+skills/brief test:       "contentPromise",
+skills/brief test:       "cta",
+skills/brief test:       "distributionMode",
+skills/brief test:       "durationRange",
+skills/brief test:       "locale",
+skills/brief test:       "objective",
+skills/brief test:       "platforms",
+skills/brief test:       "variantCount"
+skills/brief test:     ],
+skills/brief test:     "formatted": "    / must have required property 'accountId' {\"missingProperty\":\"accountId\"}\n    / must have required property 'audience' {\"missingProperty\":\"audience\"}\n    / must have required property 'objective' {\"missingProperty\":\"objective\"}\n    / must have required property 'platforms' {\"missingProperty\":\"platforms\"}\n    / must have required property 'distributionMode' {\"missingProperty\":\"distributionMode\"}\n    / must have required property 'durationRange' {\"missingProperty\":\"durationRange\"}\n    / must have required property 'locale' {\"missingProperty\":\"locale\"}\n    / must have required property 'brandOrCampaign' {\"missingProperty\":\"brandOrCampaign\"}\n    / must have required property 'contentPromise' {\"missingProperty\":\"contentPromise\"}\n    / must have required property 'cta' {\"missingProperty\":\"cta\"}\n    / must have required property 'variantCount' {\"missingProperty\":\"variantCount\"}"
+skills/brief test:   }
+skills/brief test: }
+apps/cli test: ▶ cutdown doctor — the real probe set on this machine
+apps/cli test:   ✔ no probe raises — a crashed check is the defect this pins (5623.0246ms)
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    /variantCount must be integer {\"type\":\"integer\"}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    /objective must be equal to one of the allowed values {\"allowedValues\":[\"discovery\",\"education_utility\",\"community\",\"authority_trust\",\"organic_conversion\",\"paid_acquisition\",\"retention_loyalty\"]}"
+skills/brief test:   }
+skills/brief test: }
+skills/ingest test: {
+skills/ingest test:   "code": "INGEST_UNSUPPORTED_ASSET",
+skills/ingest test:   "message": "Cannot classify \"notes.xyz\" (extension .xyz) into any of the six REQ-001 asset classes: video, audio, image, logo, subtitle, brand_reference. Declare `assetKind` in its rights sidecar to override, or remove it from the ingest directory.",
+skills/ingest test:   "skill": "ingest",
+skills/ingest test:   "skillVersion": "1.0.0",
+skills/ingest test:   "details": {
+skills/ingest test:     "relativePath": "notes.xyz",
+skills/ingest test:     "extension": ".xyz",
+skills/ingest test:     "atomicity": "No job inventory was committed — the whole ingest failed."
+skills/ingest test:   }
+skills/ingest test: }
+apps/cli test:   ✔ every check is well-formed, and every failure carries a fix (4895.844ms)
+apps/cli test: ✔ cutdown doctor — the real probe set on this machine (10519.3465ms)
+apps/cli test: ▶ cutdown doctor — a tool that is present but cannot RUN is a failure
+apps/cli test:   ✔ uv that is on PATH but not a runnable program FAILS, and the fix says so (26.8755ms)
+apps/cli test:   ✔ pnpm that is on PATH but not a runnable program FAILS — not "version unread" (31.7537ms)
+apps/cli test:   ﹣ a tool that runs but prints no readable version FAILS rather than passing empty (0.1075ms) # POSIX only — a runnable .exe cannot be synthesised here
+apps/cli test:   ﹣ a tool that answers properly PASSES — the failures above are not a blanket refusal (0.0657ms) # POSIX only — a runnable .exe cannot be synthesised here
+apps/cli test: ✔ cutdown doctor — a tool that is present but cannot RUN is a failure (59.1993ms)
+apps/cli test: ▶ cutdown doctor — a raising probe keeps its identity
+apps/cli test:   ✔ two raising probes are distinguishable, and the fix does not blame doctor (0.5123ms)
+apps/cli test: ✔ cutdown doctor — a raising probe keeps its identity (0.6077ms)
+apps/cli test: ▶ cutdown doctor — present-but-unverified is its own state, not a pass
+apps/cli test:   ✔ a Windows .cmd shim reports UNVERIFIED, and the summary refuses to say "all passed" (8.5624ms)
+apps/cli test:   ✔ unverified does not fail the command, but a real failure still does (0.2458ms)
+apps/cli test: ✔ cutdown doctor — present-but-unverified is its own state, not a pass (8.9594ms)
+apps/cli test: ▶ exit codes are part of the contract
+apps/cli test:   ✔ the four codes are distinct and hold their documented values (0.8245ms)
+apps/cli test: ✔ exit codes are part of the contract (2.1576ms)
+apps/cli test: ▶ CutdownError
+apps/cli test:   ✔ it is a real Error, so `throw` and `instanceof` both behave (0.4558ms)
+apps/cli test:   ✔ every contract field is preserved verbatim (1.4087ms)
+apps/cli test:   ✔ toStructured OMITS `details` entirely when there is none (0.286ms)
+apps/cli test:   ✔ toStructured includes `details` when present, and drops nothing else (0.5474ms)
+apps/cli test:   ✔ toStructured output survives a JSON round-trip unchanged (0.3186ms)
+apps/cli test: ✔ CutdownError (3.4696ms)
+apps/cli test: ▶ the 2-vs-3 distinction
+apps/cli test:   ✔ inputInvalid means "the caller sent something wrong" — exit 2 (0.8626ms)
+apps/cli test:   ✔ runtimeFailure means "input was fine, the work was not possible" — exit 3 (0.1775ms)
+apps/cli test:   ✔ the two constructors do not produce the same exit code (0.1876ms)
+apps/cli test: ✔ the 2-vs-3 distinction (1.5119ms)
+apps/cli test: ▶ reportError
+apps/cli test:   ✔ a CutdownError is written verbatim and returns ITS exit code (0.4856ms)
+apps/cli test:   ✔ stderr carries exactly ONE JSON object and a trailing newline (0.483ms)
+apps/cli test:   ✔ a plain Error is WRAPPED, never leaked — exit 1 and UNEXPECTED_ERROR (0.363ms)
+apps/cli test:   ✔ a thrown non-Error (string, null) is still valid structured JSON (1.4161ms)
+apps/cli test:   ✔ a subclass-shaped impostor is not mistaken for a CutdownError (0.3434ms)
+apps/cli test: ✔ reportError (3.3789ms)
+apps/cli test: ▶ orphan mirrors are CLASSIFIED before anything is removed
+apps/cli test:   ✔ marks a GENERATED orphan removable and a hand-written one NOT removable (11.452ms)
+apps/cli test:   ✔ ignores a directory that is not `cutdown-` prefixed — the pack owns those (5.2845ms)
+apps/cli test:   ✔ classifies a `cutdown-` FILE rather than throwing on it (5.7844ms)
+apps/cli test:   ✔ reports a `cutdown-` directory with no SKILL.md as unremovable (6.1143ms)
+apps/cli test:   ✔ does NOT classify a hand-written skill that merely QUOTES the banner as generated (8.2027ms)
+apps/cli test:   ✔ does NOT list a mirror whose skill is still live (11.1591ms)
+apps/cli test: ✔ orphan mirrors are CLASSIFIED before anything is removed (80.6642ms)
+apps/cli test: ▶ sync writes into an injected mirror root, and prunes only on request
+apps/cli test:   ✔ generates every mirror into the injected root (259.3103ms)
+apps/cli test:   ✔ is idempotent against the injected root too (142.1079ms)
+apps/cli test:   ✔ REPORTS a generated orphan without --prune, and does not delete it (100.7638ms)
+apps/cli test:   ✔ removes a generated orphan WITH --prune (86.7874ms)
+apps/cli test:   ✔ REFUSES to remove a hand-written cutdown-* mirror even with --prune (74.4203ms)
+apps/cli test: ✔ sync writes into an injected mirror root, and prunes only on request (705.1427ms)
+apps/cli test: ▶ resolveOutputs over the real delivered packages
+apps/cli test:   ✔ the two real packages of one CreativeBrief resolve to ONE output (236.9934ms)
+apps/cli test: ✔ resolveOutputs over the real delivered packages (238.4936ms)
+apps/cli test: ▶ assertSafeJobId — traversal and escape
+apps/cli test:   ✔ the classic traversal forms are rejected (2.2359ms)
+apps/cli test:   ✔ a dot-dot ANYWHERE is rejected, not only as a leading segment (0.481ms)
+apps/cli test:   ✔ path separators are rejected on both platforms (0.4621ms)
+apps/cli test:   ✔ absolute and drive-qualified paths are rejected (0.3475ms)
+apps/cli test:   ✔ agrees with the other two mirrors on every REJECTED id (1.1486ms)
+apps/cli test:   ✔ agrees with the other two mirrors on every ACCEPTED id (0.423ms)
+apps/cli test:   ✔ a rejected id is a STRUCTURED refusal, not a bare Error with a stack (0.4649ms)
+apps/cli test:   ✔ the empty id is rejected (1.4377ms)
+apps/cli test:   ✔ an id may not START with a dot, dash, or underscore (0.417ms)
+apps/cli test:   ✔ whitespace, control characters, and a NUL byte are rejected (0.5012ms)
+apps/cli test:   ✔ non-ASCII ids are rejected — the charset is an allowlist, not a denylist (0.4834ms)
+apps/cli test:   ✔ shell and URL metacharacters are rejected (0.5386ms)
+apps/cli test:   ✔ the length ceiling is 64 characters, inclusive (0.227ms)
+apps/cli test:   ✔ the error names the offending id and the permitted charset (0.4367ms)
+apps/cli test:   ✔ legitimate ids are accepted — the guard must not reject everything (0.288ms)
+apps/cli test: ✔ assertSafeJobId — traversal and escape (12.1711ms)
+apps/cli test: ▶ job layout
+apps/cli test:   ✔ every accepted id resolves strictly INSIDE the jobs root (0.5619ms)
+apps/cli test:   ✔ jobPaths exposes the tech-spec §9.1 subdirectories, all under the job root (0.4695ms)
+apps/cli test:   ✔ the run log is a FILE at the job root, not inside a subdirectory (0.2955ms)
+apps/cli test: ✔ job layout (1.5234ms)
+apps/cli test: ▶ makeQaGateEnv reads the LATEST render only
+apps/cli test:   ✔ returns null when the job has no renders at all (1.628ms)
+apps/cli test:   ✔ returns the report of the only render (32.4064ms)
+apps/cli test:   ✔ prefers the ULID-latest render, not the first or the alphabetically odd one (22.2915ms)
+apps/cli test:   ✔ THROWS when the latest render has no report, rather than falling back to an older verdict (10.9273ms)
+apps/cli test:   ✔ keeps the tiers separate — a draft render is invisible at the final gate (23.4794ms)
+apps/cli test:   ✔ ignores files that are not directories in the tier root (25.1455ms)
+apps/cli test: ✔ makeQaGateEnv reads the LATEST render only (117.0863ms)
+apps/cli test: ▶ a malformed report is a throw, not a null
+apps/cli test:   ✔ lets a JSON parse error propagate so the gate can report it as UNREADABLE (28.1982ms)
+apps/cli test: ✔ a malformed report is a throw, not a null (28.5926ms)
+apps/cli test: ▶ reviewDecisionInForce reads the LATEST draft and the decision in force
+apps/cli test:   ✔ reports `none` when the job has no drafts (0.7856ms)
+apps/cli test:   ✔ reports `none` when a draft exists but nobody has decided (23.5982ms)
+apps/cli test:   ✔ reports `approved`, naming who approved it (121.5418ms)
+apps/cli test:   ✔ follows the LATEST draft — an approval of an older draft does not carry over (78.9094ms)
+apps/cli test:   ✔ reports `rejected` distinctly once the latest draft is rejected (52.5735ms)
+apps/cli test:   ✔ reports `unreadable` when a file IN THE DECISION NAMESPACE cannot be read — never `none` (52.7995ms)
+apps/cli test:   ✔ does NOT report `unreadable` for a neighbour file outside the namespace (93.7967ms)
+apps/cli test: ✔ reviewDecisionInForce reads the LATEST draft and the decision in force (424.7742ms)
+apps/cli test: ▶ resolveUserPath — option-shaped input is rejected
+apps/cli test:   ✔ a leading dash is refused, naming the offending value (1.9153ms)
+apps/cli test:   ✔ every dash-leading form is rejected, long, short, and bare (0.5147ms)
+apps/cli test:   ✔ a dash INSIDE the path is fine — only the first character matters (0.6043ms)
+apps/cli test:   ✔ a relative path resolves against cwd and comes back absolute (0.2639ms)
+apps/cli test:   ✔ an already-absolute path is returned unchanged (0.2314ms)
+apps/cli test:   ✔ a traversing path is resolved, NOT rejected — this guard is about argv, not containment (0.2459ms)
+apps/cli test: ✔ resolveUserPath — option-shaped input is rejected (5.7079ms)
+apps/cli test: ▶ appendRunLog — the authoritative append-only record (§5, §8)
+apps/cli test:   ✔ it creates the job root and writes one parseable JSON line (17.6754ms)
+apps/cli test:   ✔ it APPENDS — an entry never overwrites the one before it (16.3091ms)
+apps/cli test:   ✔ every line is independently parseable — it is JSONL, not a JSON array (0.8659ms)
+apps/cli test:   ✔ loggedAt is stamped on every entry as a parseable ISO instant (0.9536ms)
+apps/cli test:   ✔ a caller-supplied field is not clobbered by the stamp, and vice versa (5.831ms)
+apps/cli test: ✔ appendRunLog — the authoritative append-only record (§5, §8) (45.0622ms)
+apps/cli test: ▶ the meta-schema is STRICT from day one (D-15)
+apps/cli test:   ✔ accepts a well-formed frontmatter (109.2606ms)
+apps/cli test:   ✔ REJECTS an unknown key — the case a typo produces (63.9095ms)
+apps/cli test:   ✔ rejects a missing required field (46.6705ms)
+apps/cli test:   ✔ rejects a string entrypoint — argv arrays only (tech-spec §6.2) (36.1838ms)
+apps/cli test:   ✔ rejects a side effect outside the declared vocabulary (33.8652ms)
+apps/cli test:   ✔ rejects a description too short to be invocation-worthy (39.8235ms)
+apps/cli test:   ✔ rejects an unanchored schema path (no relative traversal out of the skill) (29.8682ms)
+apps/cli test:   ✔ stops after a schema failure rather than reading fields it just called untrustworthy (26.6982ms)
+apps/cli test: ✔ the meta-schema is STRICT from day one (D-15) (388.302ms)
+apps/cli test: ▶ the checks a JSON Schema cannot make
+apps/cli test:   ✔ fails when the declared name does not match the directory (24.225ms)
+apps/cli test:   ✔ fails on a DANGLING contractsUsed entry — what §6.4 actually detects is retirement (30.4036ms)
+apps/cli test:   ✔ fails when a declared schema file does not exist (38.5611ms)
+apps/cli test:   ✔ WARNS (does not fail) when an async skill omits heartbeatSeconds (27.8516ms)
+apps/cli test:   ✔ does not warn when an async skill declares heartbeatSeconds (38.981ms)
+apps/cli test: ✔ the checks a JSON Schema cannot make (160.5855ms)
+apps/cli test: ▶ the registry row is stable
+apps/cli test:   ✔ prefixes the mirror name and sorts the list fields (0.3545ms)
+apps/cli test:   ✔ omits heartbeatSeconds entirely rather than writing null (0.1515ms)
+apps/cli test: ✔ the registry row is stable (0.684ms)
+apps/cli test: ▶ the generated mirror body
+apps/cli test:   ✔ carries the prefixed name and the real description in its frontmatter (0.1908ms)
+apps/cli test:   ✔ says it is generated and names the file to edit instead (0.1123ms)
+apps/cli test:   ✔ spells out the four-step wrapper body (tech-spec §6.3) (0.12ms)
+apps/cli test:   ✔ is a pure function of the frontmatter — same input, same bytes (0.0981ms)
+apps/cli test: ✔ the generated mirror body (0.7208ms)
+apps/cli test: ▶ the real command is idempotent
+apps/cli test:   ✔ --check reports the committed registry and mirror as current (63.8205ms)
+apps/cli test:   ✔ the committed registry matches what a fresh generation would produce (0.6447ms)
+apps/cli test: ✔ the real command is idempotent (64.6806ms)
+apps/cli test: ▶ parseStructuredError — recovers the contract, never invents it
+apps/cli test:   ✔ a clean structured error round-trips with every field intact (2.2952ms)
+apps/cli test:   ✔ details survive, since that is where field names and paths live (0.3568ms)
+apps/cli test:   ✔ leading NON-JSON noise is tolerated (0.1885ms)
+apps/cli test:   ✔ an empty or brace-free stream yields null, not a fabricated error (0.3095ms)
+apps/cli test:   ✔ malformed JSON yields null rather than throwing (0.3819ms)
+apps/cli test:   ✔ a JSON object missing `code` or `message` is REJECTED (0.2786ms)
+apps/cli test:   ✔ a non-object JSON value is rejected (0.175ms)
+apps/cli test:   ✔ KNOWN LIMIT: noise containing a brace defeats recovery — but fails to null, never to a wrong error (0.4033ms)
+apps/cli test: ✔ parseStructuredError — recovers the contract, never invents it (6.7146ms)
+apps/cli test: ▶ readSkill
+apps/cli test:   ✔ a real skill parses, and its entrypoint is an argv ARRAY (15.6475ms)
+apps/cli test:   ✔ an unknown skill fails with SKILL_NOT_FOUND and LISTS what does exist (6.6408ms)
+apps/cli test:   ✔ a traversing skill name cannot reach outside the skills root (5.3521ms)
+apps/cli test: ✔ readSkill (28.1304ms)
+apps/cli test: ▶ listSkillNames
+apps/cli test:   ✔ lists the real skills, sorted, and only directories holding a SKILL.md (38.445ms)
+apps/cli test: ✔ listSkillNames (39.415ms)
+apps/cli test: ▶ writeJsonAtomic
+apps/cli test:   ✔ it creates missing parent directories (23.332ms)
+apps/cli test:   ✔ it leaves NO temp file behind — a stray .tmp would be read as a result (11.3251ms)
+apps/cli test:   ✔ the file is complete and newline-terminated the instant it appears (13.8698ms)
+apps/cli test:   ✔ an overwrite fully replaces the previous content (23.7953ms)
+apps/cli test: ✔ writeJsonAtomic (72.7802ms)
+apps/cli test: ▶ readJson
+apps/cli test:   ✔ it round-trips what writeJsonAtomic wrote (7.419ms)
+apps/cli test:   ✔ a missing file THROWS rather than returning undefined (0.6631ms)
+apps/cli test:   ✔ a malformed file throws rather than yielding a partial object (4.5476ms)
+apps/cli test: ✔ readJson (12.9272ms)
+apps/cli test: ▶ an empty history is UNPROVEN, never proven-by-absence
+apps/cli test:   ✔ reports all four criteria red and neither milestone earned (356.4895ms)
+apps/cli test: ✔ an empty history is UNPROVEN, never proven-by-absence (357.3584ms)
+apps/cli test: ▶ the hand-computed 20-output scenario
+apps/cli test:   ✔ counts 20 real outputs across 3 accounts and excludes the 3 fixtures (252.905ms)
+apps/cli test:   ✔ counts the warning-waived packages separately (D-35) (73.3731ms)
+apps/cli test:   ✔ reports all four criteria green and PHASE_0_EXIT_EARNED (59.8542ms)
+apps/cli test: ✔ the hand-computed 20-output scenario (612.6457ms)
+apps/cli test: ▶ fixture packages can never earn Phase 0 exit (D-27/D-36/D-38)
+apps/cli test:   ✔ 20 FIXTURE packages across 3 accounts leave criterion 1 red (287.1958ms)
+apps/cli test: ✔ fixture packages can never earn Phase 0 exit (D-27/D-36/D-38) (287.4042ms)
+apps/cli test: ▶ a stable accountId survives a display-name change (D-36)
+apps/cli test:   ✔ does not split a count when the human-readable label would have (312.3117ms)
+apps/cli test: ✔ a stable accountId survives a display-name change (D-36) (312.5818ms)
+apps/cli test: ▶ criterion 3: a schema MAJOR bump inside the last ten keeps it red
+apps/cli test:   ✔ goes red when a new major of an existing family JOINS the contract set (203.9716ms)
+apps/cli test:   ✔ the REAL 0B-3 transition: render-v2 joining between consecutive packages is breaking, named, not_met (186.6661ms)
+apps/cli test:   ✔ still refuses an in-place major mutation, even though the policy forbids authoring one (160.2569ms)
+apps/cli test:   ✔ stays GREEN when only a content hash moves under an unchanged major (218.8231ms)
+apps/cli test:   ✔ counts a REMOVED contract as breaking — losing a schema is at least as bad as a bump (231.4134ms)
+apps/cli test:   ✔ only looks at the last ten — an older bump falls out of the window (254.5967ms)
+apps/cli test:   ✔ reports a DETECTED breaking change as not_met at THREE outputs, never as unproven (110.9073ms)
+apps/cli test:   ✔ is still red when a bump is ABSORBED by repackaging every affected CreativeBrief (198.1377ms)
+apps/cli test:   ✔ a package between two windowed packages is still walked (250.462ms)
+apps/cli test:   ✔ leaves NINE outputs unproven — and says nothing about whether a major moved (179.9381ms)
+apps/cli test:   ✔ becomes decidable at TEN outputs (236.6414ms)
+apps/cli test:   ✔ is NOT made decidable by ten packages of ONE CreativeBrief — the threshold counts outputs (198.0882ms)
+apps/cli test: ✔ criterion 3: a schema MAJOR bump inside the last ten keeps it red (2430.9364ms)
+apps/cli test: ▶ T-1/D-56: one approved cut per CreativeBrief is ONE delivered output
+apps/cli test:   ✔ counts two packages of one CreativeBrief once, the LATER surviving and the earlier NAMED (151.6166ms)
+apps/cli test:   ✔ does not merge two packages of one CreativeBrief in DIFFERENT jobs, and reports the split (80.144ms)
+apps/cli test:   ✔ does not merge two packages of one CreativeBrief under DIFFERENT accounts, and reports it (65.5915ms)
+apps/cli test:   ✔ never lets a FIXTURE evict a real output that shares its CreativeBrief (D-36) (105.5831ms)
+apps/cli test:   ✔ never lets an EVIDENCE-INCOMPLETE package supersede a complete one (244.7891ms)
+apps/cli test:   ✔ keeps criterion 1 red at 20 PACKAGES over 19 briefs — the numerator counts outputs (403.6255ms)
+apps/cli test:   ✔ counts the ACCOUNT tally over resolved outputs, not packages (a 2-account proof) (159.9202ms)
+apps/cli test: ✔ T-1/D-56: one approved cut per CreativeBrief is ONE delivered output (1211.8234ms)
+apps/cli test: ▶ the Counts block reconciles against its written identities
+apps/cli test:   ✔ holds with EVIDENCE-INCOMPLETE packages of BOTH classes present (123.2215ms)
+apps/cli test:   ✔ holds on the REJECTED arm, where an unreadable file places no package at all (98.3953ms)
+apps/cli test:   ✔ holds on the hand-computed 20-output corpus (275.413ms)
+apps/cli test: ✔ the Counts block reconciles against its written identities (497.3686ms)
+apps/cli test: ▶ an unreadable package makes ALL FOUR criteria unproven, with a way forward
+apps/cli test:   ✔ reports every criterion as unproven — including criterion 4, which reported a disproof (65.9859ms)
+apps/cli test:   ✔ states criterion 2's own reason — an unreadable file may have carried invalid ranges (47.4328ms)
+apps/cli test:   ✔ prints a NON-DESTRUCTIVE remedy, and never tells anyone to delete evidence (77.3124ms)
+apps/cli test:   ✔ carries no remedy when nothing is unreadable (78.4535ms)
+apps/cli test:   ✔ reports a proven failure as not_met even while an unreadable file is present (78.1577ms)
+apps/cli test: ✔ an unreadable package makes ALL FOUR criteria unproven, with a way forward (347.7214ms)
+apps/cli test: ▶ the three criterion states are reported as three different things
+apps/cli test:   ✔ renders three distinguishable glyphs and prints the remedy (136.8854ms)
+apps/cli test:   ✔ names both shortfall clauses separately, omitting either when its count is zero (147.7406ms)
+apps/cli test: ✔ the three criterion states are reported as three different things (284.959ms)
+apps/cli test: ▶ the live corpus: two real packages of one CreativeBrief are ONE output
+apps/cli test:   ✔ reports 1 real output where 2 real packages exist, or skips loudly (71.8057ms)
+apps/cli test: ✔ the live corpus: two real packages of one CreativeBrief are ONE output (72.0119ms)
+apps/cli test: ▶ criterion 2: range evidence has to be real evidence
+apps/cli test:   ✔ a SKIPPED range check is UNREPRESENTABLE, and such a file never counts (204.6161ms)
+apps/cli test:   ✔ a non-zero violationCount is UNREPRESENTABLE (const: 0), so such a file never counts (141.7532ms)
+apps/cli test:   ✔ a zero rangeCount is UNREPRESENTABLE (minimum: 1) — "zero violations" over zero ranges claims nothing (117.2453ms)
+apps/cli test: ✔ criterion 2: range evidence has to be real evidence (463.9159ms)
+apps/cli test: ▶ criterion 4: missing evidence keeps it red
+apps/cli test:   ✔ a rights manifest with NO assets is unrepresentable, and such a file never counts (136.9248ms)
+apps/cli test:   ✔ a `fail` gateStatus is UNREPRESENTABLE — the enum has no such member (122.8135ms)
+apps/cli test:   ✔ a non-zero blockerCount is UNREPRESENTABLE (const: 0), and never reaches the real count (142.0527ms)
+apps/cli test:   ✔ an EMPTY approval id is UNREPRESENTABLE ($ref Ulid), so such a file never counts (142.2611ms)
+apps/cli test:   ✔ an EMPTY QA report id is UNREPRESENTABLE ($ref Ulid), so such a file never counts (123.7361ms)
+apps/cli test:   ✔ goes red on an uncleared weakestState — one of the two gaps still REACHABLE (199.0453ms)
+apps/cli test:   ✔ goes red when the range evidence names a DIFFERENT QA report — the other reachable gap (196.8941ms)
+apps/cli test: ✔ criterion 4: missing evidence keeps it red (1064.2691ms)
+apps/cli test: ▶ unreadable package files are named, never silently skipped
+apps/cli test:   ✔ reports a malformed package and keeps criterion 4 red (138.5518ms)
+apps/cli test:   ✔ ignores a leftover .staging- directory rather than reporting it as corrupt (74.5032ms)
+apps/cli test: ✔ unreadable package files are named, never silently skipped (213.2967ms)
+apps/cli test: ▶ the schema constraints the status reachability notes depend on
+apps/cli test:   ✔ pins the constraints that make eight gap checks unreachable (0.3286ms)
+apps/cli test:   ✔ confirms the two REACHABLE checks are genuinely unconstrained by the schema (0.2426ms)
+apps/cli test: ✔ the schema constraints the status reachability notes depend on (0.7468ms)
+apps/cli test: ▶ whichOnPath
+apps/cli test:   ✔ finds a real file on a real multi-entry PATH, and returns null for one that is absent (38.2401ms)
+apps/cli test:   ✔ an unreadable or nonexistent PATH entry does not stop the scan (13.9237ms)
+apps/cli test: ✔ whichOnPath (53.5966ms)
+apps/cli test: ▶ toolVersion
+apps/cli test:   ✔ reports a tool that is absent as absent — never as a crash (21.6137ms)
+apps/cli test:   ✔ a shell shim is PRESENT with an unread version, never an exception (6.9769ms)
+apps/cli test:   ﹣ a file that cannot be executed reports found-without-version rather than throwing (0.1227ms) # POSIX only — Windows has no executable bit
+apps/cli test: ✔ toolVersion (29.2186ms)
+apps/cli test: ▶ tool-probe refuses the media binaries — tech-spec §11 enforced at the spawn
+apps/cli test:   ✔ refuses ffmpeg, naming the module that may spawn it (1.1275ms)
+apps/cli test:   ✔ refuses ffprobe, naming the module that may spawn it (0.2387ms)
+apps/cli test:   ✔ refuses ffplay, naming the module that may spawn it (0.375ms)
+apps/cli test:   ✔ refuses FFmpeg, naming the module that may spawn it (0.2341ms)
+apps/cli test:   ✔ refuses ffmpeg.exe, naming the module that may spawn it (0.2404ms)
+apps/cli test:   ✔ still probes an ordinary tool — the refusal is a named set, not a blanket (23.2413ms)
+apps/cli test:   ✔ the guard fires BEFORE the PATH lookup, so it cannot be dodged by absence (0.6432ms)
+apps/cli test: ✔ tool-probe refuses the media binaries — tech-spec §11 enforced at the spawn (26.7704ms)
+apps/cli test: ℹ tests 215
+apps/cli test: ℹ suites 53
+apps/cli test: ℹ pass 212
+apps/cli test: ℹ fail 0
+apps/cli test: ℹ cancelled 0
+apps/cli test: ℹ skipped 3
+apps/cli test: ℹ todo 0
+apps/cli test: ℹ duration_ms 11984.7346
+apps/cli test: Done
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_DURATION_RANGE_INVERTED",
+skills/brief test:   "message": "durationRange.maxSeconds (20) is less than minSeconds (45).",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "durationRange": {
+skills/brief test:       "minSeconds": 45,
+skills/brief test:       "maxSeconds": 20
+skills/brief test:     }
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_MISSING_REQUIRED_FIELDS",
+skills/brief test:   "message": "The brief is missing 1 required field(s): cta.text. PRD REQ-002 requires an explicit brief — these are never inferred, because an inferred audience or objective silently changes what the whole pipeline optimises for.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [
+skills/brief test:       "cta.text"
+skills/brief test:     ],
+skills/brief test:     "formatted": "    /cta/kind must be equal to constant {\"allowedValue\":\"none\"}\n    /cta must have required property 'text' {\"missingProperty\":\"text\"}\n    /cta must match exactly one schema in oneOf {\"passingSchemas\":null}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_SCHEMA_INVALID",
+skills/brief test:   "message": "The brief does not satisfy job-brief-v1.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [],
+skills/brief test:     "formatted": "    /cta must NOT have additional properties {\"additionalProperty\":\"text\"}\n    /cta/kind must be equal to constant {\"allowedValue\":\"cta\"}\n    /cta must match exactly one schema in oneOf {\"passingSchemas\":null}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "BRIEF_MISSING_REQUIRED_FIELDS",
+skills/brief test:   "message": "The brief is missing 1 required field(s): cta.text. PRD REQ-002 requires an explicit brief — these are never inferred, because an inferred audience or objective silently changes what the whole pipeline optimises for.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "missingFields": [
+skills/brief test:       "cta.text"
+skills/brief test:     ],
+skills/brief test:     "formatted": "    /cta/kind must be equal to constant {\"allowedValue\":\"none\"}\n    /cta must have required property 'text' {\"missingProperty\":\"text\"}\n    /cta/kind must be equal to constant {\"allowedValue\":\"cta\"}\n    /cta must match exactly one schema in oneOf {\"passingSchemas\":null}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: {
+skills/brief test:   "code": "REQUEST_SCHEMA_INVALID",
+skills/brief test:   "message": "The request does not satisfy brief's input schema.",
+skills/brief test:   "skill": "brief",
+skills/brief test:   "skillVersion": "1.0.0",
+skills/brief test:   "details": {
+skills/brief test:     "errors": [
+skills/brief test:       {
+skills/brief test:         "instancePath": "",
+skills/brief test:         "schemaPath": "#/required",
+skills/brief test:         "keyword": "required",
+skills/brief test:         "params": {
+skills/brief test:           "missingProperty": "brief"
+skills/brief test:         },
+skills/brief test:         "message": "must have required property 'brief'"
+skills/brief test:       }
+skills/brief test:     ],
+skills/brief test:     "formatted": "    / must have required property 'brief' {\"missingProperty\":\"brief\"}"
+skills/brief test:   }
+skills/brief test: }
+skills/brief test: ▶ a missing required field FAILS and NAMES the field (REQ-002)
+skills/brief test:   ✔ a brief with no accountId exits 2 and names accountId (928.3286ms)
+skills/brief test:   ✔ nothing is committed when the brief is rejected (542.047ms)
+skills/brief test:   ✔ EVERY missing field is reported in one pass, not just the first (513.9309ms)
+skills/brief test:   ✔ an empty brief names all eleven fields a human must supply (581.5159ms)
+skills/brief test:   ✔ the error explains WHY the field is not simply inferred (575.0476ms)
+skills/brief test:   ✔ a field present but of the WRONG TYPE fails as a schema error, not a missing-field one (655.525ms)
+skills/brief test:   ✔ an out-of-range value is rejected (1042.2949ms)
+skills/brief test:   ✔ an unknown field is rejected rather than silently dropped (538.5023ms)
+skills/brief test:   ✔ a bogus enum member is rejected — the registry is real, not decorative (1435.3866ms)
+skills/brief test:   ✔ no failure path leaks a stack trace to stderr (1594.7093ms)
+skills/brief test: ✔ a missing required field FAILS and NAMES the field (REQ-002) (8409.6249ms)
+skills/brief test: ▶ a valid brief validates and LANDS
+skills/brief test:   ✔ it exits 0 and commits the brief where the result says it did (475.5764ms)
+skills/brief test:   ✔ briefPath is job-relative with forward slashes, on every platform (467.7847ms)
+skills/brief test:   ✔ the committed artefact satisfies job-brief-v1 in full (628.248ms)
+skills/brief test:   ✔ the envelope is filled in, crediting the skill and version (500.2825ms)
+skills/brief test:   ✔ a caller-supplied briefId and envelope are PRESERVED, not overwritten (527.3827ms)
+skills/brief test:   ✔ two briefs in one job land as two files, not one overwriting the other (979.7657ms)
+skills/brief test: ✔ a valid brief validates and LANDS (3579.4661ms)
+skills/brief test: ▶ the content hash
+skills/brief test:   ✔ it is the sha256 of what actually landed on disk (515.8125ms)
+skills/brief test:   ✔ two runs of the SAME brief hash identically, despite different timestamps (927.6729ms)
+skills/brief test:   ✔ a real content change changes the hash (923.0176ms)
+skills/brief test: ✔ the content hash (2366.7251ms)
+skills/brief test: ▶ cross-field rules the schema subset cannot express
+skills/brief test:   ✔ an inverted durationRange is BLOCKED (tech-spec §3 forbids if/then/else) (489.6647ms)
+skills/brief test:   ✔ an equal min and max is allowed — the rule is `<`, not `<=` (491.4102ms)
+skills/brief test: ✔ cross-field rules the schema subset cannot express (981.2342ms)
+skills/brief test: ▶ warnings inform without blocking
+skills/brief test:   ✔ a non-TikTok platform WARNS but still commits (decisions.md D-3) (551.4846ms)
+skills/brief test:   ✔ multiple platforms warn that `plan` runs once per platform (REQ-050) (633.3655ms)
+skills/brief test:   ✔ a single supported platform warns about nothing (627.0168ms)
+skills/brief test:   ✔ an explicit "no CTA" warns that the choice is carried through (464.8321ms)
+skills/brief test:   ✔ a malformed CTA union member is rejected, not warned about (1342.217ms)
+skills/brief test: ✔ warnings inform without blocking (3619.3408ms)
+skills/brief test: ▶ the request envelope itself
+skills/brief test:   ✔ a request missing `brief` fails against the skill's input schema (420.6224ms)
+skills/brief test: ✔ the request envelope itself (420.8005ms)
+skills/brief test: ℹ tests 27
+skills/brief test: ℹ suites 6
+skills/brief test: ℹ pass 27
+skills/brief test: ℹ fail 0
+skills/brief test: ℹ cancelled 0
+skills/brief test: ℹ skipped 0
+skills/brief test: ℹ todo 0
+skills/brief test: ℹ duration_ms 20038.1444
+skills/brief test: Done
+skills/ingest test: {
+skills/ingest test:   "code": "RIGHTS_SIDECAR_INVALID",
+skills/ingest test:   "message": "Rights sidecar C:\\Users\\FredWang\\AppData\\Local\\Temp\\cutdown-ingest-FOwal1\\bad-sidecar\\clip.mp4.rights.yaml is not valid YAML: Tabs are not allowed as indentation at line 2, column 1:\n\nstate: cleared\n\tbroken: [unclosed\n^\n",
+skills/ingest test:   "skill": "ingest",
+skills/ingest test:   "skillVersion": "1.0.0",
+skills/ingest test:   "details": {
+skills/ingest test:     "relativePath": "clip.mp4"
+skills/ingest test:   }
+skills/ingest test: }
+skills/ingest test: ▶ ingest — atomicity (the plan's headline guarantee)
+skills/ingest test:   ✔ an unsupported member fails the WHOLE ingest and commits nothing (5058.0561ms)
+skills/ingest test:   ✔ no staging directory is left behind after a failure (4160.6309ms)
+skills/ingest test:   ✔ a successful ingest commits every asset AND an inventory (4470.0597ms)
+skills/ingest test: ✔ ingest — atomicity (the plan's headline guarantee) (13690.4003ms)
+skills/ingest test: ▶ ingest — committed artefacts are well-formed
+skills/ingest test:   ✔ every proxy storedPath is job-relative and actually resolves (4667.8987ms)
+skills/ingest test:   ✔ an asset with no rights sidecar lands `unknown`, never `cleared` (4074.3104ms)
+skills/ingest test:   ✔ re-ingesting the same corpus is a full cache hit (REQ-005) (7485.1012ms)
+skills/ingest test: ✔ ingest — committed artefacts are well-formed (16227.6533ms)
+skills/ingest test: ▶ ingest — malformed input is reported as input error, not a skill defect
+skills/ingest test:   ✔ a corrupt YAML sidecar exits 2, not 1, and carries no stack trace (1356.8481ms)
+skills/ingest test: ✔ ingest — malformed input is reported as input error, not a skill defect (1363.8593ms)
+skills/ingest test: ▶ rights — date handling fails closed
+skills/ingest test:   ✔ a datetime-shaped expiry is NOT silently treated as unexpired (1.1777ms)
+skills/ingest test:   ✔ a non-STRING date is reported, not silently dropped (2.9166ms)
+skills/ingest test:   ✔ an unreadable date is committed as null, not written back verbatim (0.4324ms)
+skills/ingest test:   ✔ evaluateDates reports unparseable values instead of ignoring them (0.3218ms)
+skills/ingest test:   ✔ a bare past date still expires normally (0.1282ms)
+skills/ingest test: ✔ rights — date handling fails closed (5.5095ms)
+skills/ingest test: ℹ tests 31
+skills/ingest test: ℹ suites 7
+skills/ingest test: ℹ pass 31
+skills/ingest test: ℹ fail 0
+skills/ingest test: ℹ cancelled 0
+skills/ingest test: ℹ skipped 0
+skills/ingest test: ℹ todo 0
+skills/ingest test: ℹ duration_ms 31824.0373
+skills/ingest test: Done
+skills/plan test$ node --test "dist/tests/**/*.test.js"
+packages/qa test$ node --test "dist/tests/**/*.test.js"
+skills/revise test$ node --test "dist/tests/**/*.test.js"
+skills/propose test$ node --test "dist/tests/**/*.test.js"
+packages/qa test: ▶ a clean EDL passes and its advisory does not fail the gate
+packages/qa test:   ✔ the baseline resolves to gateStatus pass with no blockers (130.6288ms)
+packages/qa test:   ✔ the AI-media disclosure with no alteration signal is advisory, never a block (1.1556ms)
+packages/qa test: ✔ a clean EDL passes and its advisory does not fail the gate (133.3318ms)
+packages/qa test: ▶ quote fidelity (REQ-037)
+packages/qa test:   ✔ a reordered display quote BLOCKS with quote-fidelity (1.1697ms)
+packages/qa test:   ✔ a quote of words the Moment never contained BLOCKS (0.7358ms)
+packages/qa test:   ✔ a quote attributed to a non-speaker BLOCKS (misattribution) (0.7599ms)
+packages/qa test:   ✔ an in-order shortening with a correct speaker is CLEAN (0.5871ms)
+packages/qa test:   ✔ a matched but UNCORRECTED speaker is an ADVISORY, not a block (stays advisory) (0.6248ms)
+packages/qa test: ✔ quote fidelity (REQ-037) (4.4337ms)
+packages/qa test: ▶ prohibited claims (D-35/D-37, non-waivable)
+packages/qa test:   ✔ a JobBrief prohibited claim in the title BLOCKS (1.498ms)
+packages/qa test:   ✔ a StyleProfile prohibited claim in a caption BLOCKS (the union is checked) (0.9138ms)
+packages/qa test: ✔ prohibited claims (D-35/D-37, non-waivable) (2.7695ms)
+packages/qa test: ▶ required evidence & context (REQ-034)
+packages/qa test:   ✔ a proofPoint whose evidence Moment is not in the EDL BLOCKS (1.2846ms)
+packages/qa test:   ✔ a requires_setup dependency on a Moment absent from the EDL BLOCKS (context loss) (0.509ms)
+packages/qa test: ✔ required evidence & context (REQ-034) (2.0139ms)
+packages/qa test: ▶ rights (REQ-003/056)
+packages/qa test:   ✔ an unknown-rights Moment BLOCKS (0.4913ms)
+packages/qa test:   ✔ a cleared/BYO audioMode with no evidence BLOCKS, and is admitted with recorded evidence (0.5896ms)
+packages/qa test: ✔ rights (REQ-003/056) (1.4279ms)
+packages/qa test: ▶ disclosures (REQ-058, D-35)
+packages/qa test:   ✔ a paid distribution without a paid-partnership disclosure BLOCKS (0.36ms)
+packages/qa test:   ✔ material alteration without an AI-media disclosure BLOCKS (3.7129ms)
+packages/qa test: ✔ disclosures (REQ-058, D-35) (4.2602ms)
+packages/qa test: ▶ capability & range
+packages/qa test:   ✔ an out-of-bounds source range BLOCKS with edl-resolution, never clamped (0.5531ms)
+packages/qa test:   ✔ a duration above the platform max BLOCKS with capability (0.2546ms)
+packages/qa test:   ✔ a schema-invalid EDL fails closed with a schema block and skips content checks (0.2893ms)
+packages/qa test: ✔ capability & range (1.2514ms)
+packages/qa test: ▶ D-37 separation: critic advisories NEVER become blockers
+packages/qa test:   ✔ a clean EDL with a coherence/style critic advisory still passes (0.3024ms)
+packages/qa test:   ✔ a high-severity critic finding does not appear among blockers (0.1958ms)
+packages/qa test:   ✔ gateStatus is copied from the deterministic verdict even when a blocker AND a critic finding are present (0.2485ms)
+packages/qa test: ✔ D-37 separation: critic advisories NEVER become blockers (0.8564ms)
+packages/qa test: ▶ technical QA — the clean control
+packages/qa test:   ✔ produces ZERO findings on a clean render (2.6116ms)
+packages/qa test:   ✔ records an entry for EVERY check, including the ones that did not run (0.484ms)
+packages/qa test:   ✔ never records a `skipped` or `errored` check without a reason (0.3725ms)
+packages/qa test: ✔ technical QA — the clean control (4.562ms)
+packages/qa test: ▶ technical QA — positive and negative fixture per check
+packages/qa test:   ✔ missing_media: does not fire on the clean control (1.17ms)
+packages/qa test:   ✔ missing_media: fires with the right severity when broken (0.7484ms)
+packages/qa test:   ✔ container_corruption: does not fire on the clean control (0.2507ms)
+packages/qa test:   ✔ container_corruption: fires with the right severity when broken (0.3167ms)
+packages/qa test:   ✔ source_range_validity: does not fire on the clean control (0.3137ms)
+packages/qa test:   ✔ source_range_validity: fires with the right severity when broken (0.2418ms)
+packages/qa test:   ✔ output_dimensions: does not fire on the clean control (0.2355ms)
+packages/qa test:   ✔ output_dimensions: fires with the right severity when broken (0.2907ms)
+packages/qa test:   ✔ output_duration: does not fire on the clean control (0.1121ms)
+packages/qa test:   ✔ output_duration: fires with the right severity when broken (0.1203ms)
+packages/qa test:   ✔ codec_profile: does not fire on the clean control (0.0624ms)
+packages/qa test:   ✔ codec_profile: fires with the right severity when broken (0.3459ms)
+packages/qa test:   ✔ black_frames: does not fire on the clean control (0.1327ms)
+packages/qa test:   ✔ black_frames: fires with the right severity when broken (0.4246ms)
+packages/qa test:   ✔ frozen_frames: does not fire on the clean control (0.1343ms)
+packages/qa test:   ✔ frozen_frames: fires with the right severity when broken (0.2506ms)
+packages/qa test:   ✔ duplicate_frames: does not fire on the clean control (0.126ms)
+packages/qa test:   ✔ duplicate_frames: fires with the right severity when broken (0.2378ms)
+packages/qa test:   ✔ crop_failure: does not fire on the clean control (0.1068ms)
+packages/qa test:   ✔ crop_failure: fires with the right severity when broken (0.2377ms)
+packages/qa test:   ✔ unexpected_silence: does not fire on the clean control (0.2419ms)
+packages/qa test:   ✔ unexpected_silence: fires with the right severity when broken (0.3669ms)
+packages/qa test:   ✔ audio_clipping: does not fire on the clean control (0.1382ms)
+packages/qa test:   ✔ audio_clipping: fires with the right severity when broken (0.194ms)
+packages/qa test:   ✔ loudness_target: does not fire on the clean control (0.2023ms)
+packages/qa test:   ✔ loudness_target: fires with the right severity when broken (0.262ms)
+packages/qa test:   ✔ true_peak: does not fire on the clean control (0.1032ms)
+packages/qa test:   ✔ true_peak: fires with the right severity when broken (0.1349ms)
+packages/qa test:   ✔ av_sync_drift: does not fire on the clean control (0.1958ms)
+packages/qa test:   ✔ av_sync_drift: fires with the right severity when broken (0.207ms)
+packages/qa test:   ✔ caption_file_present: does not fire on the clean control (0.0998ms)
+packages/qa test:   ✔ caption_file_present: fires with the right severity when broken (0.1686ms)
+packages/qa test:   ✔ caption_overflow: does not fire on the clean control (0.1059ms)
+packages/qa test:   ✔ caption_overflow: fires with the right severity when broken (0.1924ms)
+packages/qa test:   ✔ caption_readability: does not fire on the clean control (0.0705ms)
+packages/qa test:   ✔ caption_readability: fires with the right severity when broken (0.2181ms)
+packages/qa test:   ✔ caption_timing: does not fire on the clean control (0.0766ms)
+packages/qa test:   ✔ caption_timing: fires with the right severity when broken (0.177ms)
+packages/qa test:   ✔ caption_safe_zone: does not fire on the clean control (0.2328ms)
+packages/qa test:   ✔ caption_safe_zone: fires with the right severity when broken (0.2898ms)
+packages/qa test:   ✔ caption_spelling: does not fire on the clean control (0.1767ms)
+packages/qa test:   ✔ caption_spelling: fires with the right severity when broken (0.1762ms)
+packages/qa test:   ✔ caption_name_flag: does not fire on the clean control (0.1446ms)
+packages/qa test:   ✔ caption_name_flag: fires with the right severity when broken (0.6966ms)
+packages/qa test:   ✔ non_speech_cue_review: does not fire on the clean control (0.1046ms)
+packages/qa test:   ✔ non_speech_cue_review: fires with the right severity when broken (0.23ms)
+packages/qa test:   ✔ the fixture matrix covers the whole contract enum (0.1486ms)
+packages/qa test: ✔ technical QA — positive and negative fixture per check (13.0501ms)
+packages/qa test: ▶ technical QA — finding identity is stable
+packages/qa test:   ✔ gives the same finding the same id across runs, so a waiver keeps meaning (0.2581ms)
+packages/qa test: ✔ technical QA — finding identity is stable (0.3499ms)
+packages/qa test: ▶ technical QA — thresholds are DATA, not code
+packages/qa test:   ✔ changing a threshold changes the verdict with no code change (0.2074ms)
+packages/qa test:   ✔ re-classifying a NON-D-35 check in the ruleset changes its severity (0.2058ms)
+packages/qa test:   ✔ every field the ruleset declares is actually READ by a check (13.9402ms)
+packages/qa test: ✔ technical QA — thresholds are DATA, not code (14.5443ms)
+packages/qa test: ▶ technical QA — the ruleset fails closed
+packages/qa test:   ✔ refuses unparseable YAML rather than falling back to defaults (1.7567ms)
+packages/qa test:   ✔ refuses a ruleset missing a setting rather than completing it silently (0.66ms)
+packages/qa test:   ✔ REFUSES a ruleset that demotes a D-35 non-waivable check (18.9117ms)
+packages/qa test:   ✔ still permits the ruleset to TIGHTEN — adding a blocker is fine (5.5875ms)
+packages/qa test:   ✔ the shipped ruleset satisfies the D-35 floor (0.216ms)
+packages/qa test:   ✔ refuses a ruleset that leaves a check unclassified (1.7228ms)
+packages/qa test: ✔ technical QA — the ruleset fails closed (29.3393ms)
+packages/qa test: ▶ technical QA — a broken detector never reads as clean
+packages/qa test:   ✔ records `errored` with the thrown message instead of silently passing (0.5685ms)
+packages/qa test: ✔ technical QA — a broken detector never reads as clean (0.6974ms)
+packages/qa test: ▶ D-35 gate status
+packages/qa test:   ✔ passes clean (1.4487ms)
+packages/qa test:   ✔ treats info findings as not affecting the gate (0.5014ms)
+packages/qa test:   ✔ fails on an unwaived warning (0.4121ms)
+packages/qa test:   ✔ passes with waivers once every warning is covered (0.4443ms)
+packages/qa test:   ✔ still fails when only SOME warnings are waived (0.3544ms)
+packages/qa test: ✔ D-35 gate status (5.0581ms)
+packages/qa test: ▶ D-35 waivers are rejected, never ignored
+packages/qa test:   ✔ REJECTS a waiver naming a blocker (1.4217ms)
+packages/qa test:   ✔ REJECTS a waiver naming a finding this report does not contain (0.4485ms)
+packages/qa test:   ✔ REJECTS a finding whose waivable flag contradicts its severity (0.5389ms)
+packages/qa test:   ✔ REJECTS a waiver written against a DIFFERENT plan (0.6506ms)
+packages/qa test:   ✔ REJECTS a waiver belonging to a different job (0.5568ms)
+packages/qa test:   ✔ accepts an in-scope waiver (0.4019ms)
+packages/qa test:   ✔ a waiver SURVIVES a re-render of the same plan — the case that makes it usable (0.274ms)
+packages/qa test:   ✔ no waiver can move a report containing a blocker out of fail (0.3001ms)
+packages/qa test: ✔ D-35 waivers are rejected, never ignored (5.5315ms)
+packages/qa test: ▶ the report is assembled, never authored
+packages/qa test:   ✔ computes gateStatus from findings rather than accepting one (5.953ms)
+packages/qa test:   ✔ records the ruleset version so a past verdict stays interpretable (0.6847ms)
+packages/qa test: ✔ the report is assembled, never authored (6.943ms)
+packages/qa test: ▶ the advance gate re-derives rather than trusting the stored status
+packages/qa test:   ✔ refuses a report claiming `pass` beside a blocker finding (1.0303ms)
+packages/qa test:   ✔ refuses a report claiming `pass_with_waivers` whose warnings are not actually covered (0.626ms)
+packages/qa test: ✔ the advance gate re-derives rather than trusting the stored status (1.8835ms)
+packages/qa test: ▶ the advance gate fails closed
+packages/qa test:   ✔ refuses when there is no report at all (0.2414ms)
+packages/qa test:   ✔ refuses a failing report (0.4381ms)
+packages/qa test:   ✔ allows pass_with_waivers (0.4577ms)
+packages/qa test: ✔ the advance gate fails closed (1.4036ms)
+packages/qa test: ℹ tests 102
+packages/qa test: ℹ suites 19
+packages/qa test: ℹ pass 102
+packages/qa test: ℹ fail 0
+packages/qa test: ℹ cancelled 0
+packages/qa test: ℹ skipped 0
+packages/qa test: ℹ todo 0
+packages/qa test: ℹ duration_ms 673.8432
+packages/qa test: Done
+skills/plan test: {
+skills/plan test:   "code": "PLATFORM_UNSUPPORTED",
+skills/plan test:   "message": "Platform \"instagram_reels\" has no Phase 0 capability fixture — only tiktok does (D-3). plan fails explicitly rather than falling back to a generic profile.",
+skills/plan test:   "skill": "plan",
+skills/plan test:   "skillVersion": "1.0.0"
+skills/plan test: }
+skills/plan test: ▶ recorded-model path plans a story + EDL that validate
+skills/plan test:   ✔ both artefacts are written, schema-valid, and record provenance; the EDL resolves (1009.0632ms)
+skills/plan test: ✔ recorded-model path plans a story + EDL that validate (1009.6975ms)
+skills/plan test: ▶ platform discipline (D-3)
+skills/plan test:   ✔ a non-TikTok platform is refused explicitly (exit 2), no fallback (634.1504ms)
+skills/plan test: ✔ platform discipline (D-3) (634.3042ms)
+skills/plan test: ▶ unconfigured gateway is a clean skip
+skills/plan test:   ✔ no recordedModelPath and no configured gateway yields kind=skipped (585.7822ms)
+skills/plan test: ✔ unconfigured gateway is a clean skip (585.9851ms)
+skills/plan test: ℹ tests 3
+skills/plan test: ℹ suites 3
+skills/plan test: ℹ pass 3
+skills/plan test: ℹ fail 0
+skills/plan test: ℹ cancelled 0
+skills/plan test: ℹ skipped 0
+skills/plan test: ℹ todo 0
+skills/plan test: ℹ duration_ms 2701.6626
+skills/plan test: Done
+skills/propose test: ▶ recorded-model path produces briefs with the required properties
+skills/propose test:   ✔ N briefs are returned (kind=briefs, count matches variants) (684.4221ms)
+skills/propose test:   ✔ every referenced Moment id exists in the input, and every artefact records model provenance + validates (748.1257ms)
+skills/propose test: ✔ recorded-model path produces briefs with the required properties (1433.4479ms)
+skills/propose test: ▶ REQ-036 refusal when footage cannot support the request
+skills/propose test:   ✔ one Moment against three variants refuses with a reason, not a padded set (494.0331ms)
+skills/propose test: ✔ REQ-036 refusal when footage cannot support the request (494.2583ms)
+skills/propose test: ▶ unconfigured gateway is a clean skip, not a failure
+skills/propose test:   ✔ no recordedModelPath and no configured gateway yields kind=skipped MODEL_NOT_CONFIGURED (502.4517ms)
+skills/propose test: ✔ unconfigured gateway is a clean skip, not a failure (502.7062ms)
+skills/propose test: ℹ tests 4
+skills/propose test: ℹ suites 3
+skills/propose test: ℹ pass 4
+skills/propose test: ℹ fail 0
+skills/propose test: ℹ cancelled 0
+skills/propose test: ℹ skipped 0
+skills/propose test: ℹ todo 0
+skills/propose test: ℹ duration_ms 2965.5126
+skills/propose test: Done
+skills/revise test: ▶ narrowness: a caption note revises the EDL and nothing wider (REQ-039)
+skills/revise test:   ✔ regenerates the PlatformEDL, links its parent, and spawns no CreativeBrief (795.2324ms)
+skills/revise test:   ✔ shows the interpreted constraints with VERBATIM source text (REQ-112) (710.71ms)
+skills/revise test: ✔ narrowness: a caption note revises the EDL and nothing wider (REQ-039) (1507.1918ms)
+skills/revise test: ▶ ambiguity is a refusal, not a guess (REQ-112)
+skills/revise test:   ✔ returns needs_confirmation and writes NO revision (617.2844ms)
+skills/revise test: ✔ ambiguity is a refusal, not a guess (REQ-112) (617.5769ms)
+skills/revise test: ▶ a wide revision is refused, not half-performed
+skills/revise test:   ✔ refuses an angle-level note and names the command that owns that object (541.2214ms)
+skills/revise test: ✔ a wide revision is refused, not half-performed (541.4211ms)
+skills/revise test: ▶ a model interpretation that cannot be checked is rejected
+skills/revise test:   ✔ exhausts the single repair retry on a PARAPHRASED sourceText and writes nothing (D-32) (500.9334ms)
+skills/revise test: ✔ a model interpretation that cannot be checked is rejected (501.1364ms)
+skills/revise test: ▶ the gateway is not configured — the Phase 0 default
+skills/revise test:   ✔ skips cleanly with a reason rather than attempting a paid call (470.7313ms)
+skills/revise test: ✔ the gateway is not configured — the Phase 0 default (470.9301ms)
+skills/revise test: ▶ a note about a render that does not exist
+skills/revise test:   ✔ refuses rather than revising the newest EDL it can find (467.9864ms)
+skills/revise test: ✔ a note about a render that does not exist (468.1458ms)
+skills/revise test: ℹ tests 7
+skills/revise test: ℹ suites 6
+skills/revise test: ℹ pass 7
+skills/revise test: ℹ fail 0
+skills/revise test: ℹ cancelled 0
+skills/revise test: ℹ skipped 0
+skills/revise test: ℹ todo 0
+skills/revise test: ℹ duration_ms 4319.8248
+skills/revise test: Done
+skills/approve test$ node --test "dist/tests/**/*.test.js"
+skills/package test$ node --test "dist/tests/**/*.test.js"
+packages/renderer-ffmpeg test$ node --test "dist/tests/**/*.test.js"
+skills/validate test$ node --test "dist/tests/**/*.test.js"
+packages/renderer-ffmpeg test: ▶ wrapping
+packages/renderer-ffmpeg test:   ✔ wraps greedily at the line width (1.1167ms)
+packages/renderer-ffmpeg test:   ✔ gives an over-long word its own line rather than splitting it (0.1491ms)
+packages/renderer-ffmpeg test:   ✔ NEVER truncates past the line budget — the overflow is reported, not hidden (0.1917ms)
+packages/renderer-ffmpeg test:   ✔ collapses every whitespace run so a newline cannot break SRT cue framing (0.0984ms)
+packages/renderer-ffmpeg test: ✔ wrapping (2.4845ms)
+packages/renderer-ffmpeg test: ▶ representability — refuse, never mangle
+packages/renderer-ffmpeg test:   ✔ rejects a backslash, which libass would silently swallow (0.5095ms)
+packages/renderer-ffmpeg test:   ✔ rejects a control character (0.1617ms)
+packages/renderer-ffmpeg test:   ✔ escapes braces so an override block cannot be injected from caption text (0.4769ms)
+packages/renderer-ffmpeg test:   ✔ rejects an empty caption rather than emitting a blank cue (0.1851ms)
+packages/renderer-ffmpeg test: ✔ representability — refuse, never mangle (1.5606ms)
+packages/renderer-ffmpeg test: ▶ verbatim and display stay separate
+packages/renderer-ffmpeg test:   ✔ renders displayText and carries verbatimSourceText untouched (0.6959ms)
+packages/renderer-ffmpeg test:   ✔ a `none` caption produces no cue at all (0.2468ms)
+packages/renderer-ffmpeg test: ✔ verbatim and display stay separate (1.0832ms)
+packages/renderer-ffmpeg test: ▶ review flags
+packages/renderer-ffmpeg test:   ✔ flags a capitalised token that does not start a sentence (0.2438ms)
+packages/renderer-ffmpeg test:   ✔ does not flag the first word of a sentence (0.1348ms)
+packages/renderer-ffmpeg test:   ✔ flags a caption that needs more lines than the ruleset allows (0.2649ms)
+packages/renderer-ffmpeg test:   ✔ carries a D-28 low-confidence mark into the review payload (0.2489ms)
+packages/renderer-ffmpeg test: ✔ review flags (1.1079ms)
+packages/renderer-ffmpeg test: ▶ time formatting
+packages/renderer-ffmpeg test:   ✔ ASS uses centiseconds, its real resolution (0.1301ms)
+packages/renderer-ffmpeg test:   ✔ SRT uses a comma and milliseconds (0.0952ms)
+packages/renderer-ffmpeg test:   ✔ WebVTT uses a dot and milliseconds (0.0832ms)
+packages/renderer-ffmpeg test:   ✔ ASS colours are &HAABBGGRR, not RGB (0.0878ms)
+packages/renderer-ffmpeg test: ✔ time formatting (0.5511ms)
+packages/renderer-ffmpeg test: ▶ the three files agree
+packages/renderer-ffmpeg test:   ✔ emits the same number of cues in all three formats (0.4984ms)
+packages/renderer-ffmpeg test:   ✔ sets PlayRes to the real canvas so px values mean output pixels (0.1938ms)
+packages/renderer-ffmpeg test:   ✔ writes LF only, so the caption files hash the same on every platform (0.1995ms)
+packages/renderer-ffmpeg test:   ✔ escapes WebVTT markup characters (0.1809ms)
+packages/renderer-ffmpeg test:   ✔ starts WebVTT with its required signature (0.1124ms)
+packages/renderer-ffmpeg test: ✔ the three files agree (1.3971ms)
+packages/renderer-ffmpeg test: ▶ aspect treatments Phase 0 cannot honestly perform are REFUSED
+packages/renderer-ffmpeg test:   ✔ refuses subject_reframe rather than falling back to a centre crop (1.6808ms)
+packages/renderer-ffmpeg test:   ✔ refuses split_screen (0.3185ms)
+packages/renderer-ffmpeg test:   ✔ performs the three treatments it can (0.3521ms)
+packages/renderer-ffmpeg test: ✔ aspect treatments Phase 0 cannot honestly perform are REFUSED (3.6421ms)
+packages/renderer-ffmpeg test: ▶ injection fixtures — filter values are escaped, paths are policed
+packages/renderer-ffmpeg test:   ✔ escapes a caption's colon so it cannot end the filter option (0.2251ms)
+packages/renderer-ffmpeg test:   ✔ escapes quotes and backslashes (0.1004ms)
+packages/renderer-ffmpeg test:   ✔ escapes filtergraph structural characters (0.1429ms)
+packages/renderer-ffmpeg test:   ✔ escapes a Windows drive colon in a filter path (0.2069ms)
+packages/renderer-ffmpeg test:   ✔ rejects an option-shaped path (0.2459ms)
+packages/renderer-ffmpeg test:   ✔ rejects a concat: protocol path (0.1946ms)
+packages/renderer-ffmpeg test:   ✔ rejects an http: path (0.2078ms)
+packages/renderer-ffmpeg test:   ✔ rejects a relative path, whose meaning depends on the caller cwd (0.1128ms)
+packages/renderer-ffmpeg test:   ✔ rejects a colour that is not #RRGGBB rather than passing it through (0.1272ms)
+packages/renderer-ffmpeg test:   ✔ a malicious caption's text reaches the graph fully escaped (0.3186ms)
+packages/renderer-ffmpeg test: ✔ injection fixtures — filter values are escaped, paths are policed (2.276ms)
+packages/renderer-ffmpeg test: ▶ the assembled graph
+packages/renderer-ffmpeg test:   ✔ concats video and audio when the render has audio (0.1402ms)
+packages/renderer-ffmpeg test:   ✔ concats video only when there is no audio, and never fabricates a track (0.0997ms)
+packages/renderer-ffmpeg test:   ✔ burns captions AFTER the concat, on the output timeline the cues are timed to (0.1207ms)
+packages/renderer-ffmpeg test:   ✔ refuses an empty timeline (0.103ms)
+packages/renderer-ffmpeg test:   ✔ fades every clip boundary so a cut cannot click (0.0507ms)
+packages/renderer-ffmpeg test: ✔ the assembled graph (0.6271ms)
+packages/renderer-ffmpeg test: ▶ exact timeline arithmetic — never floats
+packages/renderer-ffmpeg test:   ✔ renders an exact rational to fixed decimal seconds (0.1251ms)
+packages/renderer-ffmpeg test:   ✔ keeps an exactly-representable boundary exact (0.1424ms)
+packages/renderer-ffmpeg test:   ✔ truncates rather than rounding, so a cut can never move past a frame (0.0487ms)
+packages/renderer-ffmpeg test:   ✔ counts output frames exactly at a fractional frame rate (0.122ms)
+packages/renderer-ffmpeg test:   ✔ never returns a zero-frame clip (0.0505ms)
+packages/renderer-ffmpeg test:   ✔ refuses an inverted range instead of producing a negative duration (0.0784ms)
+packages/renderer-ffmpeg test: ✔ exact timeline arithmetic — never floats (0.693ms)
+packages/renderer-ffmpeg test: ▶ editorial fades (D-52) — duration-preserving, exact strings
+packages/renderer-ffmpeg test:   ✔ a faded video chain carries fade-in and fade-out at exact offsets, after normalisation (0.0904ms)
+packages/renderer-ffmpeg test:   ✔ a chain without a fade contains no video fade filter at all (0.0471ms)
+packages/renderer-ffmpeg test:   ✔ the blurred-background composite fades AFTER the overlay, covering background and subject alike (0.0537ms)
+packages/renderer-ffmpeg test:   ✔ an editorial audio fade REPLACES the boundary micro-fade on its side (0.0491ms)
+packages/renderer-ffmpeg test:   ✔ without an editorial fade the 20 ms boundary micro-fades remain exactly as before (0.0684ms)
+packages/renderer-ffmpeg test:   ✔ a one-sided fade emits only its side (0.0566ms)
+packages/renderer-ffmpeg test:   ✔ buildFilterGraph threads each input fade into its own chain only (0.146ms)
+packages/renderer-ffmpeg test: ✔ editorial fades (D-52) — duration-preserving, exact strings (0.628ms)
+packages/renderer-ffmpeg test: ▶ exact fade arithmetic helpers
+packages/renderer-ffmpeg test:   ✔ msToSecondsString is exact to nine places (0.2258ms)
+packages/renderer-ffmpeg test:   ✔ secondsStringMinusMs subtracts as scaled integers, never floats (0.2821ms)
+packages/renderer-ffmpeg test: ✔ exact fade arithmetic helpers (0.5694ms)
+packages/renderer-ffmpeg test: ▶ one-sided fades on the audio side (round-2 gap)
+packages/renderer-ffmpeg test:   ✔ an in-only fade keeps the 20 ms micro-fade on the OUT side (0.0952ms)
+packages/renderer-ffmpeg test:   ✔ an out-only fade keeps the 20 ms micro-fade on the IN side (0.1134ms)
+packages/renderer-ffmpeg test: ✔ one-sided fades on the audio side (round-2 gap) (0.288ms)
+skills/validate test: {
+skills/validate test:   "code": "REQUEST_SCHEMA_INVALID",
+skills/validate test:   "message": "The request does not satisfy validate's input schema.",
+skills/validate test:   "skill": "validate",
+skills/validate test:   "skillVersion": "1.0.0",
+skills/validate test:   "details": {
+skills/validate test:     "errors": [
+skills/validate test:       {
+skills/validate test:         "instancePath": "/edlId",
+skills/validate test:         "schemaPath": "#/properties/edlId/pattern",
+skills/validate test:         "keyword": "pattern",
+skills/validate test:         "params": {
+skills/validate test:           "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+skills/validate test:         },
+skills/validate test:         "message": "must match pattern \"^[0-9A-HJKMNP-TV-Z]{26}$\""
+skills/validate test:       }
+skills/validate test:     ],
+skills/validate test:     "formatted": "    /edlId must match pattern \"^[0-9A-HJKMNP-TV-Z]{26}$\" {\"pattern\":\"^[0-9A-HJKMNP-TV-Z]{26}$\"}"
+skills/validate test:   }
+skills/validate test: }
+skills/validate test: {
+skills/validate test:   "code": "REQUEST_SCHEMA_INVALID",
+skills/validate test:   "message": "The request does not satisfy validate's input schema.",
+skills/validate test:   "skill": "validate",
+skills/validate test:   "skillVersion": "1.0.0",
+skills/validate test:   "details": {
+skills/validate test:     "errors": [
+skills/validate test:       {
+skills/validate test:         "instancePath": "/edlId",
+skills/validate test:         "schemaPath": "#/properties/edlId/pattern",
+skills/validate test:         "keyword": "pattern",
+skills/validate test:         "params": {
+skills/validate test:           "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+skills/validate test:         },
+skills/validate test:         "message": "must match pattern \"^[0-9A-HJKMNP-TV-Z]{26}$\""
+skills/validate test:       }
+skills/validate test:     ],
+skills/validate test:     "formatted": "    /edlId must match pattern \"^[0-9A-HJKMNP-TV-Z]{26}$\" {\"pattern\":\"^[0-9A-HJKMNP-TV-Z]{26}$\"}"
+skills/validate test:   }
+skills/validate test: }
+skills/validate test: {
+skills/validate test:   "code": "REQUEST_SCHEMA_INVALID",
+skills/validate test:   "message": "The request does not satisfy validate's input schema.",
+skills/validate test:   "skill": "validate",
+skills/validate test:   "skillVersion": "1.0.0",
+skills/validate test:   "details": {
+skills/validate test:     "errors": [
+skills/validate test:       {
+skills/validate test:         "instancePath": "/edlId",
+skills/validate test:         "schemaPath": "#/properties/edlId/pattern",
+skills/validate test:         "keyword": "pattern",
+skills/validate test:         "params": {
+skills/validate test:           "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+skills/validate test:         },
+skills/validate test:         "message": "must match pattern \"^[0-9A-HJKMNP-TV-Z]{26}$\""
+skills/validate test:       }
+skills/validate test:     ],
+skills/validate test:     "formatted": "    /edlId must match pattern \"^[0-9A-HJKMNP-TV-Z]{26}$\" {\"pattern\":\"^[0-9A-HJKMNP-TV-Z]{26}$\"}"
+skills/validate test:   }
+skills/validate test: }
+packages/renderer-ffmpeg test: ▶ tier-1 determinism on the machine running this suite (D-33, as amended by D-57)
+packages/renderer-ffmpeg test:   ✔ renders the same manifest twice to BYTE-IDENTICAL output (6527.2173ms)
+skills/validate test: {
+skills/validate test:   "code": "STORY_PLAN_INVALID",
+skills/validate test:   "message": "MasterStoryPlan 01HQZX3F5G7K9M2N4P6R8S0T4V at C:\\Users\\FredWang\\AppData\\Local\\Temp\\cutdown-validate-ws-6l5EVf\\project-data\\jobs\\validate-traversal\\story-plans\\01HQZX3F5G7K9M2N4P6R8S0T4V.json does not satisfy master-story-plan-v1.json:     / must have required property 'envelope' {\"missingProperty\":\"envelope\"}\n    / must have required property 'jobId' {\"missingProperty\":\"jobId\"}\n    / must have required property 'creativeBriefId' {\"missingProperty\":\"creativeBriefId\"}\n    / must have required property 'parentStoryPlanId' {\"missingProperty\":\"parentStoryPlanId\"}\n    / must have required property 'beats' {\"missingProperty\":\"beats\"}\n    / must have required property 'dependencies' {\"missingProperty\":\"dependencies\"}\n    / must have required property 'alternateHooks' {\"missingProperty\":\"alternateHooks\"}\n    / must have required property 'modelProvenance' {\"missingProperty\":\"modelProvenance\"}. A stored artefact that fails its own contract is not trustworthy input — several of its ids become filesystem paths.",
+skills/validate test:   "skill": "validate",
+skills/validate test:   "skillVersion": "1.0.0"
+skills/validate test: }
+skills/validate test: {
+skills/validate test:   "code": "PATH_ESCAPES_ROOT",
+skills/validate test:   "message": "The recorded model path resolves to C:\\Users\\FredWang\\AppData\\Local\\Temp\\cutdown-validate-ws-6l5EVf\\.env, which is outside C:\\projects\\ai.playground\\trendMonitor\\cutdown\\skills\\validate.",
+skills/validate test:   "skill": "validate",
+skills/validate test:   "skillVersion": "1.0.0",
+skills/validate test:   "details": {
+skills/validate test:     "what": "The recorded model path"
+skills/validate test:   }
+skills/validate test: }
+packages/renderer-ffmpeg test:   ✔ stamps the render record from RENDER_SCHEMA_VERSION and satisfies render-v2 (D-62) (5876.2819ms)
+skills/validate test: {
+skills/validate test:   "code": "PATH_ESCAPES_ROOT",
+skills/validate test:   "message": "The bounds path resolves to C:\\Users\\FredWang\\AppData\\Local\\Temp\\cutdown-validate-ws-6l5EVf\\.env, which is outside C:\\projects\\ai.playground\\trendMonitor\\cutdown\\skills\\validate.",
+skills/validate test:   "skill": "validate",
+skills/validate test:   "skillVersion": "1.0.0",
+skills/validate test:   "details": {
+skills/validate test:     "what": "The bounds path"
+skills/validate test:   }
+skills/validate test: }
+skills/approve test: ▶ what approve refuses (D-9, D-35)
+skills/approve test:   ✔ rejects a request with no approver name — exit 2, not 3 (553.4673ms)
+skills/approve test:   ✔ rejects a rejection with no reason — exit 2 (542.5604ms)
+skills/approve test:   ✔ rejects a whitespace-only reason — a blank reason is no reason (531.5936ms)
+skills/approve test:   ✔ refuses an unknown render id (556.3402ms)
+skills/approve test:   ✔ refuses to approve a FINAL render — approval is of a draft, or the ordering is circular (568.2627ms)
+skills/approve test:   ✔ refuses to approve a draft whose QA gate refuses — a blocker is non-waivable by ANYONE (526.4146ms)
+skills/approve test:   ✔ refuses to approve a draft with no QA report at all — absence of evidence is not a pass (620.8254ms)
+skills/approve test:   ✔ refuses even a REJECTION when no QA report exists at all — and this is a real limit (750.8581ms)
+skills/approve test:   ✔ DOES let a reviewer reject a QA-failed draft — that is exactly what review is for (966.7222ms)
+skills/approve test: ✔ what approve refuses (D-9, D-35) (5633.9905ms)
+skills/approve test: ▶ an approval records the reviewed draft, its EDL and its manifest — and no package
+skills/approve test:   ✔ writes a schema-valid ReviewDecision naming all four subjects (1511.0946ms)
+skills/approve test:   ✔ names the ULID-shaped file after the decision, not after the manifest (1195.0394ms)
+skills/approve test: ✔ an approval records the reviewed draft, its EDL and its manifest — and no package (2725.4893ms)
+skills/approve test: ▶ duplicate and conflicting decisions preserve history
+skills/approve test:   ✔ a second decision about the same draft is a NEW record that supersedes without deleting (2729.144ms)
+skills/approve test:   ✔ WARNS on a SUCCESSFUL approve when a namespace file is unreadable, and names the consequence (1199.4421ms)
+skills/approve test:   ✔ selection is deterministic when two decisions share a decidedAt — the ULID breaks the tie (203.9852ms)
+skills/approve test:   ✔ a malformed file under reviews/ is REPORTED, never silently dropped (182.5034ms)
+skills/approve test:   ✔ refuses an ANONYMOUS approval — the case a key-presence check let through (131.8637ms)
+skills/approve test:   ✔ refuses a decision whose decidedAt is not an instant — it cannot be ordered (108.4032ms)
+skills/approve test:   ✔ orders by INSTANT, so an offset timestamp cannot outrank a genuinely later one (77.7372ms)
+skills/approve test: ✔ duplicate and conflicting decisions preserve history (4649.2281ms)
+skills/approve test: ▶ an unreadable decision makes the whole resolution INDETERMINATE
+skills/approve test:   ✔ refuses to report `approved` when a sibling decision file is unreadable (133.6049ms)
+skills/approve test:   ✔ reports unreadable files on the indeterminate arm ALONE, so no branch guards a dead case (305.9212ms)
+skills/approve test:   ✔ the RESOLVER reports indeterminate for a truncated candidate decision (98.5582ms)
+skills/approve test: ✔ an unreadable decision makes the whole resolution INDETERMINATE (539.1361ms)
+skills/approve test: ▶ the decision namespace is what `approve` writes, and nothing else
+skills/approve test:   ✔ an approval still resolves with validate's gate outputs sitting in reviews/ (110.7911ms)
+skills/approve test:   ✔ an unrelated dropped .json is out of scope, not an irrevocable veto (139.5823ms)
+skills/approve test:   ✔ but a ULID-named file that fails the contract IS still indeterminate (127.6378ms)
+skills/approve test:   ✔ ignores a ULID-named file with the wrong extension (117.7897ms)
+skills/approve test: ✔ the decision namespace is what `approve` writes, and nothing else (496.5126ms)
+skills/approve test: ℹ tests 25
+skills/approve test: ℹ suites 5
+skills/approve test: ℹ pass 25
+skills/approve test: ℹ fail 0
+skills/approve test: ℹ cancelled 0
+skills/approve test: ℹ skipped 0
+skills/approve test: ℹ todo 0
+skills/approve test: ℹ duration_ms 14667.437
+skills/approve test: Done
+skills/validate test: {
+skills/validate test:   "code": "UNEXPECTED_ERROR",
+skills/validate test:   "message": "Style profile C:\\Users\\FredWang\\AppData\\Local\\Temp\\cutdown-validate-ws-6l5EVf\\.env does not satisfy style-profile-v1.",
+skills/validate test:   "skill": "validate",
+skills/validate test:   "skillVersion": "1.0.0",
+skills/validate test:   "details": {
+skills/validate test:     "errorType": "StyleProfileError"
+skills/validate test:   }
+skills/validate test: }
+skills/validate test: ▶ a clean EDL passes; critic findings are advisory, never blockers (D-37)
+skills/validate test:   ✔ gateStatus pass, two files written, critic ran, and no critic finding is a blocker (762.149ms)
+skills/validate test: ✔ a clean EDL passes; critic findings are advisory, never blockers (D-37) (763.8903ms)
+skills/validate test: ▶ each deliberately-broken EDL is BLOCKED, and the critic stays advisory
+skills/validate test:   ✔ an out-of-bounds range fails the gate (edl-resolution) — exit 0, fail is a valid result (693.4195ms)
+skills/validate test:   ✔ a prohibited claim in the title fails the gate (prohibited-claims) (746.0537ms)
+skills/validate test:   ✔ a reordered quote caption fails the gate (quote-fidelity) (744.7053ms)
+skills/validate test: ✔ each deliberately-broken EDL is BLOCKED, and the critic stays advisory (2184.5995ms)
+skills/validate test: ▶ unconfigured gateway: the deterministic gate still runs, the critic is skipped
+skills/validate test:   ✔ no recordedModelPath yields a real gateStatus with critic.status skipped (754.8993ms)
+skills/validate test: ✔ unconfigured gateway: the deterministic gate still runs, the critic is skipped (755.2471ms)
+skills/validate test: ▶ a traversing edlId is refused before it reads or writes anything
+skills/validate test:   ✔ refuses a forward-slash traversal (669.1521ms)
+skills/validate test:   ✔ refuses a backslash traversal — win32 normalises both separators (728.11ms)
+skills/validate test:   ✔ refuses an id that is not a ULID at all (1047.3315ms)
+skills/validate test:   ✔ writes NOTHING into the victim job (3.8575ms)
+skills/validate test:   ✔ still accepts a legitimate ULID edlId (1741.1781ms)
+skills/validate test:   ✔ an ABSENT story plan still produces a gate report; a PRESENT-but-invalid one refuses (2707.0307ms)
+skills/validate test:   ✔ refuses a RECORDED-FIXTURE override path outside the skill directory (2333.2353ms)
+skills/validate test:   ✔ ACCEPTS a shipped StyleProfile outside the skill directory, and still leaks nothing (2598.2714ms)
+skills/validate test: ✔ a traversing edlId is refused before it reads or writes anything (11898.4869ms)
+skills/validate test: ℹ tests 13
+skills/validate test: ℹ suites 4
+skills/validate test: ℹ pass 13
+skills/validate test: ℹ fail 0
+skills/validate test: ℹ cancelled 0
+skills/validate test: ℹ skipped 0
+skills/validate test: ℹ todo 0
+skills/validate test: ℹ duration_ms 16034.8537
+skills/validate test: Done
+packages/renderer-ffmpeg test:   ✔ reports measured loudness and true peak on the render artefact (REQ-085) (4331.338ms)
+packages/renderer-ffmpeg test:   ✔ burns a visible version identifier into a DRAFT and none into a final (D-34) (8320.8588ms)
+packages/renderer-ffmpeg test:   ✔ renders a FINAL tier from source originals, twice, byte-identically (8219.2988ms)
+packages/renderer-ffmpeg test:   ✔ emits all three caption files beside the burn-in (REQ-104) (4705.8754ms)
+packages/renderer-ffmpeg test: ✔ tier-1 determinism on the machine running this suite (D-33, as amended by D-57) (38127.2955ms)
+packages/renderer-ffmpeg test: ▶ QA blocks a bad render, end to end
+packages/renderer-ffmpeg test:   ✔ measures a real render and reports a caption overflow with a time range (5620.293ms)
+packages/renderer-ffmpeg test:   ✔ a clean render passes the gate (6355.6123ms)
+packages/renderer-ffmpeg test: ✔ QA blocks a bad render, end to end (11976.9532ms)
+packages/renderer-ffmpeg test: ℹ tests 66
+packages/renderer-ffmpeg test: ℹ suites 15
+packages/renderer-ffmpeg test: ℹ pass 66
+packages/renderer-ffmpeg test: ℹ fail 0
+packages/renderer-ffmpeg test: ℹ cancelled 0
+packages/renderer-ffmpeg test: ℹ skipped 0
+packages/renderer-ffmpeg test: ℹ todo 0
+packages/renderer-ffmpeg test: ℹ duration_ms 50894.0289
+packages/renderer-ffmpeg test: Done
+skills/package test: ▶ the happy path: an approved, QA-passed final render becomes a package
+skills/package test:   ✔ writes a complete bundle with every piece of evidence (1391.9823ms)
+skills/package test:   ✔ records a DECLARED cover when the EDL names one on the first clip (1640.2366ms)
+skills/package test:   ✔ DEFAULTS the cover when the declared instant is past the first clip (1905.9769ms)
+skills/package test:   ✔ DEFAULTS the cover when the declared instant is in a different timebase (3332.2279ms)
+skills/package test:   ✔ falls back to editorially_approved when a cleared right carries no evidence pointer (3356.8047ms)
+skills/package test:   ✔ marks the package `real` only when every asset is real (D-36) (3012.592ms)
+skills/package test: ✔ the happy path: an approved, QA-passed final render becomes a package (14641.4424ms)
+skills/package test: ▶ fail-closed: every way a package must NOT happen
+skills/package test:   ✔ refuses a DRAFT render (1400.8049ms)
+skills/package test:   ✔ refuses when no approval exists (pre-approval packaging) (1540.1047ms)
+skills/package test:   ✔ refuses when the decision in force is a REJECTION, and says so distinctly (2056.3436ms)
+skills/package test:   ✔ refuses when a ULID-named file in reviews/ is unreadable (THE SKILL, not the resolver) (2227.8344ms)
+skills/package test:   ✔ PACKAGES SUCCESSFULLY with `validate`'s gate outputs present in reviews/gates/ (2029.837ms)
+skills/package test:   ✔ refuses when the approval was given for a DIFFERENT EDL (1189.5471ms)
+skills/package test:   ✔ refuses when the final manifest names no approved draft at all (1420.0409ms)
+skills/package test:   ✔ refuses EDITORIAL DIVERGENCE — the cut changed after sign-off (2083.8003ms)
+skills/package test:   ✔ refuses a FAILED final QA gate (1594.3904ms)
+skills/package test:   ✔ refuses a BLOCKER even when the stored gateStatus claims `pass` (1503.7882ms)
+skills/package test:   ✔ refuses an attempted BLOCKER WAIVER — a waived blocker cannot become a package (1250.5836ms)
+skills/package test:   ✔ refuses a SKIPPED range check — absence of evidence is not evidence of zero (1230.6582ms)
+skills/package test:   ✔ refuses UNKNOWN rights on the same footing as expired (2159.8463ms)
+skills/package test:   ✔ refuses EXPIRED rights (2202.2015ms)
+skills/package test:   ✔ refuses RESTRICTED rights (1844.4765ms)
+skills/package test:   ✔ refuses a missing caption sidecar (REQ-104 needs a caption FILE) (1697.9313ms)
+skills/package test:   ✔ refuses a waiver id with no committed record behind it (1751.0998ms)
+skills/package test:   ✔ refuses a waiver that is on disk but fails its own schema, and says so (2378.0424ms)
+skills/package test:   ✔ refuses when the DRAFT was re-rendered against a different plan after approval (1960.4846ms)
+skills/package test:   ✔ refuses when the approved draft has no QA report — the check must not be skippable (1435.6991ms)
+skills/package test:   ✔ refuses an unknown render id (1665.6038ms)
+skills/package test: ✔ fail-closed: every way a package must NOT happen (36625.9367ms)
+skills/package test: ▶ a warning waiver is accepted and counted separately (D-35)
+skills/package test:   ✔ packages with pass_with_waivers and carries the waiver in full (3019.7328ms)
+skills/package test: ✔ a warning waiver is accepted and counted separately (D-35) (3020.1676ms)
+skills/package test: ▶ packages are immutable
+skills/package test:   ✔ a second packaging of the same render mints a NEW id rather than overwriting (4081.0542ms)
+skills/package test: ✔ packages are immutable (4081.3436ms)
+skills/package test: ℹ tests 29
+skills/package test: ℹ suites 4
+skills/package test: ℹ pass 29
+skills/package test: ℹ fail 0
+skills/package test: ℹ cancelled 0
+skills/package test: ℹ skipped 0
+skills/package test: ℹ todo 0
+skills/package test: ℹ duration_ms 58642.8853
+skills/package test: Done
+skills/render test$ node --test "dist/tests/**/*.test.js"
+skills/render test: ✔ index artefact: a music event inside clip 2 lands output-relative (1.4929ms)
+skills/render test: ✔ index artefact: speech and silence are dropped, not projected (0.7169ms)
+skills/render test: ✔ index artefact: an event outside every clip yields nothing (0.2019ms)
+skills/render test: ✔ index artefact: an event spanning both clips splits into one span per clip (0.1952ms)
+skills/render test: ✔ output-relative {events} shape passes through unchanged (0.2925ms)
+skills/render test: ✔ a document with neither shape is rejected, naming both accepted shapes (0.4674ms)
+skills/render test: ✔ a document carrying BOTH shapes is refused, never half-read (0.2136ms)
+skills/render test: ✔ a non-array value under either key is refused, even beside nothing else (0.173ms)
+skills/render test: ✔ empty arrays yield an empty list — the check RUNS clean rather than skipping (0.1825ms)
+skills/render test: ✔ a half-valid index entry fails the whole load, citing the entry index and field (0.2594ms)
+skills/render test: ✔ parseIndexAudioEvent refuses an event that ends before it starts (0.1772ms)
+skills/render test: ✔ projection output is sorted by start even when clips see events out of order (0.2668ms)
+skills/render test: ✔ multi-asset EDL: events project ONLY onto clips of their own asset (0.1894ms)
+skills/render test: ✔ multi-asset EDL: a matching clip still receives its events, at the right output offset (0.1426ms)
+skills/render test: ✔ a skipped clip still advances the output offset — a filtered clip is not a deleted clip (0.2235ms)
+skills/render test: ✔ multi-asset EDL with no document assetId is REFUSED, naming the way forward (0.2353ms)
+skills/render test: ✔ single-asset EDL with no document assetId still works — one asset is unambiguous (0.0927ms)
+skills/render test: ✔ an assetId naming no clip in this EDL is REFUSED, not silently projected as nothing (0.1167ms)
+skills/render test: ✔ real source index: the assembled artefact is accepted and its assetId resolves (0.1092ms)
+skills/render test: ✔ real source index: the sub-stage checkpoint (no assetId) is refused on a multi-asset EDL (0.4515ms)
+skills/render test: ✔ real source index: one injected non-speech event lands only on its own asset (0.1354ms)
+skills/render test: ✔ a malformed assetId 12345 is REFUSED on a multi-asset EDL, with the real reason (0.2413ms)
+skills/render test: ✔ a malformed assetId 12345 is REFUSED on a single-asset EDL too (0.0975ms)
+skills/render test: ✔ a malformed assetId true is REFUSED on a multi-asset EDL, with the real reason (0.0733ms)
+skills/render test: ✔ a malformed assetId true is REFUSED on a single-asset EDL too (0.0516ms)
+skills/render test: ✔ a malformed assetId {} is REFUSED on a multi-asset EDL, with the real reason (0.05ms)
+skills/render test: ✔ a malformed assetId {} is REFUSED on a single-asset EDL too (0.0457ms)
+skills/render test: ✔ a malformed assetId [] is REFUSED on a multi-asset EDL, with the real reason (0.0452ms)
+skills/render test: ✔ a malformed assetId [] is REFUSED on a single-asset EDL too (0.0484ms)
+skills/render test: ✔ a malformed assetId "" is REFUSED on a multi-asset EDL, with the real reason (0.0496ms)
+skills/render test: ✔ a malformed assetId "" is REFUSED on a single-asset EDL too (0.0482ms)
+skills/render test: ✔ an ABSENT assetId still takes the documented single-asset exemption (0.1197ms)
+skills/render test: ✔ the single-asset exemption TRUSTS the caller — pinned as a known limit, not an oversight (0.1102ms)
+skills/render test: ▶ D-34 — a final render is not authorised without an approval
+skills/render test:   ✔ refuses a final that names no approved draft (735.2819ms)
+skills/render test:   ✔ refuses a final whose named draft has no approval record on disk (658.8329ms)
+skills/render test:   ✔ refuses a final when the only decision names a DIFFERENT manifest (779.9143ms)
+skills/render test:   ✔ refuses a final whose decision in force is a REJECTION, and quotes the reason (736.7099ms)
+skills/render test:   ✔ refuses a final when a ULID-named file in reviews/ is unreadable (THE SKILL, not the resolver) (671.2199ms)
+skills/render test:   ✔ does NOT block on `validate`'s gate outputs, which live in reviews/gates/ (711.2565ms)
+skills/render test:   ✔ refuses a final whose approval was given for a DIFFERENT EDL (652.9254ms)
+skills/render test:   ✔ takes the LATEST decision, so a later rejection overrides an earlier approval (714.6442ms)
+skills/render test: ✔ D-34 — a final render is not authorised without an approval (5662.1327ms)
+skills/render test: ▶ a draft render produces the render, the manifest and the QA report together
+skills/render test:   ✔ renders and gates in one invocation (5251.7386ms)
+skills/render test:   ✔ rejects an unknown EDL with a structured error, not a stack trace (681.4809ms)
+skills/render test: ✔ a draft render produces the render, the manifest and the QA report together (5933.5277ms)
+skills/render test: ▶ bad QA inputs are refused BEFORE anything is rendered
+skills/render test:   ✔ refuses a schema-invalid waiver and leaves no new render behind (779.2292ms)
+skills/render test:   ✔ refuses an unreadable --audio-events path and leaves no new render behind (658.1253ms)
+skills/render test:   ✔ refuses a timeline that mixes audio-bearing and silent assets (D-50) (657.8167ms)
+skills/render test: ✔ bad QA inputs are refused BEFORE anything is rendered (2095.4915ms)
+skills/render test: ▶ a draft render assembles the review payload beside it
+skills/render test:   ✔ degrades to a WARNING when the editorial lineage is not on disk (4452.4225ms)
+skills/render test:   ✔ degrades to a WARNING when the lineage is PRESENT but contract-invalid (4466.5863ms)
+skills/render test:   ✔ writes reviews/pending/<renderId>.json once the lineage IS on disk (4234.2673ms)
+skills/render test: ✔ a draft render assembles the review payload beside it (13153.5702ms)
+skills/render test: ▶ a traversing asset storedPath is refused before any encode
+skills/render test:   ✔ refuses a `..` traversal and renders nothing (684.3148ms)
+skills/render test:   ✔ refuses a traversing edlId on the request itself (533.3084ms)
+skills/render test: ✔ a traversing asset storedPath is refused before any encode (1217.8219ms)
+skills/render test: ℹ tests 51
+skills/render test: ℹ suites 5
+skills/render test: ℹ pass 51
+skills/render test: ℹ fail 0
+skills/render test: ℹ cancelled 0
+skills/render test: ℹ skipped 0
+skills/render test: ℹ todo 0
+skills/render test: ℹ duration_ms 28803.2961
+skills/render test: Done

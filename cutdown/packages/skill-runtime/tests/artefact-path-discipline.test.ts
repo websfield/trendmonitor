@@ -10,10 +10,11 @@ import { describe, it } from 'node:test';
  *
  * This exists because the same defect has now recurred three times in one phase, in
  * three different files, always the same shape: a field is guarded where a reviewer
- * named it, and the sibling on the next line is missed. `render-v1`'s `outputPath`
- * and `captions.{srtPath,vttPath,assPath}` and `source-asset-v1`'s `storedPath` are
- * *described* as job-relative and constrained only by `minLength: 1` — tightening
- * those patterns would be a BREAKING change to a Phase 4 contract, so the guard is
+ * named it, and the sibling on the next line is missed. `render-v2` now carries a
+ * job-relative pattern on `outputPath` and `captions.*Path` (Stage 0B-3, D-62), but
+ * v1 records on disk, `render-manifest-v1`'s caption paths and `source-asset-v1`'s
+ * `storedPath` are still constrained only by `minLength: 1` (deferred, D-62b) — and
+ * no pattern can express device names or containment — so the guard is
  * `resolveJobRelative` in code, and a guard that lives only in code needs something
  * that notices when a new call site forgets it.
  *

@@ -19,4 +19,4 @@ export * from './contract-set.js';
 export * from './generate.js';
 export * from './check-generated.js';
 export * from './validate.js';
-export { PLATFORM_EDL_SCHEMA_VERSION } from './versions.js';
+export { PLATFORM_EDL_SCHEMA_VERSION, RENDER_SCHEMA_VERSION } from './versions.js';

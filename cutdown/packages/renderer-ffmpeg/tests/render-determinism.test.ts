@@ -28,6 +28,7 @@ import {
   type QaRuleset,
   type SafeZoneOverlay,
 } from '@cutdown/qa';
+import { RENDER_SCHEMA_VERSION, createAjv } from '@cutdown/contracts';
 import { FfmpegRendererAdapter, type FfmpegRenderPlan } from '../src/adapter.js';
 
 /**
@@ -208,6 +209,24 @@ describe('tier-1 determinism on the machine running this suite (D-33, as amended
     strictEqual(renderA.contentHash.value, hashA);
     strictEqual(renderB.contentHash.value, hashB);
     strictEqual(renderA.determinismTier, 1, 'Phase 0 claims tier 1 and nothing stronger');
+  });
+
+  it('stamps the render record from RENDER_SCHEMA_VERSION and satisfies render-v2 (D-62)', async () => {
+    const edl = edlWith({ kind: 'text', displayText: 'version stamp fixture' });
+    const plan = await planFor(edl, '01J9RM2B3C4D5E6F7G8H9K0N7V');
+    const render = await adapter.execute(plan, { jobDir: workspace, timeoutMs: 600_000 });
+
+    // The constant, not a literal: the drift test in contracts pins the constant
+    // to render-v2.json, and this pins the sole producer to the constant — the
+    // two together are what D-52 says a bump needs so no producer is missed.
+    strictEqual(render.envelope.schemaVersion, RENDER_SCHEMA_VERSION);
+
+    // Whole-artefact validation against the v2 $id — this is what enforces the
+    // new job-relative path patterns on outputPath and captions.*Path for every
+    // record this adapter will ever produce.
+    const validate = createAjv().getSchema('https://cutdown.local/contracts/schemas/render-v2.json');
+    ok(validate !== undefined, 'render-v2 must be registered');
+    ok(validate(render), JSON.stringify(validate.errors));
   });
 
   it('reports measured loudness and true peak on the render artefact (REQ-085)', async () => {

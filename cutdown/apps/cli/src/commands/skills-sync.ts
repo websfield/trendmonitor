@@ -211,9 +211,12 @@ why each one exists. That file is the source of truth; this one is generated fro
  *   - **name === directory.** The CLI, the local runner and the mirror all address
  *     a skill by directory, so a mismatch means three callers disagree about which
  *     skill they ran.
- *   - **`contractsUsed` resolves.** This failure is the POINT of §6.4: a contract
- *     major bump has to be visible HERE, not three stages later as a malformed
- *     artefact.
+ *   - **`contractsUsed` resolves.** What this detects is contract RETIREMENT —
+ *     a named schema file vanishing from disk. It does NOT detect a major bump:
+ *     under tech-spec §3 a bump ADDS a new file and keeps the old one, so
+ *     `render-v1` kept resolving straight through the 0B-3 `render-v2` bump
+ *     (spike F-O). Bump visibility lives in criterion 3's family-keyed drift
+ *     (D-61) and in each reader's own dispatch, never here.
  *   - **the declared schemas exist.** A skill whose `input.json` is missing fails
  *     at every invocation instead of at sync time.
  */
@@ -251,7 +254,7 @@ export function checkFrontmatter(
   if (dangling.length > 0) {
     problems.push({
       skill,
-      problem: `contractsUsed names ${dangling.join(', ')}, which have no schema under packages/contracts/schemas/. This failure is the POINT (tech-spec §6.4): a contract major bump must be visible to every dependent skill here, rather than surfacing three stages later as a malformed artefact.`,
+      problem: `contractsUsed names ${dangling.join(', ')}, which have no schema under packages/contracts/schemas/. A named contract has been RETIRED from disk (or the name is a typo); note this check cannot see a major bump — a bump adds a new file and the old name keeps resolving (tech-spec §3) — so fixing the name here does not make the skill current with the newest major.`,
     });
   }
 

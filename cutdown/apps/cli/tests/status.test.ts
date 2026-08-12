@@ -423,6 +423,25 @@ describe('criterion 3: a schema MAJOR bump inside the last ten keeps it red', ()
     strictEqual(c3.offendingPackageIds.length, 1, 'exactly one consecutive pair broke');
   });
 
+  it('the REAL 0B-3 transition: render-v2 joining between consecutive packages is breaking, named, not_met', () => {
+    // The exact set movement the D-62 bump produces on the next minted package:
+    // the pre-bump packages record the render family at {1}, the first post-bump
+    // package records {1,2}. This is the trap 0B-1 built, springing on the real
+    // family it was built for — the review record's trajectory statement cites it.
+    reset();
+    const postBump = [
+      ...DEFAULT_CONTRACT_SET,
+      { schemaId: 'https://cutdown.local/contracts/schemas/render-v2.json', majorVersion: 2, schemaVersion: '2.0.0', contentHash: H('c') },
+    ];
+    for (let i = 0; i < 8; i++) writePackage({ accountId: `acct-${String(i % 3)}` });
+    writePackage({ accountId: 'acct-0', contractSet: postBump });
+    writePackage({ accountId: 'acct-1', contractSet: postBump });
+    const c3 = criterion('no-breaking-contract-change');
+    strictEqual(c3.state, 'not_met', 'the bump is a PROVEN failure while it sits inside the window');
+    ok(c3.detail.includes('render-v2.json v1→v2'), 'the render family bump is named, majors and all');
+    strictEqual(c3.offendingPackageIds.length, 1, 'exactly one consecutive pair broke');
+  });
+
   it('still refuses an in-place major mutation, even though the policy forbids authoring one', () => {
     reset();
     for (let i = 0; i < 8; i++) writePackage({ accountId: `acct-${String(i % 3)}` });

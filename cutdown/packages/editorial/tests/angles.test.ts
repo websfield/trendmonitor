@@ -21,7 +21,10 @@ function ranked(count: number, scored: boolean): RankedMoment[] {
 describe('buildProposePrompt', () => {
   test('assembles a system turn and a content turn carrying the candidate momentIds', () => {
     const prompt = buildProposePrompt({ brief: makeJobBrief(), rankedMoments: [{ moment: makeMoment({ momentId: ulid(1) }), score: 0.9, rank: 1 }] });
-    assert.match(prompt.system, /ONLY the momentIds provided/);
+    // The system turn must state BOTH the moment-id rule and the enforced JSON
+    // shape — the first live run failed because the shape was never spelled out.
+    assert.match(prompt.system, /every momentId is one provided in candidateMoments/);
+    assert.match(prompt.system, /"basis": \{"kind": "observed_fact", "observed": string\}/);
     assert.equal(prompt.content[0]?.type, 'text');
     assert.ok(String(prompt.content[0]?.['text']).includes(ulid(1)));
   });

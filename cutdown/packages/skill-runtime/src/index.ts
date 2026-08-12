@@ -487,6 +487,75 @@ export function readContractJson<T>(path: string, schemaId: string, code: string
 }
 
 /**
+ * Read a stored artefact whose contract family spans more than one major, and
+ * validate it against the major the artefact itself DECLARES.
+ *
+ * Dispatch keys on `envelope.schemaVersion` — the envelope field every contract
+ * instance is required to carry — never on try-in-order validation: a v2 instance
+ * also satisfies v1's shape (v2 only narrows), so trying majors in sequence would
+ * silently mask a mislabelled instance. A record that declares major 2 and fails
+ * v2's constraints is invalid, full stop; it is not retried against v1
+ * (`packages/skill-runtime/tests/versioned-read.test.ts` pins this).
+ *
+ * A declared major no basename covers is refused FAIL CLOSED with the accepted
+ * majors named and a non-destructive remedy — the `reviews.ts` posture: never
+ * instruct anyone to delete evidence.
+ *
+ * `basenames` are contract file basenames (e.g. `['render-v1', 'render-v2']`),
+ * the same tokens `contractSchemaId` takes. First consumer: `skills/package`
+ * reading render records across the Stage 0B-3 `render-v2` bump (D-62).
+ */
+export function readVersionedContractJson<T>(path: string, basenames: string[], code: string, what: string): T {
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    throw fail(code, `${what} could not be read at ${path}.`);
+  }
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(raw);
+  } catch {
+    throw fail(code, `${what} at ${path} is not valid JSON.`);
+  }
+  // `JSON.parse` happily returns `null`, a number, or a string — none of which
+  // can carry an envelope, and reading `.envelope` off `null` would surface as
+  // the exact unnamed TypeError this helper's sibling exists to prevent.
+  if (candidate === null || typeof candidate !== 'object') {
+    throw fail(code, `${what} at ${path} carries no readable envelope.schemaVersion, so its contract major cannot be determined.`);
+  }
+  const envelope = (candidate as { envelope?: { schemaVersion?: unknown } }).envelope;
+  const declared = envelope?.schemaVersion;
+  if (typeof declared !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(declared)) {
+    throw fail(code, `${what} at ${path} carries no readable envelope.schemaVersion, so its contract major cannot be determined.`);
+  }
+  const declaredMajor = Number(declared.split('.')[0]);
+  const byMajor = new Map<number, string>();
+  for (const basename of basenames) {
+    const suffix = /-v([0-9]+)$/.exec(basename);
+    if (suffix === null) {
+      throw fail('CONTRACT_SCHEMA_MISSING', `${basename} carries no -vN suffix, so it cannot participate in major dispatch.`);
+    }
+    if (byMajor.has(Number(suffix[1]))) {
+      // A caller error, made loud: two basenames claiming one major would let
+      // Map's silent last-wins decide which schema validates the artefact.
+      throw fail('CONTRACT_SCHEMA_MISSING', `two basenames claim major ${suffix[1] ?? ''}; dispatch needs one schema per major.`);
+    }
+    byMajor.set(Number(suffix[1]), basename);
+  }
+  const basename = byMajor.get(declaredMajor);
+  if (basename === undefined) {
+    const accepted = [...byMajor.keys()].sort((a, b) => a - b).join(', ');
+    throw fail(
+      code,
+      `${what} at ${path} declares schemaVersion ${declared}, whose major (${String(declaredMajor)}) is not one this reader accepts (accepted: ${accepted}). ` +
+        `Re-run the skill that produced it, or move the file aside for inspection — never delete evidence.`,
+    );
+  }
+  return validateContract<T>(candidate, contractSchemaId(basename), code, `${what} at ${path}`);
+}
+
+/**
  * The validation half of `readContractJson`, for a value already in hand.
  *
  * Exists because several artefacts are stored as an ARRAY of contract objects — a

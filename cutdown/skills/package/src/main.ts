@@ -21,6 +21,7 @@ import {
   contractSchemaId,
   fail,
   readContractJson,
+  readVersionedContractJson,
   formatAjvErrors,
   jobDir,
   resolveJobRelative,
@@ -42,6 +43,7 @@ import type {
   PlatformEdlV1,
   RenderManifestV1,
   RenderV1,
+  RenderV2,
   SourceAssetV1,
 } from '@cutdown/contracts/generated';
 
@@ -64,7 +66,11 @@ type JobBrief = JobBriefV1.JobBrief;
 type MasterStoryPlan = MasterStoryPlanV1.MasterStoryPlan;
 type PlatformEDL = PlatformEdlV1.PlatformEDL;
 type RenderManifest = RenderManifestV1.RenderManifest;
-type Render = RenderV1.Render;
+// Both majors flow through this reader (Stage 0B-3, D-62): v1 records on disk
+// and v2 records from the constant-stamped producer. The two generated types are
+// structurally identical (v2 only adds patterns, which types cannot carry), but
+// the union states what is actually read.
+type Render = RenderV1.Render | RenderV2.Render;
 type SourceAsset = SourceAssetV1.SourceAsset;
 
 const SKILL = 'package';
@@ -129,7 +135,11 @@ const readContract = readContractJson;
 let sharedAjv: ReturnType<typeof contractValidator> | null = null;
 const ajv = (): ReturnType<typeof contractValidator> => (sharedAjv ??= contractValidator());
 
-const RENDER_SCHEMA = contractSchemaId('render-v1');
+// Render records span two majors since the Stage 0B-3 `render-v2` bump (D-62), so
+// they are read through `readVersionedContractJson`, which dispatches on the
+// envelope's DECLARED major — there is deliberately no pinned render `$id` constant
+// here for a future repoint to miss.
+const RENDER_CONTRACTS = ['render-v1', 'render-v2'];
 const MANIFEST_SCHEMA = contractSchemaId('render-manifest-v1');
 const QA_REPORT_SCHEMA = contractSchemaId('technical-qa-report-v1');
 const EDL_SCHEMA = contractSchemaId('platform-edl-v1');
@@ -157,7 +167,7 @@ function locateRender(root: string, renderId: string): LocatedRender | null {
       .sort()) {
       const renderPath = join(tierRoot, manifestDir, 'render.json');
       if (!existsSync(renderPath)) continue;
-      const parsed = readContract<Render>(renderPath, RENDER_SCHEMA, 'RENDER_ARTEFACT_UNREADABLE', `The render record at renders/${tier}/${manifestDir}`);
+      const parsed = readVersionedContractJson<Render>(renderPath, RENDER_CONTRACTS, 'RENDER_ARTEFACT_UNREADABLE', `The render record at renders/${tier}/${manifestDir}`);
       if (parsed.renderId === renderId) {
         return { render: parsed, tier, renderRel: `renders/${tier}/${manifestDir}` };
       }
@@ -572,9 +582,11 @@ async function run(request: PackageRequest, ctx: SkillContext): Promise<PackageR
   const target = join(root, 'packages', contentPackageId);
   const staging = join(root, 'packages', `.staging-${contentPackageId}`);
 
-  // `outputPath` carries no pattern in `render-v1` (only `minLength`), so the guard
-  // is the code's job: a traversing value here would copy a file from outside the job
-  // into a bundle whose whole purpose is to be handed to a client.
+  // `outputPath` carries no pattern in `render-v1` (only `minLength`); `render-v2`
+  // adds one (D-62), but the code guard stays for both majors — the pattern cannot
+  // express device names or post-symlink containment, and a traversing value here
+  // would copy a file from outside the job into a bundle whose whole purpose is to
+  // be handed to a client.
   const masterSource = resolveJobRelative(root, render.outputPath, "The render's outputPath");
   if (!existsSync(masterSource)) {
     throw fail(

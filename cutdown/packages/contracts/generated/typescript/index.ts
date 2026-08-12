@@ -19,6 +19,7 @@ export * as PlatformEdlV1 from './platform-edl-v1.js';
 export * as QaWaiverV1 from './qa-waiver-v1.js';
 export * as RenderManifestV1 from './render-manifest-v1.js';
 export * as RenderV1 from './render-v1.js';
+export * as RenderV2 from './render-v2.js';
 export * as ReviewDecisionV1 from './review-decision-v1.js';
 export * as SourceAssetV1 from './source-asset-v1.js';
 export * as SourceIndexV1 from './source-index-v1.js';

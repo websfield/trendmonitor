@@ -3,8 +3,8 @@ import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { ulid } from 'ulid';
-import { ArtefactPathError, checkSourceRange, resolveArtefactPath } from '@cutdown/contracts';
-import type { PlatformEdlV1, RenderV1 } from '@cutdown/contracts/generated';
+import { ArtefactPathError, RENDER_SCHEMA_VERSION, checkSourceRange, resolveArtefactPath } from '@cutdown/contracts';
+import type { PlatformEdlV1, RenderV2 } from '@cutdown/contracts/generated';
 import {
   EXIT_INPUT_VALIDATION,
   EXIT_RUNTIME,
@@ -480,12 +480,17 @@ export class FfmpegRendererAdapter implements RendererAdapter {
       : ({
           kind: 'unavailable',
           reason: 'The EDL sources carry no audio stream, so the render has no audio track to measure.',
-        } satisfies RenderV1.LoudnessUnavailable);
+        } satisfies RenderV2.LoudnessUnavailable);
 
     return {
       renderId: ulid(),
       envelope: {
-        schemaVersion: '1.0.0',
+        // The shared constant, never a literal: this adapter is the sole producer
+        // of render records, it cannot import `skill-runtime`, and D-52's lesson is
+        // that a bump which relies on producers remembering misses one. The drift
+        // test in `contracts/tests/versions.test.ts` pins the constant to the
+        // current render schema file.
+        schemaVersion: RENDER_SCHEMA_VERSION,
         createdAt: new Date().toISOString(),
         createdBy: { kind: 'skill', skill: 'render', skillVersion: this.rendererVersion },
       },

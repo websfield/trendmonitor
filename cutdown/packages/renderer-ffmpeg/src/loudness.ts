@@ -1,5 +1,5 @@
 import { inputArgs, runFfmpeg, type RunOptions } from '@cutdown/renderer-core';
-import type { RenderV1 } from '@cutdown/contracts/generated';
+import type { RenderV2 } from '@cutdown/contracts/generated';
 
 /**
  * Loudness and true-peak MEASUREMENT of a produced render (PRD REQ-085).
@@ -11,7 +11,7 @@ import type { RenderV1 } from '@cutdown/contracts/generated';
  * out.
  */
 
-export type LoudnessReport = RenderV1.LoudnessMeasured | RenderV1.LoudnessUnavailable;
+export type LoudnessReport = RenderV2.LoudnessMeasured | RenderV2.LoudnessUnavailable;
 
 /**
  * `ebur128`'s end-of-run summary, e.g.

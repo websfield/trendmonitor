@@ -266,6 +266,25 @@ describe('the drift payload is what a human reads', () => {
 });
 
 describe('currentContractSet — the input ordering F-B exploits is real', () => {
+  test('the live tree carries the 0B-3 bump: 15 entries, render family {1,2}, breaking v1→v2 vs the pre-bump set', () => {
+    // Not a hypothetical set: this exercises the family reducer on the REAL
+    // transition this repository performed (D-62), with v1 sorted before v2
+    // exactly as F-B warns. A first-wins reducer fails here on live data.
+    const set = currentContractSet();
+    strictEqual(set.length, 15, 'fourteen contracts plus render-v2 (D-62)');
+    const renders = set.filter((e) => /\/render-v[0-9]+\.json$/.test(e.schemaId));
+    deepEqual(
+      renders.map((e) => e.majorVersion).sort(),
+      [1, 2],
+      'the render family holds BOTH majors — v1 stays on disk (tech-spec §3)',
+    );
+    const preBump = set.filter((e) => !e.schemaId.endsWith('/render-v2.json'));
+    const d = only(diffContractSets(preBump, set));
+    strictEqual(d['kind'], 'breaking', 'keyed by family, a new major of an existing family is breaking — never added');
+    strictEqual(String(d['schemaId']).split('/').pop(), 'render-v2.json');
+    strictEqual(`v${String(d['from'])}→v${String(d['to'])}`, 'v1→v2', '`from` is the max the family already carried');
+  });
+
   test('entries are sorted by schemaId, and each major matches its own schemaVersion', () => {
     const set = currentContractSet();
     ok(set.length > 0, 'the committed contract schemas must produce a non-empty set');

@@ -49,7 +49,7 @@ Record one named human's immutable review decision about a reviewed draft render
 | execution | `sync` |
 | timeout | 60s |
 | side effects | reads-project-data, writes-project-data |
-| contracts | render-v1, render-manifest-v1, technical-qa-report-v1, review-decision-v1 |
+| contracts | render-v1, render-v2, render-manifest-v1, technical-qa-report-v1, review-decision-v1 |
 
 Read `cutdown/skills/approve/SKILL.md` for the behaviour, the refusals, and
 why each one exists. That file is the source of truth; this one is generated from it.

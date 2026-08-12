@@ -113,13 +113,22 @@ describe('the checks a JSON Schema cannot make', () => {
     ok(result.problems[0]?.problem.includes('three callers disagree'));
   });
 
-  it('fails on a DANGLING contractsUsed entry — the point of §6.4', () => {
+  it('fails on a DANGLING contractsUsed entry — what §6.4 actually detects is retirement', () => {
     const result = check({ ...good, contractsUsed: ['platform-edl-v1', 'moment-v9'] });
     strictEqual(result.problems.length, 1);
     ok(result.problems[0]?.problem.includes('moment-v9'));
+    // The message must NOT claim this check sees a major bump: under tech-spec §3
+    // a bump ADDS a new file and the old name keeps resolving, so this check
+    // detects retirement (or a typo) only (spike F-O — the old message claimed
+    // bump visibility, and that claim survived in this assertion after the two
+    // message homes were corrected: the fourth home of one falsehood).
     ok(
-      result.problems[0]?.problem.includes('three stages later'),
-      'the message says why this fails here rather than downstream',
+      result.problems[0]?.problem.includes('RETIRED'),
+      'the message names what the check actually detects',
+    );
+    ok(
+      !result.problems[0]?.problem.includes('major bump must be visible'),
+      'and no longer claims bump visibility it does not have',
     );
   });
 

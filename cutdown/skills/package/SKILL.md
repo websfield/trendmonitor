@@ -12,6 +12,7 @@ contractsUsed:
   - platform-edl-v1
   - render-manifest-v1
   - render-v1
+  - render-v2
   - technical-qa-report-v1
   - qa-waiver-v1
   - review-decision-v1

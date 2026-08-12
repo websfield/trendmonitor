@@ -1,0 +1,36 @@
+
+cutdown status --phase0 — PRD §15 Phase 0 exit criteria (evidence: ContentPackages only, D-36)
+
+  [x] met   [ ] not met (measured)   [?] unproven (the evidence to decide is not there)
+
+  [ ] >= 20 approved real outputs across 3 accounts
+      1/20 approved real output(s) across 1/3 account(s) (T-1/D-56: one approved cut per CreativeBrief, from 2 complete real package(s)); 1 fixture package(s) EXCLUDED (D-36)
+  [x] zero invalid source ranges in final renders
+      3 package(s) carry range-validation evidence; 17 range(s) validated, 0 package(s) without acceptable evidence
+  [?] the last 10 outputs require no breaking contract change
+      only 1/10 resolved real output(s) exist (2 evidence-complete real package(s) in the span), so stability across 10 outputs is UNPROVEN (not proven by absence)
+  [x] rights records and QA reports accompany every delivered package
+      3/3 readable package(s) carry complete rights + QA evidence
+
+  Counts (readable = real + fixture + missing evidence; resolved outputs + superseded + rejected = real)
+    packages readable ........ 3   (an unreadable file is counted nowhere here — see below)
+    real, complete ........... 2
+    fixture, complete ........ 1   (NOT counted toward criterion 1, D-36)
+    missing evidence ......... 0
+    warning-waived ........... 3   (D-35: reported separately from clean packages)
+    resolved real OUTPUTS .... 1   (T-1/D-56: one approved cut per CreativeBrief)
+    superseded real .......... 1
+    rejected real ............ 0   (unresolvable: the package set is incomplete)
+
+  Real outputs by stable accountId (D-36 — a display-name change never splits a count)
+    acct-schwarzkopf-extracare-au-w1 .... 1
+
+  Superseded packages (T-1 — folded into a later package of the same CreativeBrief, NAMED not just counted)
+    01KZ8B40TENCWQ72F061FXK79S (real) superseded by 01KZ9YK48KBRAX85DJ1P76NYMN — CreativeBrief 01KZ8ARV5A260Z7D3VJAY94C3Q
+
+  Milestones (D-38 — never merged)
+    PIPELINE_IMPLEMENTATION_COMPLETE  EARNED
+      3 complete package(s) exist, so the chain from ingest to package has run end to end. This is the PIPELINE half of D-38 only: the six implementation gates and the recorded-model suites are build-time facts recorded in docs/progress/, not package evidence, and this command does not read them.
+    PHASE_0_EXIT_EARNED               not earned
+      1 of 4 criteria are not met: approved-real-outputs; 1 unproven: no-breaking-contract-change. D-38: the implementation milestone must never be reported as Phase 0 exit.
+

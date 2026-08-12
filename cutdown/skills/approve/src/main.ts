@@ -19,7 +19,7 @@ import {
   type ReviewDecision,
 } from '@cutdown/contracts';
 import { qaAllowsAdvance, type TechnicalQaReport } from '@cutdown/qa';
-import type { RenderV1 } from '@cutdown/contracts/generated';
+import type { RenderV1, RenderV2 } from '@cutdown/contracts/generated';
 
 /**
  * `approve` — the human act, recorded with a name (decisions.md D-9,
@@ -33,7 +33,11 @@ import type { RenderV1 } from '@cutdown/contracts/generated';
  * not after something downstream trips over it.
  */
 
-type Render = RenderV1.Render;
+// Both majors flow through this reader (Stage 0B-3, D-62): v1 records on disk
+// and v2 records from the constant-stamped producer. The two generated types are
+// structurally identical (v2 only adds patterns, which types cannot carry), but
+// the union states what is actually read.
+type Render = RenderV1.Render | RenderV2.Render;
 
 const SKILL = 'approve';
 const VERSION = '1.0.0';

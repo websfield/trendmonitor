@@ -67,12 +67,33 @@ export function buildProposePrompt(inputs: ProposePromptInputs): ProposePrompt {
     rightsState: ranked.moment.rights.state,
   }));
 
+  // The shape below is creative-brief-v1's model-supplied subset, spelled out
+  // field by field. The first live run proved a shapeless "editorial content of
+  // each angle" ask fails validation twice: the model invented its own keys
+  // (`observed_fact`/`model_judgement` as properties instead of `basis.kind`
+  // values) because nothing told it the enforced names. Recorded fixtures are
+  // hand-authored in the right shape, so only a live call can catch drift here —
+  // keep this block in sync with creative-brief-v1.json.
   const system =
     'You are an editorial strategist proposing distinct short-video angles for a client brief. ' +
-    'Return ONLY a JSON object {"angles": [...]} with the editorial content of each angle. ' +
+    'Return ONLY a JSON object of EXACTLY this shape — no prose, no markdown fence: ' +
+    '{"angles": [{' +
+    '"audiencePromise": string, ' +
+    '"creativeThesis": string, ' +
+    '"hookFamily": one of "outcome_first"|"problem_first"|"proof_first"|"personality_first"|"utility_first"|"curiosity_first", ' +
+    '"narrativeArchetype": string, ' +
+    '"value": string (the emotional or practical value delivered), ' +
+    '"semanticAngleLabel": string (a short label naming this angle), ' +
+    '"proofPoints": [{"claim": string, "evidenceMomentIds": [string, ...], "basis": {"kind": "observed_fact", "observed": string} OR {"kind": "model_judgement", "inference": string}}, ...], ' +
+    '"selectedMoments": [{"momentId": string, "candidateFunction": one of "promise"|"context"|"proof"|"escalation"|"demonstration"|"objection"|"payoff"|"invitation"|"cta", "rationale": string}, ...], ' +
+    '"cta": {"kind": "none"} OR {"kind": "cta", "text": string}, ' +
+    '"knownLimitations": [string, ...]' +
+    '}, ...]}. ' +
     'Hard rules enforced deterministically after you answer (breaking them rejects your output): ' +
-    'every angle references ONLY the momentIds provided; each proofPoint links >=1 evidence momentId; ' +
-    'each proofPoint and each angle distinguishes an observed_fact from a model_judgement; ' +
+    'return EXACTLY brief.variantCount angles; every momentId is one provided in candidateMoments; ' +
+    'each proofPoint links >=1 evidence momentId, and every evidenceMomentId MUST also appear in that same angle\'s selectedMoments ' +
+    '(the downstream edit can only cut selected Moments, and the editorial gate blocks any EDL missing a cited evidence Moment); ' +
+    'a basis of kind "observed_fact" names what is literally on screen, "model_judgement" names your inference; ' +
     'angles must differ by creative thesis or audience promise, not by clip order (REQ-031). ' +
     'Do NOT compute distinctness or invent Moment IDs — the system does the former and forbids the latter.';
 

@@ -41,12 +41,30 @@ export interface StoryPlanPrompt {
 /** Assemble the deterministic `plan` prompt from a CreativeBrief. */
 export function buildStoryPlanPrompt(inputs: StoryPlanPromptInputs): StoryPlanPrompt {
   const { creativeBrief } = inputs;
+  // The shape is master-story-plan-v1's model-supplied subset, spelled out field
+  // by field — a shapeless ask fails schema validation live (the propose prompt
+  // proved this class of defect); recorded fixtures are hand-authored in the
+  // right shape and cannot catch it. Keep in sync with master-story-plan-v1.json.
   const system =
     'You are a story editor composing a platform-neutral narrative graph for one approved angle. ' +
-    'Return ONLY a JSON object for the MasterStoryPlan beats/dependencies/alternateHooks. ' +
-    'Rules enforced deterministically after you answer: every beat.momentId MUST be one of the ' +
+    'Return ONLY a JSON object of EXACTLY this shape — no prose, no markdown fence: ' +
+    '{"beats": [{' +
+    '"beatId": string (plan-local, e.g. "beat-1"), ' +
+    '"order": integer (0-based, contiguous, no gaps or duplicates), ' +
+    '"function": one of "promise"|"context"|"proof"|"escalation"|"demonstration"|"objection"|"payoff"|"invitation"|"cta", ' +
+    '"momentId": string, ' +
+    '"rationale": string, ' +
+    '"basis": {"kind": "observed_fact", "observed": string} OR {"kind": "model_judgement", "inference": string}, ' +
+    '"optional": boolean (true if the edit may drop this beat under a duration bound), ' +
+    '"alternateMomentIds": [string, ...] (may be [])' +
+    '}, ...], ' +
+    '"dependencies": [{"fromBeatId": string, "toBeatId": string, "relation": one of "requires_setup"|"answers"|"proves"|"continues"|"contradicts"}, ...], ' +
+    '"alternateHooks": [{"hookFamily": one of "outcome_first"|"problem_first"|"proof_first"|"personality_first"|"utility_first"|"curiosity_first", "openingBeatId": string, "rationale": string}, ...]}. ' +
+    'Rules enforced deterministically after you answer: every beat.momentId and every alternateMomentId MUST be one of the ' +
     'selected Moment IDs below; order values MUST be a contiguous run with no gaps or duplicates; ' +
-    'every dependency MUST reference beat IDs you define. Crop, caption and duration decisions do ' +
+    'every dependency and alternateHook MUST reference beat IDs you define; ' +
+    'every Moment cited in proofPoints[].evidenceMomentIds MUST fill at least one beat — the downstream editorial gate ' +
+    'blocks an edit that drops a claim\'s evidence (REQ-034). Crop, caption and duration decisions do ' +
     'NOT belong here — they are the PlatformEDL (REQ-033).';
 
   const payload = {
@@ -59,6 +77,9 @@ export function buildStoryPlanPrompt(inputs: StoryPlanPromptInputs): StoryPlanPr
       candidateFunction: m.candidateFunction,
       rationale: m.rationale,
     })),
+    // The gate's required-evidence check is per evidenceMomentId — the planner
+    // cannot honour a rule it was never shown (a live run failed exactly here).
+    proofPoints: creativeBrief.proofPoints.map((p) => ({ claim: p.claim, evidenceMomentIds: p.evidenceMomentIds })),
   };
 
   return { system, content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
