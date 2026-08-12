@@ -482,7 +482,11 @@ def index_asset(request: dict[str, Any]) -> dict[str, Any]:
             records,
             "visual_descriptions",
             lambda: visual_module.run_visual_descriptions(
-                ctx, shot_list, enable_vlm=not no_vlm, force="visual_descriptions" in force
+                ctx,
+                shot_list,
+                enable_vlm=not no_vlm,
+                keyframe_loader=visual_module.ffmpeg_keyframe_loader(media_path),
+                force="visual_descriptions" in force,
             ),
         )
     else:

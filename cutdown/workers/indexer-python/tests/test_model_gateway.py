@@ -350,3 +350,18 @@ class TestProvenance:
         assert isinstance(parameters, list)
         assert all(set(pair) == {"key", "value"} for pair in parameters)
         assert all(isinstance(pair["value"], str) for pair in parameters)
+
+
+class TestRequestShape:
+    def test_the_payload_pins_low_effort_beside_the_token_budget(self) -> None:
+        # Claude Sonnet 5 thinks by default against the SAME max_tokens budget
+        # as the response text — the unpinned 512-token payload returned zero
+        # text blocks live (the exact failure class the editorial gateway hit).
+        transport = FakeTransport(['{"description": "a kitchen"}'])
+        ModelGateway(enabled_config(), transport).complete_json(
+            system="s", content=[{"type": "text", "text": "go"}], validate=require_description
+        )
+        payload = transport.payloads[0]
+        assert payload["output_config"] == {"effort": "low"}
+        assert payload["max_tokens"] == enabled_config().max_output_tokens
+        assert payload["max_tokens"] >= 2048

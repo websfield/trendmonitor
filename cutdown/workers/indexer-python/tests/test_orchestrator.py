@@ -330,7 +330,7 @@ class TestOperatorSkipWiring:
         monkeypatch.setattr(ocr_module, "run_ocr_sub_stage", fake_ocr)
         monkeypatch.setattr(
             visual_module, "run_visual_descriptions",
-            lambda ctx, shots, enable_vlm=False, force=False: {
+            lambda ctx, shots, enable_vlm=False, keyframe_loader=None, force=False: {
                 "visualDescriptions": [],
                 "subStage": {"status": "skipped", "reason": "vlm disabled (test stub)"},
             },

@@ -6,7 +6,7 @@
       "parameters": [
         { "key": "keyframePolicy", "value": "shot-keyframe-plus-cadence-v1" },
         { "key": "maxKeyframes", "value": "3" },
-        { "key": "maxOutputTokens", "value": "512" },
+        { "key": "maxOutputTokens", "value": "2048" },
         { "key": "modelId", "value": "claude-sonnet-5" },
         { "key": "provider", "value": "anthropic" },
         { "key": "secondsPerExtraKeyframe", "value": "5.0" }
@@ -27,7 +27,7 @@
         "parameters": [
           { "key": "keyframePolicy", "value": "shot-keyframe-plus-cadence-v1" },
           { "key": "maxKeyframes", "value": "3" },
-          { "key": "maxOutputTokens", "value": "512" },
+          { "key": "maxOutputTokens", "value": "2048" },
           { "key": "modelId", "value": "claude-sonnet-5" },
           { "key": "provider", "value": "anthropic" },
           { "key": "secondsPerExtraKeyframe", "value": "5.0" }
@@ -49,7 +49,7 @@
         "parameters": [
           { "key": "keyframePolicy", "value": "shot-keyframe-plus-cadence-v1" },
           { "key": "maxKeyframes", "value": "3" },
-          { "key": "maxOutputTokens", "value": "512" },
+          { "key": "maxOutputTokens", "value": "2048" },
           { "key": "modelId", "value": "claude-sonnet-5" },
           { "key": "provider", "value": "anthropic" },
           { "key": "secondsPerExtraKeyframe", "value": "5.0" }
@@ -71,7 +71,7 @@
         "parameters": [
           { "key": "keyframePolicy", "value": "shot-keyframe-plus-cadence-v1" },
           { "key": "maxKeyframes", "value": "3" },
-          { "key": "maxOutputTokens", "value": "512" },
+          { "key": "maxOutputTokens", "value": "2048" },
           { "key": "modelId", "value": "claude-sonnet-5" },
           { "key": "provider", "value": "anthropic" },
           { "key": "secondsPerExtraKeyframe", "value": "5.0" }

@@ -32,9 +32,12 @@ property assertions (every description references a real `shotId`;
 
 from __future__ import annotations
 
+import base64
+import subprocess
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from harness import (
@@ -85,10 +88,67 @@ class KeyframeImage:
     data_base64: str
 
 
-#: Supplied by the caller (the `index` orchestrator), which owns frame
-#: extraction. Injecting it keeps this module free of an FFmpeg dependency and
-#: makes the whole sub-stage testable with no media and no network.
+#: Supplied by the caller (the `index` orchestrator). Injecting it keeps the
+#: sub-stage testable with no media and no network; the production loader is
+#: `ffmpeg_keyframe_loader` below.
 KeyframeLoader = Callable[[dict[str, Any], int], KeyframeImage]
+
+#: The one on-disk source of gateway config (tech-spec: cutdown/.env), resolved
+#: relative to this file so the worker finds it regardless of spawn cwd.
+#: visual.py lives at workers/indexer-python/src/ → parents[3] is cutdown/.
+DEFAULT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
+
+#: PRD §10.7 minimisation: the VLM needs composition, not 4K — frames are
+#: downscaled so the long edge is at most this many pixels before encoding.
+KEYFRAME_MAX_EDGE = 1024
+
+
+def ffmpeg_keyframe_loader(media_path: Path, *, ffmpeg: str = "ffmpeg") -> KeyframeLoader:
+    """Extract one JPEG per (shot, tick) from the SOURCE media via ffmpeg.
+
+    Seconds are derived by the same exact rational conversion the keyframe
+    budget uses (`ticks * num / den`); no float value ever reaches an artefact.
+    A failed or empty extraction raises `SubStageError`, which the sub-stage
+    catches and degrades to a skip with the reason recorded (never fabricates).
+    """
+
+    def load(shot: dict[str, Any], tick: int) -> KeyframeImage:
+        timebase = shot["timebase"]
+        seconds = int(tick) * int(timebase["num"]) / int(timebase["den"])
+        argv = [
+            ffmpeg,
+            "-v", "error",
+            "-ss", f"{seconds:.6f}",
+            "-i", str(media_path),
+            "-frames:v", "1",
+            "-vf", f"scale='min({KEYFRAME_MAX_EDGE},iw)':-2",
+            "-f", "image2pipe",
+            "-vcodec", "mjpeg",
+            "-",
+        ]
+        try:
+            completed = subprocess.run(argv, capture_output=True, check=False)
+        except OSError as error:
+            raise SubStageError(
+                code="KEYFRAME_EXTRACTION_FAILED",
+                message=f"ffmpeg could not be spawned: {error}",
+            ) from error
+        if completed.returncode != 0 or not completed.stdout:
+            raise SubStageError(
+                code="KEYFRAME_EXTRACTION_FAILED",
+                message=(
+                    f"ffmpeg produced no frame at tick {tick} ({seconds:.3f}s) "
+                    f"from {media_path.name}"
+                ),
+                details={"stderr": completed.stderr[-2000:].decode("utf-8", errors="replace")},
+            )
+        return KeyframeImage(
+            ticks=int(tick),
+            media_type="image/jpeg",
+            data_base64=base64.b64encode(completed.stdout).decode("ascii"),
+        )
+
+    return load
 
 Clock = Callable[[], str]
 
@@ -328,8 +388,13 @@ def run_visual_descriptions(
     whole indexer until the D-21 ceiling is set (REQUIRED skip semantics). The
     caller flips it on explicitly; even then, a missing key or ceiling still
     degrades to a skip rather than to a failure or a paid call.
+
+    The config fallback reads `cutdown/.env` ONLY when the VLM is enabled: the
+    disabled path uses pure defaults so tests (and every skip run) never touch
+    a real key file, and its cache key stays machine-independent.
     """
-    config = config if config is not None else load_config()
+    if config is None:
+        config = load_config(env_file=DEFAULT_ENV_FILE) if enable_vlm else GatewayConfig()
     started_at = clock()
     degraded: list[str] = []
 

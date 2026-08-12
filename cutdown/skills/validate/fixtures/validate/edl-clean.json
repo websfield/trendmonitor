@@ -10,7 +10,7 @@
   "locale": "en-AU",
   "targetDurationRange": { "minSeconds": 20, "maxSeconds": 45 },
   "canvas": { "width": 720, "height": 1280, "aspectRatio": "9:16" },
-  "aspectTreatment": { "mode": "subject_reframe", "rationale": "keep the founder centred" },
+  "aspectTreatment": { "mode": "blurred_background", "rationale": "keep the founder centred" },
   "hookFamily": "proof_first",
   "clips": [
     { "clipId": "clip-1", "order": 0, "momentId": "01HQZX3F5G7K9M2N4P6R8S0T2V", "assetId": "01HQZX3F5G7K9M2N4P6R8S0T36", "sourceRange": { "assetId": "01HQZX3F5G7K9M2N4P6R8S0T36", "startTicks": 0, "endTicks": 300, "timebase": { "num": 1, "den": 30 } }, "narrativeFunction": "proof", "rationale": "the evidence clip", "caption": { "kind": "none" } },

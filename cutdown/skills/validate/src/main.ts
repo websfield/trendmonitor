@@ -216,7 +216,10 @@ function loadCapability(ctx: SkillContext): PlatformCapability {
     duration: { minSeconds: duration.minSeconds, maxSeconds: duration.maxSeconds },
     canvas: { width: res.width, height: res.height, aspectRatio: ratios[0] ?? '9:16' },
     preferredAspectRatios: ratios,
-    aspectTreatmentOptions: ['subject_reframe', 'letterbox', 'blurred_background', 'branded_background', 'split_screen'],
+    // D-47: only the three treatments Phase 0 actually renders — the gate must
+    // never bless an EDL the renderer will refuse (two authorities disagreeing
+    // is how a valid-looking cut dies at the most expensive step).
+    aspectTreatmentOptions: ['letterbox', 'blurred_background', 'branded_background'],
   };
 }
 

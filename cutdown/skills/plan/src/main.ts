@@ -150,10 +150,13 @@ function loadCapability(ctx: SkillContext): PlatformCapability {
     duration: { minSeconds: duration.minSeconds, maxSeconds: duration.maxSeconds },
     canvas: { width: res.width, height: res.height, aspectRatio: ratios[0] ?? '9:16' },
     preferredAspectRatios: ratios,
-    // The PRD §11 example carries no per-platform treatment allow-list; Phase 0
-    // admits the full REQ-052 vocabulary (centre_crop is unrepresentable in the
-    // enum), and the Phase 1 registry will restrict it per platform.
-    aspectTreatmentOptions: ['subject_reframe', 'letterbox', 'blurred_background', 'branded_background', 'split_screen'],
+    // D-47: `subject_reframe` (needs REQ-016 subject tracks) and `split_screen`
+    // (needs multi-source composition) cannot be honestly executed at Phase 0 —
+    // the renderer refuses them rather than centre-cropping (REQ-052). Offering
+    // them here let a live model choose one, pass the gate, and be refused at
+    // the most expensive step; the allow-list is the three treatments Phase 0
+    // actually performs, so a stray choice is refused at plan validation.
+    aspectTreatmentOptions: ['letterbox', 'blurred_background', 'branded_background'],
   };
 }
 
@@ -193,7 +196,11 @@ async function run(request: PlanRequest, ctx: SkillContext): Promise<PlanResult>
   const capability = loadCapability(ctx);
 
   const momentAssetById = new Map<string, string>();
-  for (const m of moments) momentAssetById.set(m.momentId, m.assetId);
+  const momentById = new Map<string, Moment>();
+  for (const m of moments) {
+    momentAssetById.set(m.momentId, m.assetId);
+    momentById.set(m.momentId, m);
+  }
   const selectedAssetIds = new Set<string>();
   for (const sm of creativeBrief.selectedMoments) {
     const assetId = momentAssetById.get(sm.momentId);
@@ -253,7 +260,7 @@ async function run(request: PlanRequest, ctx: SkillContext): Promise<PlanResult>
     const storyPlan = storyResult.data;
 
     // 4. Platform EDL — model proposes ranges; resolveEdl owns the bounds block.
-    const edlPrompt = buildEdlPrompt(creativeBrief, storyPlan);
+    const edlPrompt = buildEdlPrompt(creativeBrief, storyPlan, momentById, jobBrief);
     let clipsChecked = 0;
     const edlResult = await gateway.completeJson<PlatformEDL>({
       system: edlPrompt.system,
@@ -313,27 +320,77 @@ async function run(request: PlanRequest, ctx: SkillContext): Promise<PlanResult>
     if (err instanceof ModelNotConfiguredError) {
       return { kind: 'skipped', code: 'MODEL_NOT_CONFIGURED', reason: err.message };
     }
-    throw fail('PLAN_MODEL_FAILED', `the model plan was unusable after one repair retry: ${(err as Error).message}`);
+    // No retry claim here: firstText/transport failures throw BEFORE the repair
+    // loop runs; the gateway's own schema error already says "after one repair
+    // retry" in the one case where that is true.
+    throw fail('PLAN_MODEL_FAILED', `the model plan was unusable: ${(err as Error).message}`);
   }
 }
 
 /** Assemble the EDL prompt from the CreativeBrief + the just-validated story plan. */
-function buildEdlPrompt(creativeBrief: CreativeBrief, storyPlan: MasterStoryPlan): { system: string; content: Array<{ type: 'text'; text: string }> } {
+function buildEdlPrompt(
+  creativeBrief: CreativeBrief,
+  storyPlan: MasterStoryPlan,
+  momentById: ReadonlyMap<string, Moment>,
+  jobBrief: JobBrief,
+): { system: string; content: Array<{ type: 'text'; text: string }> } {
+  // The shape is platform-edl-v1's model-supplied subset, spelled out field by
+  // field, and the payload carries each Moment's assetId, sourceRange, verbatim
+  // transcript and speakers — the first live run proved the model cannot mint a
+  // valid clip from momentIds alone (it was never told the asset ids, tick
+  // ranges, or quote text the resolver then rejects it against). Recorded
+  // fixtures are hand-authored in the right shape and cannot catch either gap.
+  // Keep in sync with platform-edl-v1.json.
   const system =
     'You are a platform editor turning an approved narrative plan into a TikTok 9:16 timeline. ' +
-    'Return ONLY a JSON object with {clips, aspectTreatment, audioMode, disclosures, metadata, coverFrame}. ' +
-    'Rules enforced deterministically after you answer: every clip.sourceRange MUST be within the asset bounds ' +
-    '(an out-of-bounds range is rejected, never clamped); clip.order MUST be a contiguous run; clip.assetId MUST ' +
-    'equal its Moment\'s asset; a quote caption MUST carry verbatimSourceText and speakerLabel from the Moment. ' +
+    'Return ONLY a JSON object of EXACTLY this shape — no prose, no markdown fence: ' +
+    '{"clips": [{' +
+    '"clipId": string (timeline-local, e.g. "clip-1"), ' +
+    '"order": integer (0-based, contiguous), ' +
+    '"momentId": string, ' +
+    '"assetId": string (copy the Moment\'s assetId verbatim), ' +
+    '"sourceRange": {"assetId": string (same assetId), "startTicks": integer, "endTicks": integer (exclusive, > startTicks), "timebase": {"num": integer, "den": integer} (copy the Moment sourceRange timebase verbatim)}, ' +
+    '"narrativeFunction": one of "promise"|"context"|"proof"|"escalation"|"demonstration"|"objection"|"payoff"|"invitation"|"cta", ' +
+    '"rationale": string, ' +
+    '"caption": {"kind": "none"} OR {"kind": "text", "displayText": string} OR {"kind": "quote", "displayText": string, "verbatimSourceText": string (exact words from the Moment transcript.verbatimText), "speakerLabel": string (from the Moment speakers[].label)}' +
+    '}, ...], ' +
+    '"aspectTreatment": {"mode": one of "letterbox"|"blurred_background"|"branded_background" (decisions.md D-47: "subject_reframe" and "split_screen" are Phase 1 — the Phase 0 renderer refuses them), "rationale": string}, ' +
+    '"audioMode": one of "cross_platform_cleared"|"byo_licensed"|"native_audio_plan", ' +
+    '"disclosures": {"paidPartnership": boolean, "aiGeneratedOrAltered": boolean, "ownedBusinessPromotion": boolean}, ' +
+    '"metadata": {"title": string, "description": string or null}, ' +
+    '"coverFrame": {"kind": "none"} OR {"kind": "moment_frame", "momentId": string, "atTick": {"ticks": integer, "timebase": {"num": integer, "den": integer}}}}. ' +
+    'Rules enforced deterministically after you answer: every clip.sourceRange MUST lie WITHIN its Moment\'s given sourceRange ' +
+    '(same assetId, same timebase, startTicks/endTicks inside the Moment\'s ticks — an out-of-bounds range is rejected, never clamped); ' +
+    'clip.order MUST be a contiguous run; clip.assetId MUST equal its Moment\'s assetId; ' +
+    'a quote caption MUST copy verbatimSourceText exactly from the Moment\'s transcript.verbatimText and speakerLabel from its speakers, ' +
+    'and its displayText MUST be an in-order subsequence of that verbatimSourceText — shorten only by dropping words, never reorder, rephrase, or add (REQ-037); ' +
+    'when a clip\'s Moment lists a "requires_setup" sourceDependency, the EDL MUST also include a clip for that setup Moment, placed earlier — or drop the dependent clip; ' +
+    'every Moment cited in proofPoints[].evidenceMomentIds MUST be realised by at least one clip — the gate blocks an edit that drops a claim\'s evidence (REQ-034). ' +
     'aspectTreatment.mode must be a permitted non-crop treatment (REQ-052). ' +
+    'Set disclosures.paidPartnership true when distributionMode is "paid". ' +
     'Each clip MAY carry an optional transition {fadeInMs, fadeOutMs} (integers 40-2000, D-52): a duration-preserving ' +
     'fade from/to black on video and silence on audio; adjacent fadeOut+fadeIn reads as a dip-to-black join, and the ' +
     'pair must fit inside the clip. Omit it for a hard cut.';
   const payload = {
     creativeThesis: creativeBrief.creativeThesis,
     hookFamily: creativeBrief.hookFamily,
+    distributionMode: jobBrief.distributionMode,
+    targetDurationRange: jobBrief.durationRange,
+    proofPoints: creativeBrief.proofPoints.map((p) => ({ claim: p.claim, evidenceMomentIds: p.evidenceMomentIds })),
     beats: storyPlan.beats.map((b) => ({ beatId: b.beatId, order: b.order, function: b.function, momentId: b.momentId })),
-    selectedMoments: creativeBrief.selectedMoments.map((m) => ({ momentId: m.momentId, candidateFunction: m.candidateFunction })),
+    selectedMoments: creativeBrief.selectedMoments.map((m) => {
+      const moment = momentById.get(m.momentId);
+      return {
+        momentId: m.momentId,
+        candidateFunction: m.candidateFunction,
+        assetId: moment?.assetId ?? null,
+        sourceRange: moment?.sourceRange ?? null,
+        durationSeconds: moment?.durationSeconds ?? null,
+        transcriptVerbatimText: moment?.transcript.verbatimText ?? null,
+        speakers: moment?.speakers.map((s) => ({ label: s.label, isCorrected: s.isCorrected })) ?? [],
+        sourceDependencies: moment?.sourceDependencies ?? [],
+      };
+    }),
   };
   return { system, content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
 }

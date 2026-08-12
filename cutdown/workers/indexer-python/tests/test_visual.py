@@ -17,17 +17,20 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
-from harness import SubStageContext, read_checkpoint
+from harness import SubStageContext, SubStageError, read_checkpoint
 from model_gateway import GatewayConfig, ModelUnavailableError
 from visual import (
     KEYFRAME_POLICY,
     SECONDS_PER_EXTRA_KEYFRAME,
     SUB_STAGE,
     KeyframeImage,
+    ffmpeg_keyframe_loader,
     keyframe_budget,
     run_visual_descriptions,
     select_keyframe_ticks,
@@ -507,3 +510,65 @@ class TestCacheKeying:
             ctx, case["shots"], transport=RecordedTransport([]), **kwargs
         )
         assert second.cache_hit is True
+
+
+class TestFfmpegKeyframeLoader:
+    """The production loader (main.py injects it) — real ffmpeg, tiny clip."""
+
+    requires_ffmpeg = pytest.mark.skipif(
+        shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH"
+    )
+
+    @pytest.fixture
+    def clip(self, tmp_path: Path) -> Path:
+        path = tmp_path / "clip.mp4"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-v", "error",
+                "-f", "lavfi", "-i", "color=c=red:s=320x240:d=2:r=25",
+                str(path),
+            ],
+            check=True,
+        )
+        return path
+
+    @requires_ffmpeg
+    def test_extracts_a_jpeg_at_the_requested_tick(self, clip: Path) -> None:
+        load = ffmpeg_keyframe_loader(clip)
+        frame = load({"timebase": {"num": 1, "den": 25}}, 25)  # tick 25 → 1.0s
+        assert frame.ticks == 25
+        assert frame.media_type == "image/jpeg"
+        assert base64.b64decode(frame.data_base64)[:3] == b"\xff\xd8\xff"
+
+    @requires_ffmpeg
+    def test_a_missing_source_raises_instead_of_fabricating(self, tmp_path: Path) -> None:
+        load = ffmpeg_keyframe_loader(tmp_path / "absent.mp4")
+        with pytest.raises(SubStageError) as caught:
+            load({"timebase": {"num": 1, "den": 25}}, 0)
+        assert caught.value.to_payload()["code"] == "KEYFRAME_EXTRACTION_FAILED"
+
+    @requires_ffmpeg
+    def test_a_tick_past_the_end_raises_instead_of_returning_nothing(self, clip: Path) -> None:
+        # 60s into a 2s clip: ffmpeg exits 0 with empty stdout — the empty
+        # frame must be an error, never a silent zero-image "success".
+        load = ffmpeg_keyframe_loader(clip)
+        with pytest.raises(SubStageError):
+            load({"timebase": {"num": 1, "den": 25}}, 25 * 60)
+
+
+class TestDisabledPathTouchesNoEnvFile:
+    def test_the_default_skip_never_reads_cutdown_env(
+        self, ctx: SubStageContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The enable_vlm=False fallback must use pure defaults: reading the real
+        # cutdown/.env in a skip run would leak a live key into tests and make
+        # the checkpoint cache key machine-dependent.
+        def boom(**_: Any) -> None:
+            raise AssertionError("load_config must not run when the VLM is disabled")
+
+        monkeypatch.setattr("visual.load_config", boom)
+        artefact = run_visual_descriptions(
+            ctx, load_fixture("no-vlm", "input.json")["shots"], clock=fixed_clock
+        ).artefact
+        assert artefact["subStage"]["status"] == "skipped"
+        assert artefact["visualDescriptions"] == []

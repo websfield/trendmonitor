@@ -61,7 +61,11 @@ PROVIDER_ANTHROPIC = "anthropic"
 #: not a snapshot, so the id lives here and is recorded into every artefact.
 DEFAULT_MODEL_ID = "claude-sonnet-5"
 DEFAULT_BASE_URL = "https://api.anthropic.com"
-DEFAULT_MAX_OUTPUT_TOKENS = 512
+#: `max_tokens` caps adaptive thinking AND response text together on Claude
+#: Sonnet 5 (the same failure class the editorial gateway hit live: 512 left
+#: zero text blocks once thinking led). 2048 leaves room for thinking plus the
+#: one-line `{"description": ...}` this gateway asks for.
+DEFAULT_MAX_OUTPUT_TOKENS = 2048
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_KEYFRAMES = 3
 
@@ -432,6 +436,11 @@ class ModelGateway:
             payload = {
                 "model": self.config.model_id,
                 "max_tokens": self.config.max_output_tokens,
+                # Claude Sonnet 5 thinks by default against the SAME max_tokens
+                # budget as the text; "low" bounds thinking spend for what is a
+                # single-sentence captioning call (mirrors packages/editorial's
+                # gateway, which pins "medium" for its harder structured tasks).
+                "output_config": {"effort": "low"},
                 "system": system,
                 "messages": messages,
             }
