@@ -6,7 +6,9 @@ Checkpoints: on
 
 ## What you are building
 
-**UGC Intelligence for ClientHub** — four components: a Pattern Engine (C1, produces beliefs), a Scoring & Amplification service (C2, acts on beliefs at two gates: submission approval and post-publication amplification), a Calibration Monitor (C3, referees — sole breaker + pattern-promotion authority), and a Knowledge API (C4, serves beliefs — read-only, holds no tenant data). **The product is not what is viral, but why:** C1 mines tenant-neutral `Mechanism` claims (falsifiable, no effect size, human-ratified) from the public exemplar corpus; C4 serves them. **Code has landed across three planes:** .NET/C# control plane (`src/ControlPlane/`, `src/KnowledgeApi/`) for every deterministic decision, Python intelligence plane (`src/IntelligencePlane/` — extraction/mining/stats), React/TS frontend (`src/Frontend/`); the nightly trend monitor runs as a Python entrypoint behind an external-cron scheduling port (ADR-0009), Hangfire remaining for .NET-side jobs (still planned). The doc set stays authoritative — start at `docs/initial/README.md` and `docs/initial/integration-contract.md`.
+**Respin — Creator Content Engine** (active direction since 2026-08-13, `docs/initial/decisions.md` R-1): a subscription web service that turns a creator's idea, reference reel, or day of footage into a script in their own voice, mapped to shots they can film, built on mechanisms extracted from posts proven to perform — and that gets measurably better per creator as posted results feed back in. Three-layer IP: universal laws → curated shared framework library → per-creator brain (four versioned docs; context, never weights — R-8). Four surfaces: Studio (7 modes), Trends (autopsy + **Spin**), Results (the learning loop), marketing site + billing. Stack (tech-spec §1, R-18/R-19): Next.js 15/TS, self-hosted Postgres (Docker locally, Lightsail in prod) + Drizzle, Better Auth, Stripe, Inngest, Anthropic behind a provider adapter — no Vercel/Neon/Clerk. The build follows `docs/initial/build-plan.md` (M0 landed; M1 next), in the **`respin/` subdirectory** (self-rooted workspace like `cutdown/` — R-15).
+
+Two earlier product lines remain in this repo: **UGC Intelligence** (`src/` — built and tested, docs frozen at `docs/initial.past/`; start at `docs/initial.past/README.md` and `docs/initial.past/integration-contract.md`) and **Cutdown** (`cutdown/` — parked as a possible future execution layer, `docs/video-editing/`).
 
 ## Golden rules (any project — keep these even if you rewrite everything else)
 
@@ -20,7 +22,16 @@ Checkpoints: on
 8. **Scale caution to blast radius.** Reading and analyzing are free — they change nothing. Edits and test runs are cheap — they're reversible. Pushing, publishing, sending anything outside the repo, and deleting what you didn't create (rule 3) are not: those wait for explicit confirmation, and if you catch yourself reaching for reasons one is *probably* fine, that reaching is the signal to stop and ask.
 9. **Current facts beat trained memory.** Library APIs, CLI flags, and config schemas are present-day facts: verify against the installed version (lockfile, type definitions, `--help`, official docs) before use — partial recognition from training is not current knowledge.
 
-## Non-negotiable rules (this project)
+## Non-negotiable rules (Respin — the active build)
+
+1. **Spin, never copy.** The similarity gate is a hard pre-display gate (REQ-E04/I02, R-3); ingest from compliant sources only — no scraping of closed platforms (REQ-E01, R-4).
+2. **The ledger is the balance.** `credit_ledger` is append-only, balance derived; webhooks idempotent on Stripe event id; debit in the generation's transaction (REQ-G04/G06, R-6).
+3. **Brains are context, never weights, never silent.** Versioned docs, per-field provenance, proposal-approval for every update (R-8, REQ-B02/C05).
+4. **Learning is earned.** Proposals only from `packages/brain` at n ≥ 3 comparable verified results; unverified never learns; paid/organic never pool; reach and conversion never collapse (R-10, REQ-F).
+5. **No leakage.** Nothing crosses profiles or workspaces; library contributions are mechanism-level only (REQ-A03/D04, R-9).
+6. **No invented specifics, no guarantees.** `[check]` placeholders; every output names its weakest point; engineering and evidence completion are separate claims (REQ-I03/I04, build-plan).
+
+## Non-negotiable rules (UGC Intelligence codebase — `src/`)
 
 1. **The model never decides.** Vetoes (V1–V6) and verdicts are computed in deterministic application code from extracted features and stored records; the model may raise a `suspected_veto` but may never clear one, and its output is never an input to veto/verdict computation — a model-influenced compliance decision is a silent regulatory breach (P1).
 2. **No auto-approval, ever.** Every `APPROVED` requires a real human click (`human_approved_at`); REQ-021 is a won't-change constraint that keeps the system outside "substantially automated decision" scope.
@@ -48,7 +59,10 @@ Checkpoints: on
 ## Commands
 
 ```bash
-node -e "['docs/initial/schemas/rubric-v1.json','docs/initial/schemas/events-v1.json','docs/initial/schemas/mechanisms-v1.json'].forEach(f=>JSON.parse(require('fs').readFileSync(f,'utf8')))"  # entry gate: the three contract schemas parse
+pnpm -C respin typecheck && pnpm -C respin lint && pnpm -C respin test && pnpm -C respin build   # Respin entry gate (active build — M0+)
+pnpm -C respin db:check                              # Respin migration drift check (schema vs committed migrations)
+TEST_DATABASE_URL=postgres://respin:respin_local_dev@localhost:5435/respin pnpm -C respin test   # SAME suite with the two Docker concurrency suites LIVE (they loud-skip without it; this is the CI shape and the only run that proves the ledger's money invariants under real concurrency — `docker compose -f respin/docker-compose.yml up -d` first)
+node -e "['docs/initial.past/schemas/rubric-v1.json','docs/initial.past/schemas/events-v1.json','docs/initial.past/schemas/mechanisms-v1.json'].forEach(f=>JSON.parse(require('fs').readFileSync(f,'utf8')))"  # entry gate: the three UGC contract schemas parse (frozen set — see Where things live)
 dotnet build UgcIntelligence.slnx                    # control plane (C2, C3, C4 + shared libs). .NET 10 emits .slnx, not .sln
 dotnet test tests/Architecture                       # the suites that test the architecture, not the model
 uv run --with pytest pytest tests/Architecture       # intelligence plane (C1 + extraction). Casing matters: lowercase collects ZERO tests on Linux
@@ -59,11 +73,12 @@ npm --prefix src/Frontend test                      # UI honesty suite + compone
 
 ## Where things live
 
-- **Authoritative doc set → `docs/initial/`** — PRD, tech specs (UGC / trend / knowledge), ADRs 0001–0009 in `adr/`, component specs (C1/C2/C4), eval plan, compliance notes. Layout matches the links.
+- **Active product doc set → `docs/initial/`** — **Respin** (Creator Content Engine): `PRD.md`, `tech-spec.md`, `build-plan.md` (M0–M6), `gtm.md`, `decisions.md` (R-1 supersedes the Cutdown program; append-only). Respin code lives in `respin/` — M0 and the R-18/R-19 auth swap have landed.
+- **UGC Intelligence doc set → `docs/initial.past/`** (frozen 2026-08-13) — PRD, tech specs (UGC / trend / knowledge), ADRs 0001–0009 in `adr/`, component specs (C1/C2/C4), eval plan, compliance notes. Still authoritative *for the built UGC code in `src/`*; no longer the product direction.
 - `docs/initial.backup/` is the **superseded first draft**, kept for provenance. Do not cite it, do not edit it, and do not trust its links (flat layout; links assume subfolders). Two known defects are corrected in the authoritative set: `Proxy` outcomes entering an effect-size calculation, and a `c3_ace` field name that collides with Component 3.
-- Machine-readable contracts → `docs/initial/schemas/` — `rubric-v1.json` (vetoes, VPS/BAS/AWS weights), `events-v1.json` (event envelope, breaker states, Contracts B–D), `mechanisms-v1.json` (Mechanism, warrant ladder, Contract E).
-- The integration spine → `docs/initial/integration-contract.md` — Contracts A–E, failure semantics. Read this before proposing any cross-component change.
-- **C3's component doc** is `docs/initial/component-3-calibration-monitor.md` (added in Phase 4, closing deferral D4); its spec also lives across ADR-0005 and Contracts C/D.
+- Machine-readable contracts → `docs/initial.past/schemas/` — `rubric-v1.json` (vetoes, VPS/BAS/AWS weights), `events-v1.json` (event envelope, breaker states, Contracts B–D), `mechanisms-v1.json` (Mechanism, warrant ladder, Contract E). **Known breakage:** `src/Frontend/scripts/gen-types.mjs`, `tests/Architecture/MechanismSchemaTests.cs`, and `tests/Architecture/test_synthesiser.py` still read these at the old `docs/initial/schemas/` path — repoint them (or freeze those suites) before trusting the entry gate.
+- The integration spine → `docs/initial.past/integration-contract.md` — Contracts A–E, failure semantics. Read this before proposing any cross-component change to the UGC code.
+- **C3's component doc** is `docs/initial.past/component-3-calibration-monitor.md` (added in Phase 4, closing deferral D4); its spec also lives across ADR-0005 and Contracts C/D.
 
 ## Conventions
 
@@ -82,12 +97,21 @@ A change touching **N** Critical Paths must pass **N** gates. Skipping a gate be
 | Measurement discipline | provenance, baselines/denominators, calibration & eval plan, trend subsystem, holdout design, **prevalence & the warrant ladder** | `measurement-discipline` | `measurement-reviewer` |
 | Money & exploration | budget allocation, ε, `arm` tags, AWS weights, amplification recommendations | `budget-exploration` | `budget-exploration-reviewer` |
 
-**Cutdown is a second product line** (`cutdown/`, `docs/video-editing/`) and is exempt from the four rows above by `tech-spec.md` §14 — it has its own two paths, and the exemption is not an absence of gates:
+**Cutdown is a second product line** (`cutdown/`, `docs/video-editing/`) and is exempt from the four rows above by `docs/video-editing/tech-spec.md` §14 — it has its own two paths, and the exemption is not an absence of gates:
 
 | Critical Path | Triggered when the change touches… | Reviewer skill (`.claude/skills/`) | Reviewer agent (`.claude/agents/`) |
 |---|---|---|---|
 | Cutdown measurement honesty | counting & exit criteria, `status --phase0`, baselines/cohorts/denominators, uplift or performance claims, QA pass rates, latency/cache/accuracy rates, `packages/evaluation`, `output-counting-policy.md`, PRD §14/§15 numbers | `cd-measurement-honesty` | `cutdown-measurement-reviewer` |
 | Cutdown tenancy & boundaries | `packages/contracts/schemas/**`, `contract-set.ts`, generated trees, delivered-artefact immutability, `decisions.md`, artefact paths & containment, skills registry / `cutdown-*` mirror, the boundary to `src/`, Review Studio & workspace isolation | `cd-tenancy-boundaries` | `cutdown-boundary-reviewer` |
+
+**Respin is the active product line** (`docs/initial/` — PRD/tech-spec/build-plan, decisions R-1 supersedes the Cutdown program; the UGC doc set is frozen at `docs/initial.past/`). Its four paths gate the Respin build (`app/`, `packages/`) from M0; the six rows above continue to gate the earlier codebases they name:
+
+| Critical Path | Triggered when the change touches… | Reviewer skill (`.claude/skills/`) | Reviewer agent (`.claude/agents/`) |
+|---|---|---|---|
+| Respin billing & credits | billing, `credit_ledger`, metering, Stripe webhooks, tiers/pricing/allowances, packs, auto-top-up, pause/resume, expiry, `packages/credits`, `packages/config`, margin dashboard, PRD §4G | `respin-billing-credits` | `respin-billing-reviewer` |
+| Respin brain tenancy | workspace/profile isolation, query scoping, `brain_docs` versioning & provenance, onboarding inference, session→library contributions, export/deletion, seats/roles, admin surface, PRD §4A/§4D | `respin-brain-tenancy` | `respin-tenancy-reviewer` |
+| Respin spin compliance | `packages/trends` ingest adapters, autopsy pipeline, Spin, the similarity gate, kill-test honesty, integrity guardrails REQ-I01–I05, PRD §4E/§4I | `respin-spin-compliance` | `respin-compliance-reviewer` |
+| Respin learning honesty | results entry, verification flags, baselines, north-star metrics, promotion proposals, minimum-n, `packages/brain`, reach-vs-conversion, confounders, success-metric/pilot claims, PRD §4F/§5 | `respin-learning-honesty` | `respin-learning-reviewer` |
 
 ## Definition of Done
 

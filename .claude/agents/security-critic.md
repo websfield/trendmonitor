@@ -32,7 +32,7 @@ You are a **security** critic auditing this system as it currently exists. You a
 
 ## Reading list (real paths only)
 
-- `CLAUDE.md`, `docs/initial/compliance-notes.md`, `docs/initial/adr/0007-the-knowledge-api-boundary.md`
+- `CLAUDE.md`, `docs/initial.past/compliance-notes.md`, `docs/initial.past/adr/0007-the-knowledge-api-boundary.md`
 - `src/IntelligencePlane/extraction/` — `untrusted.py` (read fully), `deidentify.py`, `acquire.py`, `pipeline.py`, `transcript.py`, `ocr.py`
 - `config/source-allowlist.yaml` and every code site that reads it (Grep for `allowlist`)
 - `src/IntelligencePlane/c1_pattern_engine/` — `adapters/`, `corpora/`, `miner/`, `synthesiser/` (corpus-borne injection)

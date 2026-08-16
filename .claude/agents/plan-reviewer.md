@@ -21,11 +21,11 @@ Assume the plan shipped and **failed in production**. Enumerate the most likely 
 
 ### 3. Mechanical consistency (re-verify, don't trust)
 - **Coverage parity** — every gating enumeration (a spec's route list, an event dispatch list, an audit page list) names its defining set and matches it 1:1.
-- **Closure** — every file in *Implementation Tasks* appears in *Files to Create / Modify* and vice versa; every Owner agent exists in `.claude/agents/`; every Acceptance Criterion has a concrete evidence pointer; requirement IDs reconcile between master plan and phase headers.
+- **Closure** — every file in *Implementation Tasks* appears in *Files to Create / Modify* and vice versa; every Owner agent exists in `.claude/agents/`; every Acceptance Criterion has a concrete evidence pointer; requirement IDs reconcile between master plan and phase headers; every phase plan carries a non-empty *Least confident* line (the author's declared weakest bet — probe it as part of your simulation).
 - **Deferral ledger** — every "a later phase will…" promise has a row with a resolvable receiving task (or a named future phase + a Non-Goals entry).
 - **Handoff contracts** — every artifact produced in phase i and consumed in phase j>i has its interface pinned in phase i and cited by phase j.
 - **Verifiability** — every Acceptance Criterion is PASS/FAIL with evidence; no "it works" criteria.
-- **Number provenance** — every quantitative target is cited (doc:line) or derived in a Derived Budgets table.
+- **Number provenance** — every quantitative target is cited (doc:line) or derived in a Derived Budgets table. "Adds recurring spend" is an uncited number too: a new external service or paid dependency with no recurring-cost row (estimated monthly cost + free-tier ceiling) is a finding.
 
 ### 4. Consolidate
 You receive the other reviewers' verdicts in your brief. Merge them with your own findings, deduplicate, and prioritize.

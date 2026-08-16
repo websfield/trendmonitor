@@ -30,10 +30,10 @@
       "timeoutMs": 300000
     },
     {
-      "match": "(^|/)docs/initial/.*\\.json$",
-      "command": "node -e \"['docs/initial/schemas/rubric-v1.json','docs/initial/schemas/events-v1.json','docs/initial/schemas/mechanisms-v1.json'].forEach(f=>JSON.parse(require('fs').readFileSync(f,'utf8')))\"",
+      "match": "(^|/)docs/initial\\.past/.*\\.json$",
+      "command": "node -e \"['docs/initial.past/schemas/rubric-v1.json','docs/initial.past/schemas/events-v1.json','docs/initial.past/schemas/mechanisms-v1.json'].forEach(f=>JSON.parse(require('fs').readFileSync(f,'utf8')))\"",
       "cwd": ".",
-      "label": "contract schemas parse",
+      "label": "UGC contract schemas parse (frozen doc set — edits here are suspect)",
       "timeoutMs": 15000
     },
     {
@@ -45,7 +45,22 @@
     },
     {
       "match": "(^|/)docs/initial/.*\\.md$",
-      "note": "Design doc changed — the doc set IS the product right now. If this edit touches an invariant, update the owning ADR + integration-contract.md + the schema JSONs in the same change (CLAUDE.md rule 9), and keep REQ-xxx / ADR citations intact."
+      "note": "Respin design doc changed — the doc set IS the product right now. decisions.md is append-only: supersede by appending a new R-entry, never edit one in place. Keep REQ-xxx / R-x citations intact, and keep PRD.md / tech-spec.md / build-plan.md consistent in the same change."
+    },
+    {
+      "match": "(^|/)packages/db/.*",
+      "note": "Respin db schema touched — every schema change ships its migration AND a seed update in the same commit (build-plan working agreement). Drizzle: generate the migration now, don't defer it."
+    },
+    {
+      "match": "(^|/)respin/.*\\.(ts|tsx|mjs|json|yaml)$",
+      "command": "pnpm -C respin typecheck && pnpm -C respin lint && pnpm -C respin test",
+      "cwd": ".",
+      "label": "respin typechecks + lints + tests green",
+      "timeoutMs": 300000
+    },
+    {
+      "match": "(^|/)docs/initial\\.(past|backup)/.*",
+      "note": "This doc set is superseded history (UGC Intelligence / first draft) kept for provenance — it should not normally be edited. If you are citing it as current product truth, stop: the active doc set is docs/initial/ (Respin)."
     }
   ]
 }

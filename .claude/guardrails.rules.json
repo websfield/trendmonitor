@@ -68,7 +68,7 @@
       "id": "ugc-auto-approve",
       "severity": "warn",
       "filePattern": "\\.(cs|py|ts|tsx|sql|json|ya?ml)$",
-      "notFilePattern": "(guardrails\\.rules\\.json$|(^|/)docs/initial/)",
+      "notFilePattern": "(guardrails\\.rules\\.json$|(^|/)docs/initial(\\.past|\\.backup)?/)",
       "flags": "i",
       "bodyPattern": "auto[_-]?approv",
       "message": "No auto-approval exists in this system, ever (REQ-021, won't-change): every APPROVED requires a real human click recorded as human_approved_at. If this is a comment stating the prohibition, fine — otherwise stop."
@@ -107,8 +107,8 @@
     {
       "id": "ugc-contract-schema-edit",
       "severity": "warn",
-      "filePattern": "(^|/)docs/initial/schemas/(rubric|events|mechanisms)-v1\\.json$",
-      "message": "This is a versioned machine-readable contract. A semantic change bumps the version (never mutates v1 in place silently), must keep rubric-vps-v1.md / integration-contract.md consistent, and passes the boundaries gate (CLAUDE.md rule 9)."
+      "filePattern": "(^|/)docs/initial\\.past/schemas/(rubric|events|mechanisms)-v1\\.json$",
+      "message": "This is a versioned contract of the SUPERSEDED UGC doc set (docs/initial.past/ is frozen history — the active product is Respin under docs/initial/). Editing it is almost certainly a mistake; if the UGC code genuinely needs a contract change, bump the version rather than mutating v1 in place, and keep rubric-vps-v1.md / integration-contract.md consistent."
     },
     {
       "id": "ugc-cross-tenant",
@@ -117,6 +117,44 @@
       "flags": "i",
       "bodyPattern": "ignore[_-]?query[_-]?filters|cross[_-]?tenant|tenant[_-]?id\\s*[:=]\\s*(null|none)\\b",
       "message": "Tenant A's outcome data never informs Tenant B's scoring — enforced at the repository layer with no widening override and no admin path (tech-spec §Multi-tenancy, compliance-notes). This is not a configuration option."
+    },
+    {
+      "id": "secret-anthropic-api-key",
+      "severity": "block",
+      "notFilePattern": "(\\.env\\.example$|\\.sample$|\\.template$|guardrails\\.rules\\.json$)",
+      "bodyPattern": "sk-ant-[A-Za-z0-9_\\-]{16,}",
+      "message": "Anthropic API key literal. Never commit LLM keys — env vars + .env.example placeholders only; no LLM key is ever client-side (Respin tech-spec §6)."
+    },
+    {
+      "id": "respin-public-env-secret",
+      "severity": "warn",
+      "filePattern": "\\.(ts|tsx|js|mjs|env|env\\.local|env\\.example)$",
+      "notFilePattern": "guardrails\\.rules\\.json$",
+      "bodyPattern": "NEXT_PUBLIC_[A-Z0-9_]*(KEY|SECRET|TOKEN|PASSWORD)",
+      "message": "NEXT_PUBLIC_* is compiled into the client bundle — a secret under that prefix ships to every browser. Anything named KEY/SECRET/TOKEN belongs server-side (Respin tech-spec §6). Publishable/public keys are the only exception; verify this is one."
+    },
+    {
+      "id": "respin-package-imports-app",
+      "severity": "warn",
+      "filePattern": "(^|/)packages/[^/]+/.*\\.(ts|tsx)$",
+      "bodyPattern": "from\\s+['\"](@/)?app/|from\\s+['\"](\\.\\./)+app/|require\\(['\"](\\.\\./)+app/",
+      "message": "packages/ never imports from app/ — the dependency points one way (Respin tech-spec §1: app/ imports packages/; generation logic stays callable from tests without HTTP). Move the shared code into a package instead."
+    },
+    {
+      "id": "respin-scraping-dependency",
+      "severity": "warn",
+      "filePattern": "(^|/)package\\.json$",
+      "flags": "i",
+      "bodyPattern": "tiktok[-_]?(scraper|api|dl)|instagram[-_]?(private[-_]?api|scraper)|instaloader|snaptik|igdl|douyin[-_]?(scraper|api)",
+      "message": "Respin ingests from compliant sources ONLY — YouTube Data API and creator-submitted links; no scraping of closed platforms (REQ-E01, R-4). M4's compliance criterion is a grep-level check that no scraping dependency exists. If this dependency scrapes TikTok/Instagram, stop."
+    },
+    {
+      "id": "respin-mutable-balance",
+      "severity": "warn",
+      "filePattern": "(^|/)packages/(credits|db)/.*\\.(ts|sql)$",
+      "flags": "i",
+      "bodyPattern": "balance\\s*:\\s*(integer|bigint|numeric|real|doubleprecision)|update[\\s\\S]{0,80}\\bset\\b[\\s\\S]{0,60}\\bbalance\\s*=|\\.set\\(\\s*\\{[^}]*\\bbalance\\b",
+      "message": "The credit balance is DERIVED (sum of unexpired ledger rows), never stored as a mutable counter (REQ-G04, R-6). A balance column or a balance UPDATE is the violation itself — append a ledger row instead."
     },
     {
       "id": "ugc-mean-for-baseline",

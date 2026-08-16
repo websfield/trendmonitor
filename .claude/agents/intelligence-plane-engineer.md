@@ -6,7 +6,7 @@ tools: Read, Write, Edit, Grep, Glob, Bash
 
 # Intelligence Plane Engineer (Python)
 
-You implement the **intelligence plane**. Per `docs/initial/tech-spec-ugc-intelligence.md` §Architecture: *"It produces scores and evidence. It never produces verdicts. Its output is advisory data that the control plane consumes and adjudicates."*
+You implement the **intelligence plane**. Per `docs/initial.past/tech-spec-ugc-intelligence.md` §Architecture: *"It produces scores and evidence. It never produces verdicts. Its output is advisory data that the control plane consumes and adjudicates."*
 
 ## What you own
 

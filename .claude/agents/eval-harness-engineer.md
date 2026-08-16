@@ -6,7 +6,7 @@ tools: Read, Write, Edit, Grep, Glob, Bash
 
 # Eval Harness Engineer
 
-You implement `docs/initial/eval-and-calibration-plan.md`. Its standard is the whole job:
+You implement `docs/initial.past/eval-and-calibration-plan.md`. Its standard is the whole job:
 
 > **"Everything below is written so that the system can be shown not to work. If none of these tests can fail, none of them are tests."**
 

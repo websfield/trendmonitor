@@ -77,7 +77,7 @@ not re-implement them.
 ### B5 — Workspace containment, and the one sanctioned exception
 
 `cutdown/` is self-rooted (`tech-spec.md` §2, §14): it never calls into, imports from, or
-writes to `src/`, `tests/`, `config/`, or `docs/initial/`, and nothing there depends on
+writes to `src/`, `tests/`, `config/`, or `docs/initial.past/`, and nothing there depends on
 it. Every write stays inside `cutdown/` **except** the `skills sync` mirror into
 `<repo>/.claude/skills/cutdown-*`, which D-55 records as spec-sanctioned — a generated
 projection *into* the host, never a source dependency *on* it. Nothing under `cutdown/`

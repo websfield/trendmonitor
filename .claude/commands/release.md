@@ -32,6 +32,8 @@ First, bound the release — what's new **since the last one**:
 
 Aggregate what shipped inside that window from the per-feature **progress ledgers** (`docs/progress/<feature>/ledger.md` `complete` lines, across every feature closed since the boundary) plus any `DECISIONS.md` entries in the window, and write a plain-language changelog to `docs/progress/release/<yyyy-mm-dd>.md` — grouped by feature, in words a *user* understands, not a diff reader. That file **is** the next release's boundary marker, so the window advances on its own.
 
+Changelog lines obey the **outbound-truth** discipline (canon: the `outbound-truth` skill): every line traces to a ledger `complete` entry or the window's actual diff — a release note never announces what didn't ship, and a number without a recorded source doesn't go in.
+
 ### Step 3 — Migration & config checklist (what must happen, in what order)
 List every operational precondition the deploy needs, from the diff/ledger and `RUNBOOK.md`'s **Configuration** section (written by `/bootstrap-claude-pack`):
 - **New env / config** — any env var or config key this release requires, cross-referenced to the runbook's Configuration inventory (names and *locations*, **never values** — golden rule 2). A key the release needs that the runbook doesn't list is a gap to close *before* deploy.

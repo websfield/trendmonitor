@@ -11,7 +11,7 @@ Run it any time you want reassurance ("am I actually protected?"), after install
 
 ## Why this can't be a hook
 
-Every check below except one depends on Node. The installer runs the Node check **once**, at install time — but Node can be uninstalled, upgraded, or fall off `PATH` later, and when it does, `session-start.js` (the pack's only in-session voice) goes dark too, so nothing warns you. `/doctor` is driven by Claude over Bash, not by Node, so it still runs and still reports **even when Node is gone** — which is exactly the case that most needs a voice.
+Most of the checks below depend on Node. The installer runs the Node check **once**, at install time — but Node can be uninstalled, upgraded, or fall off `PATH` later, and when it does, `session-start.js` (the pack's only in-session voice) goes dark too, so nothing warns you. `/doctor` is driven by Claude over Bash, not by Node, so it still runs and still reports **even when Node is gone** — which is exactly the case that most needs a voice.
 
 ## Procedure
 
@@ -38,11 +38,13 @@ Run these checks (parallel where independent), then render the report card. For 
 
 7. **Cross-model check available? (optional, non-blocking.)** Probe whether the Codex CLI is installed and authenticated (see `.claude/codex-review.md`). Absent → the cross-model second opinion in the build gates and `/audit` skips silently. Report as a note, never a blocker.
 
+8. **Delegation posture (informational, read-only — never a grade input.)** Grep the frontmatter of `.claude/agents/*.md` for `model:` lines. Report exactly what the grep shows, in plain words: *"these agents run a pinned model: `<name>` → `<model>`; everything else inherits your session model"* — or, with no hits, *"no pinned models — every agent inherits your session model"*. Classify nothing; do not guess which agents are builders or gates. Add one line naming the two automatic behaviors that need no configuration: read-only sweeps may run a tier cheaper, and a failed review round escalates the builder to the strongest model (canon: the `using-the-pack` skill's token-economy dials). This check writes nothing and affects no verdict.
+
 ## The report card
 
 Lead with the one-line verdict, in the pack's shared vocabulary, then one plain line per check with its evidence.
 
-- **Ready** — Node present, all three hooks wired and live, and the guardrail smoke test blocks (exit 2). The safety net is up. A missing **Codex** cross-model check does **not** lower this to Almost — Codex is optional; note its absence as a one-line footnote on an otherwise-Ready card, never a downgrade.
+- **Ready** — Node present, all three hooks wired and live, and the guardrail smoke test blocks (exit 2). The safety net is up. A missing **Codex** cross-model check does **not** lower this to Almost — Codex is optional; note its absence as a one-line footnote on an otherwise-Ready card, never a downgrade. The **delegation posture** (check 8) is the same kind of row: one informational footnote line, never an input to the verdict.
 - **Almost** — the net is up but something is dormant or unconfigured: `settings.pack.json` un-merged, or `workspaces.json` empty. Name each and its one-command fix.
 - **Not yet** — Node missing, a hook unwired, the guardrail not firing, or a config that won't parse. The protection is not real right now. Lead with the single most important fix.
 

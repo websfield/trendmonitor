@@ -18,7 +18,7 @@ public sealed class CompositionTests
     }
 
     private static JsonElement Rubric() => JsonDocument
-        .Parse(File.ReadAllText(Path.Combine(RepoRoot(), "docs", "initial", "schemas", "rubric-v1.json")))
+        .Parse(File.ReadAllText(Path.Combine(RepoRoot(), "docs", "initial.past", "schemas", "rubric-v1.json")))
         .RootElement;
 
     private static Dictionary<string, decimal> Full(decimal value) =>

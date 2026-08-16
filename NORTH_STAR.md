@@ -4,6 +4,26 @@
 
 ## Goal
 
+Ship **Respin**: a subscription service where a creator opens the app with an idea, a trend, or footage and leaves 10 minutes later with a script in their voice, hooks to test, and a shot list — not a chat transcript. Durable order:
+
+1. **A per-creator brain that is inspectable, confirmable context** — never weights (R-8); nothing updates it silently.
+2. **An honest evidence loop** — results verified or excluded, n ≥ 3 before a rule, paid/organic never pooled; the product's own kill test is creators beating their own baseline (PRD §5.2).
+3. **A compounding curated framework library** — mechanism-level only, no creator's personal data ever (R-9).
+
+Proof by day 90 (PRD §5): 40% activation; ≥50% of pilot creators with ≥3 verified results beat their own baseline; free→paid ≥5%; ≥70% gross margin at Creator tier.
+
+## Current focus
+
+M0 (repo skeleton, auth, CI, deploy) per `docs/initial/build-plan.md`, then M1 billing — metering exists before anything burns tokens. The two earlier product lines in this repo (UGC Intelligence `src/`, Cutdown `cutdown/`) receive maintenance only; re-open Cutdown's execution layer only on R-1's revisit trigger (pilot creators demanding done-for-you editing).
+
+---
+
+## Superseded direction (2026-08-13, decision R-1) — UGC Intelligence on ClientHub
+
+> Preserved verbatim for the built-and-tested code in `src/`; its doc set is frozen at `docs/initial.past/`. This is no longer the product direction.
+
+### Goal
+
 Ship a UGC intelligence layer on ClientHub that does three things, in this order of durability:
 
 1. **Enforces the compliance gate deterministically** at submission — no LLM in any decision path.
@@ -12,13 +32,13 @@ Ship a UGC intelligence layer on ClientHub that does three things, in this order
 
 The scoring is a means. **The knowledge is the compounding asset.** Trends are disposable; mechanisms compound.
 
-## Why it matters
+### Why it matters
 
 Agency clients spend real money on amplification and carry real regulatory exposure (ACL disclosure, minors, usage rights, APP 8). A compliance miss is a silent breach; a scorer that can't beat a sorted spreadsheet is theatre. The automatic circuit breaker is the difference between this being a product and this being theatre.
 
 And a system that learns only *what* performed learns nothing that survives the format's death. Every quarter, its patterns expire with the trend that produced them. A system that learns *why* — and can be shown to be wrong about why — is the only version of this that is worth more in year three than in year one.
 
-## Success looks like
+### Success looks like
 
 - Compliance lane: recall ≥ 0.98 / precision ≥ 0.85 on the eval set (half adversarial); **zero** cases of model output influencing a veto (any such finding is a P1).
 - Calibration: Spearman ρ ≥ 0.35 (n ≥ 60, ≥ 2 cohorts) on **temporally** held-out data before any VPS is shown to a client.
@@ -28,7 +48,7 @@ And a system that learns only *what* performed learns nothing that survives the 
 - **A Knowledge API serving `contrasted` mechanisms** — each with a stated falsifier, a warrant rung, and `never_tested_against: content that was attempted and failed` — and **zero** responses containing an effect size, a causal verb, or anything derived from a tenant's outcome data (any such finding is a P1).
 - **Mechanisms are falsified and withdrawn automatically** on corpus refresh. A quarter where nothing is falsified is a quarter where the refresh tested nothing.
 
-## Constraints (must hold)
+### Constraints (must hold)
 
 - Deterministic decisions live in the .NET/C# control plane; **no LLM in any decision path**. The Python intelligence plane owns extraction, mining, and calibration stats.
 - **No auto-approval, ever** (REQ-021): every `APPROVED` has a real human click.
@@ -40,7 +60,7 @@ And a system that learns only *what* performed learns nothing that survives the 
 - A `Mechanism` carries **no effect size, by schema** (`additionalProperties: false`), a **required falsifier**, and a **human ratification** before it is served.
 - Mechanism warrant: **automatic to demote, human to promote.** `contrasted` is the ceiling and is not a causal claim.
 
-## Non-goals (out of scope)
+### Non-goals (out of scope)
 
 - Executing ad spend — the system recommends; it never touches an ad account.
 - Fine-tuning models — the labelled dataset is hundreds of posts per year; this is rubric + retrieval + LLM-as-judge + calibration.
@@ -50,10 +70,6 @@ And a system that learns only *what* performed learns nothing that survives the 
 - **A number on the Knowledge API.** No effect size, no `0-100` field, no confidence interval. The number the client wants lives behind their own tenancy boundary, in a Pattern Library built from their own outcomes.
 - A creator-facing trend feed (REQ-005g).
 
-## Current focus
+### State when frozen
 
-Phase 0 → Phase 1 (per the PRD roadmap): instrument the existing approval workflow (timing, decision logging, T+24h/48h/7d performance snapshots) so a labelled dataset predates any scorer; then build the deterministic compliance lane (Gate A) with no LLM in the decision path.
-
-Phase 6 (mechanism synthesis + Knowledge API) depends on the exemplar corpus and the trend subsystem and on **nothing else** — not the scorer, not the breaker, not a single outcome event. It could ship before Phase 3. The reason to sequence it later is attention, not dependency, and the temptation to accelerate it by feeding internal outcomes into a mechanism is the temptation this design exists to refuse.
-
-A built, tested codebase now exists across three planes — `src/ControlPlane/` + `src/KnowledgeApi/` (C#), `src/IntelligencePlane/` (Python), `src/Frontend/` (React/TS) — with runnable ASP.NET hosts for C2/C3/C4 and the real Python↔C# artefact/breaker transport wired behind config. Nothing is production-deployed yet (no CI, no container, no pipeline). The doc set in `docs/initial/` stays authoritative for the invariants.
+A built, tested codebase exists across three planes — `src/ControlPlane/` + `src/KnowledgeApi/` (C#), `src/IntelligencePlane/` (Python), `src/Frontend/` (React/TS) — with runnable ASP.NET hosts for C2/C3/C4 and the real Python↔C# artefact/breaker transport wired behind config. Nothing is production-deployed (no CI, no container, no pipeline).

@@ -88,7 +88,7 @@ public sealed class AmplificationAllocatedContractTests
     }
 
     private static JsonElement Schema() => JsonDocument
-        .Parse(File.ReadAllText(Path.Combine(RepoRoot(), "docs", "initial", "schemas", "events-v1.json")))
+        .Parse(File.ReadAllText(Path.Combine(RepoRoot(), "docs", "initial.past", "schemas", "events-v1.json")))
         .RootElement;
 
     private static string[] SchemaRequired() =>

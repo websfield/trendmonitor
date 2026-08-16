@@ -1,0 +1,12 @@
+# Shaping brief — Respin M0 (Skeleton)
+
+**Request (as stated):** "build according to docs/initial"
+**Real job:** A creator can eventually open Respin with an idea and leave 10 minutes later with a script in their voice — M0 is the foundation that makes every later milestone shippable: a deployable, authenticated, CI-gated app skeleton.
+**Chosen scope:** As asked — follow `docs/initial/build-plan.md` milestone by milestone, starting with **M0 — Skeleton** (this session's unit): repo scaffold per tech-spec §1 in `respin/` (R-15), Next.js app with marketing/product/admin route groups, Clerk auth (sign up / sign in / workspace bootstrap on first login), Neon + Drizzle with initial migration (users/workspaces/memberships), CI (typecheck, lint, test, migration check), Vercel deploy config with preview environments.
+**10-star sketch (aim, not commitment):** the full M0–M6 arc in the build plan — billing-before-generation (M1), the brain (M2), the Studio's seven modes with kill test (M3), trends + Spin (M4), the learning loop (M5), marketing + admin (M6), then the pilot evidence phase.
+**North Star alignment:** advances the Current focus verbatim — "M0 (repo skeleton, auth, CI, deploy) per `docs/initial/build-plan.md`, then M1 billing."
+**Non-goals (now):** anything M1+ (no Stripe, no credit ledger, no generation, no brain docs); no edits to the UGC (`src/`) or Cutdown (`cutdown/`) codebases; no scraping or trend ingestion of any kind.
+**How this fails (pre-mortem):**
+1. **External-account gap reported dishonestly** — Clerk/Neon/Vercel need the founder's accounts and keys; claiming M0 "accepted" from code alone would violate the engineering-vs-evidence rule. Mitigation: build against env vars, verify everything verifiable locally/CI, and report the credential-dependent criteria as *pending evidence* with exact setup steps.
+2. **Workspace bleed into the enclosing repo** — `respin/` must be self-rooted (own package.json, tsconfig, lint config) or tooling silently inherits the UGC root's config (2026-08-02 lesson). Mitigation: pin every config inside `respin/`; wire the post-edit check once `respin/package.json` exists.
+3. **Skeleton drift from the tech spec** — a scaffold that ignores tech-spec §1's layout (route groups, packages/) forces a restructure at M1. Mitigation: plan tasks cite tech-spec §1 sections; the migration ships with its seed in the same commit (working agreement).

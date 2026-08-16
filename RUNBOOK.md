@@ -1,6 +1,29 @@
 # RUNBOOK
 
-> The operating manual a competent stranger (or the founder six months from now) uses to run, deploy, and *recover* this system. Written by `/bootstrap-claude-pack` on 2026-07-10; refreshed 2026-07-14 (phases R4a/R4b). **A built, tested codebase with three runnable ASP.NET hosts exists, and the cross-process transport is built and wired behind config — but nothing is production-deployed (no CI, no container, no pipeline). The repo is under local git version control (initial commit `587a0d6`); no remote backup yet.** Each section states what exists honestly and names the remaining gap. The `operability-critic` audits this file; do not let it imply safety that hasn't been built.
+> The operating manual a competent stranger (or the founder six months from now) uses to run, deploy, and *recover* this system. Written by `/bootstrap-claude-pack` on 2026-07-10; refreshed 2026-07-14 (phases R4a/R4b) and 2026-08-14 (Respin pivot, R-1). **The repo is pushed to `github.com/websfield/trendmonitor` (the 2026-07-14 "no remote backup" gap is closed).** The sections below describe the **parked UGC Intelligence line** — built, tested, never production-deployed — and remain its honest operating manual. The **active build is Respin** (see the Respin section and Accounts below); it has no deployable code yet. The `operability-critic` audits this file; do not let it imply safety that hasn't been built.
+
+## Respin (active build — nothing deployed yet, honest by design)
+
+- **Deploy (planned, tech-spec §1 + R-15):** Vercel, root-directory `respin/`, preview deploys per PR; CI arrives at M0 (path-scoped to `respin/**`, like `cutdown.yml`). Until M0 lands there is **no deploy surface — "none found" is the current truth**.
+- **Rollback (planned):** Vercel instant rollback to a previous deployment; DB rollback via Drizzle plain-SQL migrations (every schema change ships its migration — build-plan agreement). **No migration has ever been rolled back; restore never tested.**
+- **Configuration (names only, never values — golden rule 2):** all secrets in Vercel env at M0: `DATABASE_URL` (Neon), Clerk keys, `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`, `ANTHROPIC_API_KEY` (server-side only, tech-spec §6), Resend/PostHog/Sentry DSNs, YouTube Data API key (M4). None exist yet.
+- **Observability (planned, tech-spec §7):** structured logs with request id; Inngest run history = job audit trail; Sentry for errors; PostHog for the activation funnel.
+- **Backup & restore:** durable data will live in Neon (point-in-time restore + branching). **Not yet provisioned; restore never tested.**
+
+## Accounts (outside dependencies — where each login lives, never values · Last reviewed: 2026-08-14)
+
+| Account | For | Credential location | Renewal / status |
+|---|---|---|---|
+| GitHub (`websfield/trendmonitor`) | Repo host + backup + CI | Owner's GitHub login | Active |
+| Vercel | Respin hosting/deploy | not yet provisioned — created at M0 | — |
+| Neon | Postgres | not yet provisioned — M0 | — |
+| Clerk | Auth/Organizations | not yet provisioned — M0 | — |
+| Stripe | Billing (live keys are rotate-everything) | not yet provisioned — M1 | — |
+| Resend / PostHog / Sentry | Email / analytics / errors | not yet provisioned — M1–M6 | — |
+| Google Cloud (YouTube Data API) | Trend ingestion | not yet provisioned — M4 | quota-bound (tech-spec §4) |
+| Domain registrar | Product domain (name pending R-2) | not yet purchased — before M6 | — |
+
+Rows fill in with real locations (password-manager entry / env name) as accounts are created; a stale **Last reviewed** date is itself a finding (`operability-critic`).
 
 ## Deploy (how a change goes live)
 
@@ -74,7 +97,7 @@ and the rest of the human-only work are tracked in [`ops-todos.md`](ops-todos.md
 
 **None found — no deploy surface.** Two rollback semantics are already *designed* and must be preserved when built:
 
-- **Pattern Library rollback** = repoint `active_version` to a previous immutable version — never edit a published artefact (`docs/initial/integration-contract.md`, Contract A).
+- **Pattern Library rollback** = repoint `active_version` to a previous immutable version — never edit a published artefact (`docs/initial.past/integration-contract.md`, Contract A).
 - **Scoring rollback** = the circuit breaker: C3 trips a cohort to advisory automatically; restoring is a human decision with a recorded reason (Contract C).
 
 **Host rollback (phase R4a — named before it is needed).** The three hosts (`UgcIntelligence.C2.Host`, `UgcIntelligence.C3.Host`, `UgcIntelligence.KnowledgeApi.Host`) are stateless executables that wrap deterministic class-library logic; none holds durable state of its own (C2's event log and C4's artefact cache are in-memory/local for now — see finding #16). Rollback of a bad host build is therefore **stop the process and restart the previous build**, per host, independently — there is no shared mutable runtime state to unwind and no schema migration to reverse:
@@ -95,7 +118,7 @@ Known-required configuration when code lands (from the docs): LLM provider API k
 
 **Partially built (Phase 1).** The append-only OutcomeEvent log is now the system of record for every compliance decision.
 
-- The **append-only OutcomeEvent log** (`UgcIntelligence.Events.AppendOnlyEventLog`, schema `docs/initial/schemas/events-v1.json`, **contract 1.3.0**) is the system of record for every decision. It carries `VerdictIssued` (the deterministic compliance verdict — `decided_by = deterministic_verdict_engine`, `vetoes_fired[]`, and a null-unless-clicked `human_approved_at`) and `VerdictOverridden` (original, override, reason, reviewer_id, and — as of 1.3.0 — a `human_approved_at` set only when the override verdict is `APPROVED`; a compensating event, never a delete). C2 is the sole writer; C1 and C3 are read-only consumers. Both APPROVED-emitting boundaries reject an approval with a null timestamp or over a live veto. A verdict whose event append failed is **not** issued — the caller sees the failure, and the idempotency key makes the retry safe. The replay export is snake_case NDJSON the Python plane parses (Contract B).
+- The **append-only OutcomeEvent log** (`UgcIntelligence.Events.AppendOnlyEventLog`, schema `docs/initial.past/schemas/events-v1.json`, **contract 1.3.0**) is the system of record for every decision. It carries `VerdictIssued` (the deterministic compliance verdict — `decided_by = deterministic_verdict_engine`, `vetoes_fired[]`, and a null-unless-clicked `human_approved_at`) and `VerdictOverridden` (original, override, reason, reviewer_id, and — as of 1.3.0 — a `human_approved_at` set only when the override verdict is `APPROVED`; a compensating event, never a delete). C2 is the sole writer; C1 and C3 are read-only consumers. Both APPROVED-emitting boundaries reject an approval with a null timestamp or over a live veto. A verdict whose event append failed is **not** issued — the caller sees the failure, and the idempotency key makes the retry safe. The replay export is snake_case NDJSON the Python plane parses (Contract B).
 - **Auditing a decision:** replay the log tenant-scoped (`ReplayAsync(tenantId)` / `ToReplayExportNdjson(tenantId)`). Every `VerdictIssued` is reconstructible from stored records plus the pinned inputs; the model's `suspected_vetoes` ride on the event as surfaced context only, never as an input to the verdict.
 - **Breaker state** per cohort is served by the **C3 host** at `/api/calibration/{vertical}/{platform}`; C2 reads it through a fail-closed HTTP client (60s TTL, then `cold`; a future-dated reading is also treated as `cold`).
 - **Library staleness alarm** at 30 days; **override-rate-by-cohort** (from `VerdictOverridden`) as the human-review decay signal.

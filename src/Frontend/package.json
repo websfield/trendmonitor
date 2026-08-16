@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Manager UI + operator dashboard for UGC Intelligence (Phase 9). Types are GENERATED from docs/initial/schemas/*.json — never hand-written, never widened.",
+  "description": "Manager UI + operator dashboard for UGC Intelligence (Phase 9). Types are GENERATED from docs/initial.past/schemas/*.json — never hand-written, never widened.",
   "scripts": {
     "gen:types": "node scripts/gen-types.mjs",
     "prebuild": "npm run gen:types",

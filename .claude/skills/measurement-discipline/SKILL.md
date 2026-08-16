@@ -24,9 +24,9 @@ The entire product claim is that the outperformance ratio beats a sorted spreads
 
 ## Where the canon lives
 
-- ADR-0001 (provenance) · ADR-0004 (trends vs patterns) · `docs/initial/eval-and-calibration-plan.md` (the tests that can fail)
-- `docs/initial/rubric-vps-v1.md` (VPS/BAS/AWS maths, denominator, provenance rules) · `docs/initial/schemas/rubric-v1.json`
-- `docs/initial/tech-spec-ugc-intelligence.md` (CreatorBaseline, AWS weights) · `docs/initial/tech-spec-trend-subsystem.md` (detection maths)
+- ADR-0001 (provenance) · ADR-0004 (trends vs patterns) · `docs/initial.past/eval-and-calibration-plan.md` (the tests that can fail)
+- `docs/initial.past/rubric-vps-v1.md` (VPS/BAS/AWS maths, denominator, provenance rules) · `docs/initial.past/schemas/rubric-v1.json`
+- `docs/initial.past/tech-spec-ugc-intelligence.md` (CreatorBaseline, AWS weights) · `docs/initial.past/tech-spec-trend-subsystem.md` (detection maths)
 
 ## Anti-patterns
 
