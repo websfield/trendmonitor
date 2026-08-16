@@ -1,0 +1,1 @@
+ALTER TABLE "pause_periods" ADD COLUMN "ended_known_at" timestamp with time zone;

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "credit_ledger_invoice_grant_uq" ON "credit_ledger" USING btree ("ref_type","ref_id") WHERE "credit_ledger"."ref_type" = 'invoice';

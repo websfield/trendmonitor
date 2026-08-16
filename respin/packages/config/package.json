@@ -1,0 +1,25 @@
+{
+  "name": "@respin/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./app-server": "./src/app-server.ts",
+    "./admin-server": "./src/admin-server.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@respin/db": "workspace:*",
+    "drizzle-orm": "^0.44.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

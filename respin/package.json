@@ -1,0 +1,48 @@
+{
+  "name": "respin",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.28.2",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ]
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "typecheck": "tsc --noEmit && pnpm --filter=!respin -r run typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "db:generate": "pnpm --filter @respin/db db:generate",
+    "db:migrate": "pnpm --filter @respin/db db:migrate",
+    "db:check": "pnpm --filter @respin/db db:check",
+    "db:seed": "pnpm --filter @respin/db db:seed",
+    "stripe:setup": "pnpm --filter @respin/credits stripe:setup"
+  },
+  "dependencies": {
+    "@respin/auth": "workspace:*",
+    "@respin/config": "workspace:*",
+    "@respin/credits": "workspace:*",
+    "@respin/db": "workspace:*",
+    "better-auth": "^1.6.28",
+    "next": "^15.4.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "stripe": "^22.5.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.33.0",
+    "@types/node": "^22.17.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "eslint": "^9.33.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.39.0",
+    "vitest": "^3.2.0"
+  }
+}

@@ -1,0 +1,28 @@
+# Local dev database (decision R-18: self-hosted Postgres; Docker locally,
+# Lightsail in production). Port 5435 — 5432/5433/5434/15432 are taken by other
+# projects on this machine. The credentials below are throwaway LOCAL-DEV
+# values (localhost-only); production credentials live in env on the server,
+# never in this file.
+name: respin
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: respin-postgres
+    restart: unless-stopped
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_USER: respin
+      POSTGRES_PASSWORD: respin_local_dev
+      POSTGRES_DB: respin
+    volumes:
+      - respin-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U respin -d respin"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  respin-pgdata:

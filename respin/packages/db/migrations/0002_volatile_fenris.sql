@@ -1,0 +1,4 @@
+ALTER TABLE "credit_ledger" ADD CONSTRAINT "credit_ledger_expiry_ref" CHECK ("credit_ledger"."kind" <> 'expiry' OR "credit_ledger"."ref_id" IS NOT NULL);--> statement-breakpoint
+ALTER TABLE "credit_ledger" ADD CONSTRAINT "credit_ledger_lot_expiry" CHECK ("credit_ledger"."kind" NOT IN ('grant','pack','refund') OR "credit_ledger"."expires_at" IS NOT NULL);--> statement-breakpoint
+ALTER TABLE "pause_periods" ADD CONSTRAINT "pause_periods_interval" CHECK ("pause_periods"."ended_at" IS NULL OR "pause_periods"."ended_at" > "pause_periods"."started_at");--> statement-breakpoint
+ALTER TABLE "stripe_events" ADD CONSTRAINT "stripe_events_outcome" CHECK ("stripe_events"."outcome" IN ('processed','refused_unknown_customer','refused_identity_mismatch','ignored'));

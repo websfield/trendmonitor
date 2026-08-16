@@ -1,0 +1,24 @@
+{
+  "name": "@respin/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@respin/db": "workspace:*",
+    "better-auth": "^1.6.28"
+  },
+  "peerDependencies": {
+    "next": "^15.4.0",
+    "react": "^19.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

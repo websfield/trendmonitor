@@ -1,0 +1,78 @@
+# Respin CI — path-scoped to respin/** (pattern: .github/workflows/cutdown.yml, per R-15).
+# Jobs: typecheck, lint, test, build (+ db:check from Phase 2) — build-plan M0.
+name: respin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "respin/**"
+      - ".github/workflows/respin.yml"
+  pull_request:
+    paths:
+      - "respin/**"
+      - ".github/workflows/respin.yml"
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: respin
+    services:
+      # Real Postgres for the *.docker.test.ts concurrency suites (M1 phase 1):
+      # locally they run against docker-compose; in CI this container makes the
+      # loud-skip path unreachable — the races are ALWAYS proven here.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: respin
+          POSTGRES_PASSWORD: respin_ci
+          POSTGRES_DB: respin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U respin"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://respin:respin_ci@localhost:5432/respin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        # version comes from respin/package.json "packageManager"
+        with:
+          package_json_file: respin/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: respin/pnpm-lock.yaml
+      # Print tool versions so a CI-vs-local divergence is diagnosable
+      # (lesson 2026-08-10: present-and-verified beats present-and-unrun).
+      - name: Tool versions
+        run: |
+          node --version
+          pnpm --version
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Concurrency suite ran (no silent skip)
+        # The docker suites skip loudly without TEST_DATABASE_URL; in CI the
+        # service container guarantees they ran. Fail if the skip marker shows.
+        # shell: bash makes GitHub add -o pipefail, so a FAILING suite can't
+        # exit green through tee (review round 1).
+        shell: bash
+        run: |
+          pnpm -r test:concurrency 2>&1 | tee /tmp/conc.log
+          ! grep -q "SKIPPED — TEST_DATABASE_URL" /tmp/conc.log
+      - name: Migration drift check
+        run: pnpm db:check
+      - name: Build
+        run: pnpm build

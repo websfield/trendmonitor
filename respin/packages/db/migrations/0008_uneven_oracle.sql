@@ -1,0 +1,2 @@
+ALTER TABLE "pause_periods" ADD COLUMN "started_known_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "pause_periods" ADD CONSTRAINT "pause_periods_ended_known" CHECK ("pause_periods"."ended_known_at" IS NULL OR "pause_periods"."ended_at" IS NOT NULL);

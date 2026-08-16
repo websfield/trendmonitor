@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "credit_ledger_auto_topup_uq" ON "credit_ledger" USING btree ("ref_type","ref_id") WHERE "credit_ledger"."ref_type" = 'auto_topup';
