@@ -195,7 +195,15 @@ describe("stripe:setup CLI degraded path (Verification Step 6 — by running it)
     // The same entrypoint the `stripe:setup` script names: tsx + the CLI file.
     const tsxCli = resolve(pkg, "node_modules/tsx/dist/cli.mjs");
     const childEnv: Record<string, string> = {};
-    for (const [k, v] of Object.entries({ ...process.env, ...env })) {
+    for (const [k, v] of Object.entries({
+      // Load NOTHING by default: the CLI reads `.env.local` (so the README's
+      // step-4.1 success check is true), and on a developer's machine that file
+      // is present and full — without this these degraded-path tests would stop
+      // exercising the refusal entirely, passing in CI and proving nothing here.
+      RESPIN_ENV_FILE: resolve(pkg, "tests/__no_such_env_file__"),
+      ...process.env,
+      ...env,
+    })) {
       if (v !== undefined) childEnv[k] = v;
     }
     return await new Promise<{ code: number | null; out: string }>((res) => {
@@ -247,6 +255,35 @@ describe("stripe:setup CLI degraded path (Verification Step 6 — by running it)
       expect(out).toContain("DATABASE_URL");
       expect(out).not.toMatch(/needs STRIPE_SECRET_KEY/);
       expect(out).not.toMatch(/^\s+at .+:\d+:\d+\)?$/m);
+      expect(code).toBe(1);
+    }
+  );
+
+  // THE README'S PROMISE, as a test. Services step 4.1 says "put it in
+  // .env.local … Success check: `pnpm stripe:setup` no longer prints the 'not
+  // set' remedy" — and that was FALSE until the evidence run ran it: only Next
+  // reads .env.local, so the operator did exactly what the doc said and still
+  // hit the refusal. A doc promise nothing executes is how that survived.
+  it(
+    "READS the env file: a variable present ONLY in the file is not reported missing",
+    { timeout: 60_000 },
+    async () => {
+      const { mkdtempSync, writeFileSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const envFile = join(mkdtempSync(join(tmpdir(), "respin-env-")), ".env.local");
+      writeFileSync(envFile, "DATABASE_URL=postgres://from-the-file/db\n");
+
+      const { code, out } = await runKeyless({
+        RESPIN_ENV_FILE: envFile,
+        STRIPE_SECRET_KEY: undefined,
+        DATABASE_URL: undefined,
+      });
+      // DATABASE_URL came from the file, so only the Stripe key is missing —
+      // which is precisely the "no longer prints the 'not set' remedy" the
+      // README promises for a key placed there.
+      expect(out).toContain("STRIPE_SECRET_KEY");
+      expect(out).not.toContain("and DATABASE_URL");
       expect(code).toBe(1);
     }
   );

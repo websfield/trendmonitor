@@ -6,7 +6,7 @@
 
 Three product lines share this git repo (`github.com/websfield/trendmonitor`, branch `main`):
 
-1. **Respin — the active build** (`docs/initial/`, R-1 2026-08-13). **No code yet.** M0 (skeleton, Clerk auth, Neon+Drizzle, CI, Vercel deploy) is the first session; build home is the **`respin/` subdirectory** — self-rooted workspace like `cutdown/` (R-15, owner-confirmed 2026-08-14).
+1. **Respin — the active build** (`docs/initial/`, R-1 2026-08-13). **M0 and M1 are complete** (skeleton, Better Auth, self-hosted Postgres + Drizzle, CI, billing + credit ledger; both Critical-Path gates PASS Ready A/A); M2 (brain/onboarding) is next. Build home is the **`respin/` subdirectory** — self-rooted workspace like `cutdown/` (R-15, owner-confirmed 2026-08-14). M1's live Stripe evidence run discharged E1-E7+E4b; E8 is blocked (no Stripe test-clock route exists in the product) and E9 is deferred to M3 — see `docs/progress/respin-m1-review.md` and `docs/progress/respin-m1/ledger.md`.
 2. **UGC Intelligence — built, tested, parked** (`src/ControlPlane/` + `src/KnowledgeApi/` C#, `src/IntelligencePlane/` Python, `src/Frontend/` React/TS). Suites green as of 2026-08-14 (C# ~454 architecture tests, Python ~261, frontend typecheck + vitest 86). Never production-deployed; no CI for these trees. Docs frozen at `docs/initial.past/` (schemas `events-v1.json` 1.3.0). Maintenance only.
 3. **Cutdown — parked mid-program** (`cutdown/`, `docs/video-editing/`, D-63). Phase 3 pipeline live-earned 2026-08-11; Stage 0–7 product program parked with 1/20 real outputs counted under D-56. Own CI at `.github/workflows/cutdown.yml` (path-scoped, per D-57). Revisit trigger: pilot creators demanding done-for-you editing.
 
@@ -14,9 +14,9 @@ Three product lines share this git repo (`github.com/websfield/trendmonitor`, br
 
 A subscription web service (PRD thesis): idea/reference/footage in → a script in the creator's own voice, hooks, and a shot map out — built on mechanisms from proven posts, improving as logged results feed back. Three-layer IP: universal laws → curated shared framework library → per-creator brain (four versioned docs; context, never weights — R-8). Four surfaces: Studio (7 modes), Trends (autopsy + Spin), Results (learning loop), marketing site + billing. Launch wedge: YouTube Shorts creators (R-11). Tiers: Free / $10 / $60 / $200 (R-7).
 
-## Stack (Respin, tech-spec §1 — settled by R-5, don't re-litigate)
+## Stack (Respin, tech-spec §1 — settled by R-5 as amended by R-18/R-19, don't re-litigate)
 
-Next.js 15 App Router + TS on Vercel · Neon Postgres + Drizzle · Clerk (Organizations for Studio seats) · Stripe Billing/Checkout/Portal · Inngest · Anthropic behind `packages/llm` adapter · Zod at boundaries · Resend · PostHog · Sentry. Layout inside `respin/`: `app/` (marketing|product|admin route groups + api) imports `packages/` (db, llm, brain, modes, trends, credits, config); never the reverse.
+Next.js 15 App Router + TS · **self-hosted Postgres** (Docker `respin/docker-compose.yml`, postgres:17 on port 5435 locally; Lightsail in prod) + Drizzle · **Better Auth** (its organizations plugin is the planned vehicle for Studio seats at M6) · Stripe Billing/Checkout/Portal · Anthropic behind `packages/llm` adapter · Zod at boundaries · Resend · PostHog · Sentry. **Not used: Vercel, Neon, Clerk** — dropped by R-18/R-19 (`vercel.json` removed). Inngest is unsettled: R-18 dissolved its Vercel-bound rationale, and D-M1-4 made M1 runner-free by design; the job-runner decision lands at M4 entry. Layout inside `respin/`: `app/` (marketing|product|admin route groups + api) imports `packages/` (db, llm, brain, modes, trends, credits, config); never the reverse.
 
 ## Critical Paths
 
@@ -41,16 +41,16 @@ Supporting rules: `secret-anthropic-api-key` (block), `respin-public-env-secret`
 
 ## Commands
 
-- **Respin: none yet** — M0 creates them under `respin/` (wire into CLAUDE.md Commands + `workspaces.json` when they exist; a note-only entry marks the spot).
+- **Respin** (wired into CLAUDE.md Commands + `workspaces.json`): `pnpm -C respin typecheck` · `lint` · `test` · `build` · `db:check` (migration drift) · `db:generate` / `db:migrate` / `db:seed` · `stripe:setup`. The CI-shape run that proves the money invariants under real concurrency is the same suite with `TEST_DATABASE_URL` set (the two Docker suites loud-skip without it).
 - UGC (all green 2026-08-14, schemas at `docs/initial.past/schemas/`): `dotnet build UgcIntelligence.slnx` · `dotnet test tests/Architecture` · `uv run --with pytest pytest tests/Architecture` · `uv run --with ruff ruff check src/IntelligencePlane tests/Architecture` · `npm --prefix src/Frontend run typecheck` · `npm --prefix src/Frontend test`.
 - Cutdown: `pnpm -C cutdown ...` (own entry gate; see `docs/video-editing/tech-spec.md`).
 
 ## Production surfaces (evidence-based)
 
-- **Respin**: nothing built. Planned per tech-spec §7 (cite it, not this file, in reviews): p95 TTFT < 3s, full script < 45s; money/credit paths integration-tested incl. webhook replay; structured logs + request id; Inngest run history as job audit trail; Sentry; margin ≥70%/60% (PRD §5.4). CI arrives at M0.
+- **Respin**: M0 + M1 built, gated, and evidence-run; **nothing deployed**. CI exists at `.github/workflows/respin.yml` (path-scoped). Money/credit paths are integration-tested including webhook replay and real-Postgres concurrency (M1), AND verified live against real Stripe test-mode objects (`docs/progress/respin-m1-review.md`) — E8 (payment-failed dunning) stays pending, blocked on a Stripe test-clock route this product has no path to yet; E9 (debit-refused) waits for M3's debit call site. Still planned per tech-spec §7 (cite it, not this file, in reviews): p95 TTFT < 3s, full script < 45s; structured logs + request id; job audit trail; Sentry; margin ≥70%/60% (PRD §5.4).
 - **UGC**: tests green (commands above); OutcomeEvent log is the decision record (in-memory, ADR-0008 defers durable store); no CI, no migrations tool, no deploy surface.
 - **Cutdown**: `.github/workflows/cutdown.yml` (gate + python-worker jobs, path-scoped); pinned-environment determinism per its tech-spec §12.
-- **Git/backup**: repo + GitHub remote exist (the 2026-07-14 "no git repo" gap is closed). No other backup; Neon becomes the durable-data surface at M0.
+- **Git/backup**: repo + GitHub remote exist (the 2026-07-14 "no git repo" gap is closed). No other backup. The durable-data surface is **self-hosted Postgres** (R-18) — local Docker volume today, a Lightsail-side instance in production; backup/restore is an unbuilt RUNBOOK obligation that lands with the first deploy.
 
 ## Build roadmap (Respin, build-plan)
 

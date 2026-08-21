@@ -40,9 +40,11 @@ import * as stateMod from "../src/state";
 import * as pauseMod from "../src/pause";
 import * as clockMod from "../src/clock";
 import * as monthsMod from "../src/months";
+import * as metricsMod from "../src/metrics";
 import * as errorsMod from "../src/errors";
 import * as adapterMod from "../src/stripe/adapter";
 import * as setupMod from "../src/stripe/setup";
+import * as packPriceMod from "../src/stripe/pack-price";
 import { handleStripeEvent } from "../src/stripe/webhooks";
 import { workspaceForCustomer, getOrCreateCustomer } from "../src/stripe/customers";
 import { createPortalUrl } from "../src/stripe/actions";
@@ -78,6 +80,17 @@ const NOT_DB_FACING: Record<string, string> = {
   UnknownTierPriceError: "error class",
   DuplicateStripeEvent: "error class",
   StripeNotConfiguredError: "error class",
+  // Audit 2026-08-17 remediation (R1). All five are error classes, carrying no
+  // query of their own; the CONDITIONS they signal are covered by cases in
+  // actions.test.ts / stripe.test.ts.
+  SubscriptionPausedError: "error class",
+  NotChargeableError: "error class",
+  PackPriceNotMappedError: "error class",
+  PackPriceUnavailableError: "error class",
+  PackPriceMismatchError: "error class",
+  // Audit 2026-08-17 remediation (R2) — the `incomplete` remedy's refusals.
+  InvoiceRecoveryUnavailableError: "error class",
+  NotRecoverableError: "error class",
   getDbNow: "clock read — no workspace data",
   takeWorkspaceLock: "lock primitive — keyed by the id it is given",
   assertWriteClock: "guard — covered via debit/adjust/pause cases",
@@ -131,6 +144,12 @@ const COVERED = new Set([
   "maybeAutoTopup",
   "createPortalUrl",
   "setAutoTopup",
+  // Audit 2026-08-17 remediation (R2, #8). Genuinely COVERED rather than
+  // STRIPE_BOUND: its owner gate, its workspace-scoped mirror read and its
+  // status narrowing all run BEFORE the first Stripe call, so the keyless case
+  // drives every decision this function makes about which workspace it is
+  // acting for.
+  "createInvoiceRecoveryUrl",
 ]);
 
 // EVERY public entrypoint, not just src/index (code-review CHANGE). The two
@@ -207,7 +226,36 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
     reason:
       "billing state; the liveness predicate stays OFF src/index — its readers are actions.ts, auto-topup.ts and webhooks.ts inside the package, plus app/** through the app-server facade ONLY (phase 4: the billing page's subscribe-vs-portal branch is the fourth reader of the one definition, never a fifth definition of its own)",
     viaIndex: ["getWorkspaceBillingState"],
-    internalOnly: ["hasLiveStripeSubscription"],
+    // `scheduledCancelAt` joins the liveness predicate as internal-only for the
+    // SAME reason: app/** must not read Stripe's two cancellation columns and
+    // decide for itself what "scheduled to end" means — it receives the derived
+    // date on BillingState (evidence-run finding 1).
+    //
+    // `mayChargeOffSession` joins them both (audit 2026-08-17 #6). It is the
+    // GATE in `maybeAutoTopup` — not decoration, and the `internalOnly` reader
+    // check below enforces that it stays one. It answers
+    // "may we charge this customer off-session RIGHT NOW?", which is NOT the
+    // same question as `hasLiveStripeSubscription`'s "does a subscription
+    // exist?" — `unpaid` answers yes to the second and must answer no to the
+    // first. It stays off src/index for the strongest version of the usual
+    // reason: app/** must never be able to ask a charging-authority question at
+    // all. The chargeable/not-chargeable fact reaches the UI only as a rendered
+    // reason string on the billing page, never as a predicate the page may
+    // re-evaluate.
+    //
+    // `isPausedSubscription` joins them (review of the audit remediation,
+    // 2026-08-18) for the plainest form of the same reason: app/** receives the
+    // pause as `BillingState.state === "paused"` and must never re-derive it
+    // from the mirror columns. It exists because two IN-PACKAGE readers had
+    // already derived it differently — `state.ts` liveness-gated (audit #5),
+    // `createPackCheckoutUrl` from the raw column — so a fifth definition in
+    // app/** is exactly what this list is for.
+    internalOnly: [
+      "hasLiveStripeSubscription",
+      "isPausedSubscription",
+      "scheduledCancelAt",
+      "mayChargeOffSession",
+    ],
   },
   "pause.ts": {
     reason:
@@ -219,7 +267,13 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "ensurePauseEnded",
       "recordPauseEnd",
     ],
-    internalOnly: ["clearPauseMirror"],
+    // `openPauseStartedKnownAt` is package-private for the same reason
+    // `clearPauseMirror` is: it exposes the pause's KNOWLEDGE clock, and the one
+    // thing app/** must never do is compare that clock itself. Its only caller
+    // is `stripe/webhooks.ts`'s D-AUDIT-1 gate (audit 2026-08-17 #2), which
+    // needs it to tell a pre-pause invoice delivered late from a genuine
+    // during-pause invoice.
+    internalOnly: ["clearPauseMirror", "openPauseStartedKnownAt"],
   },
   "clock.ts": {
     reason:
@@ -230,6 +284,11 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   "months.ts": {
     reason: "pure calendar arithmetic — no db, no workspace, package-internal",
     internalOnly: ["addMonthsUtc"],
+  },
+  "metrics.ts": {
+    reason:
+      "fold observability (audit 2026-08-17 #22 / R-25 D-AUDIT-3) — emits two named metrics and a workspace id, runs NO query of its own, and stays off src/index because app/** has no business emitting or redirecting money-path telemetry; its one caller is balance.ts, the balance authority",
+    internalOnly: ["setFoldMetricSink", "emitFoldMetric"],
   },
   "errors.ts": {
     reason: "error classes only",
@@ -258,6 +317,16 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
     reason: "CLI entrypoint for the above — importing it would run it",
     noImport: true,
   },
+  "stripe/pack-price.ts": {
+    reason:
+      "the ONE pack-price resolver (audit 2026-08-17 #7). Reads the GLOBAL active config and Stripe's Price object; writes nothing and touches no workspace-scoped table, so it has no isolation surface of its own. Package-private on purpose: its two callers are the manual pack Checkout and auto-top-up, and app/** must never resolve a charge amount itself — the whole point of the module is that ONE place decides what a pack costs. The three errors reach app/** through the app-server facade instead",
+    internalOnly: [
+      "PackPriceUnavailableError",
+      "PackPriceMismatchError",
+      "PackPriceNotMappedError",
+      "resolvePackPrice",
+    ],
+  },
 };
 
 /** Namespaces for the internal modules, so their claims can be checked. */
@@ -269,13 +338,34 @@ const INTERNAL_NAMESPACES: Record<string, object> = {
   "pause.ts": pauseMod,
   "clock.ts": clockMod,
   "months.ts": monthsMod,
+  "metrics.ts": metricsMod,
   "errors.ts": errorsMod,
   "stripe/adapter.ts": adapterMod,
   "stripe/setup.ts": setupMod,
+  "stripe/pack-price.ts": packPriceMod,
+};
+
+/**
+ * `internalOnly` names that ARE deliberately re-exported from an app-facing
+ * facade, each with the reason (tenancy gate 2026-08-18). "Package-private"
+ * and "unreachable from app/**" are different claims, and this is the list of
+ * places they legitimately diverge — everything else must satisfy both.
+ */
+const FACADE_REEXPORTED: Record<string, string> = {
+  hasLiveStripeSubscription:
+    "THE one liveness definition. The billing page is its fourth reader (subscribe-vs-portal), and a page-local notion of 'looks subscribed' would be a fifth definition — which is exactly what produced the round-6 BLOCK. Re-exported as a pure predicate over a row the page has already read; it performs no query.",
+  isStripeConfigured:
+    "answers the keyless question the same way the adapter does, so the page's disabled state and the action's refusal cannot drift. An env read, no query, no workspace data.",
+  getWebhookSecret:
+    "the SIGNATURE-VERIFICATION secret, reached only through the WEBHOOK facade — which is allowlisted to app/api/stripe/webhook/** alone, not to app/** at large (see app-server.ts's header for why that distinction exists). The route needs it to call the SDK's static constructEvent BEFORE any handler runs; it performs no query and touches no workspace data.",
 };
 
 it("INTERNAL_MODULES claims are CHECKED, not prose (tenancy round-7 NOTE)", () => {
   const indexNames = new Set(Object.keys(credits));
+  const facadeNames = new Set([
+    ...Object.keys(appServer),
+    ...Object.keys(webhookServer),
+  ]);
   for (const [path, entry] of Object.entries(INTERNAL_MODULES)) {
     if (entry.noImport) continue;
     const mod = INTERNAL_NAMESPACES[path];
@@ -297,11 +387,126 @@ it("INTERNAL_MODULES claims are CHECKED, not prose (tenancy round-7 NOTE)", () =
     }
     for (const n of entry.internalOnly ?? []) {
       expect(indexNames, `${path} claims ${n} is package-private`).not.toContain(n);
+      // …AND absent from the app-facing FACADES (tenancy gate 2026-08-18).
+      // Checking only `index.ts` made "internalOnly" mean less than every
+      // reason attached to it claims: those reasons say app/** must not be
+      // able to reach the name, and app/** imports the FACADE, not the index.
+      // `hasLiveStripeSubscription` proves the gap is real — it is listed
+      // internalOnly and IS re-exported from app-server. So the check is
+      // "absent from the facades unless the re-export is declared here, with
+      // its reason", which is what makes adding `setFoldMetricSink` to the
+      // facade fail this suite instead of passing it.
+      // ERROR CLASSES are exempt as a CLASS, not one by one: `app/**` may
+      // import only the facade, so a typed refusal it cannot `instanceof`
+      // degrades to "Something went wrong" — and `facade-errors.test.ts`
+      // actively REQUIRES every constructible error to be re-exported. Listing
+      // them individually here would be a second, drifting copy of that rule.
+      // Everything else needs a named reason.
+      const exported = (mod as Record<string, unknown>)[n];
+      const isErrorClass =
+        typeof exported === "function" &&
+        (exported as { prototype?: unknown }).prototype instanceof Error;
+      if (!FACADE_REEXPORTED[n] && !isErrorClass) {
+        expect(
+          facadeNames,
+          `${path} claims ${n} is package-private, but it is re-exported from an app-facing facade — either stop exporting it or declare the re-export in FACADE_REEXPORTED with a reason`
+        ).not.toContain(n);
+      }
     }
   }
   // Non-vacuity: the check must be reading real modules with real exports.
   expect(Object.keys(INTERNAL_NAMESPACES).length).toBeGreaterThan(8);
   expect(indexNames.size).toBeGreaterThan(15);
+
+  // FACADE_REEXPORTED STALENESS (tenancy gate NOTE, 2026-08-18). The allowlist
+  // grants an exception; nothing checked the exception was still being used, so
+  // an entry whose name stopped being re-exported would keep passing forever
+  // and quietly widen what the next reader believes is sanctioned. Same shape
+  // as every other claim in this file: it has to be true to stay.
+  for (const n of Object.keys(FACADE_REEXPORTED)) {
+    expect(
+      facadeNames,
+      `FACADE_REEXPORTED lists ${n}, but no facade re-exports it — delete the entry`
+    ).toContain(n);
+  }
+});
+
+/**
+ * Every `internalOnly` name must have at least one IN-PACKAGE reader.
+ *
+ * The billing gate found `mayChargeOffSession` with zero callers while two
+ * comments claimed it was the mechanism at the auto-top-up charge site — a dead
+ * export holding a reserved seat on a list whose entries all carry a reason
+ * beginning "its readers are…". The fix was to make it the real gate; THIS is
+ * what stops the next one, because "delete it if nothing uses it" was prose and
+ * prose does not fire.
+ *
+ * Source-level, like the retention scan, and for the same reason: the risk is a
+ * name nothing calls, which no type can flag.
+ */
+it("every internalOnly name is actually READ inside the package", async () => {
+  const { readdirSync, readFileSync, statSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { resolve, dirname, join, relative, sep } = await import("node:path");
+  const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+  const files = (function walk(dir: string, acc: string[] = []): string[] {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) walk(full, acc);
+      else if (full.endsWith(".ts")) acc.push(full);
+    }
+    return acc;
+  })(srcDir);
+  const sources = files.map((f) => ({
+    rel: relative(srcDir, f).split(sep).join("/"),
+    // Blank comments first — a comment naming a function is not a reader.
+    text: readFileSync(f, "utf8")
+      .replace(/\/\/.*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      // IMPORT STATEMENTS ARE NOT USES. Stripping them is what makes this
+      // check bite: un-wiring a predicate usually leaves its import behind,
+      // and counting that would let a dead export vindicate itself with the
+      // very line that fails to use it. Proven by mutation, not assumed.
+      .replace(/import[\s\S]*?from\s*["'][^"']*["'];?/g, ""),
+  }));
+
+  // The package's OWN tests count as readers for a deliberate test seam, but
+  // THIS file does not: the registry above names every internalOnly export as
+  // a string, so counting it would make every entry vindicate itself.
+  const testDir = resolve(dirname(fileURLToPath(import.meta.url)));
+  const testText = readdirSync(testDir)
+    .filter((f) => f.endsWith(".ts") && f !== "isolation.test.ts")
+    .map((f) => readFileSync(join(testDir, f), "utf8"))
+    .join("\n");
+
+  const orphans: string[] = [];
+  for (const [path, entry] of Object.entries(INTERNAL_MODULES)) {
+    for (const n of entry.internalOnly ?? []) {
+      const pattern = new RegExp(String.raw`\b` + n + String.raw`\b`, "g");
+      // Every mention across the package's sources, comments already stripped.
+      // BOUND, stated so nobody reads this as "has a caller" (tenancy gate
+      // NOTE): two mentions inside the DEFINING file alone would also satisfy
+      // it — a re-export line, a recursive call, a type position. It is a
+      // source-level heuristic for "is this export dead", not a call-graph, and
+      // it is calibrated to the shape that actually occurred: a lone
+      // self-definition with every claimed reader in a comment.
+      // The DEFINITION is one of them, so a live export needs at least two: a
+      // lone self-mention is precisely the dead-export shape this catches.
+      const srcRefs = sources.reduce(
+        (acc, src) => acc + (src.text.match(pattern)?.length ?? 0),
+        0
+      );
+      const testRefs = testText.match(pattern)?.length ?? 0;
+      if (srcRefs < 2 && testRefs === 0) orphans.push(`${path}:${n}`);
+    }
+  }
+  expect(
+    orphans,
+    `these package-private exports have NO reader — only their own definition. Wire them up or delete them; a dead export whose reason says "its readers are…" is a comment claiming a property it does not have: ${orphans.join(", ")}`
+  ).toEqual([]);
+
+  // Non-vacuity: the scan really read the package's sources.
+  expect(sources.length).toBeGreaterThan(10);
 });
 
 it("ENUMERATION completeness: every SOURCE module is enumerated or internal-with-reason", async () => {
@@ -479,7 +684,7 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       });
       await credits.purchasePackCredits(t, {
         workspaceId: A, amount: 20, expiresAt: future(48 * HOUR),
-        amountCents: 1000, refType: "checkout", refId: "cs1",
+        amountCents: 1000, refType: "checkout", refId: "cs1", configVersion: 1,
       });
       await credits.adjustCredits(t, {
         workspaceId: A, delta: 5, reasonCode: "goodwill",
@@ -630,6 +835,14 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
           object: "invoice",
           customer: "cus_B", // B's customer
           billing_reason: "subscription_cycle",
+          // The INVOICE-level parent, which names the subscription that
+          // generated it — distinct from the LINE-level
+          // `subscription_item_details` below, and the field audit #4's
+          // identity cross-check reads. Real Stripe sets both (the sibling
+          // fixture in stripe.test.ts:167 always has); this fixture carried
+          // only the line-level one, so it was an unrealistic payload that
+          // happened to pass while nothing looked at invoice identity.
+          parent: { subscription_details: { subscription: "sub_iso" } },
           lines: {
             object: "list",
             data: [
@@ -661,7 +874,19 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
   it("maybeAutoTopup: B's auto-top-up spend does NOT consume A's monthly cap", async () => {
     const db = await createTestDb();
     const { A, B } = await twoWorkspaces(db);
-    await seedDb(db); // config v1 (pack price)
+    await seedDb(db); // config v1
+    // A MAPPED pack price (audit #7, billing gate 2026-08-18). The comment on
+    // the line above used to read "config v1 (pack price)", which was true of
+    // `pack.priceUsd` and false of what auto-top-up now needs: `seedDb` ships
+    // `stripePriceMap: {}`, and the charge is priced from Stripe's own Price
+    // through `resolvePackPrice` rather than from the config number. Without a
+    // mapping this case fails on PackPriceNotMappedError before it reaches the
+    // per-workspace cap it exists to test.
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      "isolation-test"
+    );
     await db.insert(subscriptions).values([
       {
         workspaceId: A, stripeCustomerId: "cus_A",
@@ -705,6 +930,46 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     await expect(
       createPortalUrl(db, { workspaceId: A, role: "owner" } as never, "https://x")
     ).rejects.toThrow(stripeActions.NoStripeCustomerError);
+  });
+
+  it("createInvoiceRecoveryUrl: B's incomplete subscription is invisible to A, and a wrong-status A is refused before any Stripe call (audit #8)", async () => {
+    const db = await createTestDb();
+    const { A, B } = await twoWorkspaces(db);
+    // ONLY B has the recoverable (incomplete) subscription.
+    await db.insert(subscriptions).values({
+      workspaceId: B, stripeCustomerId: "cus_B_inc",
+      stripeSubscriptionId: "sub_B_inc", stripePriceId: "price_creator",
+      status: "incomplete",
+    });
+    // A has NOTHING: refused on the missing customer, never reaching Stripe and
+    // never seeing B's recoverable subscription.
+    await expect(
+      stripeActions.createInvoiceRecoveryUrl(db, {
+        workspaceId: A, role: "owner",
+      } as never)
+    ).rejects.toThrow(stripeActions.NoStripeCustomerError);
+
+    // A with a HEALTHY subscription of its own: refused on STATUS, and this is
+    // the assertion that makes the case non-vacuous as a keyless test — the
+    // status gate is deliberately ahead of the Stripe call, so this refusal
+    // proves the narrowing rather than proving the absence of a key.
+    await db.insert(subscriptions).values({
+      workspaceId: A, stripeCustomerId: "cus_A_active",
+      stripeSubscriptionId: "sub_A_active", stripePriceId: "price_creator",
+      status: "active",
+    });
+    await expect(
+      stripeActions.createInvoiceRecoveryUrl(db, {
+        workspaceId: A, role: "owner",
+      } as never)
+    ).rejects.toThrow(stripeActions.NotRecoverableError);
+
+    // …and a non-owner of the incomplete workspace is refused ahead of both.
+    await expect(
+      stripeActions.createInvoiceRecoveryUrl(db, {
+        workspaceId: B, role: "editor",
+      } as never)
+    ).rejects.toThrow(stripeActions.BillingRoleError);
   });
 
   // THE A-vs-B LIVE-SUBSCRIPTION CASE. Three STRIPE_BOUND exclusions above

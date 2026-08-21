@@ -8,6 +8,7 @@ import type { DbLike, TxLike, VerifiedWorkspaceId } from "@respin/db";
 import { creditLedger, pausePeriods } from "@respin/db";
 import { foldLedger, type FoldResult, type LotView } from "./fold";
 import { getDbNow, takeWorkspaceLock } from "./clock";
+import { emitFoldMetric } from "./metrics";
 
 export type BalanceView = {
   balance: number;
@@ -40,6 +41,11 @@ export async function deriveBalanceInTx(
   workspaceId: VerifiedWorkspaceId,
   at?: Date
 ): Promise<BalanceView> {
+  // AUDIT #22 / R-25 D-AUDIT-3: the fold's own cost, measured. Started before
+  // the lock deliberately — waiting for the lock IS part of what a caller
+  // experiences, and it is the contention D-M1-7 says will bite first once M3
+  // puts concurrent generations on one multi-seat workspace.
+  const startedAt = Date.now();
   await takeWorkspaceLock(tx, workspaceId);
   const dbNow = await getDbNow(tx);
 
@@ -80,6 +86,15 @@ export async function deriveBalanceInTx(
   const viewAt = at && at.getTime() < dbNow.getTime() ? at : dbNow;
   const view: FoldResult =
     viewAt === dbNow ? fold : foldLedger(rows, pauses, viewAt);
+  // Emitted from the ONE balance authority, so every fold in the system is
+  // measured by construction — there is no second place a fold can happen and
+  // go uncounted. `rows` is post-materialization, i.e. the history a subsequent
+  // fold will actually replay.
+  emitFoldMetric({
+    workspaceId,
+    rowCount: rows.length,
+    durationMs: Date.now() - startedAt,
+  });
   return { balance: view.balance, lots: view.lots, asOf: viewAt };
 }
 

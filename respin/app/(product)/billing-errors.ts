@@ -21,13 +21,20 @@ import {
   CheckoutInFlightError,
   ClockSkewError,
   CustomerMappingLostError,
+  InvoiceRecoveryUnavailableError,
   LedgerIntegrityError,
   NoLiveSubscriptionError,
   NoStripeCustomerError,
+  NotChargeableError,
   NotPausedError,
+  NotRecoverableError,
+  PackPriceMismatchError,
+  PackPriceNotMappedError,
+  PackPriceUnavailableError,
   PauseLengthError,
   StripeNotConfiguredError,
   StripeSessionUrlMissingError,
+  SubscriptionPausedError,
   UnknownTierPriceError,
 } from "@respin/credits/app-server";
 import { ConfigUnavailableError } from "@respin/config/app-server";
@@ -70,6 +77,15 @@ export const BILLING_ERROR_CODES = [
   "clock_skew",
   "config_unavailable",
   "workspace_access",
+  // Audit 2026-08-17 remediation (R1).
+  "subscription_paused",
+  "not_chargeable",
+  "pack_price_not_mapped",
+  "pack_price_unavailable",
+  "pack_price_mismatch",
+  // Audit 2026-08-17 remediation (R2) — the `incomplete` remedy.
+  "invoice_recovery_unavailable",
+  "not_recoverable",
   "unknown",
 ] as const;
 
@@ -96,6 +112,13 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: ClockSkewError, code: "clock_skew" },
   { cls: ConfigUnavailableError, code: "config_unavailable" },
   { cls: WorkspaceAccessError, code: "workspace_access" },
+  { cls: SubscriptionPausedError, code: "subscription_paused" },
+  { cls: NotChargeableError, code: "not_chargeable" },
+  { cls: PackPriceNotMappedError, code: "pack_price_not_mapped" },
+  { cls: PackPriceUnavailableError, code: "pack_price_unavailable" },
+  { cls: PackPriceMismatchError, code: "pack_price_mismatch" },
+  { cls: InvoiceRecoveryUnavailableError, code: "invoice_recovery_unavailable" },
+  { cls: NotRecoverableError, code: "not_recoverable" },
 ];
 
 /** The class names this module claims to handle (read by the completeness test). */
@@ -197,6 +220,45 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "You do not have access to this workspace",
     detail:
       "Sign in with the account that owns it, or ask its owner for access. Nothing was modified.",
+  },
+  // Audit 2026-08-17 remediation (R1). Each names what happened AND what the
+  // reader can do — and where the remedy belongs to an operator rather than a
+  // creator, it says so instead of offering a button that cannot help.
+  subscription_paused: {
+    title: "Your subscription is paused",
+    detail:
+      "A pause means no charges, so this was refused before anything reached Stripe — nothing was charged. Resume your subscription from this page and then try again. Your existing credits are frozen, not lost.",
+  },
+  not_chargeable: {
+    title: "There is an unpaid invoice on this subscription",
+    detail:
+      "Stripe has stopped collecting on this subscription, so we will not attempt an automatic charge against it. Nothing was charged. Open the Customer Portal and settle the outstanding invoice — the subscription can still be recovered — and this becomes available again.",
+  },
+  pack_price_not_mapped: {
+    title: "Credit packs are not set up on this server",
+    detail:
+      "No Stripe price is mapped for the credit pack, so there is nothing to charge. Nothing was charged. An operator needs to run `pnpm stripe:setup` and paste the printed price ids into /admin/config as `stripePriceMap`.",
+  },
+  pack_price_unavailable: {
+    title: "The credit-pack price cannot be charged",
+    detail:
+      "Stripe has the pack price in a state a charge cannot be built from — archived, or with no fixed amount, or in the wrong currency. Nothing was charged. An operator needs to check the pack price in the Stripe dashboard; the details are in the server log.",
+  },
+  pack_price_mismatch: {
+    title: "The credit-pack price does not match this server's configuration",
+    detail:
+      "Stripe and the app disagree about what a pack costs, so the charge was refused rather than guessing which price is right — nothing was charged, and you have not been billed twice. This is an operator problem: both amounts are named in the server log, and /admin/config is where the app's figure is corrected.",
+  },
+  // Audit 2026-08-17 remediation (R2) — the `incomplete` remedy's two refusals.
+  invoice_recovery_unavailable: {
+    title: "There is no invoice left to pay",
+    detail:
+      "Nothing was charged. Reload this page: if your payment has since gone through your plan is already active, and if the attempt has lapsed (Stripe expires an unpaid first invoice after about a day) you can start a new plan from here.",
+  },
+  not_recoverable: {
+    title: "That is not the right fix for this subscription",
+    detail:
+      "Paying a one-off invoice only helps a subscription whose FIRST payment never completed. Nothing was charged. Update your card in the Customer Portal instead — that is what recovers a subscription whose renewal failed.",
   },
   unknown: {
     title: "Something went wrong",

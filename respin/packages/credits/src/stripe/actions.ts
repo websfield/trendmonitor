@@ -11,10 +11,21 @@ import {
 import { getActiveConfig } from "@respin/config";
 import { getStripe } from "./adapter";
 import { getOrCreateCustomer } from "./customers";
-import { clearPauseMirror, ensurePauseEnded, ensurePauseStarted } from "../pause";
-import { getDbNow } from "../clock";
+import { resolvePackPrice } from "./pack-price";
+import {
+  clearPauseMirror,
+  ensurePauseEnded,
+  ensurePauseStarted,
+  hasOpenPause,
+} from "../pause";
+import { getDbNow, takeWorkspaceLock } from "../clock";
 import { addMonthsUtc } from "../months";
-import { hasLiveStripeSubscription } from "../state";
+import {
+  hasLiveStripeSubscription,
+  INCOMPLETE_STATUSES,
+  isPausedSubscription,
+  TERMINAL_STATUSES,
+} from "../state";
 
 export class BillingRoleError extends Error {
   constructor(role: string) {
@@ -101,6 +112,88 @@ export class NotPausedError extends Error {
       "There is no paused subscription to resume for this workspace. If you paused it moments ago, the pause is recorded when Stripe confirms it — reload and try again."
     );
     this.name = "NotPausedError";
+  }
+}
+
+/**
+ * The workspace is PAUSED, and the requested operation would charge it
+ * (audit 2026-08-17 #1 — the audit's single highest-confidence finding).
+ *
+ * REQ-G08 ("Must"): "While paused: no charges, no monthly grants." The manual
+ * credit-pack path violated it outright: `createPackCheckoutUrl` called
+ * `assertOwner` and nothing else, then created a real, payable Stripe Checkout
+ * Session. The sibling `auto-topup.ts` has guarded the identical hazard since
+ * round 7 (`if (sub.pausedAt !== null) return {triggered:false, reason:"paused"}`),
+ * and the billing page's own copy asserts "No charges while paused" two
+ * components away — so this was one charging path out of two, and the UI was
+ * telling the customer the opposite of what the code did.
+ *
+ * Typed rather than a bare throw so the billing page can render the reason and
+ * DISABLE the control, instead of offering a button that fails on click
+ * (round-10 NOTE 1's rule, and the facade-errors suite enforces the re-export).
+ */
+export class SubscriptionPausedError extends Error {
+  constructor(operation: string) {
+    super(
+      `Cannot ${operation} while this subscription is paused. A pause means no charges (REQ-G08), so the request was refused before anything was sent to Stripe — nothing was charged. Resume the subscription first; credits are frozen, not lost, while it is paused.`
+    );
+    this.name = "SubscriptionPausedError";
+  }
+}
+
+/**
+ * The subscription exists but is not CHARGEABLE off-session (audit
+ * 2026-08-17 #6): its status is one Stripe has given up collecting on
+ * (`unpaid`), or it is paused. Distinct from `NoLiveSubscriptionError`, which
+ * means no subscription exists at all — a distinction that matters because
+ * `unpaid` is deliberately recoverable (the customer can still pay their way
+ * out through the Portal), so the remedy is different.
+ */
+export class NotChargeableError extends Error {
+  constructor(operation: string, status: string) {
+    super(
+      `Cannot ${operation}: this workspace's subscription is "${status}", which means Stripe has stopped collecting on it — so an off-session charge must not be attempted. Nothing was charged. Settle the outstanding invoice through the Customer Portal (a subscription in this state can still be recovered), and this becomes available again.`
+    );
+    this.name = "NotChargeableError";
+  }
+}
+
+/**
+ * There is no payable hosted invoice to send an `incomplete` subscriber to
+ * (audit 2026-08-17 #8).
+ *
+ * Reachable for real reasons, not just contract drift, which is why it names a
+ * way forward rather than "unexpected": Stripe's own docs say
+ * `hosted_invoice_url` "will be null" while the invoice is not finalized, and an
+ * `incomplete` subscription that has since been paid or expired has no open
+ * invoice at all. The remedy in every one of those cases is the same — reload,
+ * and if the attempt has lapsed (Stripe expires an unpaid first invoice after
+ * about 23 hours) start a fresh plan — so the copy says that instead of
+ * offering a retry that cannot work.
+ */
+export class InvoiceRecoveryUnavailableError extends Error {
+  constructor(detail: string) {
+    super(
+      `No payable invoice could be found for this workspace's incomplete subscription (${detail}). Nothing was charged. Reload this page: if the payment has since gone through the subscription is already active, and if the attempt has lapsed you can start a new plan.`
+    );
+    this.name = "InvoiceRecoveryUnavailableError";
+  }
+}
+
+/**
+ * The subscription is not in a state a hosted-invoice retry applies to (audit
+ * 2026-08-17 #8). Deliberately NARROW: this remedy exists only for `incomplete`,
+ * where the Customer Portal cannot help. `past_due` and `unpaid` are dunning —
+ * there the Portal IS the remedy (update the card), and adding a second way to
+ * do the same thing would be a second source of truth about how a customer
+ * recovers.
+ */
+export class NotRecoverableError extends Error {
+  constructor(status: string) {
+    super(
+      `A hosted-invoice retry applies only to a subscription whose FIRST payment has not completed ("incomplete"); this one is "${status}". Nothing was charged. Manage payment details in the Customer Portal instead.`
+    );
+    this.name = "NotRecoverableError";
   }
 }
 
@@ -275,16 +368,83 @@ export async function createPackCheckoutUrl(
   urls: CheckoutUrls
 ): Promise<string> {
   assertOwner(scope);
-  const { content } = await getActiveConfig(db);
-  const priceId = Object.entries(content.stripePriceMap).find(
-    ([, t]) => t === "pack"
-  )?.[0];
-  if (!priceId) throw new UnknownTierPriceError("pack");
+  // THE PAUSE GUARD (audit 2026-08-17 #1). Placed FIRST — above the config
+  // read, above `getOrCreateCustomer`, above anything that talks to Stripe —
+  // because REQ-G08's promise is that a paused workspace is not charged, and
+  // `getOrCreateCustomer` can CREATE a Stripe customer as a side effect. A
+  // refusal that has already written to Stripe is a weaker refusal than one
+  // that has not.
+  //
+  // In the PACKAGE, not only in `buyPackAction`: the server action's guard is
+  // authoritative for the UI path, but this function is the reusable one and
+  // M3's debit-refusal flow is the next caller. REQ-A02's `assertOwner` lives
+  // here for exactly the same reason ("UI hiding is presentation, this is the
+  // gate"), and the pause rule is no different.
+  //
+  // Against `pause_periods`, the AUTHORITY — not the `subscriptions.pausedAt`
+  // mirror (billing gate, 2026-08-18). Two rounds of this guard read a proxy:
+  //
+  //  1. originally the raw mirror column, which disagreed with the billing
+  //     page's liveness-gated derivation (audit #5) — so in the drift state
+  //     `{status: canceled, pausedAt: <stale>}` the page rendered Buy-pack live
+  //     and this threw on every click, forever, because a dead subscription
+  //     emits no event that would ever clear the column;
+  //  2. then `isPausedSubscription`, which fixed that mismatch and introduced a
+  //     worse one pointing the other way: the mirror can read `canceled` while
+  //     an OPEN `pause_periods` row still exists (the irreversible branch's
+  //     bounded `ensurePauseEnded` declines, and `clearPauseMirror` then
+  //     correctly refuses while a period is genuinely open). That row was
+  //     permitted to BUY — and `debitCredits` refuses every spend while a pause
+  //     is open, with no way to close it (`resumeSubscription` dead-ends at
+  //     `NoLiveSubscriptionError`). Money for credits that can never be spent.
+  //
+  // The fix is to stop proxying. REQ-G08's other half — `debitCredits`
+  // (ledger.ts) and `adjustCredits` — is enforced against `pause_periods`, and
+  // D-AUDIT-1's grant refusal keys on the same table's knowledge time. The
+  // charge clause was the only one that never consulted that table at all.
+  //
+  // So this guard asks BOTH records and refuses if EITHER says paused.
+  //
+  // `hasOpenPause` is the load-bearing half and the reason this is correct: it
+  // makes the SELL-side refusal a strict superset of the SPEND-side one
+  // (`debitCredits`, ledger.ts, refuses on exactly this table), and a superset
+  // is what makes "sold credits that can never be spent" unrepresentable.
+  //
+  // The mirror half is DEFENCE-IN-DEPTH against a divergence the writers
+  // currently prevent — not a live second hazard, and the billing gate's round-2
+  // reachability analysis is why that is stated plainly here rather than left
+  // implied. Every writer of `subscriptions.pausedAt` lives in `pause.ts`
+  // (`recordPauseStart`, `recordPauseEnd`, `clearPauseMirror`), each writes the
+  // period and the mirror as a transactional pair, and nothing anywhere deletes
+  // a `pause_periods` row — so `pausedAt set ⟹ an open period exists` holds at
+  // every commit boundary, and this half cannot fire alone in production today.
+  // It is kept because a charging path is the wrong place to depend on that
+  // invariant staying true, and because a superset costs one already-loaded row.
+  // It is NOT kept because "the page shows the owner a pause" — an earlier
+  // version of this comment said that, and it described a row shape no writer
+  // can produce.
+  //
+  // The intended audit-#5 relaxation survives untouched, because the drift row
+  // trips NEITHER: it has no open period, and its mirror is not live.
+  const row = await subscriptionRow(db, scope);
+  const pausedByMirror = row !== null && isPausedSubscription(row);
+  if (pausedByMirror || (await hasOpenPause(db, scope.workspaceId))) {
+    throw new SubscriptionPausedError("buy a credit pack");
+  }
+  // ONE pack price, resolved and validated against Stripe (audit #7). This used
+  // to read `stripePriceMap` directly and charge whatever Stripe's Price said,
+  // while `maybeAutoTopup` charged `config.pack.priceUsd` — two authorities for
+  // one price, which an /admin/config edit could silently split. Both paths now
+  // come through `resolvePackPrice`, which refuses on divergence rather than
+  // picking a side. `PackPriceNotMappedError` replaces this path's old
+  // `UnknownTierPriceError("pack")` — same condition, a name that says which
+  // price is missing.
+  const pack = await resolvePackPrice(db);
   const customer = await getOrCreateCustomer(db, scope.workspaceId, email);
   const session = await getStripe().checkout.sessions.create({
     mode: "payment",
     customer,
-    line_items: [{ price: priceId, quantity: 1 }],
+    line_items: [{ price: pack.priceId, quantity: 1 }],
     success_url: urls.successUrl,
     cancel_url: urls.cancelUrl,
     metadata: { workspace_id: scope.workspaceId, respin_kind: "pack" },
@@ -310,6 +470,76 @@ export async function createPortalUrl(
     return_url: returnUrl,
   });
   return session.url;
+}
+
+/**
+ * The `incomplete`-subscription remedy (audit 2026-08-17 #8): the URL of the
+ * hosted Stripe invoice page for a first payment that was declined or needs SCA.
+ *
+ * Why this and not the Customer Portal — the finding itself: `incomplete` counts
+ * as LIVE for the duplicate-checkout guard (correctly; a second checkout would
+ * create a second subscription and double-bill), so the page hides Subscribe and
+ * offered only the Portal, which cannot resolve a subscription that never
+ * activated. The customer had no way forward at all.
+ *
+ * Why the URL is fetched at CLICK TIME and never mirrored into a column:
+ *  - it is a payable link to a specific invoice, and a stored payable URL is a
+ *    new surface for something we already refuse to keep (D-AUDIT-2's posture on
+ *    `stripe_events.payload`);
+ *  - `hosted_invoice_url` is null until the invoice is finalized and the invoice
+ *    itself changes state under us, so a mirrored copy would go stale silently —
+ *    the class of defect that produced the `cancel_at` evidence-run finding;
+ *  - no migration, and Stripe is the authority for its own object, exactly as
+ *    `pack-price.ts` makes Stripe the authority for the pack amount.
+ *
+ * Owner-only and status-gated, because it is a payment surface.
+ */
+export async function createInvoiceRecoveryUrl(
+  db: DbLike,
+  scope: WorkspaceScope
+): Promise<string> {
+  assertOwner(scope);
+  const row = await subscriptionRow(db, scope);
+  if (!row) throw new NoStripeCustomerError("recover an unpaid invoice");
+  if (!row.stripeSubscriptionId) {
+    throw new NoLiveSubscriptionError("recover an unpaid invoice");
+  }
+  // NARROW on purpose — see NotRecoverableError. Checked BEFORE any Stripe call,
+  // so a wrong-state request costs nothing and cannot be told apart from a
+  // right-state one by timing.
+  if (!INCOMPLETE_STATUSES.has(row.status)) {
+    throw new NotRecoverableError(row.status);
+  }
+  const sub = await getStripe().subscriptions.retrieve(
+    row.stripeSubscriptionId,
+    { expand: ["latest_invoice"] }
+  );
+  // `latest_invoice: string | Invoice | null` in the installed SDK
+  // (resources/Subscriptions.d.ts). The expand above should give the object, but
+  // both shapes are handled rather than cast: an un-expanded id reaching a
+  // `.hosted_invoice_url` read would be `undefined`, i.e. a silent "no invoice"
+  // for a customer who has one.
+  const invoice =
+    typeof sub.latest_invoice === "string"
+      ? await getStripe().invoices.retrieve(sub.latest_invoice)
+      : sub.latest_invoice;
+  if (!invoice) {
+    throw new InvoiceRecoveryUnavailableError(
+      `subscription ${row.stripeSubscriptionId} has no latest invoice`
+    );
+  }
+  // `hosted_invoice_url?: string | null` — optional AND nullable, and Stripe
+  // documents it as null "if the invoice has not been finalized yet". Only an
+  // `open` invoice is payable; a draft/void/uncollectible one is not, and `paid`
+  // means the webhook simply has not landed yet.
+  if (invoice.status !== "open" || !invoice.hosted_invoice_url) {
+    throw new InvoiceRecoveryUnavailableError(
+      `invoice ${invoice.id ?? "(no id)"} is "${invoice.status}"${
+        invoice.hosted_invoice_url ? "" : " and has no hosted invoice page"
+      }`
+    );
+  }
+  return invoice.hosted_invoice_url;
 }
 
 /** Pause 1–N months (bounds from config `pauseMonths`, REQ-G08/R-12). */
@@ -350,6 +580,21 @@ export async function pauseSubscription(
     },
   });
   await db.transaction(async (tx) => {
+    // SERIALIZE with the webhook writers (billing gate, 2026-08-18). Every
+    // other writer of this workspace's money state takes this lock —
+    // `handleStripeEvent` takes it before dispatch, and every ledger writer
+    // takes it explicitly — but the owner's pause/resume path reached only
+    // `assertWriteClock`, which does not lock. So an in-flight, uncommitted
+    // owner pause was invisible to a concurrently-processing webhook: its
+    // `ensurePauseEnded` saw no committed period, returned false, and the
+    // pause-sync branch's `clearPauseMirror` then cleared `pausedAt` after the
+    // owner's write committed — leaving `{open pause_periods, mirror clear}`.
+    // Money-safe in both directions (every money guard reads `pause_periods`),
+    // but the page would show `active` while credits were frozen and
+    // `resumeSubscription` would throw `NotPausedError`, so the owner could
+    // not resume early. Taking the lock puts this writer on the same footing
+    // as the others rather than relying on a millisecond-wide window.
+    await takeWorkspaceLock(tx, scope.workspaceId);
     const now = await getDbNow(tx);
     // CONVERGE, never throw (code-review CHANGE): Stripe has already paused
     // the subscription, and its reconciling customer.subscription.updated may
@@ -373,10 +618,26 @@ export async function resumeSubscription(
   if (!sub?.stripeSubscriptionId || sub.pausedAt === null) {
     throw new NotPausedError();
   }
+  // LIVENESS, the guard resume's sibling `pauseSubscription` has always had and
+  // this one did not (audit 2026-08-17 #25). The window is real: the owner
+  // clicks Resume in the moments before a portal-driven cancellation's webhook
+  // lands, so the mirror still says `{pausedAt: <set>}` for a subscription
+  // Stripe has already ended. `subscriptions.update` on a canceled subscription
+  // then throws a RAW Stripe error, which reaches the billing page as
+  // `?e=unknown` → "Something went wrong" — for a state the product can name
+  // exactly. Through the ONE liveness definition, so this is a further reader
+  // of `hasLiveStripeSubscription` rather than a second notion of liveness.
+  //
+  // Deliberately AFTER the NotPausedError check: "you have nothing paused" is
+  // the more useful message when both are true, and it is the one an owner
+  // double-clicking Resume will actually hit.
+  if (!isLive(sub)) throw new NoLiveSubscriptionError("resume a subscription");
   await getStripe().subscriptions.update(sub.stripeSubscriptionId, {
     pause_collection: "",
   });
   await db.transaction(async (tx) => {
+    // Same lock, same reason as `pauseSubscription` above.
+    await takeWorkspaceLock(tx, scope.workspaceId);
     const now = await getDbNow(tx);
     // Same convergence as pause: "no open pause" is exactly the state the
     // reconciling webhook leaves behind when it wins the race, and that must
@@ -435,6 +696,32 @@ export async function setAutoTopup(
   // while the flag was armed with a switch they cannot turn off.
   if (opts.enabled && !isLive(row)) {
     throw new NoLiveSubscriptionError("arm auto-top-up");
+  }
+  // CHARGEABILITY is a second question, and `unpaid` is where the two answers
+  // differ (audit 2026-08-17 #6). `hasLiveStripeSubscription` says yes to
+  // `unpaid` on purpose — the subscription still exists in Stripe and the
+  // customer can pay their way out of dunning, and treating it as irreversible
+  // once made an `unpaid` workspace unrecoverable by ANY event (round-5 CHANGE).
+  // But `unpaid` means Stripe has STOPPED COLLECTING, and arming an off-session
+  // charging authority on it would show the owner auto-top-up as ON for a
+  // subscription `getWorkspaceBillingState` already renders as `free` — the tail
+  // wagging the dog that round-10 CHANGE 4 introduced the liveness guard to
+  // stop, one status further along.
+  //
+  // `maybeAutoTopup` refuses the same status at the actual charge site, through
+  // `mayChargeOffSession` — the shared predicate, which is genuinely the GATE
+  // there as of the 2026-08-18 billing gate. (It had been dead code while this
+  // comment claimed it was the mechanism; the fix was to make the claim true
+  // rather than to soften it, so the two sites cannot drift.) The charge site
+  // still names which clause bit, for `AutoTopupResult.reason`. Both sites
+  // guard, for round-10's stated reason: the trigger refusing is not enough
+  // when the UI is the next reader.
+  //
+  // DISABLING stays unguarded here, exactly as the liveness check above leaves
+  // it: it can only move the row toward the safe state, and refusing it would
+  // trap an owner whose subscription entered dunning while the flag was armed.
+  if (opts.enabled && TERMINAL_STATUSES.has(row.status)) {
+    throw new NotChargeableError("arm auto-top-up", row.status);
   }
   await db
     .update(subscriptions)

@@ -1,3 +1,6 @@
+import { spawn } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { count, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "../src/client";
@@ -601,4 +604,39 @@ describe("M1 billing schema constraints (AC-4)", () => {
       db.insert(stripeEvents).values({ id: "evt_bad", type: "x", payload: {}, outcome: "totally_new_outcome" })
     ).rejects.toThrow();
   });
+});
+
+describe("db:migrate CLI", () => {
+  it(
+    "prints the underlying database error instead of only the spinner failure",
+    { timeout: 60_000 },
+    async () => {
+      const pkg = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+      const tsxCli = resolve(pkg, "node_modules/tsx/dist/cli.mjs");
+      const cli = resolve(pkg, "src/migrate-cli.ts");
+      const child = spawn(process.execPath, [tsxCli, cli], {
+        cwd: pkg,
+        env: {
+          ...process.env,
+          // Port 1 is intentionally unreachable; this exercises the failure
+          // after the migrator has started, where drizzle-kit used to erase
+          // the useful connection error behind its spinner.
+          DATABASE_URL: "postgres://respin:respin@127.0.0.1:1/respin",
+        },
+      });
+
+      const output = await new Promise<{ code: number | null; out: string }>(
+        (resolveResult) => {
+          let out = "";
+          child.stdout.on("data", (chunk) => (out += String(chunk)));
+          child.stderr.on("data", (chunk) => (out += String(chunk)));
+          child.on("close", (code) => resolveResult({ code, out }));
+        }
+      );
+
+      expect(output.code).toBe(1);
+      expect(output.out).toMatch(/db:migrate failed/i);
+      expect(output.out).toMatch(/ECONNREFUSED|connect/i);
+    }
+  );
 });

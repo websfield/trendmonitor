@@ -15,7 +15,7 @@
 | ORM | Drizzle | Typed schema in TS, plain SQL migrations, no codegen step |
 | Auth | Better Auth (R-19; was Clerk) — self-hosted, sessions + auth tables in our own Postgres via its Drizzle adapter | Email/password now, Google when OAuth credentials exist; organizations plugin planned for Studio seats (M6); zero per-MAU cost |
 | Payments | Stripe: Billing subscriptions (4 prices), Checkout for overage packs, Customer Portal, webhooks | Industry default; portal removes UI work |
-| Background jobs | Inngest | Cron (trend refresh, digests) + durable steps for ingest pipelines; deploy shape decided with the Lightsail runbook (R-18) |
+| Background jobs | Inngest — **provisional; the runner decision is open** (D-M1-4, recorded in R-20) | Cron (trend refresh, digests) + durable steps for ingest pipelines. R-18 dissolved Inngest's original rationale (it was Vercel-bound), and nothing in M1 needs a runner for correctness — grace/downgrade derive lazily at read time, expiry materializes in the fold, auto-top-up is request-time — so **M1 shipped runner-free by design**. The choice (Inngest vs a self-hosted alternative) is settled at **M4 entry**, where trend refresh first genuinely needs a scheduler; the M4 plan's dependency check must show a recorded decision before planning it. Deploy shape decided with the Lightsail runbook (R-18) |
 | LLM | Anthropic API behind a provider adapter (`packages/llm`) | Model tiers per operation; adapter keeps provider replaceable (Cutdown principle, kept) |
 | Email | Resend | Digests, receipts via Stripe |
 | Product analytics | PostHog | Activation funnel (metric #1) |

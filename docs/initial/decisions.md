@@ -184,3 +184,163 @@ Append-only. Each entry: context, decision, consequences, revisit trigger. Super
 **What the number actually claims, stated plainly:** 60 seconds is a *guess* chosen to be comfortably larger than second-level rounding and same-second races, and comfortably smaller than the minutes-to-hours staleness the bounds exist to refuse. It is **not** measured against real Stripe delivery lag. Its failure mode is bounded and known in both directions: too small refuses a legitimate reconciling snapshot (the pause converges on the next event, or on the owner's own action); too large lets a snapshot up to a minute stale act (bounded, and both bounds are additionally protected by the `mirrorEventAt` order guard).
 
 **Tripwire / revisit:** the M1 owner evidence run (`stripe listen`, the run that closes E1–E8) is the first time real `event.created` → processing lag is observable. Record the observed lag in the ledger during that run. If any legitimate event's lag exceeds ~30s, or if a pause/resume is refused during it, split the constant and give the delivery-lag half a config key with the measured value. Also revisit if M4's background-job runner introduces queued (rather than inline) webhook processing, which would raise lag by construction.
+
+## R-25: Audit remediation decisions D-AUDIT-1 … D-AUDIT-4 (2026-08-17)
+
+**Context:** the 2026-08-17 whole-codebase audit (`docs/progress/audit/2026-08-17.md`, readiness **Not yet / C+**) raised 30 findings against the M1 build. Four of them are not code defects but **unrecorded policy** — the code does something defensible that no document sanctions, so the invariant reads as false. This entry settles the four before the code phases touch them, per the remediation plan's Stop Condition 1 ("no code phase starts with the paused-invoice policy still implicit"). The remediation plan is `docs/plans/respin-audit-remediation-2026-08-17.md`.
+
+### D-AUDIT-1 — `invoice.paid` during a pause is refused, with ONE named exception (audit #2)
+
+**The problem:** REQ-G08 (PRD §4G, "Must") says *"While paused: no charges, no monthly grants."* `webhooks.ts`'s `invoice.paid` handler had no pause check at all, and `stripe.test.ts` carried a test titled *"invoice.paid arriving while mirror-paused is PROCESSED… never dropped"* that asserted a grant lands. So the requirement was not merely unenforced — a test actively pinned its violation. The code's implicit rationale ("a paid invoice is a fact; don't drop the customer's money") is sound engineering for a genuine delivery race and unsound as a blanket rule.
+
+**Decision:** the pause invariant is enforced, and the delivery race is carved out **narrowly and by timestamp**, not by vibes:
+
+- A grant-bearing `invoice.paid` is a **pre-pause invoice delivered late** — and grants — when its `event.created` is **at or before the active pause's `started_known_at` PLUS the `CLOCK_SKEW_MS` tolerance** (R-24). The customer paid for that service period *before* pausing, and dropping it would take money without delivering credits.
+- Otherwise — the event is more than `CLOCK_SKEW_MS` **after** the pause began — it is a genuine during-pause invoice and is **refused**: outcome `ignored`, zero ledger writes, and a structured log naming event type, invoice id, event id, the pause decision, and the reason. Stripe's `pause_collection: {behavior: "void"}` means such an invoice should not exist; if one does, it is a reconciliation question for a human, not credits for a robot.
+
+**Which way the tolerance leans, and why it is stated rather than left to the reader:** the tolerance **widens the grant window**, so an ambiguous ordering at the pause boundary resolves in the customer's favour. This is the same direction and the same constant the two existing pause bounds in `pause.ts` already use (`ensurePauseStarted` / `ensurePauseEnded` both refuse only when the disagreement *exceeds* the tolerance) — one idiom, not a second one. The failure mode is bounded and known: an invoice created up to 60 seconds after a pause begins still grants one month's allowance.
+
+**What this explicitly is NOT:** "paused workspaces may receive arbitrary monthly grants." The accepted exception is exactly one sentence long — *a pre-pause paid invoice may be granted while the mirror is already paused, because delivery was late.*
+
+**Rejected alternative (recorded so it is not silently revisited):** "no grant is ever processed while the mirror is paused, full stop." That is the stricter reading of REQ-G08 and it is defensible — but it requires a **durable deferred-invoice / manual-reconciliation path keyed by invoice id**, because otherwise a legitimately pre-pause invoice is dropped with no record and no recovery. That is a new table, a new operator surface, and a new failure mode; it is not work to start inside a fix round. If product later requires it, it is a planned change, not an implementation detail.
+
+**Consequence, stated plainly:** a creator who pauses seconds after their renewal invoice is paid still receives that month's allowance. A creator whose subscription somehow invoices *during* a void-behaviour pause receives nothing automatically and needs an operator.
+
+**Revisit:** if any genuine during-pause `invoice.paid` is ever observed in production (the refusal log is the tripwire — it is designed to be greppable), which would mean Stripe's void behaviour is not what we believe it is.
+
+### D-AUDIT-2 — `stripe_events.payload` retention: 90 days (audit #21)
+
+**The problem:** `stripe_events.payload` stores complete unredacted Stripe webhook JSON — customer email, name, billing address — indefinitely. It is not currently exploitable (nothing reads it outside the dispatcher) but it becomes so the moment any surface does, and there is no retention policy independent of workspace deletion.
+
+**Decision:** retain the full payload for **90 days after `received_at`**, or until the row's final processing state is known if that is later, then **redact the payload while retaining non-PII audit metadata** (event id, type, workspace id, customer id, outcome, timestamps). The policy explicitly covers the two row classes that workspace deletion misses: rows whose workspace has since been deleted, and rows with `workspace_id = NULL` (unattributable events — `refused_unknown_customer`).
+
+**Binding constraint, effective now:** **no new product surface may read `stripe_events.payload` until the redaction receiver exists.** The retention *implementation* is M6 scope (it belongs with the rest of REQ-A04 deletion/retention machinery); the *policy* and the *no-new-reader* constraint are in force from today.
+
+**Owner:** respin-engineer at M6; the constraint is enforced at review time by the Respin brain-tenancy gate.
+
+**Revisit:** if a legitimate support or dispute workflow needs a longer window — chargeback dispute windows can exceed 90 days, and that is the most likely reason this number moves.
+
+### D-AUDIT-3 — Ledger-fold revisit trigger: 10,000 rows / 250 ms p95 (audit #22)
+
+**The problem:** R-20/D-M1-7 says "revisit snapshotting if fold cost bites" with no metric and no threshold — an escape hatch that cannot fire, because nothing measures the thing that would trip it. The fold is O(n) over a workspace's entire ledger history under a full-workspace advisory lock, and that lock will serialize concurrent generations on one multi-seat Studio workspace once M3 lands.
+
+**Decision:** instrument now, and name the numbers that trigger the revisit:
+
+- **Metrics:** `respin.credits.fold.row_count` (per-workspace ledger rows folded) and `respin.credits.fold.duration_ms` — both emitted at the balance authority, **workspace-scoped, with no customer PII** (workspace id is an internal identifier, not personal data).
+- **Revisit triggers (either one):** any single workspace reaches **10,000 ledger rows**, or the **seven-day p95 fold duration exceeds 250 ms**.
+
+These are **operational triggers, not user-facing guarantees** — nothing in the product promises a fold latency, and this entry does not create such a promise.
+
+**Owner:** respin-engineer. The metrics ship with this remediation (R3); the dashboard/alert that watches them is deployment-gated and belongs with the first Lightsail runbook.
+
+**Revisit:** at either trigger, or at M3 entry — whichever is first — with the snapshot-row design D-M1-7 already names (never a mutable counter).
+
+### D-AUDIT-4 — Repository license posture: proprietary, all rights reserved (audit #19)
+
+**The problem:** no LICENSE file anywhere in a repo that `NORTH_STAR.md` describes as "a subscription service." Absent a license, default copyright applies and nobody — including a future collaborator or contractor — has any recorded grant.
+
+**Decision:** add an explicit **proprietary / all-rights-reserved** notice at the repository root. This matches the actual distribution posture: Respin is a hosted subscription product, not a distributable library, and no part of this repo is published to a package registry. **No OSI license is adopted by assumption** — that would be a real grant of rights made by default rather than by choice.
+
+**Scope note:** the notice covers this repository's own source. It makes no claim about the third-party dependencies in `respin/pnpm-lock.yaml`, whose licenses are their own; D-AUDIT-4 is a checklist posture, **not legal advice**.
+
+**Revisit:** if any part of the repo is ever intended for public distribution or open-source release, or if a contractor agreement requires a different grant.
+
+**Related design note (not a decision, but gated by one):** D-AUDIT-1…4 are the four *policy* findings. The audit's fifth unrecorded-design finding (#23, no profile-level tenancy cage for M2's `creator_profiles`) is answered by `docs/plans/respin-m2-profile-cage-design.md`, which is an **M2 entry gate**: a `VerifiedProfileId` brand with no `trustProfileId` counterpart, composite workspace+profile scoping at every accessor, a non-enumerating refusal, and six tests (P1–P6) that must exist and fail against un-caged code before any M2 schema or route is written.
+
+## R-26 — `rate_limit` is a personal-data store, and it gets its own retention sentence (tenancy gate, 2026-08-18)
+
+**Append-only, as this file requires — R-26 does not edit R-25, it adds the row R-25 should have had.**
+
+**The problem.** The audit-remediation work that recorded D-AUDIT-2 (a 90-day retention policy for `stripe_events.payload`, which holds unredacted customer email, name and billing address) shipped a NEW personal-data store in the same change and gave it no retention sentence at all: the `rate_limit` table added for audit #20's durable limiter.
+
+`rate_limit.key` stores a **plaintext client IP**. Verified in the installed package, not assumed: `@better-auth/core` 1.6.28 builds the key as `` `${ip}|${path}` `` (`dist/utils/ip.mjs`). An IP address is personal data. D-AUDIT-2 enumerated the PII stores this system holds and this one was not in the list, because it did not exist yet — which is exactly how a store ends up unrecorded.
+
+**Decision.**
+
+1. **`rate_limit` is a recognised personal-data store.** It joins `stripe_events.payload` on the list D-AUDIT-2 opened.
+2. **Retention: 24 hours after `last_request`.** Far shorter than D-AUDIT-2's 90 days, and the asymmetry is the point — a rate-limit counter has no audit, dispute or support value once its window has passed, so nothing is served by keeping it. The longest window any configured rule uses is one hour (`/sign-up/email`, `/forget-password`, `/reset-password`); 24 hours is a generous multiple of that and needs no coordination if a rule widens.
+3. **Do NOT rely on better-auth's own cleanup.** It prunes opportunistically — only when some *other* key's window is found expired — so a quiet endpoint's rows can persist indefinitely. That is an internal of a pinned dependency, not a retention guarantee, and treating it as one would be the same "trusting a default nobody chose" mistake audit #20 was about.
+4. **REQ-A04 (export/deletion) status: OUT of scope for export, IN for deletion sweep.** The rows are request metadata keyed by IP and path, not workspace-scoped creator content, and they are not joinable to a workspace — so there is nothing meaningful to hand a creator in an export, and attempting to attribute them would mean *inferring* which IP belonged to which person, which is worse than not exporting. They are covered by the time-based sweep above instead.
+
+**Owner:** respin-engineer, with the M6 retention receiver (the same maintenance task D-AUDIT-2's redaction lands in — one sweep, two tables).
+
+**Also recorded, and NOT fixed here — a live operational hazard.** `advanced.ipAddress.trustedProxies` is **unset**. The installed types state that when it is unset better-auth "trusts only single-value IP headers", and its `getIPFromHeader` returns `null` for a forwarded chain with more than one hop — after which every request falls back to the single shared key `no-trusted-ip|<path>`. **Behind a two-hop proxy, or against any client that sends its own `X-Forwarded-For`, all tenants share ONE 5-per-minute sign-in bucket and one client can lock everybody out of sign-in.** It is not configured here because the correct value is the deployment's real proxy addresses or CIDRs, and Lightsail is unprovisioned — guessing one would be worse than leaving it visible, since a wrong `trustedProxies` lets a client spoof its own IP and evade the limiter entirely.
+
+**This is a first-deploy blocker, alongside the #9 backup drill:** set `trustedProxies` to the actual proxy addresses when the deploy shape exists, and add a two-hop `X-Forwarded-For` case asserting per-client keying survives. The current test suite proves per-client limiting only for the single-hop header it sends.
+
+**Revisit:** at first deploy (both halves), or if a rate-limit rule's window ever exceeds 24 hours.
+
+## R-27 — R-26's trusted-proxy blocker is enforced at boot, not recorded in prose (remediation review, 2026-08-18)
+
+**Append-only — R-27 does not edit R-26. R-26's analysis was right and stands; this adds the enforcement it lacked.**
+
+**The problem.** R-26 diagnosed the `trustedProxies` hazard exactly, verified it in the installed package, and declared it a **first-deploy blocker** — and then left it as a paragraph in this file. Nothing would have stopped a production deploy from going out with it unset. That is a gap this project has already named for itself: audit #21's "no new reader of `stripe_events.payload`" constraint was given a source-scanning test precisely because *"a constraint that lives only in a decision document is a constraint the next milestone breaks by accident."* The retention rule got a tripwire; the rule that can lock every creator out of sign-in got prose. The asymmetry was the finding.
+
+**Also confirmed — the CONSEQUENCE empirically, the MECHANISM from the installed package.** A test drives the **real handler** with a two-hop `X-Forwarded-For`: with no trusted proxies, client A's six sign-in attempts return **429 to a different client B** — one client locking out another, reproduced end-to-end. The *key* they collapse onto in that test is `127.0.0.1|…`, not production's `no-trusted-ip|…`, because Better Auth reads the real `process.env` for its dev/test detection and the suite runs under `NODE_ENV=test`; production's exact key is not reachable from a test process. A companion case asserts the key that is really shared, so the difference is visible rather than assumed. R-26's mechanism was verified by reading `@better-auth/core` 1.6.28 (`utils/ip.mjs`, `api/rate-limiter/index.mjs`) and is accurate in every particular; the cross-tenant consequence is what the handler test demonstrates.
+
+**Decision.**
+
+1. **A non-local environment must choose a posture, and every auth request fails until it does.** `createAuth` resolves `advanced.ipAddress.trustedProxies` through `resolveTrustedProxies`, which throws `TrustedProxiesConfigError` when `RESPIN_TRUSTED_PROXIES` is unset, empty, malformed, or operationally useless (an all-matching range).
+
+   **Scope is wider than "production", deliberately.** Keying on that literal string was wrong: Better Auth's localhost fallback covers only `development`/`dev`/`test`, so **`staging`, `preview` and an unset `NODE_ENV` get no fallback and no resolvable IP** while `rateLimitEnabled` still has the limiter ON — the full hazard, in the environment most likely to share production's proxy topology. Exempt now means "the library guarantees a fallback", not "not production".
+
+   **It is not literally a boot refusal.** `getAuth()` is lazy, so the process starts and static pages render; the throw lands on the first request that touches auth, as a 500. Fail-closed, but a deploy can go green with the failure latent. Calling `getAuth()` once at server start would make it a true boot failure — deferred to the deployment shape rather than guessed at, and listed below as the remaining first-deploy task.
+2. **Two ways forward, both printed by the refusal** (fail closed, never without a way forward — CLAUDE.md 2026-07-30): a real list of proxy IPs/CIDRs, or the literal `none` for a genuinely single-hop deployment. The opt-out must be **typed**, so it is a decision on the record rather than an inherited default — the same distinction audit #20 drew about `rateLimit.enabled`.
+3. **Entries are validated against a one-directional rule: anything we accept, Better Auth accepts.** Better Auth drops an entry it cannot parse (it warns, but a start-up warning is not a control), and if every entry is dropped the list is empty and the shared bucket returns *while the configuration looks correct*. The validator is deliberately **stricter** than the library's, never looser, and a **generative** test measures exactly that against the installed `findInvalidTrustedProxies` so the two cannot drift. Generative is load-bearing, not a flourish: the first version of that test pinned 18 hand-picked strings, the validator was fixed until those passed, and the tenancy gate then found **nine** further over-accepts in unlisted classes — zero-padded IPv4 (`010.000.000.000/8`, which a person would plausibly type) and IPv6 group-count errors (`1:2`, `:1`) — one of which reproduced the shared-bucket outage end-to-end. That is the 2026-07-30 lesson in its failing form: fix the class, not the named instances. The corpus is now built by permutation (octet shapes × positions, IPv6 group counts × elision placement, prefixes × malformed bases) and is mutation-proven to catch the padding class. It also rejects an **all-matching range** (`0.0.0.0/0`): syntactically valid, and it trusts every hop, so `getIPFromHeader` resolves no client at all.
+
+4. **This decision CHANGES the PII story, and that is not incidental.** Choosing a real proxy list is precisely what makes a genuine client IP resolvable — and therefore *stored*. Two sinks: `rate_limit.key`, which R-26 covered with a 24-hour retention sentence, and **`session.ip_address`** (`packages/db/src/auth-schema.ts`), which R-26 did not enumerate and which has no retention, export or deletion sentence anywhere. Before this change a multi-hop deployment wrote `no-trusted-ip` and `""`; after it, both hold a plaintext IPv4 (IPv6 is truncated to /64 by the library's `normalizeIP`). **`session.ip_address` joins the personal-data list D-AUDIT-2 opened**, and needs its own retention sentence with the M6 receiver — recorded here as an open item, not fixed by this decision.
+5. **Local environments are unaffected** — better-auth falls back to localhost there, so there is no proxy to name and nothing to get wrong.
+6. **R-26's remaining half is still owner work, and is unchanged:** the *value* is the deployment's real proxy addresses. This decision does not guess one. It guarantees somebody must supply or explicitly decline one before production runs.
+
+**A residual this guard CANNOT close, recorded rather than papered over.** The validation is a bound on the *syntactic* class only. A well-formed, accepted range that is semantically **too broad** reproduces the same shared bucket: `getIPFromHeader` walks the chain right-to-left and returns `null` when *every* hop is trusted, so a range that happens to contain real clients resolves no client at all. Note the symptom is **per-request, not global**: only the clients whose own address falls inside a trusted range collapse onto the shared bucket, while everyone else keys normally — a partial collapse, which is harder to spot at first deploy than a total outage would be. Measured: only the literal `/0` is rejected — `0.0.0.0/1` and `::/1` are accepted, and `["203.0.113.0/24","10.0.0.0/8"]` against a chain from `203.0.113.9` yields `null`.
+
+This is **inherent to `trustedProxies`, not a gap in the implementation**, and deliberately not addressed by a construction-time probe: deciding it requires knowing which client addresses actually arrive, which no synthetic chain can supply. The mitigations are operational, not static — set the list to the narrowest ranges that cover the real proxy hops, and watch for Better Auth's one-time *"Rate limiting could not determine a client IP…"* warning, which is the only runtime tell that the list has swallowed the client. **This is part of what "set it from the deployment's actual proxy hops, never a guess" means, and it is a first-deploy review item.**
+
+**What this does NOT claim.** No production deploy has happened; the guard is proven by test and by fuzz, not by a deploy. Setting the real addresses remains a first-deploy task alongside the #9 backup drill. The syntactic validator does not and cannot certify that a well-formed range is the *right* range.
+
+**Owner:** respin-engineer (enforcement, landed); deployment owner (the value, at first deploy).
+
+**Revisit:** at first deploy, when the real proxy addresses replace the placeholder choice.
+
+## R-28 — A pack settling during a pause MINTS; a monthly grant does not (remediation review close-out, 2026-08-18)
+
+**Append-only. R-28 does not edit R-25/D-AUDIT-1 — it decides the case D-AUDIT-1 left unstated.**
+
+**The problem.** D-AUDIT-1 settled what `invoice.paid` does during a pause, with a discriminator, a structured log and tests. The **pack mint** branch of `checkout.session.completed` had no pause consideration at all. The window is real and reachable — checkout opens → the owner pauses → the payment settles — so the product had a live money behaviour that nobody had decided. Behaviour by absence is not a decision, and the asymmetry with its sibling branch is what made it worth naming: one path had a recorded policy and a greppable refusal, the other had silence.
+
+**Decision: MINT.** The credits land, exactly as they do outside a pause.
+
+**Why this is not in tension with REQ-G08.** The distinction is *what a pause suspends*:
+
+- A **monthly allowance** is an ENTITLEMENT the pause suspends. Granting one during a pause hands over something not owed — REQ-G08's "no monthly grants", enforced by D-AUDIT-1.
+- A **pack** is a PURCHASE the owner initiated and Stripe has already collected. Refusing the mint would take the money and deliver nothing, which is strictly worse than the alternative and is not what "no charges while paused" is protecting anyone from. The **authorization** is what REQ-G08 forbids here, and that is refused at `createPackCheckoutUrl` — before Stripe is contacted, and now against `pause_periods` rather than a mirror proxy. A settlement arriving afterwards is the tail of a purchase that was already permitted.
+
+**Said precisely, because the loose form invites a wrong reading** (billing gate, 2026-08-18): money *does* move during the pause — the card is charged at settlement. What happened before the pause is the owner's **authorization**. So the rule is not "no money moves while paused"; it is that an **owner-initiated, pre-pause-authorized** charge is not what "no charges while paused" protects anyone from, whereas a **system-initiated** one — a renewal, an auto-top-up — is. Both system-initiated paths are refused while paused (`invoice.paid` by D-AUDIT-1, `maybeAutoTopup` by `mayChargeOffSession`), which is what makes this distinction a line rather than an exception.
+
+**Both settlement events are covered.** `checkout.session.completed` and `checkout.session.async_payment_succeeded` route to the same branch, so a delayed-notification payment settling deep into a pause is governed by this decision too.
+
+**Stated consequence:** the credits are **frozen, not lost** — `effectiveExpiry` freezes every lot's clock for the duration of the pause, so the pack's 12 months are not consumed while the workspace is paused. `debitCredits` refuses to spend them until the pause ends, which is the intended behaviour and not a defect.
+
+**Pinned, not asserted:** `stripe.test.ts` → "R-28: a PACK settling during a pause still mints", with a same-fixture contrast proving a monthly grant in the *same* open pause is refused. The two behaviours are now tested side by side, which is what stops a future change from quietly aligning them.
+
+**Owner:** respin-engineer.
+**Revisit:** if a pause is ever given a "refund in-flight purchases" behaviour, which would change the answer.
+
+## R-29 — The Vivian asset boundary is confirmed: the shared library seeds mechanism-level only (M2 entry, 2026-08-19)
+
+**Closes PRD Open Decision 3**, which the build-plan names as a hard precondition on M2's library-seeding task ("confirm PRD open decision 3 before this task"). Recorded here in writing because the build-plan asked for writing, and because a boundary agreed in conversation and never written down is the boundary that erodes.
+
+**Context.** The shared framework library is the middle layer of the three-layer IP (universal laws → curated shared library → per-creator brain). Its seed corpus is the generalised F1–F9 framework set derived from the vivian-content method. That corpus has two separable parts: the *mechanisms* (what structure converts, and why), and the *person* (her voice rules, her performance log, her niche specifics, her numbers).
+
+**Decision — owner-confirmed 2026-08-19.** The shipped shared library seeds from **mechanism-level content only**: F1–F9 generalised to name, beats, why-it-converts, applicability, and tested caveats. **Vivian's voice, her log, her personal specifics, and her performance numbers never enter the product** — not in the seed, not in a framework's evidence entries, not in a prompt bundle.
+
+**This is the same rule R-9 already applies to every creator, applied to the seed corpus.** R-9 forbids a creator's session from contributing anything but mechanism-level content to the library (REQ-D04). A seed exempted from that rule would make the library's first nine rows the only rows in the product that carry a person — and would mean the library's own tenancy guarantee was false on day one.
+
+**Consequences.**
+- The seed is a checked-in data file reviewable as text, not an import from a private corpus. A reader can verify the boundary by reading it.
+- `frameworks` rows seeded this way carry `visibility='shared'`, `owner_profile_id=NULL`, and a `curator_status` set by a named curator per REQ-D02 — the seed does not self-approve.
+- Every seeded framework needs a `why_it_converts` written as a general mechanism claim. Where the original evidence is a single creator's result, the claim is stated at the mechanism level and its `confidence` reflects the thin evidence, rather than borrowing authority from numbers the product will not show.
+- The boundary is testable and will be tested: the M2 plan carries an assertion over the seed data that no seeded framework carries personal-specific fields, so a later seed edit cannot quietly reintroduce them.
+
+**Owner:** respin-engineer.
+**Revisit:** if Vivian ever becomes a profile *inside* the product, at which point her data is ordinary creator data under R-9 and this entry does not grant it any additional path into the library.

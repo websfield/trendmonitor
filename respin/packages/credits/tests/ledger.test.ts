@@ -61,7 +61,7 @@ describe("ledger ops (PGlite)", () => {
       });
       await purchasePackCredits(t, {
         workspaceId: ws, amount: 1000, expiresAt: future(365 * 24 * HOUR),
-        amountCents: 1000, refType: "checkout", refId: "cs_1",
+        amountCents: 1000, refType: "checkout", refId: "cs_1", configVersion: 1,
       });
     });
     await tx(db, (t) =>

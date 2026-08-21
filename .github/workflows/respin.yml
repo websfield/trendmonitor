@@ -37,6 +37,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      DATABASE_URL: postgres://respin:respin_ci@localhost:5432/respin
       TEST_DATABASE_URL: postgres://respin:respin_ci@localhost:5432/respin
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +58,10 @@ jobs:
           pnpm --version
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
+      - name: Apply committed migrations
+        # db:check is intentionally offline. This fresh service database makes
+        # the gate prove that every committed migration applies in Postgres.
+        run: pnpm db:migrate
       - name: Typecheck
         run: pnpm typecheck
       - name: Lint
@@ -76,3 +81,29 @@ jobs:
         run: pnpm db:check
       - name: Build
         run: pnpm build
+      # DEPENDENCY VULNERABILITY SCAN (audit 2026-08-17 #18). Nothing watched
+      # this tree before: no CI audit step, no dependabot, no renovate, no audit
+      # script — so "are any of our pinned dependencies known-vulnerable?" was a
+      # question this repo had no way to ask.
+      #
+      # SCOPE, stated because a scan's scope is exactly what people over-read:
+      # this runs at `respin/` and therefore covers the RESPIN workspace's
+      # locked tree ONLY. It says nothing about `src/` (UGC Intelligence,
+      # Python + .NET) or `cutdown/`, which have their own toolchains and would
+      # need their own jobs. Do not read a green respin job as a clean repo.
+      #
+      # THRESHOLD: high. Anything high or critical fails the build; moderate and
+      # low are reported by the non-blocking summary below so they are visible
+      # without gating every PR on a transitive advisory nobody can action.
+      #
+      # EXCEPTION PROCESS: there is no ignore-list flag here on purpose — an
+      # allowlist inside the workflow is an exception nobody reviews. To accept
+      # a specific advisory, add a `pnpm.auditConfig.ignoreCves` entry in
+      # respin/package.json with a comment naming the advisory, why it is not
+      # reachable from this code, and who to ask — so the exception lands in a
+      # reviewed diff rather than in CI configuration.
+      - name: Dependency audit (high/critical fails)
+        run: pnpm audit --audit-level high --prod
+      - name: Dependency audit — full report (never fails the build)
+        if: always()
+        run: pnpm audit || true

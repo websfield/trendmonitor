@@ -39,3 +39,5 @@ Thumbs.db
 *.key
 # ---- Codebase map (generated, not tracked) ----
 .codebase-map/
+# ---- Playwright MCP (generated browser session artifacts, not tracked) ----
+.playwright-mcp/

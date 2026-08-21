@@ -23,6 +23,7 @@ import { ensurePauseStarted } from "../src/pause";
 import { handleStripeEvent, DuplicateStripeEvent } from "../src/stripe/webhooks";
 import { appendConfigVersion } from "@respin/config";
 import { deriveBalance } from "../src/balance";
+import { getWorkspaceBillingState } from "../src/state";
 import { InsufficientCreditsError } from "../src/errors";
 
 const MAINTENANCE_URL = process.env.TEST_DATABASE_URL;
@@ -38,7 +39,10 @@ if (!MAINTENANCE_URL) {
       "(the write clock, round 10); " +
       "one PaymentIntent under 8 DISTINCT event ids mints one auto-top-up pack; " +
       "owner-Pause racing its reconciling webhook keeps ONE open pause and never silently " +
-      "acknowledges-and-discards the event)."
+      "acknowledges-and-discards the event; " +
+      "DIFFERENTIAL-PAYLOAD mirror races — audit 2026-08-17 #3's own required proof — where two " +
+      "concurrent Stripe deliveries carry DIFFERENT state and the newer one must survive whichever " +
+      "wins the scheduler)."
   );
 }
 
@@ -52,6 +56,27 @@ describe.skipIf(!MAINTENANCE_URL)("credit ledger under REAL concurrency", () => 
   afterAll(async () => {
     await harness?.pool.end();
   });
+
+  /**
+   * PRE-WARM the pool before a race, and it is not cosmetic — without it the
+   * differential-payload cases below were VACUOUS.
+   *
+   * `pg.Pool.connect()` opens a real TCP connection plus auth for a racer that
+   * finds no idle client, which measured ~11ms here. `handleStripeEvent`'s whole
+   * transaction is ~6 round trips, i.e. FASTER than that setup — so the second
+   * racer's transaction began after the first had already committed, its mirror
+   * SELECT saw the committed watermark, and it converged to `ignored` for the
+   * honest reason rather than because of the lock. Both cases passed with the
+   * lock disabled (verified, 3 runs) until this was added: a green result that
+   * proved the harness, not the invariant. This is the "present-and-unrun"
+   * failure mode from CLAUDE.md's 2026-08-10 lesson, in race form.
+   */
+  async function prewarmPool(n: number): Promise<void> {
+    const clients = await Promise.all(
+      Array.from({ length: n }, () => harness.pool.connect())
+    );
+    for (const c of clients) c.release();
+  }
 
   async function mkWorkspace(): Promise<VerifiedWorkspaceId> {
     const [w] = await harness.db
@@ -393,6 +418,19 @@ describe.skipIf(!MAINTENANCE_URL)("credit ledger under REAL concurrency", () => 
               subscription_item_details: { subscription: "sub_race" },
             },
           }] },
+          // THE INVOICE's own subscription binding, distinct from the LINE's.
+          // Absent here until the 2026-08-17 remediation, and its absence is a
+          // FIXTURE defect, not a code one: a real subscription invoice always
+          // carries `parent.subscription_details` (stripe@22.5.0 Invoices.d.ts),
+          // and audit #4's identity check reads exactly that field before
+          // granting. Without it every delivery in this race threw and the case
+          // measured ZERO grants against an expected one.
+          //
+          // Identical to the fixture defect R1 already corrected in
+          // isolation.test.ts — and it survived here only because the Docker
+          // suites were never run after R1 landed, which is the gap this run
+          // closes. The sibling fixture in stripe.test.ts has always set both.
+          parent: { subscription_details: { subscription: "sub_race" } },
         } },
       } as never;
       const results = await Promise.allSettled(
@@ -567,6 +605,233 @@ describe.skipIf(!MAINTENANCE_URL)("credit ledger under REAL concurrency", () => 
         (s) => s.workspaceId === ws
       );
       expect(mirror.pausedAt).not.toBeNull();
+    }
+  );
+
+  // ==========================================================================
+  // AUDIT 2026-08-17 #3 — THE DIFFERENTIAL-PAYLOAD RACES.
+  //
+  // The audit's most cross-confirmed finding (a Claude depth read, the
+  // correctness critic, and Codex, independently, on the same lines) and the
+  // one the plan names as needing a race "where the winning state is
+  // observable". Every pre-existing webhook race in this file fires the SAME
+  // payload concurrently — which idempotency masks, so they could not have
+  // caught this: two deliveries carrying the same facts converge no matter how
+  // badly they interleave.
+  //
+  // These carry DIFFERENT facts. Each of the five mirror writers was an
+  // unlocked read-then-write: read the mirror, check staleness against THAT
+  // snapshot, then a plain `.update()`. Unlocked, both racers read the SAME
+  // pre-state, both pass their own staleness check, and whichever commits
+  // second wins — so a stale delivery silently reverts newer billing state,
+  // with no later event to correct it.
+  //
+  // The assertion in each case is ORDER-INDEPENDENCE: the final mirror is the
+  // NEWER payload's, whichever racer the scheduler happens to run first. That
+  // is the property the lock buys, and it is false without it.
+  // ==========================================================================
+
+  it(
+    "AUDIT #3: two subscription snapshots with DIFFERENT payloads — the NEWER one survives, whichever wins the scheduler",
+    { timeout: 60_000 },
+    async () => {
+      const { db } = harness;
+      await seedAuthUser(db, "diff_sub_user");
+      await seedDb(db);
+      await prewarmPool(4);
+
+      // ROUNDS, and the count is load-bearing. A real race is scheduler-
+      // dependent: with the lock removed this assertion failed on 3 of 5
+      // single-round runs, so ONE round would be a flaky proof — green on the
+      // mutant two times in five. Each round is an independent workspace and an
+      // independent coin flip; six of them makes the mutant reliably red while
+      // the fixed code stays deterministically green (it does not depend on who
+      // wins — that is the whole property).
+      const ROUNDS = 6;
+      for (let round = 0; round < ROUNDS; round += 1) {
+        const ws = await mkWorkspace();
+        const cus = `cus_diff_sub_${round}`;
+        const subId = `sub_diff_${round}`;
+        await db.insert(subscriptions).values({
+          workspaceId: ws, stripeCustomerId: cus,
+          stripeSubscriptionId: subId, stripePriceId: "price_creator",
+          status: "active",
+        });
+        const now = Math.floor(Date.now() / 1000);
+        const OLD_AT = now;
+        const NEW_AT = now + 3600; // an hour later — an unambiguous ordering.
+
+        const mkSnapshot = (id: string, priceId: string, createdSec: number) =>
+          ({
+            id, object: "event",
+            type: "customer.subscription.updated",
+            api_version: "x", created: createdSec, livemode: false,
+            pending_webhooks: 0, request: null,
+            data: { object: {
+              id: subId, object: "subscription", customer: cus,
+              status: "active", cancel_at_period_end: false,
+              pause_collection: null,
+              items: { object: "list", data: [{
+                id: `si_diff_${round}`, object: "subscription_item",
+                price: { id: priceId, object: "price" },
+                current_period_start: createdSec,
+                current_period_end: createdSec + 30 * 86400,
+              }] },
+            } },
+          }) as never;
+
+        // The creator→pro UPGRADE (newer) racing a stale creator snapshot.
+        // `stripePriceId` is what `state.ts` derives the TIER from at read
+        // time, so a reverted price is a paying customer served the wrong
+        // entitlement — silently, with no later event to correct it.
+        await Promise.allSettled([
+          handleStripeEvent(db, mkSnapshot(`evt_diff_new_${round}`, "price_pro", NEW_AT)),
+          handleStripeEvent(db, mkSnapshot(`evt_diff_old_${round}`, "price_creator", OLD_AT)),
+        ]);
+
+        const [mirror] = (await db.select().from(subscriptions)).filter(
+          (s) => s.workspaceId === ws
+        );
+        // UNLOCKED this is `price_creator` whenever the stale racer commits
+        // second: both read `mirrorEventAt: null`, both pass the order guard,
+        // and the loser's plain `.update()` lands last. The lock makes the
+        // loser re-read the committed watermark, so it is `ignored` instead.
+        expect(
+          mirror.stripePriceId,
+          `round ${round}: the newer snapshot's price must survive whichever racer commits last`
+        ).toBe("price_pro");
+        expect(mirror.mirrorEventAt?.getTime()).toBe(NEW_AT * 1000);
+      }
+    }
+  );
+
+  it(
+    "AUDIT #3: a stale invoice racing a NEWER dunning snapshot cannot end the grace period it opens",
+    { timeout: 60_000 },
+    async () => {
+      const { db } = harness;
+      await seedAuthUser(db, "diff_grace_user");
+      await seedDb(db);
+      await appendConfigVersion(
+        db,
+        { ...CONFIG_V1_SEED, stripePriceMap: { price_creator: "creator" } },
+        "test-admin"
+      );
+      const ws = await mkWorkspace();
+      await db.insert(subscriptions).values({
+        workspaceId: ws, stripeCustomerId: "cus_diff_grace",
+        stripeSubscriptionId: "sub_diff_grace", stripePriceId: "price_creator",
+        status: "active",
+      });
+      const now = Math.floor(Date.now() / 1000);
+      const STALE_AT = now;
+      const DUNNING_AT = now + 3600;
+
+      // NEWER: the dunning snapshot that opens the 7-day window and stamps the
+      // watermark. Only subscription snapshots stamp `mirrorEventAt`.
+      const dunning = {
+        id: "evt_diff_dunning", object: "event",
+        type: "customer.subscription.updated",
+        api_version: "x", created: DUNNING_AT, livemode: false,
+        pending_webhooks: 0, request: null,
+        data: { object: {
+          id: "sub_diff_grace", object: "subscription", customer: "cus_diff_grace",
+          status: "past_due", cancel_at_period_end: false, pause_collection: null,
+          items: { object: "list", data: [{
+            id: "si_diff_grace", object: "subscription_item",
+            price: { id: "price_creator", object: "price" },
+            current_period_start: now, current_period_end: now + 30 * 86400,
+          }] },
+        } },
+      } as never;
+
+      // The dunning snapshot is applied FIRST and allowed to COMMIT, rather
+      // than raced against the invoice — and that ordering is the point, not a
+      // shortcut. Raced, this case was VACUOUS: the invoice's own mirror read
+      // lands before the snapshot's UPDATE commits, so it sees no deadline and
+      // skips the clear for an innocent reason. Verified by mutation — with the
+      // staleness guard removed the raced version passed 3 of 3.
+      //
+      // The production shape that actually bites is a grace window already
+      // OPEN and DURABLE when the late invoice arrives, which is exactly what
+      // "delivered late" means. So: commit the window, then race the late
+      // delivery against its own redelivery.
+      await handleStripeEvent(db, dunning);
+      const [opened] = (await db.select().from(subscriptions)).filter(
+        (s) => s.workspaceId === ws
+      );
+      expect(opened.graceExpiresAt, "the dunning window must be open").not.toBeNull();
+      const deadline = opened.graceExpiresAt as Date;
+
+      // OLDER: a paid invoice delivered late, twice, concurrently, under
+      // DISTINCT event ids — the redelivery race Stripe actually produces. Its
+      // allowance is a fact and is still granted; its opinion about the dunning
+      // window is stale. One invoice must still mint one allowance (the
+      // per-invoice unique), and NEITHER delivery may end the window.
+      const mkStaleInvoice = (id: string) =>
+        ({
+          id, object: "event",
+          type: "invoice.paid",
+          api_version: "x", created: STALE_AT, livemode: false,
+          pending_webhooks: 0, request: null,
+          data: { object: {
+            id: "in_diff_stale", object: "invoice", customer: "cus_diff_grace",
+            billing_reason: "subscription_cycle",
+            period_start: now, period_end: now,
+            // The RECURRING subscription line — the one that carries the
+            // allowance. `parent.type` and the proration flag live INSIDE
+            // `subscription_item_details` (installed SDK Invoices.d.ts), and
+            // getting that wrong is not cosmetic: an earlier draft of this
+            // fixture put `proration` at the line level and omitted
+            // `parent.type`, the selector correctly rejected it as not-a-
+            // subscription-line, `invoice.paid` was `ignored`, and the case
+            // "passed" its grace assertions having granted nothing at all.
+            lines: { object: "list", data: [{
+              id: "il_diff", object: "line_item",
+              period: { start: now, end: now + 30 * 86400 },
+              pricing: { price_details: { price: "price_creator" } },
+              parent: {
+                type: "subscription_item_details",
+                subscription_item_details: {
+                  subscription: "sub_diff_grace",
+                  subscription_item: "si_diff_grace",
+                  proration: false,
+                },
+              },
+            }] },
+            parent: { subscription_details: { subscription: "sub_diff_grace" } },
+          } },
+        }) as never;
+
+      await prewarmPool(4);
+      await Promise.allSettled([
+        handleStripeEvent(db, mkStaleInvoice("evt_diff_stale_a")),
+        handleStripeEvent(db, mkStaleInvoice("evt_diff_stale_b")),
+      ]);
+
+      const [mirror] = (await db.select().from(subscriptions)).filter(
+        (s) => s.workspaceId === ws
+      );
+      // BOTH halves of #3 are needed here, and only one of them is the lock.
+      // The lock serializes the two deliveries (so the per-invoice pre-check
+      // sees the committed winner instead of losing a unique-index race);
+      // `invoiceIsStale` in webhooks.ts is what stops the older opinion winning
+      // once they are serialized. With the deadline gone, `past_due` derives to
+      // `free` in state.ts — a paying customer dropped out of the window they
+      // were promised, permanently, because nothing re-opens a deadline.
+      expect(
+        mirror.graceExpiresAt?.getTime(),
+        "a stale paid invoice must not end the newer dunning window"
+      ).toBe(deadline.getTime());
+      expect(mirror.status).toBe("past_due");
+      expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe(
+        "grace"
+      );
+      // …and the redelivery race still mints exactly one allowance.
+      const grants = (await db.select().from(creditLedger)).filter(
+        (r) => r.workspaceId === ws && r.refType === "invoice"
+      );
+      expect(grants, "one invoice must mint one allowance").toHaveLength(1);
     }
   );
 });

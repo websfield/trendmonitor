@@ -97,7 +97,19 @@ export type PackParams = {
   stripeEventId?: string;
   refType: string;
   refId: string;
-  configVersion?: number;
+  /**
+   * REQUIRED, like the identical field on `DebitParams` and `GrantParams`
+   * (audit 2026-08-17 #24). It was optional here alone, which meant a pack —
+   * the one ledger row that carries REAL MONEY (`amountCents`) — could be
+   * written with no record of which config version priced it, while a debit
+   * costing zero dollars could not. Both production callers already passed it;
+   * the type simply did not make them.
+   *
+   * This is the same hardening the project already did once for `DebitParams`,
+   * for the same reason: "which config priced this?" is unanswerable after the
+   * fact, because the config table is append-only and the ACTIVE version moves.
+   */
+  configVersion: number;
 };
 
 export async function purchasePackCredits(

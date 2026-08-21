@@ -23,6 +23,7 @@ import {
 import { LedgerIntegrityError } from "./fold";
 import { ClockSkewError } from "./errors";
 import {
+  createInvoiceRecoveryUrl,
   createPackCheckoutUrl,
   createPortalUrl,
   createTierCheckoutUrl,
@@ -33,14 +34,23 @@ import {
   AutoTopupCapError,
   BillingRoleError,
   CheckoutInFlightError,
+  InvoiceRecoveryUnavailableError,
   NoLiveSubscriptionError,
   NoStripeCustomerError,
+  NotChargeableError,
   NotPausedError,
+  NotRecoverableError,
   PauseLengthError,
   StripeSessionUrlMissingError,
+  SubscriptionPausedError,
   UnknownTierPriceError,
   type CheckoutUrls,
 } from "./stripe/actions";
+import {
+  PackPriceMismatchError,
+  PackPriceNotMappedError,
+  PackPriceUnavailableError,
+} from "./stripe/pack-price";
 import {
   isStripeConfigured,
   StripeNotConfiguredError,
@@ -103,6 +113,18 @@ export {
   StripeNotConfiguredError,
   StripeSessionUrlMissingError,
   UnknownTierPriceError,
+  // Audit 2026-08-17 remediation (R1). Each is reachable from a facade method,
+  // so the walk in facade-errors.test.ts demands them here — and each has a
+  // rendered `?e=` code in app/(product)/billing-errors.ts, because a typed
+  // refusal app/** cannot instanceof degrades to "Something went wrong".
+  SubscriptionPausedError,
+  NotChargeableError,
+  PackPriceNotMappedError,
+  PackPriceUnavailableError,
+  PackPriceMismatchError,
+  // Audit 2026-08-17 remediation (R2) — the `incomplete` remedy's refusals.
+  InvoiceRecoveryUnavailableError,
+  NotRecoverableError,
 };
 export type { BalanceView, BillingState, CheckoutUrls };
 
@@ -127,6 +149,8 @@ export const respinCredits = {
   ) => createPackCheckoutUrl(getServerDb(), scope, email, urls),
   createPortalUrl: (scope: WorkspaceScope, returnUrl: string) =>
     createPortalUrl(getServerDb(), scope, returnUrl),
+  createInvoiceRecoveryUrl: (scope: WorkspaceScope) =>
+    createInvoiceRecoveryUrl(getServerDb(), scope),
   pauseSubscription: (scope: WorkspaceScope, months: number) =>
     pauseSubscription(getServerDb(), scope, months, new Date()),
   resumeSubscription: (scope: WorkspaceScope) =>

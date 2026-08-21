@@ -11,7 +11,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "tsx src/migrate-cli.ts",
     "db:check": "drizzle-kit check",
     "db:seed": "tsx src/seed-cli.ts",
     "test:concurrency": "vitest run --root ../.. packages/db/tests/concurrency.docker.test.ts"

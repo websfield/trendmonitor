@@ -14,6 +14,14 @@ import {
 } from "@respin/db";
 import { deriveBalance } from "../src/balance";
 import { effectiveExpiry, foldLedger } from "../src/fold";
+import {
+  FOLD_DURATION_METRIC,
+  FOLD_DURATION_P95_REVISIT_TRIGGER_MS,
+  FOLD_ROW_COUNT_METRIC,
+  FOLD_ROW_COUNT_REVISIT_TRIGGER,
+  setFoldMetricSink,
+  type FoldMetric,
+} from "../src/metrics";
 
 const D = (s: string) => new Date(s);
 // Fixed historical timeline (all < real now, so expiries materialize).
@@ -413,5 +421,117 @@ describe("replay order at an identical created_at (round-11 NOTE)", () => {
     const second = foldLedger([...rows].reverse(), [], new Date());
     expect(first.lots.map((l) => l.id)).toEqual(["a", "b"]);
     expect(second.lots.map((l) => l.id)).toEqual(["a", "b"]);
+  });
+});
+
+// ============ audit 2026-08-17 #22 / R-25 D-AUDIT-3: fold observability ======
+
+describe("fold metrics: the escape hatch R-20/D-M1-7 named can now actually fire", () => {
+  it("emits BOTH named metrics, per workspace, on every fold", async () => {
+    const db = await createTestDb();
+    const ws = await mkWorkspace(db);
+    await insertRows(db, ws, [
+      { delta: 100, kind: "grant", createdAt: JAN1, expiresAt: Y2030 },
+      { delta: 50, kind: "pack", createdAt: JAN10, expiresAt: Y2031 },
+      { delta: -30, kind: "debit", createdAt: JAN15 },
+    ]);
+
+    const seen: FoldMetric[] = [];
+    setFoldMetricSink((m) => seen.push(m));
+    try {
+      await deriveBalance(db, ws);
+    } finally {
+      setFoldMetricSink(null);
+    }
+
+    expect(seen).toHaveLength(1);
+    const [m] = seen;
+    // The ROW COUNT is the O(n) the decision is about — the history a fold
+    // replays, not the lot count and not a page size.
+    expect(m.rowCount).toBe(3);
+    expect(m.workspaceId).toBe(ws);
+    expect(Number.isFinite(m.durationMs)).toBe(true);
+    expect(m.durationMs).toBeGreaterThanOrEqual(0);
+    // NO PII, asserted rather than promised (D-AUDIT-3 says workspace-scoped,
+    // no customer PII): the payload is exactly these three keys, so a future
+    // edit that adds an email or a ledger ref to the metric fails here.
+    expect(Object.keys(m).sort()).toEqual([
+      "durationMs",
+      "rowCount",
+      "workspaceId",
+    ]);
+  });
+
+  it("the metric names are the ones decisions.md committed to", () => {
+    // A renamed metric silently breaks the dashboard the decision promises, and
+    // nothing else in the system would notice. Pinned to the literal strings.
+    expect(FOLD_ROW_COUNT_METRIC).toBe("respin.credits.fold.row_count");
+    expect(FOLD_DURATION_METRIC).toBe("respin.credits.fold.duration_ms");
+    expect(FOLD_ROW_COUNT_REVISIT_TRIGGER).toBe(10_000);
+    expect(FOLD_DURATION_P95_REVISIT_TRIGGER_MS).toBe(250);
+  });
+
+  it("counts rows AFTER materialization — the history the NEXT fold will replay", async () => {
+    const db = await createTestDb();
+    const ws = await mkWorkspace(db);
+    // A lot that has already expired with a remainder: the fold materializes
+    // one expiry row, so the ledger it leaves behind is longer than the one it
+    // was handed. Measuring the pre-materialization count would under-report
+    // the growth the threshold exists to watch.
+    await insertRows(db, ws, [
+      { delta: 100, kind: "grant", createdAt: JAN1, expiresAt: JAN10 },
+    ]);
+    const seen: FoldMetric[] = [];
+    setFoldMetricSink((m) => seen.push(m));
+    try {
+      await deriveBalance(db, ws);
+    } finally {
+      setFoldMetricSink(null);
+    }
+    expect(seen[0].rowCount).toBe(2);
+    const after = await db.select().from(creditLedger);
+    expect(after.filter((r) => r.workspaceId === ws)).toHaveLength(2);
+  });
+
+  it("a THROWING sink never takes the money path down", async () => {
+    const db = await createTestDb();
+    const ws = await mkWorkspace(db);
+    await insertRows(db, ws, [
+      { delta: 100, kind: "grant", createdAt: JAN1, expiresAt: Y2030 },
+    ]);
+    setFoldMetricSink(() => {
+      throw new Error("collector is down");
+    });
+    try {
+      // The whole reason emitFoldMetric owns a try/catch: observability is not
+      // allowed to make a balance unreadable.
+      const view = await deriveBalance(db, ws);
+      expect(view.balance).toBe(100);
+    } finally {
+      setFoldMetricSink(null);
+    }
+  });
+
+  it("each workspace is measured separately (no cross-workspace total)", async () => {
+    const db = await createTestDb();
+    const a = await mkWorkspace(db);
+    const b = await mkWorkspace(db);
+    await insertRows(db, a, [
+      { delta: 10, kind: "grant", createdAt: JAN1, expiresAt: Y2030 },
+    ]);
+    await insertRows(db, b, [
+      { delta: 10, kind: "grant", createdAt: JAN1, expiresAt: Y2030 },
+      { delta: 10, kind: "pack", createdAt: JAN10, expiresAt: Y2031 },
+    ]);
+    const seen: FoldMetric[] = [];
+    setFoldMetricSink((m) => seen.push(m));
+    try {
+      await deriveBalance(db, a);
+      await deriveBalance(db, b);
+    } finally {
+      setFoldMetricSink(null);
+    }
+    expect(seen.map((m) => m.rowCount)).toEqual([1, 2]);
+    expect(seen.map((m) => m.workspaceId)).toEqual([a, b]);
   });
 });

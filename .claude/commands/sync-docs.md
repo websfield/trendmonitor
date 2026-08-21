@@ -37,7 +37,7 @@ For each doc, cross-reference it against the change set and sort each required e
 `CLAUDE.md` is loaded into every session, so drift there is worse than drift in a README — a wrong line actively misleads every agent. Whenever the doc set includes a `CLAUDE.md`, run three extra checks on it:
 
 - **Truth.** Every command in its Commands section exists in the project's real scripts (manifest / Makefile / task runner); every reviewer skill and agent in its Critical-Paths table exists under `.claude/skills/` and `.claude/agents/`; every path in "Where things live" exists on disk. Each mismatch is a mechanical fix (or, if the code side is the wrong one, a flagged contradiction per Step 4).
-- **Diet.** If the file has grown well past ~100 lines, states the same rule twice, or inlines explanation a skill already carries, flag it as a *subjective* item: propose the trim, ask first. Bloat is drift too — it dilutes the rules agents must obey.
+- **Diet.** If the file has grown well past its stated line budget (this project's `CLAUDE.md` sets its own target in its header note — currently ~200 lines), states the same rule twice, or inlines explanation a skill already carries, flag it as a *subjective* item: propose the trim, ask first. Bloat is drift too — it dilutes the rules agents must obey.
 - **Lessons hygiene.** If it has a Lessons section: entries stay one line each; if the list is over its ~10 cap, propose which to merge or retire; and if a lesson has proven itself, offer to promote it — to a Non-negotiable rule in `CLAUDE.md`, or (when a diff pattern can catch it) to a guardrail rule in `.claude/guardrails.rules.json` (ask first — promotion changes enforcement, never do it silently).
 
 ### Step 4 — Apply and ask

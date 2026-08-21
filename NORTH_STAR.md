@@ -7,14 +7,14 @@
 Ship **Respin**: a subscription service where a creator opens the app with an idea, a trend, or footage and leaves 10 minutes later with a script in their voice, hooks to test, and a shot list — not a chat transcript. Durable order:
 
 1. **A per-creator brain that is inspectable, confirmable context** — never weights (R-8); nothing updates it silently.
-2. **An honest evidence loop** — results verified or excluded, n ≥ 3 before a rule, paid/organic never pooled; the product's own kill test is creators beating their own baseline (PRD §5.2).
+2. **An honest evidence loop** — results verified or excluded, n ≥ 3 before a rule, paid/organic never pooled; the product's own kill test is creators beating their own baseline (PRD §5, success metric 2, "The product's own kill test - baseline uplift").
 3. **A compounding curated framework library** — mechanism-level only, no creator's personal data ever (R-9).
 
 Proof by day 90 (PRD §5): 40% activation; ≥50% of pilot creators with ≥3 verified results beat their own baseline; free→paid ≥5%; ≥70% gross margin at Creator tier.
 
 ## Current focus
 
-M0 (repo skeleton, auth, CI, deploy) per `docs/initial/build-plan.md`, then M1 billing — metering exists before anything burns tokens. The two earlier product lines in this repo (UGC Intelligence `src/`, Cutdown `cutdown/`) receive maintenance only; re-open Cutdown's execution layer only on R-1's revisit trigger (pilot creators demanding done-for-you editing).
+M0 (repo skeleton, auth, CI) and **M1 billing** (2026-08-17, both Critical-Path gates PASS Ready A/A, live Stripe evidence run executed) are done per `docs/initial/build-plan.md` — metering exists before anything burns tokens, as intended. **M2 (brain/onboarding) is next.** One thing M1 deliberately did not close: no deploy surface exists yet. Two evidence rows stay open by design rather than by omission — E8 (payment-failed dunning) needs a Stripe test-clock route this product doesn't have, E9 (debit-refused) needs M3's debit call site (`docs/progress/respin-m1-review.md`). The two earlier product lines in this repo (UGC Intelligence `src/`, Cutdown `cutdown/`) receive maintenance only; re-open Cutdown's execution layer only on R-1's revisit trigger (pilot creators demanding done-for-you editing).
 
 ---
 

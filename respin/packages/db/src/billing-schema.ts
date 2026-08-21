@@ -77,6 +77,21 @@ export const subscriptions = pgTable(
     pausedAt: timestamp("paused_at", { withTimezone: true }),
     resumesAt: timestamp("resumes_at", { withTimezone: true }),
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    // The scheduled end of a subscription that is still LIVE. Both columns
+    // exist because Stripe expresses one fact two ways and the evidence run
+    // proved the boolean alone is not enough: cancelling through the Customer
+    // Portal on api_version 2026-05-27.dahlia emitted
+    // `{cancel_at: <ts>, cancel_at_period_end: FALSE, status: active}`, so a
+    // mirror reading only the boolean stored "not cancelling" for a
+    // subscription Stripe had already scheduled to end, and the billing page
+    // told a paying creator nothing. The installed SDK documents `cancel_at`
+    // as "a date in the future at which the subscription will automatically
+    // get canceled" (stripe@22.5.0 resources/Subscriptions.d.ts:128-130) and
+    // the boolean as "will (if status=active) or DID (if status=canceled)
+    // cancel at the end of the current billing period" — different questions,
+    // so both are mirrored and `scheduledCancelAt` (state.ts) is the ONE
+    // reader that turns the pair into a date.
+    cancelAt: timestamp("cancel_at", { withTimezone: true }),
     autoTopupEnabled: boolean("auto_topup_enabled").notNull().default(false),
     autoTopupMonthlyCapCents: integer("auto_topup_monthly_cap_cents"),
     // Stripe does not guarantee webhook delivery ORDER. This records the

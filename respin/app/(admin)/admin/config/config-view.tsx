@@ -11,7 +11,7 @@
 // It is a client component for ONE reason: an operator pasting a price map into
 // a textarea must not lose that paste when the document fails validation.
 // `useActionState` carries the draft back; a redirect could not.
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import {
   IDLE_CONFIG_FORM_STATE,
   type ConfigFormState,
@@ -64,12 +64,28 @@ export type ConfigEditorFormProps = {
   savedVersion: number | null;
 };
 
+/** Stable ids — the association is by CONSTANT, not by a string typed twice. */
+const TEXTAREA_ID = "config-content";
+const ISSUES_ID = "config-issues-list";
+
 export function ConfigEditorForm({
   active,
   state,
   action,
   savedVersion,
 }: ConfigEditorFormProps) {
+  const hasError = state.status === "error";
+  const hasIssues = hasError && (state.issues?.length ?? 0) > 0;
+  const errorRef = useRef<HTMLDivElement>(null);
+  // MOVE FOCUS on a rejected submit (audit #16). Keyed on the `state` OBJECT,
+  // not on `hasError`: `useActionState` returns a fresh object per submission,
+  // so a second rejection re-focuses the summary — whereas a boolean dependency
+  // would stay `true` and fire only once, leaving the operator's second failed
+  // save silent. Effects do not run under `renderToStaticMarkup`, so the
+  // component stays renderable by the suite exactly as before.
+  useEffect(() => {
+    if (state.status === "error") errorRef.current?.focus();
+  }, [state]);
   return (
     <div style={section} data-testid="config-editor">
       <h2 style={{ marginTop: 0 }}>
@@ -91,12 +107,26 @@ export function ConfigEditorForm({
         </div>
       ) : null}
 
-      {state.status === "error" ? (
-        <div style={warn} data-testid="config-form-error" role="alert">
+      {/* THE ERROR SUMMARY (audit 2026-08-17 #16, WCAG 2.4.3 / 1.3.1).
+          `role="alert"` announces it, but the operator who submitted was
+          scrolled to the Save button BELOW a 24-row textarea — so a sighted
+          keyboard user got no indication at all that anything had happened, and
+          the issue list had no programmatic link to the field it describes.
+          Two fixes, both needed: `tabIndex={-1}` + the focus effect below move
+          the caret here on a rejected submit (which scrolls it into view as a
+          side effect), and the textarea's `aria-describedby` names the list. */}
+      {hasError ? (
+        <div
+          style={warn}
+          data-testid="config-form-error"
+          role="alert"
+          tabIndex={-1}
+          ref={errorRef}
+        >
           <strong>{state.message ?? "The configuration was not saved."}</strong>
-          {state.issues && state.issues.length > 0 ? (
-            <ul data-testid="config-issues">
-              {state.issues.map((i) => (
+          {hasIssues ? (
+            <ul data-testid="config-issues" id={ISSUES_ID}>
+              {state.issues?.map((i) => (
                 <li key={`${i.path}:${i.message}`}>
                   <code>{i.path}</code>: {i.message}
                 </li>
@@ -111,18 +141,24 @@ export function ConfigEditorForm({
       ) : null}
 
       <form action={action}>
-        <label style={{ display: "block", marginBottom: "0.5rem" }}>
+        <label
+          style={{ display: "block", marginBottom: "0.5rem" }}
+          htmlFor={TEXTAREA_ID}
+        >
           Configuration document (JSON)
-          <textarea
-            name="content"
-            rows={24}
-            spellCheck={false}
-            style={{ width: "100%", fontFamily: "monospace" }}
-            defaultValue={
-              state.draft ?? (active.ok ? active.json : "")
-            }
-          />
         </label>
+        <textarea
+          id={TEXTAREA_ID}
+          name="content"
+          rows={24}
+          spellCheck={false}
+          style={{ width: "100%", fontFamily: "monospace" }}
+          // Only when there IS a list to point at: a dangling
+          // `aria-describedby` is announced as nothing and is worse than none.
+          aria-describedby={hasIssues ? ISSUES_ID : undefined}
+          aria-invalid={hasError || undefined}
+          defaultValue={state.draft ?? (active.ok ? active.json : "")}
+        />
         <button type="submit">Save as a new version</button>
         <p style={muted}>
           Saving never edits a row: it appends a new version, and the newest

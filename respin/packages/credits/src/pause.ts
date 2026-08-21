@@ -26,13 +26,24 @@
 // Knowledge is compared with knowledge on BOTH sides now, with the
 // `?? <processing column>` fallback keeping pre-migration rows conservative.
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
-import type { PausePeriod, TxLike, VerifiedWorkspaceId } from "@respin/db";
+import type { DbLike, PausePeriod, TxLike, VerifiedWorkspaceId } from "@respin/db";
 import { pausePeriods, subscriptions } from "@respin/db";
 import { assertWriteClock, CLOCK_SKEW_MS } from "./clock";
 import { LedgerIntegrityError } from "./fold";
 
+/**
+ * Is there an OPEN pause period? — the AUTHORITY on "is this workspace paused",
+ * as opposed to the `subscriptions.pausedAt` mirror.
+ *
+ * Accepts a plain connection as well as a transaction (billing gate,
+ * 2026-08-18). It is a single-row read with no write to order against, and
+ * `createPackCheckoutUrl` — which must ask this question before charging, for
+ * the same reason `debitCredits` asks it before spending — has no transaction
+ * to hand it. `getWorkspaceBillingState` is already `DbLike | TxLike` for the
+ * same reason.
+ */
 export async function hasOpenPause(
-  tx: TxLike,
+  tx: DbLike | TxLike,
   workspaceId: VerifiedWorkspaceId
 ): Promise<boolean> {
   const [open] = await tx
@@ -285,6 +296,31 @@ export async function ensurePauseEnded(
   // not the same clock (round-2 NOTE 3).
   await recordPauseEnd(tx, workspaceId, at, knownAt);
   return true;
+}
+
+/**
+ * The KNOWLEDGE time of the workspace's OPEN pause, or null if none is open —
+ * i.e. "when did we learn this workspace was paused?".
+ *
+ * Added for D-AUDIT-1 (audit 2026-08-17 #2), which needs to ask of an
+ * `invoice.paid`: *was this invoice's event created before the pause we know
+ * about, or during it?* Only a knowledge time can answer that, for the reason
+ * this file's header states at length — `started_at` is a PROCESSING time and
+ * can be minutes later than the fact it records, so comparing Stripe's
+ * `event.created` against it would mix two clocks, which has already been a
+ * live money defect in both directions (migrations 0007 and 0008).
+ *
+ * It lives HERE, beside the other pause readers, rather than in `webhooks.ts`,
+ * because the `started_known_at ?? started_at` fallback for pre-migration rows
+ * is this module's convention and a second copy of it would rot independently.
+ */
+export async function openPauseStartedKnownAt(
+  tx: TxLike,
+  workspaceId: VerifiedWorkspaceId
+): Promise<Date | null> {
+  const open = await openPause(tx, workspaceId);
+  if (!open) return null;
+  return open.startedKnownAt ?? open.startedAt;
 }
 
 /** The workspace's open pause row, if any (the one shape both helpers need). */

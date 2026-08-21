@@ -20,6 +20,7 @@ import {
   buyPackAction,
   openPortalAction,
   pauseAction,
+  recoverInvoiceAction,
   resumeAction,
   setAutoTopupAction,
   subscribeAction,
@@ -110,7 +111,6 @@ export default async function BillingSettingsPage(props: {
       state={state}
       isOwner={scope.role === "owner"}
       hasLiveSubscription={hasLiveSubscription}
-      cancelAtPeriodEnd={subscription?.cancelAtPeriodEnd ?? false}
       hasStripeCustomer={Boolean(subscription)}
       autoTopup={{
         enabled: subscription?.autoTopupEnabled ?? false,
@@ -126,6 +126,7 @@ export default async function BillingSettingsPage(props: {
         subscribe: subscribeAction,
         pack: buyPackAction,
         portal: openPortalAction,
+        recoverInvoice: recoverInvoiceAction,
         pause: pauseAction,
         resume: resumeAction,
         autoTopup: setAutoTopupAction,

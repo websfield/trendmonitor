@@ -171,6 +171,6 @@ Video rendering and editing (the parked Cutdown execution layer; revisit only af
 
 1. **Name and domain** - "Respin" is a placeholder; run domain research before the marketing site ships.
 2. **Trend source order** - resolved by R-11: YouTube Shorts is the launch wedge and the YouTube Data API the day-one source. The second source (licensed TikTok/IG data) is chosen from pilot demand. See `gtm.md` for the full go-to-market plan.
-3. **Vivian asset boundary** - the shipped shared library seeds from mechanism-level frameworks only (F1-F9 generalised); her voice, log, and personal specifics never enter the product. Confirm in writing before seeding.
+3. **Vivian asset boundary** - **resolved by R-29 (2026-08-19, owner-confirmed in writing)**: the shipped shared library seeds from mechanism-level frameworks only (F1-F9 generalised); her voice, log, and personal specifics never enter the product. The same rule R-9/REQ-D04 applies to every creator session, applied to the seed corpus. M2's library-seeding task is unblocked.
 4. **Free-tier abuse posture** - credit-gated already; decide whether Free requires a card after observing abuse, not before.
 5. **Annual pricing** - decide after 60 days of monthly cohort data.

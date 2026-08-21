@@ -91,7 +91,6 @@ function billingProps(over: Partial<BillingViewProps> = {}): BillingViewProps {
     state: { tier: "creator", state: "active" },
     isOwner: true,
     hasLiveSubscription: true,
-    cancelAtPeriodEnd: false,
     hasStripeCustomer: true,
     autoTopup: { enabled: false, monthlyCapCents: null },
     config: CONFIG_OK,
@@ -102,6 +101,7 @@ function billingProps(over: Partial<BillingViewProps> = {}): BillingViewProps {
       subscribe: "/a/subscribe",
       pack: "/a/pack",
       portal: "/a/portal",
+      recoverInvoice: "/a/recover-invoice",
       pause: "/a/pause",
       resume: "/a/resume",
       autoTopup: "/a/autotopup",
@@ -867,5 +867,276 @@ describe("billing error copy: completeness and hygiene", () => {
     );
     expect(billingErrorCode(new Error("something else"))).toBe("unknown");
     expect(billingErrorCode(undefined)).toBe("unknown");
+  });
+});
+
+// EVIDENCE-RUN FINDING 1: the page must TELL a paying creator their plan is
+// ending. Before this, the only copy for that was behind `cancelAtPeriodEnd`,
+// which the live Customer Portal never sets — and no test covered even that.
+describe("scheduled end (evidence-run finding 1)", () => {
+  const ENDS = new Date("2026-09-16T23:36:44.000Z");
+
+  it("renders the DATE the subscription is scheduled to end", () => {
+    const out = html(
+      <BillingView
+        {...billingProps({
+          state: { tier: "creator", state: "active", cancelAt: ENDS },
+        })}
+      />
+    );
+    expect(out).toContain("data-testid=\"scheduled-cancel\"");
+    expect(out).toContain("set to end on");
+    // The date itself, not a vague "later" — we have it, so we print it.
+    expect(out).toContain("2026-09-16");
+    // And it is not a dead end: the copy says a new plan is possible after.
+    expect(out).toContain("start a new plan afterwards");
+  });
+
+  it("NON-VACUITY: an ordinary active subscription shows no end notice", () => {
+    const out = html(<BillingView {...billingProps()} />);
+    expect(out).not.toContain("data-testid=\"scheduled-cancel\"");
+    expect(out).not.toContain("set to end on");
+  });
+
+  it("a PAUSED subscription that is also scheduled to end says BOTH", () => {
+    const out = html(
+      <BillingView
+        {...billingProps({
+          state: {
+            tier: "creator",
+            state: "paused",
+            resumesAt: new Date("2026-09-01T00:00:00.000Z"),
+            cancelAt: ENDS,
+          },
+        })}
+      />
+    );
+    expect(out).toContain("data-testid=\"paused\"");
+    expect(out).toContain("data-testid=\"scheduled-cancel\"");
+  });
+});
+
+// ================= audit 2026-08-17 remediation (R2) =================
+
+describe("audit #8: an INCOMPLETE subscription gets its own state and a remedy that can work", () => {
+  const incomplete = () =>
+    billingProps({
+      state: { tier: "free", state: "incomplete", pendingTier: "creator" },
+      // `incomplete` counts as LIVE — that is the whole trap. The duplicate-
+      // checkout guard is RIGHT to block a second plan here, so the fixture
+      // carries the same liveness the page computes.
+      hasLiveSubscription: true,
+    });
+
+  it("names the state, keeps the entitlement claim at Free, and says which plan is pending", () => {
+    const out = html(<BillingView {...incomplete()} />);
+    expect(out).toContain('data-testid="incomplete"');
+    expect(out).toContain("first payment has not completed");
+    expect(out).toContain("for the creator plan");
+    // The ENTITLEMENT is Free and the page says so — no credits were granted.
+    expect(out).toContain('data-testid="tier">free<');
+    expect(out).toContain("stays on Free");
+  });
+
+  it("offers the hosted-invoice action and NOT the Customer Portal (which cannot resolve it)", () => {
+    const out = html(<BillingView {...incomplete()} />);
+    expect(out).toContain('data-testid="incomplete-recovery"');
+    expect(out).toContain('data-testid="recover-invoice"');
+    expect(out).toContain("/a/recover-invoice");
+    // THE POINT OF THE FINDING: the Portal branch must not be what an
+    // incomplete subscriber is sent to.
+    expect(out).not.toContain('data-testid="manage-plan"');
+    expect(out).not.toContain("/a/portal");
+  });
+
+  it("keeps the duplicate-checkout guard intact — no Subscribe button is offered", () => {
+    const out = html(<BillingView {...incomplete()} />);
+    expect(out).not.toContain('data-testid="subscribe"');
+    expect(out).not.toContain('data-testid="subscribe-creator"');
+    expect(out).toContain("would bill you twice");
+  });
+
+  it("the recovery action is OWNER-ONLY, with the reason associated with the control", () => {
+    const out = html(
+      <BillingView {...billingProps({ ...incomplete(), isOwner: false })} />
+    );
+    expect(out).toContain('aria-describedby="recover-invoice-reason"');
+    expect(out).toContain('id="recover-invoice-reason"');
+    expect(out).not.toContain("/a/recover-invoice");
+  });
+
+  it("NON-VACUITY: an ACTIVE subscription still gets the Portal, not the invoice remedy", () => {
+    const out = html(<BillingView {...billingProps()} />);
+    expect(out).toContain('data-testid="manage-plan"');
+    expect(out).not.toContain('data-testid="incomplete-recovery"');
+    expect(out).not.toContain('data-testid="incomplete"');
+  });
+});
+
+describe("audit #1 (UI half): a PAUSED workspace is not offered a pack it would be refused", () => {
+  const paused = () =>
+    billingProps({
+      state: {
+        tier: "creator",
+        state: "paused",
+        resumesAt: new Date("2026-09-01T00:00:00.000Z"),
+      },
+    });
+
+  it("disables Buy pack and names the pause as the reason", () => {
+    const out = html(<BillingView {...paused()} />);
+    // The control is present but dimmed, with the reason linked to it.
+    expect(out).toContain('data-testid="buy-pack"');
+    expect(out).toContain('aria-describedby="buy-pack-reason"');
+    expect(out).toContain('id="buy-pack-reason"');
+    expect(out).toContain("a pause means no charges");
+    // …and no form posts to the pack action at all.
+    expect(out).not.toContain("/a/pack");
+  });
+
+  it("says the SAME thing the page's pause copy promises (no charges while paused)", () => {
+    const out = html(<BillingView {...paused()} />);
+    expect(out).toContain("frozen, not lost");
+  });
+
+  it("NON-VACUITY: an ACTIVE workspace can still buy a pack", () => {
+    const out = html(<BillingView {...billingProps()} />);
+    expect(out).toContain("/a/pack");
+    expect(out).not.toContain('aria-describedby="buy-pack-reason"');
+  });
+});
+
+describe("audit #17: every disabled billing control names its reason PROGRAMMATICALLY", () => {
+  it("each disabled ActionButton links its button to its own reason id", () => {
+    // A non-owner with no Stripe key: the widest set of disabled controls one
+    // render can produce.
+    const out = html(
+      <BillingView
+        {...billingProps({
+          isOwner: false,
+          stripe: { configured: false, remedy: PAGE_STRIPE_REMEDY },
+        })}
+      />
+    );
+    // Every `aria-describedby` this page emits must have a matching id, and
+    // every disabled button must have one — asserted as a PAIR so neither half
+    // can rot alone.
+    const described = [...out.matchAll(/aria-describedby="([^"]+)"/g)].flatMap(
+      (m) => m[1].split(" ")
+    );
+    expect(described.length).toBeGreaterThan(0);
+    for (const id of described) {
+      expect(out, `aria-describedby="${id}" must point at a real element`).toContain(
+        `id="${id}"`
+      );
+    }
+    const disabledButtons = [...out.matchAll(/<button[^>]*disabled[^>]*>/g)];
+    expect(disabledButtons.length).toBeGreaterThan(0);
+    for (const [tag] of disabledButtons) {
+      expect(tag, "a disabled control must say WHY, to a screen reader too").toContain(
+        "aria-describedby="
+      );
+    }
+  });
+});
+
+describe("audit #26: the auto-top-up control discloses that nothing can trigger it yet", () => {
+  it("carries the M3 disclosure, and the checkbox points at it", () => {
+    const out = html(<BillingView {...billingProps()} />);
+    expect(out).toContain('data-testid="auto-topup-unbuilt"');
+    expect(out).toContain("generation arrives in a later milestone");
+    expect(out).toContain('aria-describedby="auto-topup-unbuilt"');
+    expect(out).toContain('id="auto-topup-unbuilt"');
+  });
+
+  it("with no live subscription the checkbox names BOTH reasons", () => {
+    const out = html(
+      <BillingView {...billingProps({ hasLiveSubscription: false })} />
+    );
+    expect(out).toContain(
+      'aria-describedby="auto-topup-unbuilt auto-topup-blocked-reason"'
+    );
+    expect(out).toContain('id="auto-topup-blocked-reason"');
+  });
+
+  it("the disclosure is the SAME honesty the /usage page already gives for M3", () => {
+    const billing = html(<BillingView {...billingProps()} />);
+    const usage = html(<UsageView {...usageProps()} />);
+    for (const s of ["generation arrives in a later milestone", "(M3)"]) {
+      expect(billing, `billing must disclose: ${s}`).toContain(s);
+      expect(usage, `usage already discloses: ${s}`).toContain(s);
+    }
+  });
+});
+
+describe("audit #16: the admin config error summary is reachable and tied to the field", () => {
+  const rejected = (issues: { path: string; message: string }[]) => (
+    <ConfigEditorForm
+      active={{ ok: true, version: 2, json: "{}" }}
+      state={{
+        status: "error",
+        message: "The configuration was not saved.",
+        issues,
+        draft: '{"broken": true}',
+      }}
+      action="/a/config"
+      savedVersion={null}
+    />
+  );
+
+  it("the issue list has an id and the textarea points at it", () => {
+    const out = html(
+      rejected([{ path: "pack.priceUsd", message: "Expected number" }])
+    );
+    expect(out).toContain('id="config-issues-list"');
+    expect(out).toContain('aria-describedby="config-issues-list"');
+    expect(out).toContain("pack.priceUsd");
+  });
+
+  it("the alert is FOCUSABLE, which is what lets focus move to it on rejection", () => {
+    const out = html(rejected([{ path: "a", message: "b" }]));
+    // `tabIndex={-1}` is the half of the fix that is visible in markup; the
+    // effect that calls .focus() cannot run under static rendering, so what is
+    // asserted here is that the target it focuses is focusable at all. Without
+    // this attribute the effect would be a silent no-op.
+    expect(out).toContain('data-testid="config-form-error"');
+    expect(out).toContain('tabindex="-1"');
+    expect(out).toContain('role="alert"');
+  });
+
+  it("the textarea is marked invalid so the state is not colour-only", () => {
+    const out = html(rejected([{ path: "a", message: "b" }]));
+    expect(out).toContain('aria-invalid="true"');
+  });
+
+  it("the label is bound to the textarea by id (it was a wrapping label before)", () => {
+    const out = html(rejected([]));
+    expect(out).toContain('for="config-content"');
+    expect(out).toContain('id="config-content"');
+  });
+
+  it("NO dangling association when there are no issues to point at", () => {
+    const out = html(rejected([]));
+    expect(out).not.toContain("aria-describedby");
+    expect(out).not.toContain('id="config-issues-list"');
+    // …but the alert itself is still there and still focusable.
+    expect(out).toContain('data-testid="config-form-error"');
+    expect(out).toContain('tabindex="-1"');
+  });
+
+  it("NON-VACUITY: an idle form has no alert, no invalid flag and no description", () => {
+    const out = html(
+      <ConfigEditorForm
+        active={{ ok: true, version: 2, json: "{}" }}
+        state={{ status: "idle" }}
+        action="/a/config"
+        savedVersion={null}
+      />
+    );
+    expect(out).not.toContain('data-testid="config-form-error"');
+    expect(out).not.toContain("aria-invalid");
+    expect(out).not.toContain("aria-describedby");
+    // the field is still labelled, always
+    expect(out).toContain('for="config-content"');
   });
 });

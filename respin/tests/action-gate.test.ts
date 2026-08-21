@@ -87,18 +87,26 @@ vi.mock("@respin/auth", () => ({
   }),
 }));
 
-describe("the seven server actions propagate their gate's refusal", () => {
+describe("the billing server actions propagate their gate's refusal", () => {
   it("every billing action re-throws requireUser()'s NEXT_REDIRECT — never `?e=unknown`", async () => {
     const actions = await import("../app/(product)/settings/billing/actions");
-    const named: [string, (fd: FormData) => Promise<void>][] = [
-      ["subscribeAction", actions.subscribeAction],
-      ["buyPackAction", actions.buyPackAction],
-      ["openPortalAction", actions.openPortalAction],
-      ["pauseAction", actions.pauseAction],
-      ["resumeAction", actions.resumeAction],
-      ["setAutoTopupAction", actions.setAutoTopupAction],
-    ];
-    expect(named).toHaveLength(6);
+    // DERIVED from the module's own exports, not hand-listed (audit
+    // 2026-08-17 remediation R2). This list used to be six literals with
+    // `expect(named).toHaveLength(6)` beside them — which meant the assertion
+    // guarded the list's length, not the module's surface, so #8's new
+    // `recoverInvoiceAction` was added and the gate check simply did not see
+    // it. A `"use server"` module may export only async functions, so every
+    // export IS a POST endpoint with a stable action id, and every one of them
+    // must carry the gate. Same rule as the isolation suite's enumeration:
+    // derive what SHOULD be covered from the source, or a new export escapes.
+    const named = Object.entries(actions).filter(
+      (entry): entry is [string, (fd: FormData) => Promise<void>] =>
+        typeof entry[1] === "function"
+    );
+    expect(
+      named.length,
+      "every export of a `use server` module is a POST endpoint and must be gated"
+    ).toBeGreaterThanOrEqual(7);
     for (const [name, action] of named) {
       const fd = new FormData();
       fd.set("tier", "creator");

@@ -10,9 +10,13 @@ import {
   type DbLike,
   type VerifiedWorkspaceId,
 } from "@respin/db";
-import { getActiveConfig } from "@respin/config";
-import { hasLiveStripeSubscription } from "../state";
+import {
+  hasLiveStripeSubscription,
+  mayChargeOffSession,
+  TERMINAL_STATUSES,
+} from "../state";
 import { getStripe } from "./adapter";
+import { resolvePackPrice } from "./pack-price";
 
 export type AutoTopupResult =
   | { triggered: true; paymentIntentId: string }
@@ -23,7 +27,15 @@ export type AutoTopupResult =
         | "paused"
         | "cap_reached"
         | "no_customer"
-        | "not_subscribed";
+        | "not_subscribed"
+        /**
+         * The subscription EXISTS but Stripe has stopped collecting on it
+         * (`unpaid`) — audit 2026-08-17 #6. Distinct from `not_subscribed`
+         * because the states differ in what happens next: `not_subscribed` is
+         * terminal for auto-top-up (subscribe again), `not_chargeable` clears
+         * itself the moment the customer settles the outstanding invoice.
+         */
+        | "not_chargeable";
     };
 
 /**
@@ -73,20 +85,72 @@ export async function maybeAutoTopup(
   // Stated consequence: auto-top-up is a subscriber feature. A workspace with
   // no live subscription buys packs through the manual Checkout, which is also
   // what `setAutoTopup`'s own "subscribe first" refusal already says.
-  if (!hasLiveStripeSubscription(sub)) {
-    return { triggered: false, reason: "not_subscribed" };
+  //
+  // THROUGH `mayChargeOffSession`, the shared predicate (billing gate,
+  // 2026-08-18). This site used to inline the same three conditions, which left
+  // `mayChargeOffSession` with ZERO callers while two comments claimed it was
+  // the mechanism here — a comment asserting a property the code did not have
+  // (CLAUDE.md 2026-07-30). The predicate is now the GATE, so "may we charge
+  // off-session?" has exactly one definition and this site cannot drift from
+  // it; the three checks below run only to name WHICH condition bit, for
+  // `AutoTopupResult.reason`. They are ordered to match the predicate's own
+  // clauses, and they are unreachable unless it has already refused.
+  //
+  // CHARGEABILITY is the clause worth restating here (audit 2026-08-17 #6).
+  // `hasLiveStripeSubscription` answers "does a subscription exist?" and says
+  // YES to `unpaid` on purpose — round 5 kept `unpaid` out of
+  // IRREVERSIBLE_STATUSES because a customer can pay their way out of dunning,
+  // and treating it as irreversible made such a workspace unrecoverable by ANY
+  // event. But `unpaid` means Stripe has STOPPED COLLECTING, and this is the
+  // off-session charge site: a $10 PaymentIntent against a customer already in
+  // collections — for a workspace `getWorkspaceBillingState` renders as `free`
+  // — is the surprise charge R-12 exists to prevent. That is why chargeability
+  // is a separate question from liveness, and why the predicate asks both.
+  if (!mayChargeOffSession(sub)) {
+    if (!hasLiveStripeSubscription(sub)) {
+      return { triggered: false, reason: "not_subscribed" };
+    }
+    if (TERMINAL_STATUSES.has(sub.status)) {
+      return { triggered: false, reason: "not_chargeable" };
+    }
+    // R-12 "no charges" while paused — checked EXPLICITLY, not as a
+    // fall-through (billing gate, 2026-08-18). "The only clause left" is true
+    // today and silently wrong the day `mayChargeOffSession` grows a fourth
+    // clause: a new refusal would reach M3 mislabelled as `paused`. A wrong
+    // reason on a money path is worse than a loud one, so an unrecognised
+    // refusal throws instead of guessing.
+    if (sub.pausedAt !== null) return { triggered: false, reason: "paused" };
+    throw new Error(
+      `maybeAutoTopup: mayChargeOffSession refused a charge for a reason this function cannot name (status=${sub.status}, live=${hasLiveStripeSubscription(sub)}, paused=${sub.pausedAt !== null}). A new clause was added to the predicate without giving it an AutoTopupResult.reason.`
+    );
   }
-  // R-12 "no charges" while paused — guard in the function, not the caller.
-  if (sub.pausedAt !== null) return { triggered: false, reason: "paused" };
   if (!sub.autoTopupEnabled || sub.autoTopupMonthlyCapCents === null) {
     return { triggered: false, reason: "disabled" };
   }
 
-  const { content } = await getActiveConfig(db);
-  const packCents = Math.round(content.pack.priceUsd * 100);
-
+  // AUDIT #7, the half that was missing (billing gate, 2026-08-18). This site
+  // used to compute `Math.round(content.pack.priceUsd * 100)` and charge it as
+  // a raw off-session amount — touching no Stripe `Price` and running no
+  // divergence check — while `pack-price.ts` and `actions.ts` both claimed
+  // "both paths now come through resolvePackPrice". One caller is not both, and
+  // a comment claiming a property is not the property (CLAUDE.md 2026-07-30).
+  //
+  // The hazard had CHANGED SHAPE rather than closed: after the manual path was
+  // fixed, an `/admin/config` edit to `pack.priceUsd` made manual Checkout
+  // REFUSE (mismatch) while this path silently charged the new, un-validated
+  // number. Same class as #6 — "a landmine armed for the milestone that adds
+  // the caller" — and M3 is that caller.
+  //
+  // Now: Stripe's Price is the charge authority here too, and a config/Stripe
+  // divergence refuses BEFORE any PaymentIntent is created.
   // Cap headroom in REAL CENTS from this-calendar-month auto-top-up rows'
   // amountCents (never reconstructed from credits — billing round-1 finding 6).
+  //
+  // READ FIRST, ahead of the price resolution below, so the no-headroom-at-all
+  // case can refuse without touching Stripe. That ordering is what keeps this
+  // function's refusals keyless (the isolation suite's whole contract), and it
+  // is a pure win: a workspace that has already spent its cap cannot be
+  // un-capped by any price Stripe might return.
   const monthStart = new Date(
     Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)
   );
@@ -105,6 +169,25 @@ export async function maybeAutoTopup(
     );
   const spentCents = Number(rows[0]?.cents ?? 0);
   const n = Number(rows[0]?.n ?? 0);
+
+  // NO-HEADROOM SHORT-CIRCUIT, decided without a price and therefore without
+  // Stripe. It is EXACT, not an approximation: a pack costs a positive number
+  // of cents, so once this month's spend has reached the cap, `spent + pack`
+  // exceeds it for every possible price — no Stripe read could change the
+  // answer. This is deliberately NOT a second price authority (audit #7); it
+  // reads no price at all.
+  if (spentCents >= sub.autoTopupMonthlyCapCents) {
+    return { triggered: false, reason: "cap_reached" };
+  }
+
+  // THE CHARGE AUTHORITY (audit #7). Stripe's own Price, validated against the
+  // active config — the same resolver the manual Checkout path uses, so an
+  // /admin/config edit can no longer make the two paths charge different
+  // amounts. Reached only once the cheap refusals above have passed.
+  const packPrice = await resolvePackPrice(db);
+  const packCents = packPrice.amountCents;
+
+  // The exact cap test, now against the amount Stripe will really charge.
   if (spentCents + packCents > sub.autoTopupMonthlyCapCents) {
     return { triggered: false, reason: "cap_reached" };
   }
@@ -119,7 +202,9 @@ export async function maybeAutoTopup(
   const pi = await getStripe().paymentIntents.create(
     {
       amount: packCents,
-      currency: "usd",
+      // From the resolved Stripe Price, not a second literal: the resolver
+      // already refused anything that is not usd, so these cannot disagree.
+      currency: packPrice.currency,
       customer: sub.stripeCustomerId,
       off_session: true,
       confirm: true,

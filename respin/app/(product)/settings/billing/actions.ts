@@ -140,6 +140,24 @@ export async function openPortalAction(formData: FormData): Promise<void> {
   redirect(url);
 }
 
+/**
+ * The `incomplete`-subscription remedy (audit 2026-08-17 #8). Same thin shape as
+ * `openPortalAction` — gate, scope, packaged operation, redirect to Stripe — and
+ * every rule (owner-only, status-narrow, invoice payable) lives in the package.
+ */
+export async function recoverInvoiceAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  let url: string;
+  try {
+    const scope = await respinDb.withWorkspace({ authUserId: user.id });
+    url = await respinCredits.createInvoiceRecoveryUrl(scope);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    redirect(failHref(err, formData));
+  }
+  redirect(url);
+}
+
 export async function pauseAction(formData: FormData): Promise<void> {
   const user = await requireUser();
   try {

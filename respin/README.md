@@ -34,10 +34,19 @@ T1); the balance is always `deriveBalance`, never arithmetic in a page.
 pnpm install
 docker compose up -d         # local Postgres (port 5435; see docker-compose.yml)
 cp env.example .env.local    # then fill values (the local DATABASE_URL is inside)
-pnpm db:migrate              # applies committed migrations to DATABASE_URL
-pnpm db:seed                 # dev data; refuses non-local hosts without RESPIN_SEED_FORCE=1
-pnpm dev
+DATABASE_URL=postgres://respin:respin_local_dev@localhost:5435/respin pnpm db:migrate
+DATABASE_URL=postgres://respin:respin_local_dev@localhost:5435/respin pnpm db:seed
+pnpm dev                     # `next dev` DOES read .env.local; the CLIs above do not
 ```
+
+**Why the two CLI lines carry `DATABASE_URL` inline:** only Next reads
+`.env.local`. `db:migrate` and `db:seed` are drizzle-kit/tsx processes and see
+the shell's environment only — found by running this runbook, not by reading it
+(evidence run, 2026-08-17). `pnpm stripe:setup` is the exception: it loads
+`.env.local` itself, because the billing section below tells the operator to put
+the key there. **Never pipe `pnpm dev` through `head`** — when `head` exits the
+pipe closes and the dev server dies mid-session, answering a few requests and
+then hanging every one after.
 
 Checks (same set CI runs): `pnpm typecheck && pnpm lint && pnpm test && pnpm db:check && pnpm build`
 — you should see all five exit 0. Tests run against in-process PGlite (R-17): no
@@ -87,9 +96,18 @@ public).
    #    success card).
    #    Success check: the dashboard's top-left toggle reads "Test mode".
 
+   # 0b. The Stripe CLI (needed from step 5 on, and for the evidence run):
+   #    winget install --id Stripe.StripeCli   # or see stripe.com/docs/stripe-cli
+   #    stripe login                            # interactive, opens a browser
+   #    Success check: `stripe --version` prints a version. On Windows, winget
+   #    installs it under %LOCALAPPDATA%\Microsoft\WinGet\Packages\ and it may
+   #    NOT be on a Git-Bash PATH; `stripe listen --api-key sk_test_...` works
+   #    without `stripe login` if you would rather not authorise the CLI.
+
    # 1. Test-mode secret key: dashboard → Developers → API keys → "Secret key"
    #    Put it in .env.local as STRIPE_SECRET_KEY (sk_test_...).
    #    Success check: `pnpm stripe:setup` no longer prints the "not set" remedy.
+   #    (This script loads .env.local itself — it is the ONE CLI here that does.)
 
    # 2. Create the product + prices (idempotent — safe to re-run).
    #    Needs DATABASE_URL too: the PACK price is created at the active
@@ -244,18 +262,40 @@ own terminal (leave it visible — every step below should print an event there)
 7. **Cancel from the Customer Portal** — reach it through
    `/settings/billing` → "Cancel subscription", which shows the pause offer
    first (REQ-G08).
-   **Check:** the interstitial offers pause **above** the link out; after
-   cancelling, `/settings/billing` reports the free tier once
-   `customer.subscription.deleted` arrives, and the subscribe buttons come
-   back (a cancelled workspace is not locked out of re-subscribing).
+   **Check:** the interstitial offers pause **above** the link out; the portal's
+   cancel confirmation says the plan runs to the end of the paid period, and
+   `/settings/billing` then shows **"This subscription is set to end on
+   &lt;date&gt;"** while still serving the paid tier. Once
+   `customer.subscription.deleted` arrives at that period end (or immediately,
+   if you cancel right away) the page reports the free tier and the subscribe
+   buttons come back — a cancelled workspace is not locked out of re-subscribing.
+   **Note the date the page shows**: on the API version this app pins, the
+   portal expresses a period-end cancellation as `cancel_at`, NOT the legacy
+   `cancel_at_period_end` boolean, and reading only the boolean is how the first
+   evidence run found the page saying nothing at all (ledger, finding 1).
    *(accept-when: "cancel → downgrade")*
-8. **Payment-failed → grace → downgrade**: subscribe again with the
-   failure-on-renewal test card 4000 0000 0000 0341, then in the dashboard
-   advance the subscription's clock or use `stripe trigger
-   invoice.payment_failed`.
+8. **Payment-failed → grace → downgrade** — **this one needs a Stripe TEST
+   CLOCK, and the three obvious shortcuts do not work.** All three were tried in
+   the 2026-08-17 evidence run and each is a dead end, for a different reason:
+   - the failure-on-renewal card 4000 0000 0000 0341 is declined **at Checkout**,
+     so no subscription is created and no `invoice.payment_failed` ever exists;
+   - `stripe trigger invoice.payment_failed` mints its **own** customer, which
+     maps to no workspace (`refused_unknown_customer`), and the invoice it
+     builds is not subscription-generated, which `isSubscriptionInvoice` refuses
+     by design;
+   - `subscriptions update --billing-cycle-anchor=now` generates no invoice, so
+     nothing is charged and nothing fails.
+
+   What works is a customer created **with** a test clock, then advancing the
+   clock past a renewal whose default payment method is
+   `pm_card_chargeCustomerFail`. Our Checkout creates the customer itself with
+   no `test_clock`, so there is no route to that through the product today —
+   doing this needs either a dev-only customer-creation path that accepts a test
+   clock, or waiting for a real renewal.
    **Check:** `/settings/billing` shows the grace state with a deadline
    `graceDays` away; past that deadline the effective tier is free.
-   *(accept-when: "payment-failed → grace → downgrade")*
+   *(accept-when: "payment-failed → grace → downgrade" — recorded PENDING in the
+   ledger until a test-clock route exists; do not claim it from the unit tests)*
 9. **Debit refused at zero balance** — **not runnable at M1.** The only debit
    caller is the generation pipeline, which ships at M3; the debit API and its
    refusal are tested in `packages/credits`. Record this row as still pending

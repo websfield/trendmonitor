@@ -3,7 +3,7 @@
 // Stripe.Event objects typed from the installed SDK. Keyless: the handler
 // never touches the Stripe API; signature verification is the route's edge
 // (tested separately via the SDK's test-header helper in routes.test.ts land).
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type Stripe from "stripe";
 import {
@@ -477,6 +477,190 @@ describe("accept-when: pack purchase", () => {
     expect(months).toBeGreaterThan(11);
     expect(months).toBeLessThan(13);
   });
+  it("records what STRIPE charged, and warns loudly if it ever has to substitute", async () => {
+    const { db, ws } = await setup();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // The normal case: the ledger records Stripe's own figure, not config's.
+      await handleStripeEvent(
+        db,
+        mkEvent(
+          "checkout.session.completed",
+          sessionObject({
+            id: "cs_amt_real",
+            amount_total: 1234,
+            metadata: { respin_kind: "pack", workspace_id: ws },
+          })
+        )
+      );
+      const [rec] = (await db.select().from(creditLedger)).filter(
+        (r) => r.refId === "cs_amt_real"
+      );
+      expect(rec.amountCents).toBe(1234);
+
+      // The unreachable case, made diagnosable rather than silent: a paid
+      // session with no amount_total falls back to the configured price — which
+      // audit #7's resolver guarantees is the same number — and says so.
+      await handleStripeEvent(
+        db,
+        mkEvent(
+          "checkout.session.completed",
+          sessionObject({
+            id: "cs_amt_null",
+            amount_total: null,
+            metadata: { respin_kind: "pack", workspace_id: ws },
+          })
+        )
+      );
+      const [sub] = (await db.select().from(creditLedger)).filter(
+        (r) => r.refId === "cs_amt_null"
+      );
+      expect(sub.amountCents).toBe(
+        Math.round(CONFIG_V1_SEED.pack.priceUsd * 100)
+      );
+      expect(
+        warn.mock.calls.flat().join(" "),
+        "a substituted money figure must never be silent"
+      ).toContain("NO amount_total");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("R-28: a PACK settling during a pause still mints — decided, not incidental", () => {
+  function mkEventAt(type: string, object: object, createdSec: number): Stripe.Event {
+    return { ...mkEvent(type, object), created: createdSec } as Stripe.Event;
+  }
+
+  /** Subscribe, then open a pause — the same fixture the D-AUDIT-1 suite uses. */
+  async function pausedWs() {
+    const s = await setup();
+    await handleStripeEvent(s.db, mkEvent("customer.subscription.created", subObject()));
+    await handleStripeEvent(
+      s.db,
+      mkEvent(
+        "customer.subscription.updated",
+        subObject({ pause_collection: { behavior: "void" } })
+      )
+    );
+    expect(await s.db.transaction((t) => hasOpenPause(t, s.ws))).toBe(true);
+    return s;
+  }
+
+  /**
+   * The pack mint branch had no pause consideration at all, in contrast to
+   * `invoice.paid`, whose during-pause behaviour is a recorded decision with a
+   * greppable log line (D-AUDIT-1). That made this behaviour-by-absence: the
+   * window is real (checkout opens → owner pauses → payment settles), and
+   * nothing said whether minting was intended or merely unimplemented.
+   *
+   * R-28 decides it: MINT. The distinction from D-AUDIT-1 is what a pause
+   * suspends. A monthly allowance is an ENTITLEMENT the pause suspends, so
+   * granting one during a pause would hand over something not owed. A pack is a
+   * PURCHASE the owner initiated and Stripe has already collected — refusing
+   * the mint would take the money and deliver nothing, which is the one outcome
+   * worse than minting into a frozen ledger. The credits are frozen, not lost:
+   * the fold freezes every lot's expiry clock for the duration of the pause.
+   */
+  it("mints the pack, and the credits are frozen rather than lost", async () => {
+    const { db, ws } = await pausedWs();
+
+    const out = await handleStripeEvent(
+      db,
+      mkEventAt(
+        "checkout.session.completed",
+        sessionObject({
+          id: "cs_pack_paused",
+          metadata: { respin_kind: "pack", workspace_id: ws },
+        }),
+        nowSec() + 3600
+      )
+    );
+
+    // The customer paid; the credits exist.
+    expect(out).toBe("processed");
+    const packs = (await db.select().from(creditLedger)).filter(
+      (r) => r.kind === "pack"
+    );
+    expect(packs).toHaveLength(1);
+    expect(packs[0].delta).toBe(CONFIG_V1_SEED.pack.credits);
+  });
+
+
+  /**
+   * The CONTINUATION of the INERT deferral, and the reason "inert" needed a
+   * bound (billing gate NOTE, 2026-08-18). A drifted `{canceled, pausedAt}` row
+   * is harmless only while the subscription stays dead — a RE-SUBSCRIBE restores
+   * liveness, and the stale flag comes back to life: the workspace would render
+   * `paused` and be refused a pack purchase on a subscription it just bought.
+   *
+   * The pause-sync branch now pairs `ensurePauseEnded` with `clearPauseMirror`,
+   * like its two siblings, so the revival converges the mirror rather than
+   * inheriting the stale flag.
+   */
+  it("a RE-SUBSCRIBE clears a drifted pausedAt instead of reviving it", async () => {
+    const { db, ws } = await setup();
+    // The drift state: dead subscription, pause flag that outlived it, and NO
+    // open pause_periods row (which is what makes it drift rather than a pause).
+    await db
+      .update(subscriptions)
+      .set({
+        stripeSubscriptionId: "sub_old_dead",
+        stripePriceId: "price_creator",
+        status: "canceled",
+        pausedAt: new Date(),
+        resumesAt: new Date(),
+      })
+      .where(eq(subscriptions.workspaceId, ws));
+    expect(await db.transaction((t) => hasOpenPause(t, ws))).toBe(false);
+
+    // New business: a different subscription id, active, not paused.
+    await handleStripeEvent(
+      db,
+      mkEvent(
+        "customer.subscription.updated",
+        subObject({ id: "sub_new_after_drift", status: "active" })
+      )
+    );
+
+    const [row] = await db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.workspaceId, ws));
+    expect(row.stripeSubscriptionId).toBe("sub_new_after_drift");
+    expect(
+      row.pausedAt,
+      "a revived subscription must not inherit the dead one's pause flag"
+    ).toBeNull();
+    expect((await getWorkspaceBillingState(db, ws, new Date())).state).not.toBe(
+      "paused"
+    );
+  });
+
+  it("CONTRAST with D-AUDIT-1: a monthly GRANT in the same pause is refused", async () => {
+    const { db, ws } = await pausedWs();
+
+    // Same workspace, same open pause, an entitlement rather than a purchase.
+    // An hour after the pause became known, so this is a genuine during-pause
+    // event and not the delivery race D-AUDIT-1 allows.
+    const out = await handleStripeEvent(
+      db,
+      mkEventAt(
+        "invoice.paid",
+        invoiceObject({ id: "in_during_pause_contrast" }),
+        nowSec() + 3600
+      )
+    );
+    expect(out).toBe("ignored");
+    // Workspace-scoped, like every other assertion in this package: the row
+    // that must not exist is THIS workspace's grant, not any grant anywhere.
+    expect(
+      (await db.select().from(creditLedger)).filter(
+        (r) => r.workspaceId === ws && r.kind === "grant"
+      )
+    ).toHaveLength(0);
+  });
 });
 
 describe("D-M1-6 identity: sole-authority mapping", () => {
@@ -627,13 +811,29 @@ describe("edge bullets", () => {
     expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe("free");
   });
 
-  it("invoice.paid arriving while mirror-paused is PROCESSED (a paid invoice is a fact), never dropped", async () => {
+  /**
+   * RETITLED 2026-08-18 (billing gate, audit remediation). This case was called
+   * *"invoice.paid arriving while mirror-paused is PROCESSED … never dropped"*
+   * and R-25/D-AUDIT-1 names it as the test that "actively pinned the
+   * violation" of REQ-G08. D-AUDIT-1 changed the rule underneath it and the
+   * test was never touched — it stayed green for a reason nobody had written
+   * down: `mkEvent` stamps `created: nowSec()` and the pause is opened
+   * milliseconds earlier, so `lagMs ≈ 0` and it exercises the **tolerance
+   * exception**, not the general property its old title claimed.
+   *
+   * A test asserting a property the system no longer has is CLAUDE.md's
+   * 2026-07-30 lesson inverted. It now says what it actually proves, and the
+   * refusal branch it never covered is tested below.
+   */
+  it("a PRE-PAUSE invoice delivered late still grants — the ONE accepted exception (D-AUDIT-1), not a general rule", async () => {
     const { db } = await setup();
     await handleStripeEvent(db, mkEvent("customer.subscription.created", subObject()));
     await handleStripeEvent(
       db,
       mkEvent("customer.subscription.updated", subObject({ pause_collection: { behavior: "void" } }))
     );
+    // `created: nowSec()` — contemporaneous with the pause, so lagMs ≈ 0 and
+    // this is the pre-pause delivery race the decision allows.
     const out = await handleStripeEvent(db, mkEvent("invoice.paid", invoiceObject()));
     expect(out).toBe("processed");
     const grants = (await db.select().from(creditLedger)).filter((r) => r.kind === "grant");
@@ -2113,5 +2313,340 @@ describe("round-10 regression pins (billing NOTE 3: the pause bound is SYMMETRIC
     );
     expect(await handleStripeEvent(db, fresh)).toBe("processed");
     expect(await db.transaction((t) => hasOpenPause(t, ws))).toBe(true);
+  });
+});
+
+// EVIDENCE-RUN FINDING 1 (2026-08-17). These fixtures are the shape the LIVE
+// Customer Portal produced on api_version 2026-05-27.dahlia — read out of this
+// repo's own `stripe_events` table after the run, not imagined: `cancel_at` set,
+// `cancel_at_period_end` FALSE, `status` still active. Every fixture in this
+// file before today expressed the same fact the other way round, which is
+// exactly why twelve review rounds could not catch it.
+describe("evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean", () => {
+  it("mirrors cancel_at and surfaces it as a scheduled end — with the boolean FALSE", async () => {
+    const { db, ws } = await setup();
+    const endsAt = nowSec() + 30 * 86400;
+    await handleStripeEvent(db, mkEvent("customer.subscription.created", subObject()));
+    expect(
+      await handleStripeEvent(
+        db,
+        mkEvent(
+          "customer.subscription.updated",
+          subObject({ cancel_at: endsAt, cancel_at_period_end: false, status: "active" })
+        )
+      )
+    ).toBe("processed");
+
+    const [row] = await db.select().from(subscriptions);
+    expect(row.cancelAt?.getTime()).toBe(endsAt * 1000);
+    // The legacy column is mirrored faithfully — it really is false. Reading
+    // only THAT is what told a paying creator nothing.
+    expect(row.cancelAtPeriodEnd).toBe(false);
+
+    const state = await getWorkspaceBillingState(db, ws, new Date());
+    expect(state.state).toBe("active");
+    expect(state.cancelAt?.getTime()).toBe(endsAt * 1000);
+  });
+
+  it("the scheduled end DIES with the subscription (DEAD_SUBSCRIPTION_FIELDS clears it)", async () => {
+    const { db, ws } = await setup();
+    const endsAt = nowSec() + 30 * 86400;
+    await handleStripeEvent(
+      db,
+      mkEvent("customer.subscription.created", subObject({ cancel_at: endsAt }))
+    );
+    await handleStripeEvent(
+      db,
+      mkEvent("customer.subscription.deleted", subObject({ status: "canceled", cancel_at: endsAt }))
+    );
+    const [row] = await db.select().from(subscriptions);
+    expect(row.cancelAt).toBeNull();
+    // …and the read path would refuse it anyway, so a stale value cannot
+    // resurface as "your plan ends on <date>" for a workspace with no plan.
+    const state = await getWorkspaceBillingState(db, ws, new Date());
+    expect(state).toEqual({ tier: "free", state: "free" });
+  });
+
+  it("NON-VACUITY: an ordinary active subscription carries no scheduled end", async () => {
+    const { db, ws } = await setup();
+    await handleStripeEvent(db, mkEvent("customer.subscription.created", subObject()));
+    const [row] = await db.select().from(subscriptions);
+    expect(row.cancelAt).toBeNull();
+    expect((await getWorkspaceBillingState(db, ws, new Date())).cancelAt).toBeUndefined();
+  });
+});
+
+describe("audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding", () => {
+  function mkEventAt(type: string, object: object, createdSec: number): Stripe.Event {
+    return { ...mkEvent(type, object), created: createdSec } as Stripe.Event;
+  }
+
+  /**
+   * The concrete instance the correctness critic reported and the depth room
+   * and Codex both re-found: `invoice.paid`'s grace-clear had NO order guard
+   * while the status-lift beside it did.
+   *
+   * The workspace lock added for #3 cannot close this and never could — the
+   * lock serializes two writers, it does not give a stale writer a newer
+   * opinion. Both halves of #3 were needed and only one had landed.
+   */
+  it("a STALE invoice.paid does NOT end a newer, still-live dunning grace period", async () => {
+    const { db, ws } = await setup();
+    const t = nowSec();
+
+    // T+100: the dunning snapshot opens the 7-day window and STAMPS the
+    // watermark (only subscription snapshots stamp `mirrorEventAt`).
+    await handleStripeEvent(
+      db,
+      mkEventAt("customer.subscription.updated", subObject({ status: "past_due" }), t + 100)
+    );
+    const [opened] = await db.select().from(subscriptions);
+    expect(opened.status).toBe("past_due");
+    expect(opened.graceExpiresAt).not.toBeNull();
+    const deadline = opened.graceExpiresAt as Date;
+    // The customer is inside the window they were promised.
+    expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe("grace");
+
+    // T+50: an OLDER paid invoice is delivered late. Its allowance is still a
+    // fact and is still granted (idempotent per invoice), but its opinion
+    // about the dunning window predates the failure that opened this one.
+    expect(
+      await handleStripeEvent(
+        db,
+        mkEventAt("invoice.paid", invoiceObject({ id: "in_stale_clear" }), t + 50)
+      )
+    ).toBe("processed");
+
+    const [after] = await db.select().from(subscriptions);
+    // BEFORE the fix: `graceExpiresAt` was null here. `past_due` + a null
+    // deadline derives to `free` in state.ts, so a paying customer inside
+    // their grace window was downgraded by a late delivery — permanently,
+    // because no later event re-opens a deadline.
+    expect(after.graceExpiresAt?.getTime()).toBe(deadline.getTime());
+    expect(after.status).toBe("past_due");
+    expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe("grace");
+  });
+
+  it("NON-VACUITY: a CURRENT invoice.paid still clears the grace and lifts the status", async () => {
+    const { db, ws } = await setup();
+    const t = nowSec();
+    await handleStripeEvent(
+      db,
+      mkEventAt("customer.subscription.updated", subObject({ status: "past_due" }), t + 100)
+    );
+    expect((await db.select().from(subscriptions))[0].graceExpiresAt).not.toBeNull();
+    // Delivered AFTER the snapshot that opened the window — the ordinary
+    // recovery. The guard must not turn this into a customer stuck in dunning.
+    expect(
+      await handleStripeEvent(
+        db,
+        mkEventAt("invoice.paid", invoiceObject({ id: "in_fresh_clear" }), t + 200)
+      )
+    ).toBe("processed");
+    const [after] = await db.select().from(subscriptions);
+    expect(after.graceExpiresAt).toBeNull();
+    expect(after.status).toBe("active");
+    expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe("active");
+  });
+
+  it("a TERMINAL mirror is still tidied by a CURRENT paid invoice — cleared, and never revived", async () => {
+    const { db, ws } = await setup();
+    const t = nowSec();
+    await handleStripeEvent(
+      db,
+      mkEventAt("customer.subscription.updated", subObject({ status: "past_due" }), t + 100)
+    );
+    // Death. DEAD_SUBSCRIPTION_FIELDS clears the deadline with everything else,
+    // so re-open one by hand: the branch under test is the split predicate's
+    // TERMINAL half, not the death writer's own tidy-up.
+    await handleStripeEvent(
+      db,
+      mkEventAt("customer.subscription.deleted", subObject({ status: "canceled" }), t + 150)
+    );
+    await db
+      .update(subscriptions)
+      .set({ graceExpiresAt: new Date(Date.now() + 7 * 24 * HOUR) })
+      .where(eq(subscriptions.workspaceId, ws));
+
+    // Delivered AFTER the death notice — the customer paying the still-open
+    // invoice from Stripe's emailed link. `invoiceMayWriteStatus` refuses it
+    // (TERMINAL) but `invoiceIsStale` does not, which is exactly the asymmetry
+    // the split exists to preserve: the deadline is cleared, the subscription
+    // is NOT resurrected (BLOCKER 6's rule, still holding).
+    await handleStripeEvent(
+      db,
+      mkEventAt("invoice.paid", invoiceObject({ id: "in_terminal_clear" }), t + 200)
+    );
+    const [after] = await db.select().from(subscriptions);
+    expect(after.graceExpiresAt).toBeNull();
+    expect(after.status).toBe("canceled");
+    expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe("free");
+  });
+
+  /**
+   * The one direction the split leaves open, asserted rather than assumed: a
+   * STALE invoice against a TERMINAL mirror leaves the deadline standing. That
+   * is deliberate and it is free — `state.ts` reads `graceExpiresAt` ONLY inside
+   * its `past_due` branch, which a terminal status never reaches — so the
+   * surviving value can never become a user-visible claim.
+   */
+  it("a stale invoice on a terminal mirror leaves the deadline, and it STILL cannot surface as grace", async () => {
+    const { db, ws } = await setup();
+    const t = nowSec();
+    await handleStripeEvent(
+      db,
+      mkEventAt("customer.subscription.updated", subObject({ status: "past_due" }), t + 100)
+    );
+    await handleStripeEvent(
+      db,
+      mkEventAt("customer.subscription.deleted", subObject({ status: "canceled" }), t + 150)
+    );
+    await db
+      .update(subscriptions)
+      .set({ graceExpiresAt: new Date(Date.now() + 7 * 24 * HOUR) })
+      .where(eq(subscriptions.workspaceId, ws));
+
+    await handleStripeEvent(
+      db,
+      mkEventAt("invoice.paid", invoiceObject({ id: "in_terminal_stale" }), t + 50)
+    );
+    const [after] = await db.select().from(subscriptions);
+    expect(after.graceExpiresAt).not.toBeNull();
+    // The claim that makes leaving it harmless — asserted, not promised.
+    expect(await getWorkspaceBillingState(db, ws, new Date())).toEqual({
+      tier: "free",
+      state: "free",
+    });
+  });
+});
+
+describe("D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'", () => {
+  function mkEventAt(type: string, object: object, createdSec: number): Stripe.Event {
+    return { ...mkEvent(type, object), created: createdSec } as Stripe.Event;
+  }
+
+  /** Subscribe, then open a pause. The pause's knowledge time is ~now. */
+  async function paused() {
+    const s = await setup();
+    await handleStripeEvent(s.db, mkEvent("customer.subscription.created", subObject()));
+    await handleStripeEvent(
+      s.db,
+      mkEvent(
+        "customer.subscription.updated",
+        subObject({ pause_collection: { behavior: "void" } })
+      )
+    );
+    expect(await s.db.transaction((t) => hasOpenPause(t, s.ws))).toBe(true);
+    return s;
+  }
+
+  /**
+   * THE BRANCH THAT HAD NO TEST. It denies a paying creator a month's
+   * allowance and records `ignored` permanently, and until now deleting the
+   * entire pause check left the suite green — so REQ-G08's enforcement was
+   * unproven in the one direction that actually refuses.
+   */
+  it("a GENUINE during-pause invoice is refused: outcome `ignored`, and ZERO credits minted", async () => {
+    const { db, ws } = await paused();
+    // An hour AFTER the pause became known — far outside the tolerance, so
+    // this is not a delivery race by any reading.
+    const event = mkEventAt(
+      "invoice.paid",
+      invoiceObject({ id: "in_during_pause" }),
+      nowSec() + 3600
+    );
+    expect(await handleStripeEvent(db, event)).toBe("ignored");
+
+    // NOTHING was minted — the assertion the refusal exists for.
+    const rows = (await db.select().from(creditLedger)).filter(
+      (r) => r.workspaceId === ws
+    );
+    expect(rows, "a during-pause invoice must write no ledger row at all").toHaveLength(0);
+    expect((await deriveBalance(db, ws)).balance).toBe(0);
+
+    // …and THIS event is RECORDED as ignored, not dropped: the refusal is
+    // greppable, which R-25 names as the tripwire for ever observing one live.
+    // Selected BY ID — the table also holds the two subscription events this
+    // fixture used to open the pause, and both are `processed`.
+    const [evt] = (await db.select().from(stripeEvents)).filter(
+      (r) => r.id === event.id
+    );
+    expect(evt.outcome).toBe("ignored");
+  });
+
+  it("the refusal is idempotent — a redelivery of the same event does not sneak a grant through", async () => {
+    const { db, ws } = await paused();
+    const event = mkEventAt(
+      "invoice.paid",
+      invoiceObject({ id: "in_during_pause_2" }),
+      nowSec() + 3600
+    );
+    expect(await handleStripeEvent(db, event)).toBe("ignored");
+    await expect(handleStripeEvent(db, event)).rejects.toBeInstanceOf(
+      DuplicateStripeEvent
+    );
+    expect(
+      (await db.select().from(creditLedger)).filter((r) => r.workspaceId === ws)
+    ).toHaveLength(0);
+  });
+
+  it("BOUNDARY: inside the tolerance grants, outside it refuses — the rule is the clock, not the pause flag", async () => {
+    // INSIDE. The tolerance deliberately WIDENS the grant window so an
+    // ambiguous ordering at the pause boundary resolves in the customer's
+    // favour (D-AUDIT-1); 59s of the 60s tolerance is unambiguously inside.
+    {
+      const { db, ws } = await paused();
+      expect(
+        await handleStripeEvent(
+          db,
+          mkEventAt("invoice.paid", invoiceObject({ id: "in_inside" }), nowSec() + 59)
+        )
+      ).toBe("processed");
+      expect((await deriveBalance(db, ws)).balance).toBeGreaterThan(0);
+    }
+    // OUTSIDE, on a fresh workspace so the two directions cannot mask each
+    // other. 10 minutes past the tolerance.
+    {
+      const { db, ws } = await paused();
+      expect(
+        await handleStripeEvent(
+          db,
+          mkEventAt("invoice.paid", invoiceObject({ id: "in_outside" }), nowSec() + 600)
+        )
+      ).toBe("ignored");
+      expect((await deriveBalance(db, ws)).balance).toBe(0);
+    }
+  });
+
+  it("the direction that must NOT change: an UNPAUSED workspace still gets its allowance", async () => {
+    // Non-vacuity for the whole branch — the guard must refuse during a pause,
+    // not refuse late invoices generally. Same "an hour later" event that is
+    // refused above, against a workspace with no pause.
+    const { db, ws } = await setup();
+    await handleStripeEvent(db, mkEvent("customer.subscription.created", subObject()));
+    expect(
+      await handleStripeEvent(
+        db,
+        mkEventAt("invoice.paid", invoiceObject({ id: "in_unpaused" }), nowSec() + 3600)
+      )
+    ).toBe("processed");
+    expect((await deriveBalance(db, ws)).balance).toBeGreaterThan(0);
+  });
+
+  it("a RESUMED workspace grants again — the refusal is tied to the OPEN pause, not to having ever paused", async () => {
+    const { db, ws } = await paused();
+    // Clearing pause_collection resumes.
+    await handleStripeEvent(
+      db,
+      mkEvent("customer.subscription.updated", subObject({ pause_collection: null }))
+    );
+    expect(await db.transaction((t) => hasOpenPause(t, ws))).toBe(false);
+    expect(
+      await handleStripeEvent(
+        db,
+        mkEventAt("invoice.paid", invoiceObject({ id: "in_after_resume" }), nowSec() + 3600)
+      )
+    ).toBe("processed");
+    expect((await deriveBalance(db, ws)).balance).toBeGreaterThan(0);
   });
 });

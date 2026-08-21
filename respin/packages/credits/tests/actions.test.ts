@@ -16,20 +16,50 @@ const sessionCreate = vi.fn(async () => ({
   url: "https://checkout.stripe.test/cs_created",
 }));
 const subUpdate = vi.fn(async () => ({ id: "sub_updated" }));
+// Audit #7 + #8 (billing gate 2026-08-18). `prices.retrieve` is what
+// `resolvePackPrice` reads — it is now on BOTH charge paths, so the mock has to
+// serve it. `subscriptions.retrieve` / `invoices.retrieve` are what
+// `createInvoiceRecoveryUrl` reads; without them its whole Stripe half was
+// unreachable and an inverted status check would have failed nothing.
+const priceRetrieve = vi.fn(async () => ({
+  id: "price_pack",
+  active: true,
+  unit_amount: 1000,
+  currency: "usd",
+}));
+const subRetrieve = vi.fn(async () => ({
+  id: "sub_1",
+  latest_invoice: {
+    id: "in_open",
+    status: "open",
+    hosted_invoice_url: "https://invoice.stripe.test/in_open",
+  },
+}));
+const invoiceRetrieve = vi.fn(async () => ({
+  id: "in_expanded",
+  status: "open",
+  hosted_invoice_url: "https://invoice.stripe.test/in_expanded",
+}));
 vi.mock("../src/stripe/adapter", async (importActual) => ({
   ...(await importActual<typeof import("../src/stripe/adapter")>()),
   getStripe: () => ({
     paymentIntents: { create: piCreate },
     checkout: { sessions: { create: sessionCreate } },
-    subscriptions: { update: subUpdate },
+    subscriptions: { update: subUpdate, retrieve: subRetrieve },
+    prices: { retrieve: priceRetrieve },
+    invoices: { retrieve: invoiceRetrieve },
   }),
 }));
 import { eq } from "drizzle-orm";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createTestDb,
   schema,
   seedAuthUser,
   seedDb,
+  pausePeriods,
   subscriptions,
   trustWorkspaceId,
   type TestDb,
@@ -39,16 +69,28 @@ import {
   AlreadySubscribedError,
   BillingRoleError,
   CheckoutInFlightError,
+  createInvoiceRecoveryUrl,
   createPackCheckoutUrl,
   createPortalUrl,
   createTierCheckoutUrl,
+  InvoiceRecoveryUnavailableError,
   NoLiveSubscriptionError,
+  NotChargeableError,
+  SubscriptionPausedError,
   pauseSubscription,
   resumeSubscription,
   setAutoTopup,
   UnknownTierPriceError,
 } from "../src/stripe/actions";
 import { maybeAutoTopup } from "../src/stripe/auto-topup";
+import { getWorkspaceBillingState } from "../src/state";
+import { debitCredits } from "../src/ledger";
+import { WorkspacePausedError } from "../src/errors";
+import {
+  PackPriceMismatchError,
+  PackPriceNotMappedError,
+  PackPriceUnavailableError,
+} from "../src/stripe/pack-price";
 import { creditLedger, CONFIG_V1_SEED } from "@respin/db";
 import { appendConfigVersion } from "@respin/config";
 
@@ -57,6 +99,22 @@ const URLS = { successUrl: "http://x/s", cancelUrl: "http://x/c" };
 async function setup(db: TestDb) {
   await seedAuthUser(db, "actions_user");
   await seedDb(db);
+  // A MAPPED PACK PRICE is now part of the baseline (audit #7, billing gate
+  // 2026-08-18). `seedDb` ships `stripePriceMap: {}`, which was fine while
+  // `maybeAutoTopup` computed its amount from `pack.priceUsd` — but that was
+  // the defect: the charge touched no Stripe Price and ran no divergence check.
+  // Now the resolver is the authority on BOTH charge paths, so a workspace with
+  // no mapped pack price cannot auto-top-up at all, and the five auto-top-up
+  // cases below correctly began failing with PackPriceNotMappedError until this
+  // line existed. This is the state a real install is in after `stripe:setup`.
+  //
+  // Tests that need the UNMAPPED state append their own config afterwards —
+  // `appendConfigVersion` makes the newest version active, so they override this.
+  await appendConfigVersion(
+    db,
+    { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+    "actions-test-baseline"
+  );
   const [w] = await db
     .insert(schema.workspaces)
     .values({ name: "A" })
@@ -688,10 +746,13 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
     // The same non-vacuity direction the round-7 auto-top-up guard needed: a
     // liveness rule that refused everything would pass the two tests above and
     // be useless.
+    // `unpaid` MOVED OUT of this set by audit 2026-08-17 #6 — see the test
+    // below. It is still LIVE (recoverable through the Portal), which is why
+    // round-5 deliberately kept it out of IRREVERSIBLE_STATUSES; it is not
+    // CHARGEABLE, which is a different question this suite had conflated.
     for (const over of [
       { status: "past_due" },
       { status: "active", cancelAtPeriodEnd: true },
-      { status: "unpaid" },
     ]) {
       const db = await createTestDb();
       const { wsId, scopeOf } = await setup(db);
@@ -703,5 +764,534 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
       const [row] = await db.select().from(subscriptions);
       expect(row.autoTopupEnabled, JSON.stringify(over)).toBe(true);
     }
+  });
+
+  // AUDIT 2026-08-17 #6 — the case this suite previously asserted the OPPOSITE
+  // of. `unpaid` means Stripe has stopped collecting: the subscription is live
+  // enough to recover, and NOT live enough to charge off-session. Arming the
+  // authority there would show an owner auto-top-up as ON for a subscription
+  // the rest of the product already renders as `free`.
+  it("AUDIT #6: `unpaid` cannot ARM auto-top-up — liveness is not chargeability", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await mkSub(db, wsId, { status: "unpaid" });
+    await expect(
+      setAutoTopup(db, scopeOf("owner"), {
+        enabled: true,
+        monthlyCapCents: 5000,
+      })
+    ).rejects.toThrow(NotChargeableError);
+    // NOTHING was written — the refusal precedes the update.
+    const [row] = await db.select().from(subscriptions);
+    expect(row.autoTopupEnabled).toBe(false);
+    expect(row.autoTopupMonthlyCapCents).toBeNull();
+  });
+
+  it("AUDIT #6 (the direction that must NOT change): an `unpaid` owner can still DISARM it", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await mkSub(db, wsId, {
+      status: "unpaid",
+      autoTopupEnabled: true,
+      autoTopupMonthlyCapCents: 5000,
+    });
+    await setAutoTopup(db, scopeOf("owner"), { enabled: false });
+    const [row] = await db.select().from(subscriptions);
+    expect(row.autoTopupEnabled).toBe(false);
+  });
+
+  // AUDIT #6, the CHARGE site. `setAutoTopup` refusing to arm is not enough on
+  // its own: a row armed BEFORE this change (or armed while healthy and then
+  // fallen into dunning) must still not produce an off-session PaymentIntent.
+  it("AUDIT #6: maybeAutoTopup refuses an `unpaid` subscription — no PaymentIntent, even when fully armed", async () => {
+    const db = await createTestDb();
+    const { wsId } = await setup(db);
+    await mkSub(db, wsId, {
+      status: "unpaid",
+      autoTopupEnabled: true,
+      autoTopupMonthlyCapCents: 5000,
+    });
+    piCreate.mockClear();
+    const result = await maybeAutoTopup(db, wsId, 10, new Date());
+    expect(result).toEqual({ triggered: false, reason: "not_chargeable" });
+    expect(piCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ========== billing gate 2026-08-18: the untested money paths ==============
+
+describe("audit #1 (package half): the AUTHORITATIVE pause refusal on the pack path", () => {
+  it("a paused workspace's pack checkout throws SubscriptionPausedError and reaches NO Stripe call", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      "test"
+    );
+    await db.insert(subscriptions).values({
+      workspaceId: wsId, stripeCustomerId: "cus_paused",
+      stripeSubscriptionId: "sub_paused", stripePriceId: "price_creator",
+      status: "active", pausedAt: new Date(),
+    });
+    sessionCreate.mockClear();
+
+    await expect(
+      createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
+    ).rejects.toBeInstanceOf(SubscriptionPausedError);
+
+    // THE POINT. The code argues this guard is the authoritative one and that
+    // the UI's disabled button is merely presentational — so a refusal that had
+    // already created a Stripe customer or a payable session would be a weaker
+    // refusal than the one REQ-G08 promises. Nothing reached Stripe.
+    expect(sessionCreate).not.toHaveBeenCalled();
+  });
+
+  it("NON-VACUITY: the same workspace UNPAUSED reaches Stripe and gets a URL", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      "test"
+    );
+    await db.insert(subscriptions).values({
+      workspaceId: wsId, stripeCustomerId: "cus_live",
+      stripeSubscriptionId: "sub_live", stripePriceId: "price_creator",
+      status: "active", pausedAt: null,
+    });
+    sessionCreate.mockClear();
+    await expect(
+      createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
+    ).resolves.toContain("checkout.stripe.test");
+    expect(sessionCreate).toHaveBeenCalled();
+  });
+});
+
+describe("audit #5 drift: the pack path and the billing page agree on 'paused'", () => {
+  /**
+   * The remediation left the two readers of "is this paused?" disagreeing, and
+   * the deferred NOTE described it as cosmetic (a Buy-pack button that renders
+   * live and fails on click). It was not cosmetic.
+   *
+   * `state.ts` was liveness-gated by audit #5; `createPackCheckoutUrl` read the
+   * raw `pausedAt` column. In the #5 drift state the page therefore derived
+   * `free` — no pause, control live — while the server refused every click. A
+   * dead subscription emits no further events, so nothing was coming to clear
+   * that column: the workspace could never buy a pack again, which is the one
+   * purchase a workspace with no live subscription is meant to make.
+   */
+  async function driftRow(db: TestDb) {
+    const { wsId, scopeOf } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      "test"
+    );
+    // The exact #5 drift: cancelled in Stripe, with a pause flag that outlived
+    // the subscription it described (ensurePauseEnded is a no-op when no open
+    // pause_periods row exists — pause.ts concedes the state is reachable).
+    await db.insert(subscriptions).values({
+      workspaceId: wsId, stripeCustomerId: "cus_drift",
+      stripeSubscriptionId: "sub_drift", stripePriceId: "price_creator",
+      status: "canceled", pausedAt: new Date(), resumesAt: new Date(),
+    });
+    return { wsId, scopeOf };
+  }
+
+  it("a drifted row does NOT permanently block the pack purchase", async () => {
+    const db = await createTestDb();
+    const { scopeOf } = await driftRow(db);
+    sessionCreate.mockClear();
+
+    await expect(
+      createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
+    ).resolves.toContain("checkout.stripe.test");
+    expect(sessionCreate).toHaveBeenCalled();
+  });
+
+  it("SYMMETRY: the page shows no pause for that row, and the server does not refuse one", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await driftRow(db);
+
+    // The page's answer...
+    const state = await getWorkspaceBillingState(db, wsId, new Date());
+    expect(state.state).not.toBe("paused");
+    // ...and the server's, on the same row. Before the fix these disagreed:
+    // free page, SubscriptionPausedError on click.
+    await expect(
+      createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
+    ).resolves.toBeTypeOf("string");
+  });
+
+  /**
+   * The case the billing gate said was missing, and it is the one that matters:
+   * every other case in this file builds "paused" by inserting a `subscriptions`
+   * row, so the invariant was pinned only against the MIRROR. The authority is
+   * `pause_periods` — it is what `debitCredits` refuses on — and the mirror can
+   * read `canceled` while an open period still exists.
+   *
+   * Gating the charge on the mirror let that row BUY a pack whose credits
+   * `debitCredits` would then refuse to spend, with no way to close the pause.
+   */
+  it("AUTHORITY: an OPEN pause_periods row refuses the charge even when the mirror says canceled", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      "test"
+    );
+    // Mirror looks DEAD — no live subscription, so `isPausedSubscription` (and
+    // the billing page) both say "not paused".
+    await db.insert(subscriptions).values({
+      workspaceId: wsId, stripeCustomerId: "cus_auth",
+      stripeSubscriptionId: "sub_auth", stripePriceId: "price_creator",
+      status: "canceled", pausedAt: null,
+    });
+    // ...but the AUTHORITY still holds an open period.
+    await db.insert(pausePeriods).values({
+      workspaceId: wsId, startedAt: new Date(), startedKnownAt: new Date(),
+    });
+    sessionCreate.mockClear();
+
+    await expect(
+      createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
+    ).rejects.toBeInstanceOf(SubscriptionPausedError);
+    expect(sessionCreate).not.toHaveBeenCalled();
+  });
+
+  it("AUTHORITY: the charge and the SPEND now refuse on the same table", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      "test"
+    );
+    await db.insert(subscriptions).values({
+      workspaceId: wsId, stripeCustomerId: "cus_both",
+      stripeSubscriptionId: "sub_both", stripePriceId: "price_creator",
+      status: "canceled", pausedAt: null,
+    });
+    await db.insert(pausePeriods).values({
+      workspaceId: wsId, startedAt: new Date(), startedKnownAt: new Date(),
+    });
+
+    // The spend refuses (this was always true)...
+    await expect(
+      db.transaction((tx) =>
+        debitCredits(tx, {
+          workspaceId: wsId, cost: 1, refType: "generation",
+          refId: "gen_1", at: new Date(), configVersion: 1,
+        })
+      )
+    ).rejects.toBeInstanceOf(WorkspacePausedError);
+
+    // ...and the CHARGE now refuses too. Selling credits that cannot be spent
+    // is the failure this pairing exists to make impossible.
+    await expect(
+      createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
+    ).rejects.toBeInstanceOf(SubscriptionPausedError);
+  });
+
+
+  /**
+   * The drifted `pausedAt` has no reaper — `resumeSubscription` reads the raw
+   * column, passes its NotPausedError check, then dead-ends on liveness, so
+   * nothing clears it. The billing gate's judgement was that the residue is
+   * inert at every reader, and deferring the reaper is correct on that basis.
+   *
+   * "Inert" is a property, so it is asserted rather than believed: this pins
+   * every reader at once, and turns a future change that makes the stale column
+   * load-bearing again into a failing test instead of a silent regression.
+   */
+  it("INERT: the stale pausedAt changes no reader's answer", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await driftRow(db);
+
+    // 1. The page derives free, not a paid paused tier (audit #5's fix).
+    const state = await getWorkspaceBillingState(db, wsId, new Date());
+    expect(state.state).not.toBe("paused");
+    expect(state.tier).toBe("free");
+
+    // 2. Auto-top-up refuses on LIVENESS, never reaching the pause clause —
+    //    so the stale flag is not what protects the customer here.
+    expect(await maybeAutoTopup(db, wsId, 10, new Date())).toEqual({
+      triggered: false,
+      reason: "not_subscribed",
+    });
+
+    // 3. Arming refuses too, and not because of the pause.
+    await expect(
+      setAutoTopup(db, scopeOf("owner"), { enabled: true, monthlyCapCents: 5000 })
+    ).rejects.toBeInstanceOf(NoLiveSubscriptionError);
+
+    // 4. Resume cannot clear it — this is exactly why no reaper exists yet.
+    await expect(
+      resumeSubscription(db, scopeOf("owner"))
+    ).rejects.toBeInstanceOf(NoLiveSubscriptionError);
+
+    // 5. And the charge path is permitted, because the AUTHORITY has no open
+    //    period — the stale mirror column does not veto a legitimate purchase.
+    sessionCreate.mockClear();
+    await expect(
+      createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
+    ).resolves.toBeTypeOf("string");
+  });
+
+  it("SYMMETRY, the direction that must NOT change: a LIVE paused row is paused to both", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      "test"
+    );
+    await db.insert(subscriptions).values({
+      workspaceId: wsId, stripeCustomerId: "cus_live_paused",
+      stripeSubscriptionId: "sub_live_paused", stripePriceId: "price_creator",
+      status: "active", pausedAt: new Date(),
+    });
+    sessionCreate.mockClear();
+
+    // REQ-G08 is intact: this is the row audit #1 is about, and it still
+    // refuses before anything reaches Stripe.
+    const state = await getWorkspaceBillingState(db, wsId, new Date());
+    expect(state.state).toBe("paused");
+    await expect(
+      createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
+    ).rejects.toBeInstanceOf(SubscriptionPausedError);
+    expect(sessionCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("audit #7: ONE pack-price authority — the auto-top-up half", () => {
+  async function armed(db: TestDb) {
+    const { wsId } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      "test"
+    );
+    await db.insert(subscriptions).values({
+      workspaceId: wsId, stripeCustomerId: "cus_at", stripeSubscriptionId: "sub_at",
+      stripePriceId: "price_creator", status: "active",
+      autoTopupEnabled: true, autoTopupMonthlyCapCents: 5000,
+    });
+    return { wsId };
+  }
+
+  it("charges the amount STRIPE holds, read through the shared resolver", async () => {
+    const db = await createTestDb();
+    const { wsId } = await armed(db);
+    piCreate.mockClear();
+    priceRetrieve.mockClear();
+    const out = await maybeAutoTopup(db, wsId, 10, new Date());
+    expect(out.triggered).toBe(true);
+    // The resolver ran — this path used to touch no Stripe Price at all.
+    expect(priceRetrieve).toHaveBeenCalled();
+    expect(piCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 1000, currency: "usd" }),
+      expect.anything()
+    );
+  });
+
+  it("DIVERGENCE: config and Stripe disagreeing REFUSES before any PaymentIntent", async () => {
+    const db = await createTestDb();
+    const { wsId } = await armed(db);
+    // An /admin/config edit to pack.priceUsd — append-only, no deploy needed.
+    // Before this fix the manual path refused while THIS path silently charged
+    // the new, un-validated number.
+    await appendConfigVersion(
+      db,
+      {
+        ...CONFIG_V1_SEED,
+        pack: { ...CONFIG_V1_SEED.pack, priceUsd: 25 },
+        stripePriceMap: { price_pack: "pack" },
+      },
+      "admin-who-changed-the-price"
+    );
+    piCreate.mockClear();
+    await expect(maybeAutoTopup(db, wsId, 10, new Date())).rejects.toBeInstanceOf(
+      PackPriceMismatchError
+    );
+    expect(
+      piCreate,
+      "a divergence must refuse BEFORE money moves, not after"
+    ).not.toHaveBeenCalled();
+  });
+
+  it("an ARCHIVED Stripe pack price refuses too — no charge built on a dead price", async () => {
+    const db = await createTestDb();
+    const { wsId } = await armed(db);
+    piCreate.mockClear();
+    priceRetrieve.mockResolvedValueOnce({
+      id: "price_pack", active: false, unit_amount: 1000, currency: "usd",
+    } as never);
+    await expect(maybeAutoTopup(db, wsId, 10, new Date())).rejects.toBeInstanceOf(
+      PackPriceUnavailableError
+    );
+    expect(piCreate).not.toHaveBeenCalled();
+  });
+
+  it("no mapped pack price refuses — there is nothing to charge", async () => {
+    const db = await createTestDb();
+    const { wsId } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_creator: "creator" } },
+      "test"
+    );
+    await db.insert(subscriptions).values({
+      workspaceId: wsId, stripeCustomerId: "cus_np", stripeSubscriptionId: "sub_np",
+      stripePriceId: "price_creator", status: "active",
+      autoTopupEnabled: true, autoTopupMonthlyCapCents: 5000,
+    });
+    piCreate.mockClear();
+    await expect(maybeAutoTopup(db, wsId, 10, new Date())).rejects.toBeInstanceOf(
+      PackPriceNotMappedError
+    );
+    expect(piCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("audit #8: createInvoiceRecoveryUrl's STRIPE half", () => {
+  async function incomplete(db: TestDb) {
+    const { wsId, scopeOf } = await setup(db);
+    await db.insert(subscriptions).values({
+      workspaceId: wsId, stripeCustomerId: "cus_inc", stripeSubscriptionId: "sub_inc",
+      stripePriceId: "price_creator", status: "incomplete",
+    });
+    return { wsId, scopeOf };
+  }
+
+  it("an OPEN latest invoice yields its hosted URL", async () => {
+    const db = await createTestDb();
+    const { scopeOf } = await incomplete(db);
+    await expect(createInvoiceRecoveryUrl(db, scopeOf("owner"))).resolves.toBe(
+      "https://invoice.stripe.test/in_open"
+    );
+    expect(subRetrieve).toHaveBeenCalledWith(
+      "sub_inc",
+      expect.objectContaining({ expand: ["latest_invoice"] })
+    );
+  });
+
+  it("a PAID latest invoice refuses — there is nothing left to pay", async () => {
+    const db = await createTestDb();
+    const { scopeOf } = await incomplete(db);
+    subRetrieve.mockResolvedValueOnce({
+      id: "sub_inc",
+      latest_invoice: { id: "in_paid", status: "paid", hosted_invoice_url: "https://x" },
+    } as never);
+    await expect(
+      createInvoiceRecoveryUrl(db, scopeOf("owner"))
+    ).rejects.toBeInstanceOf(InvoiceRecoveryUnavailableError);
+  });
+
+  it("an OPEN invoice with NO hosted page refuses (Stripe returns null until finalized)", async () => {
+    const db = await createTestDb();
+    const { scopeOf } = await incomplete(db);
+    subRetrieve.mockResolvedValueOnce({
+      id: "sub_inc",
+      latest_invoice: { id: "in_draft", status: "open", hosted_invoice_url: null },
+    } as never);
+    await expect(
+      createInvoiceRecoveryUrl(db, scopeOf("owner"))
+    ).rejects.toBeInstanceOf(InvoiceRecoveryUnavailableError);
+  });
+
+  it("NO latest invoice at all refuses", async () => {
+    const db = await createTestDb();
+    const { scopeOf } = await incomplete(db);
+    subRetrieve.mockResolvedValueOnce({ id: "sub_inc", latest_invoice: null } as never);
+    await expect(
+      createInvoiceRecoveryUrl(db, scopeOf("owner"))
+    ).rejects.toBeInstanceOf(InvoiceRecoveryUnavailableError);
+  });
+
+  it("the UN-EXPANDED shape is handled: a string id triggers a second retrieve", async () => {
+    // latest_invoice is typed `string | Invoice | null` in the installed SDK.
+    // Reading .hosted_invoice_url off a bare id would be undefined — a silent
+    // "no invoice" for a customer who has one — so both shapes are handled, and
+    // this is the case that proves the string branch actually works.
+    const db = await createTestDb();
+    const { scopeOf } = await incomplete(db);
+    subRetrieve.mockResolvedValueOnce({
+      id: "sub_inc", latest_invoice: "in_expanded",
+    } as never);
+    invoiceRetrieve.mockClear();
+    await expect(createInvoiceRecoveryUrl(db, scopeOf("owner"))).resolves.toBe(
+      "https://invoice.stripe.test/in_expanded"
+    );
+    expect(invoiceRetrieve).toHaveBeenCalledWith("in_expanded");
+  });
+});
+
+describe("the owner's pause/resume path serializes with the webhook writers", () => {
+  /**
+   * `pauseSubscription` and `resumeSubscription` must take `takeWorkspaceLock`,
+   * like every other writer of this workspace's money state (billing gate,
+   * 2026-08-18). Without it an uncommitted owner pause is invisible to a
+   * concurrently-processing webhook, whose `ensurePauseEnded` then returns false
+   * and whose `clearPauseMirror` clears `pausedAt` after the owner's write
+   * commits — `{open pause_periods, mirror clear}`. Money-safe (every money
+   * guard reads `pause_periods`), but the page reads `active` while credits are
+   * frozen and the owner cannot resume early.
+   *
+   * WHAT THIS PROVES, and what it does not. It is a SOURCE assertion: it proves
+   * the call is present, not that it serializes. The behavioural proof needs two
+   * real connections, which means the Docker suite — and driving it through
+   * `pauseSubscription` there would mean mocking the Stripe adapter inside the
+   * one suite that proves the ledger's money invariants under real concurrency.
+   * That trade is not worth it for this, so the honest instrument is the cheap
+   * one, labelled: before this, removing either lock turned NOTHING red.
+   */
+  const SRC = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/stripe/actions.ts"),
+    "utf8"
+  );
+
+  function bodyOf(fn: string): string {
+    const start = SRC.indexOf(`export async function ${fn}(`);
+    expect(start, `${fn} must exist in actions.ts`).toBeGreaterThan(-1);
+    const next = SRC.indexOf("\nexport ", start + 1);
+    return SRC.slice(start, next === -1 ? SRC.length : next);
+  }
+
+  it.each(["pauseSubscription", "resumeSubscription"])(
+    "%s takes the workspace lock",
+    (fn) => {
+      const body = bodyOf(fn)
+        .replace(/\/\/.*/g, "")
+        .replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(
+        body,
+        `${fn} writes this workspace's pause state and must serialize against handleStripeEvent, which takes the same lock before dispatch`
+      ).toContain("takeWorkspaceLock(tx, scope.workspaceId)");
+
+      // …and takes it FIRST. Placement is load-bearing twice over, so
+      // asserting mere presence would let a reorder pass (billing gate NOTE):
+      //
+      //  - before `getDbNow`, or a contended wait leaves `at` stale and
+      //    `assertWriteClock`'s `latestEventAt` comparison can throw
+      //    `ClockSkewError` on an ordinary pause;
+      //  - before any write, which is the property that rules out an
+      //    advisory-lock-vs-row-lock cycle across the seven call sites.
+      const lockAt = body.indexOf("takeWorkspaceLock");
+      const clockAt = body.indexOf("getDbNow(");
+      expect(clockAt, `${fn} must read the db clock inside its transaction`)
+        .toBeGreaterThan(-1);
+      expect(
+        lockAt,
+        `${fn} must take the lock BEFORE reading the clock — reading it first lets a contended wait produce a ClockSkewError on an ordinary pause`
+      ).toBeLessThan(clockAt);
+    }
+  );
+
+  it("NON-VACUITY: the slicer really isolates one function", () => {
+    expect(bodyOf("pauseSubscription")).not.toContain("resumeSubscription(");
+    expect(bodyOf("resumeSubscription")).toContain("NotPausedError");
   });
 });

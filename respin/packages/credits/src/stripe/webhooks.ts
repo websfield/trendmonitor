@@ -16,11 +16,16 @@ import {
 } from "@respin/db";
 import { getActiveConfig, type SubscriptionTier } from "@respin/config";
 import type Stripe from "stripe";
-import { getDbNow } from "../clock";
+import { CLOCK_SKEW_MS, getDbNow, takeWorkspaceLock } from "../clock";
 import { addMonthsUtc } from "../months";
-import { IRREVERSIBLE_STATUSES } from "../state";
+import { IRREVERSIBLE_STATUSES, TERMINAL_STATUSES } from "../state";
 import { grantCredits, purchasePackCredits } from "../ledger";
-import { ensurePauseEnded, ensurePauseStarted } from "../pause";
+import {
+  clearPauseMirror,
+  ensurePauseEnded,
+  ensurePauseStarted,
+  openPauseStartedKnownAt,
+} from "../pause";
 import { workspaceForCustomer } from "./customers";
 
 /** The stored vocabulary — matches the stripe_events_outcome CHECK exactly. */
@@ -50,7 +55,11 @@ const GRANT_BILLING_REASONS = new Set(["subscription_create", "subscription_cycl
 const ACTIVE_STATUSES = new Set(["active", "trialing"]);
 // End states. A subscription in one of these is DEAD: no invoice, however
 // late, may lift it back to a paid tier (code-review BLOCK — resurrection).
-const TERMINAL_STATUSES = new Set(["canceled", "incomplete_expired", "unpaid"]);
+// MOVED to state.ts (audit 2026-08-17 #6): it was defined here while its
+// sibling IRREVERSIBLE_STATUSES lived in state.ts, so "dead" had two
+// half-definitions in two files and `auto-topup.ts` — which needed THIS one —
+// imported the other. Both now come from state.ts, the one place that owns the
+// mirror's vocabulary.
 // IRREVERSIBLE_STATUSES (imported from state.ts, the ONE definition) is the
 // subset used by the subscription-mirror guard. `unpaid` belongs in
 // TERMINAL_STATUSES above — no invoice may lift it back to a paid tier — but it
@@ -138,10 +147,40 @@ function subscriptionLinesOf(invoice: Stripe.Invoice): Stripe.InvoiceLineItem[] 
  */
 const DEAD_SUBSCRIPTION_FIELDS = {
   cancelAtPeriodEnd: false,
+  // Same reasoning as the boolean, for the field the PORTAL actually sets
+  // (evidence-run finding 1): a dead subscription has no future cancellation
+  // date, and whatever this row says after it dies is inherited forever.
+  cancelAt: null,
   graceExpiresAt: null,
   autoTopupEnabled: false,
   autoTopupMonthlyCapCents: null,
+  // The stale PAID TIER (audit 2026-08-17 #5). Tier is derived at READ time
+  // from this column × the active config's `stripePriceMap` (state.ts), so a
+  // dead subscription that keeps its price id keeps answering "creator" to
+  // every later reader. It is cleared for the same reason as every field above
+  // it: a dead subscription emits no further events, so whatever this row says
+  // at death is what every reader inherits forever. `getWorkspaceBillingState`
+  // already returns free for a dead status, so this changes no rendered state
+  // today — it removes the stale VALUE that the #5 drift path was reading
+  // around that status check.
+  stripePriceId: null,
 } as const;
+//
+// NOT in the object above, deliberately, and this is the interesting half of
+// audit #5: `pausedAt` / `resumesAt` are ALSO stale-on-death, but they are the
+// two columns `pause.ts` declares itself the sole writer of ("Phase 3 must
+// NEVER write subscriptions.pausedAt directly; always go through here" — the
+// DUAL-TRUTH rule, because pause truth lives in `pause_periods` AND this
+// mirror and they stay consistent only because one module writes both). Adding
+// them here would have satisfied the audit's literal wording by breaking the
+// invariant that keeps the two truths in sync.
+//
+// So the death writers below call `ensurePauseEnded` (which closes an open
+// period and clears the mirror through `recordPauseEnd`) and then
+// `clearPauseMirror`, which converges the mirror when NO period is open — the
+// exact drift state #5 describes, and a function that already existed for the
+// owner's resume path. `clearPauseMirror` refuses while a pause is genuinely
+// open, so the pair cannot desynchronise the two truths in either direction.
 
 /**
  * Is there a grace window still RUNNING? The never-EXTEND rule keys on this
@@ -194,6 +233,98 @@ function isSubscriptionInvoice(invoice: Stripe.Invoice): boolean {
 }
 
 /**
+ * WHICH subscription generated this invoice (audit 2026-08-17 #4).
+ *
+ * Verified against the installed SDK rather than recalled (golden rule 9):
+ * `stripe@22.5.0` types `Invoice.Parent.SubscriptionDetails.subscription` as
+ * `string | Subscription` — "The subscription that generated this invoice" —
+ * so both the id and the expanded-object shapes are real and both are handled,
+ * exactly as `customerIdOf` and the checkout branch already do for their own
+ * dual-shape fields.
+ */
+function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
+  const sub = invoice.parent?.subscription_details?.subscription;
+  if (typeof sub === "string") return sub;
+  return typeof sub === "object" && sub !== null && typeof sub.id === "string"
+    ? sub.id
+    : null;
+}
+
+/**
+ * May an invoice event write to the mirror it resolved to? — the SUBSCRIPTION
+ * IDENTITY check, which is not the same question as `invoiceMayWriteStatus`'s
+ * TERMINAL/ORDER check and was missing entirely (audit 2026-08-17 #4).
+ *
+ * Both invoice handlers resolved their mirror by `eq(subscriptions.workspaceId,
+ * workspaceId)` alone — the workspace is right, but nothing asked whether the
+ * invoice came from the subscription the mirror is currently BOUND to. A
+ * workspace that cancels and re-subscribes has one mirror row pointing at the
+ * NEW subscription; a late-arriving invoice event belonging to the OLD, dead one
+ * had no id check stopping it from granting that new subscription's allowance
+ * or pushing it into dunning.
+ *
+ * This is the same defect CLASS the M1 review already found and fixed once, for
+ * checkout events ("a resurrection hazard where a re-subscribe checkout event
+ * could permanently orphan the mirror onto a dead subscription id", round 5b) —
+ * the fix simply never extended to the invoice handlers. CLAUDE.md's 2026-07-30
+ * lesson is exactly this shape: fix the class, not the field.
+ *
+ * ONE case is deliberately allowed through, and it is not a weakening: a mirror
+ * with `stripeSubscriptionId === null` has nothing to compare against. That is
+ * the legitimate first-invoice-before-the-snapshot ordering, which the evidence
+ * run OBSERVED live (`invoice.paid` at 23:36:48.738 arriving BEFORE
+ * `customer.subscription.created` at 23:36:49.106 — ledger.md). Refusing it
+ * would break the ordinary subscribe flow on real Stripe delivery order.
+ */
+function invoiceMatchesMirror(
+  invoiceSubId: string,
+  mirrorSubId: string | null
+): boolean {
+  if (mirrorSubId === null) return true;
+  return invoiceSubId === mirrorSubId;
+}
+
+/**
+ * D-AUDIT-1 (audit 2026-08-17 #2) — may a grant-bearing `invoice.paid` mint the
+ * monthly allowance given the workspace's pause state?
+ *
+ * REQ-G08 (PRD §4G, "Must"): "While paused: no charges, no monthly grants."
+ * This handler had NO pause check, and `stripe.test.ts` carried a test titled
+ * "invoice.paid arriving while mirror-paused is PROCESSED… never dropped" that
+ * asserted the grant lands — so the requirement was not merely unenforced, a
+ * test actively pinned its violation.
+ *
+ * The code's implicit rationale ("a paid invoice is a fact; don't drop the
+ * customer's money") is sound for a genuine delivery race and unsound as a
+ * blanket rule. R-25/D-AUDIT-1 settles it by TIMESTAMP rather than by vibes:
+ *
+ *  - the event was created at or before the pause became known (plus the
+ *    tolerance below) → a PRE-PAUSE invoice delivered late. Grant. The customer
+ *    paid for that service period before pausing, and dropping it would take
+ *    money without delivering credits.
+ *  - otherwise → a genuine DURING-PAUSE invoice. Refuse, mint nothing.
+ *    `pause_collection: {behavior: "void"}` means such an invoice should not
+ *    exist; if one does it is a reconciliation question for a human.
+ *
+ * The tolerance WIDENS the grant window, so an ambiguous ordering at the pause
+ * boundary resolves in the customer's favour — the same direction and the same
+ * constant the two existing bounds in `pause.ts` use (both refuse only when the
+ * disagreement EXCEEDS it). One idiom, not a second one. Stated consequence:
+ * an invoice created up to 60s after a pause begins still grants.
+ *
+ * Returns null when the workspace is not paused (the ordinary case).
+ */
+function prePauseGrantDecision(
+  pauseKnownAt: Date | null,
+  event: Stripe.Event
+): { paused: false } | { paused: true; allowed: boolean; lagMs: number } {
+  if (pauseKnownAt === null) return { paused: false };
+  const eventAt = new Date(event.created * 1000);
+  const lagMs = eventAt.getTime() - pauseKnownAt.getTime();
+  return { paused: true, allowed: lagMs <= CLOCK_SKEW_MS, lagMs };
+}
+
+/**
  * May an INVOICE event write subscription status?
  *
  * Two guards, both learned the hard way, and they belong together because
@@ -221,9 +352,40 @@ function invoiceMayWriteStatus(
 ): boolean {
   if (!mirror) return false;
   if (TERMINAL_STATUSES.has(mirror.status)) return false;
-  const eventAt = new Date(event.created * 1000);
-  return !(
-    mirror.mirrorEventAt && mirror.mirrorEventAt.getTime() > eventAt.getTime()
+  return !invoiceIsStale(mirror, event);
+}
+
+/**
+ * The ORDER half of `invoiceMayWriteStatus`, on its own — because the two
+ * halves have OPPOSITE answers for one write, and collapsing them hid a defect
+ * (audit 2026-08-17 #3's one independently-confirmed concrete instance).
+ *
+ * `invoice.paid`'s grace-clear used no guard at all: it nulled `graceExpiresAt`
+ * whenever a deadline existed, while its own status-lift half beside it was
+ * order-guarded. So a STALE `invoice.paid` — one whose `created` predates the
+ * subscription snapshot that opened the current dunning window — ended a LIVE
+ * grace period early, and `past_due` with a null deadline derives to `free`
+ * (state.ts): a customer inside the window they were promised was downgraded by
+ * a late delivery, with nothing left to correct it, because the deadline is
+ * gone and no future event re-opens it.
+ *
+ * Why this is NOT just `!invoiceMayWriteStatus`: that predicate also refuses on
+ * TERMINAL, and for a terminal mirror clearing the deadline is still RIGHT —
+ * `canceled` already derives to free, so the clear is tidy-up, not a downgrade
+ * (see the note at the clear site). Only the ORDER reason must veto the clear.
+ *
+ * Note the lock (see `handleStripeEvent`) does not close this and was never
+ * going to: serializing two writers fixes the interleaving, not a stale
+ * writer's opinion. The lock is why the surviving mirror is a whole snapshot
+ * rather than a mix; this is why the surviving snapshot is the NEWEST one.
+ */
+function invoiceIsStale(
+  mirror: { mirrorEventAt: Date | null } | undefined,
+  event: Stripe.Event
+): boolean {
+  if (!mirror?.mirrorEventAt) return false;
+  return (
+    mirror.mirrorEventAt.getTime() > new Date(event.created * 1000).getTime()
   );
 }
 
@@ -233,6 +395,28 @@ function priceIdOfLine(line: Stripe.InvoiceLineItem | undefined): string | null 
   return typeof price === "object" && price !== null && "id" in price
     ? (price as { id: string }).id
     : null;
+}
+
+/**
+ * The money figure recorded on a pack ledger row.
+ *
+ * The fallback is NOT a second price authority, but it is not an identity
+ * either: `resolvePackPrice` validates config against Stripe at
+ * SESSION-CREATION, and this runs at SETTLEMENT, so an `/admin/config` price
+ * edit in between makes the two differ. See the call site for why the branch is
+ * unreachable and why substituting still beats failing closed.
+ */
+function packAmountCents(
+  session: Stripe.Checkout.Session,
+  content: { pack: { priceUsd: number } },
+  eventId: string
+): number {
+  if (typeof session.amount_total === "number") return session.amount_total;
+  const substituted = Math.round(content.pack.priceUsd * 100);
+  console.warn(
+    `[stripe-webhook] ${eventId} pack session ${session.id} settled with payment_status=paid but NO amount_total; recording the configured pack price (${substituted}c) instead. This figure is equal to what Stripe charged UNLESS the configured pack price changed after this session was created — before trusting it, compare the session's amount_total in Stripe against the config version recorded on this ledger row. The branch should be unreachable, so also check the Stripe API version if it fires.`
+  );
+  return substituted;
 }
 
 /**
@@ -258,10 +442,53 @@ export async function handleStripeEvent(
         ? await workspaceForCustomer(tx, customerId)
         : null;
 
+      // THE WORKSPACE LOCK — audit 2026-08-17 #3, the audit's most
+      // cross-confirmed finding (a Claude depth read, the correctness critic,
+      // and Codex independently landed on the same lines).
+      //
+      // Every one of the five `subscriptions`-mirror writers below was an
+      // unlocked READ-THEN-WRITE: each read the mirror, checked staleness
+      // against THAT snapshot, then issued a plain `.update()`. Two concurrent
+      // or out-of-order Stripe deliveries could therefore both pass their own
+      // staleness check and the loser's write would silently revert newer
+      // billing state to stale. The credit ledger was already proven unsafe
+      // under exactly this shape and fixed with `takeWorkspaceLock` ("11 of 20
+      // concurrent debits succeeded against a 100 balance", clock.ts) — the fix
+      // was simply never carried across to this file.
+      //
+      // It is taken ONCE, HERE, rather than five times in the writers, for the
+      // reason CLAUDE.md's 2026-07-30 lesson gives: guard where the path is
+      // BUILT, so a sixth writer added later inherits the guard instead of
+      // needing to remember it. Consequences worth stating:
+      //
+      //  - It is the FIRST lock this transaction takes, and `deriveBalance` /
+      //    `debitCredits` re-acquire the same xact lock as a no-op (D-M1-7), so
+      //    the ordering cannot deadlock against the ledger paths.
+      //  - It also closes #28 without widening the idempotency list. Two events
+      //    carrying the SAME business object (one checkout session, one invoice,
+      //    one PaymentIntent) necessarily resolve to the same workspace, so they
+      //    now SERIALIZE here: the loser waits, its pre-check then sees the
+      //    winner's committed row, and it converges to `ignored` — instead of
+      //    losing a unique-index race and returning a false 500. Adding those
+      //    business-object constraints to IDEMPOTENCY_CONSTRAINTS was the other
+      //    candidate fix and is deliberately NOT taken: that list turns a 23505
+      //    into a silent 200, which is precisely the "collapsing them all into a
+      //    200 silently discards events" hazard the round-2 BLOCK closed.
+      //  - Unattributed events (`workspaceId === null`) take no lock. They also
+      //    write nothing — they can only refuse — so there is nothing to
+      //    serialize.
+      if (workspaceId) await takeWorkspaceLock(tx, workspaceId);
+
       const outcome = await dispatch(tx, event, workspaceId);
       if (outcome !== "processed") {
-        // Payload-free refusal log (D-M1-6): id + outcome only.
-        console.warn(`[stripe-webhook] ${event.id} → ${outcome}`);
+        // Payload-free refusal log (D-M1-6): ids + type + outcome only, never
+        // payload fields. `event.type` joins it per audit 2026-08-17 #27 —
+        // without it, telling an EXPECTED ignore (an unhandled event type) from
+        // a refusal that matters required a database lookup mid-incident, which
+        // is the wrong time to need one.
+        console.warn(
+          `[stripe-webhook] ${event.id} type=${event.type} → ${outcome}`
+        );
       }
       const now = await getDbNow(tx);
       await tx.insert(stripeEvents).values({
@@ -364,7 +591,32 @@ async function dispatch(
           workspaceId,
           amount: content.pack.credits,
           expiresAt: addMonthsUtc(now, content.pack.validityMonths),
-          amountCents: session.amount_total ?? Math.round(content.pack.priceUsd * 100),
+          // WHAT STRIPE ACTUALLY CHARGED for this session, with a fallback
+          // that is NOT a second price authority (billing gate, 2026-08-18).
+          //
+          // The fallback reads like a second price authority after audit #7
+          // removed one. It is NOT one — but the reason is narrower than it
+          // first looks, and the narrow version is the true one (billing gate,
+          // 2026-08-18). `resolvePackPrice` refuses to build a Checkout when
+          // config and the Stripe Price disagree — at SESSION-CREATION time.
+          // This code runs at SETTLEMENT. An `/admin/config` price edit in
+          // between is sanctioned and deploy-free, so the two are equal only
+          // for a config that has not moved since the session was created.
+          //
+          // What actually carries this is that the branch is unreachable
+          // (`payment_status === "paid"` is asserted above, and a paid Session
+          // always carries `amount_total`), and that failing closed would be
+          // worse than substituting: rolling back would withhold
+          // credits the customer has already paid for — exactly the outcome
+          // R-28 decided against for this same branch — over a figure that
+          // feeds the margin rollup and not what the customer receives
+          // (`content.pack.credits` decides that, and is read from the same
+          // config snapshot). It is LOGGED rather than substituted silently
+          // because an unreachable branch that fires is a Stripe-contract
+          // surprise on a money column, and the operator needs to know the
+          // recorded figure is the one that may need reconciling.
+
+          amountCents: packAmountCents(session, content, event.id),
           stripeEventId: event.id,
           refType: "checkout_session",
           refId: session.id,
@@ -492,6 +744,26 @@ async function dispatch(
           `${event.type} ${event.id}: subscription ${sub.id} has ${items.length} items — M1 sells single-item subscriptions, so there is no rule for which item carries the plan price; refusing to mirror a guess. REMEDY: open subscription ${sub.id} in the Stripe dashboard and remove the extra item(s) so exactly one priced item remains, then the redelivery succeeds. Until then EVERY mirror update for this workspace is blocked, including pause/resume sync. Stripe will redeliver`
         );
       }
+      // ZERO items fails closed (audit 2026-08-17 #29). The `items.length > 1`
+      // refusal above has always existed; zero was accepted, and `item?.price
+      // ?.id ?? null` then wrote a LIVE mirror with a null price. The result is
+      // a paying workspace that renders as Free (state.ts resolves a null price
+      // to `{tier: "free", reason: "unmapped_price"}`) while STILL being blocked
+      // from starting a second checkout, because `hasLiveStripeSubscription`
+      // reads the id and the status, not the price — so the customer can neither
+      // use what they bought nor buy it again. Fail closed and let Stripe
+      // redeliver, which is what every other unexpected-shape branch in this
+      // file does.
+      //
+      // The installed SDK types `Subscription.items` as a non-optional list, so
+      // for a genuine payload this never fires — same posture as the service
+      // period refusal in `invoice.paid`: the types forbid the shape, and the
+      // branch that used to fail OPEN on it is the one that cost money.
+      if (items.length === 0) {
+        throw new Error(
+          `${event.type} ${event.id}: subscription ${sub.id} carries ZERO priced items, so there is no price to mirror — refusing to write a live subscription with a null price, which would render this paying workspace as Free while still blocking it from a second checkout. The installed SDK types \`items\` as always present, so an empty list means the API version or the object shape has changed. REMEDY: open subscription ${sub.id} in the Stripe dashboard and confirm it has exactly one priced item; compare the payload against the API version pinned in adapter.ts. Stripe will redeliver`
+        );
+      }
       const item = items[0];
       const now = await getDbNow(tx);
       // Grace must NOT depend on delivery order (billing review finding 1).
@@ -522,6 +794,12 @@ async function dispatch(
           currentPeriodStart: item ? new Date(item.current_period_start * 1000) : null,
           currentPeriodEnd: item ? new Date(item.current_period_end * 1000) : null,
           cancelAtPeriodEnd: sub.cancel_at_period_end,
+          // BOTH, because Stripe expresses one fact two ways and the evidence
+          // run proved the boolean alone is not enough: a Customer Portal
+          // cancellation arrived as {cancel_at: <ts>, cancel_at_period_end:
+          // FALSE, status: active}. `scheduledCancelAt` (state.ts) is the ONE
+          // reader that turns the pair into a date.
+          cancelAt: sub.cancel_at ? new Date(sub.cancel_at * 1000) : null,
           mirrorEventAt: eventAt,
           // A snapshot that lands an IRREVERSIBLE status is a death notice, and
           // must leave exactly what `customer.subscription.deleted` leaves —
@@ -552,6 +830,30 @@ async function dispatch(
         })
         .where(eq(subscriptions.workspaceId, workspaceId));
 
+      // A snapshot that landed an IRREVERSIBLE status is a DEATH NOTICE, and a
+      // dead subscription is never paused (audit 2026-08-17 #5). Handled here,
+      // ahead of the ordinary pause sync, because a canceled payload can still
+      // carry `pause_collection` — and feeding that to `ensurePauseStarted`
+      // would OPEN a pause on a subscription that no longer exists, which is the
+      // drift state #5 is about, manufactured by our own writer.
+      //
+      // Both calls, in this order, and both through pause.ts (the sole writer of
+      // `pausedAt` — see the note under DEAD_SUBSCRIPTION_FIELDS):
+      //   - `ensurePauseEnded` closes an OPEN period and clears the mirror with
+      //     it. It is `eventAt`-bounded, so a snapshot that predates a pause the
+      //     owner opened later correctly declines to close it;
+      //   - `clearPauseMirror` then converges the mirror when NO period is open
+      //     — the exact "paused with no open pause period" drift `pause.ts`'s own
+      //     docblock concedes is reachable, and the state that made a canceled
+      //     subscription render as a paid paused tier forever.
+      // `clearPauseMirror` refuses while a pause is genuinely open, so if the
+      // bounded close above declined, this cannot undo it.
+      if (IRREVERSIBLE_STATUSES.has(sub.status)) {
+        await ensurePauseEnded(tx, workspaceId, now, eventAt);
+        await clearPauseMirror(tx, workspaceId);
+        return "processed";
+      }
+
       // Pause mirror sync — convergent by construction, through the SAME
       // helpers the owner action uses (pause.ts), so neither writer can throw
       // at the other's ordering and the two paths cannot drift apart.
@@ -573,7 +875,21 @@ async function dispatch(
         // (billing round-7 NOTE — the pause writer and this watermark are on
         // different clocks, because `pauseSubscription` deliberately does not
         // stamp `mirrorEventAt`).
-        await ensurePauseEnded(tx, workspaceId, now, eventAt);
+        //
+        // PAIRED WITH `clearPauseMirror`, like the irreversible branch above
+        // and `resumeSubscription` (billing gate, 2026-08-18). This branch was
+        // the only one of the three that closed the PERIOD without converging
+        // the MIRROR, and `state.ts` reads the mirror. The gap only shows on a
+        // row that is already drifted: `{canceled, pausedAt: <stale>}` is inert
+        // while the subscription stays dead, but a RE-SUBSCRIBE restores
+        // liveness and the stale flag comes back to life — the workspace then
+        // renders `paused`, and is refused a pack purchase, on a subscription
+        // it has just bought. Safe for the same reason as the sibling call:
+        // `clearPauseMirror` refuses while a period is genuinely open, so a
+        // bounded decline above makes this a no-op rather than an override.
+        if (!(await ensurePauseEnded(tx, workspaceId, now, eventAt))) {
+          await clearPauseMirror(tx, workspaceId);
+        }
       }
       return "processed";
     }
@@ -609,6 +925,17 @@ async function dispatch(
       }
       const now = await getDbNow(tx);
       await ensurePauseEnded(tx, workspaceId, now);
+      // `ensurePauseEnded` is a NO-OP when no open `pause_periods` row exists,
+      // and that is precisely the audit #5 drift state: a mirror saying
+      // `pausedAt` with no open period. The cancellation then left
+      // {status: canceled, pausedAt: <set>, resumesAt: <stale>} behind, which
+      // `state.ts` rendered as a paid PAUSED tier forever — a dead subscription
+      // emits no further events, so nothing was ever coming to correct it.
+      // Converging the mirror here closes it at the writer; `state.ts`'s new
+      // liveness gate on the paused branch is the read-side half, and both are
+      // wanted (this one stops NEW drift, that one makes rows already on disk
+      // read honestly). Through pause.ts, the sole writer of `pausedAt`.
+      await clearPauseMirror(tx, workspaceId);
       await tx
         .update(subscriptions)
         .set({
@@ -651,6 +978,49 @@ async function dispatch(
         .from(subscriptions)
         .where(eq(subscriptions.workspaceId, workspaceId))
         .limit(1);
+
+      // AUDIT #4 — WHICH subscription generated this invoice? Checked BEFORE any
+      // grant or status write, and before the shape refusals below, because a
+      // mismatched invoice should not be able to throw this workspace into a
+      // Stripe retry loop over a shape that was never ours to grant from.
+      // `billing_reason` has already established this is a subscription invoice.
+      const invoiceSubId = invoiceSubscriptionId(invoice);
+      if (invoiceSubId === null) {
+        throw new Error(
+          `invoice.paid ${event.id}: billing_reason ${invoice.billing_reason} implies a subscription generated this invoice, but no subscription id could be read from \`parent.subscription_details.subscription\` — refusing to grant an allowance that cannot be attributed to a subscription. The installed SDK types that field as \`string | Subscription\` and always present for a subscription invoice, so its absence means the API version or the object shape has changed. REMEDY: compare invoice ${invoice.id ?? "(no id)"} against the API version pinned in adapter.ts. Stripe will redeliver`
+        );
+      }
+      if (!invoiceMatchesMirror(invoiceSubId, mirror?.stripeSubscriptionId ?? null)) {
+        // `ignored`, not a throw: this invoice is genuinely not ours to act on,
+        // and a throw would make Stripe redeliver it forever. Diagnosable by
+        // ids alone (D-M1-6: ids in the log, never payload fields).
+        console.warn(
+          `[stripe-webhook] ${event.id} invoice ${invoice.id ?? "(no id)"} was generated by subscription ${invoiceSubId}, but this workspace's mirror is bound to ${mirror?.stripeSubscriptionId ?? "(none)"} — ignoring; an allowance is never granted for a subscription the mirror does not hold`
+        );
+        return "ignored";
+      }
+
+      // D-AUDIT-1 / REQ-G08 — "While paused: no charges, no monthly grants."
+      // Placed after the identity check (an invoice for the wrong subscription
+      // is not ours to reason about at all) and BEFORE the shape refusals, so a
+      // during-pause invoice never turns into a permanent Stripe retry loop over
+      // a line-item shape. See `prePauseGrantDecision` for the full reasoning
+      // and R-25 for the recorded policy.
+      const pauseDecision = prePauseGrantDecision(
+        await openPauseStartedKnownAt(tx, workspaceId),
+        event
+      );
+      if (pauseDecision.paused && !pauseDecision.allowed) {
+        console.warn(
+          `[stripe-webhook] ${event.id} type=${event.type} invoice=${invoice.id ?? "(no id)"} pause=during-pause → ignored: the workspace has an open pause whose knowledge time precedes this event by ${pauseDecision.lagMs}ms (tolerance ${CLOCK_SKEW_MS}ms), so this is a genuine during-pause invoice and REQ-G08 forbids the monthly grant (D-AUDIT-1). NO credits were minted and NO ledger row was written. A paid invoice during a \`behavior: "void"\` pause should not exist — reconcile invoice ${invoice.id ?? "(no id)"} by hand`
+        );
+        return "ignored";
+      }
+      if (pauseDecision.paused) {
+        console.warn(
+          `[stripe-webhook] ${event.id} type=${event.type} invoice=${invoice.id ?? "(no id)"} pause=pre-pause-race → granting: the event predates the open pause's knowledge time by ${-pauseDecision.lagMs}ms (within the ${CLOCK_SKEW_MS}ms tolerance), which is the ONE accepted exception to REQ-G08 recorded in R-25/D-AUDIT-1 — a pre-pause invoice delivered late`
+        );
+      }
       // A grant-bearing invoice with NO recurring subscription line is not a
       // shape we understand: falling through would price the allowance off the
       // mirror while the customer was charged for something else. Fail closed
@@ -787,7 +1157,23 @@ async function dispatch(
       // delivery — resurrected a canceled workspace to a paid tier
       // permanently, with no later event that would ever correct it. Clearing
       // the stale deadline is still right: `canceled` already derives to free.
-      if (mirror?.graceExpiresAt) {
+      //
+      // ORDER-GUARDED as of audit 2026-08-17 #3 (see `invoiceIsStale`). The
+      // clear used to be unconditional while the status lift beside it was
+      // guarded — the asymmetry the correctness critic reported — so a STALE
+      // paid invoice ended a LIVE dunning window early and dropped a paying
+      // customer to free.
+      //
+      // The ORDER reason only, deliberately NOT `!invoiceMayWriteStatus`: that
+      // predicate also refuses on TERMINAL, and on a terminal mirror clearing
+      // the deadline is still right — `canceled` derives to free regardless, so
+      // the clear is tidy-up rather than a downgrade, and the round-4 comment
+      // below says so. A stale event on a terminal mirror therefore leaves the
+      // deadline standing, and that costs nothing: `state.ts` reads
+      // `graceExpiresAt` ONLY inside its `past_due` branch, which a terminal
+      // status never reaches. Asserted both ways in stripe.test.ts rather than
+      // claimed here.
+      if (mirror?.graceExpiresAt && !invoiceIsStale(mirror, event)) {
         const revivable =
           invoiceMayWriteStatus(mirror, event) && !ACTIVE_STATUSES.has(mirror.status);
         await tx
@@ -818,6 +1204,26 @@ async function dispatch(
       // Terminal + order guarded like every other status write (code-review
       // BLOCK): this was the ONE unguarded status writer of four.
       if (!invoiceMayWriteStatus(mirror, event)) return "ignored";
+      // AUDIT #4, the dunning half. `isSubscriptionInvoice` above established
+      // that A subscription generated this invoice; this establishes it was
+      // THIS one. Without it, a late `invoice.payment_failed` belonging to a
+      // superseded subscription could push the workspace's CURRENT, healthy
+      // subscription into dunning — opening a grace window and downgrading a
+      // paying customer on the strength of an old subscription's failure.
+      //
+      // `ignored` rather than a throw, unlike the grant path: nothing is minted
+      // here, so there is no money to protect by forcing a redelivery, and a
+      // throw would have Stripe retry an event that will never become ours.
+      const failedSubId = invoiceSubscriptionId(invoice);
+      if (
+        failedSubId !== null &&
+        !invoiceMatchesMirror(failedSubId, mirror?.stripeSubscriptionId ?? null)
+      ) {
+        console.warn(
+          `[stripe-webhook] ${event.id} failed invoice ${invoice.id ?? "(no id)"} belongs to subscription ${failedSubId}, but this workspace's mirror is bound to ${mirror?.stripeSubscriptionId ?? "(none)"} — ignoring; a superseded subscription's failure never puts the current one into dunning`
+        );
+        return "ignored";
+      }
       // Idempotent: a second failure never EXTENDS the LIVE deadline of the
       // episode it belongs to — but a LAPSED one (billing round-6 CHANGE), or
       // one left behind by an episode that has since RECOVERED (billing

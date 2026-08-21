@@ -36,15 +36,22 @@ export type BillingViewProps = {
    */
   state: {
     tier: string;
-    state: "free" | "active" | "grace" | "paused" | "unknown";
+    state: "free" | "active" | "grace" | "paused" | "incomplete" | "unknown";
     reason?: "unmapped_price";
     graceExpiresAt?: Date;
     resumesAt?: Date;
+    /**
+     * The scheduled END of a live subscription, derived by `scheduledCancelAt`
+     * from BOTH Stripe cancellation fields. The page never reads those columns
+     * itself — one definition, one reader (evidence-run finding 1).
+     */
+    cancelAt?: Date;
+    /** Only on `incomplete` — the plan the unpaid first invoice is for. */
+    pendingTier?: string;
   };
   isOwner: boolean;
   /** `hasLiveStripeSubscription` — the ONE definition, read in the page. */
   hasLiveSubscription: boolean;
-  cancelAtPeriodEnd: boolean;
   hasStripeCustomer: boolean;
   autoTopup: { enabled: boolean; monthlyCapCents: number | null };
   /** null when config could not be read — nothing is guessed. */
@@ -65,6 +72,8 @@ export type BillingViewProps = {
     subscribe: FormAction;
     pack: FormAction;
     portal: FormAction;
+    /** The `incomplete` remedy — hosted invoice, never the Portal (audit #8). */
+    recoverInvoice: FormAction;
     pause: FormAction;
     resume: FormAction;
     autoTopup: FormAction;
@@ -90,14 +99,26 @@ function day(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function Blocked({ reason }: { reason: string }) {
-  return <p style={muted}>{reason}</p>;
+function Blocked({ reason, id }: { reason: string; id?: string }) {
+  return (
+    <p style={muted} id={id}>
+      {reason}
+    </p>
+  );
 }
 
 /**
  * A submit button that is disabled with a NAMED reason, or live. One component
  * so no control on this page can be disabled without saying why — the "fail
  * closed, but never without a way forward" rule in button form.
+ *
+ * The reason is also PROGRAMMATICALLY ASSOCIATED with the control it disables
+ * (audit 2026-08-17 #17, WCAG 1.3.1 / 3.3.2). It was visible but unlinked, so a
+ * screen-reader user tabbing the page heard "Buy 500 credits for $10, dimmed"
+ * and nothing else — the reason sat in a sibling paragraph they had to go and
+ * find. `testId` is REQUIRED rather than optional now because it is the id
+ * stem: an unnamed control could not carry the association, and making it
+ * optional would let a future control opt out of the fix silently.
  */
 function ActionButton({
   action,
@@ -113,7 +134,7 @@ function ActionButton({
   blockedBy: string | null;
   hidden?: ReactNode;
   children?: ReactNode;
-  testId?: string;
+  testId: string;
   cancelMarker?: boolean;
 }) {
   // The cancel marker rides BOTH branches. Marking only the live form would
@@ -121,13 +142,14 @@ function ActionButton({
   // Stripe key) carries no marker — and the "no control on the ordinary page
   // reaches cancellation" assertion would pass over it.
   const cancel = cancelMarker ? "final" : undefined;
+  const reasonId = `${testId}-reason`;
   if (blockedBy) {
     return (
       <div data-testid={testId} data-cancel={cancel}>
-        <button type="button" disabled>
+        <button type="button" disabled aria-describedby={reasonId}>
           {label}
         </button>
-        <Blocked reason={blockedBy} />
+        <Blocked reason={blockedBy} id={reasonId} />
       </div>
     );
   }
@@ -145,7 +167,6 @@ export function BillingView(props: BillingViewProps) {
     state,
     isOwner,
     hasLiveSubscription,
-    cancelAtPeriodEnd,
     hasStripeCustomer,
     autoTopup,
     config,
@@ -167,6 +188,20 @@ export function BillingView(props: BillingViewProps) {
     ? null
     : "Prices and allowances come from the versioned runtime config, which this server cannot read — so no plan can be started until that is fixed.";
   const baseBlock = notOwner ?? noStripe ?? noConfig;
+
+  /**
+   * The UI half of audit 2026-08-17 #1. `createPackCheckoutUrl` refuses a
+   * paused workspace in the package (REQ-G08, "no charges while paused"), and
+   * that guard is the authoritative one — but a page that offers a live "Buy
+   * pack" button which then fails on click is the "offering a button that
+   * cannot help" failure the round-10 NOTE named, made worse here because the
+   * pause section two components away says "No charges while paused" in so many
+   * words. Server refusal AND disabled control, saying the same thing.
+   */
+  const pausedBlock =
+    state.state === "paused"
+      ? "This subscription is paused, and a pause means no charges. Resume it below and this becomes available again — your existing credits are frozen, not lost."
+      : null;
 
   return (
     <section>
@@ -224,6 +259,23 @@ export function BillingView(props: BillingViewProps) {
             Credits are frozen and their expiry clocks are suspended.
           </p>
         ) : null}
+        {/* INCOMPLETE — its own state at last (audit 2026-08-17 #8). It used to
+            fall through to Free here while STILL counting as live for the
+            duplicate-checkout guard, so the page hid Subscribe, offered only
+            the Customer Portal (which cannot resolve a subscription that never
+            activated), and left a declined or SCA-required first payment with
+            no way forward at all. The entitlement claim stays honest — Free is
+            what this workspace has — and `pendingTier` names what is being
+            bought without implying it is active. */}
+        {state.state === "incomplete" ? (
+          <p data-testid="incomplete">
+            Your first payment has not completed
+            {state.pendingTier ? ` for the ${state.pendingTier} plan` : ""}.
+            Until it does, this workspace stays on Free — no credits have been
+            granted, and nothing further has been charged. Finish the payment
+            below.
+          </p>
+        ) : null}
         {state.state === "unknown" ? (
           <p data-testid="state-unknown">
             Your plan could not be determined — the configuration this server
@@ -231,10 +283,16 @@ export function BillingView(props: BillingViewProps) {
             the message above; no billing action will run until it is fixed.
           </p>
         ) : null}
-        {cancelAtPeriodEnd ? (
-          <p data-testid="cancel-at-period-end">
-            This subscription is set to end at the close of the current billing
-            period. It keeps working until then.
+        {/* The SCHEDULED END, derived by `scheduledCancelAt` in state.ts from
+            BOTH of Stripe's cancellation fields (evidence-run finding 1: the
+            Customer Portal sets `cancel_at`, not the legacy boolean, so a page
+            reading the boolean told a paying creator nothing about a plan that
+            was already scheduled to end). The date is printed because we have
+            it; there is no "some time later" branch to fabricate. */}
+        {state.cancelAt ? (
+          <p data-testid="scheduled-cancel">
+            This subscription is set to end on {day(state.cancelAt)}. It keeps
+            working until then, and you can start a new plan afterwards.
           </p>
         ) : null}
         <p style={muted}>
@@ -248,7 +306,35 @@ export function BillingView(props: BillingViewProps) {
           auto-top-up arming guard and maybeAutoTopup use. Offering a subscribe
           button to a live subscriber would be offering a second Stripe
           subscription, i.e. double billing, and the action would refuse it. */}
-      {hasLiveSubscription ? (
+      {state.state === "incomplete" ? (
+        // THE REMEDY THE PORTAL CANNOT BE (audit 2026-08-17 #8). Checked ahead
+        // of `hasLiveSubscription` deliberately: an incomplete subscription IS
+        // live (the duplicate-checkout guard is right to block a second
+        // checkout — it would create a second subscription and bill twice), so
+        // without this branch it lands in "Change your plan" and is offered a
+        // Customer Portal that has nothing it can fix.
+        <div style={section} data-testid="incomplete-recovery">
+          <h2 style={{ marginTop: 0 }}>Finish signing up</h2>
+          <p style={muted}>
+            Stripe is holding an unpaid invoice for this subscription — usually
+            a declined card, or a bank confirmation that was not completed. The
+            Customer Portal cannot resolve that, so it is not offered here: the
+            invoice itself is where it gets paid. Starting a second plan is
+            still blocked, because that would bill you twice.
+          </p>
+          <ActionButton
+            action={actions.recoverInvoice}
+            testId="recover-invoice"
+            label="Pay the outstanding invoice"
+            blockedBy={notOwner ?? noStripe}
+          />
+          <p style={muted}>
+            If there is nothing left to pay, the attempt has probably lapsed —
+            Stripe expires an unpaid first invoice after about a day — and you
+            can start a new plan once it does.
+          </p>
+        </div>
+      ) : hasLiveSubscription ? (
         <div style={section} data-testid="manage-plan">
           <h2 style={{ marginTop: 0 }}>Change your plan</h2>
           <p style={muted}>
@@ -313,6 +399,10 @@ export function BillingView(props: BillingViewProps) {
               label={`Buy ${config.pack.credits} credits for $${config.pack.priceUsd}`}
               blockedBy={
                 baseBlock ??
+                // AUDIT #1's UI half, ahead of the price-map reason: when the
+                // workspace is paused the pack is refused whatever the config
+                // says, so that is the reason the reader is owed.
+                pausedBlock ??
                 (config.pack.mapped
                   ? null
                   : "No Stripe price is mapped for the credit pack. An operator needs to run `pnpm stripe:setup` and paste the printed price ids into /admin/config as `stripePriceMap`.")
@@ -344,12 +434,37 @@ export function BillingView(props: BillingViewProps) {
           <Blocked reason={notOwner} />
         ) : (
           <form action={actions.autoTopup}>
+            {/* AUDIT #26: the copy below describes live behaviour NOTHING can
+                trigger yet. M1 ships and tests `maybeAutoTopup`, but its only
+                future caller is M3's debit site — so an owner arming this today
+                is recording a preference, not switching something on. The
+                sibling /usage page discloses the identical M3-not-built gap for
+                the identical reason; this section did not, which made it the
+                one undisclosed dead control on the surface. Disclosed rather
+                than disabled, because the preference IS honoured the moment the
+                caller exists and disabling it would lose that. */}
+            <p style={muted} id="auto-topup-unbuilt" data-testid="auto-topup-unbuilt">
+              Nothing can trigger this yet: generation arrives in a later
+              milestone (M3), and only a generation spends credits. Setting it
+              now records the preference, and it takes effect with the first
+              one.
+            </p>
             <label style={{ display: "block", marginBottom: "0.5rem" }}>
               <input
                 type="checkbox"
                 name="enabled"
                 defaultChecked={autoTopup.enabled}
                 disabled={!hasLiveSubscription && !autoTopup.enabled}
+                // AUDIT #17, the second cited control. Both reasons that can
+                // apply to this checkbox are named here — the M3 disclosure
+                // always, the liveness refusal when it bites — so the reason a
+                // control is dimmed reaches a screen reader with the control
+                // rather than as an unlinked paragraph after it.
+                aria-describedby={
+                  hasLiveSubscription
+                    ? "auto-topup-unbuilt"
+                    : "auto-topup-unbuilt auto-topup-blocked-reason"
+                }
               />{" "}
               Buy a pack automatically when a generation would run out of credits
             </label>
@@ -369,7 +484,11 @@ export function BillingView(props: BillingViewProps) {
             </label>
             <button type="submit">Save auto-top-up</button>
             {!hasLiveSubscription ? (
-              <p style={muted} data-testid="auto-topup-blocked">
+              <p
+                style={muted}
+                id="auto-topup-blocked-reason"
+                data-testid="auto-topup-blocked"
+              >
                 Turning auto-top-up ON needs a live subscription — there is no
                 saved payment method to charge without one. Turning it OFF is
                 always allowed.

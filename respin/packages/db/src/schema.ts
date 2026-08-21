@@ -91,3 +91,11 @@ export * from "./auth-schema";
 // enforced by the Phase 2 lint/allowlist when that package lands (until then
 // this line is a forward reference, not a claimed property).
 export * from "./billing-schema";
+
+// M2a brain + onboarding tables (creator_profiles, brain_docs, frameworks,
+// onboarding_inputs, model_usage, workspace_spend_monthly). Intended sole
+// writers: the ProfileScope capabilities in with-workspace.ts — enforced by the
+// repo-wide writer enumeration in respin/tests/import-boundary.test.ts, not by
+// this comment.
+export * from "./brain-schema";
+export * from "./onboarding-schema";
