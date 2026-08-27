@@ -40,10 +40,23 @@ const createdAt = () =>
   timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
 
 // Which post an input is. The class is what stops a third party's sentence
-// becoming the creator's voice: a `reference` quote may never be provenance on
-// a writable brain kind, and no brain-doc content may be a verbatim substring
-// of a `reference` input. The similarity gate is spin-only (tech-spec §3 step
-// 4), so nothing else covers that route into M3's prompt bundle.
+// becoming the creator's voice, and the similarity gate does not cover this
+// route because that gate is spin-only (tech-spec §3 step 4).
+//
+// TWO RULES REST ON IT. Exactly one is ENFORCED in M2a, and this comment says
+// which — it previously claimed both, while `input_class` had no reader
+// anywhere in the repo (tenancy gate 2026-08-23):
+//
+//   ENFORCED — a `reference` input may not be the provenance of a `voice`
+//     brain document. `validateSourceEvidence` in `with-workspace.ts` reads
+//     this column and refuses with `ProvenanceError`; the barred-kind set is
+//     deliberately just `voice`, because that is the kind M2a can name with
+//     certainty.
+//
+//   NOT ENFORCED, carried as an M2b binding constraint in R-30 — that no
+//     brain-doc CONTENT may be a verbatim substring of a `reference` input.
+//     That is a corpus-wide check rather than a per-entry one, and M2a has no
+//     content generator to gate.
 export const inputClass = pgEnum("onboarding_input_class", [
   "own_post",
   "reference",
@@ -69,10 +82,22 @@ export const costState = pgEnum("model_usage_cost_state", [
   "unknown",
 ]);
 
-// Written from getWorkspaceBillingState, never re-derived. 'unmapped' is kept
-// DISTINCT from 'free': `state.ts` returns {tier:"free", reason:"unmapped_price"}
-// for an operator misconfiguration on a paying subscription, and collapsing the
-// two would book a paying customer's spend against Free.
+// 'unmapped' is kept DISTINCT from 'free': `state.ts` returns
+// {tier:"free", reason:"unmapped_price"} for an operator misconfiguration on a
+// paying subscription, and collapsing the two would book a paying customer's
+// spend against Free.
+//
+// WHO WRITES IT IS A CONSTRAINT ON M2b, NOT A PROPERTY OF THIS COLUMN — stated
+// that way because the previous comment said "written from
+// getWorkspaceBillingState, never re-derived" as though it were enforced, and
+// it is not: `recordModelUsage` takes both this and `cost_state` as ordinary
+// caller-supplied fields (billing gate 2026-08-23). It CANNOT be enforced here:
+// `getWorkspaceBillingState` lives in @respin/credits, which depends on
+// @respin/db, so packages/db calling it would invert the graph — the same
+// structural reason `createProfile` is deferred (R-30 / A-11). R-30 binding
+// constraint 8 binds the writer instead. A wrong value here understates cost
+// and therefore OVERSTATES margin, which is the dangerous direction for the one
+// number R-6 tunes pricing against.
 export const resolvedTier = pgEnum("model_usage_resolved_tier", [
   "creator",
   "pro",

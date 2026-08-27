@@ -26,38 +26,25 @@
 // Knowledge is compared with knowledge on BOTH sides now, with the
 // `?? <processing column>` fallback keeping pre-migration rows conservative.
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
-import type { DbLike, PausePeriod, TxLike, VerifiedWorkspaceId } from "@respin/db";
-import { pausePeriods, subscriptions } from "@respin/db";
+import type { PausePeriod, TxLike, VerifiedWorkspaceId } from "@respin/db";
+import { hasOpenPause, pausePeriods, subscriptions } from "@respin/db";
 import { assertWriteClock, CLOCK_SKEW_MS } from "./clock";
 import { LedgerIntegrityError } from "./fold";
 
-/**
- * Is there an OPEN pause period? — the AUTHORITY on "is this workspace paused",
- * as opposed to the `subscriptions.pausedAt` mirror.
- *
- * Accepts a plain connection as well as a transaction (billing gate,
- * 2026-08-18). It is a single-row read with no write to order against, and
- * `createPackCheckoutUrl` — which must ask this question before charging, for
- * the same reason `debitCredits` asks it before spending — has no transaction
- * to hand it. `getWorkspaceBillingState` is already `DbLike | TxLike` for the
- * same reason.
- */
-export async function hasOpenPause(
-  tx: DbLike | TxLike,
-  workspaceId: VerifiedWorkspaceId
-): Promise<boolean> {
-  const [open] = await tx
-    .select({ id: pausePeriods.id })
-    .from(pausePeriods)
-    .where(
-      and(
-        eq(pausePeriods.workspaceId, workspaceId),
-        isNull(pausePeriods.endedAt)
-      )
-    )
-    .limit(1);
-  return open !== undefined;
-}
+// `hasOpenPause` MOVED to @respin/db on 2026-08-21 (M2a, plan A-7) and is
+// re-exported here, so this package still has exactly one pause predicate and
+// every existing call site is unchanged.
+//
+// It moved because packages/db OWNS `pause_periods` (`billing-schema.ts:263`)
+// and M2a's `writeBrainDoc` — which lives there — must refuse under an open
+// pause. The alternative the plan first specified was to INJECT the predicate
+// at mint time; two gates independently showed that was a hole, because a
+// structurally-typed `isPaused` is satisfied by `async () => false` and no
+// wiring layer existed that could have supplied the real one.
+//
+// The pause WRITERS stay here: they also write the `subscriptions.pausedAt`
+// mirror, and this file's dual-truth rule is what keeps the two in sync.
+export { hasOpenPause } from "@respin/db";
 
 /**
  * @param knownAt the moment the CALLER knew about this pause — `event.created`

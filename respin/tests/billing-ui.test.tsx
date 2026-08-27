@@ -14,6 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import * as creditsFacade from "@respin/credits/app-server";
 import * as configFacade from "@respin/config/app-server";
 import { WorkspaceAccessError } from "@respin/db";
+import * as dbFacade from "@respin/db";
 import {
   APP_LOCAL_ERROR_CLASS_NAMES,
   BILLING_ERROR_CODES,
@@ -790,10 +791,21 @@ describe("billing error copy: completeness and hygiene", () => {
       )
       .map(([k]) => k);
 
+  // @respin/db's error surface is ENUMERATED, not hand-typed (M2a task 12b).
+  // It used to be the single literal `WorkspaceAccessError.name`, and that was
+  // a live gap the moment `WorkspacePausedError` moved into @respin/db:
+  // `facade-errors.test.ts` follows RELATIVE imports and so walks only
+  // @respin/credits, and nothing enumerated @respin/db — so a refusal with no
+  // copy would have degraded to "Something went wrong" with every suite green.
+  //
+  // The enumeration is over the whole root export, deliberately wider than the
+  // eslint allowlist: a db error class that app/** cannot import yet is one a
+  // later milestone will want to render, and being asked for copy when it is
+  // ADDED is cheaper than discovering the gap from a creator.
   const facadeErrorNames = [
     ...errorClassNames(creditsFacade),
     ...errorClassNames(configFacade),
-    WorkspaceAccessError.name,
+    ...errorClassNames(dbFacade),
   ];
 
   it("every Error class app/** can receive from a facade has copy here", () => {

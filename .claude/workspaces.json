@@ -52,6 +52,20 @@
       "note": "Respin db schema touched — every schema change ships its migration AND a seed update in the same commit (build-plan working agreement). Drizzle: generate the migration now, don't defer it."
     },
     {
+      "match": "(^|\\/)respin\\/packages\\/db\\/migrations\\/.*",
+      "command": "pnpm -C respin db:check",
+      "cwd": ".",
+      "label": "respin migration drift (drizzle-kit check)",
+      "timeoutMs": 120000
+    },
+    {
+      "match": "(^|\\/)respin\\/packages\\/db\\/src\\/.*schema\\.ts$",
+      "command": "pnpm -C respin db:check && pnpm -C respin typecheck",
+      "cwd": ".",
+      "label": "respin migration drift + typecheck (schema changed)",
+      "timeoutMs": 240000
+    },
+    {
       "match": "(^|/)respin/.*\\.(ts|tsx|mjs|json|yaml)$",
       "command": "pnpm -C respin typecheck && pnpm -C respin lint && pnpm -C respin test",
       "cwd": ".",

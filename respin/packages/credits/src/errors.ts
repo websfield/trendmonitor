@@ -12,14 +12,17 @@ export class InsufficientCreditsError extends Error {
   }
 }
 
-export class WorkspacePausedError extends Error {
-  constructor() {
-    super(
-      "Workspace subscription is paused: credits are frozen and debits are refused until resume (REQ-G08)."
-    );
-    this.name = "WorkspacePausedError";
-  }
-}
+// WorkspacePausedError MOVED to @respin/db on 2026-08-21 (M2a, plan A-7) and is
+// re-exported here so every existing import site is unchanged.
+//
+// It moved because `writeBrainDoc` — in packages/db — must refuse under an open
+// pause, `pause_periods` is defined in packages/db, and @respin/credits depends
+// on @respin/db, so the class could not stay here without being duplicated.
+// TWO classes of this name would be the worse outcome: they fail `instanceof`
+// against each other, and `app/(product)/billing-errors.ts` matches on
+// `instanceof`, so the pause refusal would render as "Something went wrong".
+// ONE class, one `instanceof`, one piece of copy.
+export { WorkspacePausedError } from "@respin/db";
 
 export class ClockSkewError extends Error {
   constructor(message: string) {

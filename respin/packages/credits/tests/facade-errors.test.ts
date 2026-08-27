@@ -36,6 +36,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, relative } from "node:path";
 import ts from "typescript";
+import * as credits from "../src/index";
 import * as appServer from "../src/app-server";
 import * as webhookServer from "../src/webhook-server";
 import * as configAppServer from "@respin/config/app-server";
@@ -158,8 +159,27 @@ function analyse(file: string, text?: string): Analysed {
   };
 }
 
-const FILES = walkDir(SRC);
-const ANALYSED = new Map<string, Analysed>(FILES.map((f) => [f, analyse(f)]));
+// ENOENT ONLY, and narrowly — the same race `retention.test.ts` hits.
+// `import-boundary.test.ts` writes probe files INTO `packages/credits/src`
+// (and `respin/lib`) and deletes them, and vitest runs suites concurrently, so
+// this walk can list a path that is gone by the time it is read. The whole
+// suite died at module load with ENOENT. A file that no longer exists is not
+// in the committed tree and cannot be a violation of it — and it is dropped
+// from FILES too, so the walks below and the non-vacuity count agree on one
+// population. Every OTHER read error still throws: a scanner that swallowed
+// them would report "no violations" because it could not read the files
+// (2026-08-21).
+const FILES: string[] = [];
+const ANALYSED = new Map<string, Analysed>();
+for (const f of walkDir(SRC)) {
+  try {
+    ANALYSED.set(f, analyse(f));
+    FILES.push(f);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+    throw err;
+  }
+}
 
 type WalkResult = {
   /** Error subclasses constructible from anything reachable from `starts`. */
@@ -310,11 +330,21 @@ describe("facade error surface (billing/tenancy round-7 CHANGE 2)", () => {
     );
     for (const name of [
       "InsufficientCreditsError",
-      "WorkspacePausedError",
       "RefundSourceNeverExpiresError",
     ]) {
       expect(declared, name).toContain(name);
     }
+    // WorkspacePausedError is DELIBERATELY not in `declared`: it moved to
+    // @respin/db in M2a (plan A-7) and this walk collects
+    // `class X extends Error` DECLARATIONS, which a re-export is not. The
+    // non-typo check therefore moves to the value itself — which is the
+    // stronger assertion anyway, because it would catch the re-export being
+    // dropped, and that is the failure mode the move actually risks.
+    expect(credits.WorkspacePausedError.name).toBe("WorkspacePausedError");
+    expect(
+      new credits.WorkspacePausedError() instanceof Error,
+      "the re-exported class must still be a real Error subclass"
+    ).toBe(true);
   });
 
   it("LIMIT 1 is EMPTY on the app facade: no plain `new Error` is reachable from a respinCredits method", () => {

@@ -40,9 +40,38 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             "WorkspaceCtx",
             "WorkspaceScope",
             "VerifiedWorkspaceId",
+            // M2a. The scope TYPES are importable; the VALUES are not, and
+            // that is enforced by `export type` in @respin/db's index rather
+            // than here — `allowImportNames` makes no type/value distinction,
+            // measured (see AC-15). Deliberately ABSENT, so the default-deny
+            // refuses them: writeCapabilities, assertScoped, VerifiedProfileId,
+            // and every table object.
+            "ProfileScope",
+            // Error classes app/(product)/billing-errors.ts maps to copy. They
+            // are inert values — catching a refusal is not reaching a query —
+            // and the completeness suite enumerates this surface, so one added
+            // to @respin/db without copy fails a test rather than degrading to
+            // "Something went wrong".
+            "WorkspacePausedError",
+            "ProfileAccessError",
+            "ProvenanceError",
+            "ScopeForgeryError",
+            "UsageRawError",
+            // M2b-1. Same rule as the five above: inert refusal values that
+            // billing-errors.ts maps to copy. The brain WRITE surface
+            // (writeBrainDoc, parseBrainContent, the schemas) stays absent, so
+            // the default-deny still refuses it.
+            "ContentSchemaError",
+            "KindNotYetWritableError",
+            "SchemaShapeError",
+            "ClaimWalkError",
+            "ContentWalkError",
+            "BrainReasonError",
+            "BrainRoleError",
+            "SegmenterUnavailableError",
           ],
           message:
-            "app/** may import only the sanctioned @respin/db surface (respinDb, WorkspaceAccessError, types) — every query goes through withWorkspace (tenancy T1)",
+            "app/** may import only the sanctioned @respin/db surface (respinDb, WorkspaceAccessError, the typed refusals, types) — every query goes through withWorkspace, and the write capabilities are package-only (tenancy T1, M2a A-2b)",
         },
         {
           name: "@respin/auth",
@@ -163,6 +192,55 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
   ];
 }
 
+/**
+ * THE SPECIFIER-SHAPE DENY, for packages/** — the same class M1 closed for
+ * app/** and left open one directory over (M2a A-2b).
+ *
+ * ONE builder, both blocks, for the reason this file already learned once: a
+ * hand-copied second list drifts, and the block that drifts is the one nobody
+ * re-reads. Every rule anchored to a `@respin/…` package NAME is bypassable by
+ * spelling the same module as a path, and from `packages/credits/src` BOTH
+ * `"@respin/db/src/with-workspace"` and `"../../db/src/with-workspace"` were
+ * ALLOWED — probe-confirmed against the installed engine — in the milestone
+ * that puts the tenancy cage inside that exact module. A package reaches
+ * another package through its ROOT, where the sanctioned surface lives.
+ *
+ * Same-package relatives (`./x`, `../x`) are untouched: they never cross a
+ * package boundary, and packages/db's own modules import each other that way.
+ */
+const CROSS_PACKAGE_DENY = {
+  group: [
+    // Another package's INTERNALS, by package name.
+    "@respin/*/src",
+    "@respin/*/src/*",
+    "@respin/*/src/**",
+    // Any spelling that names a `packages/<pkg>/src` path explicitly.
+    "**/packages/*/src",
+    "**/packages/*/src/*",
+    "**/packages/*/src/**",
+    "@/packages/**",
+    // Relative paths that climb OUT of one package and into another's src.
+    // `../../<pkg>/src/...` from packages/<x>/src or packages/<x>/tests, and a
+    // level or two deeper for files under a subdirectory.
+    "../../*/src",
+    "../../*/src/*",
+    "../../*/src/**",
+    "../../../*/src",
+    "../../../*/src/*",
+    "../../../*/src/**",
+    "../../../../*/src/*",
+    "../../../../*/src/**",
+  ],
+  message:
+    "packages/** reach another package through its @respin/* ROOT or a DECLARED entrypoint (./app-server, ./webhook-server, ./admin-server, ./client) — never into its src/. A deep or relative path into another package's internals bypasses every name-anchored rule, including the M2a scope cage (tenancy T1, M2a A-2b)",
+};
+
+const APP_DIRECTION_DENY = {
+  group: ["**/app/**", "@/app/**"],
+  message:
+    "packages/ must never import from app/ (tech-spec §1 import-direction rule)",
+};
+
 export default tseslint.config(
   {
     ignores: [".next/**", "node_modules/**", "**/node_modules/**", "next-env.d.ts"],
@@ -193,20 +271,16 @@ export default tseslint.config(
                 "trustWorkspaceId mints a VerifiedWorkspaceId WITHOUT session verification — only the Stripe webhook resolution files (packages/credits/src/stripe/{webhooks,customers}.ts) and tests may import it (tenancy T1)",
             },
           ],
-          patterns: [
-            {
-              group: ["**/app/**", "@/app/**"],
-              message:
-                "packages/ must never import from app/ (tech-spec §1 import-direction rule)",
-            },
-          ],
+          patterns: [APP_DIRECTION_DENY, CROSS_PACKAGE_DENY],
         },
       ],
     },
   },
   {
     // The sanctioned trustWorkspaceId call sites: the import-direction rule
-    // still binds; only the trustWorkspaceId path restriction is lifted.
+    // AND the cross-package shape deny still bind; only the trustWorkspaceId
+    // name restriction is lifted. A grant for ONE import name is not a grant to
+    // reach the module by a different spelling.
     files: [
       "packages/credits/src/stripe/webhooks.ts",
       "packages/credits/src/stripe/customers.ts",
@@ -216,13 +290,7 @@ export default tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          patterns: [
-            {
-              group: ["**/app/**", "@/app/**"],
-              message:
-                "packages/ must never import from app/ (tech-spec §1 import-direction rule)",
-            },
-          ],
+          patterns: [APP_DIRECTION_DENY, CROSS_PACKAGE_DENY],
         },
       ],
     },

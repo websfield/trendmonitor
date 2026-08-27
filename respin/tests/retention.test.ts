@@ -97,7 +97,22 @@ describe("audit #21: nothing new reads stripe_events.payload before the M6 redac
     for (const file of scanned) {
       const rel = relative(ROOT, file).replace(/\\/g, "/");
       if (ALLOWED.has(rel)) continue;
-      const src = stripComments(readFileSync(file, "utf8"));
+      // ENOENT ONLY, and narrowly. `import-boundary.test.ts` writes a probe
+      // file into `respin/lib/` and deletes it, and vitest runs suites
+      // concurrently — so this scan can glob a path that is gone by the time it
+      // reads it, and the whole scan died with ENOENT. A file that no longer
+      // exists is not in the committed tree and cannot be a violation of it.
+      // Every OTHER read error still throws: a scan that swallowed them would
+      // report "no violations" because it could not read the files, which is
+      // the 2026-08-21 fail-open shape this suite exists to avoid.
+      let raw: string;
+      try {
+        raw = readFileSync(file, "utf8");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw err;
+      }
+      const src = stripComments(raw);
       // FOUR shapes, not one (tenancy gate 2026-08-18). The header of this file
       // says the scan is source-level precisely because "a `select()` with no
       // argument returns every column including this one — which no type would

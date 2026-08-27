@@ -28,7 +28,7 @@ vi.mock("@respin/db", async (importOriginal) => {
   return { ...actual, getServerDb: () => state.db };
 });
 
-import { createTestDb } from "../../db/src/testing";
+import { createTestDb } from "@respin/db";
 import {
   getAuth,
   getSessionUser,

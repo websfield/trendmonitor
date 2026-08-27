@@ -65,6 +65,10 @@ export const CONFIG_V1_SEED = {
   // Stripe payload proves it wrong.
   monthlyPeriodDays: { min: 20, max: 45 },
   stripePriceMap: {},
+  // PRD §4G pricing table, "Creator profiles" row. Present in the SEED as well as defaulted in the schema: a
+  // fresh install writes it explicitly, so only databases seeded before M2a
+  // need `migrate-config` at all.
+  profileCaps: { free: 1, creator: 1, pro: 1, studio: 5 },
 } as const;
 
 /** Idempotent: running twice changes nothing (unique constraints + lookups). */

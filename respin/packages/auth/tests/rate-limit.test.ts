@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createTestDb, type TestDb } from "../../db/src/testing";
+import { createTestDb, type TestDb } from "@respin/db";
 import {
   createAuth,
   NO_TRUSTED_PROXIES,

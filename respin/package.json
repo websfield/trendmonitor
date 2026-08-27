@@ -12,7 +12,7 @@
       "sharp"
     ],
     "auditConfig": {
-      "//": "EVERY id here must have a dated entry in respin/SECURITY-EXCEPTIONS.md naming the reason, the blast radius and the owner. An id without one is an unreviewed exception — delete it.",
+      "//": "EVERY id here must have a dated entry in respin/SECURITY-EXCEPTIONS.md naming the reason, the blast radius and the owner. An id without one is an unreviewed exception \u2014 delete it.",
       "ignoreGhsas": [
         "GHSA-gpj5-g38j-94v9",
         "GHSA-f88m-g3jw-g9cj",
@@ -31,6 +31,7 @@
     "db:migrate": "pnpm --filter @respin/db db:migrate",
     "db:check": "pnpm --filter @respin/db db:check",
     "db:seed": "pnpm --filter @respin/db db:seed",
+    "config:migrate": "pnpm --filter @respin/config config:migrate",
     "stripe:setup": "pnpm --filter @respin/credits stripe:setup"
   },
   "dependencies": {

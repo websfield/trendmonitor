@@ -163,6 +163,13 @@
       "flags": "i",
       "bodyPattern": "baseline[\\s\\S]{0,100}\\b(mean|stddev|std_dev|variance)\\b|\\b(mean|stddev|std_dev)\\b[\\s\\S]{0,100}baseline",
       "message": "Creator and trend baselines use median + MAD, never mean/stddev — engagement distributions are heavy-tailed (tech-spec CreatorBaseline, rubric-vps-v1). Verify this statistic choice is deliberate."
+    },
+    {
+      "id": "scanner-string-assembled-regex",
+      "severity": "warn",
+      "filePattern": "(^|\\/)(tests?|scripts)\\/.*\\.(ts|mjs|js)$|(^|\\/)[^/]*(scan|guard|lint|check)[^/]*\\.(ts|mjs|js)$",
+      "bodyPattern": "new\\s+RegExp\\(\\s*['\"`]",
+      "message": "A scanner regex assembled from a string literal fails OPEN when an escape is lost — one dropped backslash turns \\s into s and the scan silently matches nothing, so \"zero violations\" becomes indistinguishable from a broken scan (CLAUDE.md lesson 2026-08-21). Use a regex literal, and assert the scanner finds a PLANTED violation of each shape it claims to cover."
     }
   ]
 }

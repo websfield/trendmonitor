@@ -92,6 +92,9 @@ importers:
         specifier: ^4.0.0
         version: 4.4.3
     devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.12
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -135,6 +138,9 @@ importers:
       uuidv7:
         specifier: ^1.0.0
         version: 1.2.1
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
     devDependencies:
       '@electric-sql/pglite':
         specifier: ^0.3.0

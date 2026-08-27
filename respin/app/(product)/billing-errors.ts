@@ -38,7 +38,22 @@ import {
   UnknownTierPriceError,
 } from "@respin/credits/app-server";
 import { ConfigUnavailableError } from "@respin/config/app-server";
-import { WorkspaceAccessError } from "@respin/db";
+import {
+  BrainReasonError,
+  BrainRoleError,
+  ClaimWalkError,
+  ContentSchemaError,
+  ContentWalkError,
+  KindNotYetWritableError,
+  SchemaShapeError,
+  SegmenterUnavailableError,
+  ProfileAccessError,
+  ProvenanceError,
+  ScopeForgeryError,
+  UsageRawError,
+  WorkspaceAccessError,
+  WorkspacePausedError,
+} from "@respin/db";
 
 /**
  * The one refusal this layer OWNS rather than relays: Stripe Checkout needs
@@ -86,6 +101,32 @@ export const BILLING_ERROR_CODES = [
   // Audit 2026-08-17 remediation (R2) — the `incomplete` remedy.
   "invoice_recovery_unavailable",
   "not_recoverable",
+  // M2a. `WorkspacePausedError` MOVED from @respin/credits to @respin/db, and
+  // moving it deleted its last mention in any suite — `facade-errors.test.ts`
+  // follows relative imports only, and @respin/db's errors were enumerated by
+  // nobody. Without this entry the pause refusal renders as "Something went
+  // wrong", which is the exact outcome the move was justified by avoiding.
+  // The completeness test now enumerates @respin/db too, so this cannot
+  // silently regress again.
+  "workspace_paused",
+  "profile_access",
+  "provenance",
+  "scope_forgery",
+  "usage_raw",
+  // M2b-1. `brain-content.ts` and `echo.ts` reached a deployed process for the
+  // first time when @respin/db's index exported them, and the completeness
+  // test above is what turned that into a demand for copy — which is the whole
+  // reason it enumerates the WHOLE root export rather than the eslint
+  // allowlist. Until then these seven refusals would have rendered as
+  // "Something went wrong".
+  "brain_content_schema",
+  "brain_kind_not_writable",
+  "brain_schema_shape",
+  "brain_claim_walk",
+  "brain_content_walk",
+  "brain_reason",
+  "brain_role",
+  "segmenter_unavailable",
   "unknown",
 ] as const;
 
@@ -119,6 +160,19 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: PackPriceMismatchError, code: "pack_price_mismatch" },
   { cls: InvoiceRecoveryUnavailableError, code: "invoice_recovery_unavailable" },
   { cls: NotRecoverableError, code: "not_recoverable" },
+  { cls: WorkspacePausedError, code: "workspace_paused" },
+  { cls: ProfileAccessError, code: "profile_access" },
+  { cls: ProvenanceError, code: "provenance" },
+  { cls: ScopeForgeryError, code: "scope_forgery" },
+  { cls: UsageRawError, code: "usage_raw" },
+  { cls: ContentSchemaError, code: "brain_content_schema" },
+  { cls: KindNotYetWritableError, code: "brain_kind_not_writable" },
+  { cls: SchemaShapeError, code: "brain_schema_shape" },
+  { cls: ClaimWalkError, code: "brain_claim_walk" },
+  { cls: ContentWalkError, code: "brain_content_walk" },
+  { cls: BrainReasonError, code: "brain_reason" },
+  { cls: BrainRoleError, code: "brain_role" },
+  { cls: SegmenterUnavailableError, code: "segmenter_unavailable" },
 ];
 
 /** The class names this module claims to handle (read by the completeness test). */
@@ -259,6 +313,72 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "That is not the right fix for this subscription",
     detail:
       "Paying a one-off invoice only helps a subscription whose FIRST payment never completed. Nothing was charged. Update your card in the Customer Portal instead — that is what recovers a subscription whose renewal failed.",
+  },
+  // M2a — the four typed refusals @respin/db owns.
+  workspace_paused: {
+    title: "This workspace is paused",
+    detail:
+      "While a pause is on, credits are frozen and nothing that would spend them runs — including building or updating a creator brain. Nothing was charged and nothing was lost: your credits and your existing brain are exactly where you left them. Resume from the billing page and this becomes available again.",
+  },
+  profile_access: {
+    title: "That creator profile is not available here",
+    detail:
+      "It either does not exist or belongs to a different workspace, and this page will not say which — that distinction would let anyone probe for other people's profiles. Nothing was changed. If it should be here, ask the workspace owner to check the profile list.",
+  },
+  provenance: {
+    title: "A quoted line did not match your own words",
+    detail:
+      "Every claim in a brain has to point at something you actually wrote, and one of the quotes did not appear where it said it did — so it was refused rather than stored. Nothing was saved and no credits were spent. Try the build again; if it keeps happening, the details are in the server log.",
+  },
+  scope_forgery: {
+    title: "The action was refused before it touched any data",
+    detail:
+      "A safety check that guards which workspace and which profile an action may reach did not pass. That is never something you can cause by using the product normally, so it means a bug rather than a mistake on your part. Nothing was read and nothing was written; the details are in the server log. Please contact support.",
+  },
+  usage_raw: {
+    title: "The action was refused before anything was recorded",
+    detail:
+      "A safety check on what may be stored alongside a usage record did not pass, so nothing was written. Nothing you typed was lost and no credits were spent. This is never something you can cause by using the product normally, so it means a bug rather than a mistake on your part; the details are in the server log. Please contact support.",
+  },
+  brain_content_schema: {
+    title: "That brain document did not match its shape",
+    detail:
+      "A brain document has a fixed set of fields so that every claim about you is one you can confirm or correct individually, and this one carried a field outside that set — so it was refused rather than stored. Nothing was saved and no credits were spent. Try building the document again; if it keeps happening the shape needs widening, which is a code change, and the details are in the server log.",
+  },
+  brain_kind_not_writable: {
+    title: "This part of your brain is not written from onboarding",
+    detail:
+      "Your performance notes are written from results you have actually logged and verified, never inferred from the material you uploaded — inferring them now would be a claim about how your content performs with no result behind it. Nothing was saved. Log some results first and this document gets written from them.",
+  },
+  brain_schema_shape: {
+    title: "The brain document shapes are misconfigured",
+    detail:
+      "A safety check that runs when the server starts found a brain-document shape that would let a claim be stored without a way for you to confirm it. This is never something you can cause by using the product; it means a bug. An operator needs to look at the server log, which names the exact field.",
+  },
+  brain_claim_walk: {
+    title: "The action was refused before anything was stored",
+    detail:
+      "The server could not agree with itself about which parts of a brain document are claims you would need to confirm, so it refused rather than storing a document you could not fully review. Nothing was saved and no credits were spent. The details are in the server log; please contact support if it keeps happening.",
+  },
+  brain_content_walk: {
+    title: "That document was too deeply nested to check",
+    detail:
+      "Before a brain document is stored it is checked line by line against the reference posts you have uploaded, and this one was structured too deeply for that check to finish — so it was refused rather than stored unchecked. Nothing was saved. Try again with a simpler structure; the details are in the server log.",
+  },
+  brain_reason: {
+    title: "The action was refused before anything was stored",
+    detail:
+      "Every version of your brain records why it exists, and the reason is chosen from a fixed set rather than written as free text, so that a stored reason can never contain a detail nobody verified. This request carried something outside that set. Nothing was saved and no credits were spent; the details are in the server log.",
+  },
+  brain_role: {
+    title: "Your role cannot confirm or activate this",
+    detail:
+      "Confirming a brain document, and activating a version of it, are the two acts that decide what the product believes about this creator and then acts on — so they need at least editor access, and you are a viewer. Nothing was changed. Ask a workspace owner to make the change, or to raise your role in workspace settings.",
+  },
+  segmenter_unavailable: {
+    title: "This server cannot run the reference check",
+    detail:
+      "The check that stops your brain from repeating somebody else's post needs full language support in the server runtime, and it is not available here — so rather than run a weakened version of that check, the action stopped. Nothing was saved. An operator needs to run the app on a Node build with full ICU (full-icu) and restart it.",
   },
   unknown: {
     title: "Something went wrong",

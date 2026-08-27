@@ -19,9 +19,11 @@ import {
   trustWorkspaceId,
   seedAuthUser,
   seedDb,
+  withWorkspace,
   CONFIG_V1_SEED,
   type TestDb,
   type VerifiedWorkspaceId,
+  type WorkspaceScope,
 } from "@respin/db";
 import { appendConfigVersion } from "@respin/config";
 import * as credits from "../src/index";
@@ -636,6 +638,39 @@ async function twoWorkspaces(db: TestDb): Promise<{
   return { A: trustWorkspaceId(wa.id), B: trustWorkspaceId(wb.id) };
 }
 
+/**
+ * A REAL scope, minted through `withWorkspace` (M2a task 11).
+ *
+ * These cases used to pass `{ workspaceId: A, role: "owner" } as never`. That
+ * compiled while `WorkspaceScope` was a structural type; it is now a class the
+ * cage recognises by identity, so every one of those literals throws
+ * `ScopeForgeryError` the moment `assertOwner` calls `assertScoped` — which is
+ * the guard working, and is why these fixtures are repaired rather than cast
+ * harder.
+ *
+ * A FRESH USER PER CALL, deliberately: `memberships_user_workspace_uq`
+ * (`schema.ts:72`) forbids one user holding owner AND editor on one workspace,
+ * so "the suite already seeds a user" is not enough — a role matrix needs one
+ * auth user, one domain user and one membership per role.
+ */
+let mintSeq = 0;
+async function mintScope(
+  db: TestDb,
+  workspaceId: VerifiedWorkspaceId,
+  role: "owner" | "editor" | "viewer"
+): Promise<WorkspaceScope> {
+  const authUserId = `iso_scope_${role}_${mintSeq++}`;
+  await seedAuthUser(db, authUserId);
+  const [u] = await db
+    .insert(schema.users)
+    .values({ authUserId })
+    .returning();
+  await db
+    .insert(schema.memberships)
+    .values({ userId: u.id, workspaceId, role });
+  return withWorkspace(db, { authUserId, workspaceId });
+}
+
 describe("cross-workspace isolation (A must never see or be moved by B)", () => {
   it("deriveBalance/deriveBalanceInTx: A's balance ignores B's rows entirely", async () => {
     const db = await createTestDb();
@@ -928,7 +963,7 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       workspaceId: B, stripeCustomerId: "cus_B", status: "active",
     });
     await expect(
-      createPortalUrl(db, { workspaceId: A, role: "owner" } as never, "https://x")
+      createPortalUrl(db, await mintScope(db, A, "owner"), "https://x")
     ).rejects.toThrow(stripeActions.NoStripeCustomerError);
   });
 
@@ -944,9 +979,7 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     // A has NOTHING: refused on the missing customer, never reaching Stripe and
     // never seeing B's recoverable subscription.
     await expect(
-      stripeActions.createInvoiceRecoveryUrl(db, {
-        workspaceId: A, role: "owner",
-      } as never)
+      stripeActions.createInvoiceRecoveryUrl(db, await mintScope(db, A, "owner"))
     ).rejects.toThrow(stripeActions.NoStripeCustomerError);
 
     // A with a HEALTHY subscription of its own: refused on STATUS, and this is
@@ -959,16 +992,12 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       status: "active",
     });
     await expect(
-      stripeActions.createInvoiceRecoveryUrl(db, {
-        workspaceId: A, role: "owner",
-      } as never)
+      stripeActions.createInvoiceRecoveryUrl(db, await mintScope(db, A, "owner"))
     ).rejects.toThrow(stripeActions.NotRecoverableError);
 
     // …and a non-owner of the incomplete workspace is refused ahead of both.
     await expect(
-      stripeActions.createInvoiceRecoveryUrl(db, {
-        workspaceId: B, role: "editor",
-      } as never)
+      stripeActions.createInvoiceRecoveryUrl(db, await mintScope(db, B, "editor"))
     ).rejects.toThrow(stripeActions.BillingRoleError);
   });
 
@@ -989,7 +1018,7 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       stripePriceId: "price_creator",
       status: "active",
     });
-    const ctxA = { workspaceId: A, role: "owner" } as never;
+    const ctxA = await mintScope(db, A, "owner");
 
     // pause/resume read the SUBSCRIPTION: B's must be invisible, so A refuses
     // for want of its own — never acts on sub_B.
@@ -1076,7 +1105,7 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     ]);
     await stripeActions.setAutoTopup(
       db,
-      { workspaceId: A, role: "owner" } as never,
+      await mintScope(db, A, "owner"),
       { enabled: true, monthlyCapCents: 1000 }
     );
     const rows = await db.select().from(subscriptions);

@@ -28,12 +28,15 @@ const DYNAMIC_PACKAGE_IMPORT =
 /** The Stripe SDK, by the same mechanism (round-2 CHANGE 5). */
 const DYNAMIC_STRIPE_IMPORT = String.raw`import\s*\(\s*["'\`]stripe(/|["'\`])`;
 
-async function scanFor(pattern: string): Promise<string[]> {
+async function scanFor(
+  pattern: string,
+  roots: readonly string[] = SCAN_ROOTS
+): Promise<string[]> {
   const { execFileSync } = await import("node:child_process");
   try {
     return execFileSync(
       "git",
-      ["grep", "--untracked", "-n", "-E", pattern, "--", ...SCAN_ROOTS],
+      ["grep", "--untracked", "-n", "-E", pattern, "--", ...roots],
       { cwd: respinRoot, encoding: "utf8" }
     )
       .split("\n")
@@ -574,5 +577,276 @@ describe("package facades from app/** (tenancy T1, M1 phase 3)", () => {
       "app/(admin)/admin/config/x.ts"
     );
     expect(messages.some((m) => m.ruleId === "no-restricted-imports")).toBe(true);
+  });
+});
+
+// ===========================================================================
+// M2a — the profile tenancy cage (`docs/plans/respin-m2a-cage-plan.md`)
+// ===========================================================================
+
+/**
+ * P6 scans PRODUCT SOURCE, which for the profile brand means packages/** as
+ * well as app/**: the risk is a convenience mint appearing inside a package,
+ * where the app allowlist cannot see it.
+ */
+const P6_ROOTS = [...SCAN_ROOTS, "packages"] as const;
+
+describe("AC-15 (eslint half): the M2a write surface is denied to app/**", () => {
+  const lintInApp = async (code: string) => {
+    const results = await eslint.lintText(code, {
+      filePath: resolve(respinRoot, "app/fixture/route.ts"),
+    });
+    return results.flatMap((r) => r.messages);
+  };
+  const denied = async (code: string) =>
+    (await lintInApp(code)).some((m) => m.ruleId === "no-restricted-imports");
+
+  // The default-deny does this work — the names are simply absent from the
+  // allowlist. Asserted per name anyway, because "it is not on a list" is a
+  // property of a file nobody re-reads, and these three are the whole cage.
+  it("DENIES writeCapabilities, assertScoped and VerifiedProfileId", async () => {
+    expect(
+      await denied(
+        'import { writeCapabilities } from "@respin/db";\nexport const x = writeCapabilities;\n'
+      ),
+      "writeCapabilities in app/** would let a route write a brain doc directly"
+    ).toBe(true);
+    expect(
+      await denied(
+        'import { assertScoped } from "@respin/db";\nexport const x = assertScoped;\n'
+      )
+    ).toBe(true);
+    expect(
+      await denied(
+        'import type { VerifiedProfileId } from "@respin/db";\nexport type X = VerifiedProfileId;\n'
+      ),
+      "the brand must not be nameable in app/** — a cast to it compiles at exit 0"
+    ).toBe(true);
+  });
+
+  it("DENIES the M2a table objects (a raw insert needs the table)", async () => {
+    for (const name of [
+      "brainDocs",
+      "creatorProfiles",
+      "onboardingInputs",
+      "modelUsage",
+      "frameworks",
+      "workspaceSpendMonthly",
+    ]) {
+      expect(
+        await denied(
+          'import { ' + name + ' } from "@respin/db";\nexport const x = ' + name + ';\n'
+        ),
+        name
+      ).toBe(true);
+    }
+  });
+
+  it("ALLOWS the scope TYPE and the typed refusals (the sanctioned M2a surface)", async () => {
+    expect(
+      await denied(
+        'import { WorkspacePausedError, ProfileAccessError, ProvenanceError, ScopeForgeryError, type ProfileScope } from "@respin/db";\n' +
+          'export const x = { WorkspacePausedError, ProfileAccessError, ProvenanceError, ScopeForgeryError };\nexport type Y = ProfileScope;\n'
+      )
+    ).toBe(false);
+  });
+});
+
+describe("AC-15 (the packages/** half): the specifier-shape hole, one directory over", () => {
+  const lintAt = async (path: string, code: string) => {
+    const results = await eslint.lintText(code, {
+      filePath: resolve(respinRoot, path),
+    });
+    return results
+      .flatMap((r) => r.messages)
+      .some((m) => m.ruleId === "no-restricted-imports");
+  };
+  const CREDITS = "packages/credits/src/fixture.ts";
+
+  // Both of these were ALLOWED before M2a — probe-confirmed — in the milestone
+  // that puts the tenancy cage inside that exact module. Every rule in this
+  // config is anchored to a `@respin/...` package NAME, so a path spelling
+  // bypassed all of them from one directory over.
+  it("DENIES a deep import into another package's src, by package name", async () => {
+    expect(
+      await lintAt(
+        CREDITS,
+        'import { writeCapabilities } from "@respin/db/src/with-workspace";\nexport const x = writeCapabilities;\n'
+      )
+    ).toBe(true);
+  });
+
+  it("DENIES the same module spelled as a relative climb", async () => {
+    expect(
+      await lintAt(
+        CREDITS,
+        'import { writeCapabilities } from "../../db/src/with-workspace";\nexport const x = writeCapabilities;\n'
+      )
+    ).toBe(true);
+  });
+
+  it("DENIES it from a subdirectory too (one level deeper)", async () => {
+    expect(
+      await lintAt(
+        "packages/credits/src/stripe/fixture.ts",
+        'import { writeCapabilities } from "../../../db/src/with-workspace";\nexport const x = writeCapabilities;\n'
+      )
+    ).toBe(true);
+  });
+
+  it("DENIES it from a package TEST too — a trustWorkspaceId grant is not a path grant", async () => {
+    expect(
+      await lintAt(
+        "packages/credits/tests/fixture.test.ts",
+        'import { writeCapabilities } from "../../db/src/with-workspace";\nexport const x = writeCapabilities;\n'
+      )
+    ).toBe(true);
+  });
+
+  it("NOT a blanket ban: the package ROOT and DECLARED entrypoints still import", async () => {
+    expect(
+      await lintAt(
+        CREDITS,
+        'import { withWorkspace, assertScoped } from "@respin/db";\nexport const x = { withWorkspace, assertScoped };\n'
+      ),
+      "the root is where the sanctioned surface lives — denying it would break every package"
+    ).toBe(false);
+    expect(
+      await lintAt(
+        CREDITS,
+        'import { getActiveConfig } from "@respin/config";\nexport const x = getActiveConfig;\n'
+      )
+    ).toBe(false);
+    // ...and a SAME-package relative import is untouched.
+    expect(
+      await lintAt(
+        CREDITS,
+        'import { foldLedger } from "./fold";\nexport const x = foldLedger;\n'
+      )
+    ).toBe(false);
+  });
+});
+
+describe("P6 — there is no trustProfileId, under any name", () => {
+  // `trustWorkspaceId` exists because a Stripe webhook arrives with no session.
+  // NOTHING analogous exists for a profile: a profile is always reached from a
+  // workspace scope the caller already holds. So a mint that registers in the
+  // cage and is importable from a package would be `trustProfileId` under
+  // another name — and this scan is what stops one appearing by convenience.
+  const CAST = String.raw`as\s+VerifiedProfileId`;
+
+  it("no product source outside with-workspace.ts casts to VerifiedProfileId", async () => {
+    const hits = await scanFor(CAST, P6_ROOTS);
+    const offenders = hits.filter(
+      (l) => !l.startsWith("packages/db/src/with-workspace.ts")
+    );
+    expect(
+      offenders,
+      "the brand compiles from any string — the ONLY sanctioned cast is inside ProfileScope.mint"
+    ).toEqual([]);
+  });
+
+  it("no export named like a profile-id trust mint exists anywhere", async () => {
+    const hits = await scanFor(
+      String.raw`export\s+(async\s+)?(function|const)\s+(trust|unsafe|raw|assume|force)[A-Za-z]*Profile`,
+      P6_ROOTS
+    );
+    expect(hits).toEqual([]);
+  });
+
+  it("the cage registries are never re-exported (only this module may register)", async () => {
+    const hits = await scanFor(
+      String.raw`export\s+.*respin\.scope\.cage`,
+      P6_ROOTS
+    );
+    expect(hits).toEqual([]);
+  });
+
+  it("NON-VACUITY: the scan finds a planted cast", async () => {
+    const { writeFileSync, rmSync, mkdirSync } = await import("node:fs");
+    const dir = resolve(respinRoot, "lib");
+    mkdirSync(dir, { recursive: true });
+    const file = resolve(dir, "__p6_probe.ts");
+    try {
+      writeFileSync(
+        file,
+        'export const x = "id" as unknown as VerifiedProfileId;\n'
+      );
+      const hits = await scanFor(CAST, P6_ROOTS);
+      expect(hits.some((l) => l.includes("__p6_probe"))).toBe(true);
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+});
+
+describe("the cage registries are unreachable from product code (tenancy gate BLOCK, 2026-08-23)", () => {
+  // THE RESIDUAL, AND WHY THIS SCAN IS THE CONTROL FOR IT.
+  //
+  // The scope registries live on `globalThis[Symbol.for("respin.scope.cage.*")]`
+  // so that a duplicated module graph shares them (AC-19). A WeakSet published
+  // that way has a public `add`, and the tenancy gate PROVED the consequence by
+  // running it: a plain `{workspaceId, role: "owner", accessors: {}}` added to
+  // the workspace registry passed `assertScoped` and reached `assertOwner` AS AN
+  // OWNER — `createPortalUrl` returned NoStripeCustomerError rather than
+  // ScopeForgeryError. Four lines, and no import at all, so every rule in
+  // eslint.config.mjs is blind to it (the gate confirmed: zero messages).
+  //
+  // THE PREVIOUS JUSTIFICATION WAS WRONG, not merely thin. The module header
+  // said the residual was acceptable because "app code cannot run module-scope
+  // code" — false for Next.js: a server action or route module body IS
+  // module-scope code in the same process.
+  //
+  // The real reason it is acceptable is narrower and checkable: the threat
+  // model here is CODE IN THIS REPOSITORY, and repo code is gated. Imports are
+  // gated by eslint; this shape needs no import, so it is gated by this scan.
+  // Nothing defends against arbitrary in-process module-scope execution, and
+  // nothing can — a WeakSet reachable by two module copies is reachable by
+  // anything else in the process, by construction. So the honest control is a
+  // tripwire on the STRING, and R-30 says so.
+  const CAGE_REF = String.raw`respin\.scope\.(cage|db)`;
+  const CAGE_ROOTS = [...SCAN_ROOTS, "packages"] as const;
+
+  it("no product source outside with-workspace.ts names a cage registry key", async () => {
+    const hits = await scanFor(CAGE_REF, CAGE_ROOTS);
+    const offenders = hits.filter(
+      (l) => !l.startsWith("packages/db/src/with-workspace.ts")
+    );
+    expect(
+      offenders,
+      "this reaches the scope registries with NO import, so eslint cannot see it — a value registered here passes assertScoped and clears assertOwner as owner"
+    ).toEqual([]);
+  });
+
+  it("NON-VACUITY: the scan finds a planted registration, in app/** and in packages/**", async () => {
+    const { writeFileSync, rmSync, mkdirSync } = await import("node:fs");
+    const probes = [
+      resolve(respinRoot, "lib/__cage_probe.ts"),
+      resolve(respinRoot, "packages/credits/src/__cage_probe.ts"),
+    ];
+    mkdirSync(resolve(respinRoot, "lib"), { recursive: true });
+    try {
+      for (const file of probes) {
+        // The gate's own four-line forge, verbatim in shape.
+        writeFileSync(
+          file,
+          'const cage = (globalThis as never)[Symbol.for("respin.scope.cage.workspace")];\n' +
+            'export const forged = { workspaceId: "w", role: "owner", accessors: {} };\n' +
+            "(cage as { add: (o: object) => void }).add(forged);\n"
+        );
+      }
+      const hits = await scanFor(CAGE_REF, CAGE_ROOTS);
+      for (const file of probes) {
+        const rel = file.includes("credits")
+          ? "packages/credits/src/__cage_probe"
+          : "lib/__cage_probe";
+        expect(
+          hits.some((l) => l.includes("__cage_probe")),
+          "the scan missed a planted registration at " + rel
+        ).toBe(true);
+      }
+    } finally {
+      for (const file of probes) rmSync(file, { force: true });
+    }
   });
 });

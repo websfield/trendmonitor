@@ -62,6 +62,7 @@ import {
   pausePeriods,
   subscriptions,
   trustWorkspaceId,
+  withWorkspace,
   type TestDb,
   type WorkspaceScope,
 } from "@respin/db";
@@ -120,18 +121,31 @@ async function setup(db: TestDb) {
     .values({ name: "A" })
     .returning();
   const wsId = trustWorkspaceId(w.id);
-  const scopeOf = (role: "owner" | "editor" | "viewer"): WorkspaceScope => ({
-    workspaceId: wsId,
-    role,
-    // The accessor map is not exercised by these actions (they take `db`
-    // directly); the empty stubs exist only to satisfy the scope type.
-    accessors: {
-      workspace: async () => [],
-      members: async () => [],
-      subscription: async () => [],
-      ledger: async () => [],
-    },
-  });
+  // REAL scopes, minted through `withWorkspace` (M2a task 11). This used to be
+  // an object literal, which compiled while `WorkspaceScope` was a structural
+  // type — and which the M2a gate found was ALREADY the shape that would break
+  // the moment the scope became a class. It is the REQ-A02 owner-only matrix
+  // that runs on these, so a cast-away literal here would have meant the
+  // matrix tested a forgery rather than a scope.
+  //
+  // THREE users, not one: `memberships_user_workspace_uq` (`schema.ts:72`)
+  // forbids one user holding owner AND editor AND viewer on one workspace, and
+  // `seedDb`'s user belongs to its own workspace, not this one.
+  const scopes = {} as Record<"owner" | "editor" | "viewer", WorkspaceScope>;
+  for (const role of ["owner", "editor", "viewer"] as const) {
+    const authUserId = `actions_${role}`;
+    await seedAuthUser(db, authUserId);
+    const [u] = await db
+      .insert(schema.users)
+      .values({ authUserId })
+      .returning();
+    await db
+      .insert(schema.memberships)
+      .values({ userId: u.id, workspaceId: w.id, role });
+    scopes[role] = await withWorkspace(db, { authUserId, workspaceId: w.id });
+  }
+  const scopeOf = (role: "owner" | "editor" | "viewer"): WorkspaceScope =>
+    scopes[role];
   return { wsId, scopeOf };
 }
 

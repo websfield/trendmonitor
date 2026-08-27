@@ -37,7 +37,6 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://respin:respin_ci@localhost:5432/respin
       TEST_DATABASE_URL: postgres://respin:respin_ci@localhost:5432/respin
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +60,8 @@ jobs:
       - name: Apply committed migrations
         # db:check is intentionally offline. This fresh service database makes
         # the gate prove that every committed migration applies in Postgres.
+        env:
+          DATABASE_URL: postgres://respin:respin_ci@localhost:5432/respin
         run: pnpm db:migrate
       - name: Typecheck
         run: pnpm typecheck

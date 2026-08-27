@@ -72,6 +72,29 @@ export const respinConfigV1 = z
       z.string(),
       z.enum(["creator", "pro", "studio", "pack"])
     ),
+    // How many creator profiles a tier may hold (PRD §4G pricing table, "Creator profiles" row). M2a lands the
+    // KEY; M2b's createProfile is what reads it — deferred there because
+    // enforcing a per-tier cap needs the TIER, whose sole authority is
+    // `credits/src/state.ts`, and packages/db cannot import it without
+    // creating a second tier authority (plan A-11).
+    //
+    // `.default(...)` rather than required, and the whole A-9 deploy order
+    // rests on it: `.strict()` means a STORED document carrying a key that
+    // older code does not know is a PARSE FAILURE, and `getActiveConfig` is
+    // called five times inside the Stripe webhook's single transaction
+    // (`webhooks.ts:588,786,1082,1197,1283`). A throw there rolls back
+    // `stripe_events`, so Stripe retries forever and grants stop landing. A
+    // default makes the key optional in storage, so DEPLOY CODE FIRST, then
+    // run `migrate-config` — and a rollback in between is safe.
+    profileCaps: z
+      .object({
+        free: z.number().int().min(0),
+        creator: z.number().int().min(0),
+        pro: z.number().int().min(0),
+        studio: z.number().int().min(0),
+      })
+      .strict()
+      .default({ free: 1, creator: 1, pro: 1, studio: 5 }),
   })
   .strict();
 

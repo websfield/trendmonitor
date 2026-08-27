@@ -2,6 +2,8 @@
 
 **One phase, one document, deliberately.** Split out of `respin-m2-master-plan.md` on 2026-08-20 after three plan-gate rounds whose fixes were applied to some documents and contradicted in others. **Rewritten whole on 2026-08-20** after two further rounds, for the same reason: patching reproduced the partial-application failure four times running.
 
+**STATUS: READY 2026-08-23.** All 16 tasks landed; AC-1 .. AC-20 met. Entry gate green on the CI shape (typecheck, lint, `db:check`, keyless build, **648/648 tests** with all three Docker suites live and no loud-skips). `migrate-config` run against the dev database and re-run to confirm the no-op. Evidence and the ten-mutation matrix: [`../progress/respin-m2/ledger.md`](../progress/respin-m2/ledger.md). Decisions A-1 .. A-11 recorded as **R-30** (12 constraints after the gates). **Gates round 1 (2026-08-23): brain tenancy BLOCK, billing & credits NEEDS CHANGES — all 10 findings accepted and fixed.** **RE-GATE (2026-08-23): brain tenancy PASS (Grade A); billing & credits found one round-1 verification claim was false (one lock site's regression coverage was unproven) — fixed and re-verified same session.** Both Critical-Path gates now PASS.
+
 **Depends on:** nothing. **Blocks:** every other M2 phase.
 **Primary agent:** `respin-engineer`.
 **Requirement IDs:** REQ-A03 (primary), REQ-A01 (schema), REQ-B02/REQ-D01 (schema shape), REQ-J02 (usage shape).

@@ -11,7 +11,8 @@
     "./admin-server": "./src/admin-server.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "config:migrate": "tsx src/migrate-config-cli.ts"
   },
   "dependencies": {
     "@respin/db": "workspace:*",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "vitest": "^3.2.0",
+    "tsx": "^4.20.0"
   }
 }

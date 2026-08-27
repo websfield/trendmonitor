@@ -28,7 +28,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { uuidv7 } from "uuidv7";
-import { workspaces } from "./schema";
+import { users, workspaces } from "./schema";
 
 const id = () =>
   uuid("id")
@@ -123,14 +123,61 @@ export const brainDocs = pgTable(
     // version" (REQ-C05) would be a comment.
     version: integer("version").notNull(),
     content: jsonb("content").notNull(),
-    // Per-field provenance (REQ-B02). Entry shape, pinned by plan A-8:
-    //   { quote, inputId, startUtf16, endUtf16, confidence }
+    // Per-field provenance (REQ-B02). Entry shape, enforced by
+    // `sourceEvidenceEntrySchema` in with-workspace.ts:
+    //   { field, quote, inputId, startUtf16, endUtf16 }
+    // `field` is the RFC-6901 pointer naming which claim position this entry
+    // supports (C-28) — without it this column is per-DOCUMENT provenance and
+    // the REQ-B02 sentence above is not true of it. `confidence` is withdrawn
+    // (C-15, and the dated REQ-B02 amendment).
     // `inputId` is a foreign id living inside jsonb, which the composite FK
     // cannot see — so `writeBrainDoc` validates it against `onboarding_inputs`
     // scoped to the same (profile_id, workspace_id). Offsets are UTF-16 code
     // units, indexing the NORMALISED content stored in `onboarding_inputs`.
-    sourceEvidence: jsonb("source_evidence"),
+    // NOT NULL from migration 0012, with a non-empty CHECK below. REQ-B02 is
+    // per-field provenance, and a version carrying none records nothing — see
+    // the CHECK for why an all-placeholder version is deliberately not
+    // storable.
+    sourceEvidence: jsonb("source_evidence").notNull(),
     status: brainDocStatus("status").notNull().default("proposed"),
+    /**
+     * THE REFERENCE CORPUS THIS VERSION WAS CHECKED AGAINST (C-29), recorded
+     * as a SET OF INPUT IDS rather than compared by timestamp.
+     *
+     * Why a recorded set and not `created_at`: `created_at` is `defaultNow()`,
+     * which in Postgres is TRANSACTION START time. An `onboarding_input` whose
+     * transaction starts before a brain write and commits after it is invisible
+     * at write time AND sits inside any `created_at`-bounded corpus rebuilt at
+     * activation — so activation would refuse a version the write had already
+     * cleared, permanently, with a priced rebuild as the only remedy. The
+     * timestamp form does not remove that class; a recorded id set does,
+     * because activation re-reads the exact corpus the write was judged
+     * against.
+     *
+     * SERVER-DERIVED and in `GUARDED_WRITE_FIELDS`: it decides which corpus the
+     * R-3 bar runs over, so a caller-suppliable value is a caller-suppliable
+     * bar. An empty array means "this profile genuinely had no reference
+     * inputs", which is a different fact from "nobody built a corpus" — the
+     * distinction `assertNoReferenceEcho` refuses to guess at.
+     */
+    referenceCorpusIds: jsonb("reference_corpus_ids")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /** Set by `confirmBrainDocFields`; server-derived from the session (C-13). */
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    confirmedBy: uuid("confirmed_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    /**
+     * The sha256 of the content the human actually SAW when confirming.
+     * Activation refuses unless it still matches, so a version cannot be
+     * confirmed in one shape and activated in another (round-2 V3).
+     */
+    confirmedContentSha256: text("confirmed_content_sha256"),
+    /** Which claim positions were confirmed, and which as placeholders (C-18). */
+    confirmedFields: jsonb("confirmed_fields"),
+    /** C-21's countable label, per field. Written by the server, never a caller. */
+    evidenceCounts: jsonb("evidence_counts"),
     // Why this version exists. Never optional: R-8's "never silent" is only
     // true if every version carries its reason.
     reason: text("reason").notNull(),
@@ -160,6 +207,37 @@ export const brainDocs = pgTable(
     uniqueIndex("brain_docs_one_active_uq")
       .on(t.profileId, t.kind)
       .where(sql`${t.status} = 'active'`),
+    // AN ACTIVE VERSION CARRIES ITS CONFIRMATION STAMP, as a constraint rather
+    // than as application code. Round 2's V3 was exactly this: activation
+    // never pinned the activated content to the confirmed content.
+    //
+    // WHAT THIS CHECK DOES **NOT** COVER, stated because an earlier version of
+    // this comment read wider than the constraint: it enforces `confirmed_at`
+    // and `confirmed_content_sha256` only. AC-26 (every claim position
+    // confirmed) and `activated_at` are application-code guarantees in
+    // `activateBrainDoc`, so a hand-run UPDATE during an incident CAN still
+    // produce an active row with an inverted or incomplete `confirmed_fields`.
+    // Measured by the tenancy gate. Widening the CHECK is register item B-5.
+    check(
+      "brain_docs_active_is_confirmed",
+      sql`${t.status} <> 'active' OR (${t.confirmedAt} IS NOT NULL AND ${t.confirmedContentSha256} IS NOT NULL)`
+    ),
+    // REQ-B02 is PER-FIELD PROVENANCE, so a version with no evidence at all
+    // records nothing about where its claims came from.
+    //
+    // THE INTERACTION WITH C-28 IS DELIBERATE AND IS STATED RATHER THAN LEFT
+    // TO BE DISCOVERED: C-28 lets a claim position be either cited or hold
+    // `[check]`, so an ALL-PLACEHOLDER version has zero evidence entries and
+    // this CHECK refuses it. That is the decision — a version in which nothing
+    // is grounded is not a version worth retaining, and storing one would put
+    // a row in the append-only history that asserts nothing and still occupies
+    // a version number. At least one claim must be grounded for the version to
+    // exist. The refusal is named in `writeBrainDoc` so it reads as a rule
+    // rather than as a constraint violation.
+    check(
+      "brain_docs_source_evidence_non_empty",
+      sql`jsonb_array_length(${t.sourceEvidence}) > 0`
+    ),
   ]
 );
 

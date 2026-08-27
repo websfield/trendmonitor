@@ -1,7 +1,7 @@
 // Versioned runtime config (D-M1-2, B5): append-only rows, active = max
 // version, Zod-validated. FAIL CLOSED: no/invalid config is a typed error —
 // never a default cost, never a silent free generation.
-import { desc } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 // (desc is used by getActiveConfig and listConfigVersions)
 import type { DbLike, TxLike } from "@respin/db";
 import { schema } from "@respin/db";
@@ -102,16 +102,55 @@ export function validateConfigContent(raw: unknown): ConfigValidation {
   };
 }
 
-/** Append a new version (never mutate). Returns the new version number. */
+/**
+ * The ONE advisory-lock key every `config_versions` writer takes.
+ *
+ * `version` is `generatedAlwaysAsIdentity()` (`billing-schema.ts:254`), so two
+ * concurrent appends NEVER conflict — there is no unique violation to catch and
+ * no row to lock, because the row does not exist yet. That makes any
+ * "re-read max(version) and compare" check unable to see an append that has
+ * INSERTED but not COMMITTED: it takes the lower identity value, the checker
+ * takes the higher one, and the operator's edit is silently superseded. The
+ * only thing that serialises writers to a table whose contention is on FUTURE
+ * rows is a lock on the table's *name*, which is what this is.
+ *
+ * A constant rather than a hash: unlike `takeWorkspaceLock`, the contention
+ * here is global — `config_versions` is one document for the whole install.
+ */
+const CONFIG_LOCK_KEY = 8_140_251_907_463_120n;
+
+/**
+ * Serialise every writer of `config_versions` (billing gate 2026-08-23).
+ *
+ * Transaction-scoped, so it releases on commit or rollback with no unlock path
+ * to forget, and re-entrant within one transaction — `applyConfigMigration`
+ * takes it and then calls `appendConfigVersion`, which takes it again.
+ */
+export async function takeConfigLock(tx: TxLike): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(${CONFIG_LOCK_KEY})`);
+}
+
+/**
+ * Append a new version (never mutate). Returns the new version number.
+ *
+ * ALWAYS runs in a transaction, and takes the config lock inside it. Given a
+ * bare connection that transaction is its own; given a transaction it is a
+ * savepoint, and an advisory *xact* lock taken inside a savepoint is still
+ * held until the outer transaction ends — which is what makes the lock
+ * meaningful for a caller that has already read `max(version)`.
+ */
 export async function appendConfigVersion(
   db: DbLike | TxLike,
   content: RespinConfigV1,
   createdBy: string
 ): Promise<number> {
   const validated = respinConfigV1.parse(content);
-  const [row] = await db
-    .insert(schema.configVersions)
-    .values({ content: validated, createdBy })
-    .returning();
-  return row.version;
+  return db.transaction(async (tx) => {
+    await takeConfigLock(tx);
+    const [row] = await tx
+      .insert(schema.configVersions)
+      .values({ content: validated, createdBy })
+      .returning();
+    return row.version;
+  });
 }

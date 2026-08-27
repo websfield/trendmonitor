@@ -4,6 +4,7 @@
 // failure here writes nothing.
 import { eq } from "drizzle-orm";
 import {
+  assertScoped,
   subscriptions,
   type DbLike,
   type WorkspaceScope,
@@ -239,7 +240,27 @@ export class UnknownTierPriceError extends Error {
   }
 }
 
+/**
+ * The REQ-A02 owner check — and, since M2a, the CAGE check that makes it mean
+ * anything.
+ *
+ * `assertScoped` comes FIRST and is not optional. Before it, a scope was a
+ * structural type, so `Object.assign({}, viewerScope, {role: "owner"})`
+ * compiled at exit 0 and arrived here as an owner: a viewer→owner escalation
+ * reaching every billing action in this file. The same shape put a raw form
+ * string into `scope.workspaceId` for the query below it. The gate reproduced
+ * both by compiling them.
+ *
+ * All seven exported actions in this file call this as their first statement,
+ * and all seven facade methods in `app-server.ts` delegate to one of them — so
+ * this single insertion covers all fourteen `WorkspaceScope`-taking entries in
+ * the package. That is exactly why `tests/import-boundary.test.ts` SCANS for
+ * the property rather than trusting it: a fifteenth entry in M2b that does not
+ * need owner would bypass the cage silently, and no assertion here could fire
+ * for it.
+ */
 function assertOwner(scope: WorkspaceScope): void {
+  assertScoped(scope);
   if (scope.role !== "owner") throw new BillingRoleError(scope.role);
 }
 
