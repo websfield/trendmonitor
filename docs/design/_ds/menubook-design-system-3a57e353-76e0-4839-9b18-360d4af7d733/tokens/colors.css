@@ -1,0 +1,212 @@
+/* ============================================================================
+ * Menubook — Color tokens
+ * ----------------------------------------------------------------------------
+ * Two layers:
+ *   1. BRAND PALETTE  — fixed, theme-independent hues from the brand board
+ *      (Mesa Green, Warm Clay, Golden, Sand, Stone) expanded into usable scales.
+ *   2. SEMANTIC ALIASES — what components actually consume (--color-bg,
+ *      --color-primary, --color-text…). These are THEME-AWARE.
+ *
+ * Menubook is DARK-FIRST: :root is the dark (candlelit) theme. The light theme
+ * (matching the storefront concept) is opt-in via `.theme-light` or
+ * `[data-theme="light"]`.
+ * ========================================================================== */
+
+:root {
+  /* -- Brand palette (fixed) ------------------------------------------------ */
+  /* Mesa Green */
+  --green-950: #0E2A1F;
+  --green-900: #143A2B;
+  --green-800: #1E4D3A;   /* ← brand Mesa Green #1E4D3A */
+  --green-700: #265C44;
+  --green-600: #2E6B4F;
+  --green-500: #3D8A66;
+  --green-400: #4BA178;
+  --green-300: #6FBF98;
+  --green-200: #9FD8BB;
+  --green-100: #D2EDE0;
+
+  /* Warm Clay */
+  --clay-700: #C2542F;
+  --clay-600: #D85C3C;
+  --clay-500: #E76F51;    /* ← brand Warm Clay #E76F51 */
+  --clay-400: #EF8A70;
+  --clay-300: #F4A892;
+  --clay-200: #F8C8B9;
+  --clay-100: #FBE3DA;
+
+  /* Golden */
+  --gold-700: #C98A24;
+  --gold-600: #E0A02F;
+  --gold-500: #F2B84B;    /* ← brand Golden #F2B84B */
+  --gold-400: #F6C96E;
+  --gold-300: #FADB9A;
+  --gold-200: #FCE9C4;
+  --gold-100: #FDF4E0;
+
+  /* Sand (warm neutral lights) */
+  --sand-50:  #FBFAF6;
+  --sand-100: #F6F2EB;    /* ← brand Sand #F6F2EB */
+  --sand-200: #EDE7DB;
+  --sand-300: #DED3C0;
+  --sand-400: #C8BBA3;
+
+  /* Stone (warm neutral darks) */
+  --stone-300: #B7AD9C;
+  --stone-400: #8A8170;
+  --stone-500: #6B6457;
+  --stone-600: #4A4338;
+  --stone-700: #38322A;
+  --stone-800: #2B2B2B;   /* ← brand Stone #2B2B2B */
+  --stone-850: #221F1A;
+  --stone-900: #1D1A15;
+  --stone-950: #14120F;
+
+  /* Brand gradient (the logo mark: orange → clay) */
+  --gradient-brand: linear-gradient(135deg, #F2994A 0%, #E76F51 100%); /* @kind color */
+  --gradient-reward: linear-gradient(135deg, #F2B84B 0%, #E0A02F 100%); /* @kind color */
+
+  /* ========================================================================
+   * SEMANTIC ALIASES — DARK THEME (default)
+   * ====================================================================== */
+
+  /* Surfaces */
+  --color-bg: #14120F;
+  --color-bg-elevated: #1A1712;
+  --color-surface: #1E1B16;
+  --color-surface-2: #26221B;
+  --color-surface-3: #2F2A20;
+  --color-overlay: rgba(10, 8, 6, 0.66);
+
+  /* Text */
+  --color-text: #F6F2EB;
+  --color-text-muted: #B7AD9C;
+  --color-text-subtle: #8A8170;
+  --color-text-inverse: #1A1712;
+
+  /* Lines */
+  --color-border: #38322A;
+  --color-border-strong: #4A4338;
+  --color-border-subtle: #2A251F;
+
+  /* Primary — green */
+  --color-primary: #2E6B4F;
+  --color-primary-hover: #357A5A;
+  --color-primary-active: #265C44;
+  --color-on-primary: #F6F2EB;
+  --color-primary-subtle: rgba(46, 107, 79, 0.18);
+  --color-primary-subtle-fg: #6FBF98;
+
+  /* Accent — clay */
+  --color-accent: #E76F51;
+  --color-accent-hover: #EF8A70;
+  --color-accent-active: #D85C3C;
+  --color-on-accent: #1A1712;
+  --color-accent-subtle: rgba(231, 111, 81, 0.18);
+  --color-accent-subtle-fg: #F0987F;
+
+  /* Reward — golden (the points/loyalty currency colour) */
+  --color-reward: #F2B84B;
+  --color-on-reward: #2B2B2B;
+  --color-reward-subtle: rgba(242, 184, 75, 0.16);
+  --color-reward-subtle-fg: #F6C96E;
+
+  /* Status — order lifecycle (never colour-only; pair with a text label) */
+  --color-status-new: #E5604A;
+  --color-status-new-fg: #F4A892;
+  --color-status-new-bg: rgba(229, 96, 74, 0.18);
+  --color-status-preparing: #F2B84B;
+  --color-status-preparing-fg: #F6C96E;
+  --color-status-preparing-bg: rgba(242, 184, 75, 0.16);
+  --color-status-ready: #4BA178;
+  --color-status-ready-fg: #6FBF98;
+  --color-status-ready-bg: rgba(75, 161, 120, 0.18);
+  --color-status-neutral: #B7AD9C;
+  --color-status-neutral-bg: rgba(183, 173, 156, 0.12);
+
+  /* Feedback */
+  --color-success: #4BA178;
+  --color-success-bg: rgba(75, 161, 120, 0.16);
+  --color-warning: #F2B84B;
+  --color-warning-bg: rgba(242, 184, 75, 0.16);
+  --color-danger: #E5604A;
+  --color-danger-bg: rgba(229, 96, 74, 0.16);
+  --color-info: #6FBF98;
+  --color-info-bg: rgba(111, 191, 152, 0.14);
+
+  /* Focus ring (golden reads strongly on dark) */
+  --color-focus: #F2B84B;
+
+  /* Rating star */
+  --color-star: #F2B84B;
+
+  color-scheme: dark;
+}
+
+/* ==========================================================================
+ * SEMANTIC ALIASES — LIGHT THEME (opt-in)
+ * Matches the warm "sand" storefront concept.
+ * ======================================================================== */
+.theme-light,
+[data-theme="light"] {
+  --color-bg: #F7F4EE;
+  --color-bg-elevated: #FFFFFF;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #F1ECE2;
+  --color-surface-3: #E9E2D5;
+  --color-overlay: rgba(20, 18, 15, 0.45);
+
+  --color-text: #20241F;
+  --color-text-muted: #6B6457;
+  --color-text-subtle: #938B7C;
+  --color-text-inverse: #FFFFFF;
+
+  --color-border: #E4DCCE;
+  --color-border-strong: #D2C7B5;
+  --color-border-subtle: #EFE9DD;
+
+  --color-primary: #1E4D3A;
+  --color-primary-hover: #18402F;
+  --color-primary-active: #143A2B;
+  --color-on-primary: #FFFFFF;
+  --color-primary-subtle: #E6EFE9;
+  --color-primary-subtle-fg: #1E4D3A;
+
+  --color-accent: #E76F51;
+  --color-accent-hover: #D85C3C;
+  --color-accent-active: #C2542F;
+  --color-on-accent: #FFFFFF;
+  --color-accent-subtle: #FBE3DA;
+  --color-accent-subtle-fg: #C2542F;
+
+  --color-reward: #F2B84B;
+  --color-on-reward: #2B2B2B;
+  --color-reward-subtle: #FDF4E0;
+  --color-reward-subtle-fg: #C98A24;
+
+  --color-status-new: #D64531;
+  --color-status-new-fg: #B23A29;
+  --color-status-new-bg: #FBE3DA;
+  --color-status-preparing: #E0A02F;
+  --color-status-preparing-fg: #9A6E14;
+  --color-status-preparing-bg: #FDF4E0;
+  --color-status-ready: #1E4D3A;
+  --color-status-ready-fg: #1E4D3A;
+  --color-status-ready-bg: #E6EFE9;
+  --color-status-neutral: #6B6457;
+  --color-status-neutral-bg: #F1ECE2;
+
+  --color-success: #1E7A52;
+  --color-success-bg: #E6EFE9;
+  --color-warning: #C98A24;
+  --color-warning-bg: #FDF4E0;
+  --color-danger: #B23A29;
+  --color-danger-bg: #FBE3DA;
+  --color-info: #1E4D3A;
+  --color-info-bg: #E6EFE9;
+
+  --color-focus: #1E4D3A;
+  --color-star: #F2B84B;
+
+  color-scheme: light;
+}

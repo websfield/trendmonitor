@@ -60,7 +60,7 @@ So the two ends were never joined by even a stub, and nothing ever forced the qu
 | `packages/llm` | M2b-2 → M2c → M3 | Adapter, `assemble.ts`, model-id-keyed price table. **The repo's first outbound HTTP client in `packages/**`** — pinned non-overridable `baseURL` |
 | Config: `llm.model`, price table, model tiers, `creditCosts.onboardingBrainRebuild` | M2b-2 | All absent from `schema.ts`. The rebuild cost is **owner-undecided** and is a precondition of the config step, not of UI |
 | `/onboarding` wizard | M2c | Interview → north-star → paste 5–10 own posts → optional 2–3 references → inference → review-and-confirm → activate |
-| `/brain` editor, versions, export | M2c | Export helpers exist; screens do not |
+| `/brain` editor, versions, export | M2c | **CORRECTED 2026-08-27 — no export exists.** `packages/db/src/export.ts` is not a file and no export-shaped function exists in `packages/*/src`. `creator-data-registry.ts` is a policy record, not an exporter. Screens do not exist either |
 | `frameworks` seeder + F1–F9 JSON | M2c | No writer exists for the table |
 | `packages/modes` + `/api/generation` | M3 | 7 modes, kill test, `ScriptOutput` schema, streaming |
 | Free-tier credit minting | M3 | DL-2/R-21 — until then a Free creator has no path to credits |
@@ -78,7 +78,7 @@ So the two ends were never joined by even a stub, and nothing ever forced the qu
 
 **Fully:** REQ-G01 (tiers/Checkout/Portal), REQ-G02/G03/G04 (grant, pack, debit, expiry, auto-top-up cap, append-only ledger), REQ-G06 (idempotent webhooks), REQ-G07 (usage page), REQ-G08 (pause/resume), REQ-A03 (profile isolation — structural via the M2a cage).
 
-**Partly:** REQ-A01 (workspace yes; **profile creation and caps no**) · REQ-B02 (server half only — the confirm *screen* is M2c) · REQ-C05 (versioning half) · REQ-A04 (export helpers, no screen) · REQ-D04/R-9 (echo bar + quote budget enforced; `frameworks` contributions have no writer) · REQ-G05 (config half; **margin dashboard is M6 and has no aggregation code**).
+**Partly:** REQ-A01 (workspace yes; **profile creation and caps no**) · REQ-B02 (server half only — the confirm *screen* is M2c) · REQ-C05 (versioning half) · REQ-A04 (**nothing** — corrected 2026-08-27; see §3) · REQ-D04/R-9 (echo bar + quote budget enforced; `frameworks` contributions have no writer) · REQ-G05 (config half; **margin dashboard is M6 and has no aggregation code**).
 
 **Explicitly open despite the substrate:** **REQ-I03** — C-28 is a provenance-*shape* rule; it enforces *that* a claim is cited, never that the citation supports it (R-34).
 
@@ -102,3 +102,23 @@ So the two ends were never joined by even a stub, and nothing ever forced the qu
 3. **Reviewers in isolated worktrees.** Four mutating reviewers on one tree produced a spurious BLOCK, two invalidated mutation runs, and a reviewer unable to distinguish a compliance outage from a dirty harness (R-34).
 4. **Just-in-time phase plans.** The master plan lists slices; a slice gets its detailed phase plan when the previous one ships. Writing all of M2b-2→M6 now would be the 489-line specification again, one milestone up.
 5. **Mutation matrices name their population.** A green matrix says nothing about a control that was never written (CLAUDE.md Lessons, 2026-08-26).
+
+---
+
+## 7. Corrections appended 2026-08-27 (plan gap audit)
+
+The two rows above were wrong, and both were load-bearing for the plan built on this review.
+
+1. **"Export helpers exist"** — they do not. Verified by listing `respin/packages/db/src/` (no
+   `export.ts`) and searching every `packages/*/src` for an export-shaped function (none). Slice 5's
+   3–4 h estimate assumed them; it is now 6–8 h. Plan review F-3.
+2. **`creator_profiles.state` does not exist.** §3 above says archived profiles are "refused by
+   reading `creator_profiles.state` at operation time", and `respin-finish-phase-2.md` R17 requires
+   it. `packages/db/src/brain-schema.ts:87-110` declares five columns and one unique constraint; no
+   migration `0000`–`0012` adds a `state` column. `respin-m2b2-metered-inference-scope.md` states as
+   an inherited fact that "M2b-1 lands the column with no writer" — M2b-1 did not land it. The
+   column now lands in slice 1's migration, gated on an owner decision (R-30 constraint 3). Plan
+   review F-2.
+
+Full disposition of every open item: [`respin-finish-open-items.md`](respin-finish-open-items.md).
+Full finding list: [`respin-finish-plan-review.md`](respin-finish-plan-review.md).

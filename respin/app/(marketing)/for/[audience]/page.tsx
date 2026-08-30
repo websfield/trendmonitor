@@ -1,0 +1,77 @@
+// Audience landing variants (/for/women, /for/business, /for/coaches):
+// the main landing's shape with audience-specific hero copy, hero photo,
+// and illustrative demo. Copy lives in ../../audiences.ts; every shared
+// section (pricing included) renders from ../../landing-sections.tsx so
+// the landing-pricing test keeps one authority to pin.
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import { buttonClass } from "../../../ui/button";
+import { AUDIENCES, getAudience } from "../../audiences";
+import {
+  ClosingBand,
+  DemoPanel,
+  LandingFooter,
+  LandingHeader,
+  MarqueeTags,
+  PricingSection,
+  RefusesBand,
+  StepsBand,
+} from "../../landing-sections";
+
+export const dynamicParams = false;
+
+export function generateStaticParams() {
+  return AUDIENCES.map((a) => ({ audience: a.slug }));
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ audience: string }>;
+}): Promise<Metadata> {
+  const a = getAudience((await params).audience);
+  if (!a) return {};
+  return { title: a.metaTitle, description: a.metaDescription };
+}
+
+export default async function AudienceLandingPage({
+  params,
+}: {
+  params: Promise<{ audience: string }>;
+}) {
+  const a = getAudience((await params).audience);
+  if (!a) notFound();
+
+  return (
+    <div className="landing">
+      <div className="landing-stripe" />
+      <LandingHeader />
+
+      <section className={`hero ${a.heroClass}`}>
+        <div className="hero-inner">
+          <h1>
+            {a.h1Lead} <span className="hero-turn">{a.h1Turn}</span>
+          </h1>
+          <p className="hero-sub">{a.sub}</p>
+          <div className="hero-ctas">
+            <a href="/sign-up" className={buttonClass("primary")}>
+              Start free, no card
+            </a>
+            <a href="#pricing" className={buttonClass("secondary")}>
+              See pricing
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <DemoPanel demo={a.demo} />
+
+      <MarqueeTags />
+      <StepsBand />
+      <RefusesBand />
+      <PricingSection />
+      <ClosingBand />
+      <LandingFooter />
+    </div>
+  );
+}

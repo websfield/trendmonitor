@@ -1,0 +1,27 @@
+approval_policy = "on-request"
+default_permissions = "trendmonitor-workspace"
+project_doc_max_bytes = 65536
+
+[features]
+hooks = true
+
+[agents]
+max_concurrent_threads_per_session = 8
+
+[permissions.trendmonitor-workspace]
+description = "Workspace writes with project secrets and network access denied by default"
+extends = ":workspace"
+
+[permissions.trendmonitor-workspace.filesystem]
+glob_scan_max_depth = 8
+
+[permissions.trendmonitor-workspace.filesystem.":workspace_roots"]
+"**/secrets/**" = "deny"
+"**/.env" = "deny"
+"**/.env.*" = "deny"
+"**/*.pem" = "deny"
+"**/*secrets*" = "deny"
+
+[permissions.trendmonitor-workspace.network]
+enabled = false
+

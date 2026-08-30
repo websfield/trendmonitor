@@ -214,6 +214,96 @@ describe("AC-14 — the three wrong implementations are RED", () => {
   });
 });
 
+/** The active config document, parsed — what an operator's database holds. */
+const activeContent = async (db: TestDb) => (await getActiveConfig(db)).content;
+
+describe("a CORRECTION reaches a database that already has the wrong value", () => {
+  // THE DEFECT (billing gate BLOCK, 2026-08-29). `mergeMissing` adds absent
+  // keys only, so `llm.maxOutputTokens: 1024` — shipped by slice 2a and wrong
+  // for slice 3 — was present, wrong, and unreachable on every existing
+  // database. Raising the schema default fixes fresh installs and nothing else,
+  // which left the slice undeployable by shipping code.
+
+  it("raises 1024 to 4000, and leaves every other key byte-identical", async () => {
+    const db = await createTestDb();
+    await seedDb(db);
+    // A slice-2a-era document: parses fine, holds the wrong ceiling.
+    const before = await activeContent(db);
+    await db.insert(schema.configVersions).values({
+      content: { ...before, llm: { ...before.llm, maxOutputTokens: 1024 } } as never,
+      // WRITTEN BY THE PRODUCT, which is what makes it correctable: a
+      // slice-2a-era document came from `seed`.
+      createdBy: "seed",
+    });
+
+    const result = await migrateConfigDefaults(db);
+    expect(result.status).toBe("migrated");
+    const after = await activeContent(db);
+    expect(after.llm.maxOutputTokens).toBe(4000);
+    // Everything else came through untouched — the correction is surgical.
+    // Compare every OTHER llm key, so "surgical" is asserted rather than
+    // asserted-about. Built by deletion rather than destructuring, because an
+    // unused binding is a lint error and a `void _a` would be noise.
+    const withoutCeiling = (llm: Record<string, unknown>) => {
+      const copy = { ...llm };
+      delete copy.maxOutputTokens;
+      return copy;
+    };
+    expect(withoutCeiling(after.llm)).toEqual(withoutCeiling(before.llm));
+    expect(after.creditCosts).toEqual(before.creditCosts);
+    expect(after.stripePriceMap).toEqual(before.stripePriceMap);
+  });
+
+  it("REFUSES an OPERATOR-AUTHORED document even when it holds the exact wrong value", async () => {
+    // THE INVARIANT, in its sharpest form (billing gate round 2). Value
+    // equality distinguishes numbers, not authors — and 1024 is a defensible
+    // operator choice, because it is the number that bounds per-call output
+    // spend. An operator who typed it keeps it.
+    const db = await createTestDb();
+    await seedDb(db);
+    const before = await activeContent(db);
+    await db.insert(schema.configVersions).values({
+      content: { ...before, llm: { ...before.llm, maxOutputTokens: 1024 } } as never,
+      createdBy: "user_operator_1",
+    });
+    expect(await migrateConfigDefaults(db)).toMatchObject({ status: "noop" });
+    expect((await activeContent(db)).llm.maxOutputTokens).toBe(1024);
+  });
+
+  it("REFUSES to touch a value an operator chose — the value half of the guard", async () => {
+    // The whole reason `mergeMissing` never overwrites a present key. A
+    // correction fires only from the EXACT value this product wrote; an
+    // operator who picked 2048 (or 8192) keeps it.
+    const db = await createTestDb();
+    await seedDb(db);
+    const before = await activeContent(db);
+    await db.insert(schema.configVersions).values({
+      content: { ...before, llm: { ...before.llm, maxOutputTokens: 2048 } } as never,
+      createdBy: "an-operator",
+    });
+
+    const result = await migrateConfigDefaults(db);
+    expect(result.status).toBe("noop");
+    expect((await activeContent(db)).llm.maxOutputTokens).toBe(2048);
+  });
+
+  it("is IDEMPOTENT: a second run corrects nothing", async () => {
+    const db = await createTestDb();
+    await seedDb(db);
+    const before = await activeContent(db);
+    await db.insert(schema.configVersions).values({
+      content: { ...before, llm: { ...before.llm, maxOutputTokens: 1024 } } as never,
+      createdBy: "seed",
+    });
+    await migrateConfigDefaults(db);
+    const versionsAfterFirst = (await db.select().from(schema.configVersions)).length;
+    expect(await migrateConfigDefaults(db)).toMatchObject({ status: "noop" });
+    expect(await db.select().from(schema.configVersions)).toHaveLength(
+      versionsAfterFirst
+    );
+  });
+});
+
 describe("A-9 deploy order: code first, then migrate-config", () => {
   // Derived from the real schema with `.omit()`, NOT a hand-written second
   // copy: a copy would drift, and the whole point is that this is what OLDER

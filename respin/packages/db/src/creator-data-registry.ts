@@ -109,7 +109,35 @@ export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = [
       behaviour: "retained",
       reason:
         "DELIBERATELY OUTLIVES the workspace — `workspace_id` is a plain column with NO foreign key, because a conventional FK would cascade away the very margin history this table exists to preserve. BASIS: business financial records, which are retained independently of a service-data deletion request. " +
-        "STATED PLAINLY BECAUSE IT IS THE UNCOMFORTABLE HALF: `workspace_id` is NOT pseudonymised today, so after a REQ-A04 deletion a per-workspace spend series remains with a resolvable identifier. The exposure is ZERO in M2a — nothing writes this table (asserted by the P8 writer enumeration) — and it becomes real the moment M2b adds the first writer. R-30 therefore carries it as a binding constraint on M2b: the first writer either pseudonymises `workspace_id` at deletion time or this decision is re-taken in writing, with an owner on it",
+        "PSEUDONYMISATION DECIDED (R-30.5 / R-54, 2026-08-29, slice 2b): at deletion time, `workspace_id` is replaced by ONE fresh random identifier per deleted workspace (every row that workspace accumulated moves to the SAME new id, so its own spend history stays internally groupable without being re-linkable to the real workspace), and the old-id-to-new-id mapping is discarded — no re-linkage path, by construction, since no column exists to write it to. `spend-rollup.ts`'s `pseudonymiseWorkspaceSpend` is the instrument; the deletion EXECUTOR that must call it is still six slices away (slice 10b), so `tests/retention.test.ts`'s sibling scan is the tripwire that keeps this from being a decision that only lives in this comment.",
+    },
+  },
+  {
+    table: "onboarding_interview_drafts",
+    holdsCreatorContent: true,
+    export: {
+      included: true,
+      reason:
+        "the creator's own IN-PROGRESS interview answers, in their own words, before submission turns the decided ones into immutable creator_authored onboarding_inputs rows and brain-document claims (slice 3b). A draft holds real typed content the creator has not submitted yet, not a system artefact, so withholding it from the export would lose words they actually wrote",
+    },
+    deletion: {
+      behaviour: "cascade",
+      reason:
+        "composite FK to creator_profiles ON DELETE CASCADE, the same shape onboarding_inputs and brain_docs already use for a profile-grained child",
+    },
+  },
+  {
+    table: "brain_activation_snapshots",
+    holdsCreatorContent: false,
+    export: {
+      included: true,
+      reason:
+        "no text of its own — every column is a foreign id into brain_docs, which is already exported whole — but it is the only record of WHICH versions were coherently active together at each activation (slice 3b, R8/R9), and a creator asking what their brain looked like at a point in time is asking exactly this table. Cheap to include since it is ids only, and withholding structural history nobody asked to keep secret is the wrong default",
+    },
+    deletion: {
+      behaviour: "cascade",
+      reason:
+        "composite FK to creator_profiles ON DELETE CASCADE, the same shape every other profile-grained child in this registry uses",
     },
   },
   {

@@ -24,7 +24,25 @@ import {
   billingErrorDisplay,
   billingErrorFromCode,
 } from "../app/(product)/billing-errors";
-import { UsageView, type UsageViewProps } from "../app/(product)/usage/usage-view";
+import {
+  UsageView,
+  burnByModeNote,
+  daysToEmptyNote,
+  spendVisibility,
+  type UsageViewProps,
+} from "../app/(product)/usage/usage-view";
+import {
+  InsufficientCreditsError,
+  LlmError,
+  PostCallDebitError,
+} from "@respin/credits/app-server";
+// `LlmError` — the BASE class, which is the whole point. The facade
+// deliberately re-exports only this one, because `app/**` renders one sentence
+// per outcome and enumerating subclasses there would be a second
+// classification of vendor failures beside the `billable` flag that already
+// travels on the error. So the routing is asserted on the FLAG, which is the
+// property, rather than on a list of subclasses that would drift. That the
+// real subclasses set the flag correctly is `packages/llm`'s own suite.
 import {
   BillingView,
   type BillingViewProps,
@@ -55,6 +73,7 @@ const html = (el: React.ReactElement) => renderToStaticMarkup(el);
 function usageProps(over: Partial<UsageViewProps> = {}): UsageViewProps {
   return {
     balance: { ok: true, value: 250, asOf: NOW },
+    burn: { ok: true, hasAnyDebit: false },
     rows: [],
     moreRows: false,
     paused: null,
@@ -739,9 +758,21 @@ describe("admin /admin/config never fabricates a version number", () => {
 
 describe("REQ-G07 empty states say WHY they are empty (non-negotiable 6)", () => {
   it("burn-by-mode and days-to-empty name the reason, and neither invents a number", () => {
+    // THE REASON CHANGED IN SLICE 2a AND THIS ASSERTION CHANGED WITH IT. It
+    // used to pin "generation arrives in a later milestone", which was the
+    // honest reason in M1 and became false the moment the metered run started
+    // spending credits. Pinned to the reason that is true now — the workspace
+    // has spent nothing — which does not expire when the next spender ships.
+    // The class is guarded in `tests/stale-disclosure.test.ts`.
     const out = html(<UsageView {...usageProps()} />);
     expect(out).toContain('data-testid="burn-by-mode"');
-    expect(out).toContain("generation arrives in a later milestone");
+    // R7/R8 (slice 2b): the burn TOTAL now carries the "nothing spent" claim,
+    // as a real answered zero from an unclamped query — not the by-mode
+    // note, which no longer varies on spend state at all (see R9).
+    expect(out).toContain('data-testid="burn-total"');
+    expect(out).toContain("Nothing spent this month");
+    expect(out).toContain("exactly one thing spends credits today");
+    expect(out).not.toContain("only a generation spends credits");
     expect(out).toContain('data-testid="days-to-empty"');
     expect(out).toContain("Not enough data");
   });
@@ -1052,11 +1083,18 @@ describe("audit #17: every disabled billing control names its reason PROGRAMMATI
   });
 });
 
-describe("audit #26: the auto-top-up control discloses that nothing can trigger it yet", () => {
-  it("carries the M3 disclosure, and the checkbox points at it", () => {
+describe("audit #26: the auto-top-up control explains WHEN it applies", () => {
+  // THIS SUITE USED TO BE CALLED "...discloses that nothing can trigger it
+  // yet", and that disclosure was accurate until slice 2a gave auto-top-up its
+  // first caller: `runInference` asks `maybeAutoTopup` when a priced attempt
+  // finds too small a balance. What must be described PROGRAMMATICALLY is the
+  // same — the checkbox points at a paragraph that explains itself — but the
+  // paragraph now says when the setting applies rather than that it cannot.
+  it("carries the explanation, and the checkbox points at it", () => {
     const out = html(<BillingView {...billingProps()} />);
     expect(out).toContain('data-testid="auto-topup-unbuilt"');
-    expect(out).toContain("generation arrives in a later milestone");
+    expect(out).toContain("needs more credits than you have");
+    expect(out).not.toContain("Nothing can trigger this yet");
     expect(out).toContain('aria-describedby="auto-topup-unbuilt"');
     expect(out).toContain('id="auto-topup-unbuilt"');
   });
@@ -1071,13 +1109,185 @@ describe("audit #26: the auto-top-up control discloses that nothing can trigger 
     expect(out).toContain('id="auto-topup-blocked-reason"');
   });
 
-  it("the disclosure is the SAME honesty the /usage page already gives for M3", () => {
+  it("neither money screen still claims that only a generation spends credits", () => {
+    // The PARITY this case was written for survives the copy change: the two
+    // money screens must not disagree about what can spend a credit. What it
+    // can no longer do is pin a shared sentence, because the shared sentence
+    // was the false one. So it asserts the agreement negatively, on the claim
+    // that actually went wrong, on both screens at once.
     const billing = html(<BillingView {...billingProps()} />);
     const usage = html(<UsageView {...usageProps()} />);
-    for (const s of ["generation arrives in a later milestone", "(M3)"]) {
-      expect(billing, `billing must disclose: ${s}`).toContain(s);
-      expect(usage, `usage already discloses: ${s}`).toContain(s);
+    for (const [label, out] of [
+      ["billing", billing],
+      ["usage", usage],
+    ] as const) {
+      expect(out, `${label} still claims only a generation spends`).not.toContain(
+        "only a generation spends credits"
+      );
+      expect(out, `${label} still claims nothing can trigger a top-up`).not.toContain(
+        "Nothing can trigger this yet"
+      );
     }
+  });
+});
+
+describe("the money screens never deny a spend the page can see (fix round, 2026-08-28)", () => {
+  // THE DEFECT THESE PIN. `/usage` carried two hardcoded sentences —
+  // "Nothing has been spent from this workspace yet" and "no credits have been
+  // spent from this workspace yet" — with no reference to the ledger it renders
+  // twenty lines below. Three gates found it independently. It is the same
+  // class as the disclosure it replaced, which is why the fix is a function
+  // over data rather than a better constant.
+
+  it("spendVisibility: a visible debit is SPENT, whatever else is true", () => {
+    expect(spendVisibility([{ delta: -50 }], false)).toBe("spent");
+    expect(spendVisibility([{ delta: 100 }, { delta: -1 }], true)).toBe("spent");
+  });
+
+  it("spendVisibility: a CLAMPED page with no debit is UNKNOWN, never 'none'", () => {
+    // The trap this exists for: `rows` is one page. An absent debit on page 1
+    // is not evidence that nothing was ever spent, and reading it as such is
+    // absence-as-zero — the error this repo has shipped twice.
+    expect(spendVisibility([{ delta: 100 }], true)).toBe("unknown");
+    expect(spendVisibility([], true)).toBe("unknown");
+  });
+
+  it("spendVisibility: only a COMPLETE page with no debit may say 'none'", () => {
+    expect(spendVisibility([], false)).toBe("none");
+    expect(spendVisibility([{ delta: 100 }], false)).toBe("none");
+  });
+
+  it("daysToEmptyNote never claims nothing was spent once a debit is visible", () => {
+    const note = daysToEmptyNote("spent");
+    expect(note).not.toMatch(/nothing has been spent/i);
+    expect(note).not.toMatch(/no credits have been spent/i);
+  });
+
+  it("daysToEmptyNote does not claim completeness on a clamped page", () => {
+    const note = daysToEmptyNote("unknown");
+    expect(note).not.toMatch(/nothing has been spent from this workspace/i);
+    // ...it scopes the claim to what is shown instead.
+    expect(note).toMatch(/shown below/i);
+  });
+
+  it("burnByModeNote (R9, slice 2b) no longer varies by spend visibility — the burn TOTAL panel answers that now — and never claims a spend total itself", () => {
+    const note = burnByModeNote();
+    expect(note).not.toMatch(/nothing has been spent/i);
+    expect(note).not.toMatch(/\d+ credits/i);
+  });
+
+  it("END TO END: a rendered debit row and a denial cannot coexist", () => {
+    // The assertion the previous covering test could not make, because it
+    // asserted the section renders and invents no number — both of which
+    // stayed true while the sentence stopped being.
+    const out = html(
+      <UsageView
+        {...usageProps({
+          rows: [
+            {
+              id: "l1",
+              kind: "debit",
+              delta: -50,
+              ref: "att-1",
+              expiresAt: null,
+              createdAt: new Date("2026-08-17T00:00:00Z"),
+            },
+          ],
+        })}
+      />
+    );
+    expect(out).toContain("-50");
+    expect(out).not.toMatch(/Nothing has been spent from this workspace yet/i);
+    expect(out).not.toMatch(/no credits have been spent from this workspace yet/i);
+  });
+
+  it("NON-VACUITY: a workspace the burn query genuinely answered as zero says so plainly (R7/R8, slice 2b — this claim moved from the by-mode note to the burn total, which is now the unclamped answer)", () => {
+    const out = html(
+      <UsageView
+        {...usageProps({
+          rows: [],
+          moreRows: false,
+          burn: { ok: true, hasAnyDebit: false },
+        })}
+      />
+    );
+    expect(out).toMatch(/Nothing spent this month/i);
+  });
+
+  it("a genuinely answered NON-ZERO burn renders the real number (billing gate round 2, 2026-08-29: previously untested — a mutation that always rendered 'Nothing spent' would have passed)", () => {
+    const out = html(
+      <UsageView
+        {...usageProps({
+          burn: { ok: true, hasAnyDebit: true, totalDebit: 137 },
+        })}
+      />
+    );
+    expect(out).toContain('data-testid="burn-total"');
+    expect(out).toContain("137 credits spent this month");
+    expect(out).not.toMatch(/Nothing spent this month/i);
+  });
+
+  it("a burn QUERY FAILURE renders the error state, distinct from a real zero (billing gate round 2, 2026-08-29)", () => {
+    const out = html(<UsageView {...usageProps({ burn: { ok: false } })} />);
+    expect(out).toContain('data-testid="burn-total-error"');
+    expect(out).not.toContain('data-testid="burn-total"');
+    expect(out).not.toMatch(/Nothing spent this month/i);
+    expect(out).not.toMatch(/\d+ credits spent/i);
+  });
+});
+
+describe("a refusal names what happened to the money (fix round, 2026-08-28)", () => {
+  // Two paths told creators something false, and in both cases the class alone
+  // could not carry the truth.
+
+  it("a BILLABLE vendor failure is not told its included run survived", () => {
+    // `refused` and `schema_invalid` are `true` in USAGE_OUTCOME_BILLABLE, so
+    // the attempt consumes the included run. The single `llm_unavailable` copy
+    // said the opposite, and the creator's next press costs full price.
+    const billable = new LlmError("declined", "refused", true);
+    expect(billingErrorCode(billable)).toBe("llm_attempt_recorded");
+    const copy = BILLING_ERROR_COPY.llm_attempt_recorded;
+    expect(`${copy.title} ${copy.detail}`.toLowerCase()).toMatch(/counted|used/);
+    expect(copy.detail).not.toMatch(/your included (build|run) was not used/i);
+  });
+
+  it("...and a NON-billable one still says the included run survived", () => {
+    // The direction that must not change: a 5xx costs the creator nothing.
+    const notBillable = new LlmError("timed out", "unavailable", false);
+    expect(billingErrorCode(notBillable)).toBe("llm_unavailable");
+    expect(BILLING_ERROR_COPY.llm_unavailable.detail).toMatch(
+      /included run was not used/i
+    );
+  });
+
+  it("the vendor-failure copy no longer blames the creator's material", () => {
+    // Nothing the creator typed is sent — the prompt is two fixed literals —
+    // so telling them it "keeps happening on ordinary material" and that they
+    // cannot fix it "by rewording" invited them to rewrite text that was never
+    // transmitted.
+    for (const code of ["llm_unavailable", "llm_attempt_recorded"] as const) {
+      expect(BILLING_ERROR_COPY[code].detail).not.toMatch(/ordinary material/i);
+    }
+  });
+
+  it("a debit refused AFTER the call does not claim nothing was called", () => {
+    const err = new PostCallDebitError("att-1", 0, 50);
+    expect(billingErrorCode(err)).toBe("debit_refused_after_call");
+    const copy = BILLING_ERROR_COPY.debit_refused_after_call;
+    expect(copy.detail).not.toMatch(/before anything was called/i);
+    expect(copy.detail).toMatch(/answered/i);
+    // ...and it still says the balance was untouched, which IS true.
+    expect(copy.detail).toMatch(/nothing was taken/i);
+  });
+
+  it("the PRE-call refusal keeps its (true) claim that nothing was called", () => {
+    // The two must stay distinguishable; collapsing them again is the defect.
+    expect(billingErrorCode(new InsufficientCreditsError(0, 50))).toBe(
+      "insufficient_credits"
+    );
+    expect(BILLING_ERROR_COPY.insufficient_credits.detail).toMatch(
+      /before anything was called/i
+    );
   });
 });
 

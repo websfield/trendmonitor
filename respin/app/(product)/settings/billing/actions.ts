@@ -20,6 +20,7 @@ import {
   billingErrorCode,
   type BillingErrorCode,
 } from "../../billing-errors";
+import { logRefusal } from "../../safe-log";
 
 const BILLING_PATH = "/settings/billing";
 
@@ -41,7 +42,7 @@ function returnPathOf(formData: FormData | null): string {
 
 function failHref(err: unknown, formData: FormData | null): string {
   const code: BillingErrorCode = billingErrorCode(err);
-  console.error(`[billing-action] refused (${code})`, err);
+  logRefusal("[billing-action] refused", err);
   return `${returnPathOf(formData)}?e=${encodeURIComponent(code)}`;
 }
 

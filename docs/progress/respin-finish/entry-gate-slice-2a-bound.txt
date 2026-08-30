@@ -1,0 +1,20 @@
+Entry gate — slice 2a remediation (bounding the spend path), 2026-08-28
+CI shape: TEST_DATABASE_URL set, Docker Postgres live, zero skips.
+
+typecheck  exit 0
+lint       exit 0  (eslint .)
+test       51 files / 1071 tests / 0 failed / 0 skipped   (was 1052 after fix round 1)
+db:check   Everything's fine  — no migration: an advisory lock needs no table
+build      next build clean; /onboarding first-load JS 1.3 kB (no pg in the client bundle)
+
+New coverage in this run:
+  packages/credits/tests/inference.test.ts               36 cases (was 22)
+  packages/credits/tests/inference-race.docker.test.ts    8 cases (was 4)
+  packages/credits/tests/support/run-slots.ts            new — granting/refusing/bounded doubles
+  tests/onboarding-ui.test.tsx                          108 cases (+1: both outcome branches announce)
+
+Mutation matrices (a planted defect must redden a test):
+  unit    6/6 RED  — after fixing one survivor (a non-vacuity case that agreed with the defect)
+  docker  4/4 RED  — after fixing one survivor (a leaked lock is invisible on a re-entrant session)
+  a11y    1/1 RED  — removing role=status reddens the new case
+  cost    1/1 RED  — bypassing the no-usage branch reddens the cost_state case

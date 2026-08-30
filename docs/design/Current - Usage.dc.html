@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    .ua { font-family: 'Times New Roman', Times, serif; font-size: 16px; line-height: normal; color: #000000; background: #ffffff; }
+    .ua h1 { font-size: 2em; font-weight: bold; margin: 0.67em 0; }
+    .ua h2 { font-size: 1.5em; font-weight: bold; margin: 0.83em 0; }
+    .ua p { margin: 1em 0; }
+    .ua a { color: #0000ee; text-decoration: underline; }
+    .ua a:hover { color: #0000ee; }
+    .ua button { font: 400 13.3333px Arial, sans-serif; background: #efefef; color: #000; border: 1px solid #767676; border-radius: 2px; padding: 1px 6px; }
+    .ua th { font-weight: bold; }
+    .caption { font: 600 11px/1 'Segoe UI', -apple-system, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #8a8a8a; background: #f3f3f3; padding: 10px 16px; border-top: 1px solid #e2e2e2; border-bottom: 1px solid #e2e2e2; }
+  </style>
+</helmet>
+<div class="caption">State: active workspace, spend visible</div>
+<div class="ua" data-screen-label="Usage (as-is)" style="background: #ffffff; padding: 8px;">
+  <header style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.75rem 1.5rem; border-bottom: 1px solid #ddd;">
+    <strong>Maya's workspace</strong>
+    <nav style="display: flex; gap: 1rem; font-size: 0.9rem;">
+      <a href="#">Onboarding</a>
+      <a href="#">Studio</a>
+      <a href="#">Usage</a>
+      <a href="#">Billing</a>
+    </nav>
+    <button type="button">Sign out</button>
+  </header>
+  <main style="padding: 1.5rem;">
+    <section>
+      <h1>Usage</h1>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Credit balance</h2>
+        <p style="font-size: 2rem; margin: 0.25rem 0;"><strong>1249</strong> credits</p>
+        <p style="color: #555; font-size: 0.9rem;">Derived from your credit ledger as of 2026-08-28.</p>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">This month, by mode</h2>
+        <p style="color: #555; font-size: 0.9rem;">A per-mode breakdown is not available yet &mdash; it splits spending by what produced it, and that arrives with generation. Your credit history below lists every entry in the meantime.</p>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Days to empty</h2>
+        <p style="color: #555; font-size: 0.9rem;">Not enough data yet. This needs a longer spending history than this workspace has to measure a rate.</p>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Credit history</h2>
+        <table style="border-collapse: collapse; width: 100%;">
+          <thead>
+            <tr>
+              <th style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">Date</th>
+              <th style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">What</th>
+              <th style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">Credits</th>
+              <th style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">Expires</th>
+              <th style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">Reference</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">2026-08-27</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">debit</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">-1</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">&mdash;</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">att_9fK2mQ</td>
+            </tr>
+            <tr>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">2026-08-12</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">pack</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">+1000</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">2027-08-12</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">cs_a1B2c3</td>
+            </tr>
+            <tr>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">2026-08-05</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">grant</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">+250</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">2026-10-05</td>
+              <td style="border-bottom: 1px solid #eee; padding: 0.4rem 0.6rem; text-align: left;">in_1RxTgH</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Invoices and payment method</h2>
+        <form>
+          <button type="button">Open the Customer Portal</button>
+          <p style="color: #555; font-size: 0.9rem;">Invoices, receipts and your payment method live in Stripe's Customer Portal.</p>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="caption">State fragments: paused notice &middot; zero balance prompt</div>
+<div class="ua" style="background: #ffffff; padding: 8px 8px 24px;">
+  <main style="padding: 1.5rem;">
+    <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+      <h2 style="margin-top: 0;">Credits are frozen</h2>
+      <p>This workspace is paused: credits are not spent, not granted, and their expiry clocks are suspended until you resume.</p>
+      <p>Scheduled to resume on 2026-11-01. <a href="#">Resume in billing settings</a>.</p>
+    </div>
+    <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem;">
+      <h2 style="margin-top: 0;">Credit balance</h2>
+      <p style="font-size: 2rem; margin: 0.25rem 0;"><strong>0</strong> credits</p>
+      <p style="color: #555; font-size: 0.9rem;">Derived from your credit ledger as of 2026-08-28.</p>
+      <p>You have no credits. Buy a credit pack or start a plan on <a href="#">billing settings</a> to keep generating.</p>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1280, &quot;height&quot;: 1400}}"></script>
+</body>
+</html>

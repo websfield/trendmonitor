@@ -1,14 +1,61 @@
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ESLint } from "eslint";
-import { SCAN_ROOTS } from "./support/app-surface";
+import { SCAN_ROOTS, blankComments } from "./support/app-surface";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 
 const respinRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // One shared engine: per-test ESLint construction contended with the parallel
 // PGlite suites and flaked a timeout once (code-review finding 3).
 const eslint = new ESLint({ cwd: respinRoot });
+
+// `git grep`, ASYNC — never `execFileSync`. Measured 2026-08-27: run alone this
+// file costs 4.5s, but inside the full parallel suite a worker executing it
+// blocked for 23s straight. A synchronous child process stops the WHOLE worker
+// thread, including the birpc message pump that answers vitest's
+// `onTaskUpdate` — and that call's timeout is a hard-coded 60s inside birpc
+// with no config or env knob in vitest 3.2.7
+// (node_modules/vitest/dist/chunks/index.B521nVV-.js, DEFAULT_TIMEOUT = 6e4).
+// A starved pump is the entry gate going RED on exit code with every test
+// passing. Awaiting the child keeps the loop turning while git works.
+//
+// The catch DISCRIMINATES. `git grep` exits 1 for "no matches", which is the
+// pass; ANY other failure — git missing, a bad pattern, output past maxBuffer —
+// was previously swallowed into "no offenders", i.e. a scanner that fails OPEN
+// and is indistinguishable from one that works (CLAUDE.md, 2026-08-21).
+const execFileAsync = promisify(execFile);
+
+/** Every .ts/.tsx under a directory, recursively. Local to the sync-child scan. */
+function* walkTs(dir: string): Generator<string> {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const full = resolve(dir, e.name);
+    if (e.isDirectory()) yield* walkTs(full);
+    else if (/\.tsx?$/.test(e.name) && statSync(full).isFile()) yield full;
+  }
+}
+
+
+async function gitGrep(args: readonly string[]): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", [...args], {
+      cwd: respinRoot,
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return stdout;
+  } catch (e) {
+    const err = e as { code?: number | string };
+    if (err.code === 1) return ""; // no matches — the pass
+    throw new Error(
+      `git grep failed in a way that is NOT "no matches" (code ${String(err.code)}) ` +
+        `— this scan would otherwise report CLEAN without having scanned: ${String(e)}`
+    );
+  }
+}
 
 /**
  * The dynamic-`import()` scan, in ONE place so the guard and its non-vacuity
@@ -32,19 +79,105 @@ async function scanFor(
   pattern: string,
   roots: readonly string[] = SCAN_ROOTS
 ): Promise<string[]> {
-  const { execFileSync } = await import("node:child_process");
-  try {
-    return execFileSync(
-      "git",
-      ["grep", "--untracked", "-n", "-E", pattern, "--", ...roots],
-      { cwd: respinRoot, encoding: "utf8" }
-    )
-      .split("\n")
-      .filter(Boolean);
-  } catch {
-    return []; // git grep exits 1 on no matches — that is the pass
-  }
+  const out = await gitGrep([
+    "grep",
+    "--untracked",
+    "-n",
+    "-E",
+    pattern,
+    "--",
+    ...roots,
+  ]);
+  return out.split("\n").filter(Boolean);
 }
+
+// The scanners in this file all funnel through `gitGrep`, and its catch is the
+// difference between "scanned, found nothing" and "never scanned". That
+// distinction has to be PROVEN, not asserted in a comment: a scanner that
+// fails open reports CLEAN and is indistinguishable from one that works
+// (CLAUDE.md, 2026-08-21).
+describe("the scan's own failure mode is discriminated, not swallowed", () => {
+  it("NO test in this repo blocks its worker with a SYNCHRONOUS child process", () => {
+    // The regression guard for the entry gate's exit-code flake. A worker
+    // thread that spends 23s inside `execFileSync` cannot pump the message
+    // answering its own in-flight `onTaskUpdate`, whose birpc timeout is a
+    // hard-coded 60s with no knob (see vitest.config.ts). Measured, not
+    // argued: with these two call sites synchronous the worst worker block was
+    // 23-31s; awaited, it is ~10s.
+    //
+    // A SCAN, so it covers the tests nobody has written yet. Built from a
+    // RegExp literal, never assembled from a string: one lost backslash turns
+    // the pattern into something that matches nothing and reports clean
+    // (CLAUDE.md, 2026-08-21).
+    const SYNC_CHILD = /\b(execFileSync|execSync|spawnSync)\b/;
+    const roots = [resolve(respinRoot, "tests")];
+    for (const pkg of readdirSync(resolve(respinRoot, "packages"), {
+      withFileTypes: true,
+    })) {
+      if (!pkg.isDirectory()) continue;
+      const t = resolve(respinRoot, "packages", pkg.name, "tests");
+      if (existsSync(t)) roots.push(t);
+    }
+    // NON-VACUITY on the WALK: it must actually be reading files, or an empty
+    // offender list means "found nothing" rather than "scanned nothing".
+    // THIS FILE IS SKIPPED, and the exclusion is not a hole — it holds the
+    // scan's own specimen strings ("const out = execFileSync(...)"), which
+    // `blankComments` does not blank because they are string literals, not
+    // comments. A scanner cannot scan its own fixtures. The file is covered
+    // instead by the stricter import-level assertion below, which is where a
+    // synchronous child process has to come from in the first place.
+    const SELF = resolve(respinRoot, "tests", "import-boundary.test.ts");
+    const files = roots
+      .flatMap((r) => [...walkTs(r)])
+      .filter((f) => resolve(f) !== SELF);
+    expect(files.length, "the walk found no test files at all").toBeGreaterThan(20);
+
+    const offenders = files.filter((f) =>
+      SYNC_CHILD.test(blankComments(readFileSync(f, "utf8")))
+    );
+    expect(
+      offenders.map((f) => f.replace(respinRoot, "")),
+      "use the awaited child_process API — a synchronous one stops the whole worker thread and starves vitest's reporter RPC"
+    ).toEqual([]);
+  });
+
+  it("...and THIS file, which the scan skips, imports only the ASYNC child_process API", () => {
+    // The one file excluded above, checked where it counts: the import. A
+    // synchronous child process cannot be called without being imported, and
+    // no `*Sync` name may appear on that import line.
+    const src = readFileSync(resolve(respinRoot, "tests", "import-boundary.test.ts"), "utf8");
+    const imports = [...src.matchAll(/import\s*\{([^}]*)\}\s*from\s*"node:child_process"/g)];
+    expect(imports.length, "this file must import node:child_process exactly once").toBe(1);
+    const names = imports[0][1].split(",").map((n) => n.trim()).filter(Boolean);
+    expect(names).toEqual(["execFile"]);
+  });
+
+  it("NON-VACUITY: the sync-child scan catches a PLANTED call", () => {
+    const SYNC_CHILD = /\b(execFileSync|execSync|spawnSync)\b/;
+    expect(SYNC_CHILD.test('const out = execFileSync("git", []);')).toBe(true);
+    expect(SYNC_CHILD.test('const out = execSync("git");')).toBe(true);
+    expect(SYNC_CHILD.test('const out = spawnSync("git");')).toBe(true);
+    // ...and does NOT fire on the async API this repo now uses.
+    expect(SYNC_CHILD.test('const { stdout } = await execFileAsync("git", []);')).toBe(
+      false
+    );
+  });
+
+
+  it("a git failure that is NOT 'no matches' THROWS — it never reports a clean scan", async () => {
+    // An unmatched paren is a bad ERE; git exits 128, not 1. Verified against
+    // the installed git: `git grep -E '((('` -> fatal, exit 128.
+    await expect(scanFor(String.raw`(((`)).rejects.toThrow(
+      /NOT "no matches"/
+    );
+  });
+
+  it("NON-VACUITY: a well-formed pattern with zero matches still returns [] (exit 1 is the pass)", async () => {
+    await expect(
+      scanFor(String.raw`zzz_no_such_token_in_this_repo_zzz`)
+    ).resolves.toEqual([]);
+  });
+});
 
 async function scanForDynamicPackageImports(): Promise<string[]> {
   return scanFor(DYNAMIC_PACKAGE_IMPORT);
@@ -223,20 +356,18 @@ describe("trustWorkspaceId allowlist cage (tenancy T1, M1 phase 2 AC-8)", () => 
   });
 
   it("no live import site exists outside the allowlist (grep assertion; Phase 3 tightens to exact-match)", async () => {
-    const { execFileSync } = await import("node:child_process");
-    let out = "";
-    try {
-      out = execFileSync(
-        "git",
-        // --untracked: respin/ may be uncommitted; without it the assertion is
-        // vacuous on untracked trees (tenancy round-1 CHANGE).
-        ["grep", "--untracked", "-l", "trustWorkspaceId", "--", "app", "packages", "lib"],
-        { cwd: respinRoot, encoding: "utf8" }
-      );
-    } catch {
-      // git grep exits 1 on no matches — that's a pass (zero sites).
-      out = "";
-    }
+    // --untracked: respin/ may be uncommitted; without it the assertion is
+    // vacuous on untracked trees (tenancy round-1 CHANGE).
+    const out = await gitGrep([
+      "grep",
+      "--untracked",
+      "-l",
+      "trustWorkspaceId",
+      "--",
+      "app",
+      "packages",
+      "lib",
+    ]);
     const files = out.split("\n").filter(Boolean);
     const allowed = new Set([
       "packages/credits/src/stripe/webhooks.ts",
@@ -652,6 +783,188 @@ describe("AC-15 (eslint half): the M2a write surface is denied to app/**", () =>
   });
 });
 
+// ---- Slice 1 additions to the same cage (R5, R6).
+
+describe("slice 1: the new write surface is denied to app/**", () => {
+  const lintInApp = async (code: string) => {
+    const results = await eslint.lintText(code, {
+      filePath: resolve(respinRoot, "app/fixture/route.ts"),
+    });
+    return results
+      .flatMap((r) => r.messages)
+      .some((m) => m.ruleId === "no-restricted-imports");
+  };
+
+  it("DENIES workspaceWriteCapabilities and the raw intake operations", async () => {
+    // `workspaceWriteCapabilities` is the workspace-grained twin of
+    // `writeCapabilities`, and it is the one that INSERTS a creator profile
+    // without consulting the cap — the cap lives one layer up, in
+    // @respin/credits. Reachable from app/**, it would BE the cap's bypass.
+    expect(
+      await lintInApp(
+        'import { workspaceWriteCapabilities } from "@respin/db";\nexport const x = workspaceWriteCapabilities;\n'
+      ),
+      "workspaceWriteCapabilities in app/** would create profiles past the per-tier cap"
+    ).toBe(true);
+    // The module-level operations, as opposed to the `respinDb`-bound methods:
+    // app/** gets the facade, not the functions, because the functions take a
+    // `db` handle and the facade is what supplies the pooled one.
+    for (const name of ["appendOwnPost", "listOnboardingInputs"]) {
+      expect(
+        await lintInApp(
+          "import { " + name + ' } from "@respin/db";\nexport const x = ' + name + ";\n"
+        ),
+        name
+      ).toBe(true);
+    }
+  });
+
+  it("ALLOWS the slice-1 refusals and row types, and STILL denies the tables", async () => {
+    expect(
+      await lintInApp(
+        'import { ProfileCapError, ProfileNameError, ProfileRoleError, PostContentError, type CreatorProfile, type OnboardingInput } from "@respin/db";\n' +
+          "export const x = { ProfileCapError, ProfileNameError, ProfileRoleError, PostContentError };\n" +
+          "export type Y = [CreatorProfile, OnboardingInput];\n"
+      ),
+      "app/** must be able to instanceof these, or a typed refusal renders as 'Something went wrong'"
+    ).toBe(false);
+    // The row TYPE is allowed; the TABLE of the same subject is not. If this
+    // ever flips, a page can build its own query.
+    expect(
+      await lintInApp(
+        'import { creatorProfiles } from "@respin/db";\nexport const x = creatorProfiles;\n'
+      )
+    ).toBe(true);
+  });
+});
+
+// ---- Slice 3b, Stage B1 additions to the same cage.
+
+describe("slice 3b: the interview surface's SHAPES are allowed, its WRITES stay denied", () => {
+  const lintInApp = async (code: string) => {
+    const results = await eslint.lintText(code, {
+      filePath: resolve(respinRoot, "app/fixture/route.ts"),
+    });
+    return results
+      .flatMap((r) => r.messages)
+      .some((m) => m.ruleId === "no-restricted-imports");
+  };
+
+  it("DENIES the raw interview operations — app/** gets respinDb, not the functions", async () => {
+    // Same reason as slice 1's `appendOwnPost`/`listOnboardingInputs` above:
+    // these take a bare `db` handle, and only the facade supplies the pooled
+    // one. `saveInterviewDraft`/`getInterviewDraft`/`submitInterview` are
+    // reachable from app/** ONLY through `respinDb.*`.
+    for (const name of ["saveInterviewDraft", "getInterviewDraft", "submitInterview"]) {
+      expect(
+        await lintInApp(
+          "import { " + name + ' } from "@respin/db";\nexport const x = ' + name + ";\n"
+        ),
+        name
+      ).toBe(true);
+    }
+  });
+
+  it("ALLOWS the interview's two refusals, its field registry/types, and the metric-direction vocabulary", async () => {
+    expect(
+      await lintInApp(
+        'import { InterviewAnswerError, InterviewDraftSubmittedError, INTERVIEW_FIELDS, INTERVIEW_ANSWER_MAX, METRIC_DIRECTIONS, type InterviewAnswers, type InterviewFieldKey, type OnboardingInterviewDraft } from "@respin/db";\n' +
+          "export const x = { InterviewAnswerError, InterviewDraftSubmittedError, INTERVIEW_FIELDS, INTERVIEW_ANSWER_MAX, METRIC_DIRECTIONS };\n" +
+          "export type Y = [InterviewAnswers, InterviewFieldKey, OnboardingInterviewDraft];\n"
+      ),
+      "app/** must be able to render the field registry and instanceof the refusals, or the interview screen renders 'Something went wrong'"
+    ).toBe(false);
+  });
+});
+
+describe("R6 — a NEW @respin/* package is denied from app/** by DEFAULT (task 25)", () => {
+  // The hole this closes: every app-side rule was anchored to a package that
+  // exists TODAY, so `@respin/llm` (slice 2a) and the three after it would have
+  // landed OUTSIDE the import boundary with every fixture in this file green.
+  // A boundary that admits by omission is not a boundary.
+  const lintAt = async (path: string, code: string) => {
+    const results = await eslint.lintText(code, {
+      filePath: resolve(respinRoot, path),
+    });
+    return results
+      .flatMap((r) => r.messages)
+      .some((m) => m.ruleId === "no-restricted-imports");
+  };
+  const imp = (spec: string) =>
+    'import * as x from "' + spec + '";\nexport const y = x;\n';
+
+  // The four the finish plan actually creates, plus a name nobody has proposed
+  // — so the fixture is about the CLASS, not about a list of good guesses.
+  const UNSANCTIONED = [
+    "@respin/llm",
+    "@respin/modes",
+    "@respin/trends",
+    "@respin/brain",
+    "@respin/whatever-comes-next",
+  ];
+
+  it.each(UNSANCTIONED)("denies %s from app/**", async (pkg) => {
+    expect(await lintAt("app/fixture/route.ts", imp(pkg))).toBe(true);
+  });
+
+  it.each(UNSANCTIONED)("denies %s from lib/** too", async (pkg) => {
+    expect(await lintAt("lib/fixture.ts", imp(pkg))).toBe(true);
+  });
+
+  it("denies a DEEP entrypoint — of an unsanctioned package and of a sanctioned one", async () => {
+    for (const spec of [
+      "@respin/llm/app-server",
+      "@respin/llm/a/b",
+      "@respin/auth/server",
+      "@respin/db/app-server",
+    ]) {
+      expect(await lintAt("app/fixture/route.ts", imp(spec)), spec).toBe(true);
+    }
+  });
+
+  it("NON-VACUITY: every SANCTIONED entrypoint still passes, where it is sanctioned", async () => {
+    // The direction that makes this a boundary rather than a wall — and it is
+    // not hypothetical: the catch-all's first draft broke all six sanctioned
+    // imports at once. `no-restricted-imports` matches with GITIGNORE
+    // semantics, which cannot re-include a child of an excluded parent, so
+    // negating the deep entrypoints without also negating their package roots
+    // made every negation inert.
+    //
+    // The two packages carrying an `allowImportNames` allowlist are probed with
+    // a NAMED import of a sanctioned name, because a namespace import of them
+    // is denied by that older rule and always was — using `import * as` here
+    // would make this fixture pass for the wrong reason on the day the
+    // catch-all broke them.
+    const SANCTIONED: [string, string][] = [
+      ["app/fixture/route.ts", 'import { respinDb } from "@respin/db";\nexport const y = respinDb;\n'],
+      ["app/fixture/route.ts", 'import { requireUser } from "@respin/auth";\nexport const y = requireUser;\n'],
+      ["app/fixture/route.ts", imp("@respin/auth/client")],
+      ["app/fixture/route.ts", imp("@respin/credits/app-server")],
+      ["app/fixture/route.ts", imp("@respin/config/app-server")],
+      ["app/(admin)/fixture/page.tsx", imp("@respin/config/admin-server")],
+      ["app/api/stripe/webhook/route.ts", imp("@respin/credits/webhook-server")],
+    ];
+    for (const [path, code] of SANCTIONED) {
+      expect(await lintAt(path, code), path + " <- " + code.slice(0, 60)).toBe(
+        false
+      );
+    }
+  });
+
+  it("the admin and webhook grants stay SCOPED to their own files", async () => {
+    // Neither grant may have been widened by being negated in the catch-all.
+    expect(
+      await lintAt("app/fixture/route.ts", imp("@respin/config/admin-server")),
+      "the config WRITE surface leaked outside app/(admin)"
+    ).toBe(true);
+    expect(
+      await lintAt("app/fixture/route.ts", imp("@respin/credits/webhook-server")),
+      "the Stripe dispatcher leaked outside the webhook route"
+    ).toBe(true);
+  });
+});
+
+
 describe("AC-15 (the packages/** half): the specifier-shape hole, one directory over", () => {
   const lintAt = async (path: string, code: string) => {
     const results = await eslint.lintText(code, {
@@ -762,6 +1075,13 @@ describe("P6 — there is no trustProfileId, under any name", () => {
     expect(hits).toEqual([]);
   });
 
+  // THE PROBE'S NAME IS LOAD-BEARING. It must live under `lib/` for the scan to
+  // reach it, which means `tsc` reaches it too — and the file is deliberately
+  // uncompilable (`VerifiedProfileId` is never imported). The `finally` below
+  // removes it on any test outcome, but NOT when the run is killed mid-test,
+  // and a survivor then fails `pnpm typecheck` on every later run until someone
+  // notices a stray file. `tsconfig.json` therefore excludes `**/__*_probe.ts`;
+  // rename this file and that exclude stops covering it.
   it("NON-VACUITY: the scan finds a planted cast", async () => {
     const { writeFileSync, rmSync, mkdirSync } = await import("node:fs");
     const dir = resolve(respinRoot, "lib");
@@ -774,6 +1094,91 @@ describe("P6 — there is no trustProfileId, under any name", () => {
       );
       const hits = await scanFor(CAST, P6_ROOTS);
       expect(hits.some((l) => l.includes("__p6_probe"))).toBe(true);
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+});
+
+describe("P6b — the WORKSPACE brand has the scan its profile twin already had", () => {
+  // WHY THIS EXISTS, AND WHY IT WAS MISSING (tenancy gate, round 2, 2026-08-28).
+  //
+  // `VerifiedProfileId` has two instruments: an eslint deny on
+  // `trustProfileId`, and the P6 source scan above with a planted-cast probe.
+  // `VerifiedWorkspaceId` had only the first — the `trustWorkspaceId` IMPORT
+  // allowlist — and a bare `x as VerifiedWorkspaceId` is invisible to an import
+  // rule. The brand is `string & {…}`, so it compiles from any string.
+  //
+  // The run slot is what made the gap cost something. `pgRunSlots.acquire`
+  // takes a `VerifiedWorkspaceId` and decides WHICH TENANT'S semaphore a run
+  // consumes, so a forged id there is a cross-tenant denial of service — one
+  // workspace exhausting another's slots. The brand is also on app/**'s
+  // allowlist and `respinCredits.getBalance`/`getBillingState` take one
+  // directly.
+  //
+  // No live bypass exists today: the two casts in product source are both
+  // inside `with-workspace.ts`, which is where the mint lives. This is the scan
+  // that keeps it that way.
+  const WS_CAST = String.raw`as\s+VerifiedWorkspaceId`;
+
+  /**
+   * PRODUCT SOURCE ONLY — test files are excluded, and the exclusion is stated
+   * rather than left as an impression.
+   *
+   * A suite legitimately names workspace ids to build fixtures (this scan's own
+   * sibling, `packages/db/tests/run-slot-key.test.ts`, does exactly that to
+   * prove the key is injective over adversarial id shapes). A forged brand in a
+   * test is reachable by nobody; a forged brand in `app` or in a package's `src`
+   * is reachable by a request. The scan is drawn where the risk is.
+   *
+   * NOTE the divergence from P6 above, which scans tests as well: that is
+   * incidental, not designed — no test happens to cast to `VerifiedProfileId`
+   * today, so the question has never been put to it. Recorded here so the two
+   * are not assumed to be the same rule.
+   */
+  const isProductSource = (line: string) =>
+    !/\/tests?\//.test(line) && !/\.test\.tsx?:/.test(line);
+
+  it("no product source outside with-workspace.ts casts to VerifiedWorkspaceId", async () => {
+    const hits = await scanFor(WS_CAST, P6_ROOTS);
+    const offenders = hits
+      .filter(isProductSource)
+      .filter((l) => !l.startsWith("packages/db/src/with-workspace.ts"));
+    expect(
+      offenders,
+      "the brand compiles from any string — the only sanctioned casts are the mint and trustWorkspaceId, both in with-workspace.ts"
+    ).toEqual([]);
+  });
+
+  it("no export named like a SECOND workspace-id trust mint exists", async () => {
+    // `trustWorkspaceId` is sanctioned and import-restricted (a Stripe webhook
+    // arrives with no session). A second one under another name would be that
+    // restriction routed around by convenience.
+    const hits = await scanFor(
+      String.raw`export\s+(async\s+)?(function|const)\s+(unsafe|raw|assume|force)[A-Za-z]*Workspace`,
+      P6_ROOTS
+    );
+    expect(hits).toEqual([]);
+  });
+
+  it("NON-VACUITY: the scan finds a planted workspace-brand cast", async () => {
+    // Same probe-name convention as P6 above, so `tsconfig.json`'s
+    // `**/__*_probe.ts` exclude covers it and an interrupted run cannot poison
+    // every later typecheck.
+    const { writeFileSync, rmSync, mkdirSync } = await import("node:fs");
+    const dir = resolve(respinRoot, "lib");
+    mkdirSync(dir, { recursive: true });
+    const file = resolve(dir, "__p6b_probe.ts");
+    try {
+      writeFileSync(
+        file,
+        'export const x = "id" as unknown as VerifiedWorkspaceId;\n'
+      );
+      const hits = (await scanFor(WS_CAST, P6_ROOTS)).filter(isProductSource);
+      expect(
+        hits.some((l) => l.includes("__p6b_probe")),
+        "a scan that finds nothing reports a clean tree — plant one and it must be seen"
+      ).toBe(true);
     } finally {
       rmSync(file, { force: true });
     }

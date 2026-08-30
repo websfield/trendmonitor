@@ -39,6 +39,58 @@ export type AutoTopupResult =
     };
 
 /**
+ * `mayChargeOffSession` refused a charge for a reason this function cannot
+ * name — a new clause was added to the predicate without giving it an
+ * `AutoTopupResult.reason`.
+ *
+ * A CLASS FOR THE SAME REASON AS ITS SIBLING BELOW: slice 2a made this path
+ * app-reachable through `runInference`, and the facade's "no anonymous Error"
+ * rule binds here now. The behaviour is unchanged and deliberately loud — R-12
+ * refuses to guess a reason on a money path — but a caller can now tell this
+ * apart from a vendor failure, which is the difference between "our predicate
+ * grew a branch" and "Anthropic was down".
+ *
+ * The three fields are STATUS FLAGS, not identifiers: no customer id, no
+ * subscription id, nothing that belongs in a log rather than on a page.
+ */
+export class AutoTopupUnnamedRefusalError extends Error {
+  constructor(
+    public readonly status: string,
+    public readonly live: boolean,
+    public readonly paused: boolean
+  ) {
+    super(
+      `maybeAutoTopup: mayChargeOffSession refused a charge for a reason this function cannot name (status=${status}, live=${live}, paused=${paused}). A new clause was added to the predicate without giving it an AutoTopupResult.reason.`
+    );
+    this.name = "AutoTopupUnnamedRefusalError";
+  }
+}
+
+/**
+ * A caller asked for a top-up against a shortfall that is not a positive
+ * integer number of credits.
+ *
+ * A CLASS RATHER THAN A BARE `new Error`, and slice 2a is why it changed: until
+ * `runInference` existed, `maybeAutoTopup` had no app-reachable caller, so
+ * `facade-errors.test.ts`'s "no anonymous Error on an app-reachable path" rule
+ * did not bind here. It does now — `app/**` may import only the facade, and an
+ * error with no class to `instanceof` renders as "Something went wrong" on the
+ * screen that spends money. The rule caught this the moment the path opened,
+ * which is what it exists for.
+ *
+ * It is a PROGRAMMING ERROR, not a refusal a creator can act on: every real
+ * caller computes the shortfall from a balance it just read.
+ */
+export class AutoTopupShortfallError extends Error {
+  constructor(public readonly shortfall: number) {
+    super(
+      `maybeAutoTopup: shortfall must be a positive integer number of credits (got ${shortfall}) — it is the amount the refused debit was short by.`
+    );
+    this.name = "AutoTopupShortfallError";
+  }
+}
+
+/**
  * @param shortfall credits the refused debit was short by — the Phase-3
  * handoff contract's third argument, restored here (billing review finding 7:
  * the plan pins `maybeAutoTopup(db, workspaceId, shortfall, at)` and the code
@@ -59,9 +111,7 @@ export async function maybeAutoTopup(
   at: Date
 ): Promise<AutoTopupResult> {
   if (!Number.isInteger(shortfall) || shortfall <= 0) {
-    throw new Error(
-      `maybeAutoTopup: shortfall must be a positive integer number of credits (got ${shortfall}) — it is the amount the refused debit was short by.`
-    );
+    throw new AutoTopupShortfallError(shortfall);
   }
   const [sub] = await db
     .select()
@@ -120,8 +170,10 @@ export async function maybeAutoTopup(
     // reason on a money path is worse than a loud one, so an unrecognised
     // refusal throws instead of guessing.
     if (sub.pausedAt !== null) return { triggered: false, reason: "paused" };
-    throw new Error(
-      `maybeAutoTopup: mayChargeOffSession refused a charge for a reason this function cannot name (status=${sub.status}, live=${hasLiveStripeSubscription(sub)}, paused=${sub.pausedAt !== null}). A new clause was added to the predicate without giving it an AutoTopupResult.reason.`
+    throw new AutoTopupUnnamedRefusalError(
+      sub.status,
+      hasLiveStripeSubscription(sub),
+      sub.pausedAt !== null
     );
   }
   if (!sub.autoTopupEnabled || sub.autoTopupMonthlyCapCents === null) {

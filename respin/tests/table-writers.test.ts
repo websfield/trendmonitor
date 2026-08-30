@@ -23,7 +23,12 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** drizzle export name → SQL table name. All six of migration 0011. */
+/**
+ * drizzle export name -> SQL table name. The six of migration 0011, plus the
+ * two slice-3b tables (migration 0018) — a table this scan does not KNOW
+ * about is a table it finds zero writers of no matter how many it has, which
+ * is the same fail-open shape a broken regex produces (CLAUDE.md 2026-08-21).
+ */
 const TABLES: Record<string, string> = {
   brainDocs: "brain_docs",
   creatorProfiles: "creator_profiles",
@@ -31,6 +36,8 @@ const TABLES: Record<string, string> = {
   onboardingInputs: "onboarding_inputs",
   modelUsage: "model_usage",
   workspaceSpendMonthly: "workspace_spend_monthly",
+  onboardingInterviewDrafts: "onboarding_interview_drafts",
+  brainActivationSnapshots: "brain_activation_snapshots",
 };
 
 const VERBS = ["insert", "update", "delete"] as const;
@@ -273,33 +280,89 @@ function productSources(dir: string, acc: Map<string, string> = new Map()) {
 
 /**
  * The expected writer set, per table, with the reason each entry is there.
- * A file here is a REVIEWED decision; a file in the scan and not here fails.
+ * A key here is a REVIEWED decision; a writer in the scan and not here fails.
+ *
+ * KEYED `file::verb`, NOT `file` (billing gate, 2026-08-27). Keying on the file
+ * alone discarded the `verb` the scanner had already collected, so an
+ * `UPDATE creator_profiles SET state` added to `with-workspace.ts` — the
+ * natural home, and already an expected INSERT writer — would land with this
+ * suite green while `creator_profiles`' own entry claimed the cap was enforced
+ * by its only caller. That is the archive/reactivate debt R-35 §2 names, which
+ * had prose and no instrument; it has one now. It is also the same failure this
+ * file already records for `brain_docs` two entries down: a reviewed decision
+ * is only reviewed if it describes what is there.
  */
 const EXPECTED: Record<string, Record<string, string>> = {
   brain_docs: {
-    "packages/db/src/with-workspace.ts":
-      "writeCapabilities() — THREE capabilities write this table, all cage-asserted and pause-gated: writeBrainDoc (status and version server-derived), confirmBrainDocFields (confirmed_by server-derived from the session), activateBrainDoc (supersedes the incumbent, refuses unconfirmed or drifted content). It said 'the ONE write surface' after two more landed, so the scan stayed green while its stated reason was false — a reviewed decision is only reviewed if it describes what is there (learning gate 2026-08-26)",
+    "packages/db/src/with-workspace.ts::insert":
+      "writeCapabilities().writeBrainDoc — the INSERT: status and version server-derived, cage-asserted, pause-gated, role-gated.",
+    "packages/db/src/with-workspace.ts::update":
+      "writeCapabilities().writeBrainDoc, .confirmBrainDocFields and .activateBrainDoc — the three UPDATE lifecycle acts (a new proposal supersedes every older proposal but never the active version under the profile lock; confirmed_by is server-derived from the session; activation supersedes the incumbent active version plus any pre-invariant legacy proposal and refuses unconfirmed or drifted content). SURFACED BY MAKING THIS SCAN VERB-AWARE, 2026-08-27: the file-only key had collapsed all capabilities into one INSERT entry whose text said 'the ONE write surface' after more had landed, so the scan stayed green while its stated reason was false. Splitting by verb is what made the update path nameable at all.",
   },
   onboarding_inputs: {
-    "packages/db/src/with-workspace.ts":
+    "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().appendOnboardingInput — normalises, hashes, and stamps the scope's ids",
   },
   model_usage: {
-    "packages/db/src/with-workspace.ts":
+    "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().recordModelUsage — the append-only spend record",
+    // Slice 2b-c / R4a: the table's ONE sanctioned UPDATE
+    // (`onboarding-schema.ts`'s own docblock on `cost_state`, written before
+    // this existed: "estimated at insert; reconciled when the provider's own
+    // figure lands. That transition is this table's ONE sanctioned update").
+    // Lives in `spend-rollup.ts`, not `with-workspace.ts`, because it is not
+    // a ProfileScope/WorkspaceScope-caged write — a vendor reconciliation
+    // event names a `model_usage` row directly, the same operator-grained
+    // shape `reconcileSpend` and `pseudonymiseWorkspaceSpend` already have in
+    // this file.
+    "packages/db/src/spend-rollup.ts::update":
+      "applyReconciliationDelta — estimated/unknown -> reconciled, applying the exact cost and unknown-count delta to workspace_spend_monthly in the same transaction, idempotent by row-locked state (R4a).",
   },
-  // Deliberately EMPTY in M2a. createProfile is DEFERRED to M2b (plan A-11):
-  // it needs the per-tier cap AND the tier, and the tier's sole authority is
-  // credits/src/state.ts, which packages/db cannot import without creating a
-  // second tier authority — the defect class that caused two M1 gate findings.
-  creator_profiles: {},
-  // Written by M2b. Named here with an empty set so the FIRST writer is a
-  // deliberate edit to this file rather than a silent addition.
-  workspace_spend_monthly: {},
+  // Written from slice 1. ONE writer, and the split is the point: the INSERT
+  // lives in `packages/db` (a scope-caged workspace write capability) while the
+  // DECISION — the per-tier cap, priced off the resolved tier — lives in
+  // `packages/credits/src/profiles.ts`, because the tier's sole authority is
+  // `credits/src/state.ts` and `packages/db` cannot import it without creating
+  // a second tier authority (R-30 constraint 2, the defect class behind two M1
+  // gate findings). This entry is what stops a SECOND writer appearing that
+  // skips the cap: a `.insert(creatorProfiles)` anywhere else fails here.
+  creator_profiles: {
+    "packages/db/src/with-workspace.ts::insert":
+      "workspaceWriteCapabilities().createProfile — strips server-derived fields and stamps the scope's workspace id, and refuses a viewer. There is deliberately NO `::update` entry: nothing archives or reactivates a profile yet, and the slice that adds one owes the same cap check createProfile makes (R-35 §2). Adding an UPDATE here is now a deliberate edit to this file rather than a silent one.",
+  },
+  // Written by M2b slice 2b. All three entries are `spend-rollup.ts`, not
+  // `with-workspace.ts` — this is the ONE table whose writer lives outside the
+  // cage file, because it has no FK to a scope and no ProfileScope/
+  // WorkspaceScope grain to cage against (its own docblock: "a plain column
+  // with NO foreign key, deliberately").
+  workspace_spend_monthly: {
+    "packages/db/src/spend-rollup.ts::insert":
+      "upsertSpendRollup (R1) AND applyRollupDelta (R4a, slice 2b-c) — both the values() side of their own onConflictDoUpdate, on the same grain-key insert-or-increment shape; applyRollupDelta is the reconciliation-delta sibling upsertSpendRollup's full-cost/+1-count math cannot reuse (R4a's own docblock).",
+    "packages/db/src/spend-rollup.ts::onConflictDoUpdate":
+      "upsertSpendRollup's increment (R1) and applyRollupDelta's signed delta (R4a). The repo's first onConflictDoUpdate in product code (R1), instrumented before it existed (this scanner's own probe at line ~358 above).",
+    "packages/db/src/spend-rollup.ts::update":
+      "pseudonymiseWorkspaceSpend — R-30.5/R-54's deletion-executor obligation: moves every row of a deleted workspace to one fresh random id, discarding the mapping.",
+  },
   // Written by NOTHING, and that is the point: frameworks is created by M2a and
   // seeded by a later milestone under R-29's evidence rules. An empty
   // expectation is the strongest assertion this file can carry.
   frameworks: {},
+  // Slice 3b (Stage A). ONE writer file for both verbs — `saveInterviewDraft`
+  // and `submitInterview` share the same two private helpers
+  // (`readDraftRow`/the insert-or-update pair), so there is exactly one
+  // insert site and one update site, not four.
+  onboarding_interview_drafts: {
+    "packages/db/src/interview-ops.ts::insert":
+      "saveInterviewDraft (first save for a profile) and submitInterview (no prior draft existed) — both insert the row that becomes this profile's ONE draft (unique index on profile_id).",
+    "packages/db/src/interview-ops.ts::update":
+      "saveInterviewDraft (a later patch, merged field-by-field) and submitInterview (stamping submitted_at, guarded by `submitted_at IS NULL` so a violated invariant refuses rather than double-submitting).",
+  },
+  // Slice 3b (Stage A). ONE writer, append-only, INSERT only — there is no
+  // update or delete path by design (R8/R9's own docblock on the table).
+  brain_activation_snapshots: {
+    "packages/db/src/with-workspace.ts::insert":
+      "writeCapabilities().activateBrainDocCoherent — records the coherent snapshot in the SAME transaction as (and after) activateBrainDoc's own supersede-then-activate pair.",
+  },
 };
 
 describe("P8 — every M2a table's writers are enumerated", () => {
@@ -365,18 +428,28 @@ describe("P8 — every M2a table's writers are enumerated", () => {
     expect(scanWriters(files).length).toBeGreaterThan(0);
   });
 
+  it("creator edits reuse the one creator_authored input writer and do not add a framework writer", () => {
+    const editComposer = files.get("packages/db/src/brain-ops.ts");
+    expect(editComposer, "the creator-edit producer file is not in the scan").toBeDefined();
+    expect(editComposer).toContain("caps.appendOnboardingInput({");
+    expect(editComposer).toContain('inputClass: "creator_authored"');
+    expect(editComposer).toContain('fieldKey: "creator_edit"');
+    expect(editComposer).toContain("caps.writeBrainDoc(");
+    expect(EXPECTED.frameworks).toEqual({});
+  });
+
   it.each(Object.keys(EXPECTED))("%s has exactly its expected writers", (table) => {
     const actual = new Set(
       scanWriters(files)
         .filter((f) => f.table === table)
-        .map((f) => f.file)
+        .map((f) => `${f.file}::${f.verb}`)
     );
     const expected = new Set(Object.keys(EXPECTED[table]));
     expect(
       [...actual].filter((f) => !expected.has(f)).sort(),
       "unexpected writer of " +
         table +
-        " — route it through writeCapabilities, or add it to EXPECTED with a reason"
+        " (file::verb) — route it through writeCapabilities, or add it to EXPECTED with a reason"
     ).toEqual([]);
     expect(
       [...expected].filter((f) => !actual.has(f)).sort(),

@@ -1,0 +1,1210 @@
+/* Signal base + component classes. Every color/size resolves to a token from
+   ./respin-tokens.css; the three literals below are declared by the design
+   brief itself (product-shell rail, landing blueprint grid, refusal-panel body
+   ink) and live here as variables so no component carries a hex. */
+
+:root {
+  /* next/font wiring: geist exposes --font-geist-* on <html>; the token file's
+     --font-sans/--font-mono quote "Geist" by name, which self-hosted fonts do
+     not register. Re-point them at the loaded families. */
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  /* Product shell rail (DESIGN.md tokens note). */
+  --sidebar-bg: #121419;
+  /* Landing blueprint grid + refusal-panel body ink (DESIGN.md landing spec). */
+  --blueprint-line: rgba(148, 166, 238, 0.05);
+  --on-accent-body: #dde3f9;
+  /* Theme-stable inks for text over the landing's dark photo bands: the
+     photos stay dark in both themes, so --accent-text (which flips dark in
+     light theme) cannot be used there. Pinned to the dark-theme accent ink. */
+  --on-photo-accent: #94a6ee;
+}
+
+[data-theme="light"],
+.theme-light {
+  --sidebar-bg: var(--surface-2);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-2);
+  font: 400 var(--fs-body) / var(--lh-body) var(--font-sans);
+}
+
+h1,
+h2,
+h3 {
+  color: var(--text-1);
+  line-height: var(--lh-heading);
+  margin: 0 0 var(--sp-3);
+}
+
+h1 {
+  font-size: var(--fs-h1);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: var(--fs-h2);
+  font-weight: 600;
+}
+
+h3 {
+  font-size: var(--fs-h3);
+  font-weight: 600;
+}
+
+p {
+  margin: 0 0 var(--sp-3);
+}
+
+a {
+  color: var(--accent-text);
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+a:hover {
+  color: var(--accent-text-strong);
+  text-decoration: underline;
+}
+
+::selection {
+  background: var(--accent-surface-2);
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+:focus-visible {
+  /* Transparent outline, not none: forced-colors mode strips box-shadows and
+     repaints outlines, so this keeps a visible focus indicator there. */
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+
+/* Visually hidden, still in the accessibility tree (outline headings). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- controls ------------------------------------------------------------ */
+
+input,
+textarea,
+select {
+  font: 400 var(--fs-body) / var(--lh-body) var(--font-sans);
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-2) var(--sp-3);
+  min-height: 44px;
+}
+
+textarea {
+  min-height: unset;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+}
+
+button {
+  font: 500 var(--fs-ui) / 1 var(--font-sans);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  min-width: 44px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font: 500 var(--fs-ui) / 1 var(--font-sans);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+a.btn:hover {
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-2);
+  border-color: var(--border-strong);
+}
+
+.btn-secondary:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.btn-quiet {
+  background: transparent;
+  color: var(--text-3);
+}
+
+.btn-quiet:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+/* Disabled is a stated refusal, not a color change alone: the reason text sits
+   beside the control, linked by aria-describedby. */
+.btn[disabled],
+.btn[aria-disabled="true"] {
+  background: var(--surface-3);
+  color: var(--text-4);
+  border-color: transparent;
+  cursor: not-allowed;
+}
+
+/* Toggle (auto-top-up). The knob is the one sanctioned pill (DESIGN.md).
+   Semantics stay a plain checkbox; the wrapping label is the 44px target. */
+input[type="checkbox"].toggle {
+  appearance: none;
+  width: 40px;
+  height: 24px;
+  min-height: unset;
+  padding: 0;
+  border-radius: 12px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  position: relative;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background var(--dur) var(--ease);
+}
+
+input[type="checkbox"].toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition:
+    transform var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+
+input[type="checkbox"].toggle:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type="checkbox"].toggle:checked::after {
+  transform: translateX(16px);
+  background: var(--on-accent);
+}
+
+input[type="checkbox"].toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---- panels & banners ---------------------------------------------------- */
+
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-5);
+  margin-bottom: var(--sp-4);
+}
+
+.panel-1 {
+  box-shadow: var(--shadow-soft);
+}
+
+.panel-2 {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+
+/* The refusal component: strong neutral border and plain words. No alarm red
+   anywhere (tokens file, honesty-state rule). */
+.banner {
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--sp-5);
+  margin-bottom: var(--sp-4);
+}
+
+.banner strong {
+  color: var(--text-1);
+}
+
+/* ---- text utilities ------------------------------------------------------ */
+
+.muted {
+  color: var(--text-3);
+  font-size: var(--fs-ui);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.meta {
+  font: 400 var(--fs-meta) / 1.5 var(--font-mono);
+  color: var(--text-4);
+}
+
+.label {
+  font: 600 var(--fs-label) / 1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+/* ---- badges -------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  font: 600 var(--fs-label) / 1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+}
+
+.badge-filled {
+  background: var(--accent-surface-2);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-text-strong);
+}
+
+.badge-outline {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+}
+
+.badge-dashed {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-3);
+}
+
+/* ---- fields -------------------------------------------------------------- */
+
+.field {
+  display: grid;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
+}
+
+.field > label {
+  font: 500 var(--fs-ui) / 1.4 var(--font-sans);
+  color: var(--text-2);
+}
+
+.field .field-limit {
+  color: var(--text-3);
+  font-size: var(--fs-ui);
+  margin: 0;
+}
+
+/* ---- pasted-post rows ---------------------------------------------------- */
+
+.posts-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.post-row {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-2);
+}
+
+.post-meta {
+  font: 400 var(--fs-meta) / 1.5 var(--font-mono);
+  color: var(--text-4);
+}
+
+/* ---- meter --------------------------------------------------------------- */
+
+.meter {
+  position: relative;
+  height: 8px;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  overflow: visible;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+.meter-baseline {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--text-1);
+}
+
+/* ---- ledger table -------------------------------------------------------- */
+
+.ledger-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ledger-table th {
+  font: 600 var(--fs-label) / 1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+  text-align: left;
+  background: var(--surface-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.ledger-table td {
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-ui);
+}
+
+.ledger-table td.num {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+
+.ledger-table td.num-delta {
+  text-align: right;
+}
+
+.ledger-table .delta-pos {
+  color: var(--accent-text-strong);
+}
+
+.balance-num {
+  font: 600 var(--fs-display) / var(--lh-tight) var(--font-mono);
+  color: var(--text-1);
+}
+
+/* ---- product shell ------------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 224px 1fr;
+  min-height: 100vh;
+}
+
+.shell-sidebar {
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-5) 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.shell-wordmark {
+  font: 700 19px / 1 var(--font-sans);
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  padding: 0 var(--sp-5) var(--sp-5);
+}
+
+.shell-nav {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--sp-5);
+  border-left: 3px solid transparent;
+  color: var(--text-3);
+  font: 500 var(--fs-ui) / 1 var(--font-sans);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.nav-item:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+  text-decoration: none;
+}
+
+.nav-item[aria-current="page"] {
+  background: var(--accent-surface-2);
+  border-left-color: var(--accent);
+  color: var(--text-1);
+}
+
+.shell-foot {
+  margin-top: auto;
+  padding: var(--sp-4) var(--sp-5) 0;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.shell-workspace {
+  font: 500 var(--fs-ui) / 1.4 var(--font-sans);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.shell-credits {
+  font: 500 var(--fs-meta) / 1 var(--font-mono);
+  color: var(--text-3);
+}
+
+.shell-main {
+  padding: var(--sp-8) var(--sp-8) var(--sp-12);
+  max-width: 880px;
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .shell-sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-4);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .shell-wordmark {
+    padding: 0 var(--sp-3) 0 0;
+  }
+
+  .shell-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .nav-item {
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    padding: 0 var(--sp-3);
+  }
+
+  .nav-item[aria-current="page"] {
+    border-bottom-color: var(--accent);
+  }
+
+  .shell-foot {
+    margin-top: 0;
+    margin-left: auto;
+    border-top: none;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+  }
+
+  .shell-main {
+    padding: var(--sp-5) var(--sp-4) var(--sp-10);
+  }
+}
+
+/* ---- auth ---------------------------------------------------------------- */
+
+.auth-main {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: var(--sp-5);
+}
+
+.auth-card {
+  width: 320px;
+  max-width: 100%;
+  display: grid;
+  gap: var(--sp-3);
+}
+
+/* ---- landing ------------------------------------------------------------- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.landing {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text-1);
+  min-height: 100vh;
+}
+
+.landing-stripe {
+  height: 3px;
+  background: var(--accent);
+}
+
+.landing-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-4) var(--sp-12);
+  border-bottom: 1px solid var(--border);
+}
+
+.landing-wordmark {
+  font: 700 19px / 1 var(--font-sans);
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+}
+
+.landing-header nav {
+  display: flex;
+  gap: var(--sp-5);
+  font: 500 var(--fs-ui) / 1 var(--font-sans);
+}
+
+.landing-header nav a,
+.landing-footer nav a {
+  color: var(--text-3);
+}
+
+.landing-header-cta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* Hero: a dark photo band. The scrim keeps the left third quiet for the
+   headline; text uses the theme-stable over-photo inks because the photo
+   stays dark in both themes. Falls back to plain scrim-over-bg if the
+   image is missing. */
+.hero {
+  --hero-photo: url("/marketing/hero.png");
+  padding: 96px var(--sp-12) 150px;
+  background:
+    linear-gradient(90deg, var(--scrim) 0%, var(--scrim) 36%, transparent 72%),
+    linear-gradient(0deg, var(--scrim) 0%, transparent 34%),
+    var(--hero-photo) center / cover no-repeat,
+    var(--bg);
+}
+
+/* Audience variants (/for/<slug>) swap only the photo. */
+.hero.hero-women {
+  --hero-photo: url("/marketing/hero-women.png");
+}
+
+.hero.hero-business {
+  --hero-photo: url("/marketing/hero-business.png");
+}
+
+.hero.hero-coaches {
+  --hero-photo: url("/marketing/hero-coaches.png");
+}
+
+.hero-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.hero h1 {
+  font: 700 clamp(40px, 7.5vw, 88px) / var(--lh-tight) var(--font-sans);
+  letter-spacing: -0.03em;
+  margin: 0;
+  max-width: 15ch;
+  color: var(--on-accent);
+  animation: rise 0.5s var(--ease) both;
+}
+
+.hero .hero-turn {
+  display: block;
+  margin-left: clamp(0px, 9vw, 150px);
+  color: var(--on-photo-accent);
+}
+
+.hero-sub {
+  font: 400 17px / 1.55 var(--font-sans);
+  color: var(--on-accent-body);
+  margin: var(--sp-5) 0 0;
+  max-width: 46ch;
+  animation: rise 0.5s var(--ease) 0.08s both;
+}
+
+.hero-ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-top: var(--sp-6);
+  animation: rise 0.5s var(--ease) 0.16s both;
+}
+
+/* Overlap: the demo panel rides up over the hero photo's bottom edge. */
+.demo-section {
+  position: relative;
+  z-index: 2;
+  margin-top: -92px;
+  padding-top: 0;
+}
+
+.marquee {
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.marquee-track {
+  display: flex;
+  gap: 10px;
+  width: max-content;
+  padding: var(--sp-3) 0;
+  animation: marquee 28s linear infinite;
+}
+
+.mech-tag {
+  font: 500 var(--fs-meta) / 1 var(--font-mono);
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+
+.mech-tag.mech-hot {
+  color: var(--accent-text-strong);
+  background: var(--accent-surface-2);
+  border-color: var(--accent-border);
+}
+
+.landing-section {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--sp-12) var(--sp-12) 72px;
+}
+
+.landing-section + .landing-section {
+  padding-top: 0;
+}
+
+.demo-panel {
+  background: var(--surface-1);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  animation: rise 0.6s var(--ease) 0.32s both;
+}
+
+.demo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.demo-before {
+  padding: var(--sp-6) 28px;
+  border-right: 1px solid var(--border);
+}
+
+.demo-before .demo-copy {
+  margin-top: var(--sp-4);
+  display: grid;
+  gap: var(--sp-3);
+  font: 400 14px / 1.65 var(--font-sans);
+  color: var(--text-4);
+}
+
+.demo-before .demo-copy p {
+  margin: 0;
+}
+
+.demo-after {
+  padding: var(--sp-6) 28px;
+  background: var(--accent-surface);
+}
+
+.demo-label {
+  font: 600 10px / 1 var(--font-mono);
+  letter-spacing: 0.16em;
+  color: var(--text-4);
+}
+
+.demo-after .demo-label {
+  color: var(--accent-text);
+}
+
+.script-grid {
+  margin-top: var(--sp-4);
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  row-gap: var(--sp-3);
+}
+
+.script-tc {
+  font: 500 var(--fs-meta) / 1.6 var(--font-mono);
+  color: var(--text-3);
+}
+
+.script-tc.script-tc-turn {
+  font-weight: 600;
+  color: var(--accent-text);
+}
+
+.script-line {
+  font: 400 14.5px / 1.6 var(--font-sans);
+  color: var(--text-1);
+  margin: 0;
+}
+
+.the-turn {
+  border-left: 2px solid var(--accent);
+  padding-left: var(--sp-3);
+}
+
+.the-turn-label {
+  font: 700 9px / 1 var(--font-mono);
+  letter-spacing: 0.18em;
+  color: var(--accent-text);
+}
+
+.the-turn p {
+  font: 600 14.5px / 1.55 var(--font-sans);
+  color: var(--text-1);
+  margin: var(--sp-1) 0 0;
+}
+
+.script-shot {
+  font: 400 13px / 1.6 var(--font-sans);
+  color: var(--text-3);
+  margin: 0;
+}
+
+/* The [check] token: the only dashed cobalt element (DESIGN.md). Marks a
+   specific the product will not invent. */
+.check-token {
+  font: 500 12px / 1 var(--font-mono);
+  color: var(--accent-text-strong);
+  background: var(--accent-surface-2);
+  border: 1px dashed var(--accent-border);
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+.demo-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 13px 28px;
+  border-top: 1px solid var(--accent-border);
+  background: var(--accent-surface-2);
+}
+
+.demo-foot span {
+  font: 400 var(--fs-meta) / 1.5 var(--font-mono);
+  color: var(--accent-text-strong);
+}
+
+/* Full-bleed section bands give the scroll a rhythm (surface shifts between
+   sections); the inner .landing-section keeps the content column. */
+.band-steps {
+  background: var(--surface-1);
+}
+
+.band-refuses {
+  background: var(--accent-hover);
+}
+
+.section-title {
+  font: 600 clamp(26px, 3.6vw, 40px) / 1.15 var(--font-sans);
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--sp-6);
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  border-top: 1px solid var(--border);
+}
+
+.steps-cta {
+  margin-top: var(--sp-8);
+}
+
+.steps-photo {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: var(--sp-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.step {
+  padding: 28px 28px 0;
+}
+
+.step:first-child {
+  padding-left: 0;
+}
+
+.step:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+.step:last-child {
+  padding-right: 0;
+}
+
+.step-num {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: var(--radius-sm);
+  font: 600 var(--fs-meta) / 1 var(--font-mono);
+}
+
+.step h3 {
+  font: 600 18px / 1.35 var(--font-sans);
+  margin: 10px 0 0;
+}
+
+.step p {
+  font: 400 14px / 1.6 var(--font-sans);
+  color: var(--text-3);
+  margin: var(--sp-2) 0 0;
+  max-width: 40ch;
+}
+
+.refuses h2 {
+  font: 600 clamp(26px, 3.6vw, 40px) / 1.15 var(--font-sans);
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--on-accent);
+}
+
+.refuses-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-4) var(--sp-10);
+  margin-top: var(--sp-6);
+  font: 400 15px / 1.6 var(--font-sans);
+  color: var(--on-accent-body);
+}
+
+.pricing-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+
+.pricing-head h2 {
+  font: 600 26px / 1.2 var(--font-sans);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.pricing-head .pricing-note {
+  font: 400 13px / 1.4 var(--font-mono);
+  color: var(--text-4);
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-top: var(--sp-5);
+}
+
+.price-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  transition:
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+.price-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-soft);
+}
+
+.price-card.price-featured {
+  background: var(--accent-surface);
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-soft);
+}
+
+.price-card.price-featured:hover {
+  box-shadow: var(--shadow);
+}
+
+.price-name-row {
+  display: flex;
+  align-items: center;
+}
+
+.price-name {
+  font: 600 14px / 1 var(--font-sans);
+  color: var(--text-1);
+}
+
+.price-flag {
+  margin-left: auto;
+  white-space: nowrap;
+  font: 600 9px / 1 var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--accent-text-strong);
+  background: var(--accent-surface-2);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) 6px;
+}
+
+.price-amount {
+  font: 600 30px / 1 var(--font-mono);
+  color: var(--text-1);
+  margin-top: 14px;
+}
+
+.price-amount .price-period {
+  font: 400 13px / 1 var(--font-mono);
+  color: var(--text-4);
+}
+
+.price-lines {
+  display: grid;
+  gap: 7px;
+  margin-top: var(--sp-4);
+  font: 400 13px / 1.5 var(--font-sans);
+  color: var(--text-3);
+}
+
+.price-card .btn {
+  margin-top: var(--sp-5);
+  width: 100%;
+}
+
+.pricing-fine {
+  font: 400 13px / 1.6 var(--font-sans);
+  color: var(--text-4);
+  margin: var(--sp-4) 0 0;
+  max-width: 70ch;
+}
+
+/* Closing move: a small centered card over the night photo, so the page
+   ends on an invitation instead of pricing fine print. */
+.band-close {
+  background: url("/marketing/night.png") center / cover no-repeat
+    var(--surface-1);
+}
+
+.closing {
+  display: grid;
+  place-items: center;
+  padding-top: 84px;
+  padding-bottom: 84px;
+}
+
+.close-card {
+  width: min(100%, 380px);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 34px 30px;
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-4);
+  text-align: center;
+}
+
+.close-card p {
+  font: 600 18px / 1.4 var(--font-sans);
+  margin: 0;
+  color: var(--text-1);
+}
+
+.close-signin {
+  font: 400 13px / 1.4 var(--font-sans);
+  color: var(--text-3);
+}
+
+.landing-footer {
+  border-top: 1px solid var(--border);
+  padding: var(--sp-6) var(--sp-12);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-5);
+}
+
+.landing-footer .landing-wordmark {
+  font-size: 15px;
+}
+
+.landing-footer .footer-tag {
+  font: 400 12.5px / 1.4 var(--font-sans);
+  color: var(--text-4);
+}
+
+.landing-footer nav {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  font: 500 12.5px / 1 var(--font-sans);
+}
+
+@media (max-width: 900px) {
+  .pricing-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .steps {
+    grid-template-columns: 1fr;
+  }
+
+  .step,
+  .step:first-child,
+  .step:last-child {
+    padding: 28px 0 0;
+    border-right: none;
+  }
+
+  .demo-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .demo-before {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 560px) {
+  .landing-header,
+  .landing-footer {
+    padding-left: var(--sp-5);
+    padding-right: var(--sp-5);
+  }
+
+  .hero {
+    padding: 56px var(--sp-5) 120px;
+  }
+
+  .hero .hero-turn {
+    margin-left: 0;
+  }
+
+  .demo-section {
+    margin-top: -72px;
+  }
+
+  .landing-section {
+    padding-left: var(--sp-5);
+    padding-right: var(--sp-5);
+  }
+
+  .pricing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .refuses-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -30,17 +30,23 @@ import { CHECK } from "../src/brain-content";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 import { pausePeriods } from "../src/billing-schema";
-import { brainDocs, creatorProfiles } from "../src/brain-schema";
+import { brainDocs, creatorProfiles, frameworks } from "../src/brain-schema";
 import {
   CALLER_SUPPLIABLE_BRAIN_FIELDS,
   GUARDED_WRITE_FIELDS,
+  CALLER_SUPPLIABLE_PROFILE_FIELDS,
 } from "../src/with-workspace";
 
 /** The `NoServerFields` shape, reachable for the compile-level assertions. */
 type NoServerFieldsProbe = {
   [K in (typeof GUARDED_WRITE_FIELDS)[number]]?: never;
 };
-import { modelUsage, onboardingInputs } from "../src/onboarding-schema";
+import {
+  brainActivationSnapshots,
+  modelUsage,
+  onboardingInputs,
+  onboardingInterviewDrafts,
+} from "../src/onboarding-schema";
 import {
   ProfileAccessError,
   ProfileScope,
@@ -94,9 +100,32 @@ const evidenceFor = (inputId: string, content: string, field = "/register") => [
 
 let FIXTURE_EVIDENCE: ReturnType<typeof evidenceFor>;
 
+/**
+ * EVERY seeded input id, including the sibling profile's and the foreign
+ * workspace's — what `onboardingInputsByIds` is driven with.
+ *
+ * MUTATED IN PLACE rather than reassigned: `accessorArgs` is built once at
+ * collection time, before any `beforeEach` has run, so it captures this array
+ * object and must see the ids through it. Reassigning would leave the args map
+ * holding the empty original — and the accessor returns `[]` for an empty id
+ * set BY DESIGN, so the test would pass while asking the accessor for nothing.
+ */
+const ALL_INPUT_IDS: string[] = [];
+
+/**
+ * The stamps an `active` row must carry, per `brain_docs_active_is_confirmed`.
+ *
+ * `activatedAt` JOINED THIS IN SLICE 3 (B-5), and the widened CHECK caught the
+ * omission on its first run: every fixture here inserted `status: "active"`
+ * with a NULL `activated_at` — precisely the row B-5 says must not exist, in
+ * twenty-one tests, none of which was about activation. That is the constraint
+ * doing exactly what it was widened to do, on the same day it was widened, so
+ * the fixture is corrected rather than the constraint relaxed.
+ */
 const RAW_CONFIRMED = {
   confirmedAt: new Date(),
   confirmedContentSha256: "0".repeat(64),
+  activatedAt: new Date(),
 };
 
 // `writeBrainDoc` PARSES its content against the per-kind schema now (task 3),
@@ -127,7 +156,14 @@ const sha256 = (s: string) =>
 /** A usage row's caller-supplied half, so each fixture names only what varies. */
 const usageInput = (attemptId: string) => ({
   attemptId,
-  purpose: "onboarding_brain_build",
+  // THE PURPOSE THE ACCESSOR IS ACTUALLY DRIVEN WITH. It read
+  // "onboarding_brain_build" while `accessorArgs` passes "onboarding_brain",
+  // so `countBillableAttempts` matched NO fixture row and returned 0 with the
+  // cage intact, 0 with the profile predicate dropped, and 0 with no cage at
+  // all — the cross-parented case could not discriminate (tenancy gate,
+  // 2026-08-28, who ran all three). A scoping test whose fixture the query
+  // cannot see is not a scoping test.
+  purpose: "onboarding_brain",
   model: "claude-opus-5",
   tokensIn: 100,
   tokensOut: 200,
@@ -138,6 +174,7 @@ const usageInput = (attemptId: string) => ({
   promptBundleVersion: "pb-1",
   configVersion: 1,
   outcome: "succeeded" as const,
+  consumedIncludedBuild: true,
 });
 
 describe("ProfileScope — the profile tenancy cage", () => {
@@ -150,6 +187,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
 
   beforeEach(async () => {
     db = await createTestDb();
+    ALL_INPUT_IDS.length = 0;
     await seedAuthUser(db, "user_a");
     await seedAuthUser(db, "user_b");
     aWorkspaceId = (
@@ -189,6 +227,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
           contentSha256: sha256(`content for ${profileId}`),
         })
         .returning();
+      ALL_INPUT_IDS.push(ownInput.id);
       // Captured so fixtures that go THROUGH `writeBrainDoc` can cite a real
       // input: `validateSourceEvidence` checks the id, the offsets and that the
       // quote is verbatim, so a constant would be refused.
@@ -225,6 +264,30 @@ describe("ProfileScope — the profile tenancy cage", () => {
         profileId,
         workspaceId,
         ...usageInput(`att_${profileId}`),
+      });
+      await db.insert(onboardingInterviewDrafts).values({
+        profileId,
+        workspaceId,
+        answers: {},
+      });
+      await db.insert(brainActivationSnapshots).values({
+        profileId,
+        workspaceId,
+      });
+      await db.insert(frameworks).values({
+        slug: `private-${profileId}`,
+        name: `Private ${profileId}`,
+        beats: [],
+        whyItConverts: "Private fixture",
+        applicability: [],
+        sourceReferences: [],
+        evidenceEntries: [],
+        testedCaveats: [],
+        confidence: "observed",
+        saturation: "observed",
+        visibility: "private",
+        ownerProfileId: profileId,
+        workspaceId,
       });
     }
   });
@@ -268,6 +331,42 @@ describe("ProfileScope — the profile tenancy cage", () => {
 
   // ------------------------------------------------------------------- P3
 
+/**
+ * Accessors that return a SCALAR rather than rows.
+ *
+ * `countOnboardingInputs` (added with the write-side row ceiling) is a scoped
+ * read like any other and belongs in the completeness enumeration — it simply
+ * has no rows for the row loops below to walk, and "returns at least one row"
+ * is not the non-vacuity question for a number. Its isolation property is
+ * asserted by VALUE in "countOnboardingInputs counts THIS profile's inputs
+ * only" below, which is the same both-axes check the row validators make.
+ * (That case did not exist when this comment first cited it, either — two
+ * citations to tests nobody had written, found by the tenancy gate on
+ * 2026-08-28. Both exist now.)
+ *
+ * A SET rather than a name check inside each loop, so a second scalar accessor
+ * has to be added here deliberately instead of silently skipping the loops.
+ */
+const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
+  "countOnboardingInputs",
+  // Slice 2a. Same shape as its sibling: a number, so the row loops have
+  // nothing to walk, and its both-axes isolation is asserted BY VALUE in
+  // "countBillableAttempts counts THIS profile's billed attempts only" below.
+  // That case did not exist when this comment first claimed it did.
+  "countBillableAttempts",
+  // Slice 3. A number, like its two siblings; its both-axes isolation is
+  // asserted BY VALUE in "countOwnPosts counts THIS profile's own posts only".
+  "countOwnPosts",
+  // Slice 3, billing round 2: the bound on attempts we paid for and did not
+  // charge for. Its both-axes isolation is asserted BY VALUE in
+  // "countUnchargedBillableAttempts and countOwnPosts count THIS profile only".
+  "countUnchargedBillableAttempts",
+  // Slice 4. Same shape as `countOwnPosts`: a number, so the row loops have
+  // nothing to walk. Its both-axes isolation is asserted BY VALUE in
+  // "countReferencePosts counts THIS profile's reference posts only".
+  "countReferencePosts",
+]);
+
   /** One breach validator per accessor: no row may name another profile. */
   const breachValidators: Record<
     keyof ProfileScope["accessors"],
@@ -289,6 +388,13 @@ describe("ProfileScope — the profile tenancy cage", () => {
         expect(row.workspaceId).toBe(ownWorkspace);
       }
     },
+    brainDocsByKind: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string; kind: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+        expect(row.kind).toBe("voice");
+      }
+    },
     activeBrainDocs: (rows, ownProfile, ownWorkspace) => {
       for (const row of rows as {
         profileId: string;
@@ -300,10 +406,80 @@ describe("ProfileScope — the profile tenancy cage", () => {
         expect(row.status).toBe("active");
       }
     },
+    // Scalar: the row loop has nothing to walk, and the isolation property is
+    // asserted by number in its own test below ("the count is per profile").
+    countOnboardingInputs: () => {},
     onboardingInputs: (rows, ownProfile, ownWorkspace) => {
       for (const row of rows as { profileId: string; workspaceId: string }[]) {
         expect(row.profileId).toBe(ownProfile);
         expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    onboardingInputsForExport: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    interviewDrafts: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    activationSnapshots: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    frameworks: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { ownerProfileId: string; workspaceId: string; visibility: string }[]) {
+        expect(row.ownerProfileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+        expect(row.visibility).toBe("private");
+      }
+    },
+    exportPage: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId?: string; workspaceId?: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // Slice 3. The id-keyed read the confirm screen resolves its evidence
+    // through. It takes CALLER-SUPPLIED IDS, which makes it the accessor most
+    // worth walking both axes: the ids come off a jsonb column the composite
+    // FK cannot see, so the `both()` predicate is the only thing standing
+    // between a cited id and another profile's row.
+    onboardingInputsByIds: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // Slice 3. The corpus the priced inference actually sends to a vendor —
+    // both axes, and additionally that it never returns a `reference` row.
+    countUnchargedBillableAttempts: () => {
+      // Scalar — asserted by value below.
+    },
+    countOwnPosts: () => {
+      // Scalar — the row loops have nothing to walk. Its isolation is asserted
+      // by value in its own test below.
+    },
+    countReferencePosts: () => {
+      // Scalar — the row loops have nothing to walk. Its isolation is asserted
+      // by value in "countReferencePosts counts THIS profile's reference posts
+      // only" below.
+    },
+    ownPostsNewest: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as {
+        profileId: string;
+        workspaceId: string;
+        inputClass: string;
+      }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+        expect(row.inputClass).toBe("own_post");
       }
     },
     modelUsage: (rows, ownProfile, ownWorkspace) => {
@@ -340,6 +516,13 @@ describe("ProfileScope — the profile tenancy cage", () => {
         expect(owner.inputClass).toBe("reference");
       }
     },
+    // A scalar accessor: it yields no rows for this loop to walk, so the
+    // breach it could commit is a COUNT that includes someone else's attempts.
+    // That is asserted by value in its own case below; here the contract is
+    // only that it never hands back rows to inspect.
+    countBillableAttempts: (rows) => {
+      expect(rows).toEqual([]);
+    },
   };
 
   /**
@@ -353,9 +536,29 @@ describe("ProfileScope — the profile tenancy cage", () => {
   } = {
     profile: [],
     brainDocs: [],
+    brainDocsByKind: ["voice"],
     activeBrainDocs: [],
+    onboardingInputsForExport: [],
+    interviewDrafts: [],
+    activationSnapshots: [],
+    frameworks: [],
+    exportPage: ["onboarding_inputs", 0],
     onboardingInputs: [],
+    // The SIBLING PROFILE'S input ids, deliberately: the P4 loops run this
+    // against a world where the other profile's rows exist, so passing its ids
+    // asks the accessor to hand them over. An empty result here is the pass,
+    // and the non-vacuity is that those rows really are in the table.
+    // EVERY profile's input ids, the sibling's and the foreigner's included:
+    // this accessor takes caller-supplied ids, so the interesting question is
+    // what it does when asked for somebody else's. Only P1's row may come back.
+    onboardingInputsByIds: [ALL_INPUT_IDS],
+    ownPostsNewest: [50],
+    countOwnPosts: [],
+    countReferencePosts: [],
+    countUnchargedBillableAttempts: [{ purpose: "onboarding_brain" }],
+    countOnboardingInputs: [],
     modelUsage: [],
+    countBillableAttempts: [{ purpose: "onboarding_brain" }],
     // No ids => "the corpus as it stands now", the write-time shape. The
     // activation shape (an explicit recorded set) is exercised in activate.test.ts.
     referenceCorpusAsOf: [],
@@ -374,6 +577,20 @@ describe("ProfileScope — the profile tenancy cage", () => {
     // an explicit shape test rather than a name test — a second accessor
     // adopting the shape gets the same treatment without editing this.
     if (Array.isArray(result)) return result;
+    // A SCALAR accessor — `countOnboardingInputs`, added with the write-side
+    // row ceiling (production gate, 2026-08-27). It is a scoped read like any
+    // other and belongs in this enumeration; it simply has no rows to inspect,
+    // so the cross-profile question it answers is "does the count include the
+    // sibling's rows", which its validator checks by NUMBER. Normalised to an
+    // empty row list here so the shared loop stays uniform, and given its own
+    // assertion below.
+    // A SCALAR accessor's "rows" are its COUNT — `Array.from({length: n})`, so
+    // `rows.length` is a true statement about it. That matters for the
+    // cross-parented case below, which asserts emptiness: returning `[]` there
+    // would have made a count that WRONGLY included the foreign row pass
+    // vacuously. The breach validators never inspect these elements (the
+    // scalar's validator is a no-op) and the non-vacuity loops skip it.
+    if (typeof result === "number") return Array.from({ length: result });
     const wrapped = (result as { inputs?: unknown }).inputs;
     expect(
       Array.isArray(wrapped),
@@ -391,9 +608,30 @@ describe("ProfileScope — the profile tenancy cage", () => {
     expect(accessorNames).toEqual(
       [
         "activeBrainDocs",
+        "activationSnapshots",
         "brainDocs",
+        "brainDocsByKind",
+        "countBillableAttempts",
+        "countOnboardingInputs",
+        // Slice 3, added deliberately: the id-keyed evidence read the confirm
+        // screen resolves quotes through, the class-filtered corpus the priced
+        // inference sends to a vendor, and its count.
+        "countOwnPosts",
+        // Slice 4: the reference-post count, closing the corpus-starvation
+        // window `ownPostsNewest`'s docblock names.
+        "countReferencePosts",
+        "countUnchargedBillableAttempts",
+        // Slice 5: one fixed-size, registry-selected page. Its generic table
+        // parameter is exercised with onboarding_inputs here; export.test.ts
+        // walks every classified table against a same-workspace sibling.
+        "exportPage",
         "modelUsage",
         "onboardingInputs",
+        "onboardingInputsForExport",
+        "onboardingInputsByIds",
+        "interviewDrafts",
+        "frameworks",
+        "ownPostsNewest",
         "profile",
         "referenceCorpusAsOf",
       ].sort()
@@ -407,6 +645,9 @@ describe("ProfileScope — the profile tenancy cage", () => {
         "writeBrainDoc",
         "confirmBrainDocFields",
         "activateBrainDoc",
+        // Slice 3b, R8: the coherent-activation wrapper that also records a
+        // brain_activation_snapshots row in the same transaction.
+        "activateBrainDocCoherent",
       ].sort()
     );
   });
@@ -418,6 +659,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
     for (const name of Object.keys(
       scope.accessors
     ) as (keyof ProfileScope["accessors"])[]) {
+      if (SCALAR_ACCESSORS.has(name)) continue;
       const rows = await invoke(scope, name);
       expect(
         rows.length,
@@ -433,6 +675,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
     for (const name of Object.keys(
       scope.accessors
     ) as (keyof ProfileScope["accessors"])[]) {
+      if (SCALAR_ACCESSORS.has(name)) continue;
       const rows = await invoke(scope, name);
       expect(rows.length).toBeGreaterThan(0);
       await breachValidators[name](rows, p2, aWorkspaceId);
@@ -457,16 +700,18 @@ describe("ProfileScope — the profile tenancy cage", () => {
     {
       table: "brain_docs",
       fk: "brain_docs_profile_workspace_fk",
+      profileColumn: "profile_id",
       // BOTH accessors over this table, not just one. The tenancy gate noted
       // that `activeBrainDocs` was applicable and skipped, making AC-4's "per
       // accessor, both axes" 4/5 in practice — and the two only share the
       // `both()` helper today, which is a property of the current
       // implementation rather than of the test.
-      accessors: ["brainDocs", "activeBrainDocs"],
+      accessors: ["brainDocs", "brainDocsByKind", "activeBrainDocs"],
     },
     {
       table: "onboarding_inputs",
       fk: "onboarding_inputs_profile_workspace_fk",
+      profileColumn: "profile_id",
       // BOTH accessors over this table. `referenceCorpusAsOf` was omitted when
       // it landed, and a tenancy mutation dropping its workspace predicate
       // survived the entire db suite — the IDENTICAL omission this file's own
@@ -474,14 +719,161 @@ describe("ProfileScope — the profile tenancy cage", () => {
       // recurred; the completeness assertion below now derives the population
       // from the accessor map so a third accessor over a covered table cannot
       // be skipped by forgetting to type it here.
-      accessors: ["onboardingInputs", "referenceCorpusAsOf"],
+      accessors: [
+        "onboardingInputs",
+        "onboardingInputsForExport",
+        "referenceCorpusAsOf",
+        "countOnboardingInputs",
+        // Slice 3's three, all over this same table. `onboardingInputsByIds`
+        // is the one most worth the cross-workspace axis: it takes CALLER
+        // -SUPPLIED IDS off a jsonb column the composite FK cannot see, so
+        // `both()` is the only thing between a cited id and another
+        // workspace's row.
+        "onboardingInputsByIds",
+        "ownPostsNewest",
+        "countOwnPosts",
+        // Slice 4, same table, same reasoning: a dropped workspace predicate
+        // here would let a sibling workspace's reference posts count toward
+        // this profile's corpus-starvation bound.
+        "countReferencePosts",
+      ],
+    },
+    {
+      table: "onboarding_interview_drafts",
+      fk: "onboarding_interview_drafts_profile_workspace_fk",
+      profileColumn: "profile_id",
+      accessors: ["interviewDrafts"],
+    },
+    {
+      table: "brain_activation_snapshots",
+      fk: "brain_activation_snapshots_profile_workspace_fk",
+      profileColumn: "profile_id",
+      accessors: ["activationSnapshots"],
+    },
+    {
+      table: "frameworks",
+      fk: "frameworks_owner_profile_workspace_fk",
+      profileColumn: "owner_profile_id",
+      accessors: ["frameworks"],
     },
     {
       table: "model_usage",
       fk: "model_usage_profile_workspace_fk",
-      accessors: ["modelUsage"],
+      profileColumn: "profile_id",
+      // BOTH accessors over this table (slice 2a). `countBillableAttempts`
+      // prices a creator's rebuild off this count, so a dropped workspace
+      // predicate here would let another workspace's attempts consume this
+      // creator's included build — the same class of omission this file
+      // records twice already, for `activeBrainDocs` and `referenceCorpusAsOf`.
+      accessors: [
+        "modelUsage",
+        "countBillableAttempts",
+        // Slice 3, billing round 2: the bound on attempts we paid for and did
+        // not charge for. A dropped workspace predicate here would let another
+        // workspace's failures exhaust this creator's cap.
+        "countUnchargedBillableAttempts",
+      ],
     },
   ] as const;
+
+  // ------------------------------------------- the two BY-VALUE count cases
+  //
+  // Two comments in this file cited these by name for weeks and neither
+  // existed (tenancy gate, 2026-08-28). A count has no rows for the P4 loops
+  // to walk, so the row validators skip it entirely — which means a scalar
+  // accessor's isolation is asserted here or nowhere. `countBillableAttempts`
+  // is the accessor that PRICES A DEBIT: if its profile predicate were ever
+  // dropped, a creator's included run would be consumed by a sibling profile's
+  // history, and until this case existed the whole suite stayed green.
+
+  it("countBillableAttempts counts THIS profile's billed attempts only", async () => {
+    const scope = await mintP1();
+    const caps = writeCapabilities(scope);
+    const sibling = await ProfileScope.mint(
+      db,
+      await withWorkspace(db, { authUserId: "user_a" }),
+      p2
+    );
+    const count = (sc: typeof scope) =>
+      sc.accessors.countBillableAttempts({ purpose: "onboarding_brain" });
+
+    // DELTAS, not absolutes: the shared fixture already seeds rows, and a case
+    // that pins totals would break every time a fixture gains one. The
+    // property is that MY writes move MY count and the sibling's do not.
+    const before = { mine: await count(scope), theirs: await count(sibling) };
+
+    for (const id of ["p1-a", "p1-b"]) {
+      await db.transaction((tx) => caps.recordModelUsage(usageInput(id), tx));
+    }
+    const siblingCaps = writeCapabilities(sibling);
+    for (const id of ["p2-a", "p2-b", "p2-c"]) {
+      await db.transaction((tx) =>
+        siblingCaps.recordModelUsage(usageInput(id), tx)
+      );
+    }
+
+    // BOTH AXES, BY VALUE. +2 is only correct if the profile predicate holds;
+    // without it this is +5, and the sibling's attempts would price my debit.
+    expect(
+      (await count(scope)) - before.mine,
+      "the sibling's attempts leaked into this profile's count"
+    ).toBe(2);
+    // ...and from the SIBLING's side, so the check is not one-directional.
+    expect((await count(sibling)) - before.theirs).toBe(3);
+  });
+
+  it("countOnboardingInputs counts THIS profile's inputs only", async () => {
+    const scope = await mintP1();
+    const caps = writeCapabilities(scope);
+    const sibling = await ProfileScope.mint(
+      db,
+      await withWorkspace(db, { authUserId: "user_a" }),
+      p2
+    );
+    const before = {
+      mine: await scope.accessors.countOnboardingInputs(),
+      theirs: await sibling.accessors.countOnboardingInputs(),
+    };
+    await caps.appendOnboardingInput({ inputClass: "own_post", content: "mine one" });
+    await caps.appendOnboardingInput({ inputClass: "own_post", content: "mine two" });
+    await writeCapabilities(sibling).appendOnboardingInput({
+      inputClass: "own_post",
+      content: "theirs",
+    });
+
+    expect((await scope.accessors.countOnboardingInputs()) - before.mine).toBe(2);
+    expect(
+      (await sibling.accessors.countOnboardingInputs()) - before.theirs
+    ).toBe(1);
+  });
+
+  it("countReferencePosts counts THIS profile's reference posts only", async () => {
+    const scope = await mintP1();
+    const caps = writeCapabilities(scope);
+    const sibling = await ProfileScope.mint(
+      db,
+      await withWorkspace(db, { authUserId: "user_a" }),
+      p2
+    );
+    const before = {
+      mine: await scope.accessors.countReferencePosts(),
+      theirs: await sibling.accessors.countReferencePosts(),
+    };
+    await caps.appendOnboardingInput({ inputClass: "reference", content: "mine ref one" });
+    await caps.appendOnboardingInput({ inputClass: "reference", content: "mine ref two" });
+    await writeCapabilities(sibling).appendOnboardingInput({
+      inputClass: "reference",
+      content: "theirs ref",
+    });
+
+    expect(
+      (await scope.accessors.countReferencePosts()) - before.mine,
+      "the sibling's reference posts leaked into this profile's count"
+    ).toBe(2);
+    expect(
+      (await sibling.accessors.countReferencePosts()) - before.theirs
+    ).toBe(1);
+  });
 
   it("P4 cross-workspace axis: a cross-parented row is invisible to the accessor", async () => {
     const scopeA = await withWorkspace(db, { authUserId: "user_a" });
@@ -495,11 +887,27 @@ describe("ProfileScope — the profile tenancy cage", () => {
       const covered = new Set<string>(CROSS_PARENTED.flatMap((c) => c.accessors));
       const tableOf: Record<string, string | undefined> = {
         brainDocs: "brain_docs",
+        brainDocsByKind: "brain_docs",
         activeBrainDocs: "brain_docs",
         onboardingInputs: "onboarding_inputs",
+        onboardingInputsForExport: "onboarding_inputs",
+        interviewDrafts: "onboarding_interview_drafts",
+        activationSnapshots: "brain_activation_snapshots",
+        frameworks: "frameworks",
         referenceCorpusAsOf: "onboarding_inputs",
         modelUsage: "model_usage",
+        countBillableAttempts: "model_usage",
+        countOnboardingInputs: "onboarding_inputs",
+        onboardingInputsByIds: "onboarding_inputs",
+        ownPostsNewest: "onboarding_inputs",
+        countOwnPosts: "onboarding_inputs",
+        countReferencePosts: "onboarding_inputs",
+        countUnchargedBillableAttempts: "model_usage",
         profile: "creator_profiles",
+        // One accessor spans every included table. Its all-table same-workspace
+        // isolation is exercised by export.test.ts's composed sibling fixture;
+        // it cannot be assigned one table in this one-table completeness map.
+        exportPage: undefined,
       };
       const namedTables = new Set<string>(CROSS_PARENTED.map((c) => c.table));
       const missing = Object.keys(scope.accessors).filter((a) => {
@@ -516,7 +924,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
         Object.keys(scope.accessors).filter((a) => !(a in tableOf))
       ).toEqual([]);
     }
-    for (const { table, fk, accessors } of CROSS_PARENTED) {
+    for (const { table, fk, profileColumn, accessors } of CROSS_PARENTED) {
       await expect(
         db.transaction(async (tx) => {
           await tx.execute(
@@ -525,7 +933,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
           // p1's id, but B's workspace: the shape the composite FK forbids.
           await tx.execute(
             sql.raw(
-              `UPDATE ${table} SET workspace_id = '${bWorkspaceId}' WHERE profile_id = '${p1}'`
+              `UPDATE ${table} SET workspace_id = '${bWorkspaceId}' WHERE ${profileColumn} = '${p1}'`
             )
           );
           const scope = await ProfileScope.mint(tx, scopeA, p1);
@@ -543,7 +951,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
             ).toHaveLength(0);
           }
           const profileOnly = await tx.execute(
-            sql.raw(`SELECT id FROM ${table} WHERE profile_id = '${p1}'`)
+            sql.raw(`SELECT id FROM ${table} WHERE ${profileColumn} = '${p1}'`)
           );
           expect(
             profileOnly.rows.length,
@@ -780,7 +1188,15 @@ describe("ProfileScope — the profile tenancy cage", () => {
   it("writeBrainDoc validates every source-evidence quote against THIS profile's inputs", async () => {
     const scope = await mintP1();
     const caps = writeCapabilities(scope);
-    const [own] = await scope.accessors.onboardingInputs();
+    // SELECTED BY CLASS, not by position. This read `[own] = ...` and relied on
+    // the accessor's insertion order — an order it never promised. Slice 1 gave
+    // `onboardingInputs` an explicit newest-first ordering (one display order,
+    // one place), and the reference input this profile also holds is the newer
+    // one, so position 0 became the reference and this test began failing on a
+    // rule it was not written to exercise.
+    const inputs = await scope.accessors.onboardingInputs();
+    const own = inputs.find((i) => i.inputClass === "own_post")!;
+    expect(own, "the fixture must hold an own_post input").toBeDefined();
     const [foreign] = await db
       .select()
       .from(onboardingInputs)
@@ -956,7 +1372,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
       caps.appendOnboardingInput({ inputClass: "own_post", content: "kept" })
     ).resolves.toBeDefined();
     await expect(
-      caps.recordModelUsage(usageInput("att_paused"))
+      db.transaction((tx) => caps.recordModelUsage(usageInput("att_paused"), tx))
     ).resolves.toBeDefined();
   });
 
@@ -998,6 +1414,10 @@ describe("ProfileScope — the profile tenancy cage", () => {
     const row = await caps.appendOnboardingInput({
       inputClass: "creator_authored",
       content: raw,
+      // Required for this class from slice 3b — see
+      // `onboarding_inputs_field_key_iff_creator_authored` and
+      // `OnboardingInputFieldKeyError`.
+      fieldKey: "positioning",
     });
     expect(row.content).toBe(normalised);
     expect(row.contentSha256).toBe(sha256(normalised));
@@ -1033,10 +1453,12 @@ describe("ProfileScope — the profile tenancy cage", () => {
   it("cost_micro_usd round-trips as a bigint (PGlite half of AC-17)", async () => {
     const scope = await mintP1();
     const caps = writeCapabilities(scope);
-    const row = await caps.recordModelUsage({
-      ...usageInput("att_big"),
-      costMicroUsd: 9007199254740993n,
-    });
+    const row = await db.transaction((tx) =>
+      caps.recordModelUsage(
+        { ...usageInput("att_big"), costMicroUsd: 9007199254740993n },
+        tx
+      )
+    );
     const [read] = await db
       .select()
       .from(modelUsage)
@@ -1183,16 +1605,21 @@ describe("the input_class and usage_raw rules are ENFORCED, not commented", () =
 
     // The real shape a provider returns.
     await expect(
-      caps.recordModelUsage({
-        ...base,
-        usageRaw: {
-          input_tokens: 100,
-          output_tokens: 200,
-          cache_read_input_tokens: 0,
-          cached: true,
-          detail: null,
-        },
-      })
+      db.transaction((tx) =>
+        caps.recordModelUsage(
+          {
+            ...base,
+            usageRaw: {
+              input_tokens: 100,
+              output_tokens: 200,
+              cache_read_input_tokens: 0,
+              cached: true,
+              detail: null,
+            },
+          },
+          tx
+        )
+      )
     ).resolves.toBeDefined();
 
     // Every route text could take. `model_usage` is EXCLUDED from the REQ-A04
@@ -1206,7 +1633,9 @@ describe("the input_class and usage_raw rules are ENFORCED, not commented", () =
       ["a bigint", { n: 1n }],
     ] as [string, unknown][]) {
       await expect(
-        caps.recordModelUsage({ ...base, attemptId: "att_" + label, usageRaw }),
+        db.transaction((tx) =>
+          caps.recordModelUsage({ ...base, attemptId: "att_" + label, usageRaw }, tx)
+        ),
         label + " reached usage_raw"
       ).rejects.toBeInstanceOf(UsageRawError);
     }
@@ -1286,5 +1715,51 @@ describe("C-32: every brain_docs column is CLASSIFIED — the completeness instr
     // @ts-expect-error — so is the confirmation attribution.
     void ({ confirmedBy: "x" } satisfies NoServerFieldsProbe);
     expect(true).toBe(true);
+  });
+});
+
+describe("creator_profiles is CLASSIFIED too — the same instrument, one table over", () => {
+  // C-32 gave `brain_docs` a class-level check because the hand-maintained
+  // `GUARDED_WRITE_FIELDS` had missed exactly one field in four consecutive
+  // rounds. `creator_profiles` becomes a WRITTEN table for the first time in
+  // slice 1, so it gets the instrument at the point of becoming writable rather
+  // than after its own fourth miss.
+  const columns = Object.keys(getTableColumns(creatorProfiles));
+
+  it("classifies every column as guarded or caller-suppliable", () => {
+    expect(columns.length, "the enumeration is empty — it reads nothing").toBeGreaterThan(
+      4
+    );
+    const classified = new Set<string>([
+      ...GUARDED_WRITE_FIELDS,
+      ...CALLER_SUPPLIABLE_PROFILE_FIELDS,
+    ]);
+    expect(
+      columns.filter((c) => !classified.has(c)),
+      "a creator_profiles column is neither guarded nor declared caller-suppliable — decide which it is"
+    ).toEqual([]);
+  });
+
+  it("...and the check REJECTS a planted unclassified column", () => {
+    // A scan that finds nothing is indistinguishable from a scan that is
+    // broken (2026-08-21), so the negative case is asserted rather than assumed.
+    const classified = new Set<string>([
+      ...GUARDED_WRITE_FIELDS,
+      ...CALLER_SUPPLIABLE_PROFILE_FIELDS,
+    ]);
+    expect(
+      [...columns, "someNewServerColumn"].filter((c) => !classified.has(c))
+    ).toEqual(["someNewServerColumn"]);
+  });
+
+  it("names `state` specifically — the cap's whole meaning rests on it", () => {
+    // Pinned by name as well as by the class check, for the reason C-32 pins
+    // `referenceCorpusIds`: the class check would miss its removal from the
+    // guarded list if it were silently moved to the caller-suppliable one, and
+    // moving it there is exactly the change that hands the per-tier cap to the
+    // caller — a profile created straight into `archived` costs nothing.
+    expect(GUARDED_WRITE_FIELDS).toContain("state");
+    expect(CALLER_SUPPLIABLE_PROFILE_FIELDS).not.toContain("state");
+    expect(CALLER_SUPPLIABLE_PROFILE_FIELDS).toEqual(["displayName"]);
   });
 });

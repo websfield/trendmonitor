@@ -104,17 +104,165 @@ export async function prepareConfigMigration(
   // carried through byte-identically from `raw` — never from `parsed.data`,
   // whose defaults would silently overwrite a customised value with the
   // schema's idea of it.
-  const addedKeys = Object.keys(parsed.data).filter((k) => !(k in raw));
+  const addedKeys: string[] = [];
+  const merged = mergeMissing(raw, parsed.data as Record<string, unknown>, "", addedKeys);
+  // ...THEN the corrections, which are a DIFFERENT operation and deliberately
+  // so. See `CORRECTIONS` for why adding-only was not enough.
+  const raised = applyCorrections(merged, addedKeys, row.createdBy);
   if (addedKeys.length === 0) return null;
-  const additions: Record<string, unknown> = {};
-  for (const k of addedKeys) {
-    additions[k] = (parsed.data as Record<string, unknown>)[k];
-  }
   return {
     sourceVersion: row.version,
     addedKeys,
-    merged: { ...raw, ...additions } as RespinConfigV1,
+    merged: raised as RespinConfigV1,
   };
+}
+
+/**
+ * Values this product SHIPPED WRONG, and may correct in place — once, and only
+ * from the exact wrong value.
+ *
+ * WHY THIS EXISTS AT ALL, given `mergeMissing` refuses to touch a present key.
+ * That refusal is right and is not being weakened: a schema default must never
+ * overwrite a number an operator chose. But it left slice 3 undeployable
+ * (billing gate BLOCK, 2026-08-29). `llm.maxOutputTokens` was shipped at 1024,
+ * sized for a one-sentence connectivity ping; a voice document needs ~1,200
+ * output tokens, so on EVERY database seeded before slice 3 the value is
+ * present, wrong, and unreachable — and every voice inference truncates, is
+ * billed, and refuses. Raising the schema default fixes fresh installs only.
+ *
+ * THE INVARIANT THAT MAKES THIS SAFE IS PROVENANCE, NOT VALUE (billing gate
+ * round 2, 2026-08-29). The first version fired whenever the stored value
+ * equalled `from` — and `Object.is` distinguishes values, not authors, so an
+ * operator who had deliberately CHOSEN 1024 (a defensible choice: it is the
+ * number that bounds per-call output spend) would have had it silently
+ * quadrupled. The docblock claimed "it can never overwrite a decision somebody
+ * made", which was false for exactly that operator.
+ *
+ * So it fires only when BOTH hold: the stored value is the one we wrote, AND
+ * the active version was written by the product itself (`created_by` is `seed`
+ * or `migrate-config`). A document an operator has touched is never corrected —
+ * `/admin/config` stamps their id, and `config_versions.created_by` is the
+ * record of who decided.
+ *
+ * A correction is a ONE-OFF with an expiry: once no database can still hold the
+ * `from` value, the entry is deleted. Entries are not a growing list of dials.
+ */
+const CORRECTIONS: {
+  path: readonly string[];
+  from: unknown;
+  to: unknown;
+  why: string;
+}[] = [
+  {
+    path: ["llm", "maxOutputTokens"],
+    from: 1024,
+    to: 4000,
+    why: "1024 was sized for slice 2a's one-sentence ping; a voice document needs ~1,200 output tokens, so every voice inference truncated, was billed, and refused (browser walk + billing gate, 2026-08-29)",
+  },
+];
+
+/**
+ * Apply every correction whose `from` still matches, recording each as a
+ * dotted path so the CLI prints what it changed.
+ */
+const PRODUCT_AUTHORS = new Set(["seed", "migrate-config"]);
+
+function applyCorrections(
+  doc: Record<string, unknown>,
+  changed: string[],
+  createdBy: string
+): Record<string, unknown> {
+  // PROVENANCE FIRST. An operator-authored document is never corrected, whatever
+  // it holds — see `CORRECTIONS`.
+  if (!PRODUCT_AUTHORS.has(createdBy)) return doc;
+  let out = doc;
+  for (const c of CORRECTIONS) {
+    const parent = c.path.slice(0, -1);
+    const key = c.path[c.path.length - 1];
+    let node: unknown = out;
+    for (const p of parent) {
+      node = isPlainObject(node) ? node[p] : undefined;
+    }
+    if (!isPlainObject(node)) continue;
+    // EXACTLY the wrong value, or nothing happens. `Object.is` rather than
+    // `===` so a stored `-0` or `NaN` cannot masquerade as a match.
+    if (!Object.is(node[key], c.from)) continue;
+    // Rebuilt rather than mutated: `raw` is the operator's stored document and
+    // every other key must come through it byte-identically.
+    const rebuild = (
+      obj: Record<string, unknown>,
+      rest: readonly string[]
+    ): Record<string, unknown> => {
+      if (rest.length === 0) return { ...obj, [key]: c.to };
+      const [head, ...tail] = rest;
+      const child = obj[head];
+      return {
+        ...obj,
+        [head]: rebuild(isPlainObject(child) ? child : {}, tail),
+      };
+    };
+    out = rebuild(out, parent);
+    changed.push(`${c.path.join(".")} (corrected ${String(c.from)} → ${String(c.to)})`);
+  }
+  return out;
+}
+
+/** A JSON object, as opposed to an array, a null, or a scalar. */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * THE MERGE RECURSES, and slice 2a is why.
+ *
+ * Until now this walked TOP-LEVEL keys only, which was correct for every key
+ * that had ever been added: `profileCaps` is a top-level object, so its whole
+ * subtree arrived at once. `creditCosts.onboardingBrainRebuild` is the first
+ * NESTED addition, and top-level-only would have skipped it silently —
+ * `creditCosts` is already present in the stored document, so the whole object
+ * is carried through from `raw` exactly as it is, minus the new key.
+ *
+ * That is not a cosmetic gap. R19's `getActiveConfigRequiringStored` fails
+ * CLOSED on the raw stored document, so a key `config:migrate` can never add is
+ * a key that is never stored, and the operation it prices is refused forever on
+ * every database that existed before the deploy. "Record the limitation" was
+ * the alternative the scope note offered; it is not available, because the
+ * limitation is an outage.
+ *
+ * THE INVARIANT IS UNCHANGED AND IS WHAT THE RECURSION MUST NOT BREAK: a key
+ * the stored document already has is carried through from `raw`, at every
+ * depth, and is never read from `parsed.data`. Only ABSENT keys are taken from
+ * the parsed (defaulted) document. `z.record` maps — `stripePriceMap`,
+ * `llm.prices` — are unaffected by construction: a record has no schema
+ * defaults, so `parsed.data` holds exactly the keys `raw` does and the loop
+ * adds nothing.
+ *
+ * `addedKeys` are DOTTED PATHS now (`creditCosts.onboardingBrainRebuild`), not
+ * bare names — the CLI prints them and an operator reading `onboardingBrainRebuild`
+ * with no parent would have to guess where it landed.
+ */
+function mergeMissing(
+  raw: Record<string, unknown>,
+  parsed: Record<string, unknown>,
+  prefix: string,
+  added: string[]
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...raw };
+  for (const [key, parsedValue] of Object.entries(parsed)) {
+    const path = prefix === "" ? key : `${prefix}.${key}`;
+    if (!(key in raw)) {
+      out[key] = parsedValue;
+      added.push(path);
+      continue;
+    }
+    const rawValue = raw[key];
+    if (isPlainObject(rawValue) && isPlainObject(parsedValue)) {
+      out[key] = mergeMissing(rawValue, parsedValue, path, added);
+    }
+    // Otherwise the stored value stands, byte-identically. No else branch, on
+    // purpose: writing one is how a default overwrites a customised value.
+  }
+  return out;
 }
 
 /**

@@ -32,20 +32,26 @@ export type ConfigFormAction = (
   formData: FormData
 ) => Promise<ConfigFormState>;
 
+// Signal tokens (app/respin-tokens.css): the global background is dark now, so
+// the old light-theme literals (#555 on dark, #fff5f5 panels) failed contrast
+// on the one surface that fixes broken config. Values, not markup, changed.
 const section: React.CSSProperties = {
-  border: "1px solid #ddd",
+  background: "var(--surface-1)",
+  border: "1px solid var(--border)",
   borderRadius: 6,
   padding: "1rem",
   marginBottom: "1rem",
 };
-const muted: React.CSSProperties = { color: "#555", fontSize: "0.9rem" };
+const muted: React.CSSProperties = {
+  color: "var(--text-3)",
+  fontSize: "0.9rem",
+};
 const warn: React.CSSProperties = {
   ...section,
-  borderColor: "#c00",
-  background: "#fff5f5",
+  borderColor: "var(--border-strong)",
 };
 const cell: React.CSSProperties = {
-  borderBottom: "1px solid #eee",
+  borderBottom: "1px solid var(--border)",
   padding: "0.4rem 0.6rem",
   textAlign: "left",
 };

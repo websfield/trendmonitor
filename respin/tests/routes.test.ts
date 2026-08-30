@@ -44,7 +44,7 @@ describe("route protection matcher (AC-3)", () => {
     expect(isProtectedPath("/studio")).toBe(true);
     expect(isProtectedPath("/studio/anything")).toBe(true);
     expect(isProtectedPath("/admin")).toBe(true);
-    expect(isProtectedPath("/admin/margin")).toBe(true);
+    expect(isProtectedPath("/admin/model-spend")).toBe(true);
   });
 
   it("does not protect look-alike prefixes", () => {

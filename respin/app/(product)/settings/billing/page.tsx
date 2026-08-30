@@ -25,6 +25,7 @@ import {
   setAutoTopupAction,
   subscribeAction,
 } from "./actions";
+import { logRefusal } from "../../safe-log";
 
 const TIER_LABELS: Record<TierOption["tier"], string> = {
   creator: "Creator",
@@ -48,7 +49,7 @@ export default async function BillingSettingsPage(props: {
     scope = await respinDb.withWorkspace({ authUserId: user.id });
   } catch (err) {
     rethrowNextControlFlow(err);
-    console.error("[billing] workspace scope unavailable", err);
+    logRefusal("[billing] workspace scope unavailable", err);
     return <AccessRefusal copy={billingErrorDisplay(err)} />;
   }
   const errParam = search.e;
@@ -86,7 +87,7 @@ export default async function BillingSettingsPage(props: {
     };
   } catch (err) {
     rethrowNextControlFlow(err);
-    console.error("[billing] active config unavailable", err);
+    logRefusal("[billing] active config unavailable", err);
     const copy = billingErrorDisplay(err);
     config = { ok: false, title: copy.title, detail: copy.detail };
   }
@@ -102,7 +103,7 @@ export default async function BillingSettingsPage(props: {
     // getWorkspaceBillingState reads config to resolve a tier, so it fails
     // closed with the config. Say "unknown" rather than defaulting to free —
     // the config error box above carries the operator's remedy.
-    console.error("[billing] billing state unavailable", err);
+    logRefusal("[billing] billing state unavailable", err);
     state = { tier: "unknown", state: "unknown" };
   }
 

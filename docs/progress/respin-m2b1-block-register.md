@@ -230,3 +230,24 @@ Individually named in the record:
 **What the gates confirmed rather than refuted, because it belongs on the record too.** All four independently reproduced the entry-gate figures exactly. C-42 (`reason` as a closed code) held under sustained attack — extra keys, nested codes, bare strings, `null`, `42`, case variants, all via `as unknown as` — and was called "the right shape of fix; it is on the wrong field to be sufficient". C-41's tests were verified non-vacuous. Every `migration-shape` assertion pairs with a planted violation. The tenancy cage, export/deletion, PII, B1-B4/B6, the sources allowlist, no-guarantees and no-automation all pass. The 30s->60s timeout raise was judged **honest engineering, not a green-wash**. R-10 / `performance_meta` is true. And learning explicitly credited the docs for keeping "an empty register is not a gate PASS" separate from the engineering claim throughout — that separation was the one thing that made this correction cheap.
 
 **The four Critical-Path gates HAVE now run** (2026-08-26): all four BLOCK at Grade D, nine BLOCKs fixed and pinned in section A-double-prime, eleven items open in section A. **A re-gate has not been run against the fixes** — this remediation pass is entry-gate and mutation evidence again, which is the weaker claim, on a milestone whose entire record is that reviewers find what the author's matrix misses.
+
+---
+
+## D. Appended 2026-08-27 — this register is superseded as a status source
+
+Every item in section A has been re-verified against the code and given exactly one home in
+[`respin-finish-open-items.md`](respin-finish-open-items.md), alongside the 31 brain-surface task
+rows, the 12 R-30 binding constraints and the 11 `todos.md` rows — 73 items, one home each.
+
+**Corrected by appending, per the register's own rule:**
+
+- **B-8 is CLOSED.** `respin/tests/table-writers.test.ts:281` now names all three capabilities that
+  write `brain_docs` and records why the old "the ONE write surface" string was false. Section A
+  still lists it as open.
+- **B-9 is confirmed open and is now retired with its plan.** `respin-m2b1-brain-surface-plan.md`
+  marks task 28 TODO while `respin/packages/db/src/brain-content.ts:418` proves it built. That
+  document's task table stops being a status source; the disposition register replaces it.
+- The other seventeen section-A items are **OPEN-CONFIRMED** with a `file:line` citation each in the
+  disposition register. None was carried on this register's word.
+
+Section A is left unedited. Read it as history; read the disposition register for status.

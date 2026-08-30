@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="respin-tokens.css">
+  <style>
+    body { margin: 0; background: #0F1013; }
+    a { color: var(--accent-text, #94A6EE); text-decoration: none; }
+    a:hover { color: var(--accent-text-strong, #B8C4F4); }
+    ::selection { background: #2A3350; }
+  </style>
+</helmet>
+<div data-screen-label="Trends" style="font-family: var(--font-sans); background: var(--bg); color: var(--text-1); min-height: 100vh;">
+  <div style="display: grid; grid-template-columns: 224px 1fr; min-height: 960px;">
+    <aside style="background: #121419; border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0;">
+      <div style="padding: 0 20px 18px; border-bottom: 1px solid var(--border);">
+        <span style="font: 700 18px/1 var(--font-sans); letter-spacing: -0.02em;">Respin</span>
+      </div>
+      <nav style="display: grid; padding: 12px 10px; gap: 2px;">
+        <a href="Respin Studio.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius); color: var(--text-3); font: 500 14px/1 var(--font-sans);"><span style="width: 3px; height: 14px;"></span>Studio</a>
+        <a href="#" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius); background: var(--accent-surface-2); color: var(--text-1); font: 500 14px/1 var(--font-sans);"><span style="width: 3px; height: 14px; background: var(--accent); border-radius: 2px;"></span>Trends</a>
+        <a href="Respin Results.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius); color: var(--text-3); font: 500 14px/1 var(--font-sans);"><span style="width: 3px; height: 14px;"></span>Results</a>
+        <a href="Respin Usage.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius); color: var(--text-3); font: 500 14px/1 var(--font-sans);"><span style="width: 3px; height: 14px;"></span>Usage</a>
+      </nav>
+      <div style="margin-top: auto; padding: 16px 20px; border-top: 1px solid var(--border); display: grid; gap: 8px;">
+        <span style="font: 500 13px/1 var(--font-sans); color: var(--text-1);">Dana&rsquo;s workspace</span>
+        <span style="font: 400 12px/1 var(--font-mono); color: var(--text-3);">1,247 CR &middot; brain v7</span>
+      </div>
+    </aside>
+    <main style="min-width: 0; padding: 24px 36px 64px;">
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <h1 style="font: 600 20px/1.2 var(--font-sans); letter-spacing: -0.01em; margin: 0;">Trends</h1>
+        <div style="display: flex; gap: 8px; margin-left: 12px;">
+          <span style="padding: 8px 14px; border-radius: var(--radius); background: var(--accent-surface-2); border: 1px solid var(--accent-border); color: var(--accent-text-strong); font: 500 13px/1 var(--font-sans);">Strength training</span>
+          <span style="padding: 8px 14px; border-radius: var(--radius); border: 1px solid var(--border); color: var(--text-3); font: 500 13px/1 var(--font-sans);">Hypertrophy</span>
+          <span style="padding: 8px 14px; border-radius: var(--radius); border: 1px solid var(--border); color: var(--text-3); font: 500 13px/1 var(--font-sans);">Powerlifting</span>
+        </div>
+        <span style="margin-left: auto; font: 400 12px/1 var(--font-mono); color: var(--text-4);">OUTLIER = VS THAT CHANNEL&rsquo;S OWN BASELINE, NEVER RAW VIEWS &middot; CRAWLED 6H AGO</span>
+      </div>
+
+      <div style="display: grid; gap: 16px; margin-top: 20px;">
+        <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--border);">
+            <span style="font: 600 14px/1 var(--font-sans);">@liftwithmara</span>
+            <span style="font: 400 12px/1 var(--font-mono); color: var(--text-4);">HYPERTROPHY &middot; 0:38 &middot; OBSERVED 3D AGO</span>
+            <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 5px 8px; margin-left: auto;">EMERGING &middot; 4 ACCOUNTS THIS WEEK</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 150px 1fr auto; gap: 20px; padding: 18px 20px; align-items: start;">
+            <div>
+              <div style="font: 600 28px/1 var(--font-mono); color: var(--accent-text-strong);">7.2x</div>
+              <div style="font: 400 11px/1.5 var(--font-mono); color: var(--text-4); margin-top: 6px;">HER BASELINE<br>MEDIAN OF LAST 20 POSTS</div>
+              <p style="font: 500 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 12px 0 0;">&ldquo;Your warmup is why you are weak.&rdquo;</p>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; border-left: 1px solid var(--border); padding-left: 24px;">
+              <div><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">HOOK MECHANIC</span><p style="font: 400 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 4px 0 0;">Dead-start contradiction, no greeting, claim inside 1.2s.</p></div>
+              <div><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">STRUCTURE</span><p style="font: 400 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 4px 0 0;">Claim, demo, receipt. Three beats, one idea, no detours.</p></div>
+              <div><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">ENDING</span><p style="font: 400 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 4px 0 0;">Hard cut right after the payoff. No outro, forces a rewatch.</p></div>
+              <div><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">FOLLOW TRIGGER</span><p style="font: 400 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 4px 0 0;">Part-two tease in the caption, answered from her follow tab.</p></div>
+              <div style="grid-column: 1 / -1;"><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">MATCHED FRAMEWORK</span><p style="font: 500 13.5px/1.5 var(--font-sans); color: var(--accent-text); margin: 4px 0 0;">Received wisdom, receipts attached &middot; converts for you at 2.3x baseline</p></div>
+            </div>
+            <button style="font: 600 13.5px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 12px 20px; cursor: pointer; align-self: center;" style-hover="background: var(--accent-hover);">Spin</button>
+          </div>
+        </div>
+
+        <div style="background: var(--surface-1); border: 1px solid var(--accent-border); border-radius: var(--radius); box-shadow: var(--shadow-soft);">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--border);">
+            <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--accent-text);">SPIN RESULT</span>
+            <span style="font: 400 12px/1 var(--font-mono); color: var(--text-4);">@liftwithmara&rsquo;s SHAPE, YOUR BRAIN &middot; 2 CR &middot; 27.4s</span>
+            <span style="font: 400 12px/1 var(--font-mono); color: var(--text-4); margin-left: auto;">5 DRAFTED &middot; 4 KILLED &middot; 1 SHOWN</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr;">
+            <div style="padding: 20px; border-right: 1px solid var(--border);">
+              <div style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-4);">THE ORIGINAL</div>
+              <p style="font: 600 16px/1.4 var(--font-sans); color: var(--text-3); margin: 12px 0 0;">&ldquo;Your warmup is why you are weak.&rdquo;</p>
+              <div style="display: grid; gap: 10px; margin-top: 16px;">
+                <div style="display: grid; grid-template-columns: 44px 1fr; gap: 12px;"><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-4);">00:00</span><p style="font: 400 13.5px/1.55 var(--font-sans); color: var(--text-3); margin: 0;">Contradiction to camera, mid-walk through the gym.</p></div>
+                <div style="display: grid; grid-template-columns: 44px 1fr; gap: 12px;"><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-4);">00:09</span><p style="font: 400 13.5px/1.55 var(--font-sans); color: var(--text-3); margin: 0;">Demo: her 20-minute warmup cut against a 4-minute primer.</p></div>
+                <div style="display: grid; grid-template-columns: 44px 1fr; gap: 12px;"><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-4);">00:24</span><p style="font: 400 13.5px/1.55 var(--font-sans); color: var(--text-3); margin: 0;">Receipt: her own top set, same week, hard cut on the lockout.</p></div>
+              </div>
+            </div>
+            <div style="padding: 20px; background: var(--accent-surface);">
+              <div style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--accent-text);">YOUR VERSION</div>
+              <p style="font: 600 16px/1.4 var(--font-sans); margin: 12px 0 0;">&ldquo;Your warmup is fine. Your first working set is the problem.&rdquo;</p>
+              <div style="display: grid; gap: 10px; margin-top: 16px;">
+                <div style="display: grid; grid-template-columns: 44px 1fr; gap: 12px;"><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-3);">00:00</span><p style="font: 400 13.5px/1.55 var(--font-sans); color: var(--text-2); margin: 0;">Same dead-start contradiction, but aimed where your audience actually stalls: the jump to working weight.</p></div>
+                <div style="display: grid; grid-template-columns: 44px 1fr; gap: 12px;"><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-3);">00:09</span><p style="font: 400 13.5px/1.55 var(--font-sans); color: var(--text-2); margin: 0;">Demo swapped for your rack footage: 135 to 225 in two jumps versus five.</p></div>
+                <div style="display: grid; grid-template-columns: 44px 1fr; gap: 12px;"><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-3);">00:24</span><p style="font: 400 13.5px/1.55 var(--font-sans); color: var(--text-2); margin: 0;">Receipt swapped for your client log: top set up 15 lb in three weeks. Hard cut kept.</p></div>
+              </div>
+              <div style="display: flex; gap: 10px; margin-top: 18px;">
+                <button style="font: 600 13.5px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 12px 18px; cursor: pointer;" style-hover="background: var(--accent-hover);">Open in Studio</button>
+                <button style="font: 500 13.5px/1 var(--font-sans); background: transparent; color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px 18px; cursor: pointer;" style-hover="background: var(--surface-2);">Discard</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--border);">
+            <span style="font: 600 14px/1 var(--font-sans);">@garagegainz</span>
+            <span style="font: 400 12px/1 var(--font-mono); color: var(--text-4);">POWERLIFTING &middot; 0:52 &middot; OBSERVED 8D AGO</span>
+            <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px; margin-left: auto;">ESTABLISHED &middot; STEADY 6 MONTHS</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 150px 1fr auto; gap: 20px; padding: 18px 20px; align-items: start;">
+            <div>
+              <div style="font: 600 28px/1 var(--font-mono); color: var(--accent-text-strong);">4.8x</div>
+              <div style="font: 400 11px/1.5 var(--font-mono); color: var(--text-4); margin-top: 6px;">HIS BASELINE</div>
+              <p style="font: 500 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 12px 0 0;">Opens on a log screenshot, zero spoken intro.</p>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; border-left: 1px solid var(--border); padding-left: 24px;">
+              <div><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">HOOK MECHANIC</span><p style="font: 400 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 4px 0 0;">Receipt flash: the evidence is the first frame.</p></div>
+              <div><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">STRUCTURE</span><p style="font: 400 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 4px 0 0;">Log first, then three explains, each shorter than the last.</p></div>
+              <div><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">ENDING</span><p style="font: 400 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 4px 0 0;">Question to camera, answered in pinned comment.</p></div>
+              <div><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">FOLLOW TRIGGER</span><p style="font: 400 13.5px/1.5 var(--font-sans); color: var(--text-2); margin: 4px 0 0;">Comment keyword DEADLIFT gates a program PDF.</p></div>
+              <div style="grid-column: 1 / -1;"><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">MATCHED FRAMEWORK</span><p style="font: 500 13.5px/1.5 var(--font-sans); color: var(--accent-text); margin: 4px 0 0;">Client log autopsy &middot; untested for you, 0 logged results</p></div>
+            </div>
+            <button style="font: 600 13.5px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 12px 20px; cursor: pointer; align-self: center;" style-hover="background: var(--accent-hover);">Spin</button>
+          </div>
+        </div>
+
+        <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); opacity: 0.92;">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--border);">
+            <span style="font: 600 14px/1 var(--font-sans); color: var(--text-2);">@formcheckfriday</span>
+            <span style="font: 400 12px/1 var(--font-mono); color: var(--text-4);">FORM BREAKDOWNS &middot; 0:31 &middot; OBSERVED 6W AGO</span>
+            <span style="display: flex; gap: 8px; margin-left: auto;">
+              <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px;">SATURATED &middot; 34 ACCOUNTS 30D</span>
+              <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-4); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px;">STALE &middot; KEPT FOR THE RECORD</span>
+            </span>
+          </div>
+          <div style="display: grid; grid-template-columns: 150px 1fr auto; gap: 20px; padding: 18px 20px; align-items: start;">
+            <div>
+              <div style="font: 600 28px/1 var(--font-mono); color: var(--text-3);">5.5x</div>
+              <div style="font: 400 11px/1.5 var(--font-mono); color: var(--text-4); margin-top: 6px;">THEIR BASELINE, 6 WEEKS AGO</div>
+            </div>
+            <div style="border-left: 1px solid var(--border); padding-left: 24px;">
+              <p style="font: 400 13.5px/1.6 var(--font-sans); color: var(--text-3); margin: 0; max-width: 60ch;">Freeze-frame form autopsy with red-circle overlays. This shape has been run by 34 tracked accounts in the last month and engagement on late copies is at 0.4x their baselines.</p>
+              <p style="font: 500 13.5px/1.6 var(--font-sans); color: var(--text-2); margin: 10px 0 0; max-width: 60ch;">Saturated: a straight copy will read as one. It demands a fresh interpretation, and Spin will refuse the obvious one here.</p>
+            </div>
+            <button style="font: 600 13.5px/1 var(--font-sans); background: transparent; color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px 20px; cursor: pointer; align-self: center;" style-hover="background: var(--surface-2);">Spin anyway</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top: 24px; padding: 14px 0; border-top: 1px solid var(--border); font: 600 11px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-4);">DESIGNED STATE: EMPTY FEED</div>
+      <div style="border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 28px; text-align: center; max-width: 640px;">
+        <p style="font: 600 15px/1.4 var(--font-sans); margin: 0;">No outliers in your niches right now.</p>
+        <p style="font: 400 13.5px/1.6 var(--font-sans); color: var(--text-3); margin: 8px 0 0;">This feed only shows posts beating their own channel&rsquo;s baseline by 3x or more, so quiet weeks happen. The next crawl lands tonight; widening your niches in Settings also widens the net.</p>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1440, &quot;height&quot;: 960}}"></script>
+</body>
+</html>

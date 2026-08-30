@@ -1,4 +1,4 @@
-# Respin — dev & deploy runbook (M0–M1)
+# Respin — dev & deploy runbook (M0–M2)
 
 Self-rooted pnpm workspace (decision R-15/R-16): nothing in here references the
 enclosing repo. Product docs live at `../docs/initial/` (PRD, tech-spec,
@@ -7,18 +7,25 @@ build-plan, decisions).
 ## Layout
 
 ```
-app/             Next.js 15 App Router — (marketing) /, (auth) /sign-in /sign-up,
-                 (product) /studio /usage /settings/billing,
+app/             Next.js 15 App Router — (marketing) / and /for/<audience>, (auth) /sign-in
+                 /sign-up, (product) /onboarding /brain /studio /usage /settings/billing,
                  (admin) /admin /admin/config      [route groups are URL-invisible]
+app/ui/          Signal design-system primitives (Panel, Banner, Button/buttonClass,
+                 Field, LedgerTable, Badge, Meter) — presentational only; tokens in
+                 app/respin-tokens.css + app/globals.css, spec in ./DESIGN.md
 lib/             route-boundary constants (middleware deploys these directly)
-packages/db      @respin/db — Drizzle schema (domain + auth + billing tables), migrations,
-                 seed, tenancy helpers (withWorkspace + its scoped accessors)
+packages/db      @respin/db — Drizzle schema (domain + auth + billing + brain + onboarding
+                 tables), migrations, seed, tenancy helpers (withWorkspace + its scoped
+                 accessors), the run-slot concurrency semaphore
 packages/auth    @respin/auth — Better Auth instance, requireUser/requireAdmin (THE gate,
                  server layer, fail closed); middleware is an optimistic cookie redirect only
 packages/config  @respin/config — the versioned runtime config (credit costs, allowances,
                  pack price, grace/pause bounds, Stripe price map); append-only versions
 packages/credits @respin/credits — the credit ledger and its ONE balance authority, the
-                 Stripe adapter, webhook handlers and the owner-gated billing actions
+                 Stripe adapter, webhook handlers, the owner-gated billing actions, and the
+                 metered spend path (profile intake, runInference, inferVoice)
+packages/llm     @respin/llm — the Anthropic provider adapter (pinned origin, typed errors,
+                 ceiling pricing); consumed only by @respin/credits — app/ may not import it
 ```
 
 Rule: `app/` imports only the sanctioned surfaces — `respinDb` /
@@ -73,7 +80,8 @@ public).
 2. **Auth — Better Auth, fully self-hosted (R-19)**: sessions and auth tables
    live in our own Postgres; email/password works with zero third-party
    accounts. Set `BETTER_AUTH_SECRET` (e.g. `openssl rand -base64 32`) and
-   `BETTER_AUTH_URL=http://localhost:3000` in `.env.local`. You should now
+   `BETTER_AUTH_URL=http://localhost:8000` in `.env.local` (the `dev` script
+   pins `next dev -p 8000`; the value must match it). You should now
    see: `pnpm dev` → create an account at `/sign-up` → land on `/studio`
    showing "<name>'s workspace" → sign out returns to `/`. Google sign-in is
    optional (add the OAuth client credentials; the button appears only when
@@ -150,7 +158,7 @@ public).
    #    evidence step 7 cannot run without it.
 
    # 5. Forward webhooks to the local app (leave running in its own terminal):
-   stripe listen --forward-to localhost:3000/api/stripe/webhook
+   stripe listen --forward-to localhost:8000/api/stripe/webhook
    #    Success check: it prints `whsec_...` — put that in .env.local as
    #    STRIPE_WEBHOOK_SECRET and restart `pnpm dev`.
    #    Second success check: `/settings/billing` no longer shows the
@@ -161,6 +169,13 @@ public).
    The webhook endpoint verifies the Stripe signature and nothing else — it is
    deliberately outside every auth matcher. A bad signature returns 400 and
    records nothing.
+
+5. **Model provider — Anthropic (M2b)**: set `ANTHROPIC_API_KEY` in
+   `.env.local` (console.anthropic.com → API keys). Optional for development:
+   absent, the metered run on `/onboarding` refuses by name and nothing else
+   degrades — no credit is spent. `RUN_SLOT_POOL_MAX` (optional, default 16)
+   caps in-flight model calls per process; `env.example` documents both,
+   including the connection-count footprint of raising the ceiling.
 
    **When you create the PRODUCTION endpoint**, subscribe it to exactly these
    events (`stripe listen` forwards everything locally, so a missing production
@@ -191,7 +206,7 @@ below may be claimed from a passing test — run it, then record the result in
 completion are separate claims (build-plan working agreement).
 
 Prerequisites: the five setup steps above done, `pnpm dev` running, and
-`stripe listen --forward-to localhost:3000/api/stripe/webhook` running in its
+`stripe listen --forward-to localhost:8000/api/stripe/webhook` running in its
 own terminal (leave it visible — every step below should print an event there).
 
 1. **Subscribe at the Creator price** from `/settings/billing` (reachable from

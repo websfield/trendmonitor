@@ -27,9 +27,12 @@ import {
   ContentWalkError,
   SegmenterUnavailableError,
   probeSegmenter,
+  isUsableSpanRange,
+  referenceBudgetKey,
+  groupReferenceInputs,
   type ReferenceInput,
 } from "../src/echo";
-import { ProvenanceError } from "../src/errors";
+import { ProvenanceError, ReferenceEchoError } from "../src/errors";
 
 const REF = {
   id: "11111111-1111-1111-1111-111111111111",
@@ -206,7 +209,7 @@ describe("assertNoReferenceEcho", () => {
     } catch (e) {
       raised = e;
     }
-    expect(raised).toBeInstanceOf(ProvenanceError);
+    expect(raised).toBeInstanceOf(ReferenceEchoError);
     expect((raised as Error).message).toContain(REF.id);
     expect((raised as Error).message).toContain("/rule");
   });
@@ -254,7 +257,7 @@ describe("the reference-quote budget", () => {
   it("refuses a single quote over the per-quote cap", () => {
     expect(() =>
       assertReferenceQuoteBudget([span(0, REFERENCE_QUOTE_MAX_CHARS + 1)])
-    ).toThrow(ProvenanceError);
+    ).toThrow(ReferenceEchoError);
   });
 
   it("permits a mechanism-level quote", () => {
@@ -473,6 +476,179 @@ describe("the ICU probe — the file calls it THE REAL PORTABILITY CONTROL", () 
   it("REFUSES when Intl.Segmenter is absent entirely", () => {
     (Intl as unknown as { Segmenter: unknown }).Segmenter = undefined;
     expect(() => probeSegmenter()).toThrow(SegmenterUnavailableError);
+  });
+});
+
+describe("isUsableSpanRange — the shared G-16 predicate", () => {
+  it("accepts a finite, non-negative, non-inverted half-open range", () => {
+    expect(isUsableSpanRange(0, 10)).toBe(true);
+    expect(isUsableSpanRange(5, 5)).toBe(true); // zero-length is usable
+  });
+
+  it("refuses NaN, negative, non-integer and inverted ranges", () => {
+    expect(isUsableSpanRange(NaN, NaN)).toBe(false);
+    expect(isUsableSpanRange(-1, 5)).toBe(false);
+    expect(isUsableSpanRange(1.5, 5)).toBe(false);
+    expect(isUsableSpanRange(10, 0)).toBe(false);
+  });
+});
+
+describe("referenceBudgetKey (G-11 Layer A)", () => {
+  it("is the SAME key for two posts differing only by whitespace, case or a smart quote", () => {
+    const a = referenceBudgetKey("Open cold and never explain it.");
+    const b = referenceBudgetKey("open cold and never explain it. ");
+    const c = referenceBudgetKey("OPEN COLD AND NEVER EXPLAIN IT.");
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+  });
+
+  it("is a DIFFERENT key for two genuinely different posts", () => {
+    expect(referenceBudgetKey("Open cold and never explain it.")).not.toBe(
+      referenceBudgetKey("Something else entirely, a different post.")
+    );
+  });
+});
+
+describe("groupReferenceInputs (G-11 Layer B — the containment bucket)", () => {
+  const post = (id: string, content: string): ReferenceInput => ({ id, content });
+
+  it("buckets a 500-character excerpt with the 1,000-character post it came from", () => {
+    const full = post(
+      "11111111-1111-4111-8111-111111111111",
+      Array.from({ length: 160 }, (_, i) => `word${i}`).join(" ")
+    );
+    const excerptText = full.content.split(" ").slice(20, 60).join(" ");
+    const excerpt = post("22222222-2222-4222-8222-222222222222", excerptText);
+    const map = groupReferenceInputs([full, excerpt]);
+    expect(map.get(full.id)).toBe(map.get(excerpt.id));
+  });
+
+  it("does NOT bucket two genuinely unrelated posts together", () => {
+    const a = post(
+      "11111111-1111-4111-8111-111111111111",
+      "the fastest way to lose an audience is to explain the joke before you tell it"
+    );
+    const b = post(
+      "22222222-2222-4222-8222-222222222222",
+      "always film in landscape and keep the subject centred in the frame at all times"
+    );
+    const map = groupReferenceInputs([a, b]);
+    expect(map.get(a.id)).not.toBe(map.get(b.id));
+  });
+
+  it("buckets a short duplicate (below ECHO_MIN_SEGMENTS) via Layer A, where findEchoWindow alone would miss it", () => {
+    const a = post("11111111-1111-4111-8111-111111111111", "short and sweet");
+    const b = post("22222222-2222-4222-8222-222222222222", "Short and sweet ");
+    expect(findEchoWindow(a.content, b.content)).toBeNull(); // too short for Layer B alone
+    const map = groupReferenceInputs([a, b]);
+    expect(map.get(a.id)).toBe(map.get(b.id));
+  });
+});
+
+describe("the R-3 bar switched on: G-11's two layers wired through the budget", () => {
+  const REFERENCE_ID_FULL = "11111111-1111-4111-8111-111111111111";
+  const REFERENCE_ID_EXCERPT = "22222222-2222-4222-8222-222222222222";
+
+  it("Layer A: a trailing-space duplicate paste shares ONE budget, not two", () => {
+    const full = "y".repeat(300);
+    const withSpace = full + " ";
+    const inputs: ReferenceInput[] = [
+      { id: REFERENCE_ID_FULL, content: full },
+      { id: REFERENCE_ID_EXCERPT, content: withSpace },
+    ];
+    const bucketOf = groupReferenceInputs(inputs);
+    const spanOf = (id: string, at: number, len: number) => ({
+      postSha: bucketOf.get(id)!,
+      inputId: id,
+      startUtf16: at,
+      endUtf16: at + len,
+      quote: "y".repeat(len),
+    });
+    // 200 from the plain copy, then 200 more from the space-suffixed "copy" —
+    // if they bought separate budgets neither alone exceeds 600 so both would
+    // pass; keyed on the SAME bucket, the second 200 pushes the union to 400,
+    // still under 600 — so push further to prove the union is shared.
+    expect(() =>
+      assertReferenceQuoteBudget([
+        spanOf(REFERENCE_ID_FULL, 0, 240),
+        spanOf(REFERENCE_ID_EXCERPT, 240, 240),
+        spanOf(REFERENCE_ID_EXCERPT, 480, 200),
+      ])
+    ).toThrow(ReferenceEchoError);
+  });
+
+  it("Layer B: an excerpt and its full post share ONE budget", () => {
+    const full = Array.from({ length: 200 }, (_, i) => `w${i}`).join(" ");
+    const excerpt = full.split(" ").slice(0, 60).join(" ");
+    const inputs: ReferenceInput[] = [
+      { id: REFERENCE_ID_FULL, content: full },
+      { id: REFERENCE_ID_EXCERPT, content: excerpt },
+    ];
+    const bucketOf = groupReferenceInputs(inputs);
+    expect(bucketOf.get(REFERENCE_ID_FULL)).toBe(bucketOf.get(REFERENCE_ID_EXCERPT));
+  });
+
+  it("the false-positive case: two genuinely similar reference posts land in one bucket, and the copy names the fix", () => {
+    // Two independently-written posts that happen to share a long common
+    // phrase — a real risk the phase card names, not a bug: the budget
+    // applies per bucket, and the refusal copy tells the reader to rewrite in
+    // their own words rather than which of the two "real" posts is at fault.
+    const shared = "always open cold and never explain the premise before the third beat of the video";
+    const a = `${shared} — my personal spin on this idea.`;
+    const b = `${shared} — a completely different take on it.`;
+    const inputs: ReferenceInput[] = [
+      { id: REFERENCE_ID_FULL, content: a },
+      { id: REFERENCE_ID_EXCERPT, content: b },
+    ];
+    const bucketOf = groupReferenceInputs(inputs);
+    expect(bucketOf.get(REFERENCE_ID_FULL)).toBe(bucketOf.get(REFERENCE_ID_EXCERPT));
+    let raised: unknown;
+    try {
+      assertReferenceQuoteBudget([
+        {
+          postSha: bucketOf.get(REFERENCE_ID_FULL)!,
+          inputId: REFERENCE_ID_FULL,
+          startUtf16: 0,
+          endUtf16: 240,
+          quote: a.slice(0, 240),
+        },
+        {
+          postSha: bucketOf.get(REFERENCE_ID_EXCERPT)!,
+          inputId: REFERENCE_ID_EXCERPT,
+          startUtf16: 0,
+          endUtf16: 240,
+          quote: b.slice(0, 240),
+        },
+        {
+          postSha: bucketOf.get(REFERENCE_ID_FULL)!,
+          inputId: REFERENCE_ID_FULL,
+          startUtf16: 240,
+          endUtf16: 480,
+          quote: a.slice(240, 480) || "z".repeat(240),
+        },
+      ]);
+    } catch (e) {
+      raised = e;
+    }
+    expect(raised).toBeInstanceOf(ReferenceEchoError);
+    expect((raised as Error).message).toMatch(/own words/);
+  });
+
+  it("never-brick re-proved on the BUCKETED path: a rebuild citing exactly the same spans still writes", () => {
+    const inputs: ReferenceInput[] = [{ id: REFERENCE_ID_FULL, content: "y".repeat(1000) }];
+    const bucketOf = groupReferenceInputs(inputs);
+    const sha = bucketOf.get(REFERENCE_ID_FULL)!;
+    const retained = [
+      { postSha: sha, inputId: REFERENCE_ID_FULL, startUtf16: 0, endUtf16: 240, quote: "" },
+      { postSha: sha, inputId: REFERENCE_ID_FULL, startUtf16: 240, endUtf16: 480, quote: "" },
+      { postSha: sha, inputId: REFERENCE_ID_FULL, startUtf16: 480, endUtf16: 720, quote: "" }, // 720 > 600
+    ];
+    expect(() =>
+      assertReferenceQuoteBudget(
+        [{ postSha: sha, inputId: REFERENCE_ID_FULL, startUtf16: 0, endUtf16: 100, quote: "y".repeat(100) }],
+        retained
+      )
+    ).not.toThrow();
   });
 });
 

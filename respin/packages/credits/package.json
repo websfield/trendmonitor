@@ -18,6 +18,7 @@
   "dependencies": {
     "@respin/config": "workspace:*",
     "@respin/db": "workspace:*",
+    "@respin/llm": "workspace:*",
     "drizzle-orm": "^0.44.0",
     "stripe": "^22.5.0"
   },

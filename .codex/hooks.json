@@ -1,0 +1,43 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const c=require('child_process'),p=require('path');require(p.join(c.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex','hooks','session-start.js'))\"",
+            "timeout": 15,
+            "additionalContextLimit": 1800
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const c=require('child_process'),p=require('path');require(p.join(c.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex','hooks','guardrails.js'))\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const c=require('child_process'),p=require('path');require(p.join(c.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex','hooks','post-edit-check.js'))\"",
+            "timeout": 300,
+            "additionalContextLimit": 12000
+          }
+        ]
+      }
+    ]
+  }
+}
+

@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@respin/auth/client";
+import { buttonClass } from "../ui/button";
+import { Field } from "../ui/field";
 
 /**
  * The password minimum, stated ONCE and used twice — as the input's own
@@ -12,12 +14,8 @@ import { authClient } from "@respin/auth/client";
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_RULE = `At least ${PASSWORD_MIN_LENGTH} characters.`;
 
-const field: React.CSSProperties = { display: "grid", gap: "0.25rem" };
-const hint: React.CSSProperties = {
-  color: "#555",
-  fontSize: "0.85rem",
-  margin: 0,
-};
+// Styling comes from the Signal primitives: Field (label + control + stated
+// rule) and buttonClass (app/ui/), backed by app/globals.css.
 
 export function AuthForm({
   mode,
@@ -50,7 +48,7 @@ export function AuthForm({
   }
 
   return (
-    <div style={{ width: 320, display: "grid", gap: "0.75rem" }}>
+    <div className="auth-card">
       <h1>{isSignUp ? "Create your account" : "Sign in"}</h1>
       {/* VISIBLE LABELS, not placeholders (audit 2026-08-17 #15, WCAG 3.3.2
           Level A) — and this is the product's ONLY entry point, so it is the
@@ -71,8 +69,7 @@ export function AuthForm({
           sitting nearby in the visual order only. */}
       <form onSubmit={submit} style={{ display: "grid", gap: "0.5rem" }}>
         {isSignUp && (
-          <div style={field}>
-            <label htmlFor="auth-name">Name</label>
+          <Field label="Name" htmlFor="auth-name">
             <input
               id="auth-name"
               name="name"
@@ -81,10 +78,9 @@ export function AuthForm({
               onChange={(e) => setName(e.target.value)}
               required
             />
-          </div>
+          </Field>
         )}
-        <div style={field}>
-          <label htmlFor="auth-email">Email</label>
+        <Field label="Email" htmlFor="auth-email">
           <input
             id="auth-email"
             name="email"
@@ -94,9 +90,13 @@ export function AuthForm({
             onChange={(e) => setEmail(e.target.value)}
             required
           />
-        </div>
-        <div style={field}>
-          <label htmlFor="auth-password">Password</label>
+        </Field>
+        <Field
+          label="Password"
+          htmlFor="auth-password"
+          limit={PASSWORD_RULE}
+          limitId="auth-password-rule"
+        >
           <input
             id="auth-password"
             name="password"
@@ -108,17 +108,15 @@ export function AuthForm({
             aria-describedby="auth-password-rule"
             required
           />
-          <p id="auth-password-rule" style={hint}>
-            {PASSWORD_RULE}
-          </p>
-        </div>
-        <button type="submit" disabled={busy}>
+        </Field>
+        <button type="submit" className={buttonClass("primary")} disabled={busy}>
           {busy ? "Working…" : isSignUp ? "Sign up" : "Sign in"}
         </button>
       </form>
       {googleEnabled && (
         <button
           type="button"
+          className={buttonClass("secondary")}
           disabled={busy}
           onClick={() => authClient.signIn.social({ provider: "google", callbackURL: "/studio" })}
         >

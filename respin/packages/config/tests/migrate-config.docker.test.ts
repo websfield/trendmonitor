@@ -151,11 +151,34 @@ describe.skipIf(!MAINTENANCE_URL)("migrate-config CAS on real Postgres", () => {
         .from(schema.configVersions)
         .orderBy(desc(schema.configVersions.version));
 
+      // SYNCHRONISATION, NOT A SLEEP. An earlier version of this case started
+      // the migration and asserted "not settled after 300ms" while merely
+      // HOPING appendConfigVersion had already taken its lock. Under load it
+      // had not, the migration won the lock first, and the case failed with
+      // nothing wrong in the product — observed 2026-08-27. A racing test that
+      // never establishes its own precondition is the M4 lesson from slice 1
+      // in the opposite direction: there the racers never contended, here the
+      // contention never started.
+      //
+      // So the handoff is explicit: `lockHeld` resolves INSIDE the genuine
+      // transaction, after the real function body has run `takeConfigLock` and
+      // inserted, and the transaction then stays open until the test releases
+      // it. No wall-clock assumption decides whether the race is set up.
+      let signalLockHeld!: () => void;
+      const lockHeld = new Promise<void>((r) => {
+        signalLockHeld = r;
+      });
+      let release!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+
       const delayedDb = {
         transaction: (cb: Parameters<typeof db.transaction>[0]) =>
           db.transaction(async (tx) => {
             const result = await cb(tx);
-            await new Promise((r) => setTimeout(r, 750));
+            signalLockHeld();
+            await released;
             return result;
           }),
       } as unknown as Parameters<typeof appendConfigVersion>[0];
@@ -166,6 +189,9 @@ describe.skipIf(!MAINTENANCE_URL)("migrate-config CAS on real Postgres", () => {
         editedByAppend as never,
         "operator-append"
       );
+
+      // The lock is genuinely held before the migration is allowed to start.
+      await lockHeld;
 
       let settled = false;
       const migration = migrateConfigDefaults(db).then(
@@ -179,14 +205,27 @@ describe.skipIf(!MAINTENANCE_URL)("migrate-config CAS on real Postgres", () => {
         }
       );
 
+      // With the lock provably held, this can only go true if the migration
+      // sailed past it — which is the defect under test. A slow machine
+      // delays the migration further, it never fakes a pass.
       await new Promise((r) => setTimeout(r, 300));
       expect(
         settled,
         "migrate-config completed while appendConfigVersion's own transaction was still open — that call site's takeConfigLock is not serialising against the migration"
       ).toBe(false);
 
+      release();
       await appendResult;
       const outcome = await migration;
+
+      // NON-VACUITY: the assertion above must be capable of going true. Once
+      // the append has committed and freed the lock, the migration DOES
+      // settle — so `settled === false` above was the lock blocking it, not
+      // the migration having never been reachable in the first place.
+      expect(
+        settled,
+        "the migration never settled even after the lock was released — the case above proved nothing"
+      ).toBe(true);
 
       const active = await getActiveConfig(db);
       expect(

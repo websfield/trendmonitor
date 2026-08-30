@@ -9,15 +9,15 @@
       "timeoutMs": 300000
     },
     {
-      "match": "(^|/)src/IntelligencePlane/.*\\.py$|(^|/)tests/architecture/.*\\.py$",
-      "command": "uv run --with ruff ruff check src/IntelligencePlane tests/architecture && uv run --with pytest pytest tests/architecture",
+      "match": "(^|/)src/IntelligencePlane/.*\\.py$|(^|/)tests/Architecture/.*\\.py$",
+      "command": "uv run --with ruff ruff check src/IntelligencePlane tests/Architecture && uv run --with pytest pytest tests/Architecture",
       "cwd": ".",
       "label": "intelligence plane lints + tests green",
       "timeoutMs": 300000
     },
     {
       "match": "(^|/)tests/fixtures/provenance-parity\\.json$",
-      "command": "dotnet test tests/Architecture --nologo -v q --filter FullyQualifiedName~ProvenanceParityTests && uv run --with pytest pytest tests/architecture -k parity",
+      "command": "dotnet test tests/Architecture --nologo -v q --filter FullyQualifiedName~ProvenanceParityTests && uv run --with pytest pytest tests/Architecture -k parity",
       "cwd": ".",
       "label": "C#/Python provenance parity holds",
       "timeoutMs": 300000
@@ -42,6 +42,13 @@
       "cwd": ".",
       "label": "pack config parses",
       "timeoutMs": 15000
+    },
+    {
+      "match": "(^|/)(AGENTS\\.md|\\.codex/.*|\\.agents/skills/.*|\\.claude/(skills|agents|commands)/.*)$",
+      "command": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .codex/scripts/doctor.ps1",
+      "cwd": ".",
+      "label": "Codex workflow adapters and hooks are healthy",
+      "timeoutMs": 120000
     },
     {
       "match": "(^|/)docs/initial/.*\\.md$",

@@ -185,6 +185,10 @@ export function findUngatedApiEntrypoints(appRoot: string): string[] {
  */
 const PUBLIC_ENTRYPOINTS: { file: string; why: string }[] = [
   {
+    file: "(marketing)/for/[audience]/page.tsx",
+    why: "the statically generated audience variants are public marketing pages; dynamicParams limits them to declared audience slugs.",
+  },
+  {
     file: "(marketing)/page.tsx",
     why: "the marketing landing page — the first thing a signed-out visitor sees.",
   },
@@ -333,6 +337,49 @@ const NAMED_PROTECTED_PAGES: {
   url: string;
   gate: "requireUser" | "requireAdmin";
 }[] = [
+  // Slice 1. The page and its "use server" module are named separately for the
+  // reason the block comment below the billing pair gives: an action module is a
+  // POST endpoint in its own right, invocable by its stable action id without
+  // the page ever rendering, so it carries its own gate above its own try.
+  {
+    file: "(product)/onboarding/page.tsx",
+    url: "/onboarding",
+    gate: "requireUser",
+  },
+  {
+    file: "(product)/onboarding/actions.ts",
+    url: "/onboarding",
+    gate: "requireUser",
+  },
+  // Slice 3's confirm-and-activate surface. Both entrypoints are named here
+  // because this fixture is what makes the gate a DECISION rather than a
+  // regex's opinion — and these two are the acts that decide what the product
+  // believes about a person, so an ungated one is not a leak of data alone.
+  {
+    file: "(product)/brain/page.tsx",
+    url: "/brain",
+    gate: "requireUser",
+  },
+  {
+    file: "(product)/brain/actions.ts",
+    url: "/brain",
+    gate: "requireUser",
+  },
+  // Slice 3b, Stage B1's structured-interview surface. Same reason as the two
+  // pairs above: `interview/actions.ts` is a stable POST endpoint reachable
+  // without `interview/page.tsx` ever rendering, and this fixture is what
+  // makes its gate a DECISION on this list rather than the regex walk's
+  // opinion alone.
+  {
+    file: "(product)/onboarding/interview/page.tsx",
+    url: "/onboarding/interview",
+    gate: "requireUser",
+  },
+  {
+    file: "(product)/onboarding/interview/actions.ts",
+    url: "/onboarding/interview",
+    gate: "requireUser",
+  },
   { file: "(product)/studio/page.tsx", url: "/studio", gate: "requireUser" },
   { file: "(product)/usage/page.tsx", url: "/usage", gate: "requireUser" },
   {
@@ -357,6 +404,14 @@ const NAMED_PROTECTED_PAGES: {
   {
     file: "(admin)/admin/config/actions.ts",
     url: "/admin/config",
+    gate: "requireAdmin",
+  },
+  // Slice 2b — R14: the minimal operator spend reader. Renamed from
+  // /admin/margin to /admin/model-spend in slice 2b-c (the page renders
+  // cost, never margin — R15's own rule about the route's own name).
+  {
+    file: "(admin)/admin/model-spend/page.tsx",
+    url: "/admin/model-spend",
     gate: "requireAdmin",
   },
 ];

@@ -1,0 +1,71 @@
+/* ============================================================================
+ * Menubook — Typography tokens
+ * Single family: Satoshi (display + body). Clean, modern, highly readable.
+ * ========================================================================== */
+
+:root {
+  /* Families */
+  --font-sans: "Satoshi", system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Weights */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-bold: 700;
+  --weight-black: 900;
+
+  /* Type scale (root = 16px) */
+  --text-display: 3.5rem;     /* 56 — responsive clamp lives in .mb-display */
+  --text-h1: 2rem;        /* 32 */
+  --text-h2: 1.5rem;      /* 24 */
+  --text-h3: 1.25rem;     /* 20 */
+  --text-h4: 1.125rem;    /* 18 */
+  --text-body-lg: 1.0625rem; /* 17 */
+  --text-body: 1rem;      /* 16 */
+  --text-body-sm: 0.875rem;  /* 14 */
+  --text-caption: 0.8125rem; /* 13 */
+  --text-overline: 0.6875rem; /* 11 */
+
+  /* Line heights */
+  --leading-tight: 1.1;
+  --leading-snug: 1.25;
+  --leading-normal: 1.45;
+  --leading-relaxed: 1.6;
+
+  /* Letter spacing */
+  --tracking-tight: -0.02em;
+  --tracking-snug: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+  --tracking-overline: 0.12em;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Optional helper classes — components mostly set type inline via the tokens,
+ * but these give cards and prose a quick handle on the scale.
+ * ------------------------------------------------------------------------- */
+.mb-display {
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 1.6rem + 3.6vw, 3.5rem);
+  font-weight: var(--weight-black);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+}
+.mb-h1 { font-size: var(--text-h1); font-weight: var(--weight-bold); line-height: var(--leading-snug); letter-spacing: var(--tracking-snug); }
+.mb-h2 { font-size: var(--text-h2); font-weight: var(--weight-bold); line-height: var(--leading-snug); letter-spacing: var(--tracking-snug); }
+.mb-h3 { font-size: var(--text-h3); font-weight: var(--weight-bold); line-height: var(--leading-snug); }
+.mb-h4 { font-size: var(--text-h4); font-weight: var(--weight-medium); line-height: var(--leading-normal); }
+.mb-body-lg { font-size: var(--text-body-lg); font-weight: var(--weight-regular); line-height: var(--leading-relaxed); }
+.mb-body { font-size: var(--text-body); font-weight: var(--weight-regular); line-height: var(--leading-normal); }
+.mb-body-sm { font-size: var(--text-body-sm); font-weight: var(--weight-regular); line-height: var(--leading-normal); }
+.mb-caption { font-size: var(--text-caption); font-weight: var(--weight-medium); line-height: var(--leading-normal); color: var(--color-text-muted); }
+.mb-overline {
+  font-size: var(--text-overline);
+  font-weight: var(--weight-bold);
+  line-height: 1;
+  letter-spacing: var(--tracking-overline);
+  text-transform: uppercase;
+  color: var(--color-text-subtle);
+}

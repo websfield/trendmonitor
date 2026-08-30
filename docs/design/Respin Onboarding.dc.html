@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="respin-tokens.css">
+  <style>
+    body { margin: 0; background: #0F1013; }
+    a { color: var(--accent-text, #94A6EE); text-decoration: none; }
+    a:hover { color: var(--accent-text-strong, #B8C4F4); }
+    ::selection { background: #2A3350; }
+  </style>
+</helmet>
+<div data-screen-label="Onboarding - confirm the brain" style="font-family: var(--font-sans); background: var(--bg); color: var(--text-1); min-height: 100vh;">
+  <header style="display: flex; align-items: center; gap: 24px; padding: 16px 36px; background: #121419; border-bottom: 1px solid var(--border);">
+    <span style="font: 700 18px/1 var(--font-sans); letter-spacing: -0.02em;">Respin</span>
+    <div style="display: flex; align-items: center; gap: 10px; font: 500 12px/1 var(--font-mono);">
+      <span style="color: var(--text-4);">1 INTERVIEW</span>
+      <span style="width: 20px; height: 1px; background: var(--border-strong);"></span>
+      <span style="color: var(--text-4);">2 YOUR POSTS</span>
+      <span style="width: 20px; height: 1px; background: var(--border-strong);"></span>
+      <span style="color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 5px 8px;">3 CONFIRM THE BRAIN</span>
+      <span style="width: 20px; height: 1px; background: var(--border-strong);"></span>
+      <span style="color: var(--text-4);">4 FIRST IDEAS</span>
+    </div>
+    <span style="margin-left: auto; font: 400 12px/1 var(--font-mono); color: var(--text-4);">ABOUT 6 MIN LEFT OF 20</span>
+  </header>
+  <main style="max-width: 860px; margin: 0 auto; padding: 32px 24px 120px;">
+    <h1 style="font: 600 24px/1.3 var(--font-sans); letter-spacing: -0.01em; margin: 0;">Confirm what we read from your posts</h1>
+    <p style="font: 400 14.5px/1.6 var(--font-sans); color: var(--text-3); margin: 10px 0 0; max-width: 66ch;">Every field below was inferred from the 8 posts you pasted and your interview answers, and each shows its evidence. Confirm or edit each one. Nothing activates silently: the brain starts working only when you have signed off on all six.</p>
+
+    <div style="display: grid; gap: 14px; margin-top: 28px;">
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font: 600 11px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">VOICE</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 4px 7px; margin-left: auto;">CONFIRMED</span>
+        </div>
+        <p style="font: 600 16px/1.5 var(--font-sans); margin: 10px 0 0; max-width: 62ch;">Short declarative sentences. You open with the claim, never a greeting, and you talk to one lifter, not an audience.</p>
+        <div style="margin-top: 12px; background: var(--surface-2); border-left: 2px solid var(--border-strong); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 10px 14px;">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">SOURCE EVIDENCE</span>
+          <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 6px 0 0;">&ldquo;Nine weeks at 275 is not a plateau. It is a programming receipt.&rdquo; (post 3) &middot; &ldquo;You do not need a new split. You need to stop lying about your rest times.&rdquo; (post 7) &middot; 7 of 8 posts open with the claim.</p>
+        </div>
+      </div>
+
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font: 600 11px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">POSITIONING</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 4px 7px; margin-left: auto;">CONFIRMED</span>
+        </div>
+        <p style="font: 600 16px/1.5 var(--font-sans); margin: 10px 0 0; max-width: 62ch;">The evidence-first coach for lifters who stall: every claim arrives with a client log attached.</p>
+        <div style="margin-top: 12px; background: var(--surface-2); border-left: 2px solid var(--border-strong); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 10px 14px;">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">SOURCE EVIDENCE</span>
+          <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 6px 0 0;">Interview: &ldquo;I want to be the guy who shows the log, not the guy who yells.&rdquo; &middot; 5 of 8 posts contain a screenshot or number from client training logs.</p>
+        </div>
+      </div>
+
+      <div style="background: var(--surface-1); border: 1px solid var(--accent-border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow-soft);">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font: 600 11px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">HOOK TENDENCY</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 4px 7px; margin-left: auto;">NEEDS YOUR CALL</span>
+        </div>
+        <p style="font: 600 16px/1.5 var(--font-sans); margin: 10px 0 0; max-width: 62ch;">You default to receipt-flash hooks, but your two biggest posts opened on a contrarian claim instead.</p>
+        <div style="margin-top: 12px; background: var(--surface-2); border-left: 2px solid var(--border-strong); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 10px 14px;">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">SOURCE EVIDENCE</span>
+          <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 6px 0 0;">6 of 8 pasted posts open on a log or number &middot; your two outliers (posts 2 and 5) open on &ldquo;Every program you have ever bought&hellip;&rdquo; style claims. Confirming tells the brain to lead contrarian and back it with receipts.</p>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 14px;">
+          <button style="font: 600 13px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 11px 18px; cursor: pointer;" style-hover="background: var(--accent-hover);">Confirm</button>
+          <button style="font: 500 13px/1 var(--font-sans); background: transparent; color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 11px 18px; cursor: pointer;" style-hover="background: var(--surface-2);">Edit</button>
+        </div>
+      </div>
+
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font: 600 11px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">NORTH-STAR METRIC</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 4px 7px; margin-left: auto;">CONFIRMED</span>
+        </div>
+        <p style="font: 600 16px/1.5 var(--font-sans); margin: 10px 0 0;">Follows per 1k views. Reach is a lever, not the goal.</p>
+        <div style="margin-top: 12px; background: var(--surface-2); border-left: 2px solid var(--border-strong); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 10px 14px;">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">SOURCE EVIDENCE</span>
+          <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 6px 0 0;">Interview: you picked coaching-client leads over views; follows per 1k is the closest measurable proxy you log today.</p>
+        </div>
+      </div>
+
+      <div style="background: var(--surface-1); border: 1px solid var(--accent-border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow-soft);">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font: 600 11px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">BANNED WORDS</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 4px 7px; margin-left: auto;">NEEDS YOUR CALL</span>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+          <span style="font: 500 13px/1 var(--font-mono); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 7px 10px;">grind &times;</span>
+          <span style="font: 500 13px/1 var(--font-mono); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 7px 10px;">beast mode &times;</span>
+          <span style="font: 500 13px/1 var(--font-mono); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 7px 10px;">no excuses &times;</span>
+          <span style="font: 500 13px/1 var(--font-mono); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 7px 10px;">unlock &times;</span>
+          <span style="font: 500 13px/1 var(--font-mono); color: var(--text-4); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 7px 10px;">+ add a word</span>
+        </div>
+        <div style="margin-top: 12px; background: var(--surface-2); border-left: 2px solid var(--border-strong); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 10px 14px;">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">SOURCE EVIDENCE</span>
+          <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 6px 0 0;">Three from your interview. &ldquo;unlock&rdquo; is inferred: it appears in zero of your posts but in 61% of generic fitness scripts, so banning it protects your voice. Remove it if you disagree.</p>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 14px;">
+          <button style="font: 600 13px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 11px 18px; cursor: pointer;" style-hover="background: var(--accent-hover);">Confirm</button>
+          <button style="font: 500 13px/1 var(--font-sans); background: transparent; color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 11px 18px; cursor: pointer;" style-hover="background: var(--surface-2);">Edit</button>
+        </div>
+      </div>
+
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font: 600 11px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">AUDIENCE</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 4px 7px; margin-left: auto;">CONFIRMED</span>
+        </div>
+        <p style="font: 600 16px/1.5 var(--font-sans); margin: 10px 0 0; max-width: 62ch;">Intermediate lifters training around a job. They have a log, a stall, and no patience for hype.</p>
+        <div style="margin-top: 12px; background: var(--surface-2); border-left: 2px solid var(--border-strong); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 10px 14px;">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">SOURCE EVIDENCE</span>
+          <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 6px 0 0;">Interview, plus your comment sections: &ldquo;stuck&rdquo;, &ldquo;plateau&rdquo; and &ldquo;how many sets&rdquo; are your three most frequent commenter phrases.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div style="position: sticky; bottom: 0; background: rgba(18, 20, 25, 0.94); border-top: 1px solid var(--border); backdrop-filter: blur(8px); padding: 14px 36px; display: flex; align-items: center; gap: 16px;">
+    <span style="font: 500 13px/1.5 var(--font-sans); color: var(--text-2);">4 of 6 confirmed. The brain activates only when every field is signed off.</span>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
+      <button disabled style="font: 600 13.5px/1 var(--font-sans); background: var(--surface-3); color: var(--text-4); border: none; border-radius: var(--radius); padding: 12px 20px;">Activate brain v1</button>
+      <span style="font: 400 12px/1.4 var(--font-mono); color: var(--text-4);">2 FIELDS NEED YOUR CALL</span>
+    </div>
+  </div>
+
+  <div style="padding: 14px 36px; background: #121419; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); font: 600 11px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-4);">STEP 4 &middot; THE AHA: YOUR FIRST THREE IDEAS</div>
+  <div data-screen-label="Onboarding - first ideas" style="padding: 32px 36px 64px; max-width: 1180px;">
+    <h2 style="font: 600 22px/1.3 var(--font-sans); letter-spacing: -0.01em; margin: 0;">Brain v1 is live. Here is what it would make first.</h2>
+    <p style="font: 400 14px/1.6 var(--font-sans); color: var(--text-3); margin: 8px 0 0; max-width: 66ch;">Three ideas in your voice, each mapped to why it fits the brain you just confirmed. These three are included; opening one in Studio starts your first full run.</p>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 22px;">
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+        <span style="font: 500 11px/1 var(--font-mono); color: var(--accent-text);">[consensus break]</span>
+        <p style="font: 600 17px/1.4 var(--font-sans); margin: 0;">Every program you have ever bought is wrong about training to failure.</p>
+        <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 0;">Fits: contrarian open, backed by the client log you already have on film.</p>
+        <button style="margin-top: auto; font: 600 13px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 11px 16px; cursor: pointer; align-self: start;" style-hover="background: var(--accent-hover);">Open in Studio</button>
+      </div>
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+        <span style="font: 500 11px/1 var(--font-mono); color: var(--accent-text);">[receipt flash]</span>
+        <p style="font: 600 17px/1.4 var(--font-sans); margin: 0;">This log gained 40 lb of squat in 12 weeks. Count the failure sets: zero.</p>
+        <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 0;">Fits: your evidence-first positioning, opens on the receipt like your posts 1, 4 and 6.</p>
+        <button style="margin-top: auto; font: 600 13px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 11px 16px; cursor: pointer; align-self: start;" style-hover="background: var(--accent-hover);">Open in Studio</button>
+      </div>
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+        <span style="font: 500 11px/1 var(--font-mono); color: var(--accent-text);">[direct address]</span>
+        <p style="font: 600 17px/1.4 var(--font-sans); margin: 0;">If your squat has not moved since spring, your program is not hard enough to recover from.</p>
+        <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 0;">Fits: speaks to the &ldquo;stuck&rdquo; commenter your audience field names.</p>
+        <button style="margin-top: auto; font: 600 13px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 11px 16px; cursor: pointer; align-self: start;" style-hover="background: var(--accent-hover);">Open in Studio</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1440, &quot;height&quot;: 960}}"></script>
+</body>
+</html>

@@ -320,7 +320,16 @@ describe("facade error surface (billing/tenancy round-7 CHANGE 2)", () => {
       ...reachableErrors(facadeMethods(APP_SERVER, "respinCredits")).errors,
       ...reachableErrors(facadeMethods(WEBHOOK_SERVER, "respinStripeWebhook")).errors,
     ]);
-    expect(reachable).not.toContain("InsufficientCreditsError");
+    // `InsufficientCreditsError` USED TO BE HERE, and slice 2a moved it.
+    //
+    // It was the canonical example of a class the app facade does not need,
+    // because until `runInference` existed nothing `app/**` could call ever
+    // spent a credit — every debit was package-internal or webhook-driven. The
+    // metered model call is the first app-reachable spend in the product, so
+    // the class is now genuinely reachable and IS demanded above. Deleting the
+    // line rather than rewriting the test around it is the point: the negative
+    // assertion was true of the old surface and is false of the new one.
+    expect(reachable).toContain("InsufficientCreditsError");
     expect(reachable).not.toContain("WorkspacePausedError");
     expect(reachable).not.toContain("RefundSourceNeverExpiresError");
     // ...and those classes really do exist, so the assertion is about

@@ -81,6 +81,26 @@ export const curatorStatus = pgEnum("curator_status", [
   "rejected",
 ]);
 
+// Whether a profile counts against its workspace's per-tier `profileCaps`.
+//
+// THE DOWNGRADE COLUMN (R-30.3, slice 1's owner decision, default taken). A
+// Studio workspace holding 5 profiles that downgrades to Creator (cap 1) must
+// not lose four creators' brains — REQ-A04 deletion is a request, never a
+// side effect of a plan change. So capacity is reduced by moving profiles OUT
+// OF the cap rather than out of the database, and `archived` is that state.
+//
+// THE CAP THEREFORE COUNTS `active` ROWS ONLY, and that choice has a debt
+// attached which is named here rather than discovered later: archive-then-
+// reactivate is a route back over the cap unless reactivation re-checks it.
+// Slice 1 ships NEITHER an archive nor a reactivate operation — nothing in
+// product code can move this column off its default — so the route does not
+// exist yet. Whichever slice adds `reactivateProfile` owes the same cap check
+// `createProfile` makes; `decisions.md` records that as R-35's second half.
+export const creatorProfileState = pgEnum("creator_profile_state", [
+  "active",
+  "archived",
+]);
+
 // The tenancy anchor. `(id, workspace_id)` is unique so children can carry a
 // composite FK to it — a plain FK to `id` alone would let a child name a
 // profile whose workspace differs from its own.
@@ -92,6 +112,13 @@ export const creatorProfiles = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     displayName: text("display_name").notNull(),
+    // SERVER-DERIVED, and in `GUARDED_WRITE_FIELDS` for the reason `status` is:
+    // a caller who can supply this can supply `archived`, and a profile created
+    // straight into `archived` costs nothing against the cap while still owning
+    // brain documents — the per-tier entitlement would be bypassable by a
+    // caller-chosen enum value, which is the exact shape of the M2b-1 round-2
+    // silent-brain-activation finding one table over.
+    state: creatorProfileState("state").notNull().default("active"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -174,9 +201,23 @@ export const brainDocs = pgTable(
      * confirmed in one shape and activated in another (round-2 V3).
      */
     confirmedContentSha256: text("confirmed_content_sha256"),
-    /** Which claim positions were confirmed, and which as placeholders (C-18). */
+    /**
+     * Which claim positions were confirmed, and which as placeholders (C-18).
+     *
+     * NULLABLE, DELIBERATELY, and this is B-5's other half — settled in slice 3
+     * as a contract rather than left as an unrecorded disagreement between the
+     * plan and the schema. `NULL` means *never confirmed*; `[]` means
+     * *confirmed, and nothing was*. A `NOT NULL DEFAULT '[]'` collapses those
+     * into one value on the one column that answers "did a human decide
+     * anything about this document" — and `activateBrainDoc`'s refusal counts
+     * confirmed positions against the claim set to build its message, so it
+     * needs the distinction to say an honest number. The plan document is what
+     * changed here; the column did not.
+     */
     confirmedFields: jsonb("confirmed_fields"),
-    /** C-21's countable label, per field. Written by the server, never a caller. */
+    /** C-21's countable label, per field. Written by the server, never a caller.
+     *  Nullable for the same reason as `confirmed_fields` above: unwritten and
+     *  written-as-empty are different facts about our evidence. */
     evidenceCounts: jsonb("evidence_counts"),
     // Why this version exists. Never optional: R-8's "never silent" is only
     // true if every version carries its reason.
@@ -211,16 +252,26 @@ export const brainDocs = pgTable(
     // than as application code. Round 2's V3 was exactly this: activation
     // never pinned the activated content to the confirmed content.
     //
-    // WHAT THIS CHECK DOES **NOT** COVER, stated because an earlier version of
-    // this comment read wider than the constraint: it enforces `confirmed_at`
-    // and `confirmed_content_sha256` only. AC-26 (every claim position
-    // confirmed) and `activated_at` are application-code guarantees in
-    // `activateBrainDoc`, so a hand-run UPDATE during an incident CAN still
+    // `activated_at` JOINED THE CHECK IN SLICE 3 — register item B-5, closed.
+    // An active row with no activation time is not a cosmetic gap: the column's
+    // whole reason for existing is that "which version was active at time T" is
+    // reconstructable once draft rows exist (see its own comment above), and a
+    // NULL there makes that question unanswerable for that row FOREVER, because
+    // `brain_docs` is append-only history. `activateBrainDoc` always sets it in
+    // the same UPDATE that sets the status, so this constraint costs nothing on
+    // the sanctioned path and closes the hand-run-UPDATE path that produced the
+    // finding.
+    //
+    // WHAT THIS CHECK STILL DOES **NOT** COVER, stated because an earlier
+    // version of this comment read wider than the constraint: AC-26 (every
+    // claim position confirmed) remains an application-code guarantee in
+    // `activateBrainDoc`, so a hand-run UPDATE during an incident can still
     // produce an active row with an inverted or incomplete `confirmed_fields`.
-    // Measured by the tenancy gate. Widening the CHECK is register item B-5.
+    // It is not expressible here — it needs `enumerateClaimFields`, which walks
+    // a zod schema — and that limit is recorded rather than implied.
     check(
       "brain_docs_active_is_confirmed",
-      sql`${t.status} <> 'active' OR (${t.confirmedAt} IS NOT NULL AND ${t.confirmedContentSha256} IS NOT NULL)`
+      sql`${t.status} <> 'active' OR (${t.confirmedAt} IS NOT NULL AND ${t.confirmedContentSha256} IS NOT NULL AND ${t.activatedAt} IS NOT NULL)`
     ),
     // REQ-B02 is PER-FIELD PROVENANCE, so a version with no evidence at all
     // records nothing about where its claims came from.
@@ -295,6 +346,8 @@ export const frameworks = pgTable(
 
 export type CreatorProfile = typeof creatorProfiles.$inferSelect;
 export type NewCreatorProfile = typeof creatorProfiles.$inferInsert;
+export type CreatorProfileState =
+  (typeof creatorProfileState.enumValues)[number];
 export type BrainDoc = typeof brainDocs.$inferSelect;
 export type NewBrainDoc = typeof brainDocs.$inferInsert;
 export type Framework = typeof frameworks.$inferSelect;

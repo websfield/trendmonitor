@@ -33,17 +33,26 @@
 //      is the actual control. Measured: word-like counts are identical under
 //      "und", "en" and "ja" for both the CJK and the English fixture, so the
 //      pin buys determinism in `resolvedOptions()`, not different behaviour.
-import { ProvenanceError } from "./errors";
+import { createHash } from "node:crypto";
+import { ProvenanceError, ReferenceEchoError } from "./errors";
 
 /**
  * The window, in word-like segments, at or above which a span shared with a
  * `reference` input is refused.
  *
- * A JUDGMENT WITH A MEASUREMENT BEHIND IT, not a tuned parameter. Measured
- * during plan review across two independently written documents by the same
- * author: 9 shared 8-grams in 607, and all 9 traced to a single sentence
- * deliberately copied between them — zero incidental collisions. Below 8 the
- * collision rate climbs into ordinary phrasing; at 8 it is a distinctive span.
+ * B-7 / TASK 47 (slice 4 honesty debt): the previous version of this comment
+ * asserted "9 shared 8-grams in 607" under a heading that said MEASURED,
+ * naming neither the two documents nor a reproducible method — a claim golden
+ * rule 1 cannot verify is not a fact to restate, so it is corrected here
+ * rather than carried forward. This is a JUDGMENT, plainly labelled as one,
+ * following the precedent `REFERENCE_QUOTE_TOTAL_MAX_CHARS` below already
+ * sets: nobody has run a fresh corpus measurement to derive 8, and none is
+ * claimed. The reasoning that sets it there is qualitative and stands on its
+ * own — ordinary phrasing collides well below 8 consecutive word-like
+ * segments (a shared trigram or 5-gram is unremarkable between two posts on
+ * the same topic), while 8 consecutive segments repeated verbatim is
+ * distinctive enough that a false positive is rare and, when it happens,
+ * recoverable by editing.
  *
  * IT IS A CODE CONSTANT AND NEVER A CONFIG KEY. `/admin/config` is a
  * paste-the-whole-document editor with no deploy, so a config home would be a
@@ -51,7 +60,9 @@ import { ProvenanceError } from "./errors";
  *
  * A TRIPWIRE AGAINST WHOLESALE ECHO, NOT A PLAGIARISM DETECTOR. It errs closed
  * and its refusal is recoverable by editing, so a false positive costs an edit
- * while a false negative costs R-3.
+ * while a false negative costs R-3. When a reference corpus exists at scale
+ * (M2c), THIS is the number to re-derive against real collision rates — see
+ * `REFERENCE_QUOTE_TOTAL_MAX_CHARS`'s docblock for the same trigger.
  */
 export const ECHO_MIN_SEGMENTS = 8;
 
@@ -382,8 +393,9 @@ export function assertNoReferenceEcho(
     for (const ref of references) {
       const span = findEchoWindow(leaf.text, ref.content);
       if (span !== null) {
-        throw new ProvenanceError(
-          `the field at ${leaf.pointer || "/"} repeats a span of at least ${ECHO_MIN_SEGMENTS} words from a reference post (input ${ref.id}): "${span}". A brain document records how YOU write; a reference post is somebody else's work, kept so the product can learn a mechanism from it (R-3). Rewrite the span in your own words`
+        throw new ReferenceEchoError(
+          `the field at ${leaf.pointer || "/"} repeats a span of at least ${ECHO_MIN_SEGMENTS} words from a reference post (input ${ref.id}): "${span}". A brain document records how YOU write; a reference post is somebody else's work, kept so a mechanism can be noted from it (R-3). Rewrite the span in your own words`,
+          { pointer: leaf.pointer || "/", inputId: ref.id, span }
         );
       }
     }
@@ -437,6 +449,32 @@ export type ReferenceQuoteSpan = {
   quote: string;
 };
 
+/**
+ * The ONE predicate for "is this a usable [start, end) range", shared by the
+ * two call sites the tenancy gate found disagreeing (G-16): this module's own
+ * `assertUsableSpan` below (which THROWS on a bad range, because it runs on
+ * material this write is about to cite) and `retainedReferenceSpans` in
+ * `with-workspace.ts` (which must SKIP a bad range on an already-stored row,
+ * because a stored malformed span must never make a profile permanently
+ * unable to write again — C-9 / C-41's never-brick property, one layer up).
+ *
+ * Two call sites computing this independently is exactly the shape that
+ * disagreed: the skip-list checked `Number.isInteger` only, the refuse-list
+ * also checked negative and inverted, and a stored inverted range fell through
+ * the gap — skipped by neither, so it reached `assertUsableSpan` on every
+ * later write and bricked the profile permanently. One predicate, two callers
+ * choosing what to DO with a `false` (throw vs skip), removes the gap by
+ * construction rather than by keeping both lists in sync by hand.
+ */
+export function isUsableSpanRange(startUtf16: number, endUtf16: number): boolean {
+  return (
+    Number.isInteger(startUtf16) &&
+    Number.isInteger(endUtf16) &&
+    startUtf16 >= 0 &&
+    endUtf16 >= startUtf16
+  );
+}
+
 /** A span that is not a finite, non-negative, non-inverted half-open range. */
 function assertUsableSpan(s: ReferenceQuoteSpan): void {
   // FAIL CLOSED ON THE RANGE ITSELF, because this function is a public export
@@ -450,16 +488,138 @@ function assertUsableSpan(s: ReferenceQuoteSpan): void {
   //     `NaN > 600` is FALSE, so the entire ceiling passes;
   //   - one inverted `{startUtf16: 1000, endUtf16: 0}` contributes -1000, which
   //     CREDITS the budget and buys back material already taken.
-  if (
-    !Number.isInteger(s.startUtf16) ||
-    !Number.isInteger(s.endUtf16) ||
-    s.startUtf16 < 0 ||
-    s.endUtf16 < s.startUtf16
-  ) {
+  if (!isUsableSpanRange(s.startUtf16, s.endUtf16)) {
     throw new ProvenanceError(
       `a cited span records the range [${String(s.startUtf16)}, ${String(s.endUtf16)}), which is not a valid position in reference post ${s.inputId}. A range that is inverted, negative or not a whole number cannot be measured, and a budget that cannot measure a span must refuse it rather than skip it (R-3)`
     );
   }
+}
+
+/**
+ * G-11 LAYER A — the budget's aggregation key, keyed on the COMPARISON FORM of
+ * a reference post's content rather than on `content_sha256`.
+ *
+ * `content_sha256` (stored on `onboarding_inputs`, taken over `normaliseContent`
+ * — NFC + CRLF->LF only) is the WRONG equivalence relation for this purpose: a
+ * trailing space, a re-cased letter, a smart quote or a soft hyphen all change
+ * it, so pasting the same reference post twice with one trailing space bought
+ * TWO separate 600-character budgets — measured reassembling a 989-character
+ * post exactly and contiguously. `echoComparisonForm` already folds every one
+ * of those (NFKC, zero-width strip, dash/quote fold, lowercase) because it is
+ * the form the echo bar itself compares in, so keying the budget on a digest
+ * of THAT form closes the class in one line with no new machinery.
+ *
+ * DELIBERATELY A SEPARATE DIGEST, never `content_sha256` itself. That column
+ * indexes `source_evidence`'s stored offsets (`echo.ts`'s own header states
+ * why `echoComparisonForm` must never replace `normaliseContent`) and is read
+ * for reasons that have nothing to do with the R-3 budget; conflating the two
+ * would make a future change to one silently change the other.
+ */
+/**
+ * The normalised form the budget's identity is computed over — deliberately
+ * ONE STEP FURTHER than `echoComparisonForm`.
+ *
+ * MEASURED, not assumed: `echoComparisonForm` folds case, dashes, quotes and
+ * zero-width characters, but it does not touch an ORDINARY space — U+0020 is
+ * outside both `\p{Cf}` and `\p{Default_Ignorable_Code_Point}` by definition,
+ * so a genuinely trailing or doubled space survives it unchanged. That is
+ * precisely the running example this slice's own register entry and phase
+ * card use for G-11 ("a trailing space… mints a fresh 600-character budget"),
+ * so leaving it unclosed here would ship the fix under the name of the bug it
+ * does not fix. `trim()` plus collapsing internal whitespace runs closes it
+ * without touching `echoComparisonForm` itself, which stays exactly the form
+ * the echo bar compares in (its own docblock explains why that must not move).
+ */
+function budgetComparisonForm(content: string): string {
+  return echoComparisonForm(content).trim().replace(/\s+/g, " ");
+}
+
+export function referenceBudgetKey(content: string): string {
+  return createHash("sha256")
+    .update(budgetComparisonForm(content), "utf8")
+    .digest("hex");
+}
+
+/**
+ * G-11 LAYER B — the containment bucket.
+ *
+ * Layer A alone cannot see a SUBSTRING: a 500-character excerpt of a
+ * 1,000-character reference post is a different document under any exact
+ * digest, so pasting an excerpt as a second reference input would buy it a
+ * second 600-character budget and the reassembly attack survives Layer A
+ * intact. Two reference inputs are "the same post" for budget purposes when
+ * they share at least `ECHO_MIN_SEGMENTS` word-like segments in a sliding
+ * window — the IDENTICAL relation `findEchoWindow` already computes for the
+ * echo bar itself, so this reuses it rather than inventing a second
+ * similarity measure with its own edge cases.
+ *
+ * UNION-FIND OVER THE WHOLE CORPUS, computed ONCE per write and shared by the
+ * caller across both the spans this write adds and every span already
+ * retained (with-workspace.ts composes it that way) — never recomputed
+ * independently for "new" and "retained", which would let the two disagree
+ * about which bucket a post belongs to inside the SAME write.
+ *
+ * THE RETURNED KEY IS INTERNAL AND OPAQUE — a representative input id from
+ * each connected component — and is meaningful only for the ONE call that
+ * produced it. Nothing persists it: `retainedReferenceSpans` recomputes the
+ * whole map fresh on every write from the CURRENT corpus, which is what keeps
+ * a newly-added reference post able to merge into an existing bucket rather
+ * than being compared against a snapshot frozen at some earlier write.
+ *
+ * O(n^2) `findEchoWindow` comparisons over the corpus. Reference inputs are
+ * capped per profile (`REFERENCE_COUNT_MAX`, onboarding-ops.ts) precisely so
+ * this stays a write-path-appropriate cost rather than an unbounded one.
+ */
+export function groupReferenceInputs(
+  inputs: readonly ReferenceInput[]
+): Map<string, string> {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root) as string;
+    // Path compression, iterative — flattens the chain so repeated lookups on
+    // a large corpus stay cheap.
+    let cur = x;
+    while (parent.get(cur) !== root) {
+      const next = parent.get(cur) as string;
+      parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  };
+  const union = (a: string, b: string): void => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  for (const inp of inputs) parent.set(inp.id, inp.id);
+
+  // Layer A folded in here too: an EXACT comparison-form match unions
+  // trivially, which matters for a pair of posts too short to carry a full
+  // `ECHO_MIN_SEGMENTS`-word window (findEchoWindow returns null below that
+  // length even for byte-identical content) — a short duplicate must still
+  // land in one bucket.
+  const byForm = new Map<string, string>();
+  for (const inp of inputs) {
+    const form = budgetComparisonForm(inp.content);
+    const seen = byForm.get(form);
+    if (seen !== undefined) union(seen, inp.id);
+    else byForm.set(form, inp.id);
+  }
+
+  // Layer B: any pair sharing an echo window is the same post.
+  for (let i = 0; i < inputs.length; i++) {
+    for (let j = i + 1; j < inputs.length; j++) {
+      if (find(inputs[i].id) === find(inputs[j].id)) continue;
+      if (findEchoWindow(inputs[i].content, inputs[j].content) !== null) {
+        union(inputs[i].id, inputs[j].id);
+      }
+    }
+  }
+
+  const out = new Map<string, string>();
+  for (const inp of inputs) out.set(inp.id, find(inp.id));
+  return out;
 }
 
 /**
@@ -500,7 +660,7 @@ export function assertReferenceQuoteBudget(
   for (const s of newSpans) {
     assertUsableSpan(s);
     if (s.quote.length > REFERENCE_QUOTE_MAX_CHARS) {
-      throw new ProvenanceError(
+      throw new ReferenceEchoError(
         `a quote drawn from a reference post is ${s.quote.length} characters, over the ${REFERENCE_QUOTE_MAX_CHARS}-character limit. Evidence drawn from somebody else's post stays mechanism-level (R-9, REQ-D04): quote the line that shows the mechanism, not the passage`
       );
     }
@@ -510,27 +670,55 @@ export function assertReferenceQuoteBudget(
   // every profile that wrote under the old one.
   for (const s of retained) assertUsableSpan(s);
 
+  // GROUPED BY BUCKET, THEN BY inputId WITHIN THE BUCKET.
+  //
+  // G-11 Layer B can put TWO DIFFERENT `onboarding_inputs` rows in one bucket
+  // (a full reference post and a separately-pasted excerpt of it) — and their
+  // UTF-16 offsets are two DIFFERENT COORDINATE SPACES: `[0,100)` into the
+  // excerpt's own stored content is not the same 100 characters as `[0,100)`
+  // into the full post's. Unioning raw numeric ranges ACROSS inputIds treats
+  // those as the same axis and silently UNDER-counts whenever they happen to
+  // overlap numerically — found by this slice's own bucket tests, not by a
+  // reviewer. Union stays WITHIN one inputId (safe: same coordinate space,
+  // and identical to every pre-slice-4 behaviour when a bucket holds exactly
+  // one inputId, which is every case before Layer B existed); ACROSS inputIds
+  // in the same bucket the totals are SUMMED, the conservative direction —
+  // it can only over-count material genuinely repeated across two rows that
+  // are the same post, never under-count material actually taken.
   const group = (list: readonly ReferenceQuoteSpan[]) => {
-    const by = new Map<string, { id: string; ranges: Array<[number, number]> }>();
+    const by = new Map<
+      string,
+      { id: string; byInput: Map<string, Array<[number, number]>> }
+    >();
     for (const s of list) {
-      const e = by.get(s.postSha) ?? { id: s.inputId, ranges: [] };
-      e.ranges.push([s.startUtf16, s.endUtf16]);
+      const e = by.get(s.postSha) ?? { id: s.inputId, byInput: new Map() };
+      const ranges = e.byInput.get(s.inputId) ?? [];
+      ranges.push([s.startUtf16, s.endUtf16]);
+      e.byInput.set(s.inputId, ranges);
       by.set(s.postSha, e);
     }
     return by;
+  };
+  const coveredLengthOf = (entry: {
+    byInput: Map<string, Array<[number, number]>>;
+  }): number => {
+    let total = 0;
+    for (const ranges of entry.byInput.values()) total += unionLength(ranges);
+    return total;
   };
   const before = group(retained);
   const after = group([...retained, ...newSpans]);
 
   for (const [sha, entry] of after) {
-    const coveredAfter = unionLength(entry.ranges);
+    const coveredAfter = coveredLengthOf(entry);
     if (coveredAfter <= REFERENCE_QUOTE_TOTAL_MAX_CHARS) continue;
-    const coveredBefore = unionLength(before.get(sha)?.ranges ?? []);
+    const beforeEntry = before.get(sha);
+    const coveredBefore = beforeEntry ? coveredLengthOf(beforeEntry) : 0;
     // Already over the ceiling and adding nothing new: permitted, deliberately.
     // See the header — this is what makes the refusal unable to become an
     // unclearable outage.
     if (coveredAfter <= coveredBefore) continue;
-    throw new ProvenanceError(
+    throw new ReferenceEchoError(
       `this write would take ${coveredAfter - coveredBefore} further characters from reference post ${entry.id}, bringing the total distinct material quoted from it to ${coveredAfter} — over the ${REFERENCE_QUOTE_TOTAL_MAX_CHARS}-character limit. The per-quote cap alone would let several capped quotes reassemble somebody else's post, so the distinct material taken from one post is bounded too (R-3). Re-citing a span you already cited costs nothing; quoting a further passage is what raises this`
     );
   }

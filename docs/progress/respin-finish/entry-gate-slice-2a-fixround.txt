@@ -1,0 +1,9 @@
+=== 2026-08-28T01:53:26+10:00 entry gate: slice 2a FIX ROUND 1 (CI shape, Docker live) ===
+typecheck exit=0
+lint exit=0
+test exit=0
+ Test Files  51 passed (51)
+      Tests  1052 passed (1052)
+db:check exit=0
+Everything's fine 🐶🔥
+build exit=0

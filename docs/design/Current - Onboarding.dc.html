@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    .ua { font-family: 'Times New Roman', Times, serif; font-size: 16px; line-height: normal; color: #000000; background: #ffffff; }
+    .ua h1 { font-size: 2em; font-weight: bold; margin: 0.67em 0; }
+    .ua h2 { font-size: 1.5em; font-weight: bold; margin: 0.83em 0; }
+    .ua p { margin: 1em 0; }
+    .ua ul { margin: 1em 0; padding-left: 1.1rem; }
+    .ua a { color: #0000ee; text-decoration: underline; }
+    .ua a:hover { color: #0000ee; }
+    .ua label { display: inline; }
+    .ua button { font: 400 13.3333px Arial, sans-serif; background: #efefef; color: #000; border: 1px solid #767676; border-radius: 2px; padding: 1px 6px; }
+    .ua input, .ua textarea { font: 400 13.3333px Arial, sans-serif; color: #000; background: #fff; border: 1px solid #767676; border-radius: 2px; padding: 1px 2px; }
+    .ua blockquote { margin: 1em 0; }
+    .caption { font: 600 11px/1 'Segoe UI', -apple-system, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #8a8a8a; background: #f3f3f3; padding: 10px 16px; border-top: 1px solid #e2e2e2; border-bottom: 1px solid #e2e2e2; }
+  </style>
+</helmet>
+<div class="caption">State: paste-posts step (profile exists)</div>
+<div class="ua" data-screen-label="Onboarding - paste posts (as-is)" style="background: #ffffff; padding: 8px;">
+  <header style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.75rem 1.5rem; border-bottom: 1px solid #ddd;">
+    <strong>Maya's workspace</strong>
+    <nav style="display: flex; gap: 1rem; font-size: 0.9rem;">
+      <a href="#">Onboarding</a>
+      <a href="#">Studio</a>
+      <a href="#">Usage</a>
+      <a href="#">Billing</a>
+    </nav>
+    <button type="button">Sign out</button>
+  </header>
+  <main style="padding: 1.5rem;">
+    <section>
+      <h1>Set up your creator profile</h1>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2>Add your own past posts</h2>
+        <p style="color: #555; font-size: 0.9rem;">Paste the text of posts you wrote yourself, one at a time. They are stored as you typed them &mdash; only line endings are normalised &mdash; against <strong>Maya</strong>, and nothing else reads them yet &mdash; this screen keeps them, and that is all it does.</p>
+        <p style="color: #555; font-size: 0.9rem;">Your creator plan includes 3 creator profiles. You are using 1.</p>
+        <form>
+          <label for="content">Post text</label>
+          <textarea id="content" name="content" rows="6" style="min-height: 44px; padding: 0.6rem; font-size: 1rem; display: block; width: 100%; box-sizing: border-box;"></textarea>
+          <p id="content-limit" style="color: #555; font-size: 0.9rem;">One post, up to 20,000 characters. Longer pastes are refused, never shortened.</p>
+          <button type="button" style="min-height: 44px; min-width: 44px; padding: 0.6rem 1rem; font-size: 1rem;">Save post</button>
+        </form>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2>A real model call, end to end</h2>
+        <p style="color: #555; font-size: 0.9rem;">This sends a short fixed message of ours to the model provider and shows you the reply. Nothing you pasted is sent. It exists so you can see a real call, and what it cost, end to end.</p>
+        <div>
+          <p style="color: #555; font-size: 0.9rem;">Your first run for a creator is included. Every run after that costs 1 credit. You have 1249 credits.</p>
+          <p style="color: #555; font-size: 0.9rem; min-height: 1.2em; margin: 0;"></p>
+          <form>
+            <button type="button" style="min-height: 44px; min-width: 44px; padding: 0.6rem 1rem; font-size: 1rem;">Run one model call</button>
+          </form>
+          <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-top: 1rem;">
+            <p>That was your included run for this creator, so nothing was spent. Your balance is now 1249 credits.</p>
+            <p style="color: #555; font-size: 0.9rem;">What the model replied, word for word:</p>
+            <blockquote style="margin: 0; padding-left: 0.8rem; border-left: 3px solid #ddd; white-space: pre-wrap;">Received. Connectivity between this workspace and the model provider is working.</blockquote>
+            <p style="color: #555; font-size: 0.9rem;">claude-sonnet-4 &middot; 28 tokens in &middot; 16 tokens out. This run was included, so it adds no entry to your credit history.</p>
+          </div>
+        </div>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2>Your posts (2)</h2>
+        <ul>
+          <li style="margin-bottom: 0.8rem;">
+            <div style="white-space: pre-wrap;">Nobody talks about this but your grinder matters more than your machine. I spent two years pulling sour shots on a $700 setup before someone told me the $40 blade grinder was the problem. Swapped it for a used flat burr an&hellip;</div>
+            <span style="color: #555; font-size: 0.9rem;">2026-08-26 &middot; 412 characters</span>
+            <details>
+              <summary style="color: #555; font-size: 0.9rem; cursor: pointer; min-height: 44px; display: flex; align-items: center;">Show the whole post</summary>
+              <div style="white-space: pre-wrap; margin-top: 0.4rem;">Nobody talks about this but your grinder matters more than your machine. I spent two years pulling sour shots on a $700 setup before someone told me the $40 blade grinder was the problem. Swapped it for a used flat burr and the same beans tasted like a different roaster. If you are starting out: buy the boring grinder first, the shiny machine second. Comment GRIND and I will send you my used-grinder checklist.</div>
+            </details>
+          </li>
+          <li style="margin-bottom: 0.8rem;">
+            <div style="white-space: pre-wrap;">POV: you finally stopped tamping like you are angry at the coffee. Light, level, done. Your wrists will thank you.</div>
+            <span style="color: #555; font-size: 0.9rem;">2026-08-24 &middot; 114 characters</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="caption">State: create-profile step (no profile yet)</div>
+<div class="ua" data-screen-label="Onboarding - create profile (as-is)" style="background: #ffffff; padding: 8px;">
+  <main style="padding: 1.5rem;">
+    <section>
+      <h1>Set up your creator profile</h1>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2>Name this creator</h2>
+        <p style="color: #555; font-size: 0.9rem;">A creator profile is one person&rsquo;s account and its posts. Name it however you refer to that creator.</p>
+        <p style="color: #555; font-size: 0.9rem;">Your creator plan includes 3 creator profiles. You are using 0.</p>
+        <form>
+          <label for="displayName">Creator name</label>
+          <input id="displayName" name="displayName" type="text" style="min-height: 44px; padding: 0.6rem; font-size: 1rem; min-width: 18rem;"></input>
+          <button type="button" style="min-height: 44px; min-width: 44px; padding: 0.6rem 1rem; font-size: 1rem;">Create profile</button>
+          <p id="displayName-limit" style="color: #555; font-size: 0.9rem;">One line of visible text, up to 120 characters.</p>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1280, &quot;height&quot;: 1200}}"></script>
+</body>
+</html>

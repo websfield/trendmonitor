@@ -3,10 +3,12 @@
 // nothing foreign. Enumeration is programmatic over the accessor map (AC-1),
 // with a completeness assertion so a new accessor without a validator fails
 // loudly (AC-7), instead of escaping to reviewer memory.
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 import { creditLedger, subscriptions } from "../src/billing-schema";
+import { creatorProfiles } from "../src/brain-schema";
 import {
   LEDGER_PAGE_MAX,
   WorkspaceAccessError,
@@ -57,6 +59,14 @@ describe("withWorkspace tenancy scope", () => {
         expiresAt: new Date(Date.now() + 24 * HOUR),
       },
     ]);
+    // Slice 1: a profile in EACH workspace, for the same non-vacuity reason the
+    // billing rows above exist. Each is NAMED AFTER ITS OWN WORKSPACE so the
+    // breach validator can assert which row came back, symmetrically from
+    // either side.
+    await db.insert(creatorProfiles).values([
+      { workspaceId: aWorkspaceId, displayName: `profile-of-${aWorkspaceId}` },
+      { workspaceId: bWorkspaceId, displayName: `profile-of-${bWorkspaceId}` },
+    ]);
   });
 
   /**
@@ -91,6 +101,21 @@ describe("withWorkspace tenancy scope", () => {
         expect(row.workspaceId).not.toBe(foreign);
       }
     },
+    creatorProfiles: (rows, own, foreign) => {
+      // BOTH AXES. The id axis alone would pass a query that returned nothing,
+      // so the name axis pins WHICH row came back: each workspace's profile is
+      // named after its own id, so a dropped workspace predicate surfaces the
+      // sibling's name here even before the count changes. (The validator runs
+      // from both sides, so it must be symmetric — an earlier version keyed on
+      // the literal word "foreign" and failed when run AS the workspace whose
+      // profile carried it, which is the shape a one-sided fixture always has.)
+      for (const row of rows as { workspaceId: string; displayName: string }[]) {
+        expect(row.workspaceId).toBe(own);
+        expect(row.workspaceId).not.toBe(foreign);
+        expect(row.displayName).toBe(`profile-of-${own}`);
+        expect(row.displayName).not.toContain(foreign);
+      }
+    },
   };
 
   /**
@@ -108,6 +133,7 @@ describe("withWorkspace tenancy scope", () => {
     members: [],
     subscription: [],
     ledger: [{ limit: 50 }],
+    creatorProfiles: [],
   };
 
   const invoke = (
@@ -152,6 +178,30 @@ describe("withWorkspace tenancy scope", () => {
       expect(rows.length).toBeGreaterThan(0);
       breachValidators[name](rows, bWorkspaceId, aWorkspaceId);
     }
+  });
+
+  it("creatorProfiles() returns ACTIVE profiles only — the page's count and the server's must agree", async () => {
+    // UNPINNED UNTIL NOW (tenancy + billing gates, 2026-08-27, independently).
+    // The accessor's docblock states the property — the page's displayed
+    // `used` and the server's enforced `countActiveProfiles` have to be the
+    // same question — and nothing checked it: both fixture rows are default
+    // state, so the predicate was inert in every existing assertion. Delete
+    // `eq(creatorProfiles.state, "active")` and the whole suite stayed green.
+    const scopeA = await withWorkspace(db, { authUserId: "user_a" });
+    expect(await scopeA.accessors.creatorProfiles()).toHaveLength(1);
+
+    await db
+      .update(creatorProfiles)
+      .set({ state: "archived" })
+      .where(eq(creatorProfiles.workspaceId, aWorkspaceId));
+
+    expect(
+      await scopeA.accessors.creatorProfiles(),
+      "an archived profile must not count towards the cap the page displays"
+    ).toHaveLength(0);
+    // ...and B, which shares the table, is untouched.
+    const scopeB = await withWorkspace(db, { authUserId: "user_b" });
+    expect(await scopeB.accessors.creatorProfiles()).toHaveLength(1);
   });
 
   it("ledger() CLAMPS the page size — an unbounded caller cannot read the whole table", async () => {

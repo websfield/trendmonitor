@@ -299,10 +299,54 @@ const voiceContent = z.strictObject({
     .optional(),
 });
 
+/**
+ * The declared north-star metric's direction (slice 3b, R7) — closed, because
+ * "higher is better" and "lower is better" are the only two readings a later
+ * comparability check (slice 9) can act on without parsing prose.
+ */
+export const METRIC_DIRECTIONS = ["higher_is_better", "lower_is_better"] as const;
+
 const strategyContent = z.strictObject({
   audience: claim(z.string()),
   positioning: claim(z.string()),
   pillars: z.array(claim(z.string())),
+  // ADDED IN SLICE 3B (R1/R7), and OPTIONAL AT THE SCHEMA LEVEL deliberately —
+  // every `strategy` fixture written before this slice omits them, and an
+  // ABSENT optional claim is not a claim position at all
+  // (`enumerateClaimFieldsOf`'s own docblock: "an ABSENT optional claim is not
+  // a field"), so widening this way is backward compatible with every
+  // existing document and test rather than a breaking schema migration. The
+  // INTERVIEW-DRIVEN BUILDER (`interview-ops.ts`) always populates all three
+  // for a document it constructs; the schema merely declares what a strategy
+  // document MAY carry.
+  goals: z.array(claim(z.string())).optional(),
+  ambitions: z.array(claim(z.string())).optional(),
+  /**
+   * THE DECLARED NORTH-STAR METRIC (R7, PRD B03) — structured, not prose, so
+   * a later slice can test comparability across versions without parsing a
+   * sentence. The whole OBJECT is optional for the same backward-compatibility
+   * reason `goals`/`ambitions` are; a real interview submission always fills
+   * it.
+   */
+  metric: z
+    .strictObject({
+      // SERVER-OWNED, not a claim: a stable identifier this product derives
+      // (slugified from `label`) rather than one a creator confirms per
+      // field. It needs no evidence and no confirmation — see `serverOwned`'s
+      // own docblock for why the exemption is itself the marker.
+      key: serverOwned(z.string()),
+      label: claim(z.string()),
+      unit: claim(z.string()),
+      direction: claim(z.enum(METRIC_DIRECTIONS)),
+      // Genuinely optional in the PRODUCT sense too, not only the schema
+      // sense: a creator may decline to name a platform or a measurement
+      // window for their metric, which is different from "have not decided
+      // yet" — the interview omits the key entirely rather than storing
+      // `[check]` for a field nobody was asked to commit to.
+      platform: claim(z.string()).optional(),
+      window: claim(z.string()).optional(),
+    })
+    .optional(),
 });
 
 const killtestContent = z.strictObject({
@@ -310,6 +354,11 @@ const killtestContent = z.strictObject({
   // (tech-spec §3 step 3) are SERVER-OWNED and deliberately not here: a rule
   // the creator can edit or confirm away is not an integrity rule.
   rules: z.array(claim(z.string())),
+  // ADDED IN SLICE 3B (R1), OPTIONAL for the identical backward-compatibility
+  // reason `strategy`'s new fields are: every `killtest` fixture written
+  // before this slice supplies `rules` alone.
+  bannedWords: z.array(claim(z.string())).optional(),
+  bannedVibes: z.array(claim(z.string())).optional(),
 });
 
 const performanceMetaContent = z.strictObject({

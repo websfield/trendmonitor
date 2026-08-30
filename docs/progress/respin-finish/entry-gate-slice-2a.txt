@@ -1,0 +1,11 @@
+=== 2026-08-27T22:58:23+10:00 entry gate: slice 2a mid-slice, RE-RUN (CI shape, Docker live) ===
+typecheck exit=0
+lint exit=0
+test exit=1
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Unhandled Errors [49m[22m[31m⎯⎯⎯⎯⎯⎯[39m
+[2m Test Files [22m [1m[32m48 passed[39m[22m[90m (48)[39m
+[2m      Tests [22m [1m[32m958 passed[39m[22m[90m (958)[39m
+[2m     Errors [22m [1m[31m1 error[39m[22m
+[2m   Duration [22m 138.93s[2m (transform 38.38s, setup 0ms, collect 293.42s, tests 1371.76s, environment 23ms, prepare 61.07s)[22m
+db:check exit=0
+build exit=0

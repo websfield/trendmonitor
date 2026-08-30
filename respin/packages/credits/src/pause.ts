@@ -28,7 +28,7 @@
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { PausePeriod, TxLike, VerifiedWorkspaceId } from "@respin/db";
 import { hasOpenPause, pausePeriods, subscriptions } from "@respin/db";
-import { assertWriteClock, CLOCK_SKEW_MS } from "./clock";
+import { assertWriteClock, CLOCK_SKEW_MS, takeWorkspaceLock } from "./clock";
 import { LedgerIntegrityError } from "./fold";
 
 // `hasOpenPause` MOVED to @respin/db on 2026-08-21 (M2a, plan A-7) and is
@@ -59,6 +59,26 @@ export async function recordPauseStart(
   resumesAt?: Date,
   knownAt?: Date
 ): Promise<PausePeriod> {
+  // THE WORKSPACE LOCK, FIRST, AND IT IS A MONEY CONTROL (B-10).
+  //
+  // A pause FREEZES entitlements (REQ-G08), and the code that enforces that
+  // asks `hasOpenPause` — a plain single-row read — from inside a transaction
+  // holding this same lock: `debitCredits`, `grantCredits`, and step 4 of
+  // `runInference`. Under READ COMMITTED such a read sees what was committed
+  // when the statement ran, so a pause committing a moment later was simply
+  // MISSED, and credits were spent on a workspace that had just been frozen.
+  // The reader held the lock; the writer did not, so there was nothing to
+  // serialise against.
+  //
+  // Taking it here makes pause-start and every ledger writer contend on ONE
+  // key, which is the property the refusal copy already claims out loud —
+  // four messages tell a creator "nothing was spent" on the strength of it.
+  //
+  // RE-ENTRANT, so callers that already hold it are unaffected:
+  // `pg_advisory_xact_lock` may be taken repeatedly by the same transaction,
+  // and it is released at commit. And it is the ONLY lock this function takes,
+  // so it introduces no second key and therefore no ordering question.
+  await takeWorkspaceLock(tx, workspaceId);
   await assertWriteClock(tx, workspaceId, at);
   if (await hasOpenPause(tx, workspaceId)) {
     throw new LedgerIntegrityError(

@@ -23,12 +23,14 @@ import { eq, sql } from "drizzle-orm";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 import { brainDocs, creatorProfiles } from "../src/brain-schema";
+import { brainActivationSnapshots } from "../src/onboarding-schema";
 import { memberships } from "../src/schema";
 import { pausePeriods } from "../src/billing-schema";
 import {
   BrainRoleError,
   ProfileAccessError,
   ProvenanceError,
+  ReferenceEchoError,
   WorkspacePausedError,
 } from "../src/errors";
 import {
@@ -290,6 +292,81 @@ describe("confirm → activate, and the recorded reference corpus (C-29)", () =>
     ).rejects.toThrow(/does not declare/);
   });
 
+  it("G-10: an evidence entry citing a `[check]` position is REFUSED — the THIRD C-28 direction (R7)", async () => {
+    // The two directions above are declared<=>cited (an entry must name a
+    // real position) and stated=>cited (a stated claim must be cited). Neither
+    // ever checked cited=>stated: an entry could point at `/audience`, which
+    // STRATEGY leaves as `[check]`, and store an unbounded quote as "evidence"
+    // for a claim the document never actually makes.
+    const scope = await scopeFor();
+    const caps = writeCapabilities(scope);
+    const evidence = await seedOwnEvidence(caps);
+    await expect(
+      db.transaction((tx) =>
+        caps.writeBrainDoc(
+          {
+            kind: "strategy",
+            content: STRATEGY, // /audience is CHECK
+            sourceEvidence: [
+              ...evidence,
+              { ...evidence[0], field: "/audience" },
+            ],
+            reason: REASON,
+          },
+          tx
+        )
+      )
+    ).rejects.toThrow(/holds '\[check\]'/);
+  });
+
+  it("G-10/R8: the bijection holds in BOTH directions at once (stated<=>cited)", async () => {
+    // A single test asserting both, so a future widening cannot quietly
+    // re-open one side while the other stays green (R8's exact wording).
+    const scope = await scopeFor();
+    const caps = writeCapabilities(scope);
+    const evidence = await seedOwnEvidence(caps);
+    // stated => cited: a stated position with nothing cited for it refuses
+    // (already covered above by the first C-28 test) — re-asserted here
+    // alongside its sibling so both directions live in one place.
+    await expect(
+      db.transaction((tx) =>
+        caps.writeBrainDoc(
+          {
+            kind: "strategy",
+            content: { ...STRATEGY, audience: "a stated but uncited claim" },
+            sourceEvidence: evidence,
+            reason: REASON,
+          },
+          tx
+        )
+      )
+    ).rejects.toBeInstanceOf(ProvenanceError);
+    // cited => stated: a cited `[check]` position refuses (G-10).
+    await expect(
+      db.transaction((tx) =>
+        caps.writeBrainDoc(
+          {
+            kind: "strategy",
+            content: STRATEGY,
+            sourceEvidence: [...evidence, { ...evidence[0], field: "/audience" }],
+            reason: REASON,
+          },
+          tx
+        )
+      )
+    ).rejects.toThrow(/holds '\[check\]'/);
+    // ...and a document where every stated position is cited, and nothing
+    // cites a [check], still writes.
+    await expect(
+      db.transaction((tx) =>
+        caps.writeBrainDoc(
+          { kind: "strategy", content: STRATEGY, sourceEvidence: evidence, reason: REASON },
+          tx
+        )
+      )
+    ).resolves.toBeDefined();
+  });
+
   it("the evidence key space is CLOSED — a smuggled key is refused, not stored", async () => {
     // The tenancy gate stored `{"smuggled":"her home address is 12 Acacia Ave"}`
     // on the export-included provenance column, because the entry went to jsonb
@@ -465,19 +542,23 @@ describe("confirm → activate, and the recorded reference corpus (C-29)", () =>
     } as unknown as Parameters<
       ProfileWriteCapabilities["confirmBrainDocFields"]
     >[0];
-    const confirmed = await db.transaction((tx) =>
-      caps.confirmBrainDocFields(params, tx)
-    );
+    // THE ATTACK NOW FAILS EARLIER AND LOUDER (tenancy + compliance gates,
+    // 2026-08-29). The getter's first read is `[]`, and an empty submission is
+    // refused BY NAME rather than stored — so the laundering route closes at
+    // the confirmation instead of at activation two steps later, and no
+    // attributable `confirmed_by` stamp is written over an empty decision.
+    await expect(
+      db.transaction((tx) => caps.confirmBrainDocFields(params, tx))
+    ).rejects.toThrow(/at least one field/);
+    // THE READ-ONCE PROPERTY IS UNCHANGED and is still the thing under test:
+    // the inverted payload the getter would serve on a second read never
+    // reached anything, because there was no second read.
     expect(reads, "confirmedFields was read more than once").toBe(1);
-    expect(
-      confirmed.confirmedFields,
-      "a later read of the getter reached the stored column"
-    ).toEqual([]);
-    // ...and because the stored record is empty, AC-26 refuses activation —
-    // which is the property that actually protects the creator.
+    // ...and nothing was recorded, so activation still refuses — the property
+    // that actually protects the creator, now reachable by a shorter path.
     await expect(
       db.transaction((tx) => caps.activateBrainDoc({ brainDocId: doc.id }, tx))
-    ).rejects.toThrow(/not been confirmed yet/);
+    ).rejects.toThrow(/not been confirmed/);
   });
 
   it("a GETTER on a confirmedFields ELEMENT cannot swap it either", async () => {
@@ -690,7 +771,7 @@ describe("confirm → activate, and the recorded reference corpus (C-29)", () =>
         )
       ),
       "the write-side echo bar did not run over the recorded corpus"
-    ).rejects.toThrow(ProvenanceError);
+    ).rejects.toThrow(ReferenceEchoError);
   });
 
   // ------------------------------------------------- confirmation integrity
@@ -971,5 +1052,199 @@ describe("confirm → activate, and the recorded reference corpus (C-29)", () =>
     expect((missing as Error).message).toBe((foreign as Error).message);
     expect((malformed as Error).message).toBe((foreign as Error).message);
     expect((foreign as Error).message).not.toContain(siblingDoc.id);
+  });
+});
+
+// --------------------------------------------------- activateBrainDocCoherent
+
+describe("activateBrainDocCoherent — the coherent-activation snapshot (slice 3b, R8)", () => {
+  let db: TestDb;
+  let workspaceId: string;
+  let profileId: string;
+
+  beforeEach(async () => {
+    db = await createTestDb();
+    await seedAuthUser(db, "coherent_user");
+    workspaceId = (
+      await ensureUserWorkspace(db, { authUserId: "coherent_user", name: "C" })
+    ).workspace.id;
+    const [p] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId, displayName: "C" })
+      .returning();
+    profileId = p.id;
+  });
+
+  const scopeFor = async () =>
+    ProfileScope.mint(
+      db,
+      await withWorkspace(db, { authUserId: "coherent_user" }),
+      profileId
+    );
+
+  /** Write, confirm and (coherently) activate ONE strategy version, distinguished by `positioning`. */
+  const activateStrategy = async (
+    caps: ProfileWriteCapabilities,
+    positioning: string
+  ) => {
+    const ownText = `I always open on the beat about ${positioning}, never on the setup`;
+    const own = await caps.appendOnboardingInput({
+      inputClass: "own_post",
+      content: ownText,
+    });
+    const content = { audience: CHECK, positioning, pillars: [CHECK] };
+    const doc = await db.transaction((tx) =>
+      caps.writeBrainDoc(
+        {
+          kind: "strategy",
+          content,
+          sourceEvidence: [
+            {
+              field: "/positioning",
+              quote: ownText.slice(0, 12),
+              inputId: own.id,
+              startUtf16: 0,
+              endUtf16: 12,
+            },
+          ],
+          reason: REASON,
+        },
+        tx
+      )
+    );
+    await db.transaction((tx) =>
+      caps.confirmBrainDocFields(
+        { brainDocId: doc.id, confirmedFields: confirmAll(content) },
+        tx
+      )
+    );
+    return db.transaction((tx) => caps.activateBrainDocCoherent({ brainDocId: doc.id }, tx));
+  };
+
+  it("activating the FIRST kind records a snapshot naming it, and NULL for every kind never touched", async () => {
+    const caps = writeCapabilities(await scopeFor());
+    const { doc, snapshot } = await activateStrategy(caps, "clip one");
+    expect(doc.status).toBe("active");
+    expect(snapshot.profileId).toBe(profileId);
+    expect(snapshot.workspaceId).toBe(workspaceId);
+    expect(snapshot.strategyDocId).toBe(doc.id);
+    expect(snapshot.voiceDocId).toBeNull();
+    expect(snapshot.killtestDocId).toBeNull();
+    expect(snapshot.performanceMetaDocId).toBeNull();
+  });
+
+  it("a SECOND activation of the SAME kind carries a NEW snapshot naming the NEW active id, not the superseded one", async () => {
+    const caps = writeCapabilities(await scopeFor());
+    const first = await activateStrategy(caps, "clip one");
+    const second = await activateStrategy(caps, "clip two — a different, unrelated line entirely");
+    expect(second.doc.id).not.toBe(first.doc.id);
+    expect(second.snapshot.strategyDocId).toBe(second.doc.id);
+    // Two snapshot rows exist, append-only — the first is NOT rewritten.
+    const rows = await db
+      .select()
+      .from(brainActivationSnapshots)
+      .where(eq(brainActivationSnapshots.profileId, profileId));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.strategyDocId).sort()).toEqual(
+      [first.doc.id, second.doc.id].sort()
+    );
+  });
+
+  it("activating VOICE carries STRATEGY's already-active id forward UNCHANGED (coherence across kinds)", async () => {
+    const caps = writeCapabilities(await scopeFor());
+    const { doc: strategyDoc } = await activateStrategy(caps, "clip one");
+
+    const ownText = "a voice sample sentence, said the same way every time";
+    const own = await caps.appendOnboardingInput({
+      inputClass: "own_post",
+      content: ownText,
+    });
+    const voiceContent = {
+      register: ownText.slice(0, 12),
+      sentenceRhythm: CHECK,
+      signatureMoves: [CHECK],
+      avoid: [CHECK],
+    };
+    const voiceDoc = await db.transaction((tx) =>
+      caps.writeBrainDoc(
+        {
+          kind: "voice",
+          content: voiceContent,
+          sourceEvidence: [
+            {
+              field: "/register",
+              quote: ownText.slice(0, 12),
+              inputId: own.id,
+              startUtf16: 0,
+              endUtf16: 12,
+            },
+          ],
+          reason: REASON,
+        },
+        tx
+      )
+    );
+    await db.transaction((tx) =>
+      caps.confirmBrainDocFields(
+        {
+          brainDocId: voiceDoc.id,
+          confirmedFields: enumerateClaimFields("voice", voiceContent).map((pointer) => ({
+            pointer,
+            asPlaceholder: readPointer(voiceContent, pointer) === CHECK,
+          })),
+        },
+        tx
+      )
+    );
+    const { snapshot } = await db.transaction((tx) =>
+      caps.activateBrainDocCoherent({ brainDocId: voiceDoc.id }, tx)
+    );
+    expect(snapshot.voiceDocId).toBe(voiceDoc.id);
+    // STRATEGY's id is carried forward, unchanged, even though THIS
+    // activation only touched voice.
+    expect(snapshot.strategyDocId).toBe(strategyDoc.id);
+    expect(snapshot.killtestDocId).toBeNull();
+  });
+
+  it("every gate `activateBrainDoc` has still applies — a VIEWER is refused, nothing is written", async () => {
+    const editorScope = await scopeFor();
+    const caps = writeCapabilities(editorScope);
+    const ownText = "I always open on the beat, never on the setup";
+    const own = await caps.appendOnboardingInput({
+      inputClass: "own_post",
+      content: ownText,
+    });
+    const content = { audience: CHECK, positioning: "clip one", pillars: [CHECK] };
+    const doc = await db.transaction((tx) =>
+      caps.writeBrainDoc(
+        {
+          kind: "strategy",
+          content,
+          sourceEvidence: [
+            { field: "/positioning", quote: ownText.slice(0, 12), inputId: own.id, startUtf16: 0, endUtf16: 12 },
+          ],
+          reason: REASON,
+        },
+        tx
+      )
+    );
+    await db.transaction((tx) =>
+      caps.confirmBrainDocFields({ brainDocId: doc.id, confirmedFields: confirmAll(content) }, tx)
+    );
+
+    await db.update(memberships).set({ role: "viewer" }).where(eq(memberships.workspaceId, workspaceId));
+    const viewerScope = await ProfileScope.mint(
+      db,
+      await withWorkspace(db, { authUserId: "coherent_user" }),
+      profileId
+    );
+    await expect(
+      db.transaction((tx) =>
+        writeCapabilities(viewerScope).activateBrainDocCoherent({ brainDocId: doc.id }, tx)
+      )
+    ).rejects.toBeInstanceOf(BrainRoleError);
+    expect(await db.select().from(brainActivationSnapshots)).toHaveLength(0);
+    const [row] = await db.select().from(brainDocs).where(eq(brainDocs.id, doc.id));
+    expect(row.status).toBe("proposed");
   });
 });

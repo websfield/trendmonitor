@@ -55,6 +55,18 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             "WorkspacePausedError",
             "ProfileAccessError",
             "ProvenanceError",
+            "BrainEditEmptyError",
+            "BrainEditBusyError",
+            "BrainEditLimitError",
+            "BrainDocumentLimitError",
+            "BrainVersionLimitError",
+            "ExportBusyError",
+            "OnboardingInputLimitError",
+            "BRAIN_EDIT_MAX_FIELDS",
+            "BRAIN_EDIT_POINTER_MAX",
+            "BRAIN_EDIT_VALUE_MAX",
+            "BRAIN_EDIT_TOTAL_MAX",
+            "ExportClassificationError",
             "ScopeForgeryError",
             "UsageRawError",
             // M2b-1. Same rule as the five above: inert refusal values that
@@ -69,6 +81,118 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             "BrainReasonError",
             "BrainRoleError",
             "SegmenterUnavailableError",
+            // Slice 1. The four profile/intake refusals, same rule again:
+            // inert values that `billing-errors.ts` maps to copy. The WRITE
+            // surface stays absent, so the default-deny still refuses
+            // `workspaceWriteCapabilities`, `writeCapabilities`, `assertScoped`
+            // and every table object.
+            "ProfileCapError",
+            "ProfileNameError",
+            "ProfileRoleError",
+            "PostContentError",
+            // Row TYPES the onboarding page renders. Type-only exports in
+            // @respin/db's index, so a value import of either is TS1362 —
+            // `allowImportNames` makes no type/value distinction, which is why
+            // the distinction is enforced by `export type` there and not here
+            // (AC-15, measured).
+            "CreatorProfile",
+            "OnboardingInput",
+            // The two product LIMITS the onboarding copy states. Inert
+            // numbers, not a write surface — and allowlisting them is the
+            // point: the limit was hand-copied into four places (two form
+            // attributes and two copy strings) with nothing binding them, so
+            // moving a constant silently made the copy wrong (billing +
+            // tenancy gate NOTEs, 2026-08-27). One source, asserted by
+            // `tests/onboarding-ui.test.tsx`.
+            "DISPLAY_NAME_MAX",
+            "POST_CONTENT_MAX",
+            "ONBOARDING_PAGE_MAX",
+            // Slice 4. The reference-post ceiling, stated on the reference
+            // panel the same way `POST_CONTENT_MAX` is stated on the paste
+            // form — one source, never a hand-copied number.
+            "REFERENCE_COUNT_MAX",
+            // Slice 3. Two more inert refusal values that `billing-errors.ts`
+            // maps to copy, added ONE BY ONE rather than by widening the rule:
+            // `PostAttestationError` (R8's "you did not say you wrote this")
+            // and `EvidenceUnreadableError` (a recorded quote that does not
+            // read back from the post it names). The brain WRITE surface stays
+            // absent — `writeCapabilities`, `confirmBrainDocFields` and
+            // `activateBrainDoc` are still denied here, and the three brain
+            // operations reach app/** only through `respinDb`.
+            "PostAttestationError",
+            "EvidenceUnreadableError",
+            // Slice 4. The R-3 echo bar / quote-budget refusal — its own class,
+            // separate from `ProvenanceError`, so `billing-errors.ts` can give
+            // it copy that says a reference post was echoed rather than that a
+            // quote didn't match the creator's own words (see the class's
+            // docblock in @respin/db's errors.ts).
+            "ReferenceEchoError",
+            // The view TYPES the /brain screens render. Type-only, same rule
+            // and same reason as `CreatorProfile` / `OnboardingInput` above: a
+            // value import is TS1362 at the export, not here. RENAMED off
+            // `Voice*` in slice 3b (Stage B2) — the same three types now
+            // render `strategy` and `killtest` too, not only `voice`; see
+            // `brain-ops.ts`'s docblock on `BrainClaimView`.
+            "BrainDocsView",
+            "BrainVersionView",
+            "BrainClaimView",
+            "PLACEHOLDER_ABSENCE",
+            // Slice 2b (renamed /admin/margin -> /admin/model-spend in
+            // slice 2b-c). The reconciliation view types, and the
+            // `MonthlySpendResult` shape `/usage` renders — all type-only
+            // (AC-15's `export type` rule again), so a value import is
+            // TS1362 at the export, not here. The WRITE/query surface stays
+            // absent: `monthlySpend`, `reconcileSpend`, `periodMonthUtc` and
+            // `pseudonymiseWorkspaceSpend` reach app/** only through
+            // `respinDb` (`monthlySpend`/`reconcileSpend` are its methods;
+            // the other two are package-internal, never exported to app/**
+            // at all).
+            // Slice 2b-c / R4a. `applyReconciliationDelta` has no live caller
+            // in app/** today (no vendor cost-reconciliation webhook exists
+            // yet), but exporting the class from @respin/db's root made
+            // `tests/billing-ui.test.tsx`'s completeness scan demand copy for
+            // it NOW rather than the day a caller is added and forgets to —
+            // the same forcing-function shape this allowlist's own slice-2b
+            // comment above describes. The write/query surface itself
+            // (`applyReconciliationDelta`) stays absent from this allowlist;
+            // only the error class, for copy purposes.
+            "ReconciliationTargetError",
+            "SpendReconciliationResult",
+            "SpendReconciliationRow",
+            "SpendReconciliationClass",
+            "UnbilledAttempt",
+            "MonthlySpendResult",
+            // Slice 3b, Stage B1. The interview surface's two typed refusals —
+            // inert values `billing-errors.ts` maps to copy, the same rule as
+            // every refusal class above. The two-plus write CAPABILITY reaches
+            // app/** only through `respinDb.saveInterviewDraft` /
+            // `.getInterviewDraft` / `.submitInterview`; the raw operations,
+            // like `writeCapabilities` and `appendOwnPost`, stay denied here.
+            "InterviewAnswerError",
+            "InterviewDraftSubmittedError",
+            // The interview field REGISTRY and its answer-shape TYPES — one
+            // source the interview UI renders every question from, rather
+            // than a hand-copied field list that could drift from
+            // `interview-ops.ts`'s own vocabulary (the same reason
+            // `POST_CONTENT_MAX` is allowlisted above). `INTERVIEW_FIELDS` is
+            // a plain array of descriptors (key/kind/target/pointer/declinable)
+            // — inert data, not a write surface.
+            "INTERVIEW_FIELDS",
+            "INTERVIEW_ANSWER_MAX",
+            "InterviewAnswers",
+            "InterviewFieldKey",
+            "TextAnswer",
+            "ListAnswer",
+            "DirectionAnswer",
+            "SubmitInterviewResult",
+            // The row TYPE `respinDb.getInterviewDraft` returns — type-only,
+            // same `export type` rule as `CreatorProfile`/`OnboardingInput`
+            // above, so a value import is TS1362 at the export, not here.
+            "OnboardingInterviewDraft",
+            // The declared north-star metric's closed direction vocabulary —
+            // the `metricDirection` field's two options, one source shared
+            // with `brain-content.ts`'s own schema.
+            "METRIC_DIRECTIONS",
           ],
           message:
             "app/** may import only the sanctioned @respin/db surface (respinDb, WorkspaceAccessError, the typed refusals, types) — every query goes through withWorkspace, and the write capabilities are package-only (tenancy T1, M2a A-2b)",
@@ -186,6 +310,59 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
           message: adminSurface
             ? "sanctioned @respin/config entrypoints here: ./app-server (reads) and ./admin-server (admin writes)"
             : "the only sanctioned @respin/config entrypoint outside app/(admin) is ./app-server — the WRITE surface (./admin-server) is admin-only",
+        },
+        {
+          // THE NEGATION-FORM CATCH-ALL (brain-surface task 25).
+          //
+          // Every rule above is anchored to a package that EXISTS TODAY —
+          // `paths` names @respin/db, /auth, /credits, /config one by one — so
+          // the boundary was default-ALLOW for any package added later. The
+          // finish plan creates four (`llm` in slice 2a, then `modes`,
+          // `trends`, `brain`), and each would have landed outside the cage
+          // silently with every fixture in `tests/import-boundary.test.ts`
+          // still green: a guard that passes because it found no candidates is
+          // the fail-open shape CLAUDE.md's 2026-08-21 lesson names.
+          //
+          // Inverted, so joining the boundary is a deliberate edit to THIS list
+          // rather than something a new package inherits by omission.
+          //
+          // THE PATTERN LIST'S SHAPE IS MEASURED, NOT GUESSED, and the measurement
+          // is the reason the package roots are negated here even though two of
+          // them are denied one block up. `no-restricted-imports` matches with
+          // the `ignore` package, i.e. GITIGNORE semantics — and gitignore
+          // cannot re-include a child of an excluded parent. So
+          // `["@respin/*", "!@respin/credits/app-server"]` excludes
+          // `@respin/credits` as a "directory" and the negation is INERT: the
+          // wired facade every product page imports goes dark. That was not a
+          // hypothesis; it was six lint errors across billing-errors.ts, the
+          // billing action, two pages and the webhook route on the first run of
+          // this rule, and a probe against the installed engine is what
+          // explained them.
+          //
+          // Hence: negate each package ROOT so it is not an excluded parent,
+          // then negate each sanctioned deep entrypoint. The catch-all
+          // therefore permits `@respin/credits` and `@respin/config` roots —
+          // which stay denied by their NAMED `paths` entries above, where the
+          // message can say what to import instead. This entry's job is the
+          // class those entries cannot cover: a package nobody has written yet,
+          // and a deep entrypoint nobody has sanctioned yet.
+          group: [
+            "@respin/*",
+            "@respin/*/**",
+            // The roots — negated so they are not excluded PARENTS.
+            "!@respin/db",
+            "!@respin/auth",
+            "!@respin/credits",
+            "!@respin/config",
+            // The sanctioned deep entrypoints.
+            "!@respin/auth/client",
+            "!@respin/credits/app-server",
+            "!@respin/config/app-server",
+            ...(adminSurface ? ["!@respin/config/admin-server"] : []),
+            ...(webhookSurface ? ["!@respin/credits/webhook-server"] : []),
+          ],
+          message:
+            "app/** and lib/** may import only the SANCTIONED @respin/* entrypoints — @respin/db, @respin/auth (+ /client), @respin/credits/app-server, @respin/config/app-server (plus /admin-server in app/(admin) and /credits/webhook-server in the Stripe webhook route). A NEW @respin/* package, or a NEW deep entrypoint into an existing one, is denied by default: add it to this negation list deliberately, with a deny fixture in tests/import-boundary.test.ts, rather than inheriting the boundary by omission (brain-surface task 25)",
         },
       ],
     },

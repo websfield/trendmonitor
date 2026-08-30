@@ -1,0 +1,2 @@
+ALTER TABLE "brain_docs" DROP CONSTRAINT "brain_docs_active_is_confirmed";--> statement-breakpoint
+ALTER TABLE "brain_docs" ADD CONSTRAINT "brain_docs_active_is_confirmed" CHECK ("brain_docs"."status" <> 'active' OR ("brain_docs"."confirmed_at" IS NOT NULL AND "brain_docs"."confirmed_content_sha256" IS NOT NULL AND "brain_docs"."activated_at" IS NOT NULL));

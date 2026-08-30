@@ -12,7 +12,10 @@
 import { describe, expect, it } from "vitest";
 import {
   createTestDb,
+  creatorProfiles,
   creditLedger,
+  modelUsage,
+  ProfileCapError,
   pausePeriods,
   schema,
   subscriptions,
@@ -26,6 +29,7 @@ import {
   type WorkspaceScope,
 } from "@respin/db";
 import { appendConfigVersion } from "@respin/config";
+import type { LlmProvider } from "@respin/llm";
 import * as credits from "../src/index";
 import * as appServer from "../src/app-server";
 import * as webhookServer from "../src/webhook-server";
@@ -41,19 +45,49 @@ import * as ledgerMod from "../src/ledger";
 import * as stateMod from "../src/state";
 import * as pauseMod from "../src/pause";
 import * as clockMod from "../src/clock";
+import * as profilesMod from "../src/profiles";
+import * as inferenceMod from "../src/inference";
 import * as monthsMod from "../src/months";
 import * as metricsMod from "../src/metrics";
 import * as errorsMod from "../src/errors";
+import * as inferVoiceMod from "../src/infer-voice";
 import * as adapterMod from "../src/stripe/adapter";
 import * as setupMod from "../src/stripe/setup";
 import * as packPriceMod from "../src/stripe/pack-price";
+import * as burnPeriodMod from "../src/burn-period";
 import { handleStripeEvent } from "../src/stripe/webhooks";
 import { workspaceForCustomer, getOrCreateCustomer } from "../src/stripe/customers";
 import { createPortalUrl } from "../src/stripe/actions";
 import { maybeAutoTopup } from "../src/stripe/auto-topup";
+import { anySlots } from "./support/run-slots";
 
 const HOUR = 3_600_000;
 const future = (ms: number) => new Date(Date.now() + ms);
+
+/**
+ * A provider that answers without a network, for the isolation case below.
+ *
+ * A PLAIN OBJECT rather than `vi.mock`, and that is the shape `runInference`
+ * takes its provider as a parameter for: a stub handed in as an argument can
+ * also be one that THROWS IF CALLED, which is how the pre-call gates are
+ * proved in `inference.test.ts`. A mocked module cannot express that — it has
+ * already replaced the thing whose non-invocation is the evidence.
+ */
+const stubProvider = (): LlmProvider => ({
+  vendor: "stub",
+  complete: async () => ({
+    text: "ok",
+    servedModel: "claude-sonnet-5",
+    usage: { tokensIn: 10, tokensOut: 5, raw: { input_tokens: 10, output_tokens: 5 } },
+  }),
+});
+
+const req = (attemptId: string) => ({
+  attemptId,
+  system: "s",
+  prompt: "p",
+  promptBundleVersion: "test-bundle",
+});
 
 /**
  * The enumeration contract. Every exported FUNCTION of the public surface is
@@ -65,6 +99,7 @@ const NOT_DB_FACING: Record<string, string> = {
   foldLedger: "pure function — takes rows as arguments, no query",
   effectiveExpiry: "pure function — no query",
   InsufficientCreditsError: "error class",
+  PostCallDebitError: "error class",
   WorkspacePausedError: "error class",
   ClockSkewError: "error class",
   LedgerIntegrityError: "error class",
@@ -74,6 +109,29 @@ const NOT_DB_FACING: Record<string, string> = {
   NoStripeCustomerError: "error class",
   NoLiveSubscriptionError: "error class",
   NotPausedError: "error class",
+  // Slice 3 — the composed voice inference's public surface.
+  BrainPointerDivergenceError: "error class",
+  UnchargedAttemptCapError: "error class",
+  AssemblyError: "error class (re-exported from @respin/llm)",
+  NotEnoughPostsError: "error class (re-exported from @respin/llm)",
+  inferVoice:
+    "COMPOSITION ONLY — it owns no query. Its db touches are `mintProfileScope` and `writeCapabilities` (@respin/db, whose isolation is proved by tests/profile-cage.test.ts), the caged accessors `ownPostsNewest` and `countOwnPosts` on the minted scope (breach-tested in packages/db/tests/profile-scope.test.ts — tenancy round 3 corrected this sentence, which had said nothing here reads a row), and `runInference` (this package, covered above). What is left in the function is prompt assembly, a fail-closed reply parse and a pointer check. There is no isolation case to write here that would not be a re-test of one of those.",
+  // Slice 2a. The FOUR refusals `runInference` can raise, plus the two
+  // classes it re-exports from packages it composes: `app/**` may import only
+  // this facade, so a class it cannot `instanceof` renders as "Something went
+  // wrong" on the one screen that spends money.
+  InferenceRoleError: "error class",
+  ProfileArchivedError: "error class",
+  // The concurrency bound's refusal (tech-spec S6). Not db-facing: it is built
+  // from a refusal reason and two numbers the caller already holds, and the
+  // only workspace-derived value it names is the tier, which the creator's own
+  // billing page shows them.
+  RunSlotBusyError: "error class",
+  TopupInFlightError: "error class",
+  ConfigNotMigratedError: "error class (from @respin/config)",
+  AutoTopupShortfallError: "error class",
+  AutoTopupUnnamedRefusalError: "error class",
+  LlmError: "error class (from @respin/llm — the base of every provider failure)",
   PauseLengthError: "error class",
   AutoTopupCapError: "error class",
   StripeSessionUrlMissingError: "error class",
@@ -101,6 +159,8 @@ const NOT_DB_FACING: Record<string, string> = {
     "env read — no query; re-exported from the app facade so the billing page's disabled state and the adapter's refusal cannot drift (phase 4)",
   hasLiveStripeSubscription:
     "pure predicate over a mirror row already read by its caller — no query of its own; re-exported from the app facade so the billing page's subscribe-vs-portal branch is the FOURTH reader of the one liveness definition, not a fifth definition (phase 4)",
+  burnPeriodStart:
+    "pure function over a subscription row already read by its caller plus a clock — no query of its own; re-exported from the app facade so /usage's period anchor for R7's credit burn is not re-derived a second time (slice 2b)",
   // `getStripe` and `setupStripeProducts` used to be listed here. Neither is
   // on the enumerated public surface — `getStripe` lives in the INTERNAL
   // adapter module and the setup export is actually named `stripeSetup` — so
@@ -126,6 +186,16 @@ const STRIPE_BOUND: Record<string, string> = {
 };
 
 const COVERED = new Set([
+  // Slice 1, and the named case really exists now: "createProfile: A's profile
+  // lands only in A, and B's cap is untouched by it". It was in this set with
+  // NO case behind it until the billing gate caught the false citation
+  // (2026-08-27) — the failure mode this file documents sixty lines below.
+  "createProfile",
+  // Slice 2a, and the named case really exists: "runInference: A's attempt is
+  // priced off A's OWN history, and never reaches B". Added WITH its case, in
+  // the same change, because the entry immediately above records what happens
+  // when a name lands in this set without one.
+  "runInference",
   "deriveBalance",
   "deriveBalanceInTx",
   "grantCredits",
@@ -277,6 +347,22 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
     // during-pause invoice.
     internalOnly: ["clearPauseMirror", "openPauseStartedKnownAt"],
   },
+  "profiles.ts": {
+    reason:
+      "the creator-profile ENTITLEMENT decision (slice 1, R-30 constraint 2). It is in this package rather than @respin/db because the cap is priced off the resolved tier, whose sole authority is state.ts here, and @respin/db cannot import it without creating a second tier authority. It owns no db-facing surface of its own: the INSERT and the COUNT are scope-caged write capabilities in @respin/db, and this module composes them behind the lock, the pause gate, the role gate and the cap.",
+    viaIndex: ["createProfile"],
+  },
+  "inference.ts": {
+    reason:
+      "the METERED MODEL CALL (slice 2a). Here rather than in @respin/db for the same layering reason as profiles.ts: it needs the resolved tier (state.ts), the active config and the ledger, and @respin/db can see none of the three. Its db-facing surface is `runInference`, which is covered by a named cross-workspace case below; the two constants and the FOUR error classes carry no query. `requiredConfigPaths` and `priceOf` are pure, and `recordUsage` is package-private, reached only from `runInference`. `RunSlotBusyError` is the concurrency bound's refusal (tech-spec S6): it is constructed from a `RunSlotRefusal` and two numbers already in hand, reads nothing, and carries no workspace data beyond the tier name the creator's own plan already shows them.",
+    viaIndex: [
+      "runInference",
+      "InferenceRoleError",
+      "ProfileArchivedError",
+      "RunSlotBusyError",
+      "TopupInFlightError",
+    ],
+  },
   "clock.ts": {
     reason:
       "clock/lock primitives; latestEventAt exists only to serve assertWriteClock",
@@ -292,10 +378,27 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "fold observability (audit 2026-08-17 #22 / R-25 D-AUDIT-3) — emits two named metrics and a workspace id, runs NO query of its own, and stays off src/index because app/** has no business emitting or redirecting money-path telemetry; its one caller is balance.ts, the balance authority",
     internalOnly: ["setFoldMetricSink", "emitFoldMetric"],
   },
+  "infer-voice.ts": {
+    reason:
+      "the composed voice inference — it OWNS no query of its own. Every db touch it makes is somebody else's already-isolated authority: `mintProfileScope` and `writeCapabilities` (@respin/db, covered by profile-cage.test.ts), the caged scope accessors `ownPostsNewest`/`countOwnPosts` (breach-tested in profile-scope.test.ts), and `runInference` (this package, enumerated below). What is left here is prompt assembly, a reply parse and a pointer check. `inferVoice` itself is reached from `app/**` through app-server.ts, which IS enumerated.",
+    internalOnly: ["inferVoice", "buildVoiceDocument", "isAllPlaceholders"],
+  },
   "errors.ts": {
     reason: "error classes only",
     viaIndex: [
+      // Slice 3. Exported from index.ts alongside its siblings rather than
+      // only from the app facade, so it is `viaIndex` for the same reason
+      // they are: `app/(product)/billing-errors.ts` matches on `instanceof`,
+      // and a class reachable from a facade method but absent from the public
+      // surface is a refusal that renders as "Something went wrong".
+      "BrainPointerDivergenceError",
+      // Slice 3, billing round 2. Same reason as its siblings: it is thrown by
+      // `runInference` and rendered by `billing-errors.ts` on an `instanceof`,
+      // so it must be on the public surface or the refusal degrades to
+      // "Something went wrong" on a screen that just refused a run.
+      "UnchargedAttemptCapError",
       "InsufficientCreditsError",
+      "PostCallDebitError",
       "WorkspacePausedError",
       "ClockSkewError",
     ],
@@ -314,6 +417,11 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
     reason:
       "one-off Stripe product/price seeding; reads the GLOBAL active config (not workspace-scoped) and writes nothing to our database",
     internalOnly: ["stripeSetup"],
+  },
+  "burn-period.ts": {
+    reason:
+      "R7 (slice 2b): the creator's credit-burn period anchor — a pure function over a subscription row already read by its caller and a clock, no query of its own, no workspace access",
+    internalOnly: ["burnPeriodStart"],
   },
   "stripe/setup-cli.ts": {
     reason: "CLI entrypoint for the above — importing it would run it",
@@ -339,12 +447,16 @@ const INTERNAL_NAMESPACES: Record<string, object> = {
   "state.ts": stateMod,
   "pause.ts": pauseMod,
   "clock.ts": clockMod,
+  "profiles.ts": profilesMod,
+  "inference.ts": inferenceMod,
   "months.ts": monthsMod,
   "metrics.ts": metricsMod,
   "errors.ts": errorsMod,
+  "infer-voice.ts": inferVoiceMod,
   "stripe/adapter.ts": adapterMod,
   "stripe/setup.ts": setupMod,
   "stripe/pack-price.ts": packPriceMod,
+  "burn-period.ts": burnPeriodMod,
 };
 
 /**
@@ -358,6 +470,8 @@ const FACADE_REEXPORTED: Record<string, string> = {
     "THE one liveness definition. The billing page is its fourth reader (subscribe-vs-portal), and a page-local notion of 'looks subscribed' would be a fifth definition — which is exactly what produced the round-6 BLOCK. Re-exported as a pure predicate over a row the page has already read; it performs no query.",
   isStripeConfigured:
     "answers the keyless question the same way the adapter does, so the page's disabled state and the action's refusal cannot drift. An env read, no query, no workspace data.",
+  burnPeriodStart:
+    "R7 (slice 2b): a pure function over a subscription row `/usage` has already read plus a clock — no query of its own, so re-exporting it costs nothing tenancy-wise and saves the page from re-deriving the period-anchor rule itself.",
   getWebhookSecret:
     "the SIGNATURE-VERIFICATION secret, reached only through the WEBHOOK facade — which is allowlisted to app/api/stripe/webhook/** alone, not to app/** at large (see app-server.ts's header for why that distinction exists). The route needs it to call the SDK's static constructEvent BEFORE any handler runs; it performs no query and touches no workspace data.",
 };
@@ -527,8 +641,29 @@ it("ENUMERATION completeness: every SOURCE module is enumerated or internal-with
   const modules = walk(srcDir).map((f) =>
     relative(srcDir, f).replace(/\\/g, "/")
   );
+  // `__*_probe.ts` is the repo's TRANSIENT TEST PROBE convention (tsconfig
+  // excludes it for the same reason): `tests/import-boundary.test.ts`'s
+  // non-vacuity case writes `__cage_probe.ts` into THIS package's src for the
+  // lifetime of one assertion, and vitest runs that file in a concurrent
+  // worker — so this walk raced it and reported a planted probe as an
+  // unenumerated module (first seen 2026-08-29; an interrupted run can also
+  // strand the file past its `finally`). Excluded BY THE CONVENTION, not by
+  // the one filename, and only the convention: a real module named
+  // `__x_probe.ts` would dodge this walk, which is why the convention is
+  // reserved for probes (tsconfig.json documents it).
+  const isProbe = (m: string) => /(^|\/)__[^/]*_probe\.ts$/.test(m);
+  // THE EXCLUSION'S OWN NON-VACUITY (tenancy round-3 NOTE): a mis-widened
+  // pattern here silently narrows the enumeration walk, which is the 2026-08-21
+  // scanner lesson one notch removed. The probe convention must match, and
+  // near-miss real-module names must NOT.
+  expect(isProbe("__cage_probe.ts")).toBe(true);
+  expect(isProbe("stripe/__cast_probe.ts")).toBe(true);
+  expect(isProbe("probe.ts")).toBe(false);
+  expect(isProbe("__cageprobe.ts")).toBe(false);
+  expect(isProbe("cage_probe.ts")).toBe(false);
+  expect(isProbe("__probe_helpers.ts")).toBe(false);
   const unaccounted = modules.filter(
-    (m) => !(m in ENUMERATED) && !(m in INTERNAL_MODULES)
+    (m) => !(m in ENUMERATED) && !(m in INTERNAL_MODULES) && !isProbe(m)
   );
   expect(
     unaccounted,
@@ -1132,6 +1267,113 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     const pauses = await db.select().from(pausePeriods);
     expect(pauses).toHaveLength(2);
     expect(new Set(pauses.map((p) => p.workspaceId))).toEqual(new Set([A, B]));
+  });
+
+  it("createProfile: A's profile lands only in A, and B's cap is untouched by it", async () => {
+    // THIS CASE EXISTS BECAUSE THE BILLING GATE FOUND ITS ABSENCE (2026-08-27).
+    // `"createProfile"` had been added to `COVERED` above, whose stated contract
+    // is "covered by a named isolation case below" — and there was no such case.
+    // The set is consumed only as a name list, so the enumeration could not tell
+    // a case from a claim: exactly the "reasoned exclusion resting on a false
+    // citation" shape this file warns about sixty lines further down.
+    const db = await createTestDb();
+    await seedDb(db); // config v1 — free cap is 1
+    const { A, B } = await twoWorkspaces(db);
+    const ownerA = await mintScope(db, A, "owner");
+    const ownerB = await mintScope(db, B, "owner");
+
+    const inA = await credits.createProfile(db, ownerA, "A's creator", new Date());
+    expect(inA.workspaceId).toBe(A as string);
+
+    // NON-VACUITY IN BOTH DIRECTIONS. A is now AT its cap of 1 — and B, which
+    // shares the config document and the table, is not: if the count leaked
+    // across workspaces, B's create would be refused.
+    await expect(
+      credits.createProfile(db, ownerA, "A's second", new Date())
+    ).rejects.toBeInstanceOf(ProfileCapError);
+    const inB = await credits.createProfile(db, ownerB, "B's creator", new Date());
+    expect(inB.workspaceId).toBe(B as string);
+
+    // ...and the table holds exactly one row per workspace, each carrying its
+    // own workspace id. A dropped predicate on the COUNT shows up above; a
+    // dropped predicate on the INSERT shows up here.
+    const rows = await db.select().from(creatorProfiles);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((r) => r.workspaceId === (A as string))).toHaveLength(1);
+    expect(rows.filter((r) => r.workspaceId === (B as string))).toHaveLength(1);
+  });
+
+  it("runInference: A's attempt is priced off A's OWN history, and never reaches B", async () => {
+    // THE ISOLATION QUESTION THIS OPERATION ACTUALLY POSES is not "does the
+    // row carry the right workspace id" — it is "whose history decides what
+    // this creator is charged". D-M2-2 gives each profile ONE included build
+    // and prices every rebuild after it off `countBillableAttempts`, so a
+    // dropped workspace predicate on that count would let B's spending consume
+    // A's included build: A would be charged 50 credits for the first thing
+    // they ever ran, because a stranger had run one first.
+    const db = await createTestDb();
+    await seedDb(db);
+    const { A, B } = await twoWorkspaces(db);
+    const ownerA = await mintScope(db, A, "owner");
+    const ownerB = await mintScope(db, B, "owner");
+    const profA = await credits.createProfile(db, ownerA, "A's creator", new Date());
+    const profB = await credits.createProfile(db, ownerB, "B's creator", new Date());
+
+    // B goes first and burns ITS included build, then a second, PAID attempt.
+    await tx(db, (t) =>
+      credits.grantCredits(t, {
+        workspaceId: B,
+        amount: 500,
+        expiresAt: future(365 * 24 * HOUR),
+        refType: "test",
+        refId: "b-grant",
+        configVersion: 1,
+      })
+    );
+    await credits.runInference(db, ownerB, profB.id, stubProvider(), anySlots(), req("b-1"), new Date());
+    const bSecond = await credits.runInference(
+      db,
+      ownerB,
+      profB.id,
+      stubProvider(),
+      anySlots(),
+      req("b-2"),
+      new Date()
+    );
+    expect(bSecond.creditsCharged).toBe(50);
+
+    // A now runs its FIRST EVER attempt, with a balance of ZERO. If B's two
+    // attempts were visible to A's count, this is refused for insufficient
+    // credits before the provider is ever called — so a leak here is not a
+    // subtle mis-charge, it is A being locked out of the product by a stranger.
+    const aFirst = await credits.runInference(
+      db,
+      ownerA,
+      profA.id,
+      stubProvider(),
+      anySlots(),
+      req("a-1"),
+      new Date()
+    );
+    expect(aFirst.creditsCharged).toBe(0);
+    expect(aFirst.balanceAfter).toBe(0);
+
+    // NON-VACUITY: the pricing rule is live, not simply always-free. A's
+    // SECOND attempt is priced, and refuses on A's own empty balance.
+    await expect(
+      credits.runInference(db, ownerA, profA.id, stubProvider(), anySlots(), req("a-2"), new Date())
+    ).rejects.toBeInstanceOf(credits.InsufficientCreditsError);
+
+    // ...and every row written carries its own workspace: a dropped predicate
+    // on the INSERT shows up here, one on the COUNT shows up above.
+    const usage = await db.select().from(modelUsage);
+    expect(usage.filter((u) => u.workspaceId === (A as string))).toHaveLength(1);
+    expect(usage.filter((u) => u.workspaceId === (B as string))).toHaveLength(2);
+    const debits = (await db.select().from(creditLedger)).filter(
+      (r) => r.refType === "inference"
+    );
+    expect(debits).toHaveLength(1);
+    expect(debits[0].workspaceId).toBe(B as string);
   });
 
   it("getWorkspaceBillingState reads only the given workspace's subscription", async () => {

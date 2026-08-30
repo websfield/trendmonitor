@@ -118,7 +118,12 @@ export async function createDockerTestDb(maintenanceUrl: string, dbName: string)
 
   const db = drizzlePg(pool, { schema });
   await migratePg(db, { migrationsFolder });
-  return { db, pool };
+  // `url` is returned so a suite can build its OWN pool against this same
+  // throwaway database — the run-slot capacity case needs a real
+  // `createRunSlotPool` with a real `max` and connect timeout, and the pool
+  // above deliberately has neither (`max: 20`, no timeout), so nothing about
+  // pool exhaustion could be exercised through it.
+  return { db, pool, url: testUrl.toString() };
 }
 
 /**

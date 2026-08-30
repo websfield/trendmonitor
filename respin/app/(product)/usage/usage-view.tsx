@@ -12,6 +12,9 @@
 // empty and which milestone fills it. No projected burn, no estimated
 // days-to-empty, no invoice list we do not have.
 import type { ReactNode } from "react";
+import { Banner } from "../../ui/banner";
+import { buttonClass } from "../../ui/button";
+import { LedgerTable } from "../../ui/ledger-table";
 
 /** A server action, or a plain URL when a test renders this component. */
 export type FormAction = string | ((formData: FormData) => void | Promise<void>);
@@ -25,10 +28,20 @@ export type UsageLedgerRow = {
   ref: string | null;
 };
 
+/** R7/R8 (slice 2b): the scoped, unclamped credit-burn total for the current
+ *  billing period. `ok: false` is a QUERY failure, distinct from `hasAnyDebit:
+ *  false` (a real, answered "nothing spent") — collapsing the two would make a
+ *  transient read failure render as a confirmed zero. */
+export type MonthlyBurn =
+  | { ok: true; hasAnyDebit: true; totalDebit: number }
+  | { ok: true; hasAnyDebit: false }
+  | { ok: false };
+
 export type UsageViewProps = {
   balance:
     | { ok: true; value: number; asOf: Date }
     | { ok: false; title: string; detail: string };
+  burn: MonthlyBurn;
   rows: UsageLedgerRow[];
   /** True when the ledger has more rows than this page shows. */
   moreRows: boolean;
@@ -41,18 +54,8 @@ export type UsageViewProps = {
   billingHref: string;
 };
 
-const section: React.CSSProperties = {
-  border: "1px solid #ddd",
-  borderRadius: 6,
-  padding: "1rem",
-  marginBottom: "1rem",
-};
-const muted: React.CSSProperties = { color: "#555", fontSize: "0.9rem" };
-const cell: React.CSSProperties = {
-  borderBottom: "1px solid #eee",
-  padding: "0.4rem 0.6rem",
-  textAlign: "left",
-};
+// Panels, banners, muted text and the ledger table are Signal classes and
+// primitives (app/globals.css, app/ui/).
 
 /** ISO day. Deliberately not locale-formatted: the server and the browser must
  *  agree, and a test must be able to assert an exact string. */
@@ -61,32 +64,97 @@ export function day(d: Date): string {
 }
 
 function Note({ children }: { children: ReactNode }) {
-  return <p style={muted}>{children}</p>;
+  return <p className="muted">{children}</p>;
+}
+
+/**
+ * What the two spend-derived notes may honestly say, given ONLY what this page
+ * can see.
+ *
+ * A PURE FUNCTION over the visible page, because the wrong version of this is
+ * two constants — which is exactly what shipped and what three reviewers found
+ * (2026-08-28). The sentence "Nothing has been spent from this workspace yet"
+ * was hardcoded into both notes and rendered directly above the creator's own
+ * debit row.
+ *
+ * THREE BRANCHES, AND THE MIDDLE ONE IS THE POINT. `rows` is a CLAMPED page
+ * (`moreRows` says so), so an absent debit on page 1 is not evidence that
+ * nothing was ever spent — inferring it would be absence read as a zero, the
+ * error this repo has shipped twice. So:
+ *
+ *   spent    — a debit is visible. Never claim nothing was spent.
+ *   unknown  — no debit visible, but the page is clamped. Say what is true of
+ *              the entries SHOWN, and claim nothing about the rest.
+ *   none     — no debit visible and the whole ledger fits. Only here may the
+ *              page say the workspace has spent nothing.
+ */
+export type SpendVisibility = "spent" | "unknown" | "none";
+
+export function spendVisibility(
+  rows: readonly { delta: number }[],
+  moreRows: boolean
+): SpendVisibility {
+  if (rows.some((r) => r.delta < 0)) return "spent";
+  return moreRows ? "unknown" : "none";
+}
+
+/**
+ * The "by mode" note (R9, slice 2b).
+ *
+ * NO LONGER BRANCHES ON `SpendVisibility` — the burn TOTAL panel above now
+ * answers "was anything spent" with a real, unclamped number (R7), so this
+ * note's only job is the one question left: why is there no BREAKDOWN yet.
+ * That answer does not depend on whether anything was spent, so it is one
+ * sentence, always.
+ *
+ * PINNED TO A COUNT, not free prose: `tests/usage-burn-by-mode.test.ts`
+ * derives the real number of distinct `model_usage.purpose` values written
+ * anywhere in `packages/credits/src` and fails if it is no longer 1 — the
+ * mechanism R9 asks for so this sentence cannot stay true past slice 6
+ * without someone noticing.
+ */
+export const KNOWN_SPEND_PURPOSE_COUNT = 1;
+
+export function burnByModeNote(): string {
+  return "A per-mode breakdown is not available yet — exactly one thing spends credits today (building your voice brain), so there is nothing yet to split. It appears the day a second one exists.";
+}
+
+/** The "Days to empty" note. Same rule: the clamped page cannot prove absence. */
+export function daysToEmptyNote(v: SpendVisibility): string {
+  if (v === "spent") {
+    return "Not enough data yet. This needs a longer spending history than this workspace has to measure a rate.";
+  }
+  if (v === "unknown") {
+    return "Not enough data. This needs a spending history to measure, and none appears in the entries shown below.";
+  }
+  return "Not enough data. This needs a spending history to measure, and no credits have been spent from this workspace yet.";
 }
 
 export function UsageView(props: UsageViewProps) {
-  const { balance, rows, moreRows, paused, portal, error, billingHref } = props;
+  const { balance, burn, rows, moreRows, paused, portal, error, billingHref } =
+    props;
+  const spend = spendVisibility(rows, moreRows);
   return (
     <section>
       <h1>Usage</h1>
 
       {error ? (
-        <div
-          style={{ ...section, borderColor: "#c00", background: "#fff5f5" }}
+        <Banner
+          title={error.title}
           data-testid="usage-action-error"
           role="alert"
         >
-          <strong>{error.title}</strong>
-          <p style={muted}>{error.detail}</p>
-        </div>
+          <p className="muted">{error.detail}</p>
+        </Banner>
       ) : null}
 
-      <div style={section} data-testid="balance">
+      <div className="panel" data-testid="balance">
         <h2 style={{ marginTop: 0 }}>Credit balance</h2>
         {balance.ok ? (
           <>
-            <p style={{ fontSize: "2rem", margin: "0.25rem 0" }}>
-              <strong data-testid="balance-value">{balance.value}</strong> credits
+            <p className="balance-num" style={{ margin: "0.25rem 0" }}>
+              <strong data-testid="balance-value">{balance.value}</strong>{" "}
+              <span className="muted">credits</span>
             </p>
             <Note>Derived from your credit ledger as of {day(balance.asOf)}.</Note>
             {balance.value === 0 ? (
@@ -100,13 +168,13 @@ export function UsageView(props: UsageViewProps) {
         ) : (
           <div data-testid="balance-error">
             <strong>{balance.title}</strong>
-            <p style={muted}>{balance.detail}</p>
+            <p className="muted">{balance.detail}</p>
           </div>
         )}
       </div>
 
       {paused ? (
-        <div style={section} data-testid="paused-notice">
+        <div className="panel" data-testid="paused-notice">
           <h2 style={{ marginTop: 0 }}>Credits are frozen</h2>
           <p>
             This workspace is paused: credits are not spent, not granted, and
@@ -121,64 +189,54 @@ export function UsageView(props: UsageViewProps) {
         </div>
       ) : null}
 
-      <div style={section} data-testid="burn-by-mode">
-        <h2 style={{ marginTop: 0 }}>This month, by mode</h2>
-        {/* SLOT (REQ-G07, receiver M3): burn-by-mode needs generations, and M1
-            ships metering BEFORE generation deliberately. Until a debit exists
-            there is nothing to break down, and inventing a chart would be the
-            invented-specifics failure. */}
-        <Note>
-          Nothing has been spent yet: generation arrives in a later milestone
-          (M3), and only a generation spends credits. This breakdown appears
-          with the first one.
-        </Note>
+      <div className="panel" data-testid="burn-by-mode">
+        <h2 style={{ marginTop: 0 }}>This month</h2>
+        {/* R7/R8 (slice 2b): a SCOPED, UNCLAMPED query — never a sum over
+            `rows` (that page is clamped; see the header note on this file).
+            `ok: false` is a query failure, kept visibly distinct from a real
+            answered zero so a transient read error cannot render as "you
+            spent nothing" (absence is never a zero — the same rule
+            `spendVisibility` exists for below, applied to a number that can
+            now actually fail to load). */}
+        {burn.ok ? (
+          <p data-testid="burn-total">
+            {burn.hasAnyDebit
+              ? `${burn.totalDebit} credits spent this month`
+              : "Nothing spent this month."}
+          </p>
+        ) : (
+          <p className="muted" data-testid="burn-total-error">
+            This month&apos;s total could not be loaded right now. Your credit
+            history below is still accurate.
+          </p>
+        )}
+        {/* SLOT (REQ-G07, receiver M3): a per-mode BREAKDOWN needs more than
+            one mode to split by, and until generation exists there is only
+            one thing that spends. Inventing a chart would be the
+            invented-specifics failure — see `burnByModeNote`'s own doc for
+            why this note no longer depends on whether anything was spent. */}
+        <Note>{burnByModeNote()}</Note>
       </div>
 
-      <div style={section} data-testid="days-to-empty">
+      <div className="panel" data-testid="days-to-empty">
         <h2 style={{ marginTop: 0 }}>Days to empty</h2>
-        <Note>
-          Not enough data. This needs a spending history to measure, and no
-          credits have been spent from this workspace yet.
-        </Note>
+        <Note>{daysToEmptyNote(spend)}</Note>
       </div>
 
-      <div style={section} data-testid="ledger">
+      <div className="panel" data-testid="ledger">
         <h2 style={{ marginTop: 0 }}>Credit history</h2>
         {rows.length === 0 ? (
           // A plain <p>, not <Note>: TypeScript does not check hyphenated JSX
           // attributes against a component's props, so `data-testid` on <Note>
           // would compile and silently never render.
-          <p style={muted} data-testid="ledger-empty">
+          <p className="muted" data-testid="ledger-empty">
             No credit activity yet. Rows appear here when a subscription grants
             your monthly credits, when you buy a pack, and when credits are
             spent or expire.
           </p>
         ) : (
           <>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={cell}>Date</th>
-                  <th style={cell}>What</th>
-                  <th style={cell}>Credits</th>
-                  <th style={cell}>Expires</th>
-                  <th style={cell}>Reference</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td style={cell}>{day(r.createdAt)}</td>
-                    <td style={cell}>{r.kind}</td>
-                    <td style={cell}>
-                      {r.delta > 0 ? `+${r.delta}` : String(r.delta)}
-                    </td>
-                    <td style={cell}>{r.expiresAt ? day(r.expiresAt) : "—"}</td>
-                    <td style={cell}>{r.ref ?? "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <LedgerTable rows={rows} />
             {moreRows ? (
               <Note>
                 Showing the most recent {rows.length} entries. Older entries are
@@ -189,7 +247,7 @@ export function UsageView(props: UsageViewProps) {
         )}
       </div>
 
-      <div style={section} data-testid="invoices">
+      <div className="panel" data-testid="invoices">
         <h2 style={{ marginTop: 0 }}>Invoices and payment method</h2>
         {/* SLOT (REQ-G07, receiver M2+/M6): an in-page invoice list adds no
             information the Customer Portal does not already show, and it needs
@@ -200,7 +258,9 @@ export function UsageView(props: UsageViewProps) {
             {/* Send a refusal back HERE rather than to the billing page the
                 reader did not ask for. The action allowlists this value. */}
             <input type="hidden" name="from" value="/usage" />
-            <button type="submit">Open the Customer Portal</button>
+            <button type="submit" className={buttonClass("primary")}>
+              Open the Customer Portal
+            </button>
             <Note>
               Invoices, receipts and your payment method live in Stripe&apos;s
               Customer Portal.
@@ -208,10 +268,19 @@ export function UsageView(props: UsageViewProps) {
           </form>
         ) : (
           <div data-testid="portal-unavailable">
-            <button type="button" disabled>
+            {/* The reason is programmatically associated with the control it
+                disables — same rule as billing's ActionButton (WCAG 3.3.2). */}
+            <button
+              type="button"
+              disabled
+              className={buttonClass("primary")}
+              aria-describedby="portal-unavailable-reason"
+            >
               Open the Customer Portal
             </button>
-            <Note>{portal.reason}</Note>
+            <p className="muted" id="portal-unavailable-reason">
+              {portal.reason}
+            </p>
           </div>
         )}
       </div>

@@ -16,6 +16,7 @@ import {
 } from "@respin/config/admin-server";
 import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
 import type { ConfigFormState } from "./config-form-state";
+import { logRefusal } from "../../../(product)/safe-log";
 
 export async function appendConfigAction(
   _prev: ConfigFormState,
@@ -65,7 +66,7 @@ export async function appendConfigAction(
     version = await appendConfigVersionServer(verdict.value, admin.id);
   } catch (err) {
     rethrowNextControlFlow(err);
-    console.error("[admin-config] append failed", err);
+    logRefusal("[admin-config] append failed", err);
     return {
       status: "error",
       message:

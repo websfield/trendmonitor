@@ -19,6 +19,96 @@ export class ConfigUnavailableError extends Error {
 
 export type ActiveConfig = { version: number; content: RespinConfigV1 };
 
+/**
+ * The active config parses, but the STORED document is missing a key this
+ * operation needs, so the key it would have used came from a `.default()`.
+ *
+ * R19, slice 2a. `getActiveConfig` returns `{version: row.version, content:
+ * parsed.data}` -- the version of the STORED row with DEFAULTED content -- and
+ * every `.default()` on `respinConfigV1` exists so the A-9 deploy order
+ * (deploy code, THEN `config:migrate`) is safe. That is correct for reads. It
+ * is not correct for MONEY: inside the deploy window a debit would be stamped
+ * `config_version = N` while stored document N contains neither the price nor
+ * the credit cost that priced it, and `DebitParams.configVersion` exists
+ * precisely so a customer dispute or the margin rollup can be reconciled
+ * against the document that set the number. An unreconcilable debit on an
+ * append-only ledger cannot be repaired afterwards.
+ *
+ * So the window is closed by FAILING CLOSED rather than by spending: for the
+ * duration of it, a metered operation refuses and names the remedy. The
+ * remedy is one command and needs no deploy.
+ */
+export class ConfigNotMigratedError extends Error {
+  readonly version: number;
+  readonly missing: readonly string[];
+  constructor(version: number, missing: readonly string[]) {
+    super(
+      `The active config (version ${version}) is missing ${missing.length === 1 ? "the key" : "the keys"} ${missing
+        .map((m) => `\`${m}\``)
+        .join(", ")} in its STORED document. The running code supplies a default for it, but a default is not a price: a debit stamped with this config version could not be reconciled against it. Run \`pnpm -C respin config:migrate\` to append a version that carries the key, then retry. Nothing was spent and no model was called.`
+    );
+    this.name = "ConfigNotMigratedError";
+    this.version = version;
+    this.missing = missing;
+  }
+}
+
+/** Walk a dotted path through parsed JSON. `undefined` means absent. */
+function readPath(doc: unknown, path: string): unknown {
+  let cur: unknown = doc;
+  for (const seg of path.split(".")) {
+    if (typeof cur !== "object" || cur === null || Array.isArray(cur)) {
+      return undefined;
+    }
+    if (!Object.prototype.hasOwnProperty.call(cur, seg)) return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
+/**
+ * `getActiveConfig`, plus the R19 assertion that the RAW STORED document
+ * carries every dotted path named -- not merely that the parsed document does.
+ *
+ * Every metered operation reads config through THIS function, never through
+ * `getActiveConfig`. The paths it passes are exactly the keys that priced the
+ * operation, resolved model id included, so the check is as narrow as the
+ * spend it guards: a workspace that never touches the model layer is never
+ * refused for a key it does not use.
+ */
+export async function getActiveConfigRequiringStored(
+  db: DbLike | TxLike,
+  requiredPaths: readonly string[]
+): Promise<ActiveConfig> {
+  const [row] = await db
+    .select()
+    .from(schema.configVersions)
+    .orderBy(desc(schema.configVersions.version))
+    .limit(1);
+  if (!row) {
+    throw new ConfigUnavailableError(
+      "No config version exists. Seed the database (pnpm db:seed) or append a version via the admin config editor."
+    );
+  }
+  const parsed = respinConfigV1.safeParse(row.content);
+  if (!parsed.success) {
+    throw new ConfigUnavailableError(
+      `Active config version ${row.version} does not match RespinConfigV1: ${parsed.error.message}`
+    );
+  }
+  // Against `row.content` -- the bytes in the table -- and NOT against
+  // `parsed.data`, whose defaults are the very thing being detected. Reversing
+  // these two operands makes this function a tautology that always passes,
+  // which is the mutation the suite plants.
+  const missing = requiredPaths.filter(
+    (path) => readPath(row.content, path) === undefined
+  );
+  if (missing.length > 0) {
+    throw new ConfigNotMigratedError(row.version, missing);
+  }
+  return { version: row.version, content: parsed.data };
+}
+
 export async function getActiveConfig(
   db: DbLike | TxLike
 ): Promise<ActiveConfig> {

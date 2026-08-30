@@ -16,6 +16,8 @@
 // sends the reader to Stripe for the amount, rather than printing an R-7
 // indicative number that could disagree with what the card is actually charged.
 import type { ReactNode } from "react";
+import { Banner } from "../../../ui/banner";
+import { buttonClass } from "../../../ui/button";
 
 export type FormAction = string | ((formData: FormData) => void | Promise<void>);
 
@@ -82,18 +84,9 @@ export type BillingViewProps = {
   usageHref: string;
 };
 
-const section: React.CSSProperties = {
-  border: "1px solid #ddd",
-  borderRadius: 6,
-  padding: "1rem",
-  marginBottom: "1rem",
-};
-const muted: React.CSSProperties = { color: "#555", fontSize: "0.9rem" };
-const warn: React.CSSProperties = {
-  ...section,
-  borderColor: "#c00",
-  background: "#fff5f5",
-};
+// Panels, banners and muted text are Signal classes (app/globals.css);
+// refusal/warning surfaces render as the Banner primitive — strong neutral
+// border, plain words, no alarm red.
 
 function day(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -101,7 +94,7 @@ function day(d: Date): string {
 
 function Blocked({ reason, id }: { reason: string; id?: string }) {
   return (
-    <p style={muted} id={id}>
+    <p className="muted" id={id}>
       {reason}
     </p>
   );
@@ -128,6 +121,7 @@ function ActionButton({
   children,
   testId,
   cancelMarker,
+  variant = "primary",
 }: {
   action: FormAction;
   label: string;
@@ -136,6 +130,8 @@ function ActionButton({
   children?: ReactNode;
   testId: string;
   cancelMarker?: boolean;
+  /** Signal button look — styling only, both branches. */
+  variant?: "primary" | "secondary";
 }) {
   // The cancel marker rides BOTH branches. Marking only the live form would
   // mean a cancellation control that happens to be disabled (non-owner, no
@@ -143,10 +139,18 @@ function ActionButton({
   // reaches cancellation" assertion would pass over it.
   const cancel = cancelMarker ? "final" : undefined;
   const reasonId = `${testId}-reason`;
+  const buttonCls = buttonClass(variant);
   if (blockedBy) {
     return (
       <div data-testid={testId} data-cancel={cancel}>
-        <button type="button" disabled aria-describedby={reasonId}>
+        {/* `disabled` stays adjacent to `type` — the AC-3 marker scan matches
+            the rendered `<button type="button" disabled` prefix literally. */}
+        <button
+          type="button"
+          disabled
+          className={buttonCls}
+          aria-describedby={reasonId}
+        >
           {label}
         </button>
         <Blocked reason={blockedBy} id={reasonId} />
@@ -157,7 +161,9 @@ function ActionButton({
     <form action={action} data-testid={testId} data-cancel={cancel}>
       {hidden}
       {children}
-      <button type="submit">{label}</button>
+      <button type="submit" className={buttonCls}>
+        {label}
+      </button>
     </form>
   );
 }
@@ -208,34 +214,34 @@ export function BillingView(props: BillingViewProps) {
       <h1>Billing</h1>
 
       {error ? (
-        <div style={warn} data-testid="action-error" role="alert">
-          <strong>{error.title}</strong>
-          <p style={muted}>{error.detail}</p>
-        </div>
+        <Banner title={error.title} data-testid="action-error" role="alert">
+          <p className="muted">{error.detail}</p>
+        </Banner>
       ) : null}
 
       {!config.ok ? (
-        <div style={warn} data-testid="config-error">
-          <strong>{config.title}</strong>
-          <p style={muted}>{config.detail}</p>
-        </div>
+        <Banner title={config.title} data-testid="config-error">
+          <p className="muted">{config.detail}</p>
+        </Banner>
       ) : null}
 
       {!stripe.configured ? (
-        <div style={warn} data-testid="stripe-unconfigured">
-          <strong>Billing is not configured on this server</strong>
-          <p style={muted}>{stripe.remedy}</p>
-        </div>
+        <Banner
+          title="Billing is not configured on this server"
+          data-testid="stripe-unconfigured"
+        >
+          <p className="muted">{stripe.remedy}</p>
+        </Banner>
       ) : null}
 
-      <div style={section} data-testid="current-plan">
+      <div className="panel" data-testid="current-plan">
         <h2 style={{ marginTop: 0 }}>Current plan</h2>
         <p>
           <strong data-testid="tier">{state.tier}</strong> —{" "}
           <span data-testid="state">{state.state}</span>
         </p>
         {state.reason === "unmapped_price" ? (
-          <p style={muted} data-testid="unmapped-price">
+          <p className="muted" data-testid="unmapped-price">
             This workspace pays for a Stripe price that the active config does
             not map to a plan, so it is being treated as Free rather than
             guessed. An operator can fix it by adding the price id to
@@ -295,7 +301,7 @@ export function BillingView(props: BillingViewProps) {
             working until then, and you can start a new plan afterwards.
           </p>
         ) : null}
-        <p style={muted}>
+        <p className="muted">
           Credit balance and history are on the <a href={usageHref}>usage page</a>.
         </p>
       </div>
@@ -313,9 +319,9 @@ export function BillingView(props: BillingViewProps) {
         // checkout — it would create a second subscription and bill twice), so
         // without this branch it lands in "Change your plan" and is offered a
         // Customer Portal that has nothing it can fix.
-        <div style={section} data-testid="incomplete-recovery">
+        <div className="panel" data-testid="incomplete-recovery">
           <h2 style={{ marginTop: 0 }}>Finish signing up</h2>
-          <p style={muted}>
+          <p className="muted">
             Stripe is holding an unpaid invoice for this subscription — usually
             a declined card, or a bank confirmation that was not completed. The
             Customer Portal cannot resolve that, so it is not offered here: the
@@ -328,16 +334,16 @@ export function BillingView(props: BillingViewProps) {
             label="Pay the outstanding invoice"
             blockedBy={notOwner ?? noStripe}
           />
-          <p style={muted}>
+          <p className="muted">
             If there is nothing left to pay, the attempt has probably lapsed —
             Stripe expires an unpaid first invoice after about a day — and you
             can start a new plan once it does.
           </p>
         </div>
       ) : hasLiveSubscription ? (
-        <div style={section} data-testid="manage-plan">
+        <div className="panel" data-testid="manage-plan">
           <h2 style={{ marginTop: 0 }}>Change your plan</h2>
-          <p style={muted}>
+          <p className="muted">
             You already have a subscription. Upgrades, downgrades and payment
             details are handled in Stripe&apos;s Customer Portal — starting a new
             checkout here would create a SECOND subscription and bill you twice.
@@ -356,7 +362,7 @@ export function BillingView(props: BillingViewProps) {
           />
         </div>
       ) : (
-        <div style={section} data-testid="subscribe">
+        <div className="panel" data-testid="subscribe">
           <h2 style={{ marginTop: 0 }}>Start a plan</h2>
           {config.ok ? (
             <>
@@ -374,7 +380,7 @@ export function BillingView(props: BillingViewProps) {
                         : `No Stripe price is mapped for ${t.label}. An operator needs to run \`pnpm stripe:setup\` and paste the printed price ids into /admin/config as \`stripePriceMap\`.`)
                     }
                   />
-                  <p style={muted}>
+                  <p className="muted">
                     {t.monthlyCredits} credits per month (from config v
                     {config.version}). The price is shown on Stripe&apos;s
                     checkout page — it lives in Stripe, and this page will not
@@ -389,7 +395,7 @@ export function BillingView(props: BillingViewProps) {
         </div>
       )}
 
-      <div style={section} data-testid="pack">
+      <div className="panel" data-testid="pack">
         <h2 style={{ marginTop: 0 }}>Credit pack</h2>
         {config.ok ? (
           <>
@@ -408,7 +414,7 @@ export function BillingView(props: BillingViewProps) {
                   : "No Stripe price is mapped for the credit pack. An operator needs to run `pnpm stripe:setup` and paste the printed price ids into /admin/config as `stripePriceMap`.")
               }
             />
-            <p style={muted}>
+            <p className="muted">
               A one-off pack. Packs are valid for longer than a monthly
               allowance, and monthly credits are always spent first so a pack is
               not burned while an allowance expires unused.
@@ -419,9 +425,9 @@ export function BillingView(props: BillingViewProps) {
         )}
       </div>
 
-      <div style={section} data-testid="auto-topup">
+      <div className="panel" data-testid="auto-topup">
         <h2 style={{ marginTop: 0 }}>Auto-top-up</h2>
-        <p style={muted}>
+        <p className="muted">
           Currently{" "}
           <strong data-testid="auto-topup-state">
             {autoTopup.enabled ? "on" : "off"}
@@ -443,15 +449,23 @@ export function BillingView(props: BillingViewProps) {
                 one undisclosed dead control on the surface. Disclosed rather
                 than disabled, because the preference IS honoured the moment the
                 caller exists and disabling it would lose that. */}
-            <p style={muted} id="auto-topup-unbuilt" data-testid="auto-topup-unbuilt">
-              Nothing can trigger this yet: generation arrives in a later
-              milestone (M3), and only a generation spends credits. Setting it
-              now records the preference, and it takes effect with the first
-              one.
+            {/* NO LONGER A DEAD CONTROL, AND THIS COPY USED TO SAY IT WAS.
+                Slice 2a gave auto-top-up its first caller: `runInference` asks
+                `maybeAutoTopup` when a priced attempt finds too small a
+                balance. The old sentence — "Nothing can trigger this yet" —
+                was an accurate disclosure that became a false one, on the
+                setting whose whole subject is whether money moves without
+                being asked. Found by walking the product. */}
+            <p className="muted" id="auto-topup-unbuilt" data-testid="auto-topup-unbuilt">
+              This starts buying a pack when a run needs more credits than
+              you have. That run is still refused either way — auto-top-up
+              buys the credits, it does not let the attempt through. Retry once
+              they land. Nothing is charged until a top-up is actually needed.
             </p>
             <label style={{ display: "block", marginBottom: "0.5rem" }}>
               <input
                 type="checkbox"
+                className="toggle"
                 name="enabled"
                 defaultChecked={autoTopup.enabled}
                 disabled={!hasLiveSubscription && !autoTopup.enabled}
@@ -466,7 +480,7 @@ export function BillingView(props: BillingViewProps) {
                     : "auto-topup-unbuilt auto-topup-blocked-reason"
                 }
               />{" "}
-              Buy a pack automatically when a generation would run out of credits
+              Buy a pack automatically when a run needs more credits than I have
             </label>
             <label style={{ display: "block", marginBottom: "0.5rem" }}>
               Monthly cap (US$){" "}
@@ -482,10 +496,12 @@ export function BillingView(props: BillingViewProps) {
                 }
               />
             </label>
-            <button type="submit">Save auto-top-up</button>
+            <button type="submit" className={buttonClass("secondary")}>
+              Save auto-top-up
+            </button>
             {!hasLiveSubscription ? (
               <p
-                style={muted}
+                className="muted"
                 id="auto-topup-blocked-reason"
                 data-testid="auto-topup-blocked"
               >
@@ -494,7 +510,7 @@ export function BillingView(props: BillingViewProps) {
                 always allowed.
               </p>
             ) : null}
-            <p style={muted}>
+            <p className="muted">
               Nothing is charged beyond the cap within one calendar month.
             </p>
           </form>
@@ -502,7 +518,7 @@ export function BillingView(props: BillingViewProps) {
       </div>
 
       {state.state === "paused" ? (
-        <div style={section} data-testid="resume">
+        <div className="panel" data-testid="resume">
           <h2 style={{ marginTop: 0 }}>Resume</h2>
           <ActionButton
             action={actions.resume}
@@ -517,9 +533,9 @@ export function BillingView(props: BillingViewProps) {
           consolation. The interstitial re-offers it because that is where the
           rule bites; here it is simply the feature. */}
       {!showCancel && hasLiveSubscription && state.state !== "paused" ? (
-        <div style={section} data-testid="pause">
+        <div className="panel" data-testid="pause">
           <h2 style={{ marginTop: 0 }}>Pause</h2>
-          <p style={muted}>
+          <p className="muted">
             No charges while paused. Credits are frozen and their expiry clocks
             stop, so nothing you already paid for is lost.
           </p>
@@ -547,7 +563,9 @@ export function BillingView(props: BillingViewProps) {
                     ))}
                   </select>
                 </label>{" "}
-                <button type="submit">Pause subscription</button>
+                <button type="submit" className={buttonClass("secondary")}>
+                  Pause subscription
+                </button>
               </form>
             )
           ) : (
@@ -558,8 +576,9 @@ export function BillingView(props: BillingViewProps) {
 
       {showCancel ? (
         // THE CANCEL INTERSTITIAL. Order is the rule: pause offer, then — and
-        // only then — the way out (REQ-G08 / skill B4).
-        <div style={section} data-testid="cancel-flow">
+        // only then — the way out (REQ-G08 / skill B4). Level-2 elevation: the
+        // one floating decision surface on this page (DESIGN.md).
+        <div className="panel panel-2" data-testid="cancel-flow">
           <h2 style={{ marginTop: 0 }} data-testid="cancel-pause-offer">
             Before you cancel: pause instead?
           </h2>
@@ -590,7 +609,9 @@ export function BillingView(props: BillingViewProps) {
                     ))}
                   </select>
                 </label>{" "}
-                <button type="submit">Pause instead of cancelling</button>
+                <button type="submit" className={buttonClass("primary")}>
+                  Pause instead of cancelling
+                </button>
               </form>
             )
           ) : (
@@ -600,7 +621,7 @@ export function BillingView(props: BillingViewProps) {
           <hr style={{ margin: "1rem 0" }} />
 
           <h3 data-testid="cancel-final-heading">Still want to cancel?</h3>
-          <p style={muted}>
+          <p className="muted">
             Cancellation happens in Stripe&apos;s Customer Portal. Your plan runs
             to the end of the period you have already paid for.
           </p>
@@ -608,6 +629,7 @@ export function BillingView(props: BillingViewProps) {
             action={actions.portal}
             testId="cancel-final"
             cancelMarker
+            variant="secondary"
             label="Continue to the Customer Portal to cancel"
             blockedBy={
               notOwner ??
@@ -619,9 +641,9 @@ export function BillingView(props: BillingViewProps) {
           />
         </div>
       ) : hasLiveSubscription ? (
-        <div style={section} data-testid="cancel-entry">
+        <div className="panel" data-testid="cancel-entry">
           <h2 style={{ marginTop: 0 }}>Cancel</h2>
-          <p style={muted}>
+          <p className="muted">
             <a href={cancelHref} data-testid="cancel-entry-link">
               Cancel subscription
             </a>{" "}

@@ -60,22 +60,36 @@
 // ---------------------------------------------------------------------------
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, countDistinct, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { DbLike, TxLike } from "./db-like";
 import { memberships, workspaces } from "./schema";
 import type { Membership, MembershipRole, Workspace } from "./schema";
 import { creditLedger, subscriptions } from "./billing-schema";
 import type { CreditLedgerRow, Subscription } from "./billing-schema";
-import { brainDocs, creatorProfiles } from "./brain-schema";
-import type { BrainDoc, BrainKind, CreatorProfile } from "./brain-schema";
-import { modelUsage, onboardingInputs } from "./onboarding-schema";
+import { brainDocs, creatorProfiles, frameworks } from "./brain-schema";
 import type {
+  BrainDoc,
+  BrainKind,
+  CreatorProfile,
+  Framework,
+} from "./brain-schema";
+import {
+  BILLABLE_USAGE_OUTCOMES,
+  brainActivationSnapshots,
+  modelUsage,
+  onboardingInterviewDrafts,
+  onboardingInputs,
+} from "./onboarding-schema";
+import type {
+  BrainActivationSnapshot,
   CostState,
   InputClass,
   ModelUsageRow,
   OnboardingInput,
+  OnboardingInterviewDraft,
   ResolvedTier,
 } from "./onboarding-schema";
+import { upsertSpendRollup } from "./spend-rollup";
 import { hasOpenPause } from "./pause";
 import {
   CHECK,
@@ -86,6 +100,8 @@ import {
 import {
   assertNoReferenceEcho,
   assertReferenceQuoteBudget,
+  groupReferenceInputs,
+  isUsableSpanRange,
   type ReferenceInput,
   type ReferenceQuoteSpan,
 } from "./echo";
@@ -95,17 +111,38 @@ import {
   type BrainReasonFacts,
 } from "./brain-reason";
 import {
+  BrainDocumentLimitError,
   BrainRoleError,
+  BrainVersionLimitError,
+  OnboardingInputLimitError,
+  OnboardingInputFieldKeyError,
   ProfileAccessError,
+  ProfileNameError,
+  ProfileRoleError,
   ProvenanceError,
   ScopeForgeryError,
   UsageRawError,
   WorkspacePausedError,
 } from "./errors";
+import {
+  BRAIN_CLAIM_POSITION_MAX,
+  BRAIN_DOCUMENT_TEXT_MAX,
+  BRAIN_EVIDENCE_ENTRY_MAX,
+  BRAIN_VERSION_MAX,
+  ONBOARDING_FIELD_KEY_MAX,
+  ONBOARDING_SOURCE_URL_MAX,
+  POST_CONTENT_MAX,
+  POST_COUNT_MAX,
+} from "./storage-limits";
 
 export {
   BrainRoleError,
+  OnboardingInputFieldKeyError,
   ProfileAccessError,
+  ProfileCapError,
+  ProfileNameError,
+  ProfileRoleError,
+  PostContentError,
   ProvenanceError,
   ScopeForgeryError,
   UsageRawError,
@@ -188,6 +225,30 @@ export type WorkspaceCtx = {
  */
 export type LedgerPage = { limit: number; offset?: number };
 export const LEDGER_PAGE_MAX = 200;
+
+/**
+ * The most onboarding inputs one read returns.
+ *
+ * Its own constant rather than reusing `LEDGER_PAGE_MAX`: these rows are up to
+ * `POST_CONTENT_MAX` characters each, so 200 of them is a materially different
+ * payload from 200 ledger rows, and a shared number would tie two limits that
+ * move for different reasons.
+ */
+export const ONBOARDING_PAGE_MAX = 50;
+
+/** Fixed-size pages used only by the complete creator-data export stream. */
+export const EXPORT_PAGE_SIZE = 25;
+// One bounded brain document can cite 250 distinct 20k-character inputs. Page
+// docs singly so markdown evidence resolution has a ~5 MB raw-text ceiling,
+// rather than multiplying that envelope by the ordinary 25-row page size.
+const EXPORT_BRAIN_DOC_PAGE_SIZE = 1;
+export type ProfileExportTable =
+  | "creator_profiles"
+  | "brain_docs"
+  | "onboarding_inputs"
+  | "onboarding_interview_drafts"
+  | "brain_activation_snapshots"
+  | "frameworks";
 
 /**
  * Clamp a caller-supplied page number into `[lo, hi]`, treating anything that
@@ -336,6 +397,29 @@ export type WorkspaceAccessors = {
   members: () => Promise<Membership[]>;
   subscription: () => Promise<Subscription[]>;
   ledger: (page: LedgerPage) => Promise<CreditLedgerRow[]>;
+  /**
+   * The workspace's ACTIVE creator profiles, newest first (slice 1).
+   *
+   * WORKSPACE-GRAINED ON PURPOSE, and it is the one accessor here that has to
+   * say so: every OTHER profile-grained read in this file hangs off
+   * `ProfileScope`, which cannot be minted until a profile exists. This is the
+   * read that answers "does this creator have a profile yet?", which is the
+   * question `/onboarding` opens with — so it necessarily precedes the profile
+   * grain rather than living inside it.
+   *
+   * `active` ONLY, and that is not cosmetic: the cap counts active rows
+   * (`countActiveProfiles`), so a reader that counted archived ones too would
+   * show a creator "using 2 of 1" and claim cap-reached while the server would
+   * allow the create. The page's displayed count and the server's enforced
+   * count have to be the same question (billing gate, 2026-08-27).
+   *
+   * NO `conn` PARAMETER. An earlier version took one, justified by
+   * "`createProfile` counts against the cap from INSIDE its transaction" — but
+   * `createProfile` uses `countActiveProfiles(tx)` and never this accessor, and
+   * nothing in the repo passed the argument. A comment claiming a property is
+   * not the property; the parameter is gone rather than the comment reworded.
+   */
+  creatorProfiles: () => Promise<CreatorProfile[]>;
 };
 
 export class WorkspaceScope {
@@ -392,6 +476,22 @@ export class WorkspaceScope {
           .orderBy(desc(creditLedger.createdAt), desc(creditLedger.id))
           .limit(clampPageNumber(page.limit, 1, LEDGER_PAGE_MAX, 1))
           .offset(clampPageNumber(page.offset, 0, Number.MAX_SAFE_INTEGER, 0)),
+      // Newest first with `id` as the tie-break, the same DISPLAY order the
+      // ledger accessor uses — `uuidv7` ids are time-ordered, so the tie-break
+      // agrees with `created_at` rather than fighting it. Unordered would let
+      // Postgres return a different order per call for the same rows, which is
+      // a list that reshuffles under the reader for no reason.
+      creatorProfiles: () =>
+        db
+          .select()
+          .from(creatorProfiles)
+          .where(
+            and(
+              eq(creatorProfiles.workspaceId, workspaceId),
+              eq(creatorProfiles.state, "active")
+            )
+          )
+          .orderBy(desc(creatorProfiles.createdAt), desc(creatorProfiles.id)),
     };
     workspaceCage.add(this);
   }
@@ -412,12 +512,213 @@ export class WorkspaceScope {
   }
 }
 
+export type MonthlySpendResult = {
+  /** Credits debited in the period, as a positive count. */
+  totalDebit: number;
+  /** False means "no debit visible in this period" — not the same claim as zero (R8). */
+  hasAnyDebit: boolean;
+  periodStart: Date;
+};
+
+/**
+ * The creator's credit burn this billing period (R7, slice 2b).
+ *
+ * A SCOPED QUERY WITH ITS OWN PERIOD PREDICATE — never a sum over
+ * `scope.accessors.ledger()`'s page. That page is clamped (`LEDGER_PAGE_MAX`)
+ * and `usage-view.tsx` already refuses to do arithmetic on it ("Nothing here
+ * adds up the deltas in `rows`"); this is the unclamped answer that refusal
+ * was leaving a gap for.
+ *
+ * A STANDALONE FUNCTION, not a `WorkspaceAccessors` closure entry, for the
+ * same reason `appendOwnPost` and `mintProfileScope` are standalone in
+ * `onboarding-ops.ts`: it calls `assertScoped` itself rather than joining the
+ * accessor map the cross-workspace suite enumerates.
+ *
+ * `periodStart` is supplied by the caller, not computed here: the authority
+ * for "what is this workspace's current billing period" is
+ * `getWorkspaceBillingState` / the subscription row, which lives in
+ * `@respin/credits` — `packages/credits/src/burn-period.ts` is that
+ * authority. This function only trusts the `Date` it is handed.
+ */
+export async function monthlySpend(
+  db: DbLike,
+  scope: WorkspaceScope,
+  periodStart: Date
+): Promise<MonthlySpendResult> {
+  assertScoped(scope);
+  // `kind = 'debit'` EXPLICITLY, not merely `delta < 0` (billing gate finding
+  // 1, 2026-08-29). `delta < 0` also matches `expiry` rows and a negative
+  // `adjust` — and `deriveBalanceInTx` (`balance.ts`) can materialize an
+  // expiry row LAZILY, on the very `getBalance` call this page already makes
+  // one statement earlier (`usage/page.tsx`), so a page load that crosses a
+  // lot's expiry boundary would have counted a lapsed credit as "spent" in
+  // the same render. Credits lapsing is not the creator having spent them.
+  const [row] = await db
+    .select({ total: sql<string | null>`sum(-${creditLedger.delta})` })
+    .from(creditLedger)
+    .where(
+      and(
+        eq(creditLedger.workspaceId, scope.workspaceId),
+        eq(creditLedger.kind, "debit"),
+        sql`${creditLedger.createdAt} >= ${periodStart}`
+      )
+    );
+  const totalDebit = row?.total ? Number(row.total) : 0;
+  return { totalDebit, hasAnyDebit: totalDebit > 0, periodStart };
+}
+
 export type ProfileAccessors = {
   profile: () => Promise<CreatorProfile[]>;
   brainDocs: () => Promise<BrainDoc[]>;
+  /** Every version of one kind, newest version first, with every status retained. */
+  brainDocsByKind: (kind: BrainKind, tx?: TxLike) => Promise<BrainDoc[]>;
   activeBrainDocs: () => Promise<BrainDoc[]>;
-  onboardingInputs: () => Promise<OnboardingInput[]>;
+  /** Unpaged because a REQ-A04 export must not silently truncate creator-owned rows. */
+  onboardingInputsForExport: () => Promise<OnboardingInput[]>;
+  interviewDrafts: () => Promise<OnboardingInterviewDraft[]>;
+  activationSnapshots: () => Promise<BrainActivationSnapshot[]>;
+  /** Private creator-owned frameworks only; shared rows are library content. */
+  frameworks: () => Promise<Framework[]>;
+  /** Complete, fixed-size export paging; offset advances until an empty page. */
+  exportPage: (
+    table: ProfileExportTable,
+    offset: number,
+    tx?: TxLike
+  ) => Promise<unknown[]>;
+  /**
+   * `inputClass` IS OPTIONAL AND IS A QUERY PREDICATE, NEVER A POST-PAGE FILTER
+   * (tenancy gate CHANGE, slice 4 round 2, 2026-08-29). Two onboarding-page
+   * display lists ("Your posts" and the reference-post list) used to share
+   * this accessor's UNFILTERED page and filter by class in JavaScript AFTER
+   * the page was taken — the exact anti-pattern `ownPostsNewest`'s own
+   * docblock names and closes for the inference path one accessor up, now
+   * reopened on the DISPLAY path the moment `reference` rows exist in
+   * production: a creator with more of one class than the page size sees the
+   * OTHER class's list wrongly collapse to "none" or an undercounted total.
+   * `page.tsx` now passes `inputClass` here for both lists.
+   */
+  onboardingInputs: (
+    page?: LedgerPage,
+    inputClass?: InputClass
+  ) => Promise<OnboardingInput[]>;
+  /**
+   * The inputs a set of ids names — the evidence's OWN posts, not a page.
+   *
+   * ADDED BY THE TENANCY AND COMPLIANCE GATES, 2026-08-29, and the defect it
+   * closes is a permanent outage. `readVoiceBrain` resolved a brain document's
+   * cited posts out of `onboardingInputs()`, whose default page is the 50
+   * NEWEST — against a write ceiling of 2,000. Once a cited post aged out of
+   * that window the lookup missed, `claimsFor` threw, and `/brain` refused the
+   * WHOLE page, proposed and active alike. `onboarding_inputs` has no delete
+   * path and there is no un-activate, so nothing the creator could do would
+   * clear it.
+   *
+   * The set is bounded by the document rather than by a page: one evidence
+   * entry per claim position, and `voice` declares at most twelve.
+   */
+  onboardingInputsByIds: (
+    ids: readonly string[],
+    tx?: TxLike
+  ) => Promise<OnboardingInput[]>;
+  /**
+   * The creator's OWN posts, newest first, up to an explicit limit.
+   *
+   * ADDED BY THE COMPLIANCE GATE, 2026-08-29. `inferVoice` read
+   * `onboardingInputs()` and filtered `own_post` in JavaScript, which had two
+   * defects the filter could not see. The page bound is 50, so a creator with
+   * 200 stored posts paid for a voice inferred from a quarter of them while the
+   * screen said "the posts you saved above" — and once slice 4 lands
+   * `reference` inputs, 50 recent references would starve `own_post` out of the
+   * window entirely and produce "not enough posts" for a creator with hundreds.
+   *
+   * The class filter is in the QUERY for that reason: a filter applied after a
+   * page has already been taken filters the wrong set.
+   */
+  ownPostsNewest: (limit: number) => Promise<OnboardingInput[]>;
+  /** How many OWN posts this profile holds — what the corpus bound is stated against. */
+  countOwnPosts: () => Promise<number>;
+  /**
+   * How many REFERENCE posts this profile holds (slice 4, R3).
+   *
+   * ITS OWN COUNT, not derived from `countOnboardingInputs`. `ownPostsNewest`'s
+   * own docblock records the corpus-starvation risk this closes: 50 recent
+   * `reference` rows would push a creator's `own_post` rows out of the voice
+   * corpus's read window entirely. `appendReferencePost`'s own cap
+   * (`REFERENCE_COUNT_MAX`, onboarding-ops.ts) is the write-side control that
+   * keeps this count itself bounded.
+   */
+  countReferencePosts: () => Promise<number>;
+  /**
+   * Attempts we PAID FOR and did NOT charge for, on this profile.
+   *
+   * THE BOUND THE ENTITLEMENT SPLIT REMOVED (billing gate round 2,
+   * 2026-08-29). Until `consumesIncludedBuild` existed, every non-consuming
+   * outcome was also a ZERO-COST one — a 429 or a 5xx produced nothing and was
+   * charged nothing — so "does not consume the included build" and "cost us
+   * nothing" were the same fact, and nothing needed to count these.
+   *
+   * `LlmTruncatedError` is the first class that is billable AND
+   * non-consuming: the vendor produced a full ceiling of output and charged
+   * for it, and the creator is deliberately not billed because the cause is
+   * our own misconfigured ceiling. That is right — and it left a real vendor
+   * call a creator can fire from a button, forever, at no cost to them and no
+   * cap: `priceOf` returns 0, so the balance check is skipped entirely, and
+   * truncation is deterministic for a given input size, so it repeats.
+   * Round 1's defect bounded this by accident (the second press cost 50
+   * credits); fixing that defect reopened it.
+   */
+  countUnchargedBillableAttempts: (params: {
+    purpose: string;
+  }) => Promise<number>;
+  /** How many inputs this profile holds — the write-side ceiling's reader. */
+  countOnboardingInputs: () => Promise<number>;
   modelUsage: () => Promise<ModelUsageRow[]>;
+  /**
+   * How many DISTINCT `attempt_id`s of one purpose this profile has that the
+   * vendor BILLED US FOR (D-M2-2, slice 2a).
+   *
+   * COUNTED, NOT LISTED, and that is not an optimisation. `modelUsage()` above
+   * is an unbounded read of a table that only ever grows, so pricing a rebuild
+   * off `modelUsage().length` would load a creator's entire spend history into
+   * memory to compute one integer, and would get the integer WRONG twice over:
+   * rows are not attempts (a bounded retry may write two rows for one attempt),
+   * and a 429 is not a billed attempt.
+   *
+   * `excludeAttemptId` exists because the authoritative pricing decision
+   * happens AFTER `model_usage` for this attempt has already committed — the
+   * A-7 settlement-tail order — so "how many came before me" has to be
+   * expressible without counting oneself.
+   *
+   * `earlierThanAttemptId` EXISTS BECAUSE `excludeAttemptId` ALONE IS NOT A
+   * TIE-BREAK, AND THE DOCBLOCK HERE USED TO CLAIM IT WAS. The old sentence
+   * read "two concurrent first-ever attempts then serialise on the workspace
+   * lock and exactly one of them is free, rather than both". They do serialise
+   * — and both are charged, because by the time either reaches its debit BOTH
+   * usage rows have already committed (R11 commits the spend record before the
+   * debit is attempted), so each one excludes itself and counts the other.
+   * The creator loses the included build they were promised. Proved by
+   * `packages/credits/tests/inference-race.docker.test.ts`, which PGlite could
+   * not have caught: it is single-connection, so its "race" is a sequence.
+   *
+   * The fix is an ORDER, because a symmetric predicate cannot break a tie.
+   * Passing `earlierThanAttemptId` counts only attempts that are strictly
+   * EARLIER than that attempt by `(first billable row's created_at,
+   * attempt_id)` — a total order over attempts, so exactly one attempt in any
+   * set has zero predecessors, whatever the interleaving. `created_at` is
+   * `clock_timestamp()` per row, and `attempt_id` breaks a same-instant tie.
+   *
+   * It is monotone over time, which a cheaper-looking rule is not: "the free
+   * build belongs to the smallest attempt_id" would hand a SECOND free build
+   * to any later attempt that happened to sort below the first.
+   */
+  countBillableAttempts: (
+    params: {
+      purpose: string;
+      excludeAttemptId?: string;
+      earlierThanAttemptId?: string;
+    },
+    conn?: TxLike
+  ) => Promise<number>;
   /**
    * THE ONE REFERENCE CORPUS (C-29). Both R-3 bars take it; neither builds one.
    *
@@ -497,15 +798,323 @@ export class ProfileScope {
               eq(creatorProfiles.workspaceId, workspaceId)
             )
           ),
-      brainDocs: () => db.select().from(brainDocs).where(both(brainDocs)),
+      brainDocs: () =>
+        db
+          .select()
+          .from(brainDocs)
+          .where(both(brainDocs))
+          .orderBy(desc(brainDocs.createdAt), desc(brainDocs.id)),
+      brainDocsByKind: (kind: BrainKind, tx?: TxLike) =>
+        (tx ?? db)
+          .select()
+          .from(brainDocs)
+          .where(and(both(brainDocs), eq(brainDocs.kind, kind)))
+          .orderBy(desc(brainDocs.version), desc(brainDocs.id)),
       activeBrainDocs: () =>
         db
           .select()
           .from(brainDocs)
           .where(and(both(brainDocs), eq(brainDocs.status, "active"))),
-      onboardingInputs: () =>
-        db.select().from(onboardingInputs).where(both(onboardingInputs)),
+      onboardingInputsForExport: () =>
+        db
+          .select()
+          .from(onboardingInputs)
+          .where(both(onboardingInputs))
+          .orderBy(desc(onboardingInputs.createdAt), desc(onboardingInputs.id)),
+      interviewDrafts: () =>
+        db
+          .select()
+          .from(onboardingInterviewDrafts)
+          .where(both(onboardingInterviewDrafts))
+          .orderBy(
+            desc(onboardingInterviewDrafts.createdAt),
+            desc(onboardingInterviewDrafts.id)
+          ),
+      activationSnapshots: () =>
+        db
+          .select()
+          .from(brainActivationSnapshots)
+          .where(both(brainActivationSnapshots))
+          .orderBy(
+            desc(brainActivationSnapshots.createdAt),
+            desc(brainActivationSnapshots.id)
+          ),
+      frameworks: () =>
+        db
+          .select()
+          .from(frameworks)
+          .where(
+            and(
+              eq(frameworks.ownerProfileId, profileId),
+              eq(frameworks.workspaceId, workspaceId),
+              eq(frameworks.visibility, "private")
+            )
+          )
+          .orderBy(desc(frameworks.createdAt), desc(frameworks.id)),
+      exportPage: async (
+        table: ProfileExportTable,
+        offset: number,
+        tx?: TxLike
+      ): Promise<unknown[]> => {
+        if (!Number.isInteger(offset) || offset < 0) {
+          throw new WorkspaceAccessError(
+            `exportPage: offset must be a non-negative integer; received ${String(offset)}`
+          );
+        }
+        const conn = tx ?? db;
+        switch (table) {
+          case "creator_profiles":
+            return conn
+              .select()
+              .from(creatorProfiles)
+              .where(
+                and(
+                  eq(creatorProfiles.id, profileId),
+                  eq(creatorProfiles.workspaceId, workspaceId)
+                )
+              )
+              .orderBy(desc(creatorProfiles.createdAt), desc(creatorProfiles.id))
+              .limit(EXPORT_PAGE_SIZE)
+              .offset(offset);
+          case "brain_docs":
+            return conn
+              .select()
+              .from(brainDocs)
+              .where(both(brainDocs))
+              .orderBy(desc(brainDocs.version), desc(brainDocs.id))
+              .limit(EXPORT_BRAIN_DOC_PAGE_SIZE)
+              .offset(offset);
+          case "onboarding_inputs":
+            return conn
+              .select()
+              .from(onboardingInputs)
+              .where(both(onboardingInputs))
+              .orderBy(desc(onboardingInputs.createdAt), desc(onboardingInputs.id))
+              .limit(EXPORT_PAGE_SIZE)
+              .offset(offset);
+          case "onboarding_interview_drafts":
+            return conn
+              .select()
+              .from(onboardingInterviewDrafts)
+              .where(both(onboardingInterviewDrafts))
+              .orderBy(
+                desc(onboardingInterviewDrafts.createdAt),
+                desc(onboardingInterviewDrafts.id)
+              )
+              .limit(EXPORT_PAGE_SIZE)
+              .offset(offset);
+          case "brain_activation_snapshots":
+            return conn
+              .select()
+              .from(brainActivationSnapshots)
+              .where(both(brainActivationSnapshots))
+              .orderBy(
+                desc(brainActivationSnapshots.createdAt),
+                desc(brainActivationSnapshots.id)
+              )
+              .limit(EXPORT_PAGE_SIZE)
+              .offset(offset);
+          case "frameworks":
+            return conn
+              .select()
+              .from(frameworks)
+              .where(
+                and(
+                  eq(frameworks.ownerProfileId, profileId),
+                  eq(frameworks.workspaceId, workspaceId),
+                  eq(frameworks.visibility, "private")
+                )
+              )
+              .orderBy(desc(frameworks.createdAt), desc(frameworks.id))
+              .limit(EXPORT_PAGE_SIZE)
+              .offset(offset);
+        }
+      },
+      // NEWEST FIRST, with `id` as the tie-break — the ONE display order for a
+      // creator's pasted posts, so the page never re-answers it. Unordered, the
+      // planner may return a different order per call for the same rows, and a
+      // list that reshuffles under the reader looks like data changing when
+      // nothing did. `uuidv7` ids are time-ordered, so the tie-break agrees
+      // with `created_at` instead of fighting it.
+      // CLAMPED, like `ledger` one grain up and for the same reason: this is a
+      // list that only ever grows, read by a server component whose caller may
+      // pass a URL-derived page size. An unbounded read of an append-only table
+      // is a slow-loris waiting to happen, and departing from the repo's own
+      // convention for a growing list silently is how it would arrive
+      // (production gate, 2026-08-27).
+      onboardingInputs: (
+        page: LedgerPage = { limit: ONBOARDING_PAGE_MAX },
+        inputClass?: InputClass
+      ) =>
+        db
+          .select()
+          .from(onboardingInputs)
+          .where(
+            // THE CLASS PREDICATE, IN THE QUERY — never applied to the page
+            // after it is taken. See the type's docblock (tenancy gate CHANGE,
+            // slice 4 round 2): a filter applied after the page is already the
+            // wrong page for a creator with more of the OTHER class.
+            inputClass === undefined
+              ? both(onboardingInputs)
+              : and(both(onboardingInputs), eq(onboardingInputs.inputClass, inputClass))
+          )
+          .orderBy(desc(onboardingInputs.createdAt), desc(onboardingInputs.id))
+          .limit(clampPageNumber(page.limit, 1, ONBOARDING_PAGE_MAX, 1))
+          .offset(clampPageNumber(page.offset, 0, Number.MAX_SAFE_INTEGER, 0)),
+      onboardingInputsByIds: async (ids: readonly string[], tx?: TxLike) => {
+        // AN EMPTY SET MEANS "NO INPUTS", NEVER "NO PREDICATE" — the same trap
+        // `referenceCorpusAsOf` documents above, and the same handling: return
+        // without a query rather than rely on the driver emitting `false`.
+        if (ids.length === 0) return [];
+        return (tx ?? db)
+          .select()
+          .from(onboardingInputs)
+          .where(
+            and(both(onboardingInputs), inArray(onboardingInputs.id, [...ids]))
+          );
+      },
+      ownPostsNewest: (limit: number) =>
+        db
+          .select()
+          .from(onboardingInputs)
+          .where(
+            and(
+              both(onboardingInputs),
+              // IN THE QUERY, not after the page — see the type's docblock.
+              eq(onboardingInputs.inputClass, "own_post")
+            )
+          )
+          .orderBy(desc(onboardingInputs.createdAt), desc(onboardingInputs.id))
+          // REFUSED, NOT CLAMPED (compliance gate round 2, 2026-08-29). This
+          // used to clamp an EXPLICIT bound: raise the caller's limit past 50
+          // and the read quietly stayed at 50 while the copy stated the new
+          // number. That is round 1's own defect — a silent truncation under a
+          // comment claiming an explicit bound — one layer down, and the
+          // caller-side guard (`toBeLessThanOrEqual`) would stay true through
+          // it.
+          .limit(assertCorpusLimit(limit)),
+      countUnchargedBillableAttempts: async ({ purpose }) => {
+        // DISTINCT ATTEMPTS, never rows — the same rule `countBillableAttempts`
+        // states one accessor up: a bounded retry inside one attempt is one
+        // attempt.
+        const [row] = await db
+          .select({ n: countDistinct(modelUsage.attemptId) })
+          .from(modelUsage)
+          .where(
+            and(
+              both(modelUsage),
+              eq(modelUsage.purpose, purpose),
+              inArray(modelUsage.outcome, [...BILLABLE_USAGE_OUTCOMES]),
+              eq(modelUsage.consumedIncludedBuild, false)
+            )
+          );
+        return row?.n ?? 0;
+      },
+      countOwnPosts: async () => {
+        const [row] = await db
+          .select({ n: count() })
+          .from(onboardingInputs)
+          .where(
+            and(
+              both(onboardingInputs),
+              eq(onboardingInputs.inputClass, "own_post")
+            )
+          );
+        return row?.n ?? 0;
+      },
+      countReferencePosts: async () => {
+        const [row] = await db
+          .select({ n: count() })
+          .from(onboardingInputs)
+          .where(
+            and(
+              both(onboardingInputs),
+              eq(onboardingInputs.inputClass, "reference")
+            )
+          );
+        return row?.n ?? 0;
+      },
+      countOnboardingInputs: async () => {
+        const [row] = await db
+          .select({ n: count() })
+          .from(onboardingInputs)
+          .where(both(onboardingInputs));
+        return row?.n ?? 0;
+      },
       modelUsage: () => db.select().from(modelUsage).where(both(modelUsage)),
+      // `conn` for the same reason `referenceCorpusAsOf` takes one: the scope
+      // closes over the POOL, and reading the pool from inside an open
+      // transaction deadlocks on a single-connection driver. The debit
+      // transaction is exactly that caller.
+      countBillableAttempts: async (
+        { purpose, excludeAttemptId, earlierThanAttemptId },
+        conn
+      ) => {
+        const on = conn ?? db;
+        // The billable rows of this purpose for this profile, in the cage:
+        // `both()` is the workspace+profile predicate every accessor here
+        // shares, and it is applied to BOTH queries below.
+        const scoped = and(
+          both(modelUsage),
+          eq(modelUsage.purpose, purpose),
+          inArray(modelUsage.outcome, [...BILLABLE_USAGE_OUTCOMES]),
+          // ...AND IT ACTUALLY CONSUMED THE INCLUDED BUILD (billing gate,
+          // 2026-08-29). `outcome` alone counted a truncated reply — an outage
+          // caused by this server's own reply ceiling — as the creator's one
+          // free build, so their next press cost 50 credits and failed
+          // identically. The column defaults to `true`, so this predicate
+          // changes nothing for any row written before it existed.
+          eq(modelUsage.consumedIncludedBuild, true)
+        );
+
+        let earlierThan: ReturnType<typeof sql> | undefined;
+        if (earlierThanAttemptId !== undefined) {
+          // WHERE THIS ATTEMPT SITS IN THE ORDER: its FIRST billable row. An
+          // attempt may write several rows (a bounded retry), and its position
+          // is where it started, not where it finished — otherwise a retrying
+          // attempt could be overtaken by one that began after it.
+          const [me] = await on
+            // `string | null`, NOT `Date`: drizzle's node-postgres driver
+            // installs string parsers for `timestamptz`, so this arrives with
+            // FULL microsecond precision and is re-bound unchanged. Annotating
+            // it `Date` was wrong and mattered: two reviewers read the `Date`
+            // and concluded the ordering was truncated to milliseconds, which
+            // measurement against the real driver refuted. A `.getTime()` here
+            // would crash today.
+            .select({ firstAt: sql<string | null>`min(${modelUsage.createdAt})` })
+            .from(modelUsage)
+            .where(and(scoped, eq(modelUsage.attemptId, earlierThanAttemptId)));
+
+          if (me?.firstAt == null) {
+            // UNREACHABLE ON THE PRICING PATH and deliberately not silent: R11
+            // commits this attempt's `model_usage` row before the debit is
+            // attempted, so asking where an attempt sits when it has no row is
+            // asking about an attempt that does not exist. Answering 0 would
+            // hand out a free build on the strength of a missing record —
+            // absence read as an entitlement.
+            throw new WorkspaceAccessError(
+              "countBillableAttempts: cannot order against an attempt with no billable usage row"
+            );
+          }
+          // STRICTLY earlier by (created_at, attempt_id) — a total order, so
+          // exactly one attempt in any set has zero predecessors.
+          earlierThan = sql`(${modelUsage.createdAt}, ${modelUsage.attemptId}) < (${me.firstAt}::timestamptz, ${earlierThanAttemptId})`;
+        }
+
+        const [row] = await on
+          .select({ n: countDistinct(modelUsage.attemptId) })
+          .from(modelUsage)
+          .where(
+            and(
+              scoped,
+              excludeAttemptId === undefined
+                ? undefined
+                : ne(modelUsage.attemptId, excludeAttemptId),
+              earlierThan
+            )
+          );
+        return row?.n ?? 0;
+      },
       // `conn` EXISTS BECAUSE THE CALLER IS USUALLY INSIDE A TRANSACTION, and
       // that is not a detail: the scope closes over the pool, so reading the
       // corpus on the pool from inside an open transaction deadlocks outright
@@ -644,7 +1253,27 @@ export const GUARDED_WRITE_FIELDS = [
   "confirmedContentSha256",
   "confirmedFields",
   "evidenceCounts",
+  // ---- migration 0013 (slice 1). `creator_profiles.state` decides whether a
+  // profile counts against the per-tier cap, so a caller who can supply it can
+  // create straight into `archived` and hold unlimited profiles for free. The
+  // column is server-derived at creation and moved only by an operation that
+  // re-checks the cap — of which slice 1 ships none.
+  "state",
 ] as const;
+
+/**
+ * Columns of `creator_profiles` a caller legitimately supplies.
+ *
+ * THE SAME CLOSED CLASSIFICATION `CALLER_SUPPLIABLE_BRAIN_FIELDS` gives
+ * `brain_docs`, and it exists here for the reason C-32's own rationale gives:
+ * that list "has now missed exactly one field in four consecutive rounds", and
+ * the instrument that stopped the fifth miss was enumerating the drizzle table's
+ * property space rather than trusting the hand-list. Slice 1 makes
+ * `creator_profiles` a written table for the first time, so it gets the
+ * instrument at the point of becoming writable rather than after its own fourth
+ * miss (`packages/db/tests/profile-scope.test.ts`, the creator_profiles half).
+ */
+export const CALLER_SUPPLIABLE_PROFILE_FIELDS = ["displayName"] as const;
 
 /**
  * Columns of `brain_docs` a caller legitimately supplies, named so that the
@@ -743,6 +1372,14 @@ export type AppendOnboardingInputParams = {
   inputClass: InputClass;
   content: string;
   sourceUrl?: string;
+  /**
+   * WHICH INTERVIEW QUESTION this row answers (slice 3b) — required for, and
+   * ONLY for, `inputClass: 'creator_authored'`; see `onboarding_inputs`'
+   * `field_key` column and the CHECK it carries. Any other class supplying one
+   * is refused (`OnboardingInputFieldKeyError`), same as the class's own
+   * schema comment states: it is not a foreign id and belongs to no other row.
+   */
+  fieldKey?: string;
 } & NoServerFields;
 
 export type RecordModelUsageParams = {
@@ -759,6 +1396,17 @@ export type RecordModelUsageParams = {
   promptBundleVersion: string;
   configVersion: number;
   outcome: ModelUsageRow["outcome"];
+  /**
+   * Whether this attempt spent the profile's one included build.
+   *
+   * CALLER-SUPPLIED because only the operation knows: it comes off
+   * `LlmError.consumesIncludedBuild`, which is the class's own answer to a
+   * question `outcome` cannot carry (billing gate, 2026-08-29). It is not in
+   * `GUARDED_WRITE_FIELDS` for the same reason `outcome` is not — a caller that
+   * can already choose the outcome gains nothing by also choosing this, and the
+   * one caller is `runInference`.
+   */
+  consumedIncludedBuild: boolean;
 } & NoServerFields;
 
 export type WriteBrainDocParams = {
@@ -776,6 +1424,55 @@ export type WriteBrainDocParams = {
   reason: BrainDocReason;
 } & NoServerFields;
 
+/** One source for the early edit-composer check and the locked hard-path check. */
+export const STALE_BRAIN_EDIT_DETAIL =
+  "only the current editable version can be edited. Edit the newest proposed version when it is newer than the active version; otherwise edit the active version. Superseded and stale versions are read-only history";
+
+/**
+ * The one version the current screen may edit.
+ *
+ * A proposal outranks active only when it is actually a later version. Rows
+ * written before the one-proposal invariant may contain `active v2` beside a
+ * stale `proposed v1`; choosing "any proposal" there disagrees with the screen
+ * and prevents the creator from writing v3, which is the repair path that also
+ * retires v1. Compute by version rather than trusting row order so both the
+ * early composer check and locked hard-path check share the exact rule.
+ */
+export function authoritativeEditableBrainDoc(
+  versions: readonly BrainDoc[]
+): BrainDoc | null {
+  let proposed: BrainDoc | null = null;
+  let active: BrainDoc | null = null;
+  for (const version of versions) {
+    if (
+      version.status === "proposed" &&
+      (proposed === null || version.version > proposed.version)
+    ) {
+      proposed = version;
+    }
+    if (
+      version.status === "active" &&
+      (active === null || version.version > active.version)
+    ) {
+      active = version;
+    }
+  }
+  if (proposed && (!active || proposed.version > active.version)) return proposed;
+  return active ?? proposed;
+}
+
+async function assertAuthoritativeBrainTarget(
+  scope: ProfileScope,
+  kind: BrainKind,
+  targetId: string,
+  tx: TxLike
+): Promise<void> {
+  const versions = await scope.accessors.brainDocsByKind(kind, tx);
+  if (authoritativeEditableBrainDoc(versions)?.id !== targetId) {
+    throw new ProvenanceError(STALE_BRAIN_EDIT_DETAIL);
+  }
+}
+
 export type ConfirmBrainDocParams = {
   brainDocId: string;
   /** RFC-6901 pointers the human confirmed, and how (C-18). */
@@ -786,15 +1483,34 @@ export type ActivateBrainDocParams = {
   brainDocId: string;
 };
 
+/**
+ * The result of `activateBrainDocCoherent` (slice 3b, R8): the newly-active
+ * document, AND the append-only snapshot row recorded alongside it.
+ *
+ * A PAIR, not just the doc, because the snapshot is the whole point of the
+ * "coherent" half — a caller that discarded it would have no way to name
+ * WHICH snapshot a later generation ran under (R9), which is the property
+ * this capability exists to make recordable.
+ */
+export type ActivateBrainDocCoherentResult = {
+  doc: BrainDoc;
+  snapshot: BrainActivationSnapshot;
+};
+
 export type ProfileWriteCapabilities = {
   appendOnboardingInput: (
-    input: AppendOnboardingInputParams
+    input: AppendOnboardingInputParams,
+    tx?: TxLike
   ) => Promise<OnboardingInput>;
   recordModelUsage: (
     usage: RecordModelUsageParams,
-    tx?: TxLike
+    tx: TxLike
   ) => Promise<ModelUsageRow>;
-  writeBrainDoc: (doc: WriteBrainDocParams, tx: TxLike) => Promise<BrainDoc>;
+  writeBrainDoc: (
+    doc: WriteBrainDocParams,
+    tx: TxLike,
+    expectedEditableBaseId?: string
+  ) => Promise<BrainDoc>;
   confirmBrainDocFields: (
     params: ConfirmBrainDocParams,
     tx: TxLike
@@ -803,6 +1519,19 @@ export type ProfileWriteCapabilities = {
     params: ActivateBrainDocParams,
     tx: TxLike
   ) => Promise<BrainDoc>;
+  /**
+   * Activate ONE document (exactly `activateBrainDoc`'s own logic — this is
+   * not a second implementation, see the definition below) and, in the SAME
+   * transaction and under the SAME per-profile lock, record a
+   * `brain_activation_snapshots` row naming every kind's current active
+   * version: the one just activated, and every OTHER kind's active id
+   * UNCHANGED (R8). All-or-nothing — a generation must never observe a
+   * half-activated set.
+   */
+  activateBrainDocCoherent: (
+    params: ActivateBrainDocParams,
+    tx: TxLike
+  ) => Promise<ActivateBrainDocCoherentResult>;
 };
 
 /**
@@ -815,6 +1544,29 @@ export type ProfileWriteCapabilities = {
  */
 function assertMayDecide(role: MembershipRole, act: string): void {
   if (role === "viewer") throw new BrainRoleError(act, role);
+}
+
+/**
+ * The role gate on the profile-grained WRITES, as opposed to the two acts that
+ * decide what the product believes (`assertMayDecide` above).
+ *
+ * ADDED BY THE TENANCY GATE'S BLOCK, 2026-08-27 — register item G-13, whose
+ * deferral that same Critical Path withdrew in writing on 2026-08-26. Slice 1
+ * gave `createProfile` a role gate and left THIS side of the same question
+ * undecided, which is the "by omission" that decision R-35 §4 condemns in its
+ * own text. The write that mattered is `appendOnboardingInput`: slice 1's paste
+ * form makes it reachable from a browser for every role, `onboarding_inputs` is
+ * immutable with no delete path, it is export-included, and its rows are both
+ * the reference corpus and the corpus every `source_evidence` offset indexes
+ * into — so a viewer's paste is not reversible by the owner.
+ *
+ * Applied to ALL THREE previously ungated capabilities rather than only the
+ * newly reachable one, because "fix the class, not the field" is the repo's
+ * 2026-07-30 lesson and a guard added only where today's caller happens to be
+ * is the shape that produced this finding.
+ */
+function assertMayWrite(role: MembershipRole, act: string): void {
+  if (role === "viewer") throw new ProfileRoleError(act, role);
 }
 
 /** Strip every server-derived field, whatever a cast smuggled in. */
@@ -834,6 +1586,143 @@ function stripGuarded<T extends object>(input: T): Record<string, unknown> {
  */
 function normaliseContent(raw: string): string {
   return raw.normalize("NFC").replace(/\r\n/g, "\n");
+}
+
+/** The most a `creator_profiles.display_name` may hold, in code points. */
+export const DISPLAY_NAME_MAX = 80;
+
+/**
+ * Normalise and validate a creator-profile display name, or refuse by name.
+ *
+ * NFC + trim, matching `normaliseContent`'s normalisation so that two names a
+ * person cannot tell apart are one name here too — an accented character typed
+ * as one code point and as a base-plus-combining pair are different bytes and
+ * the same name, and only one of the two forms would ever match a later lookup.
+ *
+ * MEASURED IN CODE POINTS, not `.length`: a single emoji is several UTF-16
+ * units, so a UTF-16 ceiling silently spends a creator's budget several times
+ * over on one character they typed once. Code points still over-count a ZWJ
+ * sequence, which is stated rather than hidden — it is the honest direction (a
+ * permissive ceiling refuses no reasonable name), and a grapheme segmenter here
+ * would be a second `Intl.Segmenter` dependency for a field nothing measures
+ * offsets into.
+ *
+ * Control characters are refused rather than stripped. Stripping would store a
+ * name the person did not type and never tell them; refusing costs one edit.
+ */
+export function normaliseDisplayName(raw: string): string {
+  const name = raw.normalize("NFC").trim();
+  if (name.length === 0) throw new ProfileNameError("it is blank");
+  const points = [...name].length;
+  if (points > DISPLAY_NAME_MAX) {
+    throw new ProfileNameError(
+      `it is ${points} characters and the limit is ${DISPLAY_NAME_MAX}`
+    );
+  }
+  // C0 and C1 control characters, DEL included. `\p{Cc}` with the `u` flag is
+  // the Unicode category, not a hand-listed range that forgets U+0085.
+  if (/\p{Cc}/u.test(name)) {
+    throw new ProfileNameError(
+      "it contains a line break or another control character"
+    );
+  }
+  return name;
+}
+
+/**
+ * The WORKSPACE-grained write surface (slice 1).
+ *
+ * A SECOND FUNCTION RATHER THAN A BRANCH INSIDE `writeCapabilities`, because
+ * the two grains are not interchangeable: every capability below runs BEFORE
+ * any profile exists, so there is no `ProfileScope` to hold and no `profileId`
+ * to filter on. Folding them together would mean a function whose scope
+ * argument is sometimes one cage and sometimes the other, which is the
+ * `instanceof` shape the cage header already explains is wrong.
+ *
+ * Denied to `app/**` by the same default-deny allowlist that denies
+ * `writeCapabilities` — it is simply absent from `allowImportNames`, and
+ * `tests/import-boundary.test.ts` carries the deny fixture that proves absence
+ * still means denied.
+ *
+ * IT DOES NOT ENFORCE THE CAP, and that is a layering fact rather than an
+ * omission (R-30 constraint 2): the cap is the active config document's
+ * `profileCaps` for the workspace's RESOLVED TIER, whose sole authority is
+ * `getWorkspaceBillingState` in @respin/credits — a package that depends on
+ * this one. `@respin/db` re-deriving the tier would be a second tier authority,
+ * which is the defect class behind two M1 round-6 findings. So this file owns
+ * the INSERT and the COUNT; `packages/credits/src/profiles.ts` owns the
+ * decision, and `tests/table-writers.test.ts` asserts the insert has no other
+ * caller.
+ */
+export type WorkspaceWriteCapabilities = {
+  /**
+   * How many profiles count against the cap right now.
+   *
+   * `active` ONLY — see `creatorProfileState` in brain-schema.ts for why
+   * capacity is reduced by archiving rather than deleting, and for the debt
+   * that choice leaves with whichever slice adds a reactivate operation.
+   */
+  countActiveProfiles: (tx: TxLike) => Promise<number>;
+  createProfile: (
+    params: { displayName: string } & NoServerFields,
+    tx: TxLike
+  ) => Promise<CreatorProfile>;
+};
+
+export function workspaceWriteCapabilities(
+  scope: WorkspaceScope
+): WorkspaceWriteCapabilities {
+  // Cage assertion FIRST, before any field of `scope` is read — and membership
+  // in the WORKSPACE cage specifically, so a genuinely minted ProfileScope
+  // (wrong grain, and one a viewer can hold) cannot reach a workspace write.
+  assertScoped(scope);
+  if (!workspaceCage.has(scope)) {
+    throw new ScopeForgeryError("A workspace write-capability holder");
+  }
+  const workspaceId = scope.workspaceId as string;
+
+  return {
+    countActiveProfiles: async (tx) => {
+      const [row] = await tx
+        .select({ n: count() })
+        .from(creatorProfiles)
+        .where(
+          and(
+            eq(creatorProfiles.workspaceId, workspaceId),
+            eq(creatorProfiles.state, "active")
+          )
+        );
+      return row?.n ?? 0;
+    },
+
+    createProfile: async (params, tx) => {
+      // BELT AND BRACES with the gate in `packages/credits/src/profiles.ts`.
+      // The CAP genuinely cannot move here (R-30 constraint 2 — this package
+      // cannot see config or the tier), but the ROLE can: `scope.role` is right
+      // there. This function is exported from `@respin/db`'s root, so every
+      // package can import it, and a caller-side-only guard on a documented
+      // direct entrypoint is a documented bypass (CLAUDE.md 2026-07-30).
+      assertMayWrite(scope.role, "create a creator profile");
+      // Read ONCE into a local, for the TOCTOU reason `writeBrainDoc`'s C-40
+      // comment gives: `params` is a plain object type, so `displayName` may be
+      // a getter that returns one value to the validator and another to the
+      // insert.
+      const displayName = normaliseDisplayName(params.displayName);
+      const [row] = await tx
+        .insert(creatorProfiles)
+        // Strip FIRST, ids LAST — the same order and the same reason as
+        // `appendOnboardingInput`: either alone would hold today, and the
+        // planted mutation that reverses the spread is what keeps the strip
+        // load-bearing rather than inert.
+        .values({
+          ...(stripGuarded(params) as Record<string, never>),
+          displayName,
+          workspaceId,
+        })
+        .returning();
+      return row;
+    },
+  };
 }
 
 /**
@@ -859,46 +1748,157 @@ export function writeCapabilities(
     workspaceId: scope.workspaceId as string,
   };
 
-  return {
-    appendOnboardingInput: async (input) => {
+  // A `const` BOUND BEFORE ITS OWN LAST PROPERTY REFERENCES IT, not a bare
+  // `return {...}` — `activateBrainDocCoherent` below calls
+  // `caps.activateBrainDoc(...)` to run EXACTLY `activateBrainDoc`'s own
+  // logic rather than a second copy of it. That is safe (not a
+  // use-before-assignment) because `caps` is only ever READ from inside an
+  // arrow function that executes LATER, on a call, never while this object
+  // literal is being constructed.
+  const caps: ProfileWriteCapabilities = {
+    appendOnboardingInput: async (input, tx) => {
+      // REQ-A02 / G-13. See `assertMayWrite` — this is the write slice 1 made
+      // browser-reachable, into an immutable table with no delete path.
+      assertMayWrite(scope.role, "add a post to this creator's record");
+      // MIRRORS `onboarding_inputs_field_key_iff_creator_authored` IN
+      // APPLICATION CODE, before the insert reaches it — the same reason
+      // `writeBrainDoc` names its own non-empty-`sourceEvidence` refusal
+      // rather than letting a caller see a raw 23514/23502. Read ONCE into
+      // locals for the same TOCTOU reason `writeBrainDoc`'s C-40 comment
+      // gives: `input` is a plain object type, so a getter could disagree
+      // between this check and the `.values()` spread below.
+      const inputClass = input.inputClass;
+      const rawFieldKey = input.fieldKey;
+      const rawSourceUrl = input.sourceUrl;
+      const fieldKey =
+        typeof rawFieldKey === "string" ? rawFieldKey.normalize("NFC") : rawFieldKey;
+      const sourceUrl =
+        typeof rawSourceUrl === "string" ? rawSourceUrl.normalize("NFC") : rawSourceUrl;
+      if (inputClass === "creator_authored") {
+        if (typeof fieldKey !== "string" || fieldKey.trim().length === 0) {
+          throw new OnboardingInputFieldKeyError(inputClass, undefined);
+        }
+      } else if (fieldKey !== undefined) {
+        throw new OnboardingInputFieldKeyError(inputClass, fieldKey);
+      }
       const content = normaliseContent(input.content);
-      const [row] = await db
-        .insert(onboardingInputs)
-        // The strip runs FIRST and the ids spread LAST. Either alone would
-        // hold; both are here because the P4 write-side mutation reverses the
-        // spread order precisely to make the strip load-bearing — without that
-        // mutation the strip is inert and untested.
-        .values({
-          ...(stripGuarded(input) as { inputClass: InputClass }),
-          content,
-          contentSha256: createHash("sha256")
-            .update(Buffer.from(content, "utf8"))
-            .digest("hex"),
-          ...ids,
-        })
-        .returning();
-      return row;
+      const contentLength = [...content].length;
+      if (content.trim().length === 0) {
+        throw new OnboardingInputLimitError("the normalized content is blank");
+      }
+      if (contentLength > POST_CONTENT_MAX) {
+        throw new OnboardingInputLimitError(
+          `the normalized content is ${contentLength} characters and the limit is ${POST_CONTENT_MAX}`
+        );
+      }
+      if (typeof fieldKey === "string" && [...fieldKey].length > ONBOARDING_FIELD_KEY_MAX) {
+        throw new OnboardingInputLimitError(
+          `field_key is longer than ${ONBOARDING_FIELD_KEY_MAX} characters`
+        );
+      }
+      if (sourceUrl !== undefined && typeof sourceUrl !== "string") {
+        throw new OnboardingInputLimitError("source_url must be text when supplied");
+      }
+      if (typeof sourceUrl === "string" && [...sourceUrl].length > ONBOARDING_SOURCE_URL_MAX) {
+        throw new OnboardingInputLimitError(
+          `source_url is longer than ${ONBOARDING_SOURCE_URL_MAX} characters`
+        );
+      }
+      const insert = async (conn: TxLike): Promise<OnboardingInput> => {
+        await conn.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`brain:${scope.workspaceId}:${scope.profileId}`}, 0))`
+        );
+        const [{ existing }] = await conn
+          .select({ existing: count() })
+          .from(onboardingInputs)
+          .where(
+            and(
+              eq(onboardingInputs.profileId, scope.profileId),
+              eq(onboardingInputs.workspaceId, scope.workspaceId)
+            )
+          );
+        if (existing >= POST_COUNT_MAX) {
+          throw new OnboardingInputLimitError(
+            `this creator profile already holds ${existing} immutable inputs and the limit is ${POST_COUNT_MAX}`
+          );
+        }
+        const [row] = await conn
+          .insert(onboardingInputs)
+          .values({
+            ...(stripGuarded(input) as { inputClass: InputClass }),
+            inputClass,
+            fieldKey: fieldKey ?? null,
+            sourceUrl: sourceUrl ?? null,
+            content,
+            contentSha256: createHash("sha256")
+              .update(Buffer.from(content, "utf8"))
+              .digest("hex"),
+            ...ids,
+          })
+          .returning();
+        return row;
+      };
+      return tx ? insert(tx) : db.transaction(insert);
     },
 
     recordModelUsage: async (usage, tx) => {
+      // NO ROLE GATE, DELIBERATELY — and the round-2 billing gate is why this
+      // comment exists rather than the gate. The G-13 fix added
+      // `assertMayWrite` to every previously ungated capability, which was the
+      // right instinct applied to the one capability that is exempt: this is
+      // the A-7 SETTLEMENT TAIL. `model_usage` records a fact the provider has
+      // already billed us for, and it takes `tx: TxLike` so it composes into
+      // the generation's own transaction — so a refusal here rolls the debit
+      // back AFTER the tokens are burnt, and the spend record vanishes. It is
+      // the `maybeAutoTopup` shape this package has fixed once already.
+      //
+      // `tx` IS REQUIRED, not optional (billing + tenancy gate finding,
+      // 2026-08-29). Slice 2b composed `upsertSpendRollup` into this same
+      // function, whose own docblock claims "this function takes a TxLike,
+      // never a bare DbLike, so that composing it outside a transaction is a
+      // TYPE error, not a runtime one" — but the parameter here was still
+      // optional, so `conn = tx ?? db` and an `as TxLike` cast around it made
+      // that claim false: a caller that omitted `tx` ran BOTH writes as
+      // separate auto-committing statements, silently breaking R6's shared
+      // fate with no compiler signal. The one production caller
+      // (`inference.ts`) always supplies `tx`; there is no legitimate reason
+      // for this capability to run outside a transaction, so the type now
+      // says so.
+      //
+      // The act to gate is the GENERATION, not its settlement record.
       assertMeteringOnly(usage.usageRaw);
-      const conn = tx ?? db;
-      const [row] = await conn
+      const [row] = await tx
         .insert(modelUsage)
         .values({
           ...(stripGuarded(usage) as { attemptId: string }),
           ...ids,
         } as never)
         .returning();
+      // R1 (slice 2b): the rollup upsert composes into the SAME transaction
+      // that just wrote `row` above (no more optional/bare-`db` path — see
+      // this function's own doc), so a forced failure of either write rolls
+      // the other back with it (R6, proven on real Postgres in
+      // spend-rollup.docker.test.ts). Built from the RETURNED row's own
+      // fields, never re-reading `usage`: `row.createdAt` is the value
+      // Postgres actually stamped (`clock_timestamp()`), which is what R2
+      // requires the period bucket to agree with.
+      await upsertSpendRollup(tx, {
+        workspaceId: row.workspaceId,
+        createdAt: row.createdAt,
+        resolvedTier: row.resolvedTier,
+        costMicroUsd: row.costMicroUsd,
+        costState: row.costState,
+      });
       return row;
     },
 
-    writeBrainDoc: async (doc, tx) => {
+    writeBrainDoc: async (doc, tx, expectedEditableBaseId) => {
       // REQ-G08: a brain write is an ENTITLEMENT, so it is refused while the
       // workspace is paused. `appendOnboardingInput` and `recordModelUsage`
       // deliberately are not (A-7): storing the creator's own submitted text
       // is not an entitlement and refusing it would silently discard their
       // work, and recording spend already incurred is the settlement tail.
+      assertMayWrite(scope.role, "write a brain document for this creator");
       if (await hasOpenPause(tx, scope.workspaceId)) {
         throw new WorkspacePausedError();
       }
@@ -945,6 +1945,11 @@ export function writeCapabilities(
           "a brain version must cite at least one onboarding input. Every claim position is either cited or marked '[check]', and a version in which nothing at all is cited records no provenance to confirm (REQ-B02)"
         );
       }
+      if (sourceEvidence.length > BRAIN_EVIDENCE_ENTRY_MAX) {
+        throw new BrainDocumentLimitError(
+          `it carries ${sourceEvidence.length} evidence entries and the limit is ${BRAIN_EVIDENCE_ENTRY_MAX}`
+        );
+      }
       // SERIALISE PER PROFILE, BEFORE THE BUDGET'S READ-THEN-WRITE.
       //
       // NOT the first statement that touches data — `hasOpenPause` reads sixty
@@ -968,12 +1973,51 @@ export function writeCapabilities(
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${`brain:${scope.workspaceId}:${scope.profileId}`}, 0))`
       );
+      const [{ retainedVersions }] = await tx
+        .select({ retainedVersions: count() })
+        .from(brainDocs)
+        .where(
+          and(
+            eq(brainDocs.profileId, scope.profileId),
+            eq(brainDocs.workspaceId, scope.workspaceId)
+          )
+        );
+      if (retainedVersions >= BRAIN_VERSION_MAX) {
+        throw new BrainVersionLimitError(BRAIN_VERSION_MAX);
+      }
+      // EDIT AUTHORITY IS RE-CHECKED UNDER THE WRITE LOCK. `brain-ops.ts`
+      // performs the same check before composing its creator_authored input so
+      // an ordinary stale request does no work, but only this check closes the
+      // race where two requests both read the same current base before either
+      // writes. The first replacement changes the authoritative base; the
+      // second then refuses here and its surrounding transaction rolls its
+      // input back.
+      if (expectedEditableBaseId !== undefined) {
+        await assertAuthoritativeBrainTarget(scope, kind, expectedEditableBaseId, tx);
+      }
       const content = parseBrainContent(kind, rawContent);
+      // THE ONE CORPUS (C-29), read HERE — moved AHEAD of `validateSourceEvidence`
+      // in slice 4, because G-11 Layer B's bucket map has to exist before that
+      // function can assign a `postSha` to a `reference`-classed span. Recording
+      // the id set is what lets activation judge this version against the
+      // corpus the WRITE was judged against: `defaultNow()` is
+      // transaction-START time, so an input whose transaction starts before
+      // this write and commits after it is invisible now AND inside any
+      // timestamp-bounded corpus rebuilt at activation — which would brick the
+      // version permanently, with a priced rebuild as the only remedy. The set
+      // is the fix, not a tighter timestamp.
+      const corpus = await scope.accessors.referenceCorpusAsOf(undefined, tx);
+      // G-11 LAYER B, computed ONCE for this write and shared by both halves of
+      // the budget below — see `groupReferenceInputs`'s docblock (echo.ts) for
+      // why a new span and every retained span must agree on bucket membership
+      // within one write.
+      const bucketOf = groupReferenceInputs(corpus.inputs);
       const { clean, referenceSpans } = await validateSourceEvidence(
         tx,
         scope,
         kind,
-        sourceEvidence
+        sourceEvidence,
+        bucketOf
       );
       // C-28: EVERY ENUMERATED CLAIM POSITION IS CITED OR VISIBLY MARKED
       // UNKNOWN. This is the rule three documents recorded as closed while its
@@ -986,6 +2030,11 @@ export function writeCapabilities(
       // model still decides which of its claims are placeholders, which is
       // C-1's exact thesis left open.
       const claimPositions = enumerateClaimFields(kind, content);
+      if (claimPositions.length > BRAIN_CLAIM_POSITION_MAX) {
+        throw new BrainDocumentLimitError(
+          `it declares ${claimPositions.length} claim positions and the limit is ${BRAIN_CLAIM_POSITION_MAX}`
+        );
+      }
       // ENTRY VALIDITY FIRST, THEN COVERAGE. Both directions run, and the order
       // is chosen so the message names the caller's actual mistake: an entry
       // pointing at nothing also leaves its intended position uncited, and
@@ -995,6 +2044,22 @@ export function writeCapabilities(
         if (!claimPositions.includes(e.field)) {
           throw new ProvenanceError(
             `an evidence entry names the claim position '${e.field}', which this document does not declare. Provenance has to attach to a position the creator can actually confirm (REQ-B02)`
+          );
+        }
+      }
+      // G-10, THE THIRD DIRECTION (R7/R8, slice 4): every CITED entry names a
+      // position that holds a STATED value, never `[check]`. The two loops
+      // beside this one already assert declared<-cited (above) and
+      // stated=>cited (below); neither ever checked cited=>stated, so an entry
+      // could point at a `[check]` position and store an unbounded quote as
+      // "evidence" for a claim the document never actually makes —
+      // `source_evidence` becoming a text channel with no claim behind it.
+      // Together the three directions make citation and statement a bijection:
+      // a position is cited if and only if it is stated.
+      for (const e of clean) {
+        if (readPointer(content, e.field) === CHECK) {
+          throw new ProvenanceError(
+            `an evidence entry cites the claim position '${e.field}', which currently holds '${CHECK}' rather than a stated value. Evidence can only support a claim actually being made — state the value first, or drop the entry that cites it (REQ-B02, G-10)`
           );
         }
       }
@@ -1017,30 +2082,28 @@ export function writeCapabilities(
           `${uncited.length === 1 ? "the claim at" : "the claims at"} ${uncited.join(", ")} ${uncited.length === 1 ? "is" : "are"} stated as fact with nothing cited for ${uncited.length === 1 ? "it" : "them"}. Every position the schema declares is either backed by a quote from your own material or written as '${CHECK}' so you can see it is unknown — a claim about you that nobody can trace is an invented specific (REQ-I03, REQ-B02)`
         );
       }
-      // THE ONE CORPUS (C-29), read HERE and RECORDED on the row.
-      //
-      // Recording the id set is what lets activation judge this version against
-      // the corpus the WRITE was judged against. A `created_at` comparison
-      // cannot: `defaultNow()` is transaction-START time, so an input whose
-      // transaction starts before this write and commits after it is invisible
-      // now AND inside any timestamp-bounded corpus rebuilt at activation —
-      // which would brick the version permanently, with a priced rebuild as the
-      // only remedy. The set is the fix, not a tighter timestamp.
-      const corpus = await scope.accessors.referenceCorpusAsOf(undefined, tx);
       assertNoReferenceEcho(content, corpus.inputs);
-      // The quote budget's unit is `(profile, reference inputId)` across every
-      // retained version and kind (C-41), so the spans this write adds are
-      // measured together with every span already on the profile. The measure
-      // is the UNION of covered ranges, which is what keeps a rebuild citing
-      // the same spans free — see `assertReferenceQuoteBudget`.
+      // The quote budget's unit is `(profile, reference POST BUCKET)` across
+      // every retained version and kind (C-41, G-11), so the spans this write
+      // adds are measured together with every span already on the profile. The
+      // measure is the UNION of covered ranges, which is what keeps a rebuild
+      // citing the same spans free — see `assertReferenceQuoteBudget`.
       // NEW spans and RETAINED spans are passed separately, which is what lets
       // the ceiling refuse only on material this write actually adds. See
       // `assertReferenceQuoteBudget` — a union that already exceeds the
       // ceiling must never make a re-citing rebuild impossible.
       assertReferenceQuoteBudget(
         referenceSpans,
-        await retainedReferenceSpans(tx, scope)
+        await retainedReferenceSpans(tx, scope, bucketOf)
       );
+      const documentLength = [
+        ...JSON.stringify({ content, sourceEvidence: clean }),
+      ].length;
+      if (documentLength > BRAIN_DOCUMENT_TEXT_MAX) {
+        throw new BrainDocumentLimitError(
+          `its normalized content and evidence total ${documentLength} characters and the limit is ${BRAIN_DOCUMENT_TEXT_MAX}`
+        );
+      }
       // version = max+1 for the (profile, kind) pair, computed HERE and never
       // accepted from a caller. The unique index on (profile_id, kind, version)
       // is what makes a lost race a refusal rather than a duplicate.
@@ -1101,11 +2164,56 @@ export function writeCapabilities(
           ...ids,
         })
         .returning();
+      // ONE CURRENT PROPOSAL PER (workspace, profile, kind), enforced inside
+      // the SAME transaction and under the SAME profile advisory lock as the
+      // version allocation above. A new proposal replaces every older draft;
+      // leaving two proposed rows lets the read facade select the older one
+      // and offer a creator a rollback disguised as confirmation.
+      //
+      // ACTIVE IS DELIBERATELY ABSENT FROM THE PREDICATE. Writing a replacement
+      // draft must not change what is in force; `activateBrainDoc` remains the
+      // sole transition that supersedes an active version.
+      //
+      // `row.createdAt` is the database-stamped identity of this proposal
+      // transition. Older proposals receive that exact timestamp so history's
+      // `replacementVersionFor` can name THIS version without guessing the
+      // nearest higher number. Content and evidence remain append-only; only
+      // lifecycle status/timestamp columns change.
+      await tx
+        .update(brainDocs)
+        .set({ status: "superseded", supersededAt: row.createdAt })
+        .where(
+          and(
+            eq(brainDocs.profileId, scope.profileId),
+            eq(brainDocs.workspaceId, scope.workspaceId),
+            eq(brainDocs.kind, kind),
+            eq(brainDocs.status, "proposed"),
+            ne(brainDocs.id, row.id)
+          )
+        );
       return row;
     },
 
     confirmBrainDocFields: async (params, tx) => {
       assertMayDecide(scope.role, "confirm");
+      // THE SAME LOCK `writeBrainDoc` TAKES, and for a sharper reason (tenancy
+      // gate BLOCK, 2026-08-29). Confirmation and activation are both
+      // read-then-write: `readOwnBrainDoc` is a plain SELECT, so under READ
+      // COMMITTED activation can read `confirmed_fields` holding all ten
+      // positions, a concurrent confirm can commit `[]`, and activation's
+      // UPDATE — whose predicate tests only ids — proceeds anyway. The row
+      // ends `active`, stamped with a real human's `confirmed_by`, with ZERO
+      // positions confirmed. `brain_docs_active_is_confirmed` cannot catch it
+      // (it tests NOT NULL, not coverage), and AC-26 is application-code only
+      // by design — which is exactly why the two acts must serialise.
+      //
+      // That is a SILENT BRAIN ACTIVATION: the product acting on rules about a
+      // person that nobody confirmed, with a record asserting they did (R-8,
+      // REQ-B02). Same key as the write, because the invariant spans the
+      // (workspace, profile) pair rather than one row.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`brain:${scope.workspaceId}:${scope.profileId}`}, 0))`
+      );
       if (await hasOpenPause(tx, scope.workspaceId)) {
         throw new WorkspacePausedError();
       }
@@ -1115,6 +2223,10 @@ export function writeCapabilities(
           `only a proposed version can be confirmed; this one is '${doc.status}'`
         );
       }
+      // Status has the established, more specific refusal contract for an
+      // active/superseded row. A stale proposed row still reaches this hard
+      // replay gate and cannot be confirmed from history.
+      await assertAuthoritativeBrainTarget(scope, doc.kind, doc.id, tx);
       // EVERY CONFIRMED POINTER NAMES A REAL CLAIM POSITION, AND ITS
       // PLACEHOLDER FLAG MATCHES THE STORED VALUE.
       //
@@ -1155,6 +2267,18 @@ export function writeCapabilities(
         }
         seen.add(f.pointer);
       }
+      // AN EMPTY SUBMISSION IS NOT A CONFIRMATION (tenancy + compliance gates,
+      // 2026-08-29). It used to pass every check below vacuously and then stamp
+      // `confirmed_at`, `confirmed_by` and `confirmed_content_sha256` — so the
+      // row read "a named human confirmed this document" while recording that
+      // they confirmed nothing. `brain_schema.ts` makes the NULL-vs-`[]`
+      // distinction the thing that answers "did a human decide anything here",
+      // and stamping an attributable decision over an empty set destroys it.
+      if (confirmedFields.length === 0) {
+        throw new ProvenanceError(
+          "a confirmation has to name at least one field the creator decided about. Nothing was recorded, and anything already confirmed on this version is untouched (REQ-B02)"
+        );
+      }
       const positions = enumerateClaimFields(doc.kind, doc.content);
       for (const f of confirmedFields) {
         if (!positions.includes(f.pointer)) {
@@ -1169,9 +2293,11 @@ export function writeCapabilities(
           );
         }
       }
-      // THE SHA IS OVER WHAT THE HUMAN SAW. Activation re-computes it and
-      // refuses on a mismatch, which is what stops a version being confirmed in
-      // one shape and activated in another (round-2 V3).
+      // THE SHA IS OVER WHAT THE HUMAN SAW — the claim AND the quote behind it
+      // (B-3). Activation re-computes it and refuses on a mismatch, which is
+      // what stops a version being confirmed in one shape and activated in
+      // another (round-2 V3). `confirmationSha256`'s docblock carries why the
+      // pair, and why this is the only cheap moment to widen it.
       const [row] = await tx
         .update(brainDocs)
         .set({
@@ -1180,7 +2306,10 @@ export function writeCapabilities(
           // forgeable as a parameter: a confirmation is an attributable act, so
           // it takes an id nobody can pass in.
           confirmedBy: scope.userId,
-          confirmedContentSha256: contentSha256(doc.content),
+          confirmedContentSha256: confirmationSha256(
+            doc.content,
+            doc.sourceEvidence
+          ),
           // THE SERVER-REBUILT ARRAY, never the caller's objects — the same
           // reason `sourceEvidence: clean` is above, and the reason this line
           // is not `params.confirmedFields`.
@@ -1199,6 +2328,24 @@ export function writeCapabilities(
 
     activateBrainDoc: async (params, tx) => {
       assertMayDecide(scope.role, "activate");
+      // THE SAME LOCK `writeBrainDoc` TAKES, and for a sharper reason (tenancy
+      // gate BLOCK, 2026-08-29). Confirmation and activation are both
+      // read-then-write: `readOwnBrainDoc` is a plain SELECT, so under READ
+      // COMMITTED activation can read `confirmed_fields` holding all ten
+      // positions, a concurrent confirm can commit `[]`, and activation's
+      // UPDATE — whose predicate tests only ids — proceeds anyway. The row
+      // ends `active`, stamped with a real human's `confirmed_by`, with ZERO
+      // positions confirmed. `brain_docs_active_is_confirmed` cannot catch it
+      // (it tests NOT NULL, not coverage), and AC-26 is application-code only
+      // by design — which is exactly why the two acts must serialise.
+      //
+      // That is a SILENT BRAIN ACTIVATION: the product acting on rules about a
+      // person that nobody confirmed, with a record asserting they did (R-8,
+      // REQ-B02). Same key as the write, because the invariant spans the
+      // (workspace, profile) pair rather than one row.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`brain:${scope.workspaceId}:${scope.profileId}`}, 0))`
+      );
       if (await hasOpenPause(tx, scope.workspaceId)) {
         throw new WorkspacePausedError();
       }
@@ -1222,14 +2369,25 @@ export function writeCapabilities(
           `only a proposed version can be activated; this one is '${doc.status}'. To go back to an earlier version, write a new version from it — the history stays readable that way`
         );
       }
+      // Keep the ordinary status-specific refusal above, then apply the hard
+      // replay gate to a row that still claims to be proposed. That preserves
+      // the existing action contract without reopening legacy stale drafts.
+      await assertAuthoritativeBrainTarget(scope, doc.kind, doc.id, tx);
       if (doc.confirmedAt === null || doc.confirmedContentSha256 === null) {
         throw new ProvenanceError(
           "this version has not been confirmed, and an unconfirmed version is never activated — activation is what makes the product act on a claim about you (REQ-B02)"
         );
       }
-      if (contentSha256(doc.content) !== doc.confirmedContentSha256) {
+      // RE-COMPUTED OVER THE PAIR (B-3), so a change to EITHER half refuses.
+      // The message names both halves because "content has changed" sent a
+      // creator looking at their rules for an edit that had happened to a
+      // quote.
+      if (
+        confirmationSha256(doc.content, doc.sourceEvidence) !==
+        doc.confirmedContentSha256
+      ) {
         throw new ProvenanceError(
-          "this version's content has changed since it was confirmed, so the confirmation no longer describes what would be activated. Re-confirm the current version"
+          "this version's content or the quotes behind it have changed since it was confirmed, so the confirmation no longer describes what would be activated. Re-confirm the current version"
         );
       }
       // AC-26: ACTIVATION REFUSES WHILE ANY CLAIM POSITION IS UNCONFIRMED.
@@ -1297,6 +2455,25 @@ export function writeCapabilities(
             eq(brainDocs.status, "active")
           )
         );
+      // Compatibility repair for rows written before proposal replacement was
+      // enforced in `writeBrainDoc`: activating the chosen proposal retires
+      // every other proposal of this kind in the SAME transition. Fresh data
+      // reaches this as a no-op (the write invariant leaves one proposal), but
+      // without it a pre-existing stale proposal becomes "current" as soon as
+      // the chosen replacement turns active. The identical `now` lets history
+      // attribute those repaired rows to the version activated below.
+      await tx
+        .update(brainDocs)
+        .set({ status: "superseded", supersededAt: now })
+        .where(
+          and(
+            eq(brainDocs.profileId, scope.profileId),
+            eq(brainDocs.workspaceId, scope.workspaceId),
+            eq(brainDocs.kind, doc.kind),
+            eq(brainDocs.status, "proposed"),
+            ne(brainDocs.id, doc.id)
+          )
+        );
       const [row] = await tx
         .update(brainDocs)
         .set({ status: "active", activatedAt: now })
@@ -1310,14 +2487,131 @@ export function writeCapabilities(
         .returning();
       return row;
     },
+
+    activateBrainDocCoherent: async (params, tx) => {
+      // EXACTLY `activateBrainDoc`'s OWN LOGIC, not a parallel implementation
+      // (slice 3b, R8) — every gate above (the role check, the per-profile
+      // lock, the pause gate, AC-26's coverage check, the R-3 echo re-run,
+      // the supersede-then-activate pair) runs unchanged, because this calls
+      // the SAME closure the `activateBrainDoc` capability calls. The lock it
+      // takes as its own FIRST statement is what makes the snapshot insert
+      // below share the activation's transaction AND its serialisation: a
+      // Postgres advisory xact lock is reentrant WITHIN one session/tx (a
+      // second acquire of the same key by the same transaction returns
+      // immediately), and the lock is held until this transaction commits —
+      // so no concurrent `activateBrainDoc[Coherent]` call on this profile
+      // can observe this snapshot half-written or this activation without it.
+      const doc = await caps.activateBrainDoc(params, tx);
+      // EVERY KIND'S CURRENT ACTIVE ID, read AFTER the activation above, IN
+      // THE SAME TRANSACTION — so this SELECT sees the supersede-then-activate
+      // pair `activateBrainDoc` just committed within this transaction (own
+      // writes are always visible to a later statement in the same
+      // transaction), and every OTHER kind's active id is carried forward
+      // UNCHANGED rather than guessed or left null.
+      const activeIds = await activeDocIdsByKind(
+        tx,
+        scope.profileId as string,
+        scope.workspaceId as string
+      );
+      const [snapshot] = await tx
+        .insert(brainActivationSnapshots)
+        .values({
+          profileId: scope.profileId as string,
+          workspaceId: scope.workspaceId as string,
+          voiceDocId: activeIds.voice ?? null,
+          strategyDocId: activeIds.strategy ?? null,
+          killtestDocId: activeIds.killtest ?? null,
+          performanceMetaDocId: activeIds.performance_meta ?? null,
+        })
+        .returning();
+      return { doc, snapshot };
+    },
   };
+  return caps;
 }
 
-/** sha256 over the canonical JSON of stored content. */
-function contentSha256(content: unknown): string {
+/**
+ * Every brain kind's CURRENT active document id for one profile, read inside
+ * the caller's transaction (slice 3b, R8).
+ *
+ * PLAIN STRING IDS, not a `ProfileScope`/`WorkspaceScope` parameter —
+ * deliberately. This is called only from inside `activateBrainDocCoherent`,
+ * which has already asserted and locked the scope it is acting for; a second
+ * scope-typed parameter here would be a second place that same assertion
+ * would need to happen; a plain-id helper has nothing to assert and nothing
+ * for `tests/profile-cage.test.ts`'s completeness scan to have an opinion
+ * about.
+ */
+async function activeDocIdsByKind(
+  tx: TxLike,
+  profileId: string,
+  workspaceId: string
+): Promise<Partial<Record<BrainKind, string>>> {
+  const rows = await tx
+    .select({ kind: brainDocs.kind, id: brainDocs.id })
+    .from(brainDocs)
+    .where(
+      and(
+        eq(brainDocs.profileId, profileId),
+        eq(brainDocs.workspaceId, workspaceId),
+        eq(brainDocs.status, "active")
+      )
+    );
+  const out: Partial<Record<BrainKind, string>> = {};
+  for (const r of rows) out[r.kind] = r.id;
+  return out;
+}
+
+/**
+ * The sha a confirmation pins, over the PAIR — content AND its evidence (B-3).
+ *
+ * IT USED TO COVER CONTENT ALONE, and AC-27 names the pair. That gap was
+ * theoretical for exactly as long as nothing could edit `source_evidence` after
+ * a write: today `writeBrainDoc` is the only writer of the column and it writes
+ * it once. It stops being theoretical in slice 5, which edits fields — and the
+ * failure it admits is the worse half of the two. Content is what the creator
+ * READ; evidence is the quote that made them believe it. A confirmation whose
+ * sha covers only the first says "I confirm this rule" while the sentence that
+ * justified it is replaceable afterwards with anything, including a quote from
+ * a post the creator never wrote, and activation would still pass.
+ *
+ * FIXED HERE, WITH ONE WRITER AND ONE READER, because the same fix under a live
+ * confirmation is a migration: every already-confirmed row's stored sha is a
+ * content-only digest, and widening the input silently invalidates all of them.
+ * There are none in production — no product path has ever reached
+ * `confirmBrainDocFields`, which is what slice 3 changes — so the column keeps
+ * its name and its meaning changes in one edit, at the only moment that is a
+ * two-line diff.
+ *
+ * KEY ORDER IS THE OBJECT LITERAL'S, not the caller's, and both inputs come off
+ * a `jsonb` read — Postgres normalises object key order on the way in, so the
+ * two sites compare digests of the same normalisation rather than of whatever
+ * order a caller happened to build. Array order is preserved by `jsonb`, which
+ * is what makes the evidence list's own ordering part of what was confirmed.
+ */
+function confirmationSha256(content: unknown, sourceEvidence: unknown): string {
   return createHash("sha256")
-    .update(Buffer.from(JSON.stringify(content), "utf8"))
+    .update(
+      Buffer.from(JSON.stringify({ content, sourceEvidence }), "utf8")
+    )
     .digest("hex");
+}
+
+/**
+/**
+ * A corpus limit a caller STATED, checked rather than clamped.
+ *
+ * A limit above the page ceiling is a caller bug — the config schema caps
+ * `voiceCorpusMaxPosts` at the same number — and silently serving fewer rows
+ * than asked is how a screen comes to state a bound the read never honoured.
+ */
+function assertCorpusLimit(limit: number): number {
+  if (!Number.isInteger(limit) || limit < 1 || limit > ONBOARDING_PAGE_MAX) {
+    throw new WorkspaceAccessError(
+      `ownPostsNewest: a corpus limit must be an integer between 1 and ${ONBOARDING_PAGE_MAX}; received ${limit}. Refusing rather than silently serving fewer posts than the caller asked for`
+    );
+  }
+  return limit;
 }
 
 /**
@@ -1408,15 +2702,27 @@ export function assertMeteringOnly(value: unknown, depth = 0): void {
  * because it carries a fabricated warrant.
  */
 /**
- * Brain kinds a `reference` input may never be provenance for (D-M2-10).
+ * Brain kinds a `reference` input may never be provenance for (D-M2-10,
+ * widened by R-30.10 / task 42 in slice 4).
  *
- * `voice` is the one M2a can name with certainty: it is the document that
+ * `voice` was the one M2a could name with certainty: it is the document that
  * decides how the creator SOUNDS, so a third party's sentence in it is the
- * leak. The other three are carried as an M2b question in R-30 rather than
- * guessed at here — a set that is wrong in the permissive direction is worse
- * than one that is deliberately small.
+ * leak. `killtest` and `performance_meta` join it here for the same reason —
+ * neither is a place a reference post's own words belong — and `strategy`
+ * stays EXEMPT, deliberately: learning a MECHANISM from someone else's post is
+ * what the shared library is for (REQ-D04, R-9), and the operative control on
+ * that span is `REFERENCE_QUOTE_MAX_CHARS` in `echo.ts`, not a provenance bar.
+ *
+ * `performance_meta` is not writable at all today (`WRITABLE_BRAIN_KINDS` in
+ * `brain-content.ts` excludes it), so barring it here costs nothing now and
+ * closes the hole before slice 9 makes it writable — the cheap moment to do
+ * it, per the phase-4 card's question 3.
  */
-const REFERENCE_BARRED_KINDS: ReadonlySet<BrainKind> = new Set(["voice"]);
+const REFERENCE_BARRED_KINDS: ReadonlySet<BrainKind> = new Set([
+  "voice",
+  "killtest",
+  "performance_meta",
+]);
 
 /**
  * Validate every evidence entry, and RETURN the `reference`-classed spans.
@@ -1425,12 +2731,19 @@ const REFERENCE_BARRED_KINDS: ReadonlySet<BrainKind> = new Set(["voice"]);
  * this function is the only place an input's `input_class` is read, so a second
  * reader would be a second source of truth for "is this a reference post" — the
  * shape C-29 removed for the echo corpus one decision over.
+ *
+ * `bucketOf` is G-11 LAYER B's bucket map (`groupReferenceInputs`, echo.ts),
+ * computed ONCE by the caller from the corpus fetched for THIS write and
+ * shared with `retainedReferenceSpans` below — so a new span and every
+ * retained span agree on which bucket a reference post belongs to within one
+ * write, which is what the union in `assertReferenceQuoteBudget` depends on.
  */
 async function validateSourceEvidence(
   tx: TxLike,
   scope: ProfileScope,
   kind: BrainKind,
-  entries: SourceEvidenceEntry[]
+  entries: SourceEvidenceEntry[],
+  bucketOf: ReadonlyMap<string, string>
 ): Promise<{ clean: SourceEvidenceEntry[]; referenceSpans: ReferenceQuoteSpan[] }> {
   const referenceSpans: ReferenceQuoteSpan[] = [];
   const clean: SourceEvidenceEntry[] = [];
@@ -1439,7 +2752,7 @@ async function validateSourceEvidence(
   // and export too, and a silent empty walk there would be the fail-open shape
   // `assertNoReferenceEcho` was hardened against.
   if (!entries || entries.length === 0) return { clean, referenceSpans };
-  for (const raw of entries) {
+  const parsedEntries = entries.map((raw) => {
     // PARSE EACH ENTRY THROUGH THE CLOSED SCHEMA, AND USE THE PARSE OUTPUT.
     //
     // Two defects in one, both measured by reviewers. (1) The key space was
@@ -1461,23 +2774,20 @@ async function validateSourceEvidence(
         `an evidence entry is not the shape provenance takes: ${first.path.length ? `/${first.path.join("/")} ` : ""}${first.message}. Every entry names the claim position it supports, the input it came from, and the exact range it was taken from — nothing else is stored (REQ-B02)`
       );
     }
-    const entry = parsed.data;
-    if (!UUID_RE.test(entry.inputId)) throw new ProfileAccessError();
-    const [input] = await tx
-      .select({
-        content: onboardingInputs.content,
-        inputClass: onboardingInputs.inputClass,
-        contentSha256: onboardingInputs.contentSha256,
-      })
-      .from(onboardingInputs)
-      .where(
-        and(
-          eq(onboardingInputs.id, entry.inputId),
-          eq(onboardingInputs.profileId, scope.profileId),
-          eq(onboardingInputs.workspaceId, scope.workspaceId)
-        )
-      )
-      .limit(1);
+    if (!UUID_RE.test(parsed.data.inputId)) throw new ProfileAccessError();
+    return parsed.data;
+  });
+  const inputIds = [...new Set(parsedEntries.map((entry) => entry.inputId))];
+  const inputById = new Map(
+    (await scope.accessors.onboardingInputsByIds(inputIds, tx)).map((input) => [
+      input.id,
+      input,
+    ])
+  );
+  if (inputById.size !== inputIds.length) throw new ProfileAccessError();
+
+  for (const entry of parsedEntries) {
+    const input = inputById.get(entry.inputId);
     // Same refusal as a foreign profile, same message: an input belonging to
     // another profile and an input that does not exist are indistinguishable.
     if (!input) throw new ProfileAccessError();
@@ -1519,12 +2829,24 @@ async function validateSourceEvidence(
     // verbatim — which is what makes the recorded range, rather than the quote
     // string, a measure the budget can trust.
     if (input.inputClass === "reference") {
+      // THE BUCKET, not the row and not the sha (G-11). Two `onboarding_inputs`
+      // rows holding the same post — or an excerpt of it, or the same text with
+      // a trailing space — are one post for R-3's purposes; see
+      // `groupReferenceInputs`'s docblock in echo.ts for both layers.
+      const bucket = bucketOf.get(entry.inputId);
+      if (bucket === undefined) {
+        // UNREACHABLE ON THE WRITE PATH: `bucketOf` is built from every
+        // `reference` input this profile holds, read in the SAME transaction,
+        // and `input` above was just confirmed `inputClass === "reference"`
+        // from that same table. A partial map silently answering "no bucket"
+        // would reopen exactly the reassembly gap G-11 exists to close, so
+        // this refuses by name rather than falling back to a raw digest.
+        throw new WorkspaceAccessError(
+          `validateSourceEvidence: no echo bucket was computed for reference input ${entry.inputId}. The bucket map must be built from the profile's full current reference corpus before this function runs`
+        );
+      }
       referenceSpans.push({
-        // THE POST, not the row. Two `onboarding_inputs` rows holding the same
-        // post are one post for R-3's purposes, and keying on `inputId` let a
-        // duplicate paste buy a second 600-character budget — measured
-        // reassembling a 989-character post exactly.
-        postSha: input.contentSha256,
+        postSha: bucket,
         inputId: entry.inputId,
         startUtf16: entry.startUtf16,
         endUtf16: entry.endUtf16,
@@ -1542,13 +2864,32 @@ async function validateSourceEvidence(
  * Read from the rows rather than from a counter column, deliberately: a stored
  * running total would be the monotone counter this decision exists to remove,
  * and would need a migration to hold it. The ranges are already on the rows.
+ *
+ * `bucketOf` is the SAME map `validateSourceEvidence` used for this write
+ * (G-11 Layer B, `groupReferenceInputs` in echo.ts) — passed in rather than
+ * rebuilt, so a retained span and a new span agree on bucket membership within
+ * one write. It is recomputed by the CALLER on every write from the current
+ * corpus, never cached, so a reference post added between writes can merge an
+ * old bucket with a new one.
+ *
+ * G-16, RESOLVED: this function's skip-list and `echo.ts`'s `assertUsableSpan`
+ * refuse-list used to check different things — this one only `Number.isInteger`,
+ * that one also negative and inverted — so a stored inverted range fell through
+ * neither, reached `assertUsableSpan` on every later write, and bricked the
+ * profile permanently forever after (the docblock here used to claim it
+ * couldn't happen). Both now share `isUsableSpanRange` (echo.ts); the
+ * DIRECTION stays as it was — this function SKIPS an unusable stored range (a
+ * malformed row must never make the profile unable to write again), and
+ * `assertUsableSpan` still REFUSES an unusable NEW span (a write must not
+ * introduce one).
  */
 async function retainedReferenceSpans(
   tx: TxLike,
-  scope: ProfileScope
+  scope: ProfileScope,
+  bucketOf: ReadonlyMap<string, string>
 ): Promise<ReferenceQuoteSpan[]> {
   const referenceIds = await tx
-    .select({ id: onboardingInputs.id, sha: onboardingInputs.contentSha256 })
+    .select({ id: onboardingInputs.id })
     .from(onboardingInputs)
     .where(
       and(
@@ -1558,10 +2899,7 @@ async function retainedReferenceSpans(
       )
     );
   if (referenceIds.length === 0) return [];
-  // id -> sha, so a stored entry can be keyed on the POST it came from rather
-  // than on the row. Two rows holding the same post map to one sha, which is
-  // what closes the duplicate-paste route to a second budget.
-  const shaOf = new Map(referenceIds.map((r) => [r.id, r.sha]));
+  const referenceIdSet = new Set(referenceIds.map((r) => r.id));
   const rows = await tx
     .select({ sourceEvidence: brainDocs.sourceEvidence })
     .from(brainDocs)
@@ -1585,20 +2923,25 @@ async function retainedReferenceSpans(
         string,
         unknown
       >;
-      const sha = typeof inputId === "string" ? shaOf.get(inputId) : undefined;
-      if (sha === undefined) continue;
+      if (typeof inputId !== "string" || !referenceIdSet.has(inputId)) continue;
+      const bucket = bucketOf.get(inputId);
+      if (bucket === undefined) continue;
       if (
-        !Number.isInteger(startUtf16) ||
-        !Number.isInteger(endUtf16) ||
-        typeof quote !== "string"
+        typeof quote !== "string" ||
+        typeof startUtf16 !== "number" ||
+        typeof endUtf16 !== "number" ||
+        // G-16: the SAME predicate `assertUsableSpan` refuses NEW spans with —
+        // a stored inverted or negative range is now skipped here rather than
+        // reaching that refusal on every later write.
+        !isUsableSpanRange(startUtf16, endUtf16)
       ) {
         continue;
       }
       spans.push({
-        postSha: sha,
-        inputId: inputId as string,
-        startUtf16: startUtf16 as number,
-        endUtf16: endUtf16 as number,
+        postSha: bucket,
+        inputId,
+        startUtf16,
+        endUtf16,
         // The per-quote cap was already applied when this row was written, and
         // re-applying it to a stored row would let a cap CHANGE brick every
         // profile that wrote under the old one. The empty string carries the

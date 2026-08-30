@@ -17,17 +17,12 @@ export function AccessRefusal({ copy }: { copy: BillingErrorCopy }) {
     <section>
       <h1>This workspace is not available</h1>
       <div
-        style={{
-          border: "1px solid #c00",
-          background: "#fff5f5",
-          borderRadius: 6,
-          padding: "1rem",
-        }}
+        className="banner"
         data-testid="workspace-access-error"
         role="alert"
       >
         <strong>{copy.title}</strong>
-        <p style={{ color: "#555", fontSize: "0.9rem" }}>{copy.detail}</p>
+        <p className="muted">{copy.detail}</p>
       </div>
     </section>
   );

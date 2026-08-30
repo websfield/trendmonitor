@@ -26,6 +26,8 @@ export const config = {
   // parses this literal and asserts it covers every PROTECTED_PREFIX, so the
   // "keep in sync" comment is an assertion rather than a hope.
   matcher: [
+    "/onboarding/:path*",
+    "/brain/:path*",
     "/studio/:path*",
     "/usage/:path*",
     "/settings/:path*",

@@ -11,12 +11,27 @@
 // harness and must be unique per suite: vitest runs FILES in parallel and each
 // suite starts by dropping schema public, so a shared name is a suite being
 // reset mid-run by its neighbour.
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureUserWorkspace } from "../src/bootstrap";
-import { brainDocs, creatorProfiles } from "../src/brain-schema";
-import { modelUsage } from "../src/onboarding-schema";
+import { brainDocs, creatorProfiles, frameworks } from "../src/brain-schema";
+import { modelUsage, onboardingInputs } from "../src/onboarding-schema";
+import { createRunSlotPool } from "../src/client";
 import { createDockerTestDb, seedAuthUser } from "../src/testing";
+import { editBrainDocument } from "../src/brain-ops";
+import { openBrainExport } from "../src/export";
+import {
+  ExportBusyError,
+  OnboardingInputLimitError,
+  ProvenanceError,
+} from "../src/errors";
+import { POST_COUNT_MAX } from "../src/storage-limits";
+import { pgRunSlots } from "../src/run-slot";
+import {
+  ProfileScope,
+  withWorkspace,
+  writeCapabilities,
+} from "../src/with-workspace";
 
 const MAINTENANCE_URL = process.env.TEST_DATABASE_URL;
 
@@ -89,10 +104,18 @@ describe.skipIf(!MAINTENANCE_URL)("M2a on real Postgres", () => {
             reason: "race",
             // Migration 0012: `source_evidence` is NOT NULL and non-empty, and
             // an `active` row must carry its confirmation columns.
+            // MIGRATION 0015 (B-5) added `activated_at` to that CHECK, and this
+            // fixture was one of the rows it caught: eight inserts that all
+            // failed the constraint made the partial-unique assertion below
+            // pass for the WRONG REASON — zero survivors reads as "one" to a
+            // filter that only counts fulfilled, until the length is checked.
+            // The racer must be a row the database would really accept, or the
+            // index under test is never reached.
             sourceEvidence: RAW_EVIDENCE,
             status: "active",
             confirmedAt: new Date(),
             confirmedContentSha256: "0".repeat(64),
+            activatedAt: new Date(),
           })
         )
       );
@@ -166,6 +189,400 @@ describe.skipIf(!MAINTENANCE_URL)("M2a on real Postgres", () => {
         sql`select cost_micro_usd::text as v from model_usage where id = ${row.id}`
       );
       expect((raw.rows[0] as { v: string }).v).toBe("9007199254740993");
+    }
+  );
+
+  it(
+    "parallel sanctioned brain writes leave exactly one proposed version",
+    { timeout: 60_000 },
+    async () => {
+      const { db } = harness;
+      const workspaceScope = await withWorkspace(db, {
+        authUserId: "brain_user",
+        workspaceId,
+      });
+      const profileScope = await ProfileScope.mint(
+        db,
+        workspaceScope,
+        profileId
+      );
+      const caps = writeCapabilities(profileScope);
+      const input = await caps.appendOnboardingInput({
+        inputClass: "own_post",
+        content: "Direct",
+      });
+      const results = await Promise.allSettled(
+        Array.from({ length: 6 }, () =>
+          db.transaction((tx) =>
+            caps.writeBrainDoc(
+              {
+                kind: "voice",
+                content: {
+                  register: "Direct",
+                  sentenceRhythm: "[check]",
+                  signatureMoves: [],
+                  avoid: [],
+                },
+                sourceEvidence: [
+                  {
+                    field: "/register",
+                    quote: input.content,
+                    inputId: input.id,
+                    startUtf16: 0,
+                    endUtf16: input.content.length,
+                  },
+                ],
+                reason: { code: "onboarding_inference" },
+              },
+              tx
+            )
+          )
+        )
+      );
+      expect(
+        results.filter((result) => result.status === "fulfilled"),
+        "the profile advisory lock did not serialize every sanctioned writer"
+      ).toHaveLength(6);
+
+      const proposals = await db
+        .select()
+        .from(brainDocs)
+        .where(
+          and(
+            eq(brainDocs.workspaceId, workspaceId),
+            eq(brainDocs.profileId, profileId),
+            eq(brainDocs.kind, "voice"),
+            eq(brainDocs.status, "proposed")
+          )
+        );
+      expect(
+        proposals,
+        "removing the proposal-supersede transition leaves every parallel write current"
+      ).toHaveLength(1);
+    }
+  );
+
+  it(
+    "two edits from one base commit exactly one authored input and one proposal",
+    { timeout: 60_000 },
+    async () => {
+      const { db } = harness;
+      const [profile] = await db
+        .insert(creatorProfiles)
+        .values({ workspaceId, displayName: "Edit race" })
+        .returning();
+      const workspaceScope = await withWorkspace(db, {
+        authUserId: "brain_user",
+        workspaceId,
+      });
+      const profileScope = await ProfileScope.mint(db, workspaceScope, profile.id);
+      const caps = writeCapabilities(profileScope);
+      const input = await caps.appendOnboardingInput({
+        inputClass: "own_post",
+        content: "I write directly",
+      });
+      const base = await db.transaction((tx) =>
+        caps.writeBrainDoc(
+          {
+            kind: "voice",
+            content: {
+              register: "Direct",
+              sentenceRhythm: "[check]",
+              signatureMoves: [],
+              avoid: [],
+            },
+            sourceEvidence: [
+              {
+                field: "/register",
+                quote: input.content,
+                inputId: input.id,
+                startUtf16: 0,
+                endUtf16: input.content.length,
+              },
+            ],
+            reason: { code: "onboarding_inference" },
+          },
+          tx
+        )
+      );
+
+      const results = await Promise.allSettled([
+        editBrainDocument(db, workspaceScope, profile.id, base.id, [
+          { pointer: "/register", value: "Plain" },
+        ]),
+        editBrainDocument(db, workspaceScope, profile.id, base.id, [
+          { pointer: "/register", value: "Candid" },
+        ]),
+      ]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const rejected = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected"
+      );
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0].reason).toBeInstanceOf(ProvenanceError);
+
+      const authored = await db
+        .select()
+        .from(onboardingInputs)
+        .where(
+          and(
+            eq(onboardingInputs.workspaceId, workspaceId),
+            eq(onboardingInputs.profileId, profile.id),
+            eq(onboardingInputs.inputClass, "creator_authored")
+          )
+        );
+      expect(authored).toHaveLength(1);
+      const proposals = await db
+        .select()
+        .from(brainDocs)
+        .where(
+          and(
+            eq(brainDocs.workspaceId, workspaceId),
+            eq(brainDocs.profileId, profile.id),
+            eq(brainDocs.kind, "voice"),
+            eq(brainDocs.status, "proposed")
+          )
+        );
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0].id).not.toBe(base.id);
+    }
+  );
+
+  it(
+    "concurrent direct input capabilities enforce the exact immutable row ceiling",
+    { timeout: 60_000 },
+    async () => {
+      const { db } = harness;
+      const [profile] = await db
+        .insert(creatorProfiles)
+        .values({ workspaceId, displayName: "Input race" })
+        .returning();
+      await db.insert(onboardingInputs).values(
+        Array.from({ length: POST_COUNT_MAX - 1 }, (_, index) => ({
+          workspaceId,
+          profileId: profile.id,
+          inputClass: "own_post" as const,
+          content: `seed-${index}`,
+          contentSha256: "0".repeat(64),
+        }))
+      );
+      const workspaceScope = await withWorkspace(db, {
+        authUserId: "brain_user",
+        workspaceId,
+      });
+      const profileScope = await ProfileScope.mint(db, workspaceScope, profile.id);
+      const caps = writeCapabilities(profileScope);
+      const results = await Promise.allSettled([
+        caps.appendOnboardingInput({ inputClass: "own_post", content: "last-a" }),
+        caps.appendOnboardingInput({ inputClass: "own_post", content: "last-b" }),
+      ]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const rejected = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected"
+      );
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0].reason).toBeInstanceOf(OnboardingInputLimitError);
+      const rows = await db
+        .select()
+        .from(onboardingInputs)
+        .where(
+          and(
+            eq(onboardingInputs.workspaceId, workspaceId),
+            eq(onboardingInputs.profileId, profile.id)
+          )
+        );
+      expect(rows).toHaveLength(POST_COUNT_MAX);
+    }
+  );
+
+  it(
+    "streams one repeatable-read snapshot across a page-boundary append",
+    { timeout: 60_000 },
+    async () => {
+      const { db } = harness;
+      const [profile] = await db
+        .insert(creatorProfiles)
+        .values({ workspaceId, displayName: "Export snapshot" })
+        .returning();
+      await db.insert(frameworks).values(
+        Array.from({ length: 26 }, (_, index) => ({
+          slug: `snapshot-${index}`,
+          name: `Snapshot ${index}`,
+          beats: [],
+          whyItConverts: "snapshot",
+          applicability: [],
+          sourceReferences: [],
+          evidenceEntries: [],
+          testedCaveats: [],
+          confidence: "observed" as const,
+          saturation: "observed" as const,
+          visibility: "private" as const,
+          ownerProfileId: profile.id,
+          workspaceId,
+        }))
+      );
+      const workspaceScope = await withWorkspace(db, {
+        authUserId: "brain_user",
+        workspaceId,
+      });
+      const iterable = await openBrainExport(
+        db,
+        workspaceScope,
+        profile.id,
+        "json"
+      );
+      const iterator = iterable[Symbol.asyncIterator]();
+      let json = "";
+      for (;;) {
+        const next = await iterator.next();
+        if (next.done) break;
+        json += next.value;
+        if (next.value.includes('"slug":"snapshot-')) break;
+      }
+      await db.insert(frameworks).values({
+        slug: "snapshot-late",
+        name: "Snapshot late",
+        beats: [],
+        whyItConverts: "late",
+        applicability: [],
+        sourceReferences: [],
+        evidenceEntries: [],
+        testedCaveats: [],
+        confidence: "observed",
+        saturation: "observed",
+        visibility: "private",
+        ownerProfileId: profile.id,
+        workspaceId,
+      });
+      for (;;) {
+        const next = await iterator.next();
+        if (next.done) break;
+        json += next.value;
+      }
+      const parsed = JSON.parse(json) as {
+        tables: { frameworks: Array<{ slug: string }> };
+      };
+      expect(parsed.tables.frameworks).toHaveLength(26);
+      expect(new Set(parsed.tables.frameworks.map((row) => row.slug)).size).toBe(26);
+      expect(parsed.tables.frameworks.map((row) => row.slug)).not.toContain(
+        "snapshot-late"
+      );
+    }
+  );
+
+  it(
+    "refuses a second control export slot across real Postgres sessions",
+    { timeout: 60_000 },
+    async () => {
+      const { db } = harness;
+      const [profile] = await db
+        .insert(creatorProfiles)
+        .values({ workspaceId, displayName: "Export busy" })
+        .returning();
+      const workspaceScope = await withWorkspace(db, {
+        authUserId: "brain_user",
+        workspaceId,
+      });
+      const slotPool = createRunSlotPool(harness.url, 2);
+      const slots = pgRunSlots(slotPool);
+      const held = await slots.acquire(workspaceScope.workspaceId, 1, "export");
+      expect(held.granted).toBe(true);
+      try {
+        await expect(
+          openBrainExport(db, workspaceScope, profile.id, "json", slots)
+        ).rejects.toBeInstanceOf(ExportBusyError);
+      } finally {
+        if (held.granted) await held.lease.release();
+        await slotPool.end();
+      }
+    }
+  );
+
+  it(
+    "holds the export slot until an after-first-pull cancellation has rolled its transaction back",
+    { timeout: 60_000 },
+    async () => {
+      const { db } = harness;
+      const [profile] = await db
+        .insert(creatorProfiles)
+        .values({ workspaceId, displayName: "Export cancellation" })
+        .returning();
+      const workspaceScope = await withWorkspace(db, {
+        authUserId: "brain_user",
+        workspaceId,
+      });
+      const slotPool = createRunSlotPool(harness.url, 2);
+      const slots = pgRunSlots(slotPool);
+      const blocker = await harness.pool.connect();
+      let blockerOpen = false;
+      let cancelling: Promise<IteratorResult<string>> | undefined;
+      try {
+        await blocker.query("BEGIN");
+        blockerOpen = true;
+        await blocker.query("LOCK TABLE brain_docs IN ACCESS EXCLUSIVE MODE");
+
+        const source = await openBrainExport(
+          db,
+          workspaceScope,
+          profile.id,
+          "json",
+          slots
+        );
+        const iterator = source[Symbol.asyncIterator]();
+        for (;;) {
+          const next = await iterator.next();
+          expect(next.done).toBe(false);
+          if (next.value?.includes('"brain_docs":[')) break;
+        }
+
+        await expect
+          .poll(
+            async () => {
+              const { rows } = await harness.pool.query(
+                `SELECT count(*)::int AS n
+                   FROM pg_locks l
+                   JOIN pg_class c ON c.oid = l.relation
+                  WHERE c.relname = 'brain_docs' AND l.granted = false`
+              );
+              return Number(rows[0]?.n ?? 0);
+            },
+            { timeout: 5_000 }
+          )
+          .toBeGreaterThan(0);
+
+        let cancelSettled = false;
+        cancelling = iterator.return!().then((result) => {
+          cancelSettled = true;
+          return result;
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(
+          cancelSettled,
+          "reader cancellation resolved before the blocked producer transaction settled"
+        ).toBe(false);
+        await expect(
+          openBrainExport(db, workspaceScope, profile.id, "json", slots)
+        ).rejects.toBeInstanceOf(ExportBusyError);
+
+        await blocker.query("COMMIT");
+        blockerOpen = false;
+        await cancelling;
+        expect(cancelSettled).toBe(true);
+
+        const afterRollback = await openBrainExport(
+          db,
+          workspaceScope,
+          profile.id,
+          "json",
+          slots
+        );
+        await afterRollback[Symbol.asyncIterator]().return?.();
+      } finally {
+        if (blockerOpen) await blocker.query("ROLLBACK");
+        await cancelling?.catch(() => undefined);
+        blocker.release();
+        await slotPool.end();
+      }
     }
   );
 });

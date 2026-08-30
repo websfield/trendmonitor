@@ -194,6 +194,29 @@ export const creditLedger = pgTable(
     uniqueIndex("credit_ledger_auto_topup_uq")
       .on(t.refType, t.refId)
       .where(sql`${t.refType} = 'auto_topup'`),
+    // AT MOST ONE DEBIT PER INFERENCE ATTEMPT (R12, slice 2a). The fourth
+    // partial unique on this pair, and the first one guarding a SPEND rather
+    // than a mint.
+    //
+    // SETTLED IN THE SCHEMA, NOT IN APPLICATION CODE, and that distinction is
+    // the requirement. `runInference` writes `model_usage` in its own
+    // committed transaction and debits AFTERWARDS (the A-7 settlement-tail
+    // order), so a crash, a redeploy or a user's second click between those
+    // two commits leaves an attempt recorded and unbilled — which is exactly
+    // when something retries the debit. An application-level "have we already
+    // debited this attempt?" read is a read-then-write on a table with no
+    // constraint behind it: two connections both read "no" and both insert,
+    // and the creator is charged twice for one call with no way to tell from
+    // the ledger which row was the duplicate.
+    //
+    // `ref_id` is the `attempt_id` and `ref_type` is the literal 'inference'.
+    // Global rather than per-workspace scope, for the same reason as the three
+    // siblings above: an attempt id is minted per attempt and belongs to
+    // exactly one workspace, so two workspaces claiming one attempt is a
+    // writer defect that must fail closed rather than debit twice.
+    uniqueIndex("credit_ledger_inference_debit_uq")
+      .on(t.refType, t.refId)
+      .where(sql`${t.refType} = 'inference'`),
     check("credit_ledger_delta_nonzero", sql`${t.delta} <> 0`),
     check(
       "credit_ledger_delta_sign",

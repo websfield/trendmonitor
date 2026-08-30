@@ -7,13 +7,14 @@
 // and this file is one of the paths they cover.
 import { requireUser } from "@respin/auth";
 import { respinDb } from "@respin/db";
-import { respinCredits } from "@respin/credits/app-server";
+import { respinCredits, burnPeriodStart } from "@respin/credits/app-server";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { AccessRefusal } from "../access-refusal";
 import { billingErrorDisplay, billingErrorFromCode } from "../billing-errors";
-import { UsageView, type UsageLedgerRow } from "./usage-view";
+import { UsageView, type MonthlyBurn, type UsageLedgerRow } from "./usage-view";
 import { portalAvailability } from "./copy";
 import { openPortalAction } from "../settings/billing/actions";
+import { logRefusal } from "../safe-log";
 
 /** How many ledger entries the page shows. One more is fetched to detect "more". */
 const PAGE_SIZE = 50;
@@ -36,7 +37,7 @@ export default async function UsagePage(props: {
     scope = await respinDb.withWorkspace({ authUserId: user.id });
   } catch (err) {
     rethrowNextControlFlow(err);
-    console.error("[usage] workspace scope unavailable", err);
+    logRefusal("[usage] workspace scope unavailable", err);
     return <AccessRefusal copy={billingErrorDisplay(err)} />;
   }
 
@@ -50,7 +51,7 @@ export default async function UsagePage(props: {
   } catch (err) {
     rethrowNextControlFlow(err);
     // Ids and instants stay in the log; the page gets the remedy.
-    console.error("[usage] balance derivation failed", err);
+    logRefusal("[usage] balance derivation failed", err);
     const copy = billingErrorDisplay(err);
     balance = { ok: false, title: copy.title, detail: copy.detail };
   }
@@ -84,10 +85,28 @@ export default async function UsagePage(props: {
     // A config read can fail closed (no seeded config). That must not take the
     // balance down with it — the pause notice is simply not shown, and the
     // billing page is where the operator-facing remedy is rendered in full.
-    console.error("[usage] billing state unavailable", err);
+    logRefusal("[usage] billing state unavailable", err);
   }
 
   const [subscription] = await scope.accessors.subscription();
+
+  // R7/R8 (slice 2b): this month's credit burn, from the same period
+  // authority billing uses. Failing this must not take the balance or the
+  // ledger down with it — `ok: false` renders as a stated "couldn't load"
+  // rather than a page crash, the same fail-soft shape `paused` above uses.
+  let burn: MonthlyBurn;
+  try {
+    const periodStart = burnPeriodStart(subscription, new Date());
+    const result = await respinDb.monthlySpend(scope, periodStart);
+    burn = result.hasAnyDebit
+      ? { ok: true, hasAnyDebit: true, totalDebit: result.totalDebit }
+      : { ok: true, hasAnyDebit: false };
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[usage] monthly burn unavailable", err);
+    burn = { ok: false };
+  }
+
   // REQ-A02: role first, then "is there a Stripe customer to send them to".
   // PURE and unit-tested (`portalAvailability`): an inline ternary here would
   // be a decision nothing could assert, which is how the role test came to be
@@ -103,6 +122,7 @@ export default async function UsagePage(props: {
   return (
     <UsageView
       balance={balance}
+      burn={burn}
       rows={rows}
       moreRows={moreRows}
       paused={paused}

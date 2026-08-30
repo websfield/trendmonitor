@@ -1,0 +1,49 @@
+# Keep dangerous shell operations blocked even when a command is evaluated
+# outside the normal workspace sandbox.
+prefix_rule(
+    pattern = ["rm", "-rf"],
+    decision = "forbidden",
+    justification = "Recursive force deletion is prohibited by the project safety policy.",
+    match = ["rm -rf build"],
+    not_match = ["rm file.txt"],
+)
+
+prefix_rule(
+    pattern = ["Remove-Item", "-Recurse", "-Force"],
+    decision = "forbidden",
+    justification = "Recursive force deletion is prohibited by the project safety policy.",
+    match = ["Remove-Item -Recurse -Force build"],
+    not_match = ["Remove-Item file.txt"],
+)
+
+prefix_rule(
+    pattern = ["sudo"],
+    decision = "forbidden",
+    justification = "Privilege escalation is prohibited in this repository workflow.",
+    match = ["sudo npm install"],
+    not_match = ["npm install"],
+)
+
+prefix_rule(
+    pattern = ["git", "reset", "--hard"],
+    decision = "forbidden",
+    justification = "Hard reset can discard user work.",
+    match = ["git reset --hard HEAD"],
+    not_match = ["git reset --soft HEAD~1"],
+)
+
+prefix_rule(
+    pattern = ["git", "push", "--force"],
+    decision = "forbidden",
+    justification = "Force pushes are prohibited by the project safety policy.",
+    match = ["git push --force origin main"],
+    not_match = ["git push origin feature"],
+)
+
+prefix_rule(
+    pattern = ["git", "push", "-f"],
+    decision = "forbidden",
+    justification = "Force pushes are prohibited by the project safety policy.",
+    match = ["git push -f origin main"],
+    not_match = ["git push origin feature"],
+)

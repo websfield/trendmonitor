@@ -12,7 +12,7 @@
       "sharp"
     ],
     "auditConfig": {
-      "//": "EVERY id here must have a dated entry in respin/SECURITY-EXCEPTIONS.md naming the reason, the blast radius and the owner. An id without one is an unreviewed exception \u2014 delete it.",
+      "//": "EVERY id here must have a dated entry in respin/SECURITY-EXCEPTIONS.md naming the reason, the blast radius and the owner. An id without one is an unreviewed exception — delete it.",
       "ignoreGhsas": [
         "GHSA-gpj5-g38j-94v9",
         "GHSA-f88m-g3jw-g9cj",
@@ -22,7 +22,7 @@
     }
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 8000",
     "build": "next build",
     "typecheck": "tsc --noEmit && pnpm --filter=!respin -r run typecheck",
     "lint": "eslint .",
@@ -40,6 +40,7 @@
     "@respin/credits": "workspace:*",
     "@respin/db": "workspace:*",
     "better-auth": "^1.6.28",
+    "geist": "^1.7.2",
     "next": "^15.4.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

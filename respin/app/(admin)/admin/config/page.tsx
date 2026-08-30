@@ -9,6 +9,7 @@ import { ConfigEditor, ConfigHistory } from "./config-view";
 import type { ConfigEditorFormProps } from "./config-view";
 import { appendConfigAction } from "./actions";
 import { NO_ACTIVE_CONFIG_COPY, resolveSavedVersion } from "./config-form-state";
+import { logRefusal } from "../../../(product)/safe-log";
 
 export default async function AdminConfigPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -30,7 +31,7 @@ export default async function AdminConfigPage(props: {
     // ordinary state of a fresh install, and the operator's way forward is one
     // command. A crash here would make the page that fixes the problem the
     // page that cannot load.
-    console.error("[admin-config] active config unavailable", err);
+    logRefusal("[admin-config] active config unavailable", err);
     active = { ok: false, ...NO_ACTIVE_CONFIG_COPY };
   }
 
@@ -47,13 +48,13 @@ export default async function AdminConfigPage(props: {
     history = await listConfigVersionsServer(20);
   } catch (err) {
     rethrowNextControlFlow(err);
-    console.error("[admin-config] version history unavailable", err);
+    logRefusal("[admin-config] version history unavailable", err);
   }
 
   return (
     <section>
       <h1>Runtime configuration</h1>
-      <p style={{ color: "#555", fontSize: "0.9rem" }}>
+      <p style={{ color: "var(--text-3)", fontSize: "0.9rem" }}>
         Credit costs, tier allowances, the credit-pack price, the payment-grace
         window, the pause bounds and the Stripe price map. Every save appends a
         new version; the newest version is the active one and nothing is ever

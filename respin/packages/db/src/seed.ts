@@ -51,6 +51,12 @@ export const CONFIG_V1_SEED = {
     spin: 5,
     revision: 2,
     onboardingBrainBuild: 0,
+    // The first credit debit the product ever takes (D-M2-2). Owner decision,
+    // `decisions.md` R-37. Explicit in the SEED as well as defaulted in the
+    // schema, for the reason `profileCaps` is: a fresh install writes it, so
+    // only databases seeded before slice 2a need `config:migrate` at all --
+    // and R19 refuses to price a debit from a merely-DEFAULTED key.
+    onboardingBrainRebuild: 50,
     trendBrowse: 0,
   },
   allowances: { free: 25, creator: 250, pro: 2000, studio: 8000 },
@@ -69,6 +75,51 @@ export const CONFIG_V1_SEED = {
   // fresh install writes it explicitly, so only databases seeded before M2a
   // need `migrate-config` at all.
   profileCaps: { free: 1, creator: 1, pro: 1, studio: 5 },
+  // tech-spec §6's per-tier generation concurrency, made real by slice 2a's
+  // run slot (`packages/db/src/run-slot.ts`). Workspace-grained, not per-user —
+  // the divergence from the spec's wording and the reason for it are recorded
+  // in `decisions.md` R-39 and in the schema's own comment.
+  concurrencyLimits: { free: 2, creator: 2, pro: 4, studio: 8 },
+  // Slice 3's onboarding rule: how many of the creator's OWN posts must exist
+  // before a voice inference will run. Explicit in the seed for the reason
+  // `profileCaps` carries — a fresh install writes it, so a fresh install needs
+  // no `migrate-config` to have it. Unlike `llm.prices` a default here is SAFE
+  // (it decides whether we ask for more posts, never what anyone is billed),
+  // which is why the schema also carries one.
+  onboarding: {
+    minOwnPostsForVoice: 3,
+    voiceCorpusMaxPosts: 50,
+    maxUnchargedBillableAttempts: 3,
+  },
+  // The model layer (slice 2a). Explicit in the seed for the same reason as
+  // `profileCaps` and `onboardingBrainRebuild` above: a fresh install writes
+  // it, and a merely-defaulted `llm.prices` cannot price a debit (R19).
+  llm: {
+    models: {
+      generation: "claude-sonnet-5",
+      classification: "claude-haiku-4-5",
+    },
+    prices: {
+      "claude-sonnet-5": {
+        inputNanoUsdPerToken: 3000,
+        outputNanoUsdPerToken: 15000,
+      },
+      "claude-haiku-4-5": {
+        inputNanoUsdPerToken: 1000,
+        outputNanoUsdPerToken: 5000,
+      },
+    },
+    maxOutputTokens: 4000,
+    timeoutMs: 60_000,
+    // The whole operation's deadline, retries included (production CHANGE 6).
+    // Explicit here as well as defaulted in the schema, for the reason
+    // `profileCaps` and `onboardingBrainRebuild` carry: a fresh install writes
+    // it, and an already-seeded database gets it from `config:migrate`, whose
+    // merge recurses (`migrate-config.ts:151-172`). Both routes land on the
+    // same number, which is the property the parity test exists to hold.
+    overallDeadlineMs: 40_000,
+    maxRetries: 2,
+  },
 } as const;
 
 /** Idempotent: running twice changes nothing (unique constraints + lookups). */

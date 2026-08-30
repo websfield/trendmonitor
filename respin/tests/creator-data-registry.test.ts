@@ -77,8 +77,19 @@ describe("P9 — the creator-data registry covers every table M2a created", () =
       "a table created by M2a with no export/deletion decision: add it to CREATOR_DATA_REGISTRY"
     ).toEqual([]);
     // ...and no stale entries naming a table that does not exist.
+    //
+    // AGAINST `tablesInAllMigrations()`, NOT `created` (0011-only) — slice 3b
+    // is the case this comment already promised and the check did not yet
+    // make true: it added two MORE creator-data tables in a LATER migration
+    // (`onboarding_interview_drafts`, `brain_activation_snapshots`), each
+    // registered because it holds or points at real creator content. Checking
+    // against the 0011-only list would call those "stale" for the same reason
+    // the file's own header names for the sibling predicate one describe block
+    // down — "a table added in `0012_*` would never have entered the check".
+    // A registry entry is stale when it names a table NO migration creates,
+    // not when it names a table 0011 in particular does not.
     const stale = CREATOR_DATA_REGISTRY.map((e) => e.table).filter(
-      (t) => !created.includes(t)
+      (t) => !tablesInAllMigrations().includes(t)
     );
     expect(stale).toEqual([]);
   });
@@ -135,6 +146,14 @@ describe("P9 — the creator-data registry covers every table M2a created", () =
         entry.table + " holds creator content but is excluded from the export"
       ).toBe(true);
     }
+  });
+
+  it("the exporter walks this registry instead of maintaining a second export list", () => {
+    const source = readFileSync(join(ROOT, "packages/db/src/export.ts"), "utf8");
+    expect(source).toContain("for (const entry of CREATOR_DATA_REGISTRY)");
+    expect(source).toContain("if (!entry.export.included) continue");
+    expect(source).toContain("tables[entry.table] = await reader()");
+    expect(source).toContain("registry: CREATOR_DATA_REGISTRY.map");
   });
 });
 
