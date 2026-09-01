@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   BRAIN_DOC_REASON_CODES,
   BrainReasonError,
+  classifyBrainReason,
   renderBrainReason,
   type BrainDocReason,
 } from "../src/brain-reason";
@@ -111,5 +112,78 @@ describe("the reason a brain version carries is a CODE, not a sentence", () => {
       "creator_edit",
       "correction",
     ]);
+  });
+});
+
+/**
+ * THE CLASSIFIER AND THE RENDERER MUST AGREE — proved GENERATIVELY against the
+ * real producer, not against a list of hand-picked sentences.
+ *
+ * `classifyBrainReason` exists because `brain_docs.reason` stores the SENTENCE
+ * and the export / `/brain` have to branch on the CODE (the absence sentence is
+ * selected by (kind, reason), REQ-I03). That makes this a property between two
+ * things that can drift, which is CLAUDE.md's 2026-08-18 lesson exactly: a list
+ * of counterexamples closes instances and leaves the class open. So every code
+ * is driven through the renderer across a range of the only facts it
+ * interpolates, and the round trip is asserted for all of them.
+ */
+describe("classifyBrainReason: the round trip with the only producer", () => {
+  const VERSIONS = [1, 2, 9, 10, 42, 1000];
+  const COUNTS = [0, 1, 2, 3, 11, 250];
+
+  it("every rendered sentence classifies back to the code that produced it", () => {
+    let checked = 0;
+    for (const code of BRAIN_DOC_REASON_CODES) {
+      for (const version of VERSIONS) {
+        for (const citedInputCount of COUNTS) {
+          const sentence = renderBrainReason({ code }, { version, citedInputCount });
+          expect(classifyBrainReason(sentence), sentence).toBe(code);
+          checked += 1;
+        }
+      }
+    }
+    // Non-vacuity: the loops really ran, over every code.
+    expect(checked).toBe(
+      BRAIN_DOC_REASON_CODES.length * VERSIONS.length * COUNTS.length
+    );
+  });
+
+  it("no rendered sentence classifies as a code OTHER than its own", () => {
+    // Mutual exclusivity stated separately: a pattern widened until it also
+    // matches a sibling's sentence would still pass the round trip above if it
+    // happened to be tried first.
+    for (const code of BRAIN_DOC_REASON_CODES) {
+      const sentence = renderBrainReason({ code }, { version: 7, citedInputCount: 4 });
+      for (const other of BRAIN_DOC_REASON_CODES) {
+        if (other === code) continue;
+        const otherSentence = renderBrainReason(
+          { code: other },
+          { version: 7, citedInputCount: 4 }
+        );
+        expect(otherSentence, `${code} and ${other} render the same sentence`).not.toBe(
+          sentence
+        );
+      }
+    }
+  });
+
+  it("returns null for anything this build did not render", () => {
+    // `reason` is `text NOT NULL` on an append-only table, so an incident's
+    // hand-run UPDATE is representable. The callers must be able to tell "we
+    // do not know why this version exists" from a code, because the honest
+    // absence sentence for the first is different (see export.ts).
+    for (const stored of [
+      "",
+      "something nobody rendered",
+      "Version 1: built from 3 of your posts.",
+      // Near-misses: the shape without the version prefix, and the prefix
+      // without a number.
+      "you edited this document.",
+      "Version: you edited this document.",
+      // Trailing prose after the sentence the server composes.
+      "Version 1: you edited this document. And here is a detail nobody verified.",
+    ]) {
+      expect(classifyBrainReason(stored), stored).toBeNull();
+    }
   });
 });

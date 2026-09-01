@@ -24,10 +24,16 @@ import { describe, expect, it } from "vitest";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
- * drizzle export name -> SQL table name. The six of migration 0011, plus the
- * two slice-3b tables (migration 0018) — a table this scan does not KNOW
- * about is a table it finds zero writers of no matter how many it has, which
- * is the same fail-open shape a broken regex produces (CLAUDE.md 2026-08-21).
+ * drizzle export name -> SQL table name. The six of migration 0011, the two
+ * slice-3b tables (migration 0018) and the two slice-6 generation tables
+ * (migration 0020) — a table this scan does not KNOW about is a table it finds
+ * zero writers of no matter how many it has, which is the same fail-open shape
+ * a broken regex produces (CLAUDE.md 2026-08-21).
+ *
+ * THIS MAP IS MANUAL AND NOTHING FAILS IF IT IS FORGOTTEN, which is exactly
+ * why registering a new table here is a slice REQUIREMENT (slice 6 R10) rather
+ * than a courtesy: an unregistered table produces a green suite and an
+ * unpoliced write surface, and the green suite is the dangerous half.
  */
 const TABLES: Record<string, string> = {
   brainDocs: "brain_docs",
@@ -38,6 +44,9 @@ const TABLES: Record<string, string> = {
   workspaceSpendMonthly: "workspace_spend_monthly",
   onboardingInterviewDrafts: "onboarding_interview_drafts",
   brainActivationSnapshots: "brain_activation_snapshots",
+  membershipProfileSelections: "membership_profile_selections",
+  generationAttempts: "generation_attempts",
+  generations: "generations",
 };
 
 const VERBS = ["insert", "update", "delete"] as const;
@@ -306,17 +315,6 @@ const EXPECTED: Record<string, Record<string, string>> = {
   model_usage: {
     "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().recordModelUsage — the append-only spend record",
-    // Slice 2b-c / R4a: the table's ONE sanctioned UPDATE
-    // (`onboarding-schema.ts`'s own docblock on `cost_state`, written before
-    // this existed: "estimated at insert; reconciled when the provider's own
-    // figure lands. That transition is this table's ONE sanctioned update").
-    // Lives in `spend-rollup.ts`, not `with-workspace.ts`, because it is not
-    // a ProfileScope/WorkspaceScope-caged write — a vendor reconciliation
-    // event names a `model_usage` row directly, the same operator-grained
-    // shape `reconcileSpend` and `pseudonymiseWorkspaceSpend` already have in
-    // this file.
-    "packages/db/src/spend-rollup.ts::update":
-      "applyReconciliationDelta — estimated/unknown -> reconciled, applying the exact cost and unknown-count delta to workspace_spend_monthly in the same transaction, idempotent by row-locked state (R4a).",
   },
   // Written from slice 1. ONE writer, and the split is the point: the INSERT
   // lives in `packages/db` (a scope-caged workspace write capability) while the
@@ -330,6 +328,12 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/db/src/with-workspace.ts::insert":
       "workspaceWriteCapabilities().createProfile — strips server-derived fields and stamps the scope's workspace id, and refuses a viewer. There is deliberately NO `::update` entry: nothing archives or reactivates a profile yet, and the slice that adds one owes the same cap check createProfile makes (R-35 §2). Adding an UPDATE here is now a deliberate edit to this file rather than a silent one.",
   },
+  membership_profile_selections: {
+    "packages/db/src/profile-selection.ts::insert":
+      "selectActiveProfileInTx — the sole membership-grained selection writer; eligibility is joined through the acting membership and an active profile in the same workspace before this upsert.",
+    "packages/db/src/profile-selection.ts::onConflictDoUpdate":
+      "selectActiveProfileInTx — changes only profile_id and updated_at for the same (user_id, workspace_id) membership key.",
+  },
   // Written by M2b slice 2b. All three entries are `spend-rollup.ts`, not
   // `with-workspace.ts` — this is the ONE table whose writer lives outside the
   // cage file, because it has no FK to a scope and no ProfileScope/
@@ -337,9 +341,9 @@ const EXPECTED: Record<string, Record<string, string>> = {
   // with NO foreign key, deliberately").
   workspace_spend_monthly: {
     "packages/db/src/spend-rollup.ts::insert":
-      "upsertSpendRollup (R1) AND applyRollupDelta (R4a, slice 2b-c) — both the values() side of their own onConflictDoUpdate, on the same grain-key insert-or-increment shape; applyRollupDelta is the reconciliation-delta sibling upsertSpendRollup's full-cost/+1-count math cannot reuse (R4a's own docblock).",
+      "upsertSpendRollup — the values() side of the one grain-key insert-or-increment path (R1).",
     "packages/db/src/spend-rollup.ts::onConflictDoUpdate":
-      "upsertSpendRollup's increment (R1) and applyRollupDelta's signed delta (R4a). The repo's first onConflictDoUpdate in product code (R1), instrumented before it existed (this scanner's own probe at line ~358 above).",
+      "upsertSpendRollup's increment (R1). The repo's first onConflictDoUpdate in product code, instrumented before it existed (this scanner's own probe at line ~358 above).",
     "packages/db/src/spend-rollup.ts::update":
       "pseudonymiseWorkspaceSpend — R-30.5/R-54's deletion-executor obligation: moves every row of a deleted workspace to one fresh random id, discarding the mapping.",
   },
@@ -356,6 +360,28 @@ const EXPECTED: Record<string, Record<string, string>> = {
       "saveInterviewDraft (first save for a profile) and submitInterview (no prior draft existed) — both insert the row that becomes this profile's ONE draft (unique index on profile_id).",
     "packages/db/src/interview-ops.ts::update":
       "saveInterviewDraft (a later patch, merged field-by-field) and submitInterview (stamping submitted_at, guarded by `submitted_at IS NULL` so a violated invariant refuses rather than double-submitting).",
+  },
+  // Slice 6 (Stage C) — THE EMPTY EXPECTATIONS STAGE A LEFT HERE ARE NOW
+  // FILLED IN, which was the point of leaving them: stage A shipped the schema
+  // with no writer, and the first `.insert` or `.update` to appear anywhere in
+  // `packages/**` or `app/**` had to fail here and be named. It did, and this
+  // is the naming.
+  //
+  // Two entries, not one, because the two tables have different futures: the
+  // record is APPEND-ONLY (INSERT only, like `brain_activation_snapshots`) and
+  // the claim TRANSITIONS (INSERT plus UPDATE). Keeping them apart is what
+  // makes the absence of a `generations::update` key an assertion rather than
+  // an oversight — an UPDATE of a stored generation would rewrite a creator's
+  // own history, and it would otherwise arrive under the claim table's licence.
+  generations: {
+    "packages/db/src/with-workspace.ts::insert":
+      "writeCapabilities().settleGeneration — the ONE writer, and it writes the row and moves its claim to `settled` in the same call, because `generation_attempts_settled_has_generation` is an EQUALITY that neither half can satisfy alone. Role-gated, cage-asserted, every column built field by field from the scope (no spread to strip). There is deliberately NO `::update` entry: `generations` is immutable, has no `updated_at`, and adding an UPDATE here is now a deliberate edit to this file rather than a silent one.",
+  },
+  generation_attempts: {
+    "packages/db/src/with-workspace.ts::insert":
+      "writeCapabilities().claimGenerationAttempt — the durable claim committed BEFORE outbound HTTP (R14). Insert-or-observe via onConflictDoNothing, so two concurrent presses of one attempt id produce one row and one winner; `state`, the timestamps and both terminal ids are written here, never taken from a caller.",
+    "packages/db/src/with-workspace.ts::update":
+      "writeCapabilities().advanceGenerationAttempt (claimed -> vendor_started -> vendor_complete, and the two non-settled terminals) and .settleGeneration (the `settled` transition, which is deliberately unreachable from the first). BOTH put the legal FROM-states in the WHERE, so a skipped or replayed transition updates zero rows and refuses — the half of `forward only` application code owns, since Postgres cannot compare a row to its own previous value without a trigger. R14c: advanceGenerationAttempt is ALSO the writer that stores the durable `candidate` on the move to `vendor_complete` and CLEARS it on every other transition, and settleGeneration clears it on the way to `settled` — `generation_attempts_candidate_iff_vendor_complete` is an EQUALITY, so no terminal row may retain output text and no `vendor_complete` row may exist that a retry cannot settle. The candidate is server-derived here and is never taken from a caller.",
   },
   // Slice 3b (Stage A). ONE writer, append-only, INSERT only — there is no
   // update or delete path by design (R8/R9's own docblock on the table).

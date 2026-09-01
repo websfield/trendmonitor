@@ -57,7 +57,12 @@ const BRAIN_PATH = "/brain";
 const REFERENCE_MATCH_PREVIEW_MAX = 240;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-type BrainClaimEdit = { pointer: string; value: string };
+/**
+ * `value: null` DECLINES a position — see `DeclaredMetricEdit`'s docblock in
+ * `@respin/db`. Only the metric form produces one (its two optional inputs);
+ * `readBrainEdits` reads form fields, which are always strings.
+ */
+type BrainClaimEdit = { pointer: string; value: string | null };
 type MetricDirection = "higher_is_better" | "lower_is_better";
 
 function normalizedEditText(value: string): string {
@@ -82,7 +87,11 @@ function assertBrainEditBounds(edits: readonly BrainClaimEdit[]): void {
   let aggregate = 0;
   for (const edit of edits) {
     const pointerLength = codePointLength(edit.pointer.normalize("NFC"));
-    const valueLength = codePointLength(normalizedEditText(edit.value));
+    // A DECLINE carries no text, so it costs the pointer alone — the same
+    // arithmetic `editBrainDocument` performs, which is what "keeps this
+    // courtesy bound identical" means.
+    const valueLength =
+      edit.value === null ? 0 : codePointLength(normalizedEditText(edit.value));
     if (pointerLength > BRAIN_EDIT_POINTER_MAX) {
       throw new BrainEditLimitError(
         `a field pointer is ${pointerLength} characters and the limit is ${BRAIN_EDIT_POINTER_MAX}`
@@ -298,9 +307,15 @@ export async function editBrainDocumentAction(
 
 /**
  * Edit Strategy's declared metric through its structured facade operation.
- * Empty optional fields are explicit clears (`null`), not an instruction to
- * keep an old value. The package turns those clears into the same named
- * `[check]` absence the rest of the brain uses.
+ *
+ * A BLANK OPTIONAL INPUT IS AN EXPLICIT DECLINE (`null`), never "keep whatever
+ * is stored" and — since slice 5's gate round 1 (G1) — never `[check]` either.
+ * The package leaves a declined position UNSTATED, which is exactly the shape
+ * the interview writes when a creator declines the same question. Before that,
+ * `null` meant `[check]`, a value the position could only receive if the key
+ * already existed — so a creator who had declined the question in the
+ * interview could not edit their metric at all, and the screen told them the
+ * page and the server disagreed.
  */
 export async function editDeclaredMetricAction(
   profileId: string,
@@ -332,8 +347,8 @@ export async function editDeclaredMetricAction(
       { pointer: "/metric/label", value: metric.label },
       { pointer: "/metric/unit", value: metric.unit },
       { pointer: "/metric/direction", value: metric.direction },
-      { pointer: "/metric/platform", value: metric.platform ?? "[check]" },
-      { pointer: "/metric/window", value: metric.window ?? "[check]" },
+      { pointer: "/metric/platform", value: metric.platform },
+      { pointer: "/metric/window", value: metric.window },
     ]);
     const scope = await scopeForUser(user);
     await respinDb.editDeclaredMetric(scope, profileId, brainDocId, metric);

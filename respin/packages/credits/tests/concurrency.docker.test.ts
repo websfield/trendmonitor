@@ -501,8 +501,14 @@ describe.skipIf(!MAINTENANCE_URL)("credit ledger under REAL concurrency", () => 
         (r) => r.workspaceId === ws && r.refType === "auto_topup"
       );
       expect(packs, "one PaymentIntent must mint one pack").toHaveLength(1);
+      // ONE PACK, PLUS THIS WORKSPACE'S OWN FREE ALLOWANCE (slice 6, R17):
+      // its subscription mirror leaves it resolving to `free`, so the balance
+      // read mints its monthly grant. Written as a SUM rather than as the
+      // total, because the number this case is about is how much the
+      // PaymentIntent minted — once, never twice — and the row assertion
+      // above is what proves it.
       expect((await deriveBalance(db, ws)).balance).toBe(
-        CONFIG_V1_SEED.pack.credits
+        CONFIG_V1_SEED.pack.credits + CONFIG_V1_SEED.allowances.free
       );
       // Exactly one delivery may report "processed"; the losers either
       // converge quietly to "ignored" (pre-check saw the committed winner) or

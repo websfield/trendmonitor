@@ -273,7 +273,14 @@ describe.skipIf(!MAINTENANCE_URL)("runInference under REAL concurrency", () => {
     expect(usage).toHaveLength(2);
 
     const view = await deriveBalance(harness.db, ws);
-    expect(view.balance).toBe(REBUILD_COST * 4 - REBUILD_COST);
+    // THE GRANT, MINUS THE ONE CHARGE, PLUS THE WORKSPACE'S OWN FREE
+    // ALLOWANCE (slice 6, R17). This workspace has no subscription row, so
+    // `getWorkspaceBillingState` resolves it to `free` and the balance read
+    // inside the debit transaction mints its monthly grant. The CHARGE — what
+    // this case is about — is asserted exactly, above and below.
+    expect(view.balance).toBe(
+      REBUILD_COST * 4 - REBUILD_COST + CONFIG_V1_SEED.allowances.free
+    );
     // The balance each caller was HANDED must be one the ledger can produce. A
     // returned number nobody checks is how a screen ends up showing a balance
     // the database never had.

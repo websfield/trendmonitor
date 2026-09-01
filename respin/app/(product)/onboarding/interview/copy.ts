@@ -35,6 +35,7 @@
 import {
   INTERVIEW_ANSWER_MAX,
   INTERVIEW_FIELDS,
+  METRIC_DIRECTION_LABELS,
   type InterviewAnswers,
   type InterviewFieldKey,
   type OnboardingInterviewDraft,
@@ -64,11 +65,14 @@ export const INTERVIEW_FIELD_LABELS: Record<InterviewFieldKey, string> = {
 /** Which HTML control renders each field — a scalar line, a scalar block, an enum, or a list. */
 export type FieldWidget = "input" | "textarea" | "select" | "list";
 
-/** Readable labels for `METRIC_DIRECTIONS`' two closed values. */
-export const METRIC_DIRECTION_LABELS: Record<string, string> = {
-  higher_is_better: "Higher is better",
-  lower_is_better: "Lower is better",
-};
+// RE-EXPORTED, NEVER REDECLARED (slice 5 stage 2, G0). `METRIC_DIRECTIONS` is
+// a closed vocabulary `brain-content.ts` owns, and the two READABLE labels for
+// it were held here AND in `packages/db/src/export.ts`, which renders the same
+// two values into the downloaded file. Two copies of one label set is how the
+// review screen and the export come to call the same stored enum by different
+// names; the value lives with the vocabulary now and this screen re-exports it.
+// `tests/shared-copy-identity.test.ts` proves the re-export is still one.
+export { METRIC_DIRECTION_LABELS };
 
 export const INTERVIEW_FIELD_WIDGETS: Record<InterviewFieldKey, FieldWidget> = {
   audience: "textarea",

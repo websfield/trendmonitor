@@ -54,10 +54,21 @@ export default async function InterviewPage(props: {
   }
   // No profile yet: there is nothing to interview about — the create-profile
   // step lives on `/onboarding`, and this page has no form of its own for it.
-  if (profiles.length === 0) {
-    redirect("/onboarding");
+  let profile: Awaited<
+    ReturnType<typeof respinDb.selectedProfileForMember>
+  > = null;
+  try {
+    profile = await respinDb.selectedProfileForMember(scope);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[interview] selected profile unavailable", err);
+    return <AccessRefusal copy={billingErrorDisplay(err)} />;
   }
-  const profile = profiles[0];
+  if (!profile) {
+    redirect(
+      profiles.length === 0 ? "/onboarding" : "/onboarding?choose=profile",
+    );
+  }
 
   let draft: Awaited<ReturnType<typeof respinDb.getInterviewDraft>> = null;
   try {

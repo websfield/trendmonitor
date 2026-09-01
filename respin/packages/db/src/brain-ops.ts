@@ -37,6 +37,7 @@ import {
   BrainEditBusyError,
   BrainEditEmptyError,
   BrainEditLimitError,
+  BrainEditUnchangedError,
   ProfileAccessError,
   ProvenanceError,
 } from "./errors";
@@ -461,26 +462,40 @@ export async function confirmVoiceFields(
   );
 }
 
-/**
- * Activate a confirmed version — the separate, explicit second act (R13).
+/*
+ * `activateVoice` WAS DELETED HERE (tenancy gate round 2, 2026-09-01), and the
+ * deletion is the fix rather than a tidy-up.
  *
- * SEPARATE FROM CONFIRMATION BY DESIGN, not by accident of routing. A single
- * press that confirmed and activated would be the silent brain update R-8
- * forbids: activation is what makes the product ACT on a claim about a person,
- * and REQ-B02 puts a human decision in front of it. Every gate that makes that
- * true — the all-positions check, the confirmation sha over the pair, the echo
- * bar re-run over the recorded corpus — lives in `activateBrainDoc`.
+ * It was slice 3's single-document activation: mint a `ProfileScope`, open a
+ * transaction, call `caps.activateBrainDoc` and stop — no
+ * `brain_activation_snapshots` row. `activateBrainCoherent` (below) is what
+ * `/brain` calls — `app/(product)/brain/actions.ts` names it as the replacement
+ * for the slice-3 action, and `tests/brain-ui.test.tsx` asserts that module
+ * calls neither `respinDb.activateVoice` nor `activateBrainDoc`. At deletion
+ * time this function had ZERO callers anywhere outside its own tests: the
+ * facade entry and the `index.ts` export were inventory.
+ *
+ * WHAT MADE IT WORTH DELETING RATHER THAN LEAVING. R9a made the generation
+ * path read its brain from the snapshot its own `generations` row names
+ * (`brainDocsByIds`, which is unfiltered by status BY DESIGN — the snapshot is
+ * the authority). A single-document activation writes no snapshot, so on a
+ * profile that had ALREADY activated coherently once, activating a v2 through
+ * this function left the newest snapshot naming v1: `latestBrainActivation()`
+ * still found a row, nothing refused, and the product would have kept writing
+ * in the SUPERSEDED voice with no signal on any surface. Before R9a the same
+ * shape produced wrong provenance; after it, a wrong voice. One activation
+ * entrypoint is what removes the shape, and `app/(product)/studio/page.tsx`'s
+ * courtesy-read comment states the property that deletion buys.
+ *
+ * WHERE ITS WITNESSES WENT: the gates it ran (the all-positions check, the
+ * confirmation sha over content AND evidence, the echo-bar re-run, the role
+ * check, the pause gate) are `caps.activateBrainDoc`'s, and
+ * `packages/db/tests/activate.test.ts` drives that capability directly — it
+ * never went through this wrapper. The wrapper's own callers in
+ * `brain-ops.test.ts` and `brain-edit.test.ts` now call
+ * `activateBrainCoherent`, which runs the SAME closure, so every one of those
+ * assertions is now made against the path a creator can actually reach.
  */
-export async function activateVoice(
-  db: DbLike,
-  scope: WorkspaceScope,
-  profileId: string,
-  brainDocId: string
-): Promise<BrainDoc> {
-  const profileScope = await ProfileScope.mint(db, scope, profileId);
-  const caps = writeCapabilities(profileScope);
-  return db.transaction(async (tx) => caps.activateBrainDoc({ brainDocId }, tx));
-}
 
 /**
  * Record the creator's per-field confirmation on a `strategy` document
@@ -523,18 +538,20 @@ export async function confirmKillTestFields(
 
 /**
  * Activate a confirmed version AS PART OF ONE COHERENT BRAIN (slice 3b, R8) —
- * the `/brain` screen's ONLY activation path, for all three kinds.
+ * this package's ONLY activation entrypoint, for all three kinds, since the
+ * single-document `activateVoice` was deleted (see the note above).
  *
- * `activateBrainDoc` (above, `activateVoice`'s capability) activates ONE
+ * The `activateBrainDoc` CAPABILITY (`with-workspace.ts`) activates ONE
  * document and stops there; `activateBrainDocCoherent` runs the identical
- * gates and then, in the SAME transaction and under the SAME per-profile
- * lock, records a `brain_activation_snapshots` row naming every kind's
- * current active version id — the one just activated, and every OTHER kind's
- * active id carried forward unchanged. Calling `activateBrainDoc` directly
- * from a screen that lets a creator activate Voice, Strategy or Kill Test
- * would activate that one document with no record of which OTHER versions
- * were active alongside it at that moment — exactly the fact R9 needs a later
- * generation to be able to name.
+ * gates — it calls that same closure — and then, in the SAME transaction and
+ * under the SAME per-profile lock, records a `brain_activation_snapshots` row
+ * naming every kind's current active version id: the one just activated, and
+ * every OTHER kind's active id carried forward unchanged. Reaching the
+ * capability directly from a screen that lets a creator activate Voice,
+ * Strategy or Kill Test would activate that one document with no record of
+ * which OTHER versions were active alongside it at that moment — exactly the
+ * fact R9 needs a later generation to be able to name, and (since R9a) the
+ * fact `brainDocsByIds` builds the prompt from.
  *
  * ONE FUNCTION FOR ALL THREE KINDS, unlike the confirm trio above: activation
  * is inherently a whole-brain act (that is the entire point of R8), so there
@@ -681,13 +698,36 @@ export async function readBrainHistory(
   }));
 }
 
-export type BrainClaimEdit = { pointer: string; value: string };
+/**
+ * One submitted claim edit.
+ *
+ * `value: null` DECLINES the position — the key is REMOVED from the document
+ * rather than written as `[check]` (slice 5 gate round 1, G1). The two are
+ * different statements and the schema already distinguishes them:
+ * `[check]` is "we are not stating this yet", an absent optional is "you were
+ * asked and you are not naming one". `brain-content.ts`'s own comment on
+ * `metric.platform`/`metric.window` says so — "the interview omits the key
+ * entirely rather than storing `[check]` for a field nobody was asked to
+ * commit to" — and until this slice the EDIT path had no way to say the second
+ * thing, so it said the first, and then could not even do that (see
+ * `creatableClaimPointers` below).
+ *
+ * Only positions the SCHEMA declares optional can be declined, and only
+ * positions the schema declares can be created; both are probed against the
+ * schema rather than inferred from the instance.
+ */
+export type BrainClaimEdit = { pointer: string; value: string | null };
 
 function normaliseEditedValue(value: unknown): string {
   if (typeof value !== "string") {
     throw new BrainEditLimitError("every changed value must be text");
   }
   return value.normalize("NFC").replace(/\r\n/g, "\n");
+}
+
+/** `null` passes through as the decline marker; anything else must be text. */
+function normaliseSubmittedValue(value: unknown): string | null {
+  return value === null ? null : normaliseEditedValue(value);
 }
 
 function normaliseEditedPointer(pointer: unknown): string {
@@ -701,7 +741,11 @@ function codePointLength(value: string): number {
   return [...value].length;
 }
 
-function writePointer(root: unknown, pointer: string, value: string): void {
+/** The parent container of a pointer's leaf, plus the leaf key. Refuses the rest. */
+function resolveEditTarget(
+  root: unknown,
+  pointer: string
+): { node: Record<string, unknown> | unknown[]; leaf: string } {
   if (!pointer.startsWith("/") || pointer === "/") {
     throw new ProvenanceError(`'${pointer}' is not a claim position`);
   }
@@ -720,7 +764,30 @@ function writePointer(root: unknown, pointer: string, value: string): void {
     }
     node = next as Record<string, unknown> | unknown[];
   }
-  const leaf = parts.at(-1)!;
+  return { node, leaf: parts.at(-1)! };
+}
+
+/**
+ * Write one claim position.
+ *
+ * `mayCreate` is NOT a general relaxation of the `Object.hasOwn` guard, and
+ * the distinction is the whole of G1's fix (slice 5 gate round 1). The guard's
+ * job is to stop an edit INVENTING a claim position, and it keeps doing that:
+ * `mayCreate` is true only for the pointers `creatableClaimPointers` has
+ * already proved the SCHEMA declares — i.e. an optional claim the schema
+ * defines and the stored document simply does not carry, which is the case the
+ * instance-shaped `hasOwn` test cannot tell apart from an invented key.
+ *
+ * Every other pointer, and every array position, is refused exactly as before:
+ * an array still grows only at `length` and only under `BRAIN_EDIT_LIST_MAX`.
+ */
+function writePointer(
+  root: unknown,
+  pointer: string,
+  value: string,
+  mayCreate = false
+): void {
+  const { node, leaf } = resolveEditTarget(root, pointer);
   if (Array.isArray(node)) {
     const index = Number(leaf);
     if (
@@ -733,14 +800,101 @@ function writePointer(root: unknown, pointer: string, value: string): void {
     }
     node[index] = value;
   } else {
-    if (!Object.hasOwn(node, leaf)) {
+    if (!Object.hasOwn(node, leaf) && !mayCreate) {
       throw new ProvenanceError(`'${pointer}' is not a claim position in this version`);
     }
     node[leaf] = value;
   }
 }
 
-function creatorEditInput(edits: readonly BrainClaimEdit[]) {
+/**
+ * DECLINE one claim position: remove the key.
+ *
+ * OBJECT KEYS ONLY. Deleting an array element would renumber every sibling —
+ * so `/signatureMoves/1` would silently become whatever `/signatureMoves/2`
+ * said, and every stored `source_evidence` pointer at or after the gap would
+ * cite the wrong claim. A list item is emptied by editing it, not by a hole.
+ */
+function removePointer(root: unknown, pointer: string): void {
+  const { node, leaf } = resolveEditTarget(root, pointer);
+  if (Array.isArray(node) || !Object.hasOwn(node, leaf)) {
+    throw new ProvenanceError(`'${pointer}' is not a claim position that can be left unstated`);
+  }
+  delete node[leaf];
+}
+
+/**
+ * Which submitted pointers this edit may CREATE — decided by the SCHEMA, by
+ * probing it, never by "the key is absent so go ahead".
+ *
+ * A position qualifies only if it is absent from the stored document AND, once
+ * present, the kind's schema enumerates it as a claim position. That is the
+ * exact set of "optional claim the creator declined", and nothing else:
+ * `/metric/audienceSize` is absent too, and stays refused, because
+ * `enumerateClaimFields` walks the SCHEMA's shape and never yields it.
+ *
+ * The probe runs on a throwaway clone, so a rejected candidate never touches
+ * the content that will be stored.
+ */
+function creatableClaimPointers(
+  kind: BrainKind,
+  baseContent: unknown,
+  pointers: readonly string[]
+): Set<string> {
+  const creatable = new Set<string>();
+  for (const pointer of pointers) {
+    if (readPointer(baseContent, pointer) !== undefined) continue;
+    const probe = structuredClone(baseContent);
+    try {
+      writePointer(probe, pointer, CHECK, true);
+      if (enumerateClaimFields(kind, probe).includes(pointer)) creatable.add(pointer);
+    } catch {
+      // Not a position this schema declares, or not one whose parent exists.
+      // It stays out of the set, so `writePointer` refuses it below exactly as
+      // it did before this function existed.
+    }
+  }
+  return creatable;
+}
+
+/**
+ * Which submitted pointers this edit may DECLINE — the mirror of the above.
+ *
+ * A position qualifies only if it is present AND the schema still enumerates a
+ * coherent claim set once it is gone. Removing a REQUIRED position makes
+ * `enumerateClaimFields` throw (`ClaimWalkError`, "a required claim position"),
+ * so the probe rejects it and the edit is refused by name instead of failing
+ * later inside `writeBrainDoc` with a shape complaint.
+ */
+function declinableClaimPointers(
+  kind: BrainKind,
+  baseContent: unknown,
+  pointers: readonly string[]
+): Set<string> {
+  const declinable = new Set<string>();
+  for (const pointer of pointers) {
+    if (readPointer(baseContent, pointer) === undefined) continue;
+    const probe = structuredClone(baseContent);
+    try {
+      removePointer(probe, pointer);
+      if (!enumerateClaimFields(kind, probe).includes(pointer)) declinable.add(pointer);
+    } catch {
+      // Required here, or not an object key. Refused below.
+    }
+  }
+  return declinable;
+}
+
+/**
+ * The creator-authored input this edit stores, composed from the edits that
+ * carry WORDS.
+ *
+ * A DECLINE contributes nothing: there is no text the creator typed, so there
+ * is nothing to quote and nothing to record a span into. Including it would
+ * put a pointer with an empty body into an immutable, export-included table
+ * and call it the creator's own words.
+ */
+function creatorEditInput(edits: readonly { pointer: string; value: string }[]) {
   let content = "";
   const spans = new Map<
     string,
@@ -775,12 +929,15 @@ export async function editBrainDocument(
   }
   const submitted = submittedEdits.map((edit) => ({
     pointer: normaliseEditedPointer(edit?.pointer),
-    value: normaliseEditedValue(edit?.value),
+    value: normaliseSubmittedValue(edit?.value),
   }));
   let aggregate = 0;
   for (const edit of submitted) {
     const pointerLength = codePointLength(edit.pointer);
-    const valueLength = codePointLength(edit.value);
+    // A decline carries no text, so it costs the pointer alone against the
+    // ceilings — it cannot be a way to smuggle length in, and it must not be
+    // charged for characters nobody submitted.
+    const valueLength = edit.value === null ? 0 : codePointLength(edit.value);
     if (pointerLength > BRAIN_EDIT_POINTER_MAX) {
       throw new BrainEditLimitError(
         `a field pointer is ${pointerLength} characters and the limit is ${BRAIN_EDIT_POINTER_MAX}`
@@ -815,13 +972,32 @@ export async function editBrainDocument(
     if (editable?.id !== base.id) {
       throw new ProvenanceError(STALE_BRAIN_EDIT_DETAIL);
     }
-    const edits = submitted.filter(
-      (edit) => readPointer(base.content, edit.pointer) !== edit.value
+    // WHAT COUNTS AS A CHANGE, for both kinds of submission. A decline changes
+    // the document only when the position is actually there — declining an
+    // already-absent optional is the no-op a creator performs every time they
+    // edit some OTHER metric field while leaving the two optional inputs blank
+    // (`editDeclaredMetricAction` submits all five, always), so reading it as
+    // a change would burn a version number in an append-only history for a
+    // document nobody altered.
+    const edits = submitted.filter((edit) =>
+      edit.value === null
+        ? readPointer(base.content, edit.pointer) !== undefined
+        : readPointer(base.content, edit.pointer) !== edit.value
     );
     if (edits.length === 0) {
-      throw new ProvenanceError("the submitted edit does not change this brain version");
+      // ITS OWN CLASS, not `ProvenanceError` (slice 5 gate round 1, G3). This
+      // refusal is about the SUBMISSION, not about evidence: nothing is stale
+      // and no quote failed to verify, so the shared `provenance` copy —
+      // "what this page showed you and what the server holds no longer agree,
+      // reload the page" — described an event that did not happen. See the
+      // class's own docblock in ./errors.ts.
+      throw new BrainEditUnchangedError();
     }
     const changedPointers = new Set(edits.map((edit) => edit.pointer));
+    const stated = edits.filter(
+      (edit): edit is { pointer: string; value: string } => edit.value !== null
+    );
+    const declined = edits.filter((edit) => edit.value === null);
     const content = structuredClone(base.content);
     // `metric.key` is a required serverOwned input position. The write funnel
     // strips it before storage, so a stored Strategy version cannot be fed
@@ -835,29 +1011,65 @@ export async function editBrainDocument(
         (metric as Record<string, unknown>).key = "unset";
       }
     }
-    for (const edit of edits) writePointer(content, edit.pointer, edit.value);
+    // THE TWO GRANTS ARE COMPUTED FROM THE SCHEMA, on `content` as it stands
+    // BEFORE any edit is applied, and each names exactly the pointers this
+    // submission may create or decline. Everything not in them keeps the old
+    // refusal — an invented key is still "not a claim position in this
+    // version" (G1).
+    const creatable = creatableClaimPointers(
+      base.kind,
+      content,
+      stated.map((edit) => edit.pointer)
+    );
+    const declinable = declinableClaimPointers(
+      base.kind,
+      content,
+      declined.map((edit) => edit.pointer)
+    );
+    for (const edit of declined) {
+      if (!declinable.has(edit.pointer)) {
+        throw new ProvenanceError(
+          `'${edit.pointer}' is a position this document must state, so it cannot be left unstated`
+        );
+      }
+      removePointer(content, edit.pointer);
+    }
+    for (const edit of stated) {
+      writePointer(content, edit.pointer, edit.value, creatable.has(edit.pointer));
+    }
     const positions = new Set(enumerateClaimFields(base.kind, content));
-    for (const edit of edits) {
+    for (const edit of stated) {
       if (!positions.has(edit.pointer)) {
         throw new ProvenanceError(`'${edit.pointer}' is not a claim position in this document`);
       }
     }
 
     const caps = writeCapabilities(txScope);
-    const authored = creatorEditInput(edits);
-    const input = await caps.appendOnboardingInput({
-      inputClass: "creator_authored",
-      content: authored.content,
-      fieldKey: "creator_edit",
-    }, tx);
+    // NO INPUT ROW FOR A SUBMISSION THAT TYPED NOTHING. `onboarding_inputs` is
+    // immutable, has no delete path and is export-included; a row whose whole
+    // content is a pointer with an empty body is not the creator's own words,
+    // and calling it `creator_authored` would be a claim about them that
+    // nothing backs. A pure decline is recorded by the version itself — its
+    // reason is the server-rendered "you edited this document".
+    const authored = creatorEditInput(stated);
+    const input =
+      stated.length === 0
+        ? null
+        : await caps.appendOnboardingInput({
+            inputClass: "creator_authored",
+            content: authored.content,
+            fieldKey: "creator_edit",
+          }, tx);
     const evidence = (Array.isArray(base.sourceEvidence) ? base.sourceEvidence : [])
       .filter((raw) => {
         const field = (raw as { field?: unknown }).field;
         return typeof field === "string" && !changedPointers.has(field) && positions.has(field);
       }) as SourceEvidenceEntry[];
-    for (const edit of edits) {
-      if (edit.value === CHECK) continue;
-      evidence.push({ field: edit.pointer, inputId: input.id, ...authored.spans.get(edit.pointer)! });
+    if (input) {
+      for (const edit of stated) {
+        if (edit.value === CHECK) continue;
+        evidence.push({ field: edit.pointer, inputId: input.id, ...authored.spans.get(edit.pointer)! });
+      }
     }
     // This is the one edit refusal whose cause the browser can explain without
     // guessing. `writeBrainDoc` still owns the general provenance constraint;
@@ -877,9 +1089,23 @@ export type DeclaredMetricEdit = {
   label: string;
   unit: string;
   direction: "higher_is_better" | "lower_is_better";
-  /** undefined leaves the stored value alone; null explicitly clears it to the named [check] absence. */
+  /**
+   * undefined leaves the stored value alone; null DECLINES it — the position
+   * is left unstated, exactly as the interview stores a declined optional.
+   *
+   * `null` USED TO MEAN `[check]`, and that is the change slice 5's gate round
+   * 1 required (G1). Three things were wrong with it at once: `[check]` says
+   * "we are not stating this yet" about a question the creator was asked and
+   * answered with "I am not naming one"; the stored shape for that answer is
+   * an ABSENT key, so blanking the field produced a document unlike anything
+   * the interview writes; and a creator who had declined the question in the
+   * first place could not edit the metric AT ALL, because the key was not
+   * there to write `[check]` into and `writePointer` refused the whole
+   * submission with "not a claim position in this version" — surfaced to them
+   * as "what this page showed you and what the server holds no longer agree".
+   */
   platform?: string | null;
-  /** undefined leaves the stored value alone; null explicitly clears it to the named [check] absence. */
+  /** Same three states as `platform`: undefined keeps, a string states, null declines. */
   window?: string | null;
 };
 
@@ -895,11 +1121,14 @@ export async function editDeclaredMetric(
     { pointer: "/metric/label", value: metric.label },
     { pointer: "/metric/unit", value: metric.unit },
     { pointer: "/metric/direction", value: metric.direction },
+    // `null` REACHES `editBrainDocument` AS `null`, which is the decline
+    // marker there — it is no longer mapped to `[check]` here. See
+    // `DeclaredMetricEdit`'s own docblock for the three states and why.
     ...(metric.platform === undefined
       ? []
-      : [{ pointer: "/metric/platform", value: metric.platform ?? CHECK }]),
+      : [{ pointer: "/metric/platform", value: metric.platform }]),
     ...(metric.window === undefined
       ? []
-      : [{ pointer: "/metric/window", value: metric.window ?? CHECK }]),
+      : [{ pointer: "/metric/window", value: metric.window }]),
   ]);
 }

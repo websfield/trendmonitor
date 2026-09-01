@@ -32,6 +32,7 @@ import {
   type UsageViewProps,
 } from "../app/(product)/usage/usage-view";
 import {
+  BURN_PERIOD_COPY,
   InsufficientCreditsError,
   LlmError,
   PostCallDebitError,
@@ -74,6 +75,32 @@ function usageProps(over: Partial<UsageViewProps> = {}): UsageViewProps {
   return {
     balance: { ok: true, value: 250, asOf: NOW },
     burn: { ok: true, hasAnyDebit: false },
+    // R17a: the period the burn numbers were queried over, REQUIRED since the
+    // learning-honesty pass. It was optional purely so this fixture could stay
+    // unchanged — and an optional prop standing in for a required one, held up
+    // by a source scan, is the shape this repo has recorded twice (2026-08-26,
+    // 2026-08-29). Making it required is what forces every renderer of this
+    // panel to say which window its numbers cover; the behavioural assertions
+    // that the LINE renders and that the noun is tier-correct live in
+    // `tests/usage-honesty.test.tsx`.
+    // `calendar_month`, because that is the window this fixture's workspace is
+    // actually in and because its noun ("this month") is the one the removed
+    // fallback used — so making the prop required changes no assertion in this
+    // file. The billing-cycle half is driven in `tests/usage-honesty.test.tsx`,
+    // which owns the tier-correctness of the noun.
+    period: {
+      start: NOW,
+      ...BURN_PERIOD_COPY.calendar_month,
+    },
+    // R17a (slice 6): an answered, empty split — the shape a workspace that
+    // has spent nothing this period really produces. The split's own states
+    // are driven in `usage-burn-by-mode.test.ts`, which owns that panel.
+    burnByMode: {
+      ok: true,
+      byMode: [],
+      notAGeneration: { credits: 0, debits: 0 },
+      nonTerminalClaim: { credits: 0, debits: 0 },
+    },
     rows: [],
     moreRows: false,
     paused: null,
@@ -771,8 +798,19 @@ describe("REQ-G07 empty states say WHY they are empty (non-negotiable 6)", () =>
     // note, which no longer varies on spend state at all (see R9).
     expect(out).toContain('data-testid="burn-total"');
     expect(out).toContain("Nothing spent this month");
-    expect(out).toContain("exactly one thing spends credits today");
-    expect(out).not.toContain("only a generation spends credits");
+    // SLICE 6 REWROTE THIS SENTENCE TWICE, and both dead versions are pinned
+    // as ABSENCES rather than deleted quietly. "exactly one thing spends
+    // credits today" died when `GENERATION_PURPOSE` existed; "not split by
+    // mode yet" died when R17a built the split. What survives both rewrites is
+    // the claim R17a actually cares about: the numbers are real charges, never
+    // an allocation of a cost total. `tests/usage-burn-by-mode.test.ts` is what
+    // keeps the wording in step with the real purpose SET.
+    expect(out).not.toContain("not split by mode yet");
+    expect(out).toContain("Nothing here is estimated from the totals");
+    expect(out).not.toContain("exactly one thing spends credits today");
+    // An ANSWERED empty split says so; it does not fall back to a sentence
+    // about a split the page cannot compute.
+    expect(out).toContain('data-testid="burn-by-mode-empty"');
     expect(out).toContain('data-testid="days-to-empty"');
     expect(out).toContain("Not enough data");
   });

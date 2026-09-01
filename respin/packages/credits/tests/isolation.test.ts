@@ -51,15 +51,35 @@ import * as monthsMod from "../src/months";
 import * as metricsMod from "../src/metrics";
 import * as errorsMod from "../src/errors";
 import * as inferVoiceMod from "../src/infer-voice";
+import * as generateMod from "../src/generate";
+import * as modeAccessMod from "../src/mode-access";
 import * as adapterMod from "../src/stripe/adapter";
 import * as setupMod from "../src/stripe/setup";
 import * as packPriceMod from "../src/stripe/pack-price";
 import * as burnPeriodMod from "../src/burn-period";
+import * as modeLabelMod from "../src/mode-label";
 import { handleStripeEvent } from "../src/stripe/webhooks";
 import { workspaceForCustomer, getOrCreateCustomer } from "../src/stripe/customers";
 import { createPortalUrl } from "../src/stripe/actions";
 import { maybeAutoTopup } from "../src/stripe/auto-topup";
 import { anySlots } from "./support/run-slots";
+
+/**
+ * The Free tier's monthly allowance, FROM THE SEED rather than as a literal
+ * (slice 6, R17).
+ *
+ * THREE ASSERTIONS IN THIS FILE USED TO READ `toBe(0)` and now read
+ * `toBe(FREE_ALLOWANCE)`, and the change is a real behaviour change rather
+ * than a fixture accommodation: `deriveBalance` MINTS a Free workspace's
+ * monthly grant, lazily, the way it already materialises expiry. What each of
+ * those assertions is actually about is unchanged and still non-vacuous —
+ * every one of them checks the LEDGER ROWS first (`rows.every(r =>
+ * r.workspaceId === X)`), so the isolation property is proved before any
+ * balance is derived, and the balance read that follows is the one that mints.
+ * Written as this constant so the assertion still says WHY the number is what
+ * it is, instead of hard-coding a 25 nobody can trace.
+ */
+const FREE_ALLOWANCE = CONFIG_V1_SEED.allowances.free;
 
 const HOUR = 3_600_000;
 const future = (ms: number) => new Date(Date.now() + ms);
@@ -109,6 +129,45 @@ const NOT_DB_FACING: Record<string, string> = {
   NoStripeCustomerError: "error class",
   NoLiveSubscriptionError: "error class",
   NotPausedError: "error class",
+  // Slice 6 — the composed generation's public surface. Nine error classes,
+  // four pure functions and one composition, and every one of them is here for
+  // a stated reason rather than as a batch:
+  BrainNotActivatedError: "error class",
+  GenerationAlreadyRefusedError: "error class",
+  GenerationAttemptStateError:
+    "error class (re-exported from @respin/db — the claim's transition refusal)",
+  GenerationInFlightError: "error class",
+  GenerationPayloadMismatchError: "error class",
+  GenerationRecoveryRequiredError: "error class",
+  GenerationUnchargedAttemptCapError: "error class",
+  ModeNotBuiltYetError: "error class",
+  ModeNotInPlanError: "error class",
+  UnpricedOperationError: "error class",
+  GenerationAssemblyError: "error class (re-exported from @respin/modes)",
+  KillTestError: "error class (re-exported from @respin/modes)",
+  NoCreatorRulesError: "error class (re-exported from @respin/modes)",
+  ScriptOutputError: "error class (re-exported from @respin/modes)",
+  UnknownModeError: "error class (re-exported from @respin/modes)",
+  priceOf:
+    "pure function — takes the already-read config document and a priced operation, runs no query (R13)",
+  requiredConfigPaths:
+    "pure function — builds a list of dotted config paths from a model id and a priced operation, runs no query",
+  unchargedAttemptCap:
+    "pure function — reads one number out of an already-read config document",
+  unchargedAttemptWindowStart:
+    "pure function — subtracts a config number from a clock the caller supplied, per purpose; no query. It exists because the count it feeds reads an APPEND-ONLY table, so an unwindowed count is a permanent refusal (billing gate, 2026-09-01)",
+  freeAllowancePeriodKey:
+    "pure function — formats a Date as `yyyy-MM` UTC (R17's period key)",
+  freeAllowanceExpiry:
+    "pure function — the first instant of the next UTC calendar month (R17's no-rollover expiry)",
+  hashRequest:
+    "pure function — sha256 over five strings the caller already holds; no query, and deliberately no creator identifier in it",
+  planIncludesMode:
+    "pure predicate over the TIER_MODES map and a resolved tier — no query, no workspace data (R18)",
+  assertModeAllowed:
+    "pure refusal over the same map — the tier it is handed comes from getWorkspaceBillingState, which is the one authority and IS covered below (R18)",
+  generate:
+    "COMPOSITION ONLY — it owns no query. Every db touch is somebody else's already-isolated authority: `mintProfileScope` and `writeCapabilities` (@respin/db, proved by tests/profile-cage.test.ts and profile-scope.test.ts, whose P3 case now includes this slice's four capabilities), the caged accessors `latestBrainActivation`/`brainDocsByIds`/`countUnchargedBillableAttempts` (breach-tested on BOTH axes in profile-scope.test.ts), `deriveBalance`/`deriveBalanceInTx` and `debitCredits` (this package, covered below), and `getWorkspaceBillingState` (ditto). What is left in the function is prompt assembly, a fail-closed parse and the gate order — none of which reads a row.",
   // Slice 3 — the composed voice inference's public surface.
   BrainPointerDivergenceError: "error class",
   UnchargedAttemptCapError: "error class",
@@ -159,8 +218,10 @@ const NOT_DB_FACING: Record<string, string> = {
     "env read — no query; re-exported from the app facade so the billing page's disabled state and the adapter's refusal cannot drift (phase 4)",
   hasLiveStripeSubscription:
     "pure predicate over a mirror row already read by its caller — no query of its own; re-exported from the app facade so the billing page's subscribe-vs-portal branch is the FOURTH reader of the one liveness definition, not a fifth definition (phase 4)",
-  burnPeriodStart:
-    "pure function over a subscription row already read by its caller plus a clock — no query of its own; re-exported from the app facade so /usage's period anchor for R7's credit burn is not re-derived a second time (slice 2b)",
+  burnPeriod:
+    "pure function over a subscription row already read by its caller, the RESOLVED tier its caller already derived, and a clock — no query of its own; re-exported from the app facade so /usage's period anchor for R7's credit burn is not re-derived a second time (slice 2b), and tier-keyed rather than row-keyed since the 2026-09-01 billing gate (a dead subscription keeps its `current_period_start` forever). It travels with `BURN_PERIOD_COPY`, a two-entry string map naming which period the creator is reading (R17a) — a CONST rather than a function, so these registries (which enumerate exported functions) do not list it separately",
+  modeLabel:
+    "pure lookup in `MODE_SPECS` — a mode id in, a creator-facing name out; no query, no config read, no workspace data. Re-exported from the app facade because `@respin/modes` is denied to app/** (R-64) and a label map living in a view would be a second mode vocabulary (slice 6, R17a)",
   // `getStripe` and `setupStripeProducts` used to be listed here. Neither is
   // on the enumerated public surface — `getStripe` lives in the INTERNAL
   // adapter module and the setup export is actually named `stripeSetup` — so
@@ -276,8 +337,22 @@ type InternalModule = {
 
 const INTERNAL_MODULES: Record<string, InternalModule> = {
   "balance.ts": {
-    reason: "the balance authority — reached publicly through index.ts",
-    viaIndex: ["deriveBalanceInTx", "deriveBalance"],
+    reason:
+      "the balance authority — reached publicly through index.ts. Since slice 6 it also MINTS: `mintFreeAllowanceIfDue` is the R17 Free grant, and it stays package-private on the strongest form of the usual reason — it is a WRITE to `credit_ledger` on a read path, and the only thing that may run it is the fold that immediately counts it. Exposing it would be a second way to mint credits, outside the lock the fold holds.",
+    viaIndex: [
+      "deriveBalanceInTx",
+      "deriveBalance",
+      // Pure period arithmetic, on the public surface so the period key and
+      // the no-rollover expiry can be asserted directly rather than inferred
+      // from a stored row.
+      "freeAllowancePeriodKey",
+      "freeAllowanceExpiry",
+    ],
+    // NO `internalOnly` ENTRY FOR THE MINT, and its absence is the strongest
+    // form of the claim above: `mintFreeAllowanceIfDue` is not exported at
+    // all, so there is no name for this list to hold. The check below verifies
+    // claims against the module's REAL exports, which is why naming an
+    // unexported function here fails rather than reading as extra caution.
   },
   "fold.ts": {
     reason: "pure fold + its integrity error",
@@ -361,7 +436,27 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "ProfileArchivedError",
       "RunSlotBusyError",
       "TopupInFlightError",
+      // Slice 6, R13/R16. `priceOf` and `requiredConfigPaths` were package-
+      // private while `runInference` was their only caller; they are now the
+      // PER-PURPOSE pricing authority that `generate.ts` shares, and they are
+      // on the public surface so a test can drive every purpose's price and
+      // every purpose's required config paths without a database.
+      "priceOf",
+      "requiredConfigPaths",
+      "unchargedAttemptCap",
+      // Slice 6 gate round: WHEN that cap's count starts, per purpose. Public
+      // for the same reason the cap is — a test drives both purposes' answers
+      // without a database, and the two differ deliberately.
+      "unchargedAttemptWindowStart",
     ],
+    // `recordUsage` and `withDeadline` are package-private and are now shared
+    // by BOTH metered operations (`runInference` and `generate`). That sharing
+    // is the point: `recordUsage` owns the cost/`cost_state` rules — including
+    // "a failed attempt that reported no usage costs `unknown`, never a zero" —
+    // and two implementations of them is two answers to one margin number.
+    // They stay off src/index because `app/**` must never be able to write a
+    // spend row or to bound a call it did not make.
+    internalOnly: ["recordUsage", "withDeadline"],
   },
   "clock.ts": {
     reason:
@@ -375,8 +470,13 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   },
   "metrics.ts": {
     reason:
-      "fold observability (audit 2026-08-17 #22 / R-25 D-AUDIT-3) — emits two named metrics and a workspace id, runs NO query of its own, and stays off src/index because app/** has no business emitting or redirecting money-path telemetry; its one caller is balance.ts, the balance authority",
-    internalOnly: ["setFoldMetricSink", "emitFoldMetric"],
+      "money-path observability, now TWO metrics. (1) Fold observability (audit 2026-08-17 #22 / R-25 D-AUDIT-3) — two named metrics and a workspace id, caller balance.ts. (2) The uncharged-billable CAP crossing (billing gate round 2, 2026-09-01), whose callers are the two cap sites, generate.ts and inference.ts: windowing the generation cap converted a bounded-forever exposure into an unbounded-RATE one on a tier that needs no card, and nothing counted or surfaced it. It runs NO query of its own — every value is already in the caller's hand — and the whole module stays off src/index because app/** has no business emitting or redirecting money-path telemetry, still less pointing a cap counter at a sink of its choosing",
+    internalOnly: [
+      "setFoldMetricSink",
+      "emitFoldMetric",
+      "setUnchargedAttemptCapMetricSink",
+      "emitUnchargedAttemptCapMetric",
+    ],
   },
   "infer-voice.ts": {
     reason:
@@ -401,6 +501,18 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "PostCallDebitError",
       "WorkspacePausedError",
       "ClockSkewError",
+      // Slice 6. Every generation refusal, on the public surface for exactly
+      // the reason its siblings are: `app/(product)/billing-errors.ts` matches
+      // on `instanceof`, and a class reachable from a facade method but absent
+      // from the public surface renders as "Something went wrong" on the one
+      // screen that spends a creator's credits.
+      "BrainNotActivatedError",
+      "GenerationAlreadyRefusedError",
+      "GenerationInFlightError",
+      "GenerationPayloadMismatchError",
+      "GenerationRecoveryRequiredError",
+      "GenerationUnchargedAttemptCapError",
+      "UnpricedOperationError",
     ],
   },
   "stripe/adapter.ts": {
@@ -418,10 +530,30 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "one-off Stripe product/price seeding; reads the GLOBAL active config (not workspace-scoped) and writes nothing to our database",
     internalOnly: ["stripeSetup"],
   },
+  "generate.ts": {
+    reason:
+      "the COMPOSED GENERATION (slice 6). Here rather than in @respin/db for the same layering reason as profiles.ts and inference.ts: it needs the resolved tier (state.ts), the active config, the ledger and the scoped write capabilities, and @respin/db can see only the last. It owns NO query of its own — every db touch is a caged accessor, a write capability, `debitCredits` or `deriveBalance*`, each isolated where it lives. `generate` itself reaches app/** through app-server.ts, which IS enumerated; `hashRequest` is pure and is on the public surface so the payload identity can be asserted without a database.",
+    viaIndex: ["generate", "hashRequest"],
+  },
+  "mode-access.ts": {
+    reason:
+      "R18's tier->mode map. PURE: it is handed a resolved tier and answers a question about it, and it reads no subscription row, no price map and no config — the tier authority stays `getWorkspaceBillingState`, because a second derivation is the defect class behind two M1 round-6 findings. It has no isolation surface at all.",
+    viaIndex: [
+      "planIncludesMode",
+      "assertModeAllowed",
+      "ModeNotInPlanError",
+      "ModeNotBuiltYetError",
+    ],
+  },
   "burn-period.ts": {
     reason:
-      "R7 (slice 2b): the creator's credit-burn period anchor — a pure function over a subscription row already read by its caller and a clock, no query of its own, no workspace access",
-    internalOnly: ["burnPeriodStart"],
+      "R7 (slice 2b) / R17a (slice 6): the creator's credit-burn period anchor and the words for it — pure functions over a subscription row already read by its caller, the tier its caller already resolved, and a clock; no query of its own, no workspace access",
+    internalOnly: ["burnPeriod"],
+  },
+  "mode-label.ts": {
+    reason:
+      "R17a (slice 6): the creator-facing name for a stored `generations.mode` — a pure lookup in `MODE_SPECS`, no query, no config, no workspace access. It exists because `@respin/modes` is denied to app/** (R-64) and `@respin/db` must not depend on the pipeline package either, so this is the seam that already exists rather than a new one",
+    internalOnly: ["modeLabel"],
   },
   "stripe/setup-cli.ts": {
     reason: "CLI entrypoint for the above — importing it would run it",
@@ -453,10 +585,13 @@ const INTERNAL_NAMESPACES: Record<string, object> = {
   "metrics.ts": metricsMod,
   "errors.ts": errorsMod,
   "infer-voice.ts": inferVoiceMod,
+  "generate.ts": generateMod,
+  "mode-access.ts": modeAccessMod,
   "stripe/adapter.ts": adapterMod,
   "stripe/setup.ts": setupMod,
   "stripe/pack-price.ts": packPriceMod,
   "burn-period.ts": burnPeriodMod,
+  "mode-label.ts": modeLabelMod,
 };
 
 /**
@@ -470,8 +605,10 @@ const FACADE_REEXPORTED: Record<string, string> = {
     "THE one liveness definition. The billing page is its fourth reader (subscribe-vs-portal), and a page-local notion of 'looks subscribed' would be a fifth definition — which is exactly what produced the round-6 BLOCK. Re-exported as a pure predicate over a row the page has already read; it performs no query.",
   isStripeConfigured:
     "answers the keyless question the same way the adapter does, so the page's disabled state and the action's refusal cannot drift. An env read, no query, no workspace data.",
-  burnPeriodStart:
-    "R7 (slice 2b): a pure function over a subscription row `/usage` has already read plus a clock — no query of its own, so re-exporting it costs nothing tenancy-wise and saves the page from re-deriving the period-anchor rule itself.",
+  burnPeriod:
+    "R7 (slice 2b): a pure function over a subscription row `/usage` has already read, the tier it has already resolved, and a clock — no query of its own, so re-exporting it costs nothing tenancy-wise and saves the page from re-deriving the period-anchor rule itself.",
+  modeLabel:
+    "R17a (slice 6): the ONE route from app/** to `MODE_SPECS[…].label`. `@respin/modes` is denied to app/** (R-64), so without this re-export the by-mode panel would either print raw mode ids or grow a hand-written label map — a second mode vocabulary that goes stale the day slice 7 adds six modes. Pure: a string in, a string out, no query and no workspace data.",
   getWebhookSecret:
     "the SIGNATURE-VERIFICATION secret, reached only through the WEBHOOK facade — which is allowlisted to app/api/stripe/webhook/** alone, not to app/** at large (see app-server.ts's header for why that distinction exists). The route needs it to call the SDK's static constructEvent BEFORE any handler runs; it performs no query and touches no workspace data.",
 };
@@ -871,6 +1008,13 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     const rows = await db.select().from(creditLedger);
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.workspaceId === A)).toBe(true);
+    // ZERO, not the Free allowance, and the reason is worth naming: this case
+    // uses `createTestDb()` with NO seeded config, and R17's mint SKIPS when
+    // no active config exists (a balance read must not become unavailable on a
+    // mis-configured install — see `mintFreeAllowanceIfDue`). So the number
+    // here is 0 for a stated reason rather than by luck, and the isolation
+    // property it is asserting — B holds none of A's rows — is unaffected
+    // either way.
     expect((await credits.deriveBalance(db, B)).balance).toBe(0);
   });
 
@@ -1037,8 +1181,15 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     const rows = await db.select().from(creditLedger);
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.workspaceId === B)).toBe(true);
-    expect((await credits.deriveBalance(db, A)).balance).toBe(0);
-    expect((await credits.deriveBalance(db, B)).balance).toBe(250);
+    // BOTH workspaces mint their own Free allowance here (R17): this case DOES
+    // seed a config, and both `subscriptions` rows carry `status: "none"`, so
+    // `getWorkspaceBillingState` resolves both to `free`. A's 25 is A's own —
+    // the assertion above already proved every ledger row written by the event
+    // belongs to B — and B's 250 is the invoice's allowance ON TOP of its own
+    // Free grant, which is why the number is written as a sum rather than as
+    // 275.
+    expect((await credits.deriveBalance(db, A)).balance).toBe(FREE_ALLOWANCE);
+    expect((await credits.deriveBalance(db, B)).balance).toBe(250 + FREE_ALLOWANCE);
   });
 
   it("maybeAutoTopup: B's auto-top-up spend does NOT consume A's monthly cap", async () => {
@@ -1356,7 +1507,11 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       new Date()
     );
     expect(aFirst.creditsCharged).toBe(0);
-    expect(aFirst.balanceAfter).toBe(0);
+    // A's OWN Free allowance, minted by the balance read inside the debit
+    // transaction (R17) — never B's. The next assertion is what keeps this
+    // case non-vacuous: 25 does not cover a 50-credit rebuild, so A's second
+    // attempt is still refused on A's own balance.
+    expect(aFirst.balanceAfter).toBe(FREE_ALLOWANCE);
 
     // NON-VACUITY: the pricing rule is live, not simply always-free. A's
     // SECOND attempt is priced, and refuses on A's own empty balance.

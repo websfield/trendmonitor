@@ -8,14 +8,21 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
-import { creatorProfiles } from "../src/brain-schema";
+import { brainDocs, creatorProfiles } from "../src/brain-schema";
+import { creditLedger } from "../src/billing-schema";
 import { memberships } from "../src/schema";
-import { onboardingInputs } from "../src/onboarding-schema";
+import {
+  brainActivationSnapshots,
+  modelUsage,
+  onboardingInputs,
+  onboardingInterviewDrafts,
+} from "../src/onboarding-schema";
 import {
   ProfileAccessError,
   PostAttestationError,
   PostContentError,
   ProfileRoleError,
+  ReferenceEchoError,
   ScopeForgeryError,
 } from "../src/errors";
 import {
@@ -24,6 +31,7 @@ import {
   REFERENCE_COUNT_MAX,
   appendOwnPost,
   appendReferencePost,
+  checkCandidateReferenceSafety,
   listOnboardingInputs,
 } from "../src/onboarding-ops";
 import {
@@ -33,6 +41,7 @@ import {
   writeCapabilities,
   type WorkspaceScope,
 } from "../src/with-workspace";
+import { CHECK } from "../src/brain-content";
 
 type World = {
   a: { scope: WorkspaceScope; profileId: string };
@@ -337,6 +346,246 @@ describe("appendReferencePost (R1, R2, R3, slice 4)", () => {
     await expect(
       appendReferencePost(db, viewerScope, w.a.profileId, "x")
     ).rejects.toBeInstanceOf(ProfileRoleError);
+  });
+});
+
+describe("checkCandidateReferenceSafety (R14/R14a)", () => {
+  let db: TestDb;
+  let w: World;
+
+  beforeEach(async () => {
+    db = await createTestDb();
+    w = await world(db);
+  });
+
+  const writeCandidate = async (
+    scope: WorkspaceScope,
+    profileId: string,
+    candidate: string,
+    evidenceInputId: string,
+    evidenceQuote: string
+  ): Promise<boolean> => {
+    const profileScope = await ProfileScope.mint(db, scope, profileId);
+    try {
+      await db.transaction((tx) =>
+        writeCapabilities(profileScope).writeBrainDoc(
+          {
+            kind: "voice",
+            content: {
+              register: candidate,
+              sentenceRhythm: CHECK,
+              signatureMoves: [CHECK],
+              avoid: [CHECK],
+            },
+            sourceEvidence: [
+              {
+                field: "/register",
+                quote: evidenceQuote,
+                inputId: evidenceInputId,
+                startUtf16: 0,
+                endUtf16: evidenceQuote.length,
+              },
+            ],
+            reason: { code: "onboarding_inference" },
+          },
+          tx
+        )
+      );
+      return true;
+    } catch (error) {
+      if (error instanceof ReferenceEchoError) return false;
+      throw error;
+    }
+  };
+
+  it.each([
+    [
+      "accept",
+      "Use a clipped opening and land the turn quickly.",
+      true,
+    ],
+    [
+      "refuse",
+      "Build the tension slowly then reveal the useful answer at the end.",
+      false,
+    ],
+  ] as const)(
+    "preview and hard write agree on %s for the same candidate and corpus",
+    async (_label, candidate, expected) => {
+      const own = await appendOwnPost(
+        db,
+        w.a.scope,
+        w.a.profileId,
+        "This is my own source line.",
+        true
+      );
+      await appendReferencePost(
+        db,
+        w.a.scope,
+        w.a.profileId,
+        "Build the tension slowly then reveal the useful answer at the end."
+      );
+
+      const preview = await checkCandidateReferenceSafety(
+        db,
+        w.a.scope,
+        w.a.profileId,
+        candidate
+      );
+      const writeAccepted = await writeCandidate(
+        w.a.scope,
+        w.a.profileId,
+        candidate,
+        own.id,
+        own.content
+      );
+
+      expect(preview.decision === "accept").toBe(expected);
+      expect(writeAccepted).toBe(expected);
+      expect(preview.candidateReferenceSpanCount).toBe(0);
+    }
+  );
+
+  it("does not trust an accepted preview: a changed corpus is rechecked by the hard write", async () => {
+    const candidate =
+      "Build the tension slowly then reveal the useful answer at the end.";
+    const own = await appendOwnPost(
+      db,
+      w.a.scope,
+      w.a.profileId,
+      "This is my own source line.",
+      true
+    );
+    const preview = await checkCandidateReferenceSafety(
+      db,
+      w.a.scope,
+      w.a.profileId,
+      candidate
+    );
+    expect(preview.decision).toBe("accept");
+
+    await appendReferencePost(
+      db,
+      w.a.scope,
+      w.a.profileId,
+      candidate
+    );
+
+    expect(
+      await writeCandidate(
+        w.a.scope,
+        w.a.profileId,
+        candidate,
+        own.id,
+        own.content
+      )
+    ).toBe(false);
+  });
+
+  it("stores neither candidate nor result on pass or refusal, and returns actionable refusal data", async () => {
+    const reference = await appendReferencePost(
+      db,
+      w.a.scope,
+      w.a.profileId,
+      "Build the tension slowly then reveal the useful answer at the end."
+    );
+    const sentinel = "CANDIDATE_SENTINEL_DO_NOT_STORE_4C";
+    const snapshot = async () => ({
+      creatorProfiles: await db.select().from(creatorProfiles),
+      onboardingInputs: await db.select().from(onboardingInputs),
+      interviewDrafts: await db.select().from(onboardingInterviewDrafts),
+      brainDocs: await db.select().from(brainDocs),
+      activationSnapshots: await db.select().from(brainActivationSnapshots),
+      modelUsage: await db.select().from(modelUsage),
+      creditLedger: await db.select().from(creditLedger),
+    });
+    const before = await snapshot();
+
+    const pass = await checkCandidateReferenceSafety(
+      db,
+      w.a.scope,
+      w.a.profileId,
+      `${sentinel} - an unrelated draft with no copied sequence.`
+    );
+    expect(pass.decision).toBe("accept");
+    expect(await snapshot()).toEqual(before);
+
+    const refusal = await checkCandidateReferenceSafety(
+      db,
+      w.a.scope,
+      w.a.profileId,
+      `${sentinel}. Build the tension slowly then reveal the useful answer at the end.`
+    );
+    if (refusal.decision !== "refuse") {
+      throw new Error("the echoing candidate unexpectedly passed");
+    }
+    expect(refusal).toMatchObject({
+      decision: "refuse",
+      reason: "reference_echo",
+      match: { inputId: reference.id, pointer: "/" },
+      candidateReferenceSpanCount: 0,
+    });
+    expect(refusal.message).toMatch(/own words|rewrite/i);
+    const afterRefusal = await snapshot();
+    expect(afterRefusal).toEqual(before);
+    expect(
+      JSON.stringify(afterRefusal, (_key, value) =>
+        typeof value === "bigint" ? value.toString() : value
+      )
+    ).not.toContain(sentinel);
+  });
+
+  it("isolates sibling-profile corpus and refuses foreign profiles without an oracle", async () => {
+    const sibling = await db.transaction((tx) =>
+      workspaceWriteCapabilities(w.a.scope).createProfile(
+        { displayName: "A sibling" },
+        tx
+      )
+    );
+    const siblingReference =
+      "Keep the opening spare and reveal the central point only after the final turn.";
+    await appendReferencePost(
+      db,
+      w.a.scope,
+      sibling.id,
+      siblingReference
+    );
+
+    const ownProfile = await checkCandidateReferenceSafety(
+      db,
+      w.a.scope,
+      w.a.profileId,
+      siblingReference
+    );
+    expect(
+      ownProfile.decision,
+      "a sibling profile's reference corpus must not leak into this profile"
+    ).toBe("accept");
+
+    const ids = [
+      w.b.profileId,
+      "00000000-0000-7000-8000-000000000000",
+      "not-a-uuid",
+    ];
+    const errors = await Promise.all(
+      ids.map(async (profileId): Promise<Error> => {
+        try {
+          await checkCandidateReferenceSafety(
+            db,
+            w.a.scope,
+            profileId,
+            siblingReference
+          );
+          throw new Error("a foreign profile unexpectedly passed");
+        } catch (error) {
+          return error as Error;
+        }
+      })
+    );
+    expect(errors.every((error) => error instanceof ProfileAccessError)).toBe(
+      true
+    );
+    expect(new Set(errors.map((error) => error.message)).size).toBe(1);
   });
 });
 

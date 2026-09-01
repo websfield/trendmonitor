@@ -30,6 +30,8 @@ import {
   isUsableSpanRange,
   referenceBudgetKey,
   groupReferenceInputs,
+  evaluateReferenceSafety,
+  assertReferenceSafety,
   type ReferenceInput,
 } from "../src/echo";
 import { ProvenanceError, ReferenceEchoError } from "../src/errors";
@@ -222,6 +224,86 @@ describe("assertNoReferenceEcho", () => {
 
   it("is a no-op when the profile has no reference inputs", () => {
     expect(() => assertNoReferenceEcho({ rule: REF.content }, [])).not.toThrow();
+  });
+});
+
+describe("evaluateReferenceSafety - the shared preview/write decision (R14a)", () => {
+  const span = (startUtf16: number, endUtf16: number) => ({
+    postSha: "a".repeat(64),
+    inputId: REF.id,
+    startUtf16,
+    endUtf16,
+    quote: "x".repeat(Math.max(0, endUtf16 - startUtf16)),
+  });
+
+  it("returns one deterministic decision over both echo and quote-budget inputs", () => {
+    expect(
+      evaluateReferenceSafety({
+        content: { rule: "Start with a cold open." },
+        references: [REF],
+        newSpans: [],
+        retainedSpans: [],
+      })
+    ).toEqual({ decision: "accept" });
+
+    expect(
+      evaluateReferenceSafety({
+        content: {
+          rule: "Always open cold and never explain the premise before the beat",
+        },
+        references: [REF],
+        newSpans: [],
+        retainedSpans: [],
+      })
+    ).toMatchObject({
+      decision: "refuse",
+      reason: "reference_echo",
+      match: { inputId: REF.id, pointer: "/rule" },
+    });
+
+    expect(
+      evaluateReferenceSafety({
+        content: { rule: "Start with a cold open." },
+        references: [REF],
+        newSpans: [span(0, 240), span(240, 480), span(480, 720)],
+        retainedSpans: [],
+      })
+    ).toMatchObject({
+      decision: "refuse",
+      reason: "reference_quote_budget",
+      match: null,
+    });
+  });
+
+  it("has no permissive retained-span default: an unusable retained range refuses", () => {
+    expect(() =>
+      evaluateReferenceSafety({
+        content: { rule: "Start with a cold open." },
+        references: [REF],
+        newSpans: [],
+        retainedSpans: [span(10, 1)],
+      })
+    ).toThrow(ProvenanceError);
+  });
+
+  it("keeps the hard-write adapter's structured refusal metadata", () => {
+    const decision = evaluateReferenceSafety({
+      content: { rule: REF.content },
+      references: [REF],
+      newSpans: [],
+      retainedSpans: [],
+    });
+    let raised: unknown;
+    try {
+      assertReferenceSafety(decision);
+    } catch (error) {
+      raised = error;
+    }
+    expect(raised).toBeInstanceOf(ReferenceEchoError);
+    expect((raised as ReferenceEchoError).match).toMatchObject({
+      pointer: "/rule",
+      inputId: REF.id,
+    });
   });
 });
 

@@ -107,6 +107,38 @@ export function safeLogFields(err: unknown): {
 export type LogContext = Readonly<Record<string, string | number>>;
 
 /**
+ * A value that arrived ON THE WIRE, clamped to a shape a log line may carry.
+ *
+ * WHY THIS EXISTS (compliance gate, 2026-09-01). `logRefusal`'s contract says
+ * "ONLY SERVER-DERIVED IDENTIFIERS BELONG HERE… every call site passes ids",
+ * and `/studio`'s generation action broke it in the one place it mattered
+ * most: it read `mode` straight off the `FormData` and logged it, so the
+ * `UnknownModeError` path — the path that fires precisely BECAUSE the value was
+ * not a mode — wrote the bad value to stdout. The field is a fixed hidden input
+ * in the browser, but a server action is a POST endpoint, so what actually
+ * arrives is an unbounded attacker-chosen string heading for whatever collects
+ * the Lightsail logs and, per tech-spec §7, Sentry.
+ *
+ * THE ANSWER IS A CLAMP, NOT AN ALLOWLIST, and the reason is R18's: the set of
+ * modes lives in `@respin/modes` and the set a plan includes lives in
+ * `mode-access.ts`, so a membership test here would be a third copy of a map
+ * this tree may not even import. What the log needs is not the mode — it is
+ * enough of the string to tell "someone typed `hookss`" from "someone posted 4kB
+ * of JSON", and a closed alphabet with a length bound gives exactly that.
+ *
+ * THE SHAPE IS `errorName`'s, deliberately: the same closed alphabet, the same
+ * fall back to a fixed sentinel rather than a truncation, for the same reason —
+ * a value that fails the shape is not made safe by keeping the first 40
+ * characters of it, and a sentinel is a fact ("this was not a label") where a
+ * prefix is a leak.
+ */
+export const NOT_A_LABEL = "not-a-label";
+
+export function wireLabel(raw: string): string {
+  return /^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(raw) ? raw : NOT_A_LABEL;
+}
+
+/**
  * Log a refusal safely — one call-site shape, so the rule cannot be applied in
  * one file and forgotten in the next — naming WHO it happened to as well as
  * WHAT happened.

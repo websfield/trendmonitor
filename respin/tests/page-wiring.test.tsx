@@ -15,8 +15,9 @@
 // matters: the `WorkspaceAccessError` branch below is a real instance flowing
 // through the real `billingErrorDisplay`, not a shape a mock agreed to.
 //
-// Scope, stated honestly: this covers `/usage`. `/settings/billing` and
-// `/admin/config` are still executed by no test — see the round-3 report.
+// Scope, stated honestly: this covers `/usage` in depth. The first-login
+// concurrency seam executes `/settings/billing` in
+// `first-login-pages.test.tsx`; `/admin/config` is still not executed here.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { redirect } from "next/navigation";
@@ -25,6 +26,7 @@ const LOT_UUID = "0195aa11-2222-7333-8444-555566667777";
 
 const gate = vi.hoisted(() => ({ requireUser: vi.fn() }));
 const scopeState = vi.hoisted(() => ({
+  ensureUserWorkspace: vi.fn(),
   withWorkspace: vi.fn(),
   ledger: vi.fn(),
   subscription: vi.fn(),
@@ -39,7 +41,10 @@ vi.mock("@respin/auth", () => ({
 
 vi.mock("@respin/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@respin/db")>()),
-  respinDb: { withWorkspace: scopeState.withWorkspace },
+  respinDb: {
+    ensureUserWorkspace: scopeState.ensureUserWorkspace,
+    withWorkspace: scopeState.withWorkspace,
+  },
 }));
 
 vi.mock("@respin/credits/app-server", async (importOriginal) => ({
@@ -75,6 +80,9 @@ async function renderUsage(
 beforeEach(() => {
   vi.clearAllMocks();
   gate.requireUser.mockResolvedValue({ id: "u_1" });
+  scopeState.ensureUserWorkspace.mockResolvedValue({
+    workspace: { id: "ws_1", name: "Workspace" },
+  });
   scopeState.withWorkspace.mockResolvedValue(okScope());
   scopeState.getBalance.mockResolvedValue({ balance: 1250, asOf: NOW });
   scopeState.getBillingState.mockResolvedValue({ tier: "creator", state: "active" });
@@ -106,6 +114,7 @@ describe("/usage page component: the wiring no test executed (round-3 NOTE)", ()
     expect(caught?.digest).toMatch(/^NEXT_REDIRECT;/);
     expect(caught?.digest).toContain("/sign-in");
     // The gate is a gate, not a formality: nothing was scoped or read.
+    expect(scopeState.ensureUserWorkspace).not.toHaveBeenCalled();
     expect(scopeState.withWorkspace).not.toHaveBeenCalled();
     expect(scopeState.getBalance).not.toHaveBeenCalled();
     expect(scopeState.ledger).not.toHaveBeenCalled();
@@ -113,6 +122,10 @@ describe("/usage page component: the wiring no test executed (round-3 NOTE)", ()
 
   it("happy path: scopes by the SESSION user id and renders the derived balance and history", async () => {
     const out = await renderUsage();
+    expect(scopeState.ensureUserWorkspace).toHaveBeenCalledWith({
+      authUserId: "u_1",
+      name: undefined,
+    });
     expect(scopeState.withWorkspace).toHaveBeenCalledWith({ authUserId: "u_1" });
     expect(out).toContain('data-testid="balance-value"');
     expect(out).toContain(">1250<");

@@ -19,8 +19,12 @@ import {
   createDockerTestDb,
   creatorProfiles,
   ensureUserWorkspace,
+  membershipProfileSelections,
+  schema,
   seedAuthUser,
   seedDb,
+  selectActiveProfile,
+  selectedProfileForMember,
   withWorkspace,
   type WorkspaceScope,
 } from "@respin/db";
@@ -112,6 +116,81 @@ describe.skipIf(!MAINTENANCE_URL)("createProfile under real concurrency", () => 
   });
 
   it(
+    "real Postgres keeps per-member selections isolated and rejects a foreign-workspace profile",
+    { timeout: 60_000 },
+    async () => {
+      await seedAuthUser(harness.db, "selection_owner_pg");
+      await seedAuthUser(harness.db, "selection_editor_pg");
+      await seedAuthUser(harness.db, "selection_foreign_pg");
+      const { workspace: selectionWorkspace } = await ensureUserWorkspace(
+        harness.db,
+        { authUserId: "selection_owner_pg", name: "Selection PG" }
+      );
+      const [editor] = await harness.db
+        .insert(schema.users)
+        .values({ authUserId: "selection_editor_pg" })
+        .returning();
+      await harness.db.insert(schema.memberships).values({
+        userId: editor.id,
+        workspaceId: selectionWorkspace.id,
+        role: "editor",
+      });
+      const [profileA, profileB] = await harness.db
+        .insert(creatorProfiles)
+        .values([
+          { workspaceId: selectionWorkspace.id, displayName: "PG A" },
+          { workspaceId: selectionWorkspace.id, displayName: "PG B" },
+        ])
+        .returning();
+      const { workspace: foreignWorkspace } = await ensureUserWorkspace(
+        harness.db,
+        { authUserId: "selection_foreign_pg", name: "Foreign PG" }
+      );
+      const [foreignProfile] = await harness.db
+        .insert(creatorProfiles)
+        .values({ workspaceId: foreignWorkspace.id, displayName: "Foreign PG" })
+        .returning();
+      const owner = await withWorkspace(harness.db, {
+        authUserId: "selection_owner_pg",
+      });
+      const editorScope = await withWorkspace(harness.db, {
+        authUserId: "selection_editor_pg",
+      });
+
+      await selectActiveProfile(harness.db, owner, profileA.id);
+      await selectActiveProfile(harness.db, editorScope, profileB.id);
+      expect((await selectedProfileForMember(harness.db, owner))?.id).toBe(
+        profileA.id
+      );
+      expect((await selectedProfileForMember(harness.db, editorScope))?.id).toBe(
+        profileB.id
+      );
+
+      await expect(
+        harness.db
+          .update(membershipProfileSelections)
+          .set({ profileId: foreignProfile.id })
+          .where(eq(membershipProfileSelections.userId, owner.userId as string))
+      ).rejects.toThrow();
+      await expect(
+        harness.db.insert(membershipProfileSelections).values({
+          userId: owner.userId as string,
+          workspaceId: foreignWorkspace.id,
+          profileId: foreignProfile.id,
+        })
+      ).rejects.toThrow();
+      expect((await selectedProfileForMember(harness.db, owner))?.id).toBe(
+        profileA.id
+      );
+      // The deliberate FK violation may retire a pool connection on some pg
+      // driver/server combinations. Re-establish the race precondition after
+      // this independent constraint witness so the next test still contends
+      // on already-open connections rather than connection setup.
+      await warmPool();
+    }
+  );
+
+  it(
     "eight PARALLEL creates at a cap of 1 leave exactly one profile",
     { timeout: 60_000 },
     async () => {
@@ -133,6 +212,8 @@ describe.skipIf(!MAINTENANCE_URL)("createProfile under real concurrency", () => 
         "the cap was crossed — two creates both counted cap-1 and both inserted"
       ).toHaveLength(1);
       expect(ok).toHaveLength(1);
+      const selected = await selectedProfileForMember(harness.db, scope);
+      expect(selected?.id).toBe(rows[0].id);
       // EVERY loser was refused BY NAME. A racer that failed with a raw
       // Postgres error would mean the cap was being enforced by luck rather
       // than by the check — and would render to a creator as "Something went
@@ -173,6 +254,13 @@ describe.skipIf(!MAINTENANCE_URL)("createProfile under real concurrency", () => 
         .where(eq(creatorProfiles.workspaceId, scope.workspaceId as string));
       expect(rows).toHaveLength(4);
       expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(3);
+      const selected = await selectedProfileForMember(harness.db, scope);
+      expect(rows.some((row) => row.id === selected?.id)).toBe(true);
+      const [selection] = await harness.db
+        .select()
+        .from(membershipProfileSelections)
+        .where(eq(membershipProfileSelections.userId, scope.userId as string));
+      expect(selection.profileId).toBe(selected?.id);
     }
   );
 });

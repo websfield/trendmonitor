@@ -99,3 +99,10 @@ export * from "./billing-schema";
 // this comment.
 export * from "./brain-schema";
 export * from "./onboarding-schema";
+
+// Slice 6 generation tables (generation_attempts, generations). Intended sole
+// writers: stage C's settlement path — enforced by the repo-wide writer
+// enumeration in `respin/tests/table-writers.test.ts`, which carries an EMPTY
+// expectation for both today, so the first writer anywhere is a red test
+// rather than a comment nobody re-read.
+export * from "./generation-schema";

@@ -1,20 +1,33 @@
 // /usage — REQ-G07's M1 slice. Server component: gate, scope, read, render.
 //
 // Every read goes through the sanctioned surfaces and nothing else (tenancy T1):
-// `respinDb.withWorkspace` for the scope and its accessors, `respinCredits` for
+// `scopeForUser` for bootstrap-safe scope and its accessors, `respinDb` for
+// the scoped monthly-spend reader, and `respinCredits` for
 // the derived balance and the billing state. No raw tables, no connection, no
 // Stripe — the default-deny lint and the import-boundary fixtures enforce that,
 // and this file is one of the paths they cover.
 import { requireUser } from "@respin/auth";
 import { respinDb } from "@respin/db";
-import { respinCredits, burnPeriodStart } from "@respin/credits/app-server";
+import {
+  respinCredits,
+  burnPeriod,
+  BURN_PERIOD_COPY,
+  modeLabel,
+  type BurnPeriodTier,
+} from "@respin/credits/app-server";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { AccessRefusal } from "../access-refusal";
 import { billingErrorDisplay, billingErrorFromCode } from "../billing-errors";
-import { UsageView, type MonthlyBurn, type UsageLedgerRow } from "./usage-view";
+import {
+  UsageView,
+  type BurnByMode,
+  type MonthlyBurn,
+  type UsageLedgerRow,
+} from "./usage-view";
 import { portalAvailability } from "./copy";
 import { openPortalAction } from "../settings/billing/actions";
 import { logRefusal } from "../safe-log";
+import { scopeForUser } from "../workspace-scope";
 
 /** How many ledger entries the page shows. One more is fetched to detect "more". */
 const PAGE_SIZE = 50;
@@ -27,14 +40,15 @@ export default async function UsagePage(props: {
   const user = await requireUser();
   const search = await props.searchParams;
 
-  // Scoping is a REFUSAL PATH, not an assumption: `withWorkspace` throws
-  // `WorkspaceAccessError` for an unknown user and — the M2 case — for a user
-  // who belongs to more than one workspace. Its rendered copy has existed since
-  // this page shipped and was unreachable, because this call sat outside every
-  // try and went to Next's default error page instead (round-2 NOTE).
-  let scope: Awaited<ReturnType<typeof respinDb.withWorkspace>>;
+  // Scoping is a REFUSAL PATH, not an assumption: `scopeForUser` bootstraps
+  // before the scope read so this page cannot lose the first-login race against
+  // the concurrently-rendered layout. Its underlying `withWorkspace` still
+  // throws `WorkspaceAccessError` when scope is ambiguous, including the M2
+  // case where a user belongs to more than one workspace. The refusal stays
+  // inside this try so its existing creator-facing copy remains reachable.
+  let scope: Awaited<ReturnType<typeof scopeForUser>>;
   try {
-    scope = await respinDb.withWorkspace({ authUserId: user.id });
+    scope = await scopeForUser(user);
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[usage] workspace scope unavailable", err);
@@ -73,11 +87,18 @@ export default async function UsagePage(props: {
   // Pause notice + portal availability. Billing state is its own authority; the
   // subscription row only answers "is there a Stripe customer to send them to".
   let paused: { resumesAt: Date | null } | null = null;
+  // THE RESOLVED TIER, KEPT — because the burn period below is chosen by it and
+  // not by whether a `subscriptions` row happens to carry a window (billing
+  // gate, 2026-09-01). `unknown` is the honest value when this read failed: it
+  // is not a tier, and `burnPeriod` treats it as "no anniversary we can trust",
+  // which degrades to the calendar month rather than to a stale window.
+  let billingTier: BurnPeriodTier = "unknown";
   try {
     const state = await respinCredits.getBillingState(
       scope.workspaceId,
       new Date()
     );
+    billingTier = state.tier;
     paused =
       state.state === "paused" ? { resumesAt: state.resumesAt ?? null } : null;
   } catch (err) {
@@ -94,9 +115,24 @@ export default async function UsagePage(props: {
   // authority billing uses. Failing this must not take the balance or the
   // ledger down with it — `ok: false` renders as a stated "couldn't load"
   // rather than a page crash, the same fail-soft shape `paused` above uses.
+  //
+  // ONE PERIOD, DERIVED ONCE, read by both panels AND named on the screen.
+  // `burnPeriod` is the single authority (paid: the subscription's own
+  // `current_period_start`; Free — and anything else that resolves to Free —
+  // the UTC calendar month, which is the key its Free credits are minted on),
+  // and computing it twice is how the total and the split would come to
+  // disagree about which window they are describing.
+  //
+  // IT IS PASSED THE TIER, NOT JUST THE ROW (billing gate, 2026-09-01):
+  // `DEAD_SUBSCRIPTION_FIELDS` does not clear `currentPeriodStart`, so a
+  // cancelled subscriber's row anchors "this month" to a window that never
+  // advances again — harmless until slice 6's Free mint started granting them
+  // credits on the calendar month, at which point the page summed many months
+  // of burn under one month's label.
+  const period = burnPeriod({ subscription, tier: billingTier, now: new Date() });
+  const periodStart = period.start;
   let burn: MonthlyBurn;
   try {
-    const periodStart = burnPeriodStart(subscription, new Date());
     const result = await respinDb.monthlySpend(scope, periodStart);
     burn = result.hasAnyDebit
       ? { ok: true, hasAnyDebit: true, totalDebit: result.totalDebit }
@@ -105,6 +141,34 @@ export default async function UsagePage(props: {
     rethrowNextControlFlow(err);
     logRefusal("[usage] monthly burn unavailable", err);
     burn = { ok: false };
+  }
+
+  // R17a (slice 6): the same period, split by the mode each debit's attempt
+  // settled into. ITS OWN try/catch, so a failure here degrades the split
+  // alone — the total above and the ledger below are separate answers and a
+  // creator losing all three to one query is worse than losing one.
+  //
+  // `modeLabel` is resolved HERE and not in the view: `@respin/modes` is denied
+  // to `app/**` (R-64), and a hand-written label map in a component would be a
+  // second mode vocabulary that goes stale the day slice 7 adds six modes.
+  let burnByMode: BurnByMode;
+  try {
+    const split = await respinDb.burnByMode(scope, periodStart);
+    burnByMode = {
+      ok: true,
+      byMode: split.byMode.map((r) => ({
+        mode: r.mode,
+        label: modeLabel(r.mode),
+        credits: r.credits,
+        debits: r.debits,
+      })),
+      notAGeneration: split.notAGeneration,
+      nonTerminalClaim: split.nonTerminalClaim,
+    };
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[usage] burn by mode unavailable", err);
+    burnByMode = { ok: false };
   }
 
   // REQ-A02: role first, then "is there a Stripe customer to send them to".
@@ -123,6 +187,12 @@ export default async function UsagePage(props: {
     <UsageView
       balance={balance}
       burn={burn}
+      // R17a: the creator must be able to tell which period they are reading.
+      // Resolved here, from the one derivation above, for the reason `modeLabel`
+      // is resolved here (R-66): a screen-side copy of the vocabulary is a
+      // second answer that can name a window the derivation did not choose.
+      period={{ start: period.start, ...BURN_PERIOD_COPY[period.kind] }}
+      burnByMode={burnByMode}
       rows={rows}
       moreRows={moreRows}
       paused={paused}

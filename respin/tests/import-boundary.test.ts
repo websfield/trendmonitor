@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ESLint } from "eslint";
 import { SCAN_ROOTS, blankComments } from "./support/app-surface";
+import { PLANTED_PROBE_PATHS } from "./support/probe-artifacts";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 
 const respinRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -77,7 +78,26 @@ const DYNAMIC_STRIPE_IMPORT = String.raw`import\s*\(\s*["'\`]stripe(/|["'\`])`;
 
 async function scanFor(
   pattern: string,
-  roots: readonly string[] = SCAN_ROOTS
+  roots: readonly string[] = SCAN_ROOTS,
+  /**
+   * PROBE PATHS `.gitignore` HIDES FROM THIS SCAN, named by the test that just
+   * planted one (tests/support/probe-artifacts.ts).
+   *
+   * `git grep --untracked` searches untracked files but NOT ignored ones —
+   * measured against the installed git 2.52, not assumed — and every probe
+   * artifact is now gitignored so that an interrupted run cannot leave a
+   * planted violation `git add -A` would commit. That is worth having twice
+   * over: it also makes a probe left behind by a CONCURRENT test file
+   * invisible to this scan, which is where P6b's unreproducible offender came
+   * from. The cost is exactly this parameter — a non-vacuity probe must name
+   * its own file to be seen, or it would keep passing while proving nothing.
+   *
+   * A SECOND, PATH-SCOPED `git grep` rather than `--no-exclude-standard` on the
+   * first: measured 2026-09-01, adding that flag to the `packages` root walks
+   * each package's own `node_modules`, which took 87 SECONDS and reported four
+   * `node_modules/@respin/db/src/with-workspace.ts` copies as offenders.
+   */
+  includeIgnored: readonly string[] = []
 ): Promise<string[]> {
   const out = await gitGrep([
     "grep",
@@ -88,7 +108,20 @@ async function scanFor(
     "--",
     ...roots,
   ]);
-  return out.split("\n").filter(Boolean);
+  const hidden = includeIgnored.length
+    ? await gitGrep([
+        "grep",
+        "--untracked",
+        "--no-exclude-standard",
+        "-n",
+        "-E",
+        pattern,
+        "--",
+        ...includeIgnored,
+      ])
+    : "";
+  const lines = (s: string) => s.split("\n").filter(Boolean);
+  return [...lines(out), ...lines(hidden)];
 }
 
 // The scanners in this file all funnel through `gitGrep`, and its catch is the
@@ -179,12 +212,20 @@ describe("the scan's own failure mode is discriminated, not swallowed", () => {
   });
 });
 
-async function scanForDynamicPackageImports(): Promise<string[]> {
-  return scanFor(DYNAMIC_PACKAGE_IMPORT);
+// The `includeIgnored` argument is threaded through rather than re-spelled at
+// the probe: round 3 of the tenancy gate re-spelled the git invocation in the
+// probe instead of sharing it and the two arg lists had already drifted, so the
+// probe proved the command worked rather than that the guard fires.
+async function scanForDynamicPackageImports(
+  includeIgnored: readonly string[] = []
+): Promise<string[]> {
+  return scanFor(DYNAMIC_PACKAGE_IMPORT, SCAN_ROOTS, includeIgnored);
 }
 
-async function scanForDynamicStripeImports(): Promise<string[]> {
-  return scanFor(DYNAMIC_STRIPE_IMPORT);
+async function scanForDynamicStripeImports(
+  includeIgnored: readonly string[] = []
+): Promise<string[]> {
+  return scanFor(DYNAMIC_STRIPE_IMPORT, SCAN_ROOTS, includeIgnored);
 }
 
 // AC-3 (phase 1): the import-direction rule is alive, not a comment.
@@ -270,6 +311,51 @@ describe("sanctioned @respin/db surface from app/** (tenancy T1)", () => {
     expect(messages.some((m) => m.ruleId === "no-restricted-imports")).toBe(
       false
     );
+  });
+
+  // SLICE 5 STAGE 2 (G0). The shared display vocabulary `/brain` and
+  // `/onboarding/interview` re-export rather than redeclare. Asserted BOTH
+  // ways in one test on purpose: the widening is only safe because the brain
+  // WRITE surface stayed off the list, and an ALLOW fixture with no matching
+  // DENY fixture is how "we widened the allowlist" quietly becomes "we opened
+  // the cage". `tests/shared-copy-identity.test.ts` is the other half — it
+  // proves the app files consume these by re-export, not by a second literal.
+  it("allows the SHARED COPY vocabulary and still denies the brain write surface", async () => {
+    const shared = [
+      "PLACEHOLDER_ABSENCE",
+      "INTERVIEW_PLACEHOLDER_ABSENCE",
+      "VOICE_FIELD_LABELS",
+      "STRATEGY_FIELD_LABELS",
+      "STRATEGY_METRIC_FIELD_LABELS",
+      "KILLTEST_FIELD_LABELS",
+      "METRIC_DIRECTION_LABELS",
+      "claimLabel",
+      "strategyClaimLabel",
+      "killtestClaimLabel",
+      "isMetricPointer",
+      "quoteIntro",
+    ];
+    const allowed = await lintInApp(
+      `import { ${shared.join(", ")} } from "@respin/db";\n` +
+        `export const x = [${shared.join(", ")}];\n`
+    );
+    expect(
+      allowed
+        .filter((m) => m.ruleId === "no-restricted-imports")
+        .map((m) => m.message)
+    ).toEqual([]);
+    // The neighbours in the SAME module (`packages/db/src/export.ts`) that are
+    // not display copy stay denied — `openBrainExport` reaches app/** through
+    // `respinDb`, and `exportPlan` is the registry decision itself.
+    for (const name of ["openBrainExport", "exportPlan", "exportAbsenceSentence"]) {
+      const messages = await lintInApp(
+        `import { ${name} } from "@respin/db";\nexport const x = ${name};\n`
+      );
+      expect(
+        messages.some((m) => m.ruleId === "no-restricted-imports"),
+        `${name} must stay off the app allowlist`
+      ).toBe(true);
+    }
   });
 
   it("rejects importing `createAuth`/`getAuth` (the raw instance) from app/** (AC-5)", async () => {
@@ -554,17 +640,22 @@ describe("package facades from app/** (tenancy T1, M1 phase 3)", () => {
     "the dynamic-import scan is NOT vacuous: it finds a planted violation spelled as a %s",
     async (_shape, expr) => {
       const { writeFileSync, rmSync, mkdirSync } = await import("node:fs");
-      const dir = resolve(respinRoot, "app/__scan_probe__");
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        resolve(dir, "probe.ts"),
-        `export const x = async () => ${expr};\n`
-      );
+      // EVERY WRITE INSIDE THE `try`. The `mkdirSync`/`writeFileSync` pair used
+      // to sit outside it, so an interruption between the write and the `try`
+      // never reached the `finally` — which is not hypothetical: slice 6 found
+      // this probe on disk after an interrupted run, untracked and (then) not
+      // gitignored, one `git add -A` from committing a planted tenancy
+      // violation into `app/`.
+      const probe = resolve(respinRoot, PLANTED_PROBE_PATHS.dynamicImport);
       try {
-        const hits = await scanForDynamicPackageImports();
+        mkdirSync(dirname(probe), { recursive: true });
+        writeFileSync(probe, `export const x = async () => ${expr};\n`);
+        const hits = await scanForDynamicPackageImports([
+          PLANTED_PROBE_PATHS.dynamicImport,
+        ]);
         expect(hits.join("\n")).toContain("__scan_probe__");
       } finally {
-        rmSync(dir, { recursive: true, force: true });
+        rmSync(dirname(probe), { recursive: true, force: true });
       }
     }
   );
@@ -657,16 +748,20 @@ describe("package facades from app/** (tenancy T1, M1 phase 3)", () => {
 
     it("a DYNAMIC import of the SDK is caught too (no-restricted-imports has no ImportExpression handler)", async () => {
       const { writeFileSync, rmSync, mkdirSync } = await import("node:fs");
-      const dir = resolve(respinRoot, "app/__stripe_scan_probe__");
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        resolve(dir, "probe.ts"),
-        `export const x = async () => (await import("stripe")).default;\n`
-      );
+      // Writes INSIDE the try, and the probe named from the shared list — the
+      // same two corrections as the dynamic-package probe above.
+      const probe = resolve(respinRoot, PLANTED_PROBE_PATHS.dynamicStripe);
       try {
-        expect(await scanForDynamicStripeImports()).not.toEqual([]);
+        mkdirSync(dirname(probe), { recursive: true });
+        writeFileSync(
+          probe,
+          `export const x = async () => (await import("stripe")).default;\n`
+        );
+        expect(
+          await scanForDynamicStripeImports([PLANTED_PROBE_PATHS.dynamicStripe])
+        ).not.toEqual([]);
       } finally {
-        rmSync(dir, { recursive: true, force: true });
+        rmSync(dirname(probe), { recursive: true, force: true });
       }
       // ...and with the probe gone, the live tree is clean.
       expect(await scanForDynamicStripeImports()).toEqual([]);
@@ -965,6 +1060,96 @@ describe("R6 — a NEW @respin/* package is denied from app/** by DEFAULT (task 
 });
 
 
+describe("slice 6 R1: @respin/modes joins the boundary DELIBERATELY", () => {
+  // The card's R1: a new package "joins the import boundary deliberately",
+  // and for `@respin/modes` the deliberate decision is that it STAYS DENIED
+  // from app/** — recorded in eslint.config.mjs's catch-all comment, fixtured
+  // here. The precedent is `@respin/llm`: a server action that can build a
+  // prompt can reach a model with arbitrary text, and this one has the credit
+  // debit behind it as well. app/** reaches a generation through
+  // @respin/credits/app-server.
+  const messagesAt = async (path: string, code: string) => {
+    const results = await eslint.lintText(code, {
+      filePath: resolve(respinRoot, path),
+    });
+    return results
+      .flatMap((r) => r.messages)
+      .filter((m) => m.ruleId === "no-restricted-imports")
+      .map((m) => m.message);
+  };
+  const denied = async (path: string, code: string) =>
+    (await messagesAt(path, code)).length > 0;
+  const imp = (spec: string) =>
+    'import * as x from "' + spec + '";\nexport const y = x;\n';
+
+  it("the package this fixture is about actually EXISTS", () => {
+    // A deny fixture for a package nobody wrote is a fixture about a string.
+    expect(
+      existsSync(resolve(respinRoot, "packages/modes/package.json")),
+      "packages/modes is missing — this whole block would be vacuous"
+    ).toBe(true);
+    const pkg = JSON.parse(
+      readFileSync(resolve(respinRoot, "packages/modes/package.json"), "utf8")
+    ) as { name: string };
+    expect(pkg.name).toBe("@respin/modes");
+  });
+
+  it("is denied from app/** and lib/**", async () => {
+    expect(await denied("app/fixture/route.ts", imp("@respin/modes"))).toBe(true);
+    expect(await denied("lib/fixture.ts", imp("@respin/modes"))).toBe(true);
+  });
+
+  it("NON-VACUITY: it is the CATCH-ALL that denies it, not some older rule", async () => {
+    // The fixture would still be green if a differently-scoped rule happened to
+    // fire, and then removing the catch-all would leave it green while the
+    // package went un-caged. The message is the discriminator.
+    const messages = await messagesAt("app/fixture/route.ts", imp("@respin/modes"));
+    expect(messages.join(" ")).toMatch(/denied by default/);
+  });
+
+  it("denies its DEEP entrypoints, including ones nobody has proposed", async () => {
+    for (const spec of [
+      "@respin/modes/app-server",
+      "@respin/modes/src/pipeline",
+      "@respin/modes/a/b",
+    ]) {
+      expect(await denied("app/fixture/route.ts", imp(spec)), spec).toBe(true);
+    }
+  });
+
+  it("denies a PATH spelling of it from app/**", async () => {
+    // Anchoring a rule to a package NAME is bypassable by spelling the same
+    // module as a path — the class the `patterns` group closes. Proved for the
+    // new package rather than assumed to be inherited.
+    for (const spec of [
+      "@/packages/modes/src/pipeline",
+      "../../packages/modes/src/hard-rules",
+    ]) {
+      expect(await denied("app/fixture/route.ts", imp(spec)), spec).toBe(true);
+    }
+  });
+
+  it("packages/** MAY reach its root — stage C composes the generation there", async () => {
+    // The direction that makes this a boundary rather than a wall. If this
+    // flips, `packages/credits/src/generate.ts` cannot be written at all.
+    expect(
+      await denied("packages/credits/src/fixture.ts", imp("@respin/modes"))
+    ).toBe(false);
+  });
+
+  it("...but never into its src/, by name or by relative climb", async () => {
+    for (const spec of [
+      "@respin/modes/src/pipeline",
+      "../../modes/src/hard-rules",
+    ]) {
+      expect(
+        await denied("packages/credits/src/fixture.ts", imp(spec)),
+        spec
+      ).toBe(true);
+    }
+  });
+});
+
 describe("AC-15 (the packages/** half): the specifier-shape hole, one directory over", () => {
   const lintAt = async (path: string, code: string) => {
     const results = await eslint.lintText(code, {
@@ -1084,15 +1269,16 @@ describe("P6 — there is no trustProfileId, under any name", () => {
   // rename this file and that exclude stops covering it.
   it("NON-VACUITY: the scan finds a planted cast", async () => {
     const { writeFileSync, rmSync, mkdirSync } = await import("node:fs");
-    const dir = resolve(respinRoot, "lib");
-    mkdirSync(dir, { recursive: true });
-    const file = resolve(dir, "__p6_probe.ts");
+    const file = resolve(respinRoot, PLANTED_PROBE_PATHS.profileBrandCast);
     try {
+      mkdirSync(dirname(file), { recursive: true });
       writeFileSync(
         file,
         'export const x = "id" as unknown as VerifiedProfileId;\n'
       );
-      const hits = await scanFor(CAST, P6_ROOTS);
+      const hits = await scanFor(CAST, P6_ROOTS, [
+        PLANTED_PROBE_PATHS.profileBrandCast,
+      ]);
       expect(hits.some((l) => l.includes("__p6_probe"))).toBe(true);
     } finally {
       rmSync(file, { force: true });
@@ -1166,15 +1352,18 @@ describe("P6b — the WORKSPACE brand has the scan its profile twin already had"
     // `**/__*_probe.ts` exclude covers it and an interrupted run cannot poison
     // every later typecheck.
     const { writeFileSync, rmSync, mkdirSync } = await import("node:fs");
-    const dir = resolve(respinRoot, "lib");
-    mkdirSync(dir, { recursive: true });
-    const file = resolve(dir, "__p6b_probe.ts");
+    const file = resolve(respinRoot, PLANTED_PROBE_PATHS.workspaceBrandCast);
     try {
+      mkdirSync(dirname(file), { recursive: true });
       writeFileSync(
         file,
         'export const x = "id" as unknown as VerifiedWorkspaceId;\n'
       );
-      const hits = (await scanFor(WS_CAST, P6_ROOTS)).filter(isProductSource);
+      const hits = (
+        await scanFor(WS_CAST, P6_ROOTS, [
+          PLANTED_PROBE_PATHS.workspaceBrandCast,
+        ])
+      ).filter(isProductSource);
       expect(
         hits.some((l) => l.includes("__p6b_probe")),
         "a scan that finds nothing reports a clean tree — plant one and it must be seen"
@@ -1225,14 +1414,15 @@ describe("the cage registries are unreachable from product code (tenancy gate BL
 
   it("NON-VACUITY: the scan finds a planted registration, in app/** and in packages/**", async () => {
     const { writeFileSync, rmSync, mkdirSync } = await import("node:fs");
-    const probes = [
-      resolve(respinRoot, "lib/__cage_probe.ts"),
-      resolve(respinRoot, "packages/credits/src/__cage_probe.ts"),
+    const probePaths = [
+      PLANTED_PROBE_PATHS.cageRegistrationApp,
+      PLANTED_PROBE_PATHS.cageRegistrationPackage,
     ];
-    mkdirSync(resolve(respinRoot, "lib"), { recursive: true });
+    const probes = probePaths.map((p) => resolve(respinRoot, p));
     try {
       for (const file of probes) {
         // The gate's own four-line forge, verbatim in shape.
+        mkdirSync(dirname(file), { recursive: true });
         writeFileSync(
           file,
           'const cage = (globalThis as never)[Symbol.for("respin.scope.cage.workspace")];\n' +
@@ -1240,7 +1430,7 @@ describe("the cage registries are unreachable from product code (tenancy gate BL
             "(cage as { add: (o: object) => void }).add(forged);\n"
         );
       }
-      const hits = await scanFor(CAGE_REF, CAGE_ROOTS);
+      const hits = await scanFor(CAGE_REF, CAGE_ROOTS, probePaths);
       for (const file of probes) {
         const rel = file.includes("credits")
           ? "packages/credits/src/__cage_probe"

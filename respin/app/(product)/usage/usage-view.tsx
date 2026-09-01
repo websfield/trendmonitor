@@ -37,11 +37,73 @@ export type MonthlyBurn =
   | { ok: true; hasAnyDebit: false }
   | { ok: false };
 
+/** One mode's share of the period's burn. `label` is resolved on the server —
+ *  `@respin/modes` is denied to `app/**` (R-64), so this view is handed the
+ *  creator-facing name rather than looking one up. */
+export type BurnModeRow = {
+  mode: string;
+  label: string;
+  credits: number;
+  debits: number;
+};
+
+/**
+ * R17a (slice 6): the period's burn SPLIT BY MODE, from
+ * `respinDb.burnByMode` — each `credit_ledger` debit joined to the terminal
+ * generation its `ref_id` names.
+ *
+ * THREE BUCKETS, NOT ONE LIST, and the two extra ones are the honesty. A debit
+ * is a mode's only when it reached a settled generation; a debit that names no
+ * generation claim at all (the onboarding voice-brain build — same `ref_type`,
+ * same attempt-id grain) is NOT a mode, and a debit whose claim never settled
+ * is not a draft the creator has. Both are counted and named on the screen
+ * rather than folded into a mode or dropped, so the parts add up to the total
+ * above them.
+ *
+ * `ok: false` is a QUERY failure, kept distinct from an answered empty split
+ * for exactly the reason `MonthlyBurn` keeps them distinct.
+ */
+export type BurnByMode =
+  | {
+      ok: true;
+      byMode: BurnModeRow[];
+      notAGeneration: { credits: number; debits: number };
+      nonTerminalClaim: { credits: number; debits: number };
+    }
+  | { ok: false };
+
+/**
+ * WHICH PERIOD the burn numbers cover, and what the creator may be told it is
+ * (R17a). Both strings come from `BURN_PERIOD_COPY` in `@respin/credits` —
+ * the page resolves them beside the derivation that chose the window, for the
+ * reason R-66 records for `modeLabel`.
+ *
+ * REQUIRED (learning honesty gate, 2026-09-01), and it shipped OPTIONAL for a
+ * reason that was not a design one: making it required reddened `usageProps()`
+ * in `tests/billing-ui.test.tsx`, which the change that added it was not
+ * allowed to touch — so the absence was covered by a source scan instead. An
+ * optional prop standing in for a required one, propped up by a scan over
+ * source, is the shape CLAUDE.md has recorded twice (2026-08-26, 2026-08-29):
+ * a required parameter with no default reads exactly like a guard and is not
+ * one until a test drives it. The fixture now supplies a period, so the type
+ * can say what was always true.
+ *
+ * WHAT REQUIRING IT BUYS, on a money screen: every renderer of this panel has
+ * to state WHICH WINDOW its numbers cover, and the fallback noun is gone. A
+ * dead subscription's stale `current_period_start` used to anchor "this month"
+ * and sum many months of Free burn under that heading — the defect
+ * `burnPeriod` was written to fix, and a silent default here is how it would
+ * come back.
+ */
+export type BurnPeriodView = { start: Date; noun: string; phrase: string };
+
 export type UsageViewProps = {
   balance:
     | { ok: true; value: number; asOf: Date }
     | { ok: false; title: string; detail: string };
   burn: MonthlyBurn;
+  period: BurnPeriodView;
+  burnByMode: BurnByMode;
   rows: UsageLedgerRow[];
   /** True when the ledger has more rows than this page shows. */
   moreRows: boolean;
@@ -61,6 +123,13 @@ export type UsageViewProps = {
  *  agree, and a test must be able to assert an exact string. */
 export function day(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/** Sentence-case for a noun phrase used as a heading ("this month" -> "This
+ *  month"). Deliberately ASCII-simple: both phrases are literals in
+ *  `BURN_PERIOD_COPY`, so there is no locale question to get wrong. */
+function capitalise(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function Note({ children }: { children: ReactNode }) {
@@ -99,24 +168,58 @@ export function spendVisibility(
 }
 
 /**
- * The "by mode" note (R9, slice 2b).
+ * The "by mode" note (R9, slice 2b; rewritten twice for slice 6's R17a).
  *
  * NO LONGER BRANCHES ON `SpendVisibility` — the burn TOTAL panel above now
  * answers "was anything spent" with a real, unclamped number (R7), so this
- * note's only job is the one question left: why is there no BREAKDOWN yet.
- * That answer does not depend on whether anything was spent, so it is one
- * sentence, always.
+ * note's only job is the one question left: what can this page say about the
+ * BREAKDOWN. That answer does not depend on whether anything was spent, so it
+ * is one sentence, always.
  *
- * PINNED TO A COUNT, not free prose: `tests/usage-burn-by-mode.test.ts`
- * derives the real number of distinct `model_usage.purpose` values written
- * anywhere in `packages/credits/src` and fails if it is no longer 1 — the
- * mechanism R9 asks for so this sentence cannot stay true past slice 6
- * without someone noticing.
+ * PINNED TO THE REAL PURPOSE LIST, not free prose: `tests/usage-burn-by-mode.test.ts`
+ * derives the distinct spend-purpose constants defined anywhere in
+ * `packages/credits/src` and asserts they are exactly `KNOWN_SPEND_PURPOSES`.
+ * That mechanism is what made slice 6 rewrite this sentence rather than let it
+ * go stale: the note first said "exactly one thing spends credits today
+ * (building your voice brain)", generation made that false, and the second
+ * version's "not split by mode yet" was made false by the split itself.
  */
-export const KNOWN_SPEND_PURPOSE_COUNT = 1;
+export const KNOWN_SPEND_PURPOSES = ["onboarding_brain", "generation"] as const;
 
+/** Kept as a named export: it is the number the note's own wording depends on. */
+export const KNOWN_SPEND_PURPOSE_COUNT: number = KNOWN_SPEND_PURPOSES.length;
+
+/**
+ * WHAT THIS SENTENCE MAY NOT DO, stated because R17a's own requirement says it
+ * and mutation M13 is planted against it: there is NO MODE INFERENCE FROM THE
+ * COST ROLLUP. `workspace_spend_monthly` is our vendor cost by month, its grain
+ * carries no purpose and no mode, and a breakdown derived from it would be a
+ * number about our spending wearing the label of theirs. The split above comes
+ * from `respinDb.burnByMode`, which joins each `credit_ledger` debit to the
+ * terminal generation its `ref_id` names — so the sentence now describes a
+ * mechanism the page really runs instead of naming an absence.
+ *
+ * AND IT SAYS WHY THE SECOND PURPOSE IS NOT A MODE. Both things that spend
+ * credits debit with the same `ref_type` (R-63), so "these credits went to a
+ * mode" is a claim earned by the join, not by the row — and the voice-brain
+ * build appearing on its own line is that claim being honest rather than
+ * tidy.
+ */
 export function burnByModeNote(): string {
-  return "A per-mode breakdown is not available yet — exactly one thing spends credits today (building your voice brain), so there is nothing yet to split. It appears the day a second one exists.";
+  return `The split is made by joining each charge to the draft it paid for, never by dividing up a cost total. ${KNOWN_SPEND_PURPOSE_COUNT} things spend credits today: generating a draft in the studio, which is what the modes above are, and building a creator's voice brain, which is not a mode and is listed separately. Nothing here is estimated from the totals: every number is the sum of your real charges.`;
+}
+
+/**
+ * The period line that sits under the burn total (R17a).
+ *
+ * IT EXISTS BECAUSE THE PANEL USED TO SAY "this month" FOR EVERY WORKSPACE
+ * while a paid one was really being measured from its billing anniversary —
+ * two different windows under one word, on a money screen. The word is now
+ * chosen by the same derivation that chose the window, and the START DATE is
+ * printed beside it so the creator can check it rather than trust it.
+ */
+export function burnPeriodLine(period: BurnPeriodView): string {
+  return `Since ${day(period.start)} — ${period.phrase}.`;
 }
 
 /** The "Days to empty" note. Same rule: the clamped page cannot prove absence. */
@@ -130,10 +233,106 @@ export function daysToEmptyNote(v: SpendVisibility): string {
   return "Not enough data. This needs a spending history to measure, and no credits have been spent from this workspace yet.";
 }
 
+/**
+ * The by-mode split, or the honest reason there isn't one.
+ *
+ * A COMPONENT RATHER THAN INLINE JSX because it has four states and three of
+ * them are the ones that go wrong: a failed read, an answered-but-empty split,
+ * and a period whose only charges were not generations. Inline, those would be
+ * nested ternaries no test could name.
+ */
+function BurnSplit({ burnByMode }: { burnByMode: BurnByMode }) {
+  if (!burnByMode.ok) {
+    return (
+      <p className="muted" data-testid="burn-by-mode-error">
+        The split by mode could not be loaded right now. The total above is
+        still your real charge for this period.
+      </p>
+    );
+  }
+  const { byMode, notAGeneration, nonTerminalClaim } = burnByMode;
+  if (
+    byMode.length === 0 &&
+    notAGeneration.debits === 0 &&
+    nonTerminalClaim.debits === 0
+  ) {
+    return (
+      <p className="muted" data-testid="burn-by-mode-empty">
+        No charges in this period, so there is nothing to split.
+      </p>
+    );
+  }
+  return (
+    <>
+      <table className="ledger-table" data-testid="burn-by-mode-table">
+        <thead>
+          <tr>
+            <th>Mode</th>
+            <th>Credits</th>
+            <th>Charges</th>
+          </tr>
+        </thead>
+        <tbody>
+          {byMode.map((r) => (
+            <tr key={r.mode} data-testid={`burn-mode-${r.mode}`}>
+              <td>{r.label}</td>
+              <td className="num num-delta">{r.credits}</td>
+              <td className="num">{r.debits}</td>
+            </tr>
+          ))}
+          {notAGeneration.debits > 0 ? (
+            // NAMED, NOT FOLDED INTO A MODE. This bucket is "the debit's
+            // reference matches no generation" — which is what the voice-brain
+            // build looks like, because it spends under the same `ref_type`.
+            <tr data-testid="burn-not-a-generation">
+              <td>Not a studio draft</td>
+              <td className="num num-delta">{notAGeneration.credits}</td>
+              <td className="num">{notAGeneration.debits}</td>
+            </tr>
+          ) : null}
+          {nonTerminalClaim.debits > 0 ? (
+            // A charge whose draft never finished settling. Shown rather than
+            // dropped or guessed into the mode its claim asked for: the
+            // creator paid, and a number that quietly disappears is worse than
+            // one that says it does not know.
+            <tr data-testid="burn-non-terminal">
+              <td>Charged, draft not settled</td>
+              <td className="num num-delta">{nonTerminalClaim.credits}</td>
+              <td className="num">{nonTerminalClaim.debits}</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+      {nonTerminalClaim.debits > 0 ? (
+        <p className="muted" data-testid="burn-non-terminal-note">
+          One or more charges name a draft that never finished settling, so we
+          cannot say which mode they belong to. Nothing is guessed into a mode.
+          Contact support with this page open.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 export function UsageView(props: UsageViewProps) {
-  const { balance, burn, rows, moreRows, paused, portal, error, billingHref } =
-    props;
+  const {
+    balance,
+    burn,
+    burnByMode,
+    period,
+    rows,
+    moreRows,
+    paused,
+    portal,
+    error,
+    billingHref,
+  } = props;
   const spend = spendVisibility(rows, moreRows);
+  // The noun the burn TOTAL uses in-sentence, from the period the page
+  // derived — never from a default. `BURN_PERIOD_COPY` is a total `Record`
+  // over the two kinds, so there is no third answer to fall back to, and the
+  // heading and the sentence below cannot name different windows.
+  const periodNoun = period.noun;
   return (
     <section>
       <h1>Usage</h1>
@@ -190,7 +389,12 @@ export function UsageView(props: UsageViewProps) {
       ) : null}
 
       <div className="panel" data-testid="burn-by-mode">
-        <h2 style={{ marginTop: 0 }}>This month</h2>
+        {/* R17a: the heading names the period the same way the numbers under
+            it are measured — "This month" over an anniversary window was the
+            2026-09-01 finding in one line of copy. */}
+        <h2 style={{ marginTop: 0 }}>
+          {capitalise(period.noun)}
+        </h2>
         {/* R7/R8 (slice 2b): a SCOPED, UNCLAMPED query — never a sum over
             `rows` (that page is clamped; see the header note on this file).
             `ok: false` is a query failure, kept visibly distinct from a real
@@ -201,20 +405,36 @@ export function UsageView(props: UsageViewProps) {
         {burn.ok ? (
           <p data-testid="burn-total">
             {burn.hasAnyDebit
-              ? `${burn.totalDebit} credits spent this month`
-              : "Nothing spent this month."}
+              ? `${burn.totalDebit} credits spent ${periodNoun}`
+              : `Nothing spent ${periodNoun}.`}
           </p>
         ) : (
           <p className="muted" data-testid="burn-total-error">
-            This month&apos;s total could not be loaded right now. Your credit
-            history below is still accurate.
+            {/* R17a, and the ONE line the R17a pass missed (billing +
+                tenancy gates, round 2, 2026-09-01). The heading above takes
+                its noun from the derivation and the period line below prints
+                the window's start date, and this branch — sandwiched between
+                them — said "This month" to every workspace. On a paid one
+                that rendered three lines naming two different windows on a
+                money screen, in the one state where the creator cannot see
+                the number to check it against. */}
+            {`${capitalise(periodNoun)}'s total could not be loaded right now.`}{" "}
+            Your credit history below is read separately and is unaffected.
           </p>
         )}
-        {/* SLOT (REQ-G07, receiver M3): a per-mode BREAKDOWN needs more than
-            one mode to split by, and until generation exists there is only
-            one thing that spends. Inventing a chart would be the
-            invented-specifics failure — see `burnByModeNote`'s own doc for
-            why this note no longer depends on whether anything was spent. */}
+        {/* R17a: WHICH period those numbers cover, stated rather than
+            implied. One line, from the one derivation the page made, so the
+            total and the split cannot be read as a different window than the
+            one they were queried over. */}
+        <p className="muted" data-testid="burn-period">
+          {burnPeriodLine(period)}
+        </p>
+        {/* R17a (slice 6): the SLOT that used to live here is filled. The
+            split is a scoped join from each debit to the terminal generation
+            its `ref_id` names — never a division of `workspace_spend_monthly`,
+            which is our vendor cost and carries no mode at all (mutation
+            M13). `burnByModeNote` states that to the creator. */}
+        <BurnSplit burnByMode={burnByMode} />
         <Note>{burnByModeNote()}</Note>
       </div>
 

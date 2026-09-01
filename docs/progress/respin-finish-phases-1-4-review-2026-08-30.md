@@ -2,7 +2,25 @@
 
 ## Report card
 
-**Overall: Not yet** — the current tree fails the mandatory entry gate, and the existing completion records also show unresolved acceptance and reachability gaps, including a missing Slice 4 safety-check surface.
+**Current overall: Ready (closed by Slice 4c on 2026-08-31).** The dated review below remains the immutable 2026-08-30 failure snapshot; the closure addendum records the evidence that resolves every finding without rewriting that history.
+
+### Slice 4c closure addendum - 2026-08-31
+
+| Original gap | Current disposition |
+|---|---|
+| Red current-tree entry gate | **Resolved.** Root/package TypeScript, full ESLint, `db:check`, Next production build, and CI-shaped real-PostgreSQL Vitest all pass; the final suite was **81 files / 1663 tests / 0 skipped**. |
+| Missing creator no-store safety check | **Resolved.** One server-scoped preview/write decision is live, the hydrated refusal passed, and fingerprints across all 13 relevant workspace tables proved candidate and result were not stored. |
+| Missing Slice 2b/4 browser evidence | **Resolved.** Multi-profile isolation, direct `/usage` and billing visits, the no-store refusal, one real debit, the admin cost row, and the post-deletion orphan row were walked and captured in the [Slice 4c card](respin-finish-slice-4c-card.md). |
+| Unreachable reconciliation mutator | **Resolved by honest removal.** No production mutator remains without an authenticated/idempotent owner; ordinary spend recording and the read-only reconciliation report remain live. |
+| First-login workspace race | **Resolved.** Usage and billing route through bootstrap-then-scope, with deterministic and real-PostgreSQL concurrency witnesses plus direct browser visits. |
+| Unusable multi-profile allowance | **Resolved.** Membership-selected active profiles are persisted, create-and-select is atomic, all relevant pages/actions bind the displayed selection, and the two-profile browser walk proved isolation. |
+| Current status truth and reviewer gates | **Resolved.** Tenancy, billing, spin compliance, and final code review all PASS; the clean close-out card is **Ready** and the master plan restores Slices 1-4 as current dependency proof. |
+
+Real-model evidence used exactly two authorised Anthropic calls at total vendor cost **USD 0.040326**. The admin row showed 2 priced calls before deletion; a guarded local fixture pseudonymised the rollup and deleted only the disposable workspace in one transaction; the live report then showed one `orphaned` row, 0 drift, while database inspection proved the old workspace/detail/ledger rows were gone. Evidence: [Usage](respin-finish/evidence/slice4c-metered-usage.png), [cost row](respin-finish/evidence/slice4c-model-spend-before-deletion.png), and [orphan row](respin-finish/evidence/slice4c-model-spend-orphaned.png).
+
+### Original 2026-08-30 snapshot
+
+**Overall: Not yet** — the then-current tree failed the mandatory entry gate, and the existing completion records also showed unresolved acceptance and reachability gaps, including a missing Slice 4 safety-check surface.
 
 | Gate | Result | One line |
 |---|---|---|
@@ -66,6 +84,8 @@ The implementation may be well covered at unit/integration level, but those test
 
 This conflicts with the finish master plan's governing rule that no package ships without a caller in the same slice. It also means corrected vendor cost cannot reach the supposedly completed rollup transition in production.
 
+**Slice 4c disposition (2026-08-31): resolved by honest removal.** No real provider/job/operator-import contract exists, so `applyReconciliationDelta`, its public/error plumbing, the sanctioned `model_usage` UPDATE entry, and mutation-only tests were removed. A structural test now refuses a production reconciliation mutator without its real owner. The normal spend UPSERT and read-only operator reconciliation report remain live. C1-C3 and C5-C7 are now also evidenced in the closure addendum above, so the aggregate review is Ready.
+
 ### Medium — the first-login bootstrap race remains on `/usage` and `/settings/billing`
 
 The Phase 1 review routed this known race into Slice 2a (`respin-finish-phase-1-review.md:52-54`). The current pages still call `respinDb.withWorkspace` directly (`usage/page.tsx:35-37`, `settings/billing/page.tsx:47-49`) while `workspace-scope.ts` documents that page/layout rendering can race and provides `scopeForUser` to bootstrap before scoping (`workspace-scope.ts:5-18,39-47`).
@@ -88,4 +108,4 @@ A fresh row-by-row acceptance walk and fresh Critical-Path verdicts were not pro
 - Ready status for Slices 1 and 2a; their own cards remain Almost.
 - Reachability for reconciliation-delta application.
 
-The aggregate Phase 1–4 implementation is therefore **NOT READY** for a new completion claim.
+At the time of this 2026-08-30 snapshot, the aggregate Phase 1-4 implementation was therefore **NOT READY** for a new completion claim. The 2026-08-31 closure addendum above supersedes that current-readiness conclusion and records **Ready**.

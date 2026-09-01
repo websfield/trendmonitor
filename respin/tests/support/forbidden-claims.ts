@@ -54,12 +54,263 @@ export const FORBIDDEN_CLAIMS: readonly ForbiddenClaim[] = [
 ];
 
 /**
+ * Claims about how a piece of content will DO once it is posted.
+ *
+ * ADDED BY SLICE 6 (R20/R21), and it is the half `FORBIDDEN_CLAIMS` never
+ * covered. The canon above bans claims about the PRODUCT ("we learn", "we are
+ * confident"); nothing in it stopped a screen from saying a draft would get
+ * views. `/studio` is the first surface where that sentence is even writable,
+ * because it is the first that hands a creator something to publish — and at
+ * n = 0 (no results logged, the learning loop is slice 9) the product holds no
+ * evidence about this creator whatsoever.
+ *
+ * WHY `perform` ITSELF IS NOT BANNED. `whyThisPerforms` is a section every mode
+ * emits (tech-spec §3 step 6) and the screen has to label it. What is banned is
+ * the FORECAST — `will perform`, `outperform` — and the metric vocabulary that
+ * only means something once results exist. The section's own honesty control is
+ * a different mechanism: it always names its weakest point (REQ-I04), and
+ * `STUDIO_POSITIVE_ASSERTIONS` below is what makes that a screen property
+ * rather than a schema one.
+ *
+ * `reach` IS NOT BANNED AS A BARE WORD, and the first draft of this list banned
+ * it that way. Measuring the draft against the real copy is what corrected it:
+ * `scope_forgery`'s shared refusal says "a safety check that guards which
+ * workspace and which profile an action may reach did not pass", which is the
+ * plumbing sense and is exactly right. A ban that forces a refusal about the
+ * tenancy cage to be reworded is a ban paying for a word rather than a claim.
+ * So the two entries below pin the METRIC sense — the quantity, and the promise
+ * of a bigger audience — and leave the verb alone.
+ *
+ * THE OWN-BASELINE HALF WAS ADDED AFTER THE LEARNING-HONESTY GATE MEASURED ITS
+ * ABSENCE (2026-09-01). `beats your baseline`, `better than your last`,
+ * `best-performing`, `more views` and `proven to` are PRD §5 metric 2 — "better
+ * than what you were doing" — stated as fact at n = 0, which is the direction
+ * R-10 forbids outright. Three of them were already enforced on the product's
+ * STATIC copy by `tests/studio-ui.test.tsx`, and none of them was enforced on
+ * the model's text: one vocabulary, two enforcement points, and the point that
+ * no person reviews was the one missing it (CLAUDE.md, 2026-08-29).
+ * `goes viral` joined for the same reason on R20's third noun — `reach` and
+ * `performance` each had a predicate shape beside their bare noun and virality
+ * did not.
+ */
+export const PERFORMANCE_CLAIMS: readonly ForbiddenClaim[] = [
+  ["viral", /\bviral|\bvirality/],
+  ["goes viral", /\b(go(es|ing)?|went|will go|gonna go)\s+viral\b/],
+  ["views", /\bviews\b/],
+  ["engagement", /\bengagement\b/],
+  ["more reach", /\b(more|wider|bigger|larger|extra|higher) reach\b/],
+  [
+    "reach an audience",
+    /\breach(es|ing)? (a |an |your |the )?(wider |bigger |larger |new |whole |right )?(audience|following|viewers)\b/,
+  ],
+  ["will perform", /\bwill perform/],
+  ["outperform", /\boutperform/],
+  ["blow up", /\bblow(s|ing)? up\b/],
+  [
+    "beats your baseline",
+    /\bbeat(s|ing)? (your|my|our|their|the) (baseline|average|numbers|usual|best)\b/,
+  ],
+  [
+    "better than your last",
+    /\b(perform(s|ed|ing)?|do(es)?|did|work(s|ed)?|land(s|ed)?|hit(s)?) better than (your|my|our|their|the)\b/,
+  ],
+  ["best-performing", /\bbest[- ]performing\b/],
+  ["more views", /\bmore (views|engagement|followers|saves|shares|comments)\b/],
+  ["proven to", /\bproven to\b/],
+];
+
+/**
+ * What `/studio` must POSITIVELY do, because R21 takes three bans away from it.
+ *
+ * ---------------------------------------------------------------------------
+ * THE TRANSITION THIS BLOCK RECORDS (slice 6, R21).
+ *
+ * `NOT_BUILT_YET` below bans `generat`, `script` and `hook` on screens that do
+ * not do the thing. `/studio` now does the thing: it takes a creator's input,
+ * assembles a prompt from their activated brain, calls a vendor, runs the kill
+ * test and the traceability scan, stores a `generations` row and takes one
+ * debit. So those three words are not merely permitted there, they are the only
+ * honest labels for its controls — a button that sends a person's idea to a
+ * model may not be vague about what it does.
+ *
+ * BUT A WORD LEAVING A BAN IS INDISTINGUISHABLE FROM A WEAKENED GUARD (R-38,
+ * and CLAUDE.md's 2026-08-26 lesson in its sharpest form: nothing fails if the
+ * replacement is weak, because no mutation can reach an assertion nobody
+ * wrote). So the removal is paid for HERE, in the same file, with markers the
+ * screen must render and patterns their text must match. Each entry fails if
+ * `/studio` stops doing the thing the ban used to stand in for:
+ *
+ *   - it stops saying what a press costs before the press;
+ *   - it stops saying that nothing streams;
+ *   - it stops rendering the hooks the operation returned;
+ *   - it stops naming the weakest point beside "why this performs";
+ *   - it stops stating REQ-I03's limit — that the check is about where a
+ *     specific came from, not whether it is true;
+ *   - it stops saying that no result of this creator's has been logged, which
+ *     is the n = 0 statement R21 is named for;
+ *   - it stops reporting the actual charge and the balance that resulted;
+ *   - it stops showing the kill test's own verdict.
+ *
+ * `where` names which rendered state carries the marker, so a test cannot
+ * satisfy the list by rendering one state and calling it done.
+ *
+ * ---------------------------------------------------------------------------
+ * THE SCREEN THESE PATTERNS ARE MEASURED AGAINST IS A LYING ONE (learning
+ * honesty gate, 2026-09-01) — and the first eight were rewritten because of it.
+ *
+ * The gate rebuilt the harness and ran it against a hand-built screen that
+ * renders every marker and nothing real: empty `<li>`s, a `Weakest point:`
+ * label above a blank, an empty verdict, a charge line with the word "balance"
+ * and no number. SEVEN OF THE EIGHT ASSERTIONS PASSED IT — measured, not
+ * argued. A marker plus a keyword is not evidence that a screen does the thing;
+ * it is evidence that somebody typed the keyword.
+ *
+ * SO EVERY PATTERN BELOW NOW DEMANDS THE SENTENCE BODY OR THE NUMBER — the
+ * price, the balance, the text inside the element, the second clause — rather
+ * than the LABEL that names it. `tests/studio-ui.test.tsx` keeps the lying
+ * screen as a permanent fixture and asserts the harness names ALL EIGHT: the
+ * probe is the guard, because a pattern nobody drives against a fake is a
+ * pattern nobody has checked.
+ *
+ * WHAT THAT DOES AND DOES NOT BUY, MEASURED RATHER THAN CLAIMED (2026-09-01,
+ * each of the sixteen strings run through the patterns below). Against the
+ * label-only text round 1 accepted — "This costs credits.", "No results yet.",
+ * `<li><div></div></li>`, "Your balance was updated." — all eight now REFUSE.
+ * Against a hand-written STATIC template carrying a plausible value — "This
+ * costs 5 credits, every time.", "That cost 5 credits. Your balance is now 20
+ * credits." — all eight PASS. Nothing here can tell a rendered value from a
+ * typed one, because a regex over HTML has no way to know where a number came
+ * from, and an earlier draft of this block asserted the opposite ("never a
+ * label a static template could carry"): two of the eight —
+ * `studio-no-stream` and `studio-no-results-basis` — have NO interpolated half
+ * by construction, since their content is the static copy at
+ * `app/(product)/studio/run-copy.ts` and always will be.
+ *
+ * SO THE PROPERTY THESE ENTRIES CARRY IS "the screen renders the CONTENT, not
+ * the label", and the property that the content is the OPERATION'S is carried
+ * elsewhere, per sentence: `killTestSentence` is asserted verbatim inside the
+ * rendered HTML ("a usable draft renders killTestSentence(...) verbatim", with
+ * the two other outcomes asserted absent), and `generateCostSentence` and
+ * `generateChargeSentence` are pinned to their exact sentences as pure
+ * functions ("generateCostSentence states the price and never invents one",
+ * "generateChargeSentence reports the real charge; zero is an answer, not an
+ * absence"), so the patterns below are a second gate over text a first gate has
+ * already fixed. A claim recorded here is only as good as the test that holds
+ * it up (CLAUDE.md, 2026-07-30), which is why the ones this block used to make
+ * on its own behalf now name the tests that make them.
+ *
+ * ONE MARKER MOVED RATHER THAN BEING RE-PATTERNED. `studio-kill-test` is the
+ * block's CONTAINER and its first child is a static `<h3>What the checks
+ * found</h3>`, so any pattern over the container is satisfiable by the heading
+ * alone. The verdict is `studio-kill-test-outcome`, which is where the sentence
+ * `killTestSentence` returns actually lands, so that is what the entry names.
+ */
+export const STUDIO_POSITIVE_ASSERTIONS: readonly {
+  label: string;
+  /** The `data-testid` the screen must render. */
+  testId: string;
+  /** Which rendered state carries it. */
+  where: "form" | "result";
+  /** A pattern the marker's own text must match. */
+  must: RegExp;
+}[] = [
+  {
+    label: "states the price before the press",
+    testId: "studio-cost",
+    where: "form",
+    // THE NUMBER, NOT THE NOUN. `/\bcredits?\b/` was satisfied by "This costs
+    // credits." — a sentence that states no price at all on the control that
+    // spends one. All three branches of `generateCostSentence` are named here
+    // and nothing else is: a price, a priced-at-zero, or the honest admission
+    // that the price could not be read (non-negotiable 6 — never an invented
+    // number, but never a silent absence either).
+    must: /\bcosts (\d+ credits?|nothing)\b|price of a draft could not be read/i,
+  },
+  {
+    label: "says it does not stream",
+    testId: "studio-no-stream",
+    where: "form",
+    // BOTH CLAUSES. "Nothing appears until it is ready" is a loading message;
+    // what R21 pays for is the second half — that a part-written draft is never
+    // shown, because the product may still be about to refuse it.
+    must: /nothing appears until[\s\S]*part-written draft is never shown/i,
+  },
+  {
+    label: "says no result of this creator's has been logged (n = 0)",
+    testId: "studio-no-results-basis",
+    where: "form",
+    // `/no results/` alone was passed by "No results yet." — which implies
+    // results are coming and says nothing about what the product holds. The
+    // n = 0 claim is two facts: none logged, and not being measured.
+    must: /no results of yours have been logged[\s\S]*not measuring you/i,
+  },
+  {
+    label: "renders the hooks the operation returned",
+    testId: "studio-hooks",
+    where: "result",
+    // TEXT IN A LIST ITEM, not a list item. `/<li\b/` was passed by three empty
+    // `<li>`s — a screen rendering the shape of a draft and none of it.
+    must: /<li\b[^>]*>\s*<div>\s*[^<\s]/,
+  },
+  {
+    label: "names the weakest point beside why this performs",
+    testId: "studio-weakest-point",
+    where: "result",
+    // THE COMMENT THAT USED TO BE HERE CLAIMED A PROPERTY THIS PATTERN DID NOT
+    // HAVE (2026-07-30: a comment claiming a property is not the property). It
+    // said `/\S/` was rejected because "a label above a blank" would satisfy
+    // it — and `/weakest point/i` was satisfied by exactly that, because the
+    // label `<strong>Weakest point:</strong>` is hard-coded in
+    // `generation-outcome.tsx`. So the pattern now looks PAST the label: text
+    // after the closing `</strong>`, which only the interpolated value can put
+    // there. It matches both labels the screen uses ("Weakest point:" on a
+    // fresh draft, "The weakest point of that draft:" on a replay).
+    must: /weakest point[^<]*<\/strong>\s*[^<\s]/i,
+  },
+  {
+    label: "states REQ-I03's limit on the traceability check",
+    testId: "studio-traceability-note",
+    where: "result",
+    // The one assertion that already rejected the lying screen, because the
+    // sentence IS the content. Its second witness is the source scan in
+    // `tests/studio-ui.test.tsx` proving no file under `app/(product)/studio/`
+    // contains this phrase — so it cannot be satisfied by a hard-coded copy of
+    // the note either.
+    must: /not about whether it is true/i,
+  },
+  {
+    label: "reports the actual charge and the resulting balance",
+    testId: "studio-charge",
+    where: "result",
+    // THE BALANCE, NOT THE WORD "balance". "Your balance was updated." passed
+    // the old pattern on the screen whose whole job here is to say what the
+    // press cost and what is left. `(now )?` covers the replay sentence, which
+    // reports a balance without a charge because nothing extra was spent.
+    must: /balance is (now )?\d+ credits?\b/i,
+  },
+  {
+    label: "shows the kill test's own verdict",
+    testId: "studio-kill-test-outcome",
+    where: "result",
+    // NOT `studio-kill-test` WITH `/what the checks found/i`: that is the
+    // block's static `<h3>`, and the gate measured the verdict line deleted
+    // with the assertion still green. Every one of `killTestSentence`'s three
+    // outcomes names the product's hard rules, and none of them is a heading.
+    must: /hard rules/i,
+  },
+];
+
+/**
  * Additional bans for screens that do not do the thing yet.
  *
  * SEPARATE FROM THE CANON because these are true of a screen at a point in
  * TIME, not forever: `/onboarding` may not promise a script because no script
  * exists, and the day one does the ban is retired for that screen. The canon
  * above is never retired.
+ *
+ * `/studio` LEFT THIS LIST IN SLICE 6 — see `STUDIO_POSITIVE_ASSERTIONS` above
+ * for what was put in its place and why the swap is a tightening rather than a
+ * relaxation. `/onboarding` and `/onboarding/interview` still carry every entry.
  */
 export const NOT_BUILT_YET: readonly ForbiddenClaim[] = [
   ["generate", /\bgenerat/],
@@ -91,4 +342,27 @@ export const CLAIM_SPECIMENS: Readonly<Record<string, string>> = {
   script: "your script is ready",
   hook: "ten hooks per batch",
   analyse: "we analyse your posts",
+  // PERFORMANCE_CLAIMS (slice 6, R20/R21). Each specimen is the sentence the
+  // pattern exists to stop appearing on the one screen that hands a creator
+  // something to publish — every one of them is a claim about a future this
+  // product has logged no evidence about.
+  viral: "this hook goes viral",
+  "goes viral": "this hook goes viral",
+  views: "expect more views on this one",
+  engagement: "this lifts engagement",
+  "more reach": "this one gets more reach",
+  "reach an audience": "this will reach a wider audience",
+  "will perform": "this draft will perform well",
+  outperform: "it outperforms your last post",
+  "blow up": "this one is going to blow up",
+  // The OWN-BASELINE half. `viral` and `goes viral` share a specimen on
+  // purpose: the bare adjective and the predicate built from it are two shapes
+  // over one sentence, and that is exactly the pair whose enforcement differs
+  // (`flag` and `hard`). Each still has to match its own pattern, which is what
+  // the non-vacuity loops assert.
+  "beats your baseline": "this beats your baseline",
+  "better than your last": "this performs better than your last three posts",
+  "best-performing": "your best-performing hook shape is this one",
+  "more views": "this will get you more views than your last post",
+  "proven to": "it is proven to work for this audience",
 };

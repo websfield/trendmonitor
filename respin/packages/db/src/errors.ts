@@ -160,6 +160,37 @@ export class BrainEditEmptyError extends Error {
   }
 }
 
+/**
+ * A creator edit submission changed nothing in the version it was submitted
+ * against (slice 5 gate round 1, G3).
+ *
+ * A SIBLING OF `BrainEditEmptyError`, NOT OF `ProvenanceError`, and the split
+ * is the whole finding. `editBrainDocument` used to raise a bare
+ * `ProvenanceError` here, which `/brain` renders with the copy written for the
+ * STALE-BASE refusal: "what this page showed you and what the server holds no
+ * longer agree ... reload the page". Nothing of the sort happened. Nothing is
+ * stale, nothing disagrees, and reloading changes nothing — the creator
+ * pressed Save on a form they had not altered. `editDeclaredMetricAction` is
+ * what makes that easy to do: it posts all five metric positions on every
+ * press whether or not any of them moved, so the form itself never notices,
+ * and this refusal is the first thing that tells the creator anything. A
+ * refusal that names the wrong event sends the reader to fix something that is
+ * not broken.
+ *
+ * It is not a `ProvenanceError` because it is not about evidence at all: no
+ * quote was submitted, so no quote failed to verify. Nothing in the product
+ * catches `ProvenanceError` polymorphically — only `billing-errors.ts`'s
+ * ordered class walk, which reads the exact class — so this costs no caller.
+ */
+export class BrainEditUnchangedError extends Error {
+  constructor() {
+    super(
+      "The submitted edit does not change this brain version, so no replacement draft was created. Change at least one field before submitting."
+    );
+    this.name = "BrainEditUnchangedError";
+  }
+}
+
 /** A creator-edit request exceeded one of the closed request/storage bounds. */
 export class BrainEditLimitError extends Error {
   constructor(detail: string) {
@@ -234,10 +265,11 @@ export class ExportBusyError extends Error {
  * reference post that "a quote didn't match your own words", which is not
  * what happened and is not fixable the way that message implies.
  *
- * `detail` may still carry the pointer, reference input id and span in-process,
- * but safe logging serializes none of an exception's message. Only the stable
- * refusal code/class and server context leave the process; browser redirects
- * likewise carry a code, never this text.
+ * The detail may still carry operator context in-process, but safe logging
+ * serializes none of an exception's message. The optional structured match is
+ * the only browser-reachable detail: the edit action validates its pointer and
+ * UUID, bounds its excerpt, and returns it as in-place action state. Browser
+ * redirects still carry only a stable code, never reference text.
  */
 export type ReferenceEchoMatch = {
   pointer: string;
@@ -432,29 +464,5 @@ export class InterviewAnswerError extends Error {
       `That interview answer was not stored: ${detail}. Every field is answered, explicitly marked not-decided, or (where the question allows it) explicitly declined — there is no fourth, implicit state.`
     );
     this.name = "InterviewAnswerError";
-  }
-}
-
-/**
- * R4a (slice 2b-c): `applyReconciliationDelta` was given a `usageId` that
- * names no `model_usage` row.
- *
- * NOT A USER-FACING REFUSAL — there is no live caller yet (no vendor
- * cost-reconciliation webhook exists in this codebase today), so this class
- * exists for the same reason `ScopeForgeryError` does not offer a remedy: the
- * one caller that will exist is an operator process passing an id it read
- * from `model_usage` itself, so a miss here is a bug in that caller (a stale
- * id, a wrong database) rather than anything a workspace member did. Typed
- * rather than a bare `Error` for the same reason every other refusal in this
- * file is: this package's error map matches on `instanceof`, and a raw
- * `Error` is indistinguishable from any other failure once it crosses that
- * boundary.
- */
-export class ReconciliationTargetError extends Error {
-  constructor(usageId: string) {
-    super(
-      `No model_usage row exists for id ${usageId}. applyReconciliationDelta reconciles an EXISTING row's cost; it never creates one.`
-    );
-    this.name = "ReconciliationTargetError";
   }
 }

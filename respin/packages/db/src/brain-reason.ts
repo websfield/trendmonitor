@@ -84,6 +84,49 @@ export type BrainReasonFacts = {
 };
 
 /**
+ * The stored SENTENCE -> the code it was rendered from.
+ *
+ * WHY A CLASSIFIER EXISTS AT ALL. `brain_docs.reason` stores the rendered
+ * sentence, not the code (there is no `reason_code` column), so a reader that
+ * has to branch on WHY a version exists — the export's and `/brain`'s absence
+ * sentence, which must not attribute a creator's own `[check]` to a failed
+ * search of ours (REQ-I03) — has only the sentence in hand.
+ *
+ * A `Record` over the code set, exactly like `renderBrainReason`'s switch: a
+ * fourth code is a COMPILE error here, not a silent `null`.
+ *
+ * THE PATTERNS ARE NOT TRUSTED, THEY ARE PROVEN. `brain-reason.test.ts` drives
+ * every code through `renderBrainReason` across a range of facts and asserts
+ * the round trip AND mutual exclusivity — the 2026-08-18 lesson: a property
+ * that depends on two things agreeing is proved generatively against the real
+ * producer, never with a list of hand-picked strings.
+ */
+const REASON_SENTENCE_PATTERNS: Record<BrainDocReasonCode, RegExp> = {
+  onboarding_inference:
+    /^Version \d+: inferred from \d+ of your onboarding inputs?\.$/,
+  creator_edit: /^Version \d+: you edited this document\.$/,
+  correction: /^Version \d+: corrects an earlier version\.$/,
+};
+
+/**
+ * Which code a stored reason sentence was rendered from, or `null`.
+ *
+ * `null` IS A REAL ANSWER, not a defect: `reason` is `text NOT NULL` on an
+ * append-only table whose oldest rows predate this module, and a hand-run
+ * UPDATE during an incident can put anything there. A caller that cannot name
+ * the reason must fall back to saying nothing about it rather than guessing —
+ * see `absenceCopy` in `export.ts`, which does exactly that.
+ */
+export function classifyBrainReason(
+  storedReason: string
+): BrainDocReasonCode | null {
+  for (const code of BRAIN_DOC_REASON_CODES) {
+    if (REASON_SENTENCE_PATTERNS[code].test(storedReason)) return code;
+  }
+  return null;
+}
+
+/**
  * Render the stored sentence.
  *
  * The ONLY producer of `brain_docs.reason`. Note that every interpolation is a

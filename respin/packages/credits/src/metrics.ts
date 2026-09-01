@@ -1,3 +1,6 @@
+// Money-path observability. TWO metrics live here, and the second one is not a
+// fold metric — see the divider below.
+//
 // Fold observability (audit 2026-08-17 #22, decision R-25/D-AUDIT-3).
 //
 // The architecture critic's finding was not that the O(n) fold is wrong today —
@@ -13,11 +16,13 @@
 // ends up using, while the default emits a structured, greppable line — the
 // same shape the webhook refusal log uses, for the same reason.
 //
-// PII: the payload is a workspace UUID and two numbers. A workspace id is an
-// internal identifier, not personal data (D-AUDIT-3 says so explicitly), and no
-// creator identity, email or ledger content is ever in scope here.
+// PII: the FOLD payload is a workspace UUID and two numbers. A workspace id is
+// an internal identifier, not personal data (D-AUDIT-3 says so explicitly), and
+// no creator identity, email or ledger content is ever in scope here. The cap
+// metric below states its own payload separately rather than inheriting this
+// sentence — it carries a profile id, which this one does not.
 
-import type { VerifiedWorkspaceId } from "@respin/db";
+import type { VerifiedProfileId, VerifiedWorkspaceId } from "@respin/db";
 
 /** The metric names D-AUDIT-3 committed to. Changing one is a decision edit. */
 export const FOLD_ROW_COUNT_METRIC = "respin.credits.fold.row_count";
@@ -84,5 +89,104 @@ export function emitFoldMetric(m: FoldMetric): void {
     sink(m);
   } catch (err) {
     console.warn("[respin-metric] fold metric sink threw; ignoring", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// THE UNCHARGED-BILLABLE CAP (billing gate round 2, 2026-09-01).
+//
+// WHY THIS COUNTER EXISTS AT ALL. `generation.unchargedAttemptWindowMinutes`
+// turned the uncharged-billable cap from a LIFETIME count into a 60-minute
+// one, which was the right trade — the lifetime version was a permanent,
+// operator-only, globally-keyed refusal on the product's main verb — but it
+// converted a bounded-forever exposure into an UNBOUNDED-RATE one: a profile
+// may burn a windowful of vendor calls we pay for and the creator does not,
+// every window, forever. That is on a Free tier that requires no card (R-55)
+// and whose email addresses nothing bounds (R17). The number is not the gap;
+// the gap was that NOTHING COUNTED OR SURFACED the channel, so the first abuse
+// of it would be learned about from an invoice rather than from the system.
+//
+// WHAT ONE SAMPLE CAN HONESTLY ASSERT, and what it cannot — the same line the
+// fold metrics draw above. One sample says "this profile is AT its cap right
+// now, and here is what it cost the shape of". It does NOT say a rate, and no
+// rate is faked here: "how many distinct profiles capped this hour" is an
+// aggregate over a window this process does not hold, and it is computed where
+// aggregates belong. No threshold constant sits here for the same reason —
+// inventing one would be a specific nobody chose (non-negotiable 6).
+//
+// THE POPULATION IS A LIST, NOT A PATH (CLAUDE.md 2026-08-29). Both cap sites
+// emit: `generate.ts`'s generation cap and `inference.ts`'s onboarding cap.
+// Adding a third priced purpose is what costs a third emit, and
+// `unchargedAttemptCap`'s total `Record` is where that is compulsory.
+//
+// PII: a workspace UUID, a profile UUID, a purpose string and three numbers.
+// A creator-profile id is an internal identifier — the profile's display name,
+// its posts and its brain are not in scope here and must never be added.
+
+/** The metric name. Changing it is a decision edit, like its fold siblings. */
+export const UNCHARGED_ATTEMPT_CAP_METRIC =
+  "respin.credits.uncharged_billable_attempts.capped";
+
+export type UnchargedAttemptCapMetric = {
+  workspaceId: VerifiedWorkspaceId;
+  profileId: VerifiedProfileId;
+  /** Which priced operation's count this is — the caps are per purpose. */
+  purpose: string;
+  /** Distinct uncharged-billable attempts counted inside the window. */
+  attempts: number;
+  /** The configured cap this crossed. */
+  cap: number;
+  /**
+   * The window the count was taken over, or `null` for a LIFETIME count.
+   *
+   * `null` is not "unknown" — it is the onboarding purpose's real answer
+   * (`unchargedAttemptWindowStart` returns the epoch for it), and the two
+   * cases mean opposite things to an operator reading this line: a windowed
+   * cap clears itself, a lifetime one does not and names a stuck profile.
+   */
+  windowMinutes: number | null;
+};
+
+export type UnchargedAttemptCapMetricSink = (
+  m: UnchargedAttemptCapMetric
+) => void;
+
+function defaultCapSink(m: UnchargedAttemptCapMetric): void {
+  // `warn`, not `info`, and that is the difference from the fold line above: a
+  // fold sample is the ordinary case and this one is a refusal that already
+  // happened. The line carries everything needed to find the profile without a
+  // second query, because the operator surface R-67 asks for does not exist
+  // yet and a log line that needs a join is not one.
+  console.warn(
+    `[respin-metric] ${UNCHARGED_ATTEMPT_CAP_METRIC}=1 purpose=${m.purpose} attempts=${m.attempts} cap=${m.cap} window_minutes=${m.windowMinutes ?? "lifetime"} workspace=${m.workspaceId} profile=${m.profileId}`
+  );
+}
+
+let capSink: UnchargedAttemptCapMetricSink = defaultCapSink;
+
+/** Point the cap metric somewhere else (a collector, or a test's recorder). */
+export function setUnchargedAttemptCapMetricSink(
+  next: UnchargedAttemptCapMetricSink | null
+): void {
+  capSink = next ?? defaultCapSink;
+}
+
+/**
+ * Emit one cap crossing. NEVER throws into the caller, for a sharper reason
+ * than the fold's: this fires immediately before a typed refusal, so a sink
+ * that threw would replace `GenerationUnchargedAttemptCapError` — a refusal
+ * whose whole job is to tell the creator what happened — with a telemetry
+ * stack trace rendered as "Something went wrong". Driven in `generate.test.ts`.
+ */
+export function emitUnchargedAttemptCapMetric(
+  m: UnchargedAttemptCapMetric
+): void {
+  try {
+    capSink(m);
+  } catch (err) {
+    console.warn(
+      "[respin-metric] uncharged-attempt cap metric sink threw; ignoring",
+      err
+    );
   }
 }

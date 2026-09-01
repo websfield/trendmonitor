@@ -134,6 +134,27 @@
       "when": 1788044681850,
       "tag": "0018_heavy_miracleman",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788098990007,
+      "tag": "0019_brainy_wolfpack",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1788170127430,
+      "tag": "0020_late_ultragirl",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788182850048,
+      "tag": "0021_clear_marvel_apes",
+      "breakpoints": true
     }
   ]
 }

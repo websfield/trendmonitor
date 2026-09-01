@@ -51,11 +51,12 @@ import {
   claimLabel,
   confirmProgress,
   INTERVIEW_ANSWERED_NOTHING_TO_STATE,
-  INTERVIEW_PLACEHOLDER_ABSENCE,
   isMetricPointer,
   killtestClaimLabel,
-  PLACEHOLDER_ABSENCE,
+  OPTIONAL_METRIC_BLANK_MEANING,
+  PROPOSED_INTRO,
   quoteIntro,
+  screenAbsenceSentence,
   STRATEGY_METRIC_FIELD_LABELS,
   strategyClaimLabel,
 } from "./copy";
@@ -183,6 +184,11 @@ function Refusal({ error }: { error: { title: string; detail: string } }): React
  * fixed, because this one component now renders three kinds' claims — the
  * label vocabulary and the "nothing here" sentence both differ by kind (R7,
  * R11).
+ *
+ * `placeholderAbsence` ARRIVES ALREADY RESOLVED — the caller has run
+ * `screenAbsenceSentence(kind, version.reason)` for the version these claims
+ * belong to. It cannot be resolved here: a claim knows nothing about why its
+ * version exists, and the sentence depends on that (compliance gate round 2).
  */
 function Claim({
   claim,
@@ -364,10 +370,13 @@ function ClaimsList({
 function StrategyClaims({
   claims,
   readOnly,
+  placeholderAbsence,
   testIdPrefix,
 }: {
   claims: BrainClaimView[];
   readOnly: boolean;
+  /** Already resolved for THIS version — see `Claim`'s docblock. */
+  placeholderAbsence: string;
   testIdPrefix: string;
 }): ReactNode {
   const general = claims.filter((c) => !isMetricPointer(c.pointer));
@@ -378,7 +387,7 @@ function StrategyClaims({
         claims={general}
         readOnly={readOnly}
         labelFor={strategyClaimLabel}
-        placeholderAbsence={INTERVIEW_PLACEHOLDER_ABSENCE}
+        placeholderAbsence={placeholderAbsence}
         testId={`${testIdPrefix}-claims`}
       />
       {metric.length > 0 ? (
@@ -391,7 +400,7 @@ function StrategyClaims({
             claims={metric}
             readOnly={readOnly}
             labelFor={strategyClaimLabel}
-            placeholderAbsence={INTERVIEW_PLACEHOLDER_ABSENCE}
+            placeholderAbsence={placeholderAbsence}
             testId={`${testIdPrefix}-metric-claims`}
           />
         </div>
@@ -552,6 +561,17 @@ function StrategyEditForms({
                 <option value="lower_is_better">Lower is better</option>
               </select>
             </label>
+            {/*
+              THE TWO OPTIONAL POSITIONS, and the sentence under each says what
+              blank actually DOES (slice 5 gate round 1, G1). It used to read
+              "Leave blank to record this as [check]", which was wrong twice
+              over: `[check]` means "we are not stating this yet", while a
+              creator who leaves these blank has answered — they are not naming
+              one — and the product stores that answer by leaving the position
+              unstated, exactly as the interview does when the same question is
+              declined. The same mismatch made the whole metric uneditable for
+              anyone who had declined in the interview.
+            */}
             <label style={{ display: "grid", gap: "var(--sp-2)" }}>
               <span>{STRATEGY_METRIC_FIELD_LABELS.platform}</span>
               <input
@@ -559,7 +579,7 @@ function StrategyEditForms({
                 defaultValue={metricValue(metric, "/metric/platform")}
                 style={control}
               />
-              <span className="muted">Leave blank to record this as {CHECK_MARKER}.</span>
+              <span className="muted">{OPTIONAL_METRIC_BLANK_MEANING}</span>
             </label>
             <label style={{ display: "grid", gap: "var(--sp-2)" }}>
               <span>{STRATEGY_METRIC_FIELD_LABELS.window}</span>
@@ -568,7 +588,7 @@ function StrategyEditForms({
                 defaultValue={metricValue(metric, "/metric/window")}
                 style={control}
               />
-              <span className="muted">Leave blank to record this as {CHECK_MARKER}.</span>
+              <span className="muted">{OPTIONAL_METRIC_BLANK_MEANING}</span>
             </label>
           </div>
           <SubmitButton
@@ -588,15 +608,26 @@ function VersionHistory({
   heading,
   history,
   labelFor,
-  placeholderAbsence,
+  absenceFor,
   renderClaims,
   testIdPrefix,
 }: {
   heading: string;
   history: BrainVersionView[];
   labelFor: (pointer: string) => string | null;
-  placeholderAbsence: string;
-  renderClaims?: (claims: BrainClaimView[], readOnly: boolean, testIdPrefix: string) => ReactNode;
+  /**
+   * PER VERSION, not per section. Each history entry carries its own stored
+   * `reason`, and a version the creator EDITED must describe its `[check]`
+   * positions as the creator's own decision rather than as a failed search of
+   * ours — the same defect the export had, on the same rows (round 2).
+   */
+  absenceFor: (storedReason: string) => string;
+  renderClaims?: (
+    claims: BrainClaimView[],
+    readOnly: boolean,
+    testIdPrefix: string,
+    placeholderAbsence: string
+  ) => ReactNode;
   testIdPrefix: string;
 }): ReactNode {
   return (
@@ -633,13 +664,18 @@ function VersionHistory({
                 ) : null}
                 <p className="muted">{item.reason}</p>
                 {renderClaims ? (
-                  renderClaims(item.claims, true, `${testIdPrefix}-history-v${item.version}`)
+                  renderClaims(
+                    item.claims,
+                    true,
+                    `${testIdPrefix}-history-v${item.version}`,
+                    absenceFor(item.reason)
+                  )
                 ) : (
                   <ClaimsList
                     claims={item.claims}
                     readOnly
                     labelFor={labelFor}
-                    placeholderAbsence={placeholderAbsence}
+                    placeholderAbsence={absenceFor(item.reason)}
                     testId={`${testIdPrefix}-history-v${item.version}-claims`}
                   />
                 )}
@@ -660,9 +696,15 @@ type KindSectionProps = {
   data: BrainKindSectionData;
   history: BrainVersionView[];
   labelFor: (pointer: string) => string | null;
-  placeholderAbsence: string;
+  /** The (kind, reason) absence selector for THIS kind — see `VersionHistory`. */
+  absenceFor: (storedReason: string) => string;
   /** `strategy` overrides this to split out the metric panel (R7). */
-  renderClaims?: (claims: BrainClaimView[], readOnly: boolean, testIdPrefix: string) => ReactNode;
+  renderClaims?: (
+    claims: BrainClaimView[],
+    readOnly: boolean,
+    testIdPrefix: string,
+    placeholderAbsence: string
+  ) => ReactNode;
   confirmAction: FormAction;
   activateAction: FormAction;
   editAction: BrainEditFormAction;
@@ -687,7 +729,7 @@ function KindSection({
   data,
   history,
   labelFor,
-  placeholderAbsence,
+  absenceFor,
   renderClaims,
   confirmAction,
   activateAction,
@@ -702,15 +744,24 @@ function KindSection({
     proposed?.claims.some((claim) => claim.evidenceAnnotation !== null) ?? false;
   const allConfirmed =
     proposed !== null && proposed.claims.length > 0 && confirmedCount === proposed.claims.length;
-  const claims = (claimsIn: BrainClaimView[], readOnly: boolean) =>
+  // THE VERSION'S OWN STORED REASON TRAVELS WITH ITS CLAIMS. Every caller
+  // below passes the reason of the version whose claims it is rendering, so a
+  // proposed draft, the version in force and a history entry can each describe
+  // their own `[check]` positions honestly — they need not have the same
+  // origin (compliance gate round 2).
+  const claims = (
+    claimsIn: BrainClaimView[],
+    readOnly: boolean,
+    storedReason: string
+  ) =>
     renderClaims ? (
-      renderClaims(claimsIn, readOnly, testIdPrefix)
+      renderClaims(claimsIn, readOnly, testIdPrefix, absenceFor(storedReason))
     ) : (
       <ClaimsList
         claims={claimsIn}
         readOnly={readOnly}
         labelFor={labelFor}
-        placeholderAbsence={placeholderAbsence}
+        placeholderAbsence={absenceFor(storedReason)}
         testId={`${testIdPrefix}-claims`}
       />
     );
@@ -745,7 +796,7 @@ function KindSection({
 
           {evidenceBlocked ? (
             <>
-              {claims(proposed.claims, true)}
+              {claims(proposed.claims, true, proposed.reason)}
               <p className="muted" data-testid={`${testIdPrefix}-evidence-blocked`}>
                 This draft has an evidence note, so it cannot be confirmed or
                 activated. Edit it to create a replacement draft with current
@@ -755,7 +806,7 @@ function KindSection({
           ) : (
             <>
               <form action={confirmAction}>
-                {claims(proposed.claims, false)}
+                {claims(proposed.claims, false, proposed.reason)}
                 {decideBlock ? (
                   <p className="muted" data-testid={`${testIdPrefix}-decide-blocked`}>
                     {decideBlock.reason}
@@ -805,7 +856,7 @@ function KindSection({
             Version {active.version}, activated on{" "}
             {active.activatedAt ? day(active.activatedAt) : "an unrecorded date"}.
           </p>
-          {claims(active.claims, true)}
+          {claims(active.claims, true, active.reason)}
         </div>
       ) : null}
 
@@ -837,7 +888,7 @@ function KindSection({
           heading={heading}
           history={history}
           labelFor={labelFor}
-          placeholderAbsence={placeholderAbsence}
+          absenceFor={absenceFor}
           renderClaims={renderClaims}
           testIdPrefix={testIdPrefix}
         />
@@ -912,11 +963,11 @@ export function BrainView({
             <a href="/onboarding">Go to onboarding</a>
           </>
         }
-        proposedIntro={`These are rules we drafted about how ${profileName} writes, from the posts you saved and told us you wrote. Nothing here is in force. Read each one next to the quote it came from, and confirm it — or leave it unconfirmed and it stays out.`}
+        proposedIntro={PROPOSED_INTRO.voice(profileName)}
         data={voice}
         history={voiceHistory}
         labelFor={claimLabel}
-        placeholderAbsence={PLACEHOLDER_ABSENCE}
+        absenceFor={(storedReason) => screenAbsenceSentence("voice", storedReason)}
         confirmAction={confirmVoiceAction}
         activateAction={activateVoiceAction}
         editAction={editVoiceAction}
@@ -941,13 +992,18 @@ export function BrainView({
             </>
           )
         }
-        proposedIntro={`This is ${profileName}'s strategy, built directly from what you told us in the interview — nothing here is inferred. Read each one next to your own answer, and confirm it — or leave it unconfirmed and it stays out.`}
+        proposedIntro={PROPOSED_INTRO.strategy(profileName)}
         data={strategy}
         history={strategyHistory}
         labelFor={strategyClaimLabel}
-        placeholderAbsence={INTERVIEW_PLACEHOLDER_ABSENCE}
-        renderClaims={(claims, readOnly, testIdPrefix) => (
-          <StrategyClaims claims={claims} readOnly={readOnly} testIdPrefix={testIdPrefix} />
+        absenceFor={(storedReason) => screenAbsenceSentence("strategy", storedReason)}
+        renderClaims={(claims, readOnly, testIdPrefix, placeholderAbsence) => (
+          <StrategyClaims
+            claims={claims}
+            readOnly={readOnly}
+            placeholderAbsence={placeholderAbsence}
+            testIdPrefix={testIdPrefix}
+          />
         )}
         confirmAction={confirmStrategyAction}
         activateAction={activateStrategyAction}
@@ -974,11 +1030,11 @@ export function BrainView({
             </>
           )
         }
-        proposedIntro={`These are the words and vibes ${profileName} never wants used, built directly from what you told us in the interview — nothing here is inferred. Read each one next to your own answer, and confirm it — or leave it unconfirmed and it stays out.`}
+        proposedIntro={PROPOSED_INTRO.killtest(profileName)}
         data={killtest}
         history={killtestHistory}
         labelFor={killtestClaimLabel}
-        placeholderAbsence={INTERVIEW_PLACEHOLDER_ABSENCE}
+        absenceFor={(storedReason) => screenAbsenceSentence("killtest", storedReason)}
         confirmAction={confirmKillTestAction}
         activateAction={activateKillTestAction}
         editAction={editKillTestAction}

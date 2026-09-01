@@ -32,11 +32,17 @@ import {
   BrainDocumentLimitError,
   BrainEditBusyError,
   BrainEditLimitError,
+  BrainEditUnchangedError,
   BrainReasonError,
   BrainVersionLimitError,
   CHECK,
   ClaimWalkError,
   ContentSchemaError,
+  // The evidence annotation the SERVER writes (`EVIDENCE_UNVERIFIED_ANNOTATION`
+  // in brain-ops.ts, re-exported for the projection). The honesty scan drives
+  // the real sentence, so a rewrite of it into an affirmative claim reddens
+  // here rather than passing against a fixture nobody ships.
+  EXPORT_EVIDENCE_UNVERIFIED,
   KindNotYetWritableError,
   OnboardingInputLimitError,
   ProfileRoleError,
@@ -54,7 +60,9 @@ import {
   COHERENT_ACTIVATE_MEANING,
   INTERVIEW_PLACEHOLDER_ABSENCE,
   KILLTEST_FIELD_LABELS,
+  OPTIONAL_METRIC_BLANK_MEANING,
   PLACEHOLDER_ABSENCE,
+  PROPOSED_INTRO,
   STRATEGY_FIELD_LABELS,
   STRATEGY_METRIC_FIELD_LABELS,
   VOICE_FIELD_LABELS,
@@ -109,7 +117,11 @@ const version = (p: Partial<BrainVersionView> = {}): BrainVersionView => ({
   brainDocId: "00000000-0000-7000-8000-0000000000aa",
   version: 1,
   status: "proposed",
-  reason: "Version 1: built from 3 of your posts.",
+  // A SENTENCE `renderBrainReason` REALLY PRODUCES. The old fixture string
+  // ("built from 3 of your posts") is one this server has never written, and
+  // the absence sentence is now selected from the stored reason — so a fixture
+  // whose reason no build could store would exercise only the fallback.
+  reason: REASON_INFERRED,
   claims: [claim()],
   confirmedAt: null,
   activatedAt: null,
@@ -119,6 +131,17 @@ const version = (p: Partial<BrainVersionView> = {}): BrainVersionView => ({
   updatedAt: POSTED,
   ...p,
 });
+
+/**
+ * The two stored sentences `renderBrainReason` actually writes, as LITERALS.
+ *
+ * `/brain`'s absence sentence is selected by (kind, reason) — see
+ * `screenAbsenceSentence` — so these are the fixture's real input, not
+ * decoration. Written out rather than imported from the renderer: a fixture
+ * computed by the same function the screen reads moves with a mutation.
+ */
+const REASON_INFERRED = "Version 1: inferred from 3 of your onboarding inputs.";
+const REASON_EDITED = "Version 1: you edited this document.";
 
 const EMPTY_SECTION: BrainKindSectionData = { proposed: null, active: null };
 
@@ -558,6 +581,87 @@ describe("R11: an undecided/ungrounded field is a NAMED ABSENCE, never a ratio o
     );
   });
 
+  // ---- C1: the absence is selected by (kind, REASON), never by kind alone ----
+
+  it("voice: a [check] the CREATOR typed is not blamed on a failed search of ours", () => {
+    const html = visibleCopy(
+      render({
+        voice: {
+          proposed: version({ reason: REASON_EDITED, claims: [voicePlaceholder.claims[0]] }),
+          active: null,
+        },
+      })
+    ).toLowerCase();
+    // PINNED TO THE WORDS, not to `screenAbsenceSentence`'s return value: an
+    // assertion that reads the function it is checking moves with a
+    // reason-blind mutation and stays green.
+    expect(html).toContain("you left this unstated when you edited this version");
+    expect(html).not.toContain("could not point to a quote");
+    // ...and the control it offers is one this screen actually has.
+    expect(html).toContain("edit it again to state it");
+  });
+
+  it("strategy: an edited version does not say the creator left it undecided in the interview", () => {
+    const html = visibleCopy(
+      render({
+        strategy: {
+          proposed: version({
+            reason: REASON_EDITED,
+            claims: [strategyPlaceholder.claims[0]],
+          }),
+          active: null,
+        },
+      })
+    ).toLowerCase();
+    expect(html).toContain("you left this unstated when you edited this version");
+    expect(html).not.toContain("you left this undecided in the interview");
+  });
+
+  it("HISTORY: each version's absence sentence comes from ITS OWN reason, in one render", () => {
+    // The two versions are on the page TOGETHER, so a selector that reads the
+    // SECTION's kind instead of the VERSION's reason cannot satisfy both.
+    const html = visibleCopy(
+      render({
+        voiceHistory: [
+          version({
+            brainDocId: "v2",
+            version: 2,
+            reason: REASON_EDITED,
+            claims: [voicePlaceholder.claims[0]],
+          }),
+          version({
+            brainDocId: "v1",
+            version: 1,
+            status: "superseded",
+            supersededAt: POSTED,
+            replacedByVersion: 2,
+            reason: REASON_INFERRED,
+            claims: [voicePlaceholder.claims[0]],
+          }),
+        ],
+      })
+    ).toLowerCase();
+    expect(html).toContain("you left this unstated when you edited this version");
+    expect(html).toContain("could not point to a quote");
+  });
+
+  it("a stored reason this build cannot classify claims NOTHING about whose absence it is", () => {
+    const html = visibleCopy(
+      render({
+        voice: {
+          proposed: version({
+            reason: "something nobody rendered",
+            claims: [voicePlaceholder.claims[0]],
+          }),
+          active: null,
+        },
+      })
+    ).toLowerCase();
+    expect(html).toContain("this position is recorded as not stated");
+    expect(html).not.toContain("could not point to a quote");
+    expect(html).not.toContain("you left this undecided in the interview");
+  });
+
   it("never renders a ratio, a percentage or a count of the creator's posts", () => {
     const html = visibleCopy(render({ voice: { proposed: voicePlaceholder, active: null } }));
     expect(html).not.toMatch(/%/);
@@ -947,7 +1051,16 @@ describe("slice 5: editing, ordered history and export stay honest", () => {
     expect(html).toContain('name="metric:direction"');
     expect(html).toContain('name="metric:platform"');
     expect(html).toContain('name="metric:window"');
-    expect(html).toContain(`Leave blank to record this as ${CHECK}.`);
+    // G1 — WHAT BLANK MEANS, corrected. The sentence used to say "Leave blank
+    // to record this as [check]", which described neither the creator's answer
+    // ("I am not naming one") nor what the product stores for it (an unstated
+    // position, the same shape the interview writes for a declined optional).
+    // Asserted against the constant, and asserted NEGATIVELY against the old
+    // wording, because the old wording is the defect and a partial revert
+    // would otherwise pass.
+    expect(html).toContain(OPTIONAL_METRIC_BLANK_MEANING);
+    expect(html).not.toContain(`Leave blank to record this as ${CHECK}.`);
+    expect(OPTIONAL_METRIC_BLANK_MEANING).toMatch(/not naming one/i);
   });
 
   it("does not invent a direction when the stored declared metric has none", () => {
@@ -1001,6 +1114,27 @@ describe("slice 5: editing, ordered history and export stay honest", () => {
     expect(brainErrorFor("brain-edit-all-check")!.detail).toMatch(/at least one rule stated/i);
     expect(brainErrorFor("reference_echo")!.detail).toMatch(/rewrite.*own words/i);
   });
+
+  // G3 — THE NO-OP REFUSAL SAYS WHAT HAPPENED, and the assertion is
+  // negative on purpose: the defect was not a missing sentence, it was the
+  // WRONG one. `/brain` overrides `provenance` with the STALE-BASE copy
+  // ("what this page showed you and what the server holds no longer
+  // agree ... reload the page"), and an unchanged submission — every press
+  // of the metric form that altered nothing — landed on it. The creator was
+  // sent to reload a page that was never stale.
+  it("G3: a submission that changed nothing does not borrow the stale-page copy", () => {
+    const unchanged = brainErrorFor("brain_edit_unchanged")!;
+    const stale = brainErrorFor("provenance")!;
+    expect(unchanged).not.toEqual(stale);
+    expect(unchanged).not.toEqual(brainErrorFor("unknown"));
+    // The stale copy's two load-bearing instructions must NOT appear here.
+    expect(unchanged.detail).not.toMatch(/no longer agree/i);
+    expect(unchanged.detail).not.toMatch(/reload/i);
+    // ...and it must name the act the creator can actually take.
+    expect(unchanged.detail).toMatch(/change at least one field/i);
+    // The stale copy is unchanged and still says its own thing, so this is
+    // a SPLIT and not a rewrite of the sentence that was already correct.
+    expect(stale.detail).toMatch(/no longer agree/i);  });
 });
 
 describe("the refusal channel is CLOSED, like every other surface's", () => {
@@ -1011,6 +1145,9 @@ describe("the refusal channel is CLOSED, like every other surface's", () => {
     "profile_role",
     "brain_edit_busy",
     "brain-edit-all-check",
+    // G3 — easy to reach from the metric form, which posts all five metric
+    // positions on every press whether or not the creator changed one.
+    "brain_edit_unchanged",
     "brain_edit_limit",
     "brain_document_limit",
     "brain_version_limit",
@@ -1031,6 +1168,7 @@ describe("the refusal channel is CLOSED, like every other surface's", () => {
 
   const NEW_TYPED_EDIT_REFUSALS = [
     [new BrainEditBusyError(), "brain_edit_busy"],
+    [new BrainEditUnchangedError(), "brain_edit_unchanged"],
     [new BrainEditLimitError("too large"), "brain_edit_limit"],
     [new BrainDocumentLimitError("too large"), "brain_document_limit"],
     [new BrainVersionLimitError(200), "brain_version_limit"],
@@ -1089,6 +1227,78 @@ describe("the refusal channel is CLOSED, like every other surface's", () => {
   });
 });
 
+describe("G4: a section intro never claims an origin the version does not have", () => {
+  // THE DEFECT. The three `proposedIntro` strings named where the draft came
+  // from — "from the posts you saved and told us you wrote" for voice, "built
+  // directly from what you told us in the interview — nothing here is
+  // inferred" for strategy and killtest — and were rendered above EVERY
+  // proposed version, including one whose stored reason is `creator_edit`. A
+  // creator who edits a field and reads the resulting draft is told a model
+  // read their posts, or that the interview produced it. On the screen whose
+  // whole job is provenance, that is the provenance itself being wrong.
+  const ORIGIN_CLAIMS: [string, RegExp][] = [
+    ["from the posts you saved", /posts you saved and told us you wrote/i],
+    ["built from the interview", /built directly from what you told us in the interview/i],
+    ["nothing here is inferred", /nothing here is inferred/i],
+    ["next to your own answer", /next to your own answer/i],
+  ];
+
+  it.each(["voice", "strategy", "killtest"] as const)(
+    "%s's intro claims no origin of its own",
+    (kind) => {
+      const intro = PROPOSED_INTRO[kind]("Anna");
+      for (const [label, re] of ORIGIN_CLAIMS) {
+        expect(intro, `"${label}" is asserted for every version`).not.toMatch(re);
+      }
+      expect(intro).toContain("Anna");
+      expect(intro).toMatch(/nothing here is in force/i);
+    }
+  );
+
+  it("NON-VACUITY: the origin scan would catch each retired sentence", () => {
+    const retired = [
+      "These are rules we drafted about how Anna writes, from the posts you saved and told us you wrote.",
+      "This is Anna's strategy, built directly from what you told us in the interview — nothing here is inferred. Read each one next to your own answer.",
+    ].join(" ");
+    expect(ORIGIN_CLAIMS.filter(([, re]) => re.test(retired)).map(([l]) => l)).toEqual(
+      ORIGIN_CLAIMS.map(([l]) => l)
+    );
+  });
+
+  it("a creator_edit version is introduced by ITS OWN reason, not by an inherited origin", () => {
+    // The origin is still on the page — twice, and both times derived. The
+    // version's server-rendered `reason` sits directly under the intro, and
+    // each claim carries `quoteIntro` keyed on its input row's class.
+    const html = render({
+      voice: {
+        proposed: version({ reason: "Version 2: you edited this document." }),
+        active: null,
+      },
+    });
+    expect(html).toContain("Version 2: you edited this document.");
+    expect(html).toContain(PROPOSED_INTRO.voice("Anna"));
+    for (const [label, re] of ORIGIN_CLAIMS) {
+      expect(html, `"${label}" reached an edited version's screen`).not.toMatch(re);
+    }
+  });
+
+  it("an interview-built version still says whose words each claim is, per claim", () => {
+    const html = render({
+      strategy: {
+        proposed: version({
+          reason: "Version 1: inferred from 4 of your onboarding inputs.",
+          claims: [interviewClaim()],
+        }),
+        active: null,
+      },
+    });
+    // `quoteIntro` derives this from the input row's own class, per claim —
+    // which is why removing the blanket sentence from the intro loses nothing.
+    expect(html).toContain(quoteIntro("creator_authored", "2026-08-28"));
+    expect(html).toContain("Version 1: inferred from 4 of your onboarding inputs.");
+  });
+});
+
 describe("non-negotiable 6 / R10: this screen claims no accuracy, learning, verification or measurement", () => {
   // The hardest place in the product for this rule, because every sentence is
   // about the reader. Scanned over the states that render the most copy.
@@ -1102,8 +1312,41 @@ describe("non-negotiable 6 / R10: this screen claims no accuracy, learning, veri
   // shared `/measur/` ban would forbid our own honest field label. Scoped to
   // the exact past-tense verb forms R10 actually names, which "measurement"
   // (a noun) does not match.
+  //
+  // `verified` IS NEGATION-AWARE (slice 5 gate round 1, G5), and the reason is
+  // that the screen now renders a sentence which says the OPPOSITE of the
+  // banned claim: `EXPORT_EVIDENCE_UNVERIFIED` — "this quote could not be
+  // verified against the stored post". R10 forbids CLAIMING a creator's
+  // declaration was verified; refusing to make that claim is the rule being
+  // obeyed, and a flat ban on the word would have forced the honest sentence
+  // off the screen (or, worse, forced the state carrying it to stay out of
+  // this scan's population — which is exactly what had happened).
+  //
+  // THE NEGATION MUST BIND THE VERB (learning gate CHANGE, round 2). The
+  // first shape of this ban suppressed itself after ANY negation within 16
+  // non-terminal characters, whether or not that negation governed
+  // "verified" — so three claims measured against the installed V8 walked
+  // straight through it, and they are CATCHES cases below: "this is not a
+  // draft: verified against your posts", "never guessed, verified for you",
+  // "nothing is inferred, not guessed, verified from your posts". A ban that
+  // UNDER-catches contrary to its own docblock is worse than no ban, because
+  // the docblock is what the next author trusts.
+  //
+  // The lookbehind now admits only the negation ADJACENT to the verb, with at
+  // most the copula/adverb tokens English puts between them ("could not BE
+  // verified", "has not YET been verified"). It still errs toward
+  // OVER-catching — "we are unable to verify this" trips it, because "to" is
+  // not in that set — which is the safe direction for a ban to fail in.
+  //
+  // The STEM SET covers `verifying` and `verifiable` too: both were sayable
+  // under the old pattern, which is the same class left open one word over.
+  // Probed against the installed V8 in the cases below — variable-length
+  // lookbehind is a V8 fact, not a portable one.
   const LOCAL_FORBIDDEN: [string, RegExp][] = [
-    ["verified", /\bverif(y|ies|ied|ication)\b/i],
+    [
+      "verified",
+      /(?<!\b(?:not|never|cannot|unable)\b(?:\s+(?:be|been|yet))*\s)\bverif(y|ying|ies|ied|ication|iable)\b/i,
+    ],
     ["measured", /\bmeasured\b/i],
   ];
 
@@ -1134,6 +1377,34 @@ describe("non-negotiable 6 / R10: this screen claims no accuracy, learning, veri
                 quote: "28 days",
               }),
             ],
+          }),
+          active: null,
+        },
+      },
+    ],
+    // ROUND 2's NEW SENTENCE joins the population the round it is written.
+    // `screenAbsenceSentence` gained a third and fourth answer (the creator's
+    // own edit, and the claims-nothing fallback), and a sentence outside this
+    // scan is a sentence nothing checks for claims it must not make.
+    [
+      "a voice draft the CREATOR EDITED, with a placeholder they typed",
+      {
+        voice: {
+          proposed: version({
+            reason: REASON_EDITED,
+            claims: [claim({ value: CHECK, isPlaceholder: true, quote: null, source: null })],
+          }),
+          active: null,
+        },
+      },
+    ],
+    [
+      "a version whose stored reason this build cannot classify",
+      {
+        voice: {
+          proposed: version({
+            reason: "something nobody rendered",
+            claims: [claim({ value: CHECK, isPlaceholder: true, quote: null, source: null })],
           }),
           active: null,
         },
@@ -1185,6 +1456,94 @@ describe("non-negotiable 6 / R10: this screen claims no accuracy, learning, veri
       },
     ],
     ["blocked", { voice: { proposed: version(), active: null }, decideBlock: { reason: "Viewer access." } }],
+    // ─── SLICE 5's OWN TWO SURFACES (gate round 1, G5) ────────────────────
+    //
+    // THE POPULATION LESSON, applied to the scan rather than to the guard it
+    // scans (CLAUDE.md 2026-08-29). Every state above was written before this
+    // slice, and all three `*History` props default to `[]` in `base` — so
+    // VERSION HISTORY, the superseded-version copy and the replacement line
+    // rendered NO COPY AT ALL into this scan, and neither did the evidence
+    // annotation. The screen grew two surfaces and its honesty scan did not
+    // grow with it: a derived guard is only as wide as its population.
+    [
+      "a superseded version in history, with its replacement line",
+      {
+        voice: { proposed: null, active: version({ version: 2, status: "active", activatedAt: POSTED }) },
+        voiceHistory: [
+          version({ brainDocId: "v2", version: 2, status: "active", confirmedAt: POSTED, activatedAt: POSTED, claims: [claim({ confirmed: true })] }),
+          version({
+            brainDocId: "v1",
+            version: 1,
+            status: "superseded",
+            reason: "Version 1: you edited this document.",
+            confirmedAt: POSTED,
+            activatedAt: POSTED,
+            supersededAt: POSTED,
+            replacedByVersion: 2,
+            claims: [claim({ confirmed: true })],
+          }),
+        ],
+      },
+    ],
+    [
+      "a superseded version whose replacement cannot be named",
+      {
+        voiceHistory: [
+          version({
+            brainDocId: "v1",
+            status: "superseded",
+            supersededAt: POSTED,
+            replacedByVersion: null,
+            claims: [claim({ confirmed: false })],
+          }),
+        ],
+      },
+    ],
+    [
+      "a strategy history version, rendered through the metric panel",
+      {
+        strategyHistory: [
+          version({
+            brainDocId: "s1",
+            status: "superseded",
+            supersededAt: POSTED,
+            replacedByVersion: 2,
+            claims: [
+              interviewClaim({ confirmed: true }),
+              interviewClaim({ pointer: "/metric/window", value: "28 days", quote: "28 days", confirmed: true }),
+            ],
+          }),
+        ],
+      },
+    ],
+    // THE ANNOTATED CLAIM — the state whose own honest sentence contains the
+    // word this suite bans, driven from `@respin/db`'s constant rather than a
+    // fixture string, so a rewrite of that sentence into an affirmative claim
+    // ("this quote was verified") reddens here.
+    [
+      "a claim carrying the evidence annotation, blocking the draft",
+      {
+        voice: {
+          proposed: version({
+            claims: [claim({ evidenceAnnotation: EXPORT_EVIDENCE_UNVERIFIED })],
+          }),
+          active: null,
+        },
+      },
+    ],
+    [
+      "an annotated claim in HISTORY, where it is read-only",
+      {
+        voiceHistory: [
+          version({
+            status: "superseded",
+            supersededAt: POSTED,
+            replacedByVersion: 2,
+            claims: [claim({ confirmed: true, evidenceAnnotation: EXPORT_EVIDENCE_UNVERIFIED })],
+          }),
+        ],
+      },
+    ],
   ];
 
   it.each(STATES)("%s claims nothing this product does not do", (_label, props) => {
@@ -1211,6 +1570,53 @@ describe("non-negotiable 6 / R10: this screen claims no accuracy, learning, veri
     expect(LOCAL_FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toEqual(
       expect.arrayContaining(["verified", "measured"])
     );
+  });
+
+  // G5 — the narrowing is a NARROWING, measured against the installed engine.
+  // A ban weakened to let one honest sentence through has to prove, per shape,
+  // that it still catches the claim it exists for. `LOCAL_FORBIDDEN[0]` rather
+  // than a re-typed regex: this drives the pattern the scan above actually uses.
+  describe("G5: the negation-aware `verified` ban", () => {
+    const verified = LOCAL_FORBIDDEN.find(([l]) => l === "verified")![1];
+
+    it("PASSES the product's own honest negative sentence, exactly as rendered", () => {
+      expect(verified.test(EXPORT_EVIDENCE_UNVERIFIED)).toBe(false);
+      expect(verified.test(`Evidence note: ${EXPORT_EVIDENCE_UNVERIFIED}.`)).toBe(false);
+      // The sentence must still BE a negation — if it is ever rewritten into a
+      // claim, this assertion and the state scan above both fail.
+      expect(EXPORT_EVIDENCE_UNVERIFIED).toMatch(/\b(?:not|never|cannot|unable)\b/i);
+    });
+
+    it.each([
+      ["a plain claim", "this declaration was verified"],
+      ["an agentive claim", "we verify every rule against your posts"],
+      ["a noun claim", "each rule ships with a verification"],
+      ["a claim AFTER a negation in a PREVIOUS sentence", "we could not reach it. every rule was verified"],
+      ["a claim far enough past a negation", "we never guess about any of this, because each rule was verified"],
+      // ROUND 2's THREE. Each has a negation within the old 16-character
+      // window that does NOT govern the verb, and each was measured against
+      // the installed V8 as PASSING the previous pattern.
+      ["a negation of something ELSE, before a colon", "this is not a draft: verified against your posts"],
+      ["a negation of a different verb, before a comma", "never guessed, verified for you"],
+      ["two negations, neither binding the verb", "nothing is inferred, not guessed, verified from your posts"],
+      // The two stems the ban could not say before.
+      ["a progressive claim", "we are verifying your posts"],
+      ["a capability claim", "each rule is verifiable"],
+    ])("CATCHES %s", (_label, planted) => {
+      expect(verified.test(planted)).toBe(true);
+    });
+
+    it.each([
+      ["the negation adjacent to the verb", "this rule was never verified"],
+      ["a copula between them", "this quote could not be verified"],
+      ["an adverb and a copula between them", "this rule has not yet been verified"],
+    ])("still PASSES an honest negative: %s", (_label, honest) => {
+      expect(verified.test(honest)).toBe(false);
+    });
+
+    it("does not fire on a word that merely CONTAINS the stem", () => {
+      expect(verified.test("unverified")).toBe(false);
+    });
   });
 
   it("EVERY refusal code this screen can emit is scanned — not a fixture", () => {

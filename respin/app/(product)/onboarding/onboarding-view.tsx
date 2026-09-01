@@ -38,6 +38,14 @@ import {
   RunInferencePanel,
   type RunInferencePanelProps,
 } from "./run-inference-panel";
+import {
+  CandidateSafetyPanel,
+  type SafetyAction,
+} from "./candidate-safety-panel";
+import {
+  CreatorProfilePanel,
+  type CreatorProfilePanelProps,
+} from "./creator-profile-panel";
 
 /** A server action, or a plain URL when a test renders this component. */
 export type FormAction = string | ((formData: FormData) => void | Promise<void>);
@@ -116,6 +124,9 @@ export type OnboardingViewProps = {
   createProfileAction: FormAction;
   addPostAction: FormAction;
   addReferenceAction: FormAction;
+  profilePanel?: CreatorProfilePanelProps;
+  selectionRequired?: boolean;
+  candidateSafetyAction?: SafetyAction;
   /**
    * The metered run (slice 2a), or NULL where there is no profile to run for.
    *
@@ -229,6 +240,9 @@ export function OnboardingView({
   createProfileAction,
   addPostAction,
   addReferenceAction,
+  profilePanel,
+  selectionRequired = false,
+  candidateSafetyAction,
   run,
   error,
 }: OnboardingViewProps): ReactNode {
@@ -282,6 +296,17 @@ export function OnboardingView({
         </div>
       ) : (
         <>
+          {profilePanel ? <CreatorProfilePanel {...profilePanel} /> : null}
+          {selectionRequired ? (
+            <div className="panel" data-testid="profile-selection-required">
+              <h2>Choose a creator to continue</h2>
+              <p className="muted">
+                Select a creator profile above. No posts, interview answers, or
+                brain data are shown until you choose one.
+              </p>
+            </div>
+          ) : (
+            <>
           {/*
             Slice 3b, Stage B1. A plain link, not folded into this page's own
             forms — the structured interview is its own screen with its own
@@ -471,6 +496,10 @@ export function OnboardingView({
             ) : null}
           </div>
 
+          {candidateSafetyAction ? (
+            <CandidateSafetyPanel action={candidateSafetyAction} />
+          ) : null}
+
           {run ? (
             <div className="panel">
               <h2>Draft the rules for how you write</h2>
@@ -556,6 +585,8 @@ export function OnboardingView({
               </>
             )}
           </div>
+            </>
+          )}
         </>
       )}
     </section>

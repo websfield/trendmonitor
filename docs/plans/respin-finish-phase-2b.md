@@ -1,5 +1,7 @@
 # Slice 2b: The spend record that outlives deletion
 
+> **Current truth override (Slice 4c, 2026-08-31):** this plan remains historical evidence of what Slice 2b-c built and tested. Its R4a completion claim is superseded: `applyReconciliationDelta`, the `model_usage` UPDATE allowance, error/copy plumbing, and mutation-only tests were removed because no real provider/job/operator-import caller exists. The retained unknown denominator, new-call rollup UPSERT, and read-only reconciliation report remain live. A future corrected-cost transition belongs to the real integration that can prove payload identity and idempotency.
+
 ## A creator can…
 **See this month's credit burn on `/usage`, and have it still be right after a retried settlement.**
 

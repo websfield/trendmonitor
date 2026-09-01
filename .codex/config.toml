@@ -3,7 +3,7 @@ default_permissions = "trendmonitor-workspace"
 project_doc_max_bytes = 65536
 
 [features]
-hooks = true
+hooks = false
 
 [agents]
 max_concurrent_threads_per_session = 8

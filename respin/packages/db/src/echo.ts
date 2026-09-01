@@ -358,6 +358,28 @@ export function collectStringLeaves(
 /** One `reference`-classed input, as the bar sees it. */
 export type ReferenceInput = { id: string; content: string };
 
+export type ReferenceSafetyRefusal = {
+  decision: "refuse";
+  reason: "reference_echo" | "reference_quote_budget";
+  detail: string;
+  match: { pointer: string; inputId: string; span: string } | null;
+};
+
+export type ReferenceSafetyDecision =
+  | { decision: "accept" }
+  | ReferenceSafetyRefusal;
+
+export type EvaluateReferenceSafetyParams = {
+  content: unknown;
+  references: readonly ReferenceInput[] | null | undefined;
+  newSpans: readonly ReferenceQuoteSpan[];
+  /**
+   * Required by design. A missing retained population would make the quote
+   * budget look active while silently evaluating only this write.
+   */
+  retainedSpans: readonly ReferenceQuoteSpan[];
+};
+
 /**
  * Refuse if any string leaf of `content` echoes any reference input.
  *
@@ -369,10 +391,10 @@ export type ReferenceInput = { id: string; content: string };
  * instead; the third enforcement point is M3's prompt-bundle read, which is
  * where the leak route actually runs.
  */
-export function assertNoReferenceEcho(
+function findReferenceEchoRefusal(
   content: unknown,
   references: readonly ReferenceInput[] | null | undefined
-): void {
+): ReferenceSafetyRefusal | null {
   // AN ABSENT CORPUS IS A REFUSAL, NOT A NO-OP.
   //
   // The previous form returned early whenever the array was empty, so a
@@ -387,18 +409,31 @@ export function assertNoReferenceEcho(
       "the reference-echo bar was called without a corpus. Pass the profile's reference inputs explicitly — an empty array means 'this profile has none', while a missing corpus would silently disable the check R-3 rests on"
     );
   }
-  if (references.length === 0) return;
+  if (references.length === 0) return null;
   const leaves = collectStringLeaves(content);
   for (const leaf of leaves) {
     for (const ref of references) {
       const span = findEchoWindow(leaf.text, ref.content);
       if (span !== null) {
-        throw new ReferenceEchoError(
-          `the field at ${leaf.pointer || "/"} repeats a span of at least ${ECHO_MIN_SEGMENTS} words from a reference post (input ${ref.id}): "${span}". A brain document records how YOU write; a reference post is somebody else's work, kept so a mechanism can be noted from it (R-3). Rewrite the span in your own words`,
-          { pointer: leaf.pointer || "/", inputId: ref.id, span }
-        );
+        return {
+          decision: "refuse",
+          reason: "reference_echo",
+          detail: `the field at ${leaf.pointer || "/"} repeats a span of at least ${ECHO_MIN_SEGMENTS} words from a reference post (input ${ref.id}): "${span}". A brain document records how YOU write; a reference post is somebody else's work, kept so a mechanism can be noted from it (R-3). Rewrite the span in your own words`,
+          match: { pointer: leaf.pointer || "/", inputId: ref.id, span },
+        };
       }
     }
+  }
+  return null;
+}
+
+export function assertNoReferenceEcho(
+  content: unknown,
+  references: readonly ReferenceInput[] | null | undefined
+): void {
+  const refusal = findReferenceEchoRefusal(content, references);
+  if (refusal !== null) {
+    throw new ReferenceEchoError(refusal.detail, refusal.match);
   }
 }
 
@@ -653,16 +688,19 @@ export function groupReferenceInputs(
  * with no action available to the creator, which is the exact outage C-41
  * exists to remove.
  */
-export function assertReferenceQuoteBudget(
+function findReferenceQuoteBudgetRefusal(
   newSpans: readonly ReferenceQuoteSpan[],
-  retained: readonly ReferenceQuoteSpan[] = []
-): void {
+  retained: readonly ReferenceQuoteSpan[]
+): ReferenceSafetyRefusal | null {
   for (const s of newSpans) {
     assertUsableSpan(s);
     if (s.quote.length > REFERENCE_QUOTE_MAX_CHARS) {
-      throw new ReferenceEchoError(
-        `a quote drawn from a reference post is ${s.quote.length} characters, over the ${REFERENCE_QUOTE_MAX_CHARS}-character limit. Evidence drawn from somebody else's post stays mechanism-level (R-9, REQ-D04): quote the line that shows the mechanism, not the passage`
-      );
+      return {
+        decision: "refuse",
+        reason: "reference_quote_budget",
+        detail: `a quote drawn from a reference post is ${s.quote.length} characters, over the ${REFERENCE_QUOTE_MAX_CHARS}-character limit. Evidence drawn from somebody else's post stays mechanism-level (R-9, REQ-D04): quote the line that shows the mechanism, not the passage`,
+        match: null,
+      };
     }
   }
   // Retained spans are checked for MEASURABILITY but not for the per-quote cap:
@@ -718,9 +756,53 @@ export function assertReferenceQuoteBudget(
     // See the header — this is what makes the refusal unable to become an
     // unclearable outage.
     if (coveredAfter <= coveredBefore) continue;
-    throw new ReferenceEchoError(
-      `this write would take ${coveredAfter - coveredBefore} further characters from reference post ${entry.id}, bringing the total distinct material quoted from it to ${coveredAfter} — over the ${REFERENCE_QUOTE_TOTAL_MAX_CHARS}-character limit. The per-quote cap alone would let several capped quotes reassemble somebody else's post, so the distinct material taken from one post is bounded too (R-3). Re-citing a span you already cited costs nothing; quoting a further passage is what raises this`
-    );
+    return {
+      decision: "refuse",
+      reason: "reference_quote_budget",
+      detail: `this write would take ${coveredAfter - coveredBefore} further characters from reference post ${entry.id}, bringing the total distinct material quoted from it to ${coveredAfter} — over the ${REFERENCE_QUOTE_TOTAL_MAX_CHARS}-character limit. The per-quote cap alone would let several capped quotes reassemble somebody else's post, so the distinct material taken from one post is bounded too (R-3). Re-citing a span you already cited costs nothing; quoting a further passage is what raises this`,
+      match: null,
+    };
+  }
+  return null;
+}
+
+export function assertReferenceQuoteBudget(
+  newSpans: readonly ReferenceQuoteSpan[],
+  retained: readonly ReferenceQuoteSpan[] = []
+): void {
+  const refusal = findReferenceQuoteBudgetRefusal(newSpans, retained);
+  if (refusal !== null) {
+    throw new ReferenceEchoError(refusal.detail, refusal.match);
+  }
+}
+
+/**
+ * The one pure deterministic R-3 decision consumed by both preview and write.
+ *
+ * Both populations are explicit. Pasted free text supplies no new spans
+ * honestly: it exercises the combined decision without pretending the text
+ * carried SourceEvidenceEntry citation spans. A hard write supplies the real
+ * new spans and re-loads retained spans before every decision.
+ */
+export function evaluateReferenceSafety({
+  content,
+  references,
+  newSpans,
+  retainedSpans,
+}: EvaluateReferenceSafetyParams): ReferenceSafetyDecision {
+  const echoRefusal = findReferenceEchoRefusal(content, references);
+  if (echoRefusal !== null) return echoRefusal;
+  return (
+    findReferenceQuoteBudgetRefusal(newSpans, retainedSpans) ?? {
+      decision: "accept",
+    }
+  );
+}
+
+/** Preserve the existing structured throwing contract at hard-write callers. */
+export function assertReferenceSafety(decision: ReferenceSafetyDecision): void {
+  if (decision.decision === "refuse") {
+    throw new ReferenceEchoError(decision.detail, decision.match);
   }
 }
 

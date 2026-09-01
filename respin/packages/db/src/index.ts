@@ -68,10 +68,25 @@ export {
   type WriteBrainDocParams,
   type ConfirmBrainDocParams,
   type ActivateBrainDocParams,
+  // Slice 6 (R14/R14b/R14c) — the generation claim's write surface. The
+  // ERROR CLASS is exported as a VALUE, not a type: `@respin/credits` catches
+  // it to tell a lost claim race apart from a genuine failure, and a class it
+  // cannot `instanceof` is a refusal that degrades to "something went wrong".
+  GenerationAttemptStateError,
+  type ClaimGenerationAttemptParams,
+  type ClaimGenerationAttemptResult,
+  type AdvanceGenerationAttemptParams,
+  type SettleGenerationParams,
+  type SettleGenerationResult,
   type VerifiedUserId,
   CALLER_SUPPLIABLE_BRAIN_FIELDS,
   monthlySpend,
   type MonthlySpendResult,
+  // Slice 6, R17a: credit burn by the mode each debit's attempt settled into.
+  burnByMode,
+  type BurnByModeBucket,
+  type BurnByModeResult,
+  type BurnByModeRow,
 } from "./with-workspace";
 // Slice 2b's spend-record surface — the month truncation the rollup upsert
 // uses (composed into `recordModelUsage` already, inside `with-workspace.ts`),
@@ -80,7 +95,6 @@ export {
 // reason `creator-data-registry.ts` is: the package's own suites and the
 // `respinDb` facade both need to reach it, and the `exports` map has only ".".
 export {
-  applyReconciliationDelta,
   periodMonthUtc,
   pseudonymiseWorkspaceSpend,
   reconcileSpend,
@@ -101,6 +115,14 @@ export {
 export type { ProfileScope, WorkspaceScope } from "./with-workspace";
 export {
   BrainEditEmptyError,
+  // Slice 5 gate round 1, G3. The no-op edit refusal, split off
+  // `ProvenanceError` so `/brain` stops telling a creator who submitted an
+  // unchanged form that their page went stale. Exported for the same reason
+  // every typed refusal in this block is: the completeness scan in
+  // `tests/billing-ui.test.tsx` enumerates the WHOLE root export, so a class
+  // reachable from `editBrainDocument` without copy here would render
+  // "Something went wrong".
+  BrainEditUnchangedError,
   BrainEditBusyError,
   BrainEditLimitError,
   BrainDocumentLimitError,
@@ -116,7 +138,6 @@ export {
   PostContentError,
   PostAttestationError,
   ProvenanceError,
-  ReconciliationTargetError,
   ReferenceEchoError,
   ScopeForgeryError,
   UsageRawError,
@@ -150,6 +171,7 @@ export {
   creatorProfiles,
   creatorProfileState,
   frameworks,
+  membershipProfileSelections,
   type BrainDoc,
   type BrainDocStatus,
   type BrainKind,
@@ -157,8 +179,37 @@ export {
   type CreatorProfileState,
   type Framework,
   type FrameworkVisibility,
+  type MembershipProfileSelection,
+  type NewMembershipProfileSelection,
 } from "./brain-schema";
+// Slice 6 — the generation substrate. Exported through the root for the same
+// reason every other schema module is: the `exports` map has only ".", so this
+// is the door `packages/**` and the package's own suites arrive through. The
+// WRITE surface is not here and never will be: it lives on
+// `writeCapabilities`, which `app/**` cannot import at all.
 export {
+  generationAttempts,
+  generationAttemptState,
+  generationOutcome,
+  generations,
+  type Generation,
+  type GenerationAttempt,
+  type GenerationAttemptState,
+  type GenerationOutcome,
+  type NewGeneration,
+  type NewGenerationAttempt,
+} from "./generation-schema";
+export {
+  selectActiveProfile,
+  selectActiveProfileInTx,
+  selectedProfileForMember,
+} from "./profile-selection";
+export {
+  // Slice 6: the coherent-activation table. Exported so `latestBrainActivation`
+  // and the generation path's provenance can be asserted against the rows
+  // themselves; the only WRITER remains `activateBrainDocCoherent`, which
+  // `tests/table-writers.test.ts` pins.
+  brainActivationSnapshots,
   costState,
   inputClass,
   modelUsage,
@@ -183,6 +234,7 @@ export {
   // returns one, and the onboarding UI reads `.answers` (cast to `InterviewAnswers`,
   // below) and `.submittedAt` off it directly.
   type OnboardingInterviewDraft,
+  type BrainActivationSnapshot,
 } from "./onboarding-schema";
 // THE BRAIN CONTENT AND ECHO MODULES REACH A DEPLOYED PROCESS THROUGH HERE.
 //
@@ -278,7 +330,11 @@ export {
   confirmVoiceFields,
   confirmStrategyFields,
   confirmKillTestFields,
-  activateVoice,
+  // `activateVoice` is deliberately absent: slice 3's single-document
+  // activation was deleted in the 2026-09-01 tenancy gate round because it
+  // wrote no `brain_activation_snapshots` row and had no `app/**` caller —
+  // see the note in `brain-ops.ts`. `activateBrainCoherent` is the whole
+  // activation surface.
   activateBrainCoherent,
   EvidenceUnreadableError,
   type BrainDocsView,
@@ -287,20 +343,46 @@ export {
   type BrainClaimEdit,
   type DeclaredMetricEdit,
 } from "./brain-ops";
+// ONE exporter (slice 5 gate round 1). `exportBrain`/`exportBrainFile` and
+// their materialising helpers had zero `app/**` callers while carrying every
+// export witness, so they are gone and `openBrainExport` is the whole surface.
+//
+// The label maps, the two absence sentences and `quoteIntro` are exported for
+// `app/(product)/brain/copy.ts` to RE-EXPORT rather than redeclare: the screen
+// and the downloaded file must say the same thing about the same field, and
+// `packages/db` is the only side both can import.
 export {
-  exportBrain,
-  exportBrainFile,
   openBrainExport,
-  assertExportRegistryReadable,
+  exportPlan,
   ExportClassificationError,
   EXPORT_EVIDENCE_UNVERIFIED,
   NO_RULES_RECORDED,
   PLACEHOLDER_ABSENCE,
+  INTERVIEW_PLACEHOLDER_ABSENCE,
+  exportAbsenceSentence,
+  // The SCREEN's half of the same two-dimensional (kind, reason) selection —
+  // `/brain` re-exports this rather than composing the sentence itself, so a
+  // creator's own `[check]` cannot be described one way in the file and
+  // another way on the page (compliance gate round 2).
+  screenAbsenceSentence,
   EXPORT_STREAM_DEADLINE_MS,
   EXPORT_DB_STATEMENT_TIMEOUT_MS,
+  VOICE_FIELD_LABELS,
+  STRATEGY_FIELD_LABELS,
+  STRATEGY_METRIC_FIELD_LABELS,
+  KILLTEST_FIELD_LABELS,
+  METRIC_DIRECTION_LABELS,
+  BRAIN_KIND_LABELS,
+  BRAIN_STATUS_LABELS,
+  claimLabel,
+  strategyClaimLabel,
+  killtestClaimLabel,
+  claimLabelForKind,
+  isMetricPointer,
+  exportClaimHeading,
+  exportClaimValue,
+  quoteIntro,
   type BrainExportAnnotation,
-  type BrainExportBundle,
-  type BrainExportData,
   type BrainExportFormat,
 } from "./export";
 export {

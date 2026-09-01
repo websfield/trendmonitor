@@ -81,7 +81,37 @@ import {
   NotEnoughPostsError,
 } from "@respin/llm";
 import { inferVoice, type InferVoiceResult } from "./infer-voice";
-import { BrainPointerDivergenceError } from "./errors";
+import {
+  BrainNotActivatedError,
+  BrainPointerDivergenceError,
+  GenerationAlreadyRefusedError,
+  GenerationInFlightError,
+  GenerationPayloadMismatchError,
+  GenerationRecoveryRequiredError,
+  GenerationUnchargedAttemptCapError,
+  UnpricedOperationError,
+} from "./errors";
+import {
+  generate,
+  type GenerateParams,
+  type GenerateResult,
+} from "./generate";
+import { ModeNotBuiltYetError, ModeNotInPlanError } from "./mode-access";
+import { GenerationAttemptStateError } from "@respin/db";
+// THE PIPELINE'S OWN REFUSALS, RE-EXPORTED AS VALUES (the `LlmError`
+// precedent, four imports up). `@respin/modes` is denied from `app/**`, so a
+// class it throws is a class the studio screen could not `instanceof` — and a
+// typed refusal `app/**` cannot match degrades to "Something went wrong" on
+// the one screen that spends a creator's credits. The facade-error walk cannot
+// demand these (it follows RELATIVE imports only), which is exactly why they
+// are named here deliberately rather than left to it.
+import {
+  GenerationAssemblyError,
+  KillTestError,
+  NoCreatorRulesError,
+  ScriptOutputError,
+  UnknownModeError,
+} from "@respin/modes";
 import { ConfigNotMigratedError, getActiveConfig } from "@respin/config";
 
 /**
@@ -100,9 +130,25 @@ import { ConfigNotMigratedError, getActiveConfig } from "@respin/config";
  *   does, so the page's disabled state and the action's refusal cannot drift.
  */
 export { hasLiveStripeSubscription, isStripeConfigured };
-// Slice 2b, R7: the burn-period authority — pure, no DB call, so it is a
-// plain re-export like the two above rather than a `respinCredits` method.
-export { burnPeriodStart } from "./burn-period";
+// Slice 2b, R7 / slice 6, R17a: the burn-period authority AND the vocabulary
+// for naming it to the creator — pure, no DB call, so plain re-exports like the
+// two above rather than `respinCredits` methods. `BURN_PERIOD_COPY` travels
+// with `burnPeriod` deliberately: the page that chooses the window is the page
+// that must name it, and a screen-side copy of the names would be the second
+// answer R-66 already refused for `modeLabel`.
+export { burnPeriod, BURN_PERIOD_COPY } from "./burn-period";
+// Slice 6, billing gate round 2: the sentence a WINDOWED uncharged-billable
+// cap owes its reader. Re-exported for exactly the `BURN_PERIOD_COPY` reason —
+// `billing-errors.ts` writes the words a creator reads, and an independent
+// literal there is how that copy came to say "there is nothing for you to
+// change" about a refusal that clears itself inside an hour. A plain string
+// constant: no query, no workspace data, nothing to isolate.
+export { UNCHARGED_CAP_WINDOW_CLAUSE } from "./errors";
+export type { BurnPeriod, BurnPeriodKind, BurnPeriodTier } from "./burn-period";
+// Slice 6, R17a: the creator-facing name for a stored `generations.mode`.
+// Pure, and the ONLY route from `app/**` to `MODE_SPECS[…].label` — see
+// `mode-label.ts` for why the label does not live in the view.
+export { modeLabel } from "./mode-label";
 
 // Every error class a facade method can throw must be re-exported here, or
 // `app/**` — which may import ONLY this entrypoint — cannot `instanceof` it
@@ -203,11 +249,37 @@ export {
   // class reachable from a facade method, and because a bare throw would render
   // as "Something went wrong" on a screen that just spent a creator's run.
   BrainPointerDivergenceError,
+  // Slice 6 — every refusal `respinCredits.generate` can raise. The four
+  // groups say different things and the studio screen has to tell them apart:
+  // what the plan includes (`ModeNotInPlanError`) vs what we have shipped
+  // (`ModeNotBuiltYetError`); what the creator must do first
+  // (`BrainNotActivatedError`); what a repeated submission means
+  // (`GenerationInFlightError`, `GenerationAlreadyRefusedError`,
+  // `GenerationPayloadMismatchError`); and the two that mean money moved or
+  // may have (`GenerationRecoveryRequiredError`, `PostCallDebitError` above).
+  BrainNotActivatedError,
+  GenerationAlreadyRefusedError,
+  GenerationAttemptStateError,
+  GenerationInFlightError,
+  GenerationPayloadMismatchError,
+  GenerationRecoveryRequiredError,
+  GenerationUnchargedAttemptCapError,
+  ModeNotBuiltYetError,
+  ModeNotInPlanError,
+  UnpricedOperationError,
+  // ...and the pipeline's, from `@respin/modes`.
+  GenerationAssemblyError,
+  KillTestError,
+  NoCreatorRulesError,
+  ScriptOutputError,
+  UnknownModeError,
 };
 export type {
   BalanceView,
   BillingState,
   CheckoutUrls,
+  GenerateParams,
+  GenerateResult,
   InferVoiceResult,
   // Still exported although the facade method that took it is gone:
   // `InferVoiceResult.run` IS a `RunInferenceResult`, so app/** needs the type
@@ -283,6 +355,47 @@ export const respinCredits = {
       // FROM CONFIG, not a module constant: it bounds what we send and pay for
       // (billing gate round 2).
       content.onboarding.voiceCorpusMaxPosts,
+      new Date()
+    );
+  },
+  /**
+   * Slice 6's composed generation: gate, claim, call, settle (R14-R18).
+   *
+   * THE ONE DOOR. `@respin/modes` and `@respin/llm` are both denied to
+   * `app/**`, so a server action cannot assemble a generation prompt or reach a
+   * vendor — it hands a mode, an attempt id, the creator's input and a
+   * platform, and everything from the cage to the debit happens behind this
+   * method. That is the `inferVoice` shape, deliberately: slice 3 deleted the
+   * general `runInference` door precisely so a new operation would have to
+   * bring its own cage.
+   *
+   * The provider, the slots and the clock enter here because this facade is
+   * where the real world enters; `generate` itself stays a function of injected
+   * ports so a test can hand it a stub whose refusal to be called is the proof.
+   *
+   * `attemptId` IS THE CALLER'S, with no default. It is the idempotency key
+   * three tables join on, so a defaulted one would silently make every press a
+   * new attempt and turn a double-click into two debits.
+   */
+  generate: async (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: GenerateParams
+  ): Promise<GenerateResult> => {
+    const db = getServerDb();
+    const { content } = await getActiveConfig(db);
+    const provider = createAnthropicProvider({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      timeoutMs: content.llm.timeoutMs,
+      maxRetries: content.llm.maxRetries,
+    });
+    return generate(
+      db,
+      scope,
+      profileId,
+      provider,
+      getServerRunSlots(),
+      params,
       new Date()
     );
   },

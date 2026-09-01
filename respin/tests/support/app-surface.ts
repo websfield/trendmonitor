@@ -37,6 +37,7 @@ import { basename, extname, join, relative, sep } from "node:path";
 import { defaultConfig } from "next/dist/server/config-shared";
 import { isMetadataRouteFile } from "next/dist/lib/metadata/is-metadata-route";
 import nextConfig from "../../next.config";
+import { isProbeArtifactSegment } from "./probe-artifacts";
 
 /**
  * The extensions Next will treat as routable, DERIVED: this project's own
@@ -159,8 +160,25 @@ export function isUseServerModule(src: string): boolean {
   return /^(["'])use server\1\s*;?/.test(head);
 }
 
+/** How a caller asks for the files a scan would otherwise never want to see. */
+export type WalkOptions = {
+  /**
+   * Include PROBE ARTIFACTS — the disposable planted violations a non-vacuity
+   * test writes into the tree it is about to scan (tests/support/
+   * probe-artifacts.ts). Default FALSE, and the default is the point: vitest
+   * runs test files in parallel, so a probe planted by one suite is visible to
+   * every other suite's walk for as long as it exists, and a scan whose
+   * offender belongs to another test is a failure nobody can reproduce.
+   *
+   * TRUE belongs to exactly one caller: a test proving its OWN probe is found.
+   * Without that opt-in those tests would keep passing while proving nothing,
+   * which is the fail-open shape this option exists to close.
+   */
+  includeProbeArtifacts?: boolean;
+};
+
 /** Every code file under a root (which may itself be a file, e.g. middleware.ts). */
-export function walkCodeFiles(root: string): string[] {
+export function walkCodeFiles(root: string, options: WalkOptions = {}): string[] {
   let stat;
   try {
     stat = statSync(root);
@@ -169,13 +187,16 @@ export function walkCodeFiles(root: string): string[] {
     // callers assert the total is non-trivial.
   }
   if (!stat.isDirectory()) {
+    // A root named EXPLICITLY is returned as asked: naming a path is the
+    // opt-in. The filter below is about what a walk DISCOVERS.
     return CODE_EXTENSIONS.includes(extname(root) as (typeof CODE_EXTENSIONS)[number])
       ? [root]
       : [];
   }
   return readdirSync(root, { withFileTypes: true }).flatMap((e) => {
+    if (!options.includeProbeArtifacts && isProbeArtifactSegment(e.name)) return [];
     const full = join(root, e.name);
-    if (e.isDirectory()) return walkCodeFiles(full);
+    if (e.isDirectory()) return walkCodeFiles(full, options);
     return CODE_EXTENSIONS.includes(extname(e.name) as (typeof CODE_EXTENSIONS)[number])
       ? [full]
       : [];

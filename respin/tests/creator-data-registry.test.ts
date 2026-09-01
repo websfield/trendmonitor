@@ -18,6 +18,7 @@ import {
   creatorDataEntry,
   NOT_CREATOR_DATA,
 } from "../packages/db/src/creator-data-registry";
+import { exportPlan } from "../packages/db/src/export";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS = join(ROOT, "packages/db/migrations");
@@ -148,12 +149,74 @@ describe("P9 — the creator-data registry covers every table M2a created", () =
     }
   });
 
-  it("the exporter walks this registry instead of maintaining a second export list", () => {
+  // THE LIVE LOOP, not the one that used to be here. Until 2026-08-31 these
+  // four strings pinned `withPreparedExport` -- a second, materialising
+  // exporter with no `app/**` caller -- so the registry could have stopped
+  // driving the export the route actually runs without a single red test. The
+  // pins below name `exportPlan` and `streamJsonExport`, which is what
+  // `openBrainExport` calls, and the behavioural case comes first because a
+  // source scan fails OPEN when its pattern breaks (CLAUDE.md 2026-08-21).
+  it("the export's table population IS the registry, computed not restated", () => {
+    const included = CREATOR_DATA_REGISTRY.filter((e) => e.export.included).map(
+      (e) => e.table
+    );
+    expect(exportPlan()).toEqual(included);
+    // ...and it really reads its argument, so it cannot be a constant wearing
+    // a parameter: excluding the first included table yields one fewer.
+    const firstIncluded = CREATOR_DATA_REGISTRY.findIndex((e) => e.export.included);
+    const trimmed = CREATOR_DATA_REGISTRY.map((e, i) =>
+      i === firstIncluded ? { ...e, export: { ...e.export, included: false } } : e
+    );
+    expect(exportPlan(trimmed)).toEqual(included.slice(1));
+  });
+
+  it("the LIVE json streamer walks that plan, with no cast and no second list", () => {
     const source = readFileSync(join(ROOT, "packages/db/src/export.ts"), "utf8");
-    expect(source).toContain("for (const entry of CREATOR_DATA_REGISTRY)");
-    expect(source).toContain("if (!entry.export.included) continue");
-    expect(source).toContain("tables[entry.table] = await reader()");
-    expect(source).toContain("registry: CREATOR_DATA_REGISTRY.map");
+    const streamerAt = source.indexOf("async function streamJsonExport(");
+    expect(streamerAt, "streamJsonExport was renamed or removed").toBeGreaterThan(-1);
+    expect(source.slice(streamerAt)).toContain("for (const table of plan) {");
+    expect(source).toContain("export function exportPlan(");
+    expect(source).toContain("const plan = exportPlan();");
+
+    // COMMENTS ARE NOT CODE, and this file's own docblocks describe the two
+    // shapes below in order to say they are gone — a scan over raw text
+    // therefore reports a defect the moment the fix is documented. Both
+    // detectors and both non-vacuity probes go through the same stripper, so
+    // "the probe passed" is a statement about the pipeline the scan uses.
+    const codeOnly = (text: string): string =>
+      text
+        .split("\n")
+        .filter((line) => {
+          const t = line.trim();
+          return !(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"));
+        })
+        .join("\n");
+    const code = codeOnly(source);
+
+    // The `entry.table as ProfileExportTable` cast is what let a registered
+    // table with no `exportPage` branch reach the switch and fall off it.
+    const castDetector = /as ProfileExportTable/;
+    expect(code).not.toMatch(castDetector);
+    expect(
+      codeOnly("const t = entry.table as ProfileExportTable;"),
+      "the cast detector matches nothing, so its silence is worth nothing"
+    ).toMatch(castDetector);
+
+    // ...and no third hand-maintained list of table names in this file. The
+    // deleted `EXPORT_READER_TABLES` Set was exactly that, and it is what made
+    // the union, the registry and the reader map three separate truths.
+    const listDetector = /\[\s*"creator_profiles"/;
+    expect(code).not.toMatch(listDetector);
+    expect(
+      codeOnly(['new Set([', '  "creator_profiles",', "]);"].join("\n")),
+      "the hard-coded-list detector matches nothing, so its silence is worth nothing"
+    ).toMatch(listDetector);
+    // The stripper must not eat code: a planted violation on a normal line
+    // survives it, which is what makes the two `not.toMatch` results mean
+    // anything at all.
+    expect(codeOnly('const x = 1;\nconst t = a as ProfileExportTable;')).toMatch(
+      castDetector
+    );
   });
 });
 

@@ -20,14 +20,9 @@
 // (AC-2: two sequential calls yield exactly one workspace, and a concurrent
 // conflict resolves rather than duplicating) — so this adds a round trip on
 // every render and removes a broken first impression for every new creator.
-// That trade is worth taking only on the pages a new creator reaches FIRST,
-// which today is `/onboarding`.
-//
-// KNOWN, AND DELIBERATELY NOT WIDENED IN THIS SLICE: `/usage` and
-// `/settings/billing` have the same shape and the same race. They are outside
-// slice 1's surface, so they keep their current behaviour and the defect is
-// reported rather than fixed in passing — the one-line fix is to route them
-// through this function too.
+// The bootstrap-safe authority is required anywhere a brand-new creator can
+// land directly. `/onboarding`, `/usage`, and `/settings/billing` all route
+// through this function; focused first-login tests keep that list honest.
 import { respinDb } from "@respin/db";
 
 /**

@@ -29,6 +29,11 @@ import {
   editDeclaredMetricAction,
 } from "../app/(product)/brain/actions";
 import { BrainEditRefusal } from "../app/(product)/brain/edit-form";
+import { BILLING_ERROR_COPY } from "../app/(product)/billing-errors";
+import {
+  ECHO_NO_GUARANTEE_CLAUSE,
+  NOTHING_SAVED_CLAUSE,
+} from "../app/(product)/refusal-clauses";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -40,6 +45,22 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/**
+ * The rendered markup as a READER sees it — React escapes `'` to `&#x27;`, so
+ * a copy assertion made against the source constant fails on the apostrophe in
+ * "a reference post's own wording" while the sentence is perfectly present.
+ * Decoded rather than escaped on the expectation side, so the test compares the
+ * constant itself and not a second hand-escaped copy of it.
+ */
+function readableText(html: string): string {
+  return html
+    .replace(/&#x27;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
 
 async function redirectDigest(action: Promise<unknown>): Promise<string | undefined> {
   try {
@@ -97,6 +118,35 @@ describe("the ordinary Brain edit refusal reaches actionable screen copy", () =>
     expect(html).toContain(matchedSpan);
     expect(html).toMatch(/rewrite this field in your own words/i);
     expect(html).not.toContain("attacker-controlled reference detail");
+    // G2 — THE TWO CLAUSES THE IN-FORM BANNER USED TO ROUTE AROUND. Asserted
+    // against the SHARED constants, so a banner that stops rendering one, or a
+    // `billing-errors.ts` that rewrites one, fails here rather than silently
+    // leaving the two refusal surfaces saying different things.
+    expect(readableText(html)).toContain(NOTHING_SAVED_CLAUSE);
+    expect(readableText(html)).toContain(ECHO_NO_GUARANTEE_CLAUSE);
+  });
+
+  // The other half of G2: the `?e=` copy for the SAME refusal is COMPOSED from
+  // the same two constants rather than repeating them, which is what makes the
+  // assertion above a shared-source check instead of two coincidences.
+  it("G2: the redirect copy and the in-form banner carry the SAME two clauses", () => {
+    const detail = BILLING_ERROR_COPY.reference_echo.detail;
+    expect(detail).toContain(NOTHING_SAVED_CLAUSE);
+    expect(detail).toContain(ECHO_NO_GUARANTEE_CLAUSE);
+    // REQ-I04 in its own right: the disclaimer must still refuse the promise,
+    // not merely be present under a name that could be softened to a claim.
+    expect(ECHO_NO_GUARANTEE_CLAUSE).toMatch(/does not promise/i);
+    expect(ECHO_NO_GUARANTEE_CLAUSE).not.toMatch(/\bguarantee[sd]\b/i);
+    // N2 — THE SAME PIN FOR THE OTHER CLAUSE, which had none. Every assertion
+    // in this file reads `NOTHING_SAVED_CLAUSE` and compares it against
+    // itself, so softening it to "Your draft may not have been saved." would
+    // keep the whole suite green — the self-referential class this slice has
+    // already been caught by twice. A creator who has just been refused needs
+    // a FACT about their work, not a hedge.
+    expect(NOTHING_SAVED_CLAUSE).toMatch(/nothing was saved/i);
+    expect(NOTHING_SAVED_CLAUSE).not.toMatch(
+      /\b(?:may|might|should|could|probably|likely|possibly|perhaps)\b/i
+    );
   });
 
   it("bounds the untrusted matched excerpt returned to the client", async () => {

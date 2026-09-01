@@ -194,6 +194,102 @@ export const respinConfigV1 = z
         voiceCorpusMaxPosts: 50,
         maxUnchargedBillableAttempts: 3,
       }),
+    // GENERATION'S PRODUCT RULES (slice 6, R16).
+    //
+    // `maxUnchargedBillableAttempts` IS THE SAME BOUND AS `onboarding`'s AND
+    // DELIBERATELY NOT THE SAME NUMBER-IN-ONE-PLACE. R-48's bound exists
+    // because a call can be billable to US and free to the CREATOR — a
+    // truncation, or a reply this product could not parse — so the press
+    // repeats at our expense with no balance check to stop it. Generation has
+    // exactly that hole (question 4 of the slice card: a `schema_invalid` or
+    // truncated reply writes `model_usage` and takes NO debit), so it needs
+    // the same bound.
+    //
+    // ITS OWN KEY RATHER THAN A SHARED ONE, because the two operations have
+    // different shapes and an operator who raises one must not silently raise
+    // the other: an onboarding rebuild is once-in-a-while and a generation is
+    // the thing a creator does all day, so the number at which "this is a
+    // fault on our side" becomes true is not the same number. Sharing the key
+    // would also make the count's grain unreadable — the count is per PURPOSE
+    // (`countUnchargedBillableAttempts({purpose})`), so one key over two
+    // grains would read as one bound over both.
+    //
+    // AND THEN IT SHIPPED THE IDENTICAL 3, WHICH IS THE THING THE PARAGRAPH
+    // ABOVE ARGUES AGAINST (billing gate, 2026-09-01). Both numbers are now
+    // chosen, and each cites the thing that decides it.
+    //
+    // `maxUnchargedBillableAttempts: 10` — DERIVED FROM `concurrencyLimits`,
+    // not picked. This count runs outside any lock (see `generate.ts`'s own
+    // note), so the bound's accepted width is ONE BURST of the tier's slot
+    // limit: N presses in flight together can each read `cap - 1` and all
+    // pass. The largest seeded limit is `concurrencyLimits.studio = 8`, so a
+    // cap AT OR BELOW 8 is a cap a single legal burst exhausts — unenforceable
+    // as a bound, and (before the window below) permanent as a refusal. 10 is
+    // the smallest round number strictly above it.
+    //
+    // WHAT THAT COSTS US, ON THE GRAIN THE CAP ACTUALLY COUNTS (corrected,
+    // billing gate round 2, 2026-09-01). The first derivation here read
+    // "10 x maxOutputTokens x sonnet output = 0.60 USD" — a PER-CALL figure
+    // against a PER-ATTEMPT cap. `countUnchargedBillableAttempts` is
+    // `countDistinct(attempt_id)` (`with-workspace.ts`), and one attempt makes
+    // up to THREE vendor calls: the draft, R6's one rewrite (`pipeline.ts` —
+    // exactly two `generate` expressions, no loop) and the cheap kill-test
+    // scoring call. The counted worst case is a real path, not a hypothetical:
+    // draft 1 parses, its kill test fails, the one rewrite runs, draft 2
+    // parses and is accepted, and the SCORING reply is the one this product
+    // cannot parse — `parseKillTestReply` throws out of the pipeline, no
+    // generation is settled, no debit is taken, and all three calls are
+    // billable rows under ONE attempt id.
+    //
+    //   draft + rewrite   2 x 4000 x 15000 = 120,000,000 nano-USD
+    //   scoring (Haiku)   1 x 4000 x  5000 =  20,000,000 nano-USD
+    //   per counted attempt                = 140,000,000 = 0.14 USD
+    //   x 10                               = 1.40 USD per profile per window
+    //
+    // AND INPUT IS ON TOP OF THAT AND NO KEY HERE BOUNDS IT. `maxOutputTokens`
+    // bounds the REPLY only; every one of those three calls also pays input at
+    // `inputNanoUsdPerToken` (3000 Sonnet / 1000 Haiku), and the rewrite's
+    // prompt CONTAINS draft 1's whole reply while the scoring prompt contains
+    // the rendered draft. So 1.40 USD of output ceiling per profile per window
+    // is a FLOOR on the exposure, not the exposure — the honest form of this
+    // number, and the reason the old 0.60 was wrong in the dangerous
+    // direction. Ours and never the creator's, either way.
+    // `generation-pricing.test.ts` recomputes the 140,000,000 from the seeded
+    // document, so a price or ceiling change reddens a test rather than
+    // leaving this arithmetic quietly stale.
+    //
+    // THE WINDOW IS COUNTED AND SURFACED, because a rate bound nobody measures
+    // is a bound nobody can act on: `metrics.ts` emits
+    // `respin.credits.uncharged_billable_attempts.capped` at both cap sites.
+    //
+    // `unchargedAttemptWindowMinutes: 60` — BECAUSE THE COUNT HAS TO HAVE A
+    // WINDOW AT ALL. `countUnchargedBillableAttempts` reads an APPEND-ONLY
+    // table, so an unwindowed count is a LIFETIME count: three (now ten)
+    // unparseable replies EVER would refuse this profile's generations
+    // permanently, with the only remedy an operator raising a GLOBAL key and no
+    // surface anywhere listing which profiles are at the cap. The failure this
+    // bounds is deterministic AND immediate — a truncation or an unparseable
+    // reply repeats on the very next press — so the bound only has to survive
+    // one sitting, and an hour is a sitting. A creator who hit the cap
+    // yesterday is not the failure mode; a creator hammering the button right
+    // now is.
+    //
+    // `.default(...)` for the A-9 reason `profileCaps` carries above: a STORED
+    // document written before these keys existed must still parse, or
+    // `getActiveConfig` throws inside the Stripe webhook's transaction. They
+    // are THRESHOLDS and not prices, so they are deliberately NOT on
+    // `requiredConfigPaths` — a defaulted bound still bounds; a defaulted
+    // price would bill someone against a number nobody chose.
+    generation: z
+      .object({
+        maxUnchargedBillableAttempts: z.number().int().min(1).default(10),
+        unchargedAttemptWindowMinutes: z.number().int().min(1).default(60),
+      })
+      .strict()
+      .default({
+        maxUnchargedBillableAttempts: 10,
+        unchargedAttemptWindowMinutes: 60,
+      }),
     // THE MODEL LAYER (slice 2a, tech-spec §1 / R-5). Everything the
     // provider adapter needs that must be changeable without a deploy: which
     // model each class of operation uses, what each model costs us, and the

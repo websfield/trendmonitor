@@ -19,6 +19,7 @@
 //                  ScopeForgeryError.
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { isProbeArtifactSegment } from "./support/probe-artifacts";
 import {
   createTestDb,
   ensureUserWorkspace,
@@ -342,7 +343,18 @@ type Entry = {
   file: string;
   body: string;
   params: string;
-  /** Parameter NAMES of this entry whose declared type names a scope. */
+  /**
+   * Parameter NAMES of this entry whose declared type names a scope OR is a
+   * named type that carries one (COVERED_PARAM_SHAPES).
+   *
+   * The NAME, so a struct parameter contributes `ctx` rather than the `scope`
+   * field inside it. That is deliberate and it makes the argument-identity
+   * rule STRICTER for a struct-taker: `assertScoped(scope)` on a binding
+   * destructured out of `ctx` is not recognised as forwarding this entry's own
+   * scope, so such an entry is reported until something else covers it. Wrong
+   * in the fail-closed direction — a red someone has to read, never a silent
+   * pass.
+   */
   scopeParams: string[];
   /**
    * `scopeParams` plus those of every LEXICALLY ENCLOSING entry.
@@ -401,6 +413,141 @@ function nameOf(node: ts.Node, sf: ts.SourceFile): string | undefined {
 const SCOPE_TYPE_RE = /\b(?:Workspace|Profile)Scope\b/;
 
 /**
+ * THE POPULATION OF PARAMETER SHAPES THIS SCAN SEES, AS A LIST (slice 6).
+ *
+ * A DERIVED GUARD IS ONLY AS WIDE AS ITS POPULATION (CLAUDE.md, 2026-08-29),
+ * and until slice 6 this one's population was one shape written as a regex over
+ * the parameter TEXT: `scope: WorkspaceScope`. Stage C2 refactored
+ * `packages/credits/src/generate.ts` so that `observeExistingClaim` and
+ * `settle` take a single named struct — `ctx: SettlementCtx`, `args:
+ * SettlementCtx & {…}` — and both still receive and use a real `ProfileScope`.
+ * The scan stopped seeing either, and the pinned surface went from "these are
+ * the scope-taking entries" to "these are the scope-taking entries that happen
+ * to spell the type in their parameter list". A NEW ENTRY COULD THEN EVADE
+ * AC-13 ENTIRELY BY WRAPPING ITS SCOPE IN A STRUCT — which is not a
+ * hypothetical, it is what the production code had already done.
+ *
+ * COVERED, each with a planted probe in "the scanner's own coverage" below:
+ *   1. the type NAMED directly in the parameter        `s: WorkspaceScope`
+ *   2. inside a generic/array/union/tuple in the text  `s: WorkspaceScope[]`
+ *   3. a named TYPE ALIAS whose body names a scope     `ctx: SettlementCtx`
+ *   4. a named INTERFACE whose members name a scope    `ctx: SettlementLike`
+ *   5. an INTERSECTION with any of the above           `a: Ctx & { x: 1 }`
+ *   6. an alias that reaches a scope TRANSITIVELY      `type Outer = { c: Ctx }`
+ *   7. an interface EXTENDING a scope-carrying one     `interface B extends A`
+ *   8. a CLASS whose members name a scope              `ctx: SessionHolder`
+ *
+ * NOT COVERED, and each of these is pinned by a test below so the limit is a
+ * measured fact rather than an impression:
+ *   A. a scope-carrying type declared OUTSIDE the scanned file set (an import
+ *      from a package's built `dist`, or from `app/**`). Resolving that needs a
+ *      whole-program type checker, not a per-file parse. Every scope-carrying
+ *      type in this repo is declared under a package's own `src`, which is
+ *      exactly the set `packageSources()` reads.
+ *   B. a parameter with NO type annotation whose value is a scope by inference.
+ *   C. a generic type PARAMETER constrained to a scope —
+ *      `<T extends WorkspaceScope>(s: T)`. Zero instances today.
+ *   D. the ARGUMENT-IDENTITY rule does not see through a struct: a scope
+ *      destructured out of `ctx` is not this entry's own binding as far as
+ *      `forwardsOwnScope` is concerned. That direction is fail-closed (a
+ *      false RED, never a false green) and it is pinned like the rest.
+ *   E. an alias whose body is a TYPE QUERY rather than a type reference —
+ *      `type Caps = ReturnType<typeof writeCapabilities>`. `typeRefNames`
+ *      collects `ReturnType` and nothing else, because `typeof f` names a
+ *      VALUE and resolving it needs the checker limit A already rules out.
+ *      THIS ONE IS LIVE, not hypothetical (tenancy gate round 2, 2026-09-01):
+ *      `packages/credits/src/generate.ts:654` declares exactly that alias, and
+ *      `recordRefusal`/`recordRecoveryRequired` take `caps: Caps` and call
+ *      `advanceGenerationAttempt` on it — write authority, unseen by this
+ *      scan. Safe TODAY for a reason outside the scan: a `Caps` value can only
+ *      be minted by `writeCapabilities(profileScope)`, whose argument is a
+ *      `ProfileScope` that `ProfileScope.mint` has already asserted, so the
+ *      capability object cannot exist unasserted. The closing fix, if this
+ *      stops holding, is to mark an alias whose body names a function known to
+ *      take a scope; it is not built here because the entry it would add is
+ *      already covered by construction and a widening nobody needs is a
+ *      widening nobody checks.
+ * A shape in that list arriving in production code is what makes this comment
+ * a task rather than a note — which is what E is.
+ */
+const COVERED_PARAM_SHAPES = 8;
+
+/** Every type NAME referenced anywhere inside a type node (last segment). */
+function typeRefNames(node: ts.Node | undefined, sf: ts.SourceFile): string[] {
+  if (!node) return [];
+  const names: string[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isTypeReferenceNode(n)) {
+      const t = n.typeName;
+      names.push(ts.isQualifiedName(t) ? t.right.getText(sf) : t.getText(sf));
+    }
+    if (ts.isExpressionWithTypeArguments(n) && ts.isIdentifier(n.expression)) {
+      names.push(n.expression.getText(sf));
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return names;
+}
+
+/**
+ * The named types in the scanned file set that CARRY a scope — directly, or
+ * through another named type that does. Computed to a FIXPOINT, so
+ * `type Outer = { inner: SettlementCtx }` counts as well as `SettlementCtx`.
+ *
+ * Same-file-set only, deliberately: see limit A above. Resolution is by NAME
+ * across all scanned files for the same reason `byName` below resolves callees
+ * that way — a per-file parse has no imports to follow, and a name collision
+ * between two packages can only make this WIDER (more parameters treated as
+ * scope-taking, i.e. more entries the pin forces someone to look at), never
+ * narrower.
+ */
+function scopeCarryingTypeNames(files: Map<string, string>): Set<string> {
+  const carrying = new Set<string>();
+  const refs = new Map<string, Set<string>>();
+  for (const [file, src] of files) {
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
+    const visit = (node: ts.Node): void => {
+      // ...and a CLASS too: `ProfileScope` is one, and a class is as
+      // referenceable from a parameter type as an interface is. An anonymous
+      // class has no name to resolve BY, so it is skipped WITHOUT skipping the
+      // walk into it (a named type can be declared inside one).
+      if (
+        (ts.isTypeAliasDeclaration(node) ||
+          ts.isInterfaceDeclaration(node) ||
+          ts.isClassDeclaration(node)) &&
+        node.name
+      ) {
+        const name = node.name.getText(sf);
+        // The declaration's BODY, never its own name: a type called
+        // `WorkspaceScopeish` must not qualify by spelling.
+        const parts: ts.Node[] = ts.isTypeAliasDeclaration(node)
+          ? [node.type]
+          : [...node.members, ...(node.heritageClauses ?? [])];
+        const text = parts.map((p) => p.getText(sf)).join("\n");
+        if (SCOPE_TYPE_RE.test(text)) carrying.add(name);
+        const seen = refs.get(name) ?? new Set<string>();
+        for (const p of parts) for (const r of typeRefNames(p, sf)) seen.add(r);
+        refs.set(name, seen);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, seen] of refs) {
+      if (carrying.has(name)) continue;
+      if ([...seen].some((r) => r !== name && carrying.has(r))) {
+        carrying.add(name);
+        changed = true;
+      }
+    }
+  }
+  return carrying;
+}
+
+/**
  * The simple NAME a call expression invokes: `assertScoped(x)` -> assertScoped,
  * `ProfileScope.mint(a, b)` -> mint, `caps.createProfile(p, tx)` -> createProfile.
  *
@@ -417,6 +564,11 @@ function calleeName(expr: ts.Expression, sf: ts.SourceFile): string | undefined 
 
 function collectEntries(files: Map<string, string>): Entry[] {
   const entries: Entry[] = [];
+  // Resolved ONCE over the whole file set, before any entry is collected: a
+  // struct declared in `generate.ts` is what makes a parameter in the same file
+  // scope-taking, and a struct declared in `with-workspace.ts` would do the
+  // same for a parameter in `app-server.ts`.
+  const carrying = scopeCarryingTypeNames(files);
   for (const [file, src] of files) {
     const sf = ts.createSourceFile(
       file,
@@ -435,7 +587,18 @@ function collectEntries(files: Map<string, string>): Entry[] {
         const name = nameOf(node, sf);
         if (name) {
           const scopeParams = node.parameters
-            .filter((prm) => SCOPE_TYPE_RE.test(prm.type?.getText(sf) ?? ""))
+            .filter(
+              (prm) =>
+                // shapes 1-2: the scope type spelled in the parameter text.
+                SCOPE_TYPE_RE.test(prm.type?.getText(sf) ?? "") ||
+                // shapes 3-8: a NAMED type, resolved across the scanned file
+                // set, whose body reaches a scope — alias, interface, class,
+                // heritage clause or any member of an intersection
+                // (`SettlementCtx & {…}`). It reads TYPE NODES only, so an
+                // alias built from a TYPE QUERY (`ReturnType<typeof f>`) names
+                // no type to follow and is limit E, not a covered shape.
+                typeRefNames(prm.type, sf).some((n) => carrying.has(n))
+            )
             .map((prm) => prm.name.getText(sf));
           const calls: Call[] = [];
           const collectCalls = (n: ts.Node): void => {
@@ -489,21 +652,26 @@ function collectEntries(files: Map<string, string>): Entry[] {
  *             action forwards its own parameter; worth tightening the moment
  *             M2b adds a second asserter, which is when the two could diverge.
  *
- *   BACKWARD — every CALLER of the entry is covered, and it has at least one.
- *             This is what `subscriptionRow` and `liveSubscription` do: they
- *             build a query from `scope.workspaceId` and assert nothing
- *             themselves, but a scope only reaches them through an action that
- *             has already asserted. Requiring a caller is what stops the rule
- *             degenerating — an entry NOBODY calls is not "covered", it is
- *             unreachable-today, which is a different claim and a weaker one.
+ *   BACKWARD — every CALLER FROM OUTSIDE THIS ENTRY'S CYCLE GROUP is covered,
+ *             and there is at least one. This is what `subscriptionRow` and
+ *             `liveSubscription` do: they build a query from
+ *             `scope.workspaceId` and assert nothing themselves, but a scope
+ *             only reaches them through an action that has already asserted.
+ *             Requiring a caller is what stops the rule degenerating — an
+ *             entry NOBODY calls is not "covered", it is unreachable-today,
+ *             which is a different claim and a weaker one, and an ISOLATED
+ *             cycle is the same weaker claim (both planted below). For every
+ *             entry that is not mutually recursive the group is a group of
+ *             one, so this reduces exactly to "every caller is covered".
  *
  * The scan found those two on its first run and they are the reason the
  * backward rule is implemented rather than the two functions being waved past.
  *
- * Callees resolve by NAME across all files, not within one file, and that is
- * load-bearing: app-server.ts's facade property `createPortalUrl` calls the
- * ACTION of the same name, so same-file-first resolution would find only the
- * property itself and report a self-cycle.
+ * Callees resolve SAME FILE FIRST, then by name across all files. The fallback
+ * is load-bearing: app-server.ts's facade property `createPortalUrl` calls the
+ * ACTION of the same name, and its only same-file candidate is itself. So is
+ * the local preference: `pipeline.ts` and `generate.ts` each have a private
+ * `settle`, and resolving purely by name invented an edge between them.
  */
 function coveredEntries(entries: Entry[]): Set<string> {
   const byName = new Map<string, Entry[]>();
@@ -521,7 +689,21 @@ function coveredEntries(entries: Entry[]): Set<string> {
   for (const e of entries) {
     const out: { key: string; args: string[] }[] = [];
     for (const call of e.calls) {
-      for (const callee of byName.get(call.callee) ?? []) {
+      const all = byName.get(call.callee) ?? [];
+      // SAME FILE FIRST, THEN EVERYWHERE (slice 6). A module-private helper is
+      // resolved inside its own module: `packages/modes/src/pipeline.ts` has
+      // its own private `settle`, and resolving purely by name made
+      // `pipeline.ts:runGeneration` a CALLER of `generate.ts:settle` — an edge
+      // that does not exist in any program, and one that blocked the real
+      // `settle` from ever being reported covered.
+      //
+      // The fallback is what keeps the cross-file resolution the docblock
+      // above depends on: `app-server.ts`'s facade property `createPortalUrl`
+      // calls the ACTION of the same name in another file, and its only
+      // same-file candidate is ITSELF — which is excluded, leaving the local
+      // set empty and the repo-wide one in play.
+      const local = all.filter((c) => c.file === e.file && c.key !== e.key);
+      for (const callee of local.length > 0 ? local : all) {
         if (callee.key !== e.key) out.push({ key: callee.key, args: call.args });
       }
     }
@@ -580,19 +762,99 @@ function coveredEntries(entries: Entry[]): Set<string> {
       }
     }
   }
-  // BACKWARD closure, to a fixpoint, on top of it.
+  // BACKWARD closure, to a fixpoint, on top of it — over the CYCLE GROUPS of
+  // the call graph rather than over single entries.
+  //
+  // WHY THE GROUPING EXISTS (slice 6). `observeExistingClaim` and `settle` in
+  // `generate.ts` call each other: the retry path settles a stored candidate,
+  // and a settlement that loses the lock unwinds into the observer. Each is
+  // therefore a caller of the other, so the per-entry rule "every caller is
+  // covered" could never terminate for either — each waited on the other and
+  // both stayed uncovered, a false report of exactly the kind this scan exists
+  // to make impossible to ignore. The property the rule is reaching for is
+  // "a scope reaches this entry only through something that already asserted",
+  // and for a group of mutually recursive entries that question is about the
+  // callers from OUTSIDE the group; an edge inside it carries no scope that
+  // did not come in from outside first.
+  //
+  // AND THE REQUIREMENT SURVIVES THE GENERALISATION: the group still needs at
+  // least one external caller. An ISOLATED cycle — two functions that call only
+  // each other and that nothing else calls — is NOT covered, for the same
+  // reason a lone entry nobody calls is not: unreachable-today is a weaker
+  // claim than asserted. Both directions are planted below.
+  const componentOf = cycleGroups(
+    entries.map((e) => e.key),
+    (k) => (calleesOf.get(k) ?? []).map((c) => c.key)
+  );
+  const membersOf = new Map<number, string[]>();
+  for (const e of entries) {
+    const id = componentOf.get(e.key)!;
+    membersOf.set(id, [...(membersOf.get(id) ?? []), e.key]);
+  }
   for (let changed = true; changed; ) {
     changed = false;
-    for (const e of entries) {
-      if (covered.has(e.key)) continue;
-      const callers = callersOf.get(e.key) ?? new Set<string>();
-      if (callers.size > 0 && [...callers].every((c) => covered.has(c))) {
-        covered.add(e.key);
+    for (const [id, members] of membersOf) {
+      if (members.every((m) => covered.has(m))) continue;
+      const external = new Set<string>();
+      for (const m of members) {
+        for (const c of callersOf.get(m) ?? []) {
+          if (componentOf.get(c) !== id) external.add(c);
+        }
+      }
+      if (external.size > 0 && [...external].every((c) => covered.has(c))) {
+        for (const m of members) covered.add(m);
         changed = true;
       }
     }
   }
   return covered;
+}
+
+/**
+ * Tarjan's strongly-connected components: every key mapped to its cycle group.
+ *
+ * A key that is in no cycle is its own group of one, which is what makes the
+ * grouped BACKWARD rule above reduce EXACTLY to the per-entry rule it replaced
+ * for every entry in this repo that is not mutually recursive — including the
+ * `subscriptionRow`/`liveSubscription` pair that rule was written for.
+ */
+function cycleGroups(
+  keys: readonly string[],
+  edges: (key: string) => readonly string[]
+): Map<string, number> {
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const group = new Map<string, number>();
+  let counter = 0;
+  let nextGroup = 0;
+  const visit = (v: string): void => {
+    index.set(v, counter);
+    low.set(v, counter);
+    counter += 1;
+    stack.push(v);
+    onStack.add(v);
+    for (const w of edges(v)) {
+      if (!index.has(w)) {
+        visit(w);
+        low.set(v, Math.min(low.get(v)!, low.get(w)!));
+      } else if (onStack.has(w)) {
+        low.set(v, Math.min(low.get(v)!, index.get(w)!));
+      }
+    }
+    if (low.get(v) === index.get(v)) {
+      for (;;) {
+        const w = stack.pop()!;
+        onStack.delete(w);
+        group.set(w, nextGroup);
+        if (w === v) break;
+      }
+      nextGroup += 1;
+    }
+  };
+  for (const k of keys) if (!index.has(k)) visit(k);
+  return group;
 }
 
 /**
@@ -614,6 +876,13 @@ async function packageSources(): Promise<Map<string, string>> {
   const files = new Map<string, string>();
   const walkDir = (d: string) => {
     for (const n of readdirSync(d)) {
+      // PROBE ARTIFACTS ARE NOT PRODUCT SOURCE. `import-boundary.test.ts`
+      // plants `packages/credits/src/__cage_probe.ts` — inside this very walk's
+      // roots — and vitest runs test files in parallel, so this scan could read
+      // another suite's planted forgery and pin it into the AC-13 surface.
+      // (tests/support/probe-artifacts.ts holds the list; the same skip is in
+      // `walkCodeFiles`.)
+      if (isProbeArtifactSegment(n)) continue;
       const full = join(d, n);
       if (statSync(full).isDirectory()) walkDir(full);
       else if (n.endsWith(".ts")) {
@@ -633,11 +902,12 @@ async function packageSources(): Promise<Map<string, string>> {
 }
 
 /**
- * BOTH GRAINS (task 24). The predicate was `/\bWorkspaceScope\b/` over the
- * parameter TEXT — which sees neither `writeCapabilities(scope: ProfileScope)`
- * nor any of M2b-1's profile-grained write surface. It now reads the scope
- * parameters the collector already resolved with `SCOPE_TYPE_RE`, so the
- * collector and the filter cannot drift: one regex, both readers.
+ * BOTH GRAINS (task 24), AND BOTH THROUGH A STRUCT (slice 6). The predicate was
+ * `/\bWorkspaceScope\b/` over the parameter TEXT — which saw neither
+ * `writeCapabilities(scope: ProfileScope)` nor any of M2b-1's profile-grained
+ * write surface, and then stopped seeing `ctx: SettlementCtx` too. It reads the
+ * scope parameters the collector resolved (COVERED_PARAM_SHAPES), so the
+ * collector and the filter cannot drift: one predicate, both readers.
  */
 const takesScope = (e: Entry) => e.scopeParams.length > 0;
 
@@ -731,6 +1001,7 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/db/src/with-workspace.ts:readOwnBrainDoc",
         "packages/db/src/with-workspace.ts:retainedReferenceSpans",
         "packages/db/src/with-workspace.ts:validateSourceEvidence",
+        "packages/db/src/with-workspace.ts:loadReferenceSafetyContext",
         // Slice 1's intake pair, and their two bound facade methods.
         "packages/db/src/onboarding-ops.ts:appendOwnPost",
         "packages/db/src/onboarding-ops.ts:listOnboardingInputs",
@@ -738,7 +1009,9 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // first scope-taking act is `ProfileScope.mint(db, scope, profileId)`,
         // which asserts the WORKSPACE scope before minting a profile grain.
         "packages/db/src/onboarding-ops.ts:appendReferencePost",
+        "packages/db/src/onboarding-ops.ts:checkCandidateReferenceSafety",
         "packages/db/src/app-server.ts:appendReferencePost",
+        "packages/db/src/app-server.ts:checkCandidateReferenceSafety",
         // Slice 2a. `ProfileScope` is a TYPE-ONLY export of @respin/db
         // (compile-red 8+9 above pins that), so `@respin/credits` — which owns
         // `runInference` and cannot move into @respin/db — had no way to obtain
@@ -765,12 +1038,19 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // not a diff nobody read. Two of these three are the acts that decide
         // what the product BELIEVES about a person, so they are precisely the
         // entries that must not arrive silently.
+        //
+        // THE TRIO IS NOW A PAIR (tenancy gate round 2, 2026-09-01): the
+        // single-document activation and its facade bind are DELETED, not
+        // renamed. Slice 3b's `activateBrainCoherent` (pinned below) replaced
+        // them on `/brain`, they had zero `app/**` callers afterwards, and
+        // since R9a a single-document activation — which writes no
+        // `brain_activation_snapshots` row — would have left the generation
+        // path assembling from a superseded snapshot. Two entries leaving this
+        // list is what "an unreachable scoped write is inventory" costs.
         "packages/db/src/brain-ops.ts:readVoiceBrain",
         "packages/db/src/brain-ops.ts:confirmVoiceFields",
-        "packages/db/src/brain-ops.ts:activateVoice",
         "packages/db/src/app-server.ts:readVoiceBrain",
         "packages/db/src/app-server.ts:confirmVoiceFields",
-        "packages/db/src/app-server.ts:activateVoice",
 
         // Slice 3b (Stage B2): the same trio extended to `strategy` and
         // `killtest`, and ONE coherent activation entrypoint shared by all
@@ -802,10 +1082,15 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // These were traced before pinning, rather than admitted because the
         // surface scan named them:
         //
-        // - `readBrainHistory`, both materialized export helpers, and the
-        //   streaming `openBrainExport` mint a ProfileScope before reaching
-        //   any accessor. The streaming helpers accept that minted scope and
-        //   page only through its accessors; they do not build parallel reads.
+        // - `readBrainHistory` and the streaming `openBrainExport` mint a
+        //   ProfileScope before reaching any accessor. The streaming helpers
+        //   accept that minted scope and page only through its accessors; they
+        //   do not build parallel reads. (The two MATERIALISING export helpers
+        //   this comment used to name, and their advisory-lock helper, are
+        //   gone: `exportBrain`/`exportBrainFile`/`withPreparedExport`/
+        //   `acquireWorkspaceExportLock` had no `app/**` caller and carried
+        //   every export witness on a path no user path could reach --
+        //   tenancy gate round 1, 2026-08-31.)
         // - `editBrainDocument` opens one transaction and mints against that
         //   transaction with THIS entry's `scope` before reading the base or
         //   obtaining write capabilities. `editDeclaredMetric` is a typed
@@ -819,11 +1104,7 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/db/src/brain-ops.ts:editBrainDocument",
         "packages/db/src/brain-ops.ts:editDeclaredMetric",
         "packages/db/src/brain-ops.ts:withBrainEditSlot",
-        "packages/db/src/export.ts:exportBrain",
-        "packages/db/src/export.ts:exportBrainFile",
         "packages/db/src/export.ts:openBrainExport",
-        "packages/db/src/export.ts:withPreparedExport",
-        "packages/db/src/export.ts:acquireWorkspaceExportLock",
         "packages/db/src/export.ts:createPagedExportStream",
         "packages/db/src/export.ts:forEachExportPage",
         "packages/db/src/export.ts:inputsForDocs",
@@ -834,6 +1115,15 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/db/src/app-server.ts:editBrainDocument",
         "packages/db/src/app-server.ts:editDeclaredMetric",
         "packages/db/src/app-server.ts:openBrainExport",
+
+        // Slice 4c: per-membership active-profile selection. The package
+        // operations assert the acting workspace scope before reading or
+        // writing, and the facade methods forward that same scope unchanged.
+        "packages/db/src/profile-selection.ts:selectedProfileForMember",
+        "packages/db/src/profile-selection.ts:selectActiveProfileInTx",
+        "packages/db/src/profile-selection.ts:selectActiveProfile",
+        "packages/db/src/app-server.ts:selectedProfileForMember",
+        "packages/db/src/app-server.ts:selectActiveProfile",
 
         // Slice 2b: the creator's credit burn (R7), and its bound facade
         // method. `monthlySpend` calls `assertScoped(scope)` as its OWN
@@ -857,14 +1147,63 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // NOW SIX, NOT THREE: Stage B1 bound the trio on `app-server.ts` (the
         // "later stage's job" the note above named). The three binds are thin
         // forwards of the SAME `scope` argument, exactly the shape
-        // `readVoiceBrain`/`confirmVoiceFields`/`activateVoice` and their own
-        // `app-server.ts` binds already use one block up.
+        // `readVoiceBrain`/`confirmVoiceFields` and their own `app-server.ts`
+        // binds already use one block up.
         "packages/db/src/interview-ops.ts:saveInterviewDraft",
         "packages/db/src/interview-ops.ts:getInterviewDraft",
         "packages/db/src/interview-ops.ts:submitInterview",
         "packages/db/src/app-server.ts:saveInterviewDraft",
         "packages/db/src/app-server.ts:getInterviewDraft",
         "packages/db/src/app-server.ts:submitInterview",
+
+        // Slice 6: the composed generation, its facade method, and the three
+        // package-internal helpers it funnels through.
+        //
+        // `generate` is covered exactly the way `inferVoice` and
+        // `runInference` are: its FIRST statement is
+        // `mintProfileScope(db, workspaceScope, profileId)`, and the mint runs
+        // `assertScoped` on the workspace scope before it will hand back a
+        // profile grain.
+        //
+        // THE THREE HELPERS TAKE THE ALREADY-MINTED `ProfileScope`, not a
+        // workspace scope, and are listed for the same reason
+        // `inference.ts:recordUsage` and the three `stripe/actions.ts`
+        // helpers are: a helper is exactly where a future refactor would move
+        // a scope read to, so it is a decision somebody made rather than a
+        // diff nobody read. Each is covered by the ENCLOSURE/argument-identity
+        // rules — `meteredCall` forwards the scope into `recordUsage`,
+        // `settle` and `observeExistingClaim` use only the capabilities and
+        // accessors that scope already carries.
+        //
+        // `observeExistingClaim` and `settle` ARE HERE BECAUSE THE SCAN WAS
+        // WIDENED, not because they were noticed. Stage C2 gave both a single
+        // named struct — `ctx: SettlementCtx` / `args: SettlementCtx & {…}` —
+        // and the old parameter-TEXT predicate stopped seeing either while both
+        // went on receiving and using a real `ProfileScope`. Deleting the two
+        // lines would have made the pin green and recorded a shrinking surface
+        // where the truth was a blindspot; see COVERED_PARAM_SHAPES above for
+        // the population that now decides this, and the per-shape probes that
+        // prove it. Traced, not admitted: `generate` mints the scope
+        // (`assertScoped` inside `ProfileScope.mint`) and hands it to
+        // `writeCapabilities` (which asserts it again) BEFORE building the
+        // `{db, caps, scope, params, op, at}` struct these two receive; neither
+        // is exported and `generate` is the only entry outside their own
+        // mutual recursion that calls either.
+        "packages/credits/src/generate.ts:generate",
+        "packages/credits/src/generate.ts:meteredCall",
+        "packages/credits/src/generate.ts:observeExistingClaim",
+        "packages/credits/src/generate.ts:settle",
+        "packages/credits/src/app-server.ts:generate",
+
+        // Slice 6 stage E1: the per-mode split of the same monthly burn
+        // `monthlySpend` totals, and its bound facade method.
+        // `with-workspace.ts:burnByMode` calls `assertScoped(scope)` as its
+        // OWN FIRST STATEMENT (read at packages/db/src/with-workspace.ts:702),
+        // exactly like `monthlySpend` one function above it;
+        // `app-server.ts:burnByMode` is a thin bind forwarding the SAME
+        // `scope` argument, which is what the argument-identity rule requires.
+        "packages/db/src/with-workspace.ts:burnByMode",
+        "packages/db/src/app-server.ts:burnByMode",
       ].sort()
     );
 
@@ -1015,6 +1354,108 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
     expect(takesScope(transfer)).toBe(true);
   });
 
+  // ---- The CYCLE-GROUP probes (slice 6). `observeExistingClaim` and `settle`
+  // call each other, so the per-entry backward rule deadlocked on them and
+  // reported both uncovered. Both directions of the replacement are planted:
+  // without the second one the rule would cover any cycle, which is the
+  // fail-open half.
+
+  it("CYCLES: mutual recursion reached from a covered entry is covered", () => {
+    const planted = new Map<string, string>([
+      [
+        "packages/credits/src/planted.ts",
+        "export function outer(scope: WorkspaceScope) {\n" +
+          "  assertScoped(scope);\n  return ping(scope);\n}\n" +
+          "function ping(scope: WorkspaceScope) { return pong(scope); }\n" +
+          "function pong(scope: WorkspaceScope) { return ping(scope); }\n",
+      ],
+    ]);
+    const entries = collectEntries(planted);
+    const covered = coveredEntries(entries);
+    const key = (n: string) => entries.find((e) => e.name === n)!.key;
+    expect(covered.has(key("outer"))).toBe(true);
+    for (const n of ["ping", "pong"]) {
+      expect(
+        covered.has(key(n)),
+        `${n} is reachable only through an entry that asserted`
+      ).toBe(true);
+    }
+  });
+
+  it("CYCLES: an ISOLATED cycle is NOT covered — unreachable-today is a weaker claim", () => {
+    const planted = new Map<string, string>([
+      [
+        "packages/credits/src/planted.ts",
+        "export function ping(scope: WorkspaceScope) { return pong(scope); }\n" +
+          "export function pong(scope: WorkspaceScope) { return ping(scope); }\n" +
+          "export function loop(scope: WorkspaceScope) { return loop(scope); }\n",
+      ],
+    ]);
+    const entries = collectEntries(planted);
+    const covered = coveredEntries(entries);
+    for (const n of ["ping", "pong", "loop"]) {
+      expect(
+        covered.has(entries.find((e) => e.name === n)!.key),
+        `${n} asserts nothing and nothing outside its own cycle calls it`
+      ).toBe(false);
+    }
+  });
+
+  // ---- The CALLEE-RESOLUTION probes (slice 6): same file first, then the
+  // whole set. Both directions, because each one alone is a defect.
+
+  it("RESOLUTION: a LOCAL helper of the same name is what a call resolves to", () => {
+    // The fail-OPEN direction. `packages/modes/src/pipeline.ts` and
+    // `packages/credits/src/generate.ts` both define a private `settle`, and
+    // resolving purely by name let a call reach the OTHER file's function —
+    // here that would forward coverage from a `gate` that asserts to a caller
+    // whose own `gate` does not.
+    const planted = new Map<string, string>([
+      [
+        "packages/credits/src/planted.ts",
+        "function gate(s: WorkspaceScope) { return s; }\n" +
+          "export function readSomething(db: DbLike, scope: WorkspaceScope) {\n" +
+          "  gate(scope);\n  return db;\n}\n",
+      ],
+      [
+        "packages/db/src/other.ts",
+        "function gate(s: WorkspaceScope) { assertScoped(s); }\n",
+      ],
+    ]);
+    const entries = collectEntries(planted);
+    const covered = coveredEntries(entries);
+    const target = entries.find((e) => e.name === "readSomething")!;
+    expect(
+      covered.has(target.key),
+      "its OWN gate asserts nothing — another file's function of the same name proves nothing about it"
+    ).toBe(false);
+  });
+
+  it("RESOLUTION: a facade property still resolves to the ACTION of the same name in another file", () => {
+    // The direction that must NOT change: `app-server.ts`'s bound methods are
+    // named after the operations they forward to, and their only same-file
+    // candidate is themselves.
+    const planted = new Map<string, string>([
+      [
+        "packages/credits/src/app-server.ts",
+        "export const facade = {\n" +
+          "  readIt: (scope: WorkspaceScope) => readIt(getDb(), scope),\n};\n",
+      ],
+      [
+        "packages/credits/src/ops.ts",
+        "export function readIt(db: DbLike, scope: WorkspaceScope) {\n" +
+          "  assertScoped(scope);\n  return db;\n}\n",
+      ],
+    ]);
+    const entries = collectEntries(planted);
+    const covered = coveredEntries(entries);
+    const facadeEntry = entries.find(
+      (e) => e.name === "readIt" && e.file.endsWith("app-server.ts")
+    )!;
+    expect(facadeEntry, "the facade property was not even seen").toBeDefined();
+    expect(covered.has(facadeEntry.key)).toBe(true);
+  });
+
   it("NON-VACUITY the other way: a planted COVERED entry is not reported", () => {
     const planted = new Map<string, string>([
       [
@@ -1080,25 +1521,197 @@ describe("AC-13 (the scanner's own coverage): every declaration shape is seen", 
     expect(coveredEntries(entries).has(scoped[0].key)).toBe(false);
   });
 
-  it("KNOWN LIMIT, pinned rather than left to be discovered", () => {
-    // The scan matches the literal type NAME in the parameter text. A scope
-    // reached through an alias, or through an options-object type declared in
-    // another module, is invisible — resolving that needs a full type checker
-    // over the program, not a per-file parse. There are ZERO such entries
-    // today, which is what makes this a limit rather than a gap; R-30's
-    // "Revisit" line leans on this scan, so the limit is stated here.
-    const aliased = collectEntries(
+  // ---- THE PARAMETER SHAPES (slice 6). The declaration shapes above answer
+  // "is this function seen at all"; these answer "is its SCOPE seen", which is
+  // the question stage C2 turned into a blindspot by moving two live scopes
+  // into a struct. Every shape in COVERED_PARAM_SHAPES has a planted specimen
+  // here, and the count is asserted so the prose list and the probes cannot
+  // drift apart.
+  const PARAM_SHAPES: [string, string][] = [
+    [
+      "1. the scope type named directly",
+      "export function readIt(db: DbLike, scope: WorkspaceScope) { return db; }",
+    ],
+    [
+      "2. the scope type inside a container in the parameter text",
+      "export function readIt(db: DbLike, scopes: ProfileScope[]) { return db; }",
+    ],
+    [
+      "3. a named TYPE ALIAS whose body names a scope",
+      "type Ctx = { db: DbLike; scope: WorkspaceScope };\n" +
+        "export function readIt(ctx: Ctx) { return ctx.db; }",
+    ],
+    [
+      "4. a named INTERFACE whose members name a scope",
+      "interface Ctx { db: DbLike; scope: ProfileScope }\n" +
+        "export function readIt(ctx: Ctx) { return ctx.db; }",
+    ],
+    [
+      // THE SHAPE `settle` USES. An intersection is not one type name, and a
+      // predicate reading the parameter text sees `SettlementCtx & { … }` as
+      // no scope at all.
+      "5. an INTERSECTION of a scope-carrying named type",
+      "type Ctx = { db: DbLike; scope: ProfileScope };\n" +
+        "export function readIt(args: Ctx & { run: number }) { return args.db; }",
+    ],
+    [
+      "6. a named type that reaches a scope TRANSITIVELY",
+      "type Inner = { scope: WorkspaceScope };\n" +
+        "type Outer = { inner: Inner };\n" +
+        "export function readIt(o: Outer) { return o.inner; }",
+    ],
+    [
+      "7. an interface EXTENDING a scope-carrying interface",
+      "interface Base { scope: WorkspaceScope }\n" +
+        "interface Derived extends Base { n: number }\n" +
+        "export function readIt(d: Derived) { return d.n; }",
+    ],
+    [
+      "8. a CLASS whose members name a scope",
+      "class Holder { constructor(readonly scope: ProfileScope) {} }\n" +
+        "export function readIt(h: Holder) { return h; }",
+    ],
+  ];
+
+  it("the shape list and the probe list are the same list", () => {
+    expect(PARAM_SHAPES).toHaveLength(COVERED_PARAM_SHAPES);
+  });
+
+  it.each(PARAM_SHAPES)("sees a scope passed as %s", (_label, src) => {
+    const entries = collectEntries(
+      new Map([["packages/credits/src/probe.ts", src]])
+    );
+    const scoped = entries.filter(takesScope);
+    expect(
+      scoped.map((e) => e.name),
+      "this parameter shape is invisible to the AC-13 scan — a scope reaches it unchecked"
+    ).toContain("readIt");
+    // ...and it is reported UNCOVERED, since nothing here asserts.
+    const covered = coveredEntries(entries);
+    const target = entries.find((e) => e.name === "readIt")!;
+    expect(covered.has(target.key)).toBe(false);
+  });
+
+  it("sees a struct declared in ANOTHER FILE of the scanned set", () => {
+    // The population is the file SET, not the file: `SettlementCtx` happens to
+    // live beside its two consumers, and the day one moves this must not go
+    // quiet.
+    const entries = collectEntries(
       new Map([
         [
+          "packages/db/src/types.ts",
+          "export type Ctx = { db: DbLike; scope: WorkspaceScope };\n",
+        ],
+        [
           "packages/credits/src/probe.ts",
-          "type Ctx = WorkspaceScope;\nexport function readIt(db: DbLike, scope: Ctx) { return db; }",
+          "import type { Ctx } from '@respin/db';\n" +
+            "export function readIt(ctx: Ctx) { return ctx.db; }\n",
         ],
       ])
     );
+    expect(entries.filter(takesScope).map((e) => e.name)).toEqual(["readIt"]);
+  });
+
+  it.each([
+    ["a parameter list with no scope at all", "export function readIt(db: DbLike, n: number) { return db; }"],
+    [
+      "a named struct that carries NO scope",
+      "type Ctx = { db: DbLike; n: number };\n" +
+        "export function readIt(ctx: Ctx) { return ctx.db; }",
+    ],
+    [
+      // The NAME is not the type. `WorkspaceScopeish` merely looks like one.
+      "a type whose NAME resembles a scope but whose body has none",
+      "type WorkspaceScopeish = { id: string };\n" +
+        "export function readIt(c: WorkspaceScopeish) { return c.id; }",
+    ],
+  ])(
+    "stays SILENT for %s — the widening did not make everything a scope",
+    (_label, src) => {
+      const entries = collectEntries(
+        new Map([["packages/credits/src/probe.ts", src]])
+      );
+      expect(entries.filter(takesScope)).toHaveLength(0);
+    }
+  );
+
+  it("KNOWN LIMITS, pinned rather than left to be discovered", () => {
+    // Limits A, B, C and E of COVERED_PARAM_SHAPES, each planted. Delete the
+    // row whose expectation flips — a limit that has closed is not a limit.
+    const seen = (src: string, extra?: [string, string]) =>
+      collectEntries(
+        new Map(
+          extra
+            ? [extra, ["packages/credits/src/probe.ts", src] as [string, string]]
+            : [["packages/credits/src/probe.ts", src] as [string, string]]
+        )
+      ).filter(takesScope);
+
+    // A. the scope-carrying type is declared OUTSIDE the scanned file set.
+    // `packageSources()` reads `packages/*/src` only, so a type imported from
+    // a built `dist`, from `app/**` or from a `.d.ts` is unresolvable here.
     expect(
-      aliased.filter(takesScope),
-      "if this ever finds the aliased entry, delete this test — the limit is gone"
+      seen("export function readIt(ctx: ExternalCtx) { return ctx; }"),
+      "if this ever finds the entry, the file-set limit is gone — delete this row"
     ).toHaveLength(0);
+
+    // B. no type annotation at all: the scope arrives by inference.
+    expect(
+      seen("export function readIt(scope) { return scope.workspaceId; }")
+    ).toHaveLength(0);
+
+    // C. a generic type PARAMETER constrained to a scope.
+    expect(
+      seen(
+        "export function readIt<T extends WorkspaceScope>(s: T) { return s; }"
+      )
+    ).toHaveLength(0);
+
+    // D. ARGUMENT IDENTITY DOES NOT SEE THROUGH A STRUCT. The entry IS seen —
+    // that is the whole point of the widening — but a scope destructured out
+    // of its struct parameter is not recognised as this entry's own binding,
+    // so asserting it does not count as covering it. The limit therefore
+    // reports a false RED and never a false green: `settle` and
+    // `observeExistingClaim` are covered by the backward rule instead, and an
+    // entry that needs the forward one has to take its scope positionally
+    // (which `recordUsage` and `monthlySpend` already do, for this reason).
+    const destructured = collectEntries(
+      new Map([
+        [
+          "packages/credits/src/probe.ts",
+          "type Ctx = { db: DbLike; scope: WorkspaceScope };\n" +
+            "export function readIt(ctx: Ctx) {\n" +
+            "  const { scope } = ctx;\n  assertScoped(scope);\n  return ctx.db;\n}\n",
+        ],
+      ])
+    );
+    const target = destructured.find((e) => e.name === "readIt")!;
+    expect(destructured.filter(takesScope), "the entry itself is seen").toHaveLength(1);
+    expect(
+      coveredEntries(destructured).has(target.key),
+      "if this ever goes true the limit has closed — delete this row"
+    ).toBe(false);
+
+    // E. AN ALIAS BUILT FROM A TYPE QUERY. This is `generate.ts`'s real `Caps`
+    // shape, planted verbatim: the alias reaches a scope only through a VALUE
+    // (`typeof writeCapabilities`), which a per-file parse cannot follow. The
+    // first specimen is the live one; the second proves it is the type QUERY
+    // and not the helper's name doing it — spell the same thing as a type
+    // reference and the scan sees it, which is shape 3.
+    expect(
+      seen(
+        "type Caps = ReturnType<typeof writeCapabilities>;\n" +
+          "export function recordIt(db: DbLike, caps: Caps) { return db; }"
+      ),
+      "if this ever finds the entry, limit E has closed — delete this row"
+    ).toHaveLength(0);
+    expect(
+      seen(
+        "type Caps = { scope: ProfileScope };\n" +
+          "export function recordIt(db: DbLike, caps: Caps) { return db; }"
+      ).map((e) => e.name),
+      "NON-VACUITY: the probe's own shape is otherwise visible, so the zero above is the type QUERY"
+    ).toEqual(["recordIt"]);
   });
 });
 

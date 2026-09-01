@@ -30,6 +30,7 @@ import {
   ProfileRoleError,
   WorkspacePausedError,
   hasOpenPause,
+  selectActiveProfileInTx,
   workspaceWriteCapabilities,
   assertScoped,
   type CreatorProfile,
@@ -127,6 +128,12 @@ export async function createProfile(
     if (existing >= cap) {
       throw new ProfileCapError(billing.tier, cap, existing);
     }
-    return caps.createProfile({ displayName }, tx);
+    const profile = await caps.createProfile({ displayName }, tx);
+    // SAME transaction and SAME workspace lock as the cap decision and insert.
+    // A failed selection therefore rolls the profile back, while a successful
+    // create cannot return with the acting member still pointed at an older
+    // profile. No cookie or follow-up request sits between the two writes.
+    await selectActiveProfileInTx(tx, scope, profile.id);
+    return profile;
   });
 }

@@ -27,7 +27,6 @@ import { CHECK } from "../src/brain-content";
 import {
   EvidenceUnreadableError,
   activateBrainCoherent,
-  activateVoice,
   claimsFor,
   confirmKillTestFields,
   confirmStrategyFields,
@@ -391,7 +390,12 @@ describe("readVoiceBrain / claimsFor — what the confirm screen is handed", () 
       const caps = writeCapabilities(await scopeFor());
       const doc = await writeDoc(caps);
       await confirmEverything(doc.id);
-      const activated = await activateVoice(
+      // THE COHERENT PATH, which since the 2026-09-01 tenancy gate round is
+      // the only activation this package exposes: it calls the SAME
+      // `caps.activateBrainDoc` closure these four cases are about, and adds
+      // the snapshot. Driving the gates through it means they are witnessed on
+      // the path `/brain` presses rather than on a wrapper nothing reached.
+      const { doc: activated } = await activateBrainCoherent(
         db,
         await withWorkspace(db, { authUserId: "brain_user" }),
         profileId,
@@ -430,7 +434,7 @@ describe("readVoiceBrain / claimsFor — what the confirm screen is handed", () 
         .where(eq(brainDocs.id, doc.id));
 
       await expect(
-        activateVoice(
+        activateBrainCoherent(
           db,
           await withWorkspace(db, { authUserId: "brain_user" }),
           profileId,
@@ -460,7 +464,7 @@ describe("readVoiceBrain / claimsFor — what the confirm screen is handed", () 
         })
         .where(eq(brainDocs.id, doc.id));
 
-      const err = await activateVoice(
+      const err = await activateBrainCoherent(
         db,
         await withWorkspace(db, { authUserId: "brain_user" }),
         profileId,
@@ -480,7 +484,7 @@ describe("readVoiceBrain / claimsFor — what the confirm screen is handed", () 
         .where(eq(brainDocs.id, doc.id));
 
       await expect(
-        activateVoice(
+        activateBrainCoherent(
           db,
           await withWorkspace(db, { authUserId: "brain_user" }),
           profileId,

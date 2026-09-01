@@ -36,7 +36,31 @@ export type DeletionDecision = {
 
 export type CreatorDataEntry = {
   table: string;
-  /** Does this table hold creator-authored CONTENT (as opposed to metering)? */
+  /**
+   * Does this table hold CREATOR CONTENT — their own words, or the finished
+   * work this product produced FOR them — as opposed to metering, navigation
+   * or in-flight working state?
+   *
+   * NOT "authored by the creator", and the distinction is load-bearing rather
+   * than pedantic (tenancy gate round 2, 2026-09-01). `brain_docs` is inferred
+   * by the product and `generations` is written by it; both are `true`, because
+   * what makes a row the creator's is that it is THEIRS TO TAKE, not whose
+   * fingers typed it. An authorship test applied honestly would exclude both,
+   * and this field is what forces them into the REQ-A04 export.
+   *
+   * IT IS A FORCING CONDITION ON THE EXPORT, NEVER A SYNONYM FOR IT.
+   * `tests/creator-data-registry.test.ts` makes `true` here mandate
+   * `export.included: true`; `false` decides nothing on its own, which is why
+   * `brain_activation_snapshots` is `false` and exported anyway (ids only, kept
+   * for structural history) while `workspace_spend_monthly` is `false` and not.
+   *
+   * The discriminator that puts a row on the FALSE side is therefore what the
+   * row IS, not who wrote it: metering (`model_usage`), a financial aggregate
+   * (`workspace_spend_monthly`), a navigation preference
+   * (`membership_profile_selections`), pure structure
+   * (`brain_activation_snapshots`), or unshown working state superseded by an
+   * exported record (`generation_attempts` — see its entry).
+   */
   holdsCreatorContent: boolean;
   export: ExportDecision;
   deletion: DeletionDecision;
@@ -55,6 +79,20 @@ export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = [
       behaviour: "cascade",
       reason:
         "FK to workspaces ON DELETE CASCADE, and every profile-grained child cascades from here — so one workspace delete removes the whole tree",
+    },
+  },
+  {
+    table: "membership_profile_selections",
+    holdsCreatorContent: false,
+    export: {
+      included: false,
+      reason:
+        "a mutable per-member navigation preference, not creator-authored content or brain history. Exporting its user_id through a profile export would disclose workspace membership identity without adding creator IP",
+    },
+    deletion: {
+      behaviour: "cascade",
+      reason:
+        "the composite membership FK and composite creator-profile FK both use ON DELETE CASCADE, so deleting either the membership or the selected profile removes the preference without a retained identifier",
     },
   },
   {
@@ -138,6 +176,63 @@ export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = [
       behaviour: "cascade",
       reason:
         "composite FK to creator_profiles ON DELETE CASCADE, the same shape every other profile-grained child in this registry uses",
+    },
+  },
+  {
+    table: "generations",
+    holdsCreatorContent: true,
+    export: {
+      included: true,
+      reason:
+        "the script, hooks and caption the product wrote FOR this creator, plus the kill-test verdict and the weakest point stated about it. This is the artefact they came here to make — an export that returns their brain but not what it produced returns the recipe and withholds the meal. It also carries the only record of WHICH coherent brain version each output ran under (brain_activation_id), so it is what makes their own history legible to them",
+    },
+    deletion: {
+      behaviour: "cascade",
+      reason:
+        "composite FK to creator_profiles ON DELETE CASCADE, the same shape every other profile-grained child in this registry uses. The generation cascades with the profile even though the SPEND it caused does not: model_usage's own row cascades too and workspace_spend_monthly keeps the money history, so deleting a creator's outputs never costs us the financial record and never keeps their words",
+    },
+  },
+  {
+    table: "generation_attempts",
+    // FALSE, and since R14c added `candidate` (2026-08-31) that is a judgement
+    // rather than an observation, so it is written down. The warrant is UNSHOWN,
+    // SUPERSEDABLE WORKING STATE: the candidate is an in-flight draft of a
+    // document the creator has never been shown, which the kill test or the
+    // balance may still refuse, and which the settled `generations` row
+    // supersedes the moment it exists. The creator's record of this generation
+    // is that `generations` row plus the creator-authored `request` that
+    // produced it, and BOTH are exported.
+    //
+    // NOT "IT IS NOT AUTHORED BY THE CREATOR", which is how R-67 recorded this
+    // warrant and is narrowed here in the same gate's second round. Authorship
+    // proves too much: `generations` is likewise written by the product — its
+    // own reason says so, "the script, hooks and caption the product wrote FOR
+    // this creator" — and it is `holdsCreatorContent: true` and exported. A
+    // warrant that, applied consistently, would strip the creator of the
+    // artefact they came here to make is the wrong warrant, whatever answer it
+    // happens to reach here. `holdsCreatorContent`'s own docblock now states
+    // the meaning this entry relies on. (`docs/initial/decisions.md` is
+    // append-only, so R-67's sentence stands as written; this is the code it
+    // describes, corrected.)
+    //
+    // WHAT NEITHER VERSION CLAIMS (billing + tenancy gates, 2026-09-01): that
+    // the candidate is "provably transient". The equality bounds it to the
+    // `vendor_complete` STATE, which is not the same as bounding it in TIME —
+    // an attempt stranded at `vendor_complete` by a crash between the response
+    // checkpoint and settlement keeps its candidate until something moves it,
+    // and today nothing sweeps that state. The warrant above does not depend on
+    // how long the row sits there. See R-67 for the stranded-row residual and
+    // its revisit trigger.
+    holdsCreatorContent: false,
+    export: {
+      included: false,
+      reason:
+        "the durable CLAIM: a payload sha256, a purpose, a mode, a state, four timestamps — and, while the attempt sits at `vendor_complete`, the `candidate` R14c added (2026-08-31). Excluded because it is OURS, not theirs: an in-flight draft the creator has never been shown, which the kill test or the balance may still refuse, is the product's working state and not the creator's record. The creator's record is the settled `generations` row that supersedes it, and that IS exported, along with the creator-authored `request` that produced both. `generation_attempts_candidate_iff_vendor_complete` is an equality, so no TERMINAL row can retain it — that bounds the candidate by STATE, and deliberately no longer claims to bound it in TIME, because a crash between the response checkpoint and settlement strands an attempt at `vendor_complete` and nothing sweeps that state yet (R-67). Everything else here is an operational record of whether a vendor call happened, which is our reliability story rather than their data",
+    },
+    deletion: {
+      behaviour: "cascade",
+      reason:
+        "composite FK to creator_profiles ON DELETE CASCADE. Chosen over `retained` deliberately, and the asymmetry with workspace_spend_monthly is the reason worth stating: the margin rollup must outlive the workspace because it is a financial record, whereas an attempt claim is an idempotency token whose whole job ends at settlement — keeping it after the profile is gone would retain a per-creator activity timeline for no purpose anyone could name",
     },
   },
   {

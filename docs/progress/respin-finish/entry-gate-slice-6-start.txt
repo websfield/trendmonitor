@@ -1,0 +1,74 @@
+=== TYPECHECK ===
+
+> respin@0.0.0 typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc --noEmit && pnpm --filter=!respin -r run typecheck
+
+Scope: 5 of 6 workspace projects
+packages/llm typecheck$ tsc --noEmit
+packages/db typecheck$ tsc --noEmit
+packages/llm typecheck: Done
+packages/db typecheck: Done
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== LINT ===
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+=== DBCHECK ===
+> respin@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin
+> pnpm --filter @respin/db db:check
+
+
+> @respin/db@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin\packages\db
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+=== TEST ===
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 2: the per-PaymentIntent guarantee is STRUCTURAL — a second auto-top-up row for one PI is refused by the database [33m 1086[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 4: a service period ending 31 January expires the allowance on 28 February — never 3 March [33m 817[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 8: a grant-bearing invoice whose line carries NO service period is refused, never priced off the mirror [33m 812[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 8: a line missing only period.START is refused — it must not skip the monthly-interval guard [33m 856[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE BLOCK: a re-subscribe whose CHECKOUT arrives before the subscription snapshot still activates — the terminal guard must not eat the new subscription's own first event [33m 887[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE CHANGE: `unpaid` is recoverable — an active snapshot after unpaid is applied, unlike canceled [33m 783[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE CHANGE: an EXPIRED deadline is not a live one — a later dunning episode opens a fresh window [33m 769[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE CHANGE: an OLDER active snapshot cannot wipe a LIVE grace deadline (payment_failed never stamps the watermark, so the order guard cannot protect it) [33m 703[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE BLOCK 2: an ordinary cancel-at-period-end does NOT lock the workspace out of re-subscribing [33m 738[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE BLOCK 2 (sibling): an `unpaid` subscription still counts as LIVE, so no second one can be started [33m 872[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE (mirror image): a late `deleted` for an OLD subscription never cancels the current one [33m 847[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mCHANGE 1: `customer.subscription.deleted` DISARMS auto-top-up — no off-session charging authority survives a cancellation [33m 759[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 1: a trailing `updated` carrying status canceled cannot RE-ARM what `deleted` just cleared [33m 840[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 2: a recovery seen ONLY as `updated → active` does not shorten the NEXT dunning episode's window [33m 792[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 2: the same holds when the new episode arrives as the dunning `subscription.updated` instead [33m 914[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 2 (the direction that must NOT change): inside ONE episode a second failure still never extends the deadline [33m 823[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 3: a STALE snapshot cannot close a pause the owner opened after it was created [33m 727[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 3 (non-vacuity): a CONTEMPORANEOUS snapshot without pause_collection still resumes [33m 664[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mCHANGE 3: the monthly band is CONFIG — widening `monthlyPeriodDays` self-heals the refused invoice with no deploy [33m 724[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 4: a grant-bearing invoice with NO id is REFUSED, never granted against the event id [33m 683[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 regression pins (billing NOTE 3: the pause bound is SYMMETRIC)[2m > [22ma pause-era snapshot arriving AFTER the owner resumed cannot RE-OPEN the pause [33m 768[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 regression pins (billing NOTE 3: the pause bound is SYMMETRIC)[2m > [22mNON-VACUITY: a CONTEMPORANEOUS pause snapshot still opens a pause (the bound is not a blanket refusal) [33m 627[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mmirrors cancel_at and surfaces it as a scheduled end — with the boolean FALSE [33m 788[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mthe scheduled end DIES with the subscription (DEAD_SUBSCRIPTION_FIELDS clears it) [33m 703[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mNON-VACUITY: an ordinary active subscription carries no scheduled end [33m 674[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma STALE invoice.paid does NOT end a newer, still-live dunning grace period [33m 679[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22mNON-VACUITY: a CURRENT invoice.paid still clears the grace and lifts the status [33m 842[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma TERMINAL mirror is still tidied by a CURRENT paid invoice — cleared, and never revived [33m 776[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma stale invoice on a terminal mirror leaves the deadline, and it STILL cannot surface as grace [33m 754[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma GENUINE during-pause invoice is refused: outcome `ignored`, and ZERO credits minted [33m 749[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe refusal is idempotent — a redelivery of the same event does not sneak a grant through [33m 893[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mBOUNDARY: inside the tolerance grants, outside it refuses — the rule is the clock, not the pause flag [33m 1533[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe direction that must NOT change: an UNPAUSED workspace still gets its allowance [33m 1163[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma RESUMED workspace grants again — the refusal is tied to the OPEN pause, not to having ever paused [33m 2160[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m82 passed[39m[22m[90m (82)[39m
+[2m      Tests [22m [1m[32m1763 passed[39m[22m[90m (1763)[39m
+[2m   Start at [22m 17:22:17
+[2m   Duration [22m 255.23s[2m (transform 116.63s, setup 0ms, collect 719.53s, tests 3051.43s, environment 63ms, prepare 94.90s)[22m
+
+=== DONE rc=0 ===

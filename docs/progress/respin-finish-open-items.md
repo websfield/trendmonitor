@@ -83,6 +83,8 @@ delta writer) gaps a 2026-08-29 plan audit found unbuilt against this card's own
 `/admin/margin` -> `/admin/model-spend` rename (R14/R15). Both gates PASS at Ready. Report card:
 `respin-finish-slice-2b-c-card.md`.
 
+**SUPERSEDED IN SLICE 4C (2026-08-31, appended rather than rewriting the history above).** R4 remains closed: the retained `unknown_call_count`, new-call spend UPSERT, and read-only reconciliation report are live. R4a is not a current capability: the exported delta writer and its sanctioned `model_usage` UPDATE were removed because there is no real reconciliation source or payload identity to authenticate and deduplicate. Its owner is now the future provider/job/operator-import integration; it must ship the real caller and idempotency proof in the same slice.
+
 ### Slice 3 — Infer → confirm → activate
 
 | ID | Claim | Verified at | Reachable when | Blast radius |
@@ -118,13 +120,13 @@ delta writer) gaps a 2026-08-29 plan audit found unbuilt against this card's own
 
 | ID | Claim | Verified at | Reachable when | Blast radius |
 |---|---|---|---|---|
-| task 22 | **No brain export exists at all.** `packages/db/src/export.ts` does not exist | `respin/packages/db/src/` has no `export.ts`, and no `exportBrain`-shaped function exists anywhere in `packages/*/src` | slice 5 | REQ-A04 [Must] has no engineering behind it — see F-2 |
+| task 22 | **No brain export exists at all.** `packages/db/src/export.ts` does not exist | `respin/packages/db/src/` has no `export.ts`, and no `exportBrain`-shaped function exists anywhere in `packages/*/src` | slice 5 | REQ-A04 [Must] has no engineering behind it — see F-2 — **CLOSED 2026-08-31 (slice 5).** `packages/db/src/export.ts` ships the registry-driven exporter; delivery at `app/api/export/route.ts`. Exactly ONE exporter — the unreachable non-streaming twin found by the tenancy gate was deleted. |
 | R-30.7 | The R-29 seed-content assertion is owed by the first `frameworks` writer, and there is no writer | `frameworks` is in the schema (`packages/db/src/brain-schema.ts`) and nothing in `packages/*/src` inserts into it; M2a pinned its expected writer set to `[]` | slice 5 seeds F1–F9 | the shared library seeds without the mechanism-level assertion R-29 made the condition of seeding at all |
-| task 21 | No `frameworks` accessor on `ProfileAccessors` | `with-workspace.ts:415-440` — five accessors, none of them `frameworks` | slice 5 exports | the export builds its own framework query, i.e. a second corpus |
-| task 23 | Export coverage test plus cross-profile and cross-workspace assertions | no export to test | slice 5 | — |
-| task 15 | The "annotate at export" half of wiring the R-3 bar | the echo bar runs at write (`:1030`) and activation (`:1284`); there is no export path | slice 5 | — |
-| task 37 | Export must never throw (`validateSourceEvidence` annotate mode) | `echo.ts:401` states the rule; nothing implements it | slice 5 | a data-subject right fails closed on one bad row |
-| task 44 | Absent is never zero at export — a claim-bearing array with no evidence renders "no claim made" | no export | slice 5 | an empty list reads as "nothing to avoid" |
+| task 21 | No `frameworks` accessor on `ProfileAccessors` | `with-workspace.ts:415-440` — five accessors, none of them `frameworks` | slice 5 exports | the export builds its own framework query, i.e. a second corpus — **CLOSED 2026-08-31 (slice 5), differently from how it was written.** The export does not build its own framework query: `exportPage`'s scoped `frameworks` branch is the live reader and carries the private-only rule and its witness. The separate `ProfileAccessors.frameworks` accessor was DELETED as unreachable (`decisions.md` R-62). |
+| task 23 | Export coverage test plus cross-profile and cross-workspace assertions | no export to test | slice 5 | — — **CLOSED 2026-08-31 (slice 5).** Cross-profile and cross-workspace assertions run on the LIVE streaming path over all six export branches; a foreign profile and a bogus id return the same 404 (walked). |
+| task 15 | The "annotate at export" half of wiring the R-3 bar | the echo bar runs at write (`:1030`) and activation (`:1284`); there is no export path | slice 5 | — — **CLOSED 2026-08-31 (slice 5).** Annotate-at-export implemented and walked: a corrupted offset yields HTTP 200 with a named annotation in JSON and markdown, and `/brain` renders it inline. |
+| task 37 | Export must never throw (`validateSourceEvidence` annotate mode) | `echo.ts:401` states the rule; nothing implements it | slice 5 | a data-subject right fails closed on one bad row — **CLOSED 2026-08-31 (slice 5).** The export never throws on a bad row; proven in a browser against a deliberately corrupted offset, then reversed and re-verified. |
+| task 44 | Absent is never zero at export — a claim-bearing array with no evidence renders "no claim made" | no export | slice 5 | an empty list reads as "nothing to avoid" — **CLOSED 2026-08-31 (slice 5).** Absent is never zero: empty claim arrays render "no rules recorded". Absence ATTRIBUTION is now selected on (kind, reason) after all three gates found it misattributed. |
 
 ### Slice 6 — First generation
 
@@ -206,3 +208,48 @@ not dropped: if Cutdown resumes they are still open against it.
 **`todos.md` is not corrected in place.** It is a Cutdown/UGC-era file last updated 2026-08-10 and
 its own header says so. This register is the Respin-side home for T-8 (deferred) and T-12 (slice 10b);
 the eight rows above stay where they are.
+
+---
+
+## CLOSED IN SLICE 6 (2026-09-01, appended — this register corrects by appending)
+
+**DL-2 / R-21 — Free-tier credits have no minting path. CLOSED.** Minting is **lazy, at balance-derivation
+time**, the mechanism R-20 already chose for expiry — no runner, no signup grant, no job.
+`mintFreeAllowanceIfDue` (`packages/credits/src/balance.ts`) appends a `grant` row inside
+`deriveBalanceInTx`, idempotent through the partial unique `credit_ledger_free_allowance_uq` on
+`(workspace_id, ref_id) WHERE ref_type = 'free_allowance'` with `ref_id` the `yyyy-MM` UTC period key —
+**workspace-keyed, not the `(ref_type, ref_id)` shape its five siblings use**, because every workspace on
+the platform mints `'2026-08'` and the sibling shape would have let the first Free workspace to derive a
+balance in a month take the key and refuse every other workspace's grant for the rest of it (R-63). The
+index ships with `credit_ledger_free_allowance_ref`, because NULLs are distinct in a unique index and the
+index alone is not idempotency. Proven on real Postgres by eight concurrent first reads minting **one**
+grant, by name, and by dropping the index in a rolled-back transaction and measuring the doubling.
+**Pause-gated** on both authorities — `billing.state` and `hasOpenPause` — because `fold.ts` freezes a
+lot's clock under an open pause, so grants minted while paused would never expire and would accumulate
+against Free's no-rollover rule (R-67); the skip **suspends rather than forfeits**. R17's stated cost is a
+test rather than a hope: a balance read inside the real `handleStripeEvent` transaction does not fail the
+webhook. **Residual, not claimed closed:** the acceptance walk on Free against a real vendor has not been
+run — see the slice 6 report card; engineering completion and evidence completion are separate claims.
+
+**REQ-I03 — "no invented personal specifics" unmet on the surface a creator reads. CLOSED as
+TRACEABILITY, with its limit stated to the creator rather than only in a decision log.** The scan
+(`packages/modes/src/traceability.ts`) checks every specific-shaped token in the output for membership in
+the union of the creator's active brain content and the input they gave this generation. It is honest
+about which error it makes: enforcement is **per shape and per field** (R-64, corrected by R-68) —
+currency, percent, multiplier and both date shapes are `hard`; a plain number and a proper noun `flag`;
+everything under `/disclosure/` flags whatever its shape — because an entirely honest listicle hook was
+**measured being refused** on the `5` in "The 5 mistakes…", and question 4's table debits a refusal. The
+behaviour is **flag and offer `[check]`, never silently delete**, asserted directly, because deleting on a
+false positive corrupts the creator's script. The `[check]` exemption is scoped to the **specific the
+marker is attached to**, never the sentence — the sentence-scoped version was measured returning four
+invented specifics for display with `hardRules: []` (R-68/R-69). The limit reaches the creator on screen:
+the product checked every specific against what they told it, and **it cannot check whether a claim is
+true**.
+
+**Also closed here, and not in the original 73:** REQ-I04's no-guarantee rule and REQ-I05's no-concealment
+rule became **deterministic controls on model-authored text** rather than prompt lines (`claims.ts`, the
+fifth hard rule `forbidden_claim`) — see R-69, including the round-2 BLOCK where that rule was inert on
+`/disclosure/`, the only field its concealment half could ever land on. **The vocabulary behind it is a
+stated recall aid with known gaps, not a complete control** (owner decision, R-69): "no finding" means "no
+listed string matched" and nothing more, and the revisit trigger is a measured claim reaching a creator
+through an unlisted class — which is the signal to change the mechanism, not to add another string.

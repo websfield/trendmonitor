@@ -1654,9 +1654,9 @@ describe("the run control is wired, not assumed", () => {
 
   it("the action is BOUND to the profile id, and the control is absent without one", () => {
     expect(pageSrc).toContain(
-      "runVoiceInferenceAction.bind(null, profiles[0].id)"
+      "runVoiceInferenceAction.bind(null, selectedProfile.id)"
     );
-    expect(pageSrc).toMatch(/run=\{\s*profiles\[0\]/);
+    expect(pageSrc).toMatch(/run=\{\s*selectedProfile/);
   });
 
   it("a PAUSE blocks the run, even though it does not block the paste", () => {

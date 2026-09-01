@@ -56,8 +56,10 @@ import {
 import {
   addOwnPostAction,
   addReferencePostAction,
+  checkCandidateSafetyAction,
   createProfileAction,
   runVoiceInferenceAction,
+  selectProfileAction,
 } from "./actions";
 import type { RefusalCopyByCode } from "./run-inference-panel";
 
@@ -114,7 +116,22 @@ export default async function OnboardingPage(props: {
     logRefusal("[onboarding] profile list unavailable", err);
     return <AccessRefusal copy={billingErrorDisplay(err)} />;
   }
-  const step = onboardingStep(profiles.length);
+  let selectedProfile: Awaited<
+    ReturnType<typeof respinDb.selectedProfileForMember>
+  > = null;
+  try {
+    selectedProfile = await respinDb.selectedProfileForMember(scope);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[onboarding] selected profile unavailable", err);
+    return <AccessRefusal copy={billingErrorDisplay(err)} />;
+  }
+  const availableProfiles =
+    selectedProfile &&
+    !profiles.some((profile) => profile.id === selectedProfile?.id)
+      ? [...profiles, selectedProfile]
+      : profiles;
+  const step = onboardingStep(availableProfiles.length);
 
   // Read once, used by `writeBlock` below. A failure here must not take the
   // page down — the pause is a courtesy on this screen, and the authority is
@@ -151,7 +168,7 @@ export default async function OnboardingPage(props: {
     plan = {
       tier: state.tier,
       cap: config.content.profileCaps[state.tier],
-      used: profiles.length,
+      used: availableProfiles.length,
     };
   } catch (err) {
     rethrowNextControlFlow(err);
@@ -213,10 +230,10 @@ export default async function OnboardingPage(props: {
   let fetched: Awaited<ReturnType<typeof respinDb.listOnboardingInputs>> = [];
   try {
     fetched =
-      step === "paste-posts"
+      step === "paste-posts" && selectedProfile
         ? await respinDb.listOnboardingInputs(
             scope,
-            profiles[0].id,
+            selectedProfile.id,
             { limit: PAGE_SIZE + 1 },
             "own_post"
           )
@@ -236,10 +253,10 @@ export default async function OnboardingPage(props: {
   let referenceFetched: Awaited<ReturnType<typeof respinDb.listOnboardingInputs>> = [];
   try {
     referenceFetched =
-      step === "paste-posts"
+      step === "paste-posts" && selectedProfile
         ? await respinDb.listOnboardingInputs(
             scope,
-            profiles[0].id,
+            selectedProfile.id,
             { limit: REFERENCE_COUNT_MAX },
             "reference"
           )
@@ -334,7 +351,7 @@ export default async function OnboardingPage(props: {
         // opposite default would lock a creator out of onboarding because of an
         // operator's unseeded config, which is a refusal they cannot act on.
         capReached={plan !== null && capReached(plan.used, plan.cap)}
-        profileName={profiles[0]?.displayName ?? null}
+        profileName={selectedProfile?.displayName ?? null}
         posts={posts}
         morePosts={morePosts}
         referencePosts={referencePosts}
@@ -352,9 +369,9 @@ export default async function OnboardingPage(props: {
         // still untrusted input on the wire, and `mintProfileScope` is what
         // refuses a foreign one.
         run={
-          profiles[0]
+          selectedProfile
             ? {
-                action: runVoiceInferenceAction.bind(null, profiles[0].id),
+                action: runVoiceInferenceAction.bind(null, selectedProfile.id),
                 costSentence: runCostSentence(runCost, runBalance),
                 sendSentence: preSendSentence(corpusMax),
                 block: runBlock,
@@ -364,6 +381,29 @@ export default async function OnboardingPage(props: {
             : null
         }
         createProfileAction={createProfileAction}
+        profilePanel={
+          availableProfiles.length > 0
+            ? {
+                profiles: availableProfiles.map((profile) => ({
+                  id: profile.id,
+                  displayName: profile.displayName,
+                })),
+                selectedProfileId: selectedProfile?.id ?? null,
+                selectProfileAction,
+                createProfileAction,
+                plan,
+                capReached: plan !== null && capReached(plan.used, plan.cap),
+                createBlock,
+                nameLimit: DISPLAY_NAME_MAX,
+              }
+            : undefined
+        }
+        selectionRequired={step === "paste-posts" && selectedProfile === null}
+        candidateSafetyAction={
+          selectedProfile
+            ? checkCandidateSafetyAction.bind(null, selectedProfile.id)
+            : undefined
+        }
         // The profile id is BOUND rather than carried in a hidden field, so the
         // form has nothing to tamper with. It is still untrusted input on the
         // wire; `ProfileScope.mint` is what refuses a foreign id.
@@ -373,11 +413,13 @@ export default async function OnboardingPage(props: {
         // somewhere is a fallback that can do something unintended if the
         // unreachable branch ever becomes reachable.
         addPostAction={
-          profiles[0] ? addOwnPostAction.bind(null, profiles[0].id) : "/onboarding"
+          selectedProfile
+            ? addOwnPostAction.bind(null, selectedProfile.id)
+            : "/onboarding"
         }
         addReferenceAction={
-          profiles[0]
-            ? addReferencePostAction.bind(null, profiles[0].id)
+          selectedProfile
+            ? addReferencePostAction.bind(null, selectedProfile.id)
             : "/onboarding"
         }
         // `onboardingErrorFor`, NOT the shared `billingErrorFromCode`: this

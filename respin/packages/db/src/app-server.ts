@@ -15,7 +15,9 @@ import { ensureUserWorkspace, type BootstrapParams } from "./bootstrap";
 import {
   withWorkspace,
   monthlySpend,
+  burnByMode,
   type ActivateBrainDocCoherentResult,
+  type BurnByModeResult,
   type LedgerPage,
   type MonthlySpendResult,
   type WorkspaceCtx,
@@ -24,11 +26,11 @@ import {
 import {
   appendOwnPost,
   appendReferencePost,
+  checkCandidateReferenceSafety,
   listOnboardingInputs,
 } from "./onboarding-ops";
 import type { InputClass } from "./onboarding-schema";
 import {
-  activateVoice,
   activateBrainCoherent,
   confirmVoiceFields,
   confirmStrategyFields,
@@ -65,6 +67,10 @@ import {
   type SubmitInterviewResult,
 } from "./interview-ops";
 import type { OnboardingInterviewDraft } from "./onboarding-schema";
+import {
+  selectActiveProfile,
+  selectedProfileForMember,
+} from "./profile-selection";
 
 let cached: Db | undefined;
 
@@ -132,6 +138,10 @@ export const respinDb = {
   ensureUserWorkspace: (params: BootstrapParams) =>
     ensureUserWorkspace(getServerDb(), params),
   withWorkspace: (ctx: WorkspaceCtx) => withWorkspace(getServerDb(), ctx),
+  selectedProfileForMember: (scope: WorkspaceScope) =>
+    selectedProfileForMember(getServerDb(), scope),
+  selectActiveProfile: (scope: WorkspaceScope, profileId: string) =>
+    selectActiveProfile(getServerDb(), scope, profileId),
   // Slice 1's intake pair. Both take a WorkspaceScope POSITIONALLY rather than
   // inside an options object, and that is not a style choice: the AC-13
   // completeness scan in `tests/profile-cage.test.ts` finds scope-taking
@@ -158,6 +168,17 @@ export const respinDb = {
     content: string,
     sourceUrl?: string
   ) => appendReferencePost(getServerDb(), scope, profileId, content, sourceUrl),
+  checkCandidateReferenceSafety: (
+    scope: WorkspaceScope,
+    profileId: string,
+    candidate: string
+  ) =>
+    checkCandidateReferenceSafety(
+      getServerDb(),
+      scope,
+      profileId,
+      candidate
+    ),
   listOnboardingInputs: (
     scope: WorkspaceScope,
     profileId: string,
@@ -190,14 +211,21 @@ export const respinDb = {
       brainDocId,
       confirmedFields
     ),
-  activateVoice: (
-    scope: WorkspaceScope,
-    profileId: string,
-    brainDocId: string
-  ) => activateVoice(getServerDb(), scope, profileId, brainDocId),
-  // Slice 3b (Stage B2): the same trio extended to `strategy`/`killtest`, and
-  // ONE coherent activation entrypoint for all three kinds (R8). Positional
-  // `WorkspaceScope`, same AC-13 reason as every entry above.
+  // `activateVoice` WAS A FACADE ENTRY HERE and is gone (tenancy gate round 2,
+  // 2026-09-01). It bound slice 3's single-document activation, which writes
+  // no `brain_activation_snapshots` row; slice 3b replaced it on `/brain` with
+  // `activateBrainCoherent` and it has had ZERO `app/**` callers ever since —
+  // an unreachable scoped write is inventory, not tenancy surface (the same
+  // Definition-of-Done rule that deleted four accessors in slice 5). It is not
+  // only unused: since R9a the generation path assembles its prompt from the
+  // documents its recorded snapshot NAMES, so a single-document activation on
+  // a profile that had already activated coherently would have left the
+  // product writing in the superseded voice, silently. `brain-ops.ts` carries
+  // the full note; `activateBrainCoherent` below is the whole surface.
+  //
+  // Slice 3b (Stage B2): the confirm trio extended to `strategy`/`killtest`,
+  // and ONE coherent activation entrypoint for all three kinds (R8).
+  // Positional `WorkspaceScope`, same AC-13 reason as every entry above.
   readStrategyBrain: (scope: WorkspaceScope, profileId: string) =>
     readStrategyBrain(getServerDb(), scope, profileId),
   readKillTestBrain: (scope: WorkspaceScope, profileId: string) =>
@@ -281,6 +309,15 @@ export const respinDb = {
     scope: WorkspaceScope,
     periodStart: Date
   ): Promise<MonthlySpendResult> => monthlySpend(getServerDb(), scope, periodStart),
+  // Slice 6, R17a: the SAME period, split by the mode each debit's attempt
+  // settled into. A second method rather than a field on `MonthlySpendResult`
+  // so that a by-mode read failing cannot take the total down with it — the
+  // fail-soft shape `/usage` already uses for the pause notice — and
+  // positional `WorkspaceScope`, like every entry above, for the AC-13 scan.
+  burnByMode: (
+    scope: WorkspaceScope,
+    periodStart: Date
+  ): Promise<BurnByModeResult> => burnByMode(getServerDb(), scope, periodStart),
   reconcileSpend: (): Promise<SpendReconciliationResult> =>
     reconcileSpend(getServerDb()),
   // Slice 3b, Stage B1: the structured-interview trio. Positional

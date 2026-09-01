@@ -405,8 +405,16 @@ export function parseVoiceReply(params: {
  * changes nothing else. Anything more forgiving starts guessing which part of a
  * chatty reply was the JSON, and a parser that guesses is the fail-open half of
  * R2.
+ *
+ * EXPORTED IN SLICE 6 (stage B, R3) so `@respin/modes`'s `parseScriptOutput`
+ * uses THIS fence tolerance rather than a second copy of it. R3 says the
+ * fail-closed parse contract is "copied, not reinvented"; the strongest reading
+ * of that is to share the code, because two hand-copied strippers drift and the
+ * one that drifts is the one nobody re-reads. It is pure, takes no options and
+ * decides nothing about content, so exporting it widens no surface that
+ * matters.
  */
-function stripFence(text: string): string {
+export function stripFence(text: string): string {
   const t = text.trim();
   if (!t.startsWith("```")) return t;
   const firstNewline = t.indexOf("\n");

@@ -170,6 +170,18 @@ export const ONBOARDING_ERROR_CODES = [
   "insufficient_credits",
   "config_not_migrated",
   "llm_unavailable",
+  // SLICE 6 WIDENED `runInference` WITHOUT TOUCHING THIS SCREEN, and the
+  // derived scan below is what caught it rather than a browser walk this time.
+  // `priceOf` and `requiredConfigPaths` were generalised from the hard-coded
+  // onboarding pair to a per-purpose switch (R13), and the `default:` branch of
+  // both throws `UnpricedOperationError` — a class this screen's own spend path
+  // can now raise, on the file (`inference.ts`) that has been in
+  // `SPEND_PATH_SOURCES` since slice 2a. Omitted, an operator misconfiguration
+  // would render "Something went wrong" to a creator on the screen that spends
+  // a credit. This is the population lesson working in the direction it was
+  // written for: the list did not have to be re-derived by hand, the scan
+  // demanded the entry.
+  "unpriced_operation",
   // Both halves of the two paths the shared copy used to get wrong: a vendor
   // failure the vendor still billed us for, and a debit refused after the
   // model had already answered. Omitting either would degrade the honest

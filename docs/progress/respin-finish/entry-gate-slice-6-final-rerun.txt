@@ -1,0 +1,19 @@
+=== TEST (re-run) ===
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma stale invoice on a terminal mirror leaves the deadline, and it STILL cannot surface as grace [33m 1025[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma GENUINE during-pause invoice is refused: outcome `ignored`, and ZERO credits minted [33m 1089[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe refusal is idempotent — a redelivery of the same event does not sneak a grant through [33m 1099[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mBOUNDARY: inside the tolerance grants, outside it refuses — the rule is the clock, not the pause flag [33m 3672[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe direction that must NOT change: an UNPAUSED workspace still gets its allowance [33m 1661[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma RESUMED workspace grants again — the refusal is tied to the OPEN pause, not to having ever paused [33m 1934[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m104 passed[39m[22m[90m (104)[39m
+[2m      Tests [22m [1m[32m2420 passed[39m[22m[90m (2420)[39m
+[2m   Start at [22m 11:13:21
+[2m   Duration [22m 304.29s[2m (transform 341.60s, setup 0ms, collect 1492.58s, tests 3227.11s, environment 70ms, prepare 173.01s)[22m
+
+TEST_EXIT=0
+=== BUILD ===
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+=== DONE ===

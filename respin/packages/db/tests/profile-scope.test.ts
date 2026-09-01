@@ -47,7 +47,9 @@ import {
   onboardingInputs,
   onboardingInterviewDrafts,
 } from "../src/onboarding-schema";
+import { generationAttempts, generations } from "../src/generation-schema";
 import {
+  PROFILE_EXPORT_TABLES,
   ProfileAccessError,
   ProfileScope,
   ProvenanceError,
@@ -55,6 +57,7 @@ import {
   withWorkspace,
   writeCapabilities,
   WorkspacePausedError,
+  type ProfileExportTable,
   type ProfileWriteCapabilities,
 } from "../src/with-workspace";
 
@@ -111,6 +114,21 @@ let FIXTURE_EVIDENCE: ReturnType<typeof evidenceFor>;
  * set BY DESIGN, so the test would pass while asking the accessor for nothing.
  */
 const ALL_INPUT_IDS: string[] = [];
+
+/**
+ * EVERY seeded brain-doc id, including the sibling profile's and the foreign
+ * workspace's — what `brainDocsByIds` is driven with, for the reason
+ * `ALL_INPUT_IDS` exists one comment up: this accessor takes CALLER-SUPPLIED
+ * ids, so the interesting question is what it does when asked for somebody
+ * else's. `brain_activation_snapshots`' doc-id columns carry no FK, so a
+ * snapshot really can name a document this profile does not own, and the scope
+ * predicate is the only thing that refuses it.
+ *
+ * MUTATED IN PLACE for the same reason, and the same trap applies: the accessor
+ * returns `[]` for an empty id set BY DESIGN, so a reassignment would leave the
+ * args map asking for nothing and the test passing vacuously.
+ */
+const ALL_BRAIN_DOC_IDS: string[] = [];
 
 /**
  * The stamps an `active` row must carry, per `brain_docs_active_is_confirmed`.
@@ -188,6 +206,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
   beforeEach(async () => {
     db = await createTestDb();
     ALL_INPUT_IDS.length = 0;
+    ALL_BRAIN_DOC_IDS.length = 0;
     await seedAuthUser(db, "user_a");
     await seedAuthUser(db, "user_b");
     aWorkspaceId = (
@@ -249,17 +268,21 @@ describe("ProfileScope — the profile tenancy cage", () => {
         content: `somebody else wrote this for ${profileId}`,
         contentSha256: sha256(`somebody else wrote this for ${profileId}`),
       });
-      await db.insert(brainDocs).values({
-        profileId,
-        workspaceId,
-        kind: "voice",
-        version: 1,
-        content: { note: profileId },
-        reason: RENDERED_REASON,
-        sourceEvidence: RAW_EVIDENCE,
-        status: "active",
-        ...RAW_CONFIRMED,
-      });
+      const [voiceDoc] = await db
+        .insert(brainDocs)
+        .values({
+          profileId,
+          workspaceId,
+          kind: "voice",
+          version: 1,
+          content: { note: profileId },
+          reason: RENDERED_REASON,
+          sourceEvidence: RAW_EVIDENCE,
+          status: "active",
+          ...RAW_CONFIRMED,
+        })
+        .returning();
+      ALL_BRAIN_DOC_IDS.push(voiceDoc.id);
       await db.insert(modelUsage).values({
         profileId,
         workspaceId,
@@ -270,10 +293,69 @@ describe("ProfileScope — the profile tenancy cage", () => {
         workspaceId,
         answers: {},
       });
-      await db.insert(brainActivationSnapshots).values({
-        profileId,
-        workspaceId,
-      });
+      const [snapshot] = await db
+        .insert(brainActivationSnapshots)
+        .values({
+          profileId,
+          workspaceId,
+        })
+        .returning();
+      // Slice 6 (stage A): the claim and the record, for ALL THREE profiles,
+      // so `exportPage("generations")`'s branch has something foreign to leak.
+      // The lifecycle is walked rather than short-circuited — the attempt is
+      // inserted at `vendor_complete`, the generation is written, and only
+      // then does the attempt move to `settled` — because
+      // `generation_attempts_settled_has_generation` refuses a settled row
+      // naming no generation and `generations_attempt_fk` refuses a generation
+      // naming no attempt. Neither row can be written first in its final
+      // state, which is the constraint pair doing its job on the fixture.
+      const [attempt] = await db
+        .insert(generationAttempts)
+        .values({
+          profileId,
+          workspaceId,
+          attemptId: `gen_att_${profileId}`,
+          purpose: "generation",
+          mode: "hookSet",
+          payloadSha256: sha256(`payload for ${profileId}`),
+          state: "vendor_complete",
+          vendorStartedAt: new Date(),
+          vendorCompletedAt: new Date(),
+          // R14c: `generation_attempts_candidate_iff_vendor_complete` is an
+          // EQUALITY, so this state cannot exist without the settlement input
+          // it exists to hold. The fixture carries one for the same reason it
+          // walks the lifecycle rather than short-circuiting it.
+          candidate: { v: 1, outcome: "usable" },
+        })
+        .returning();
+      const [generation] = await db
+        .insert(generations)
+        .values({
+          profileId,
+          workspaceId,
+          attemptId: attempt.attemptId,
+          mode: "hookSet",
+          brainActivationId: snapshot.id,
+          request: { idea: `idea for ${profileId}` },
+          model: "claude-opus-5",
+          promptBundleVersion: "pb-1",
+          configVersion: 1,
+          outcome: "usable",
+          output: { hooks: [`hook for ${profileId}`] },
+          weakestPoint: "no posted results yet, so nothing here is evidence about you",
+          killTest: { rulesFired: [], rewritten: false },
+        })
+        .returning();
+      await db
+        .update(generationAttempts)
+        .set({
+          state: "settled",
+          terminalAt: new Date(),
+          generationId: generation.id,
+          // ...and settling CONSUMES it: `generations` above is the record now.
+          candidate: null,
+        })
+        .where(eq(generationAttempts.id, attempt.id));
       await db.insert(frameworks).values({
         slug: `private-${profileId}`,
         name: `Private ${profileId}`,
@@ -395,15 +477,10 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         expect(row.kind).toBe("voice");
       }
     },
-    activeBrainDocs: (rows, ownProfile, ownWorkspace) => {
-      for (const row of rows as {
-        profileId: string;
-        workspaceId: string;
-        status: string;
-      }[]) {
+    brainDocsByIds: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
         expect(row.profileId).toBe(ownProfile);
         expect(row.workspaceId).toBe(ownWorkspace);
-        expect(row.status).toBe("active");
       }
     },
     // Scalar: the row loop has nothing to walk, and the isolation property is
@@ -413,31 +490,6 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       for (const row of rows as { profileId: string; workspaceId: string }[]) {
         expect(row.profileId).toBe(ownProfile);
         expect(row.workspaceId).toBe(ownWorkspace);
-      }
-    },
-    onboardingInputsForExport: (rows, ownProfile, ownWorkspace) => {
-      for (const row of rows as { profileId: string; workspaceId: string }[]) {
-        expect(row.profileId).toBe(ownProfile);
-        expect(row.workspaceId).toBe(ownWorkspace);
-      }
-    },
-    interviewDrafts: (rows, ownProfile, ownWorkspace) => {
-      for (const row of rows as { profileId: string; workspaceId: string }[]) {
-        expect(row.profileId).toBe(ownProfile);
-        expect(row.workspaceId).toBe(ownWorkspace);
-      }
-    },
-    activationSnapshots: (rows, ownProfile, ownWorkspace) => {
-      for (const row of rows as { profileId: string; workspaceId: string }[]) {
-        expect(row.profileId).toBe(ownProfile);
-        expect(row.workspaceId).toBe(ownWorkspace);
-      }
-    },
-    frameworks: (rows, ownProfile, ownWorkspace) => {
-      for (const row of rows as { ownerProfileId: string; workspaceId: string; visibility: string }[]) {
-        expect(row.ownerProfileId).toBe(ownProfile);
-        expect(row.workspaceId).toBe(ownWorkspace);
-        expect(row.visibility).toBe("private");
       }
     },
     exportPage: (rows, ownProfile, ownWorkspace) => {
@@ -483,6 +535,16 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       }
     },
     modelUsage: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // Slice 6: the coherent activation a generation records. Its id carries NO
+    // foreign key (`generation-schema.ts` records why), so THIS accessor is
+    // the only thing that keeps a stored generation from naming another
+    // profile's snapshot — which makes both axes here the actual control.
+    latestBrainActivation: (rows, ownProfile, ownWorkspace) => {
       for (const row of rows as { profileId: string; workspaceId: string }[]) {
         expect(row.profileId).toBe(ownProfile);
         expect(row.workspaceId).toBe(ownWorkspace);
@@ -537,11 +599,11 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     profile: [],
     brainDocs: [],
     brainDocsByKind: ["voice"],
-    activeBrainDocs: [],
-    onboardingInputsForExport: [],
-    interviewDrafts: [],
-    activationSnapshots: [],
-    frameworks: [],
+    // EVERY profile's brain-doc ids, the sibling's and the foreigner's
+    // included: this is the read that stands where a
+    // `brain_activation_snapshots` doc-id column has no foreign key, so asking
+    // it for somebody else's document is the whole question.
+    brainDocsByIds: [ALL_BRAIN_DOC_IDS],
     exportPage: ["onboarding_inputs", 0],
     onboardingInputs: [],
     // The SIBLING PROFILE'S input ids, deliberately: the P4 loops run this
@@ -555,7 +617,14 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     ownPostsNewest: [50],
     countOwnPosts: [],
     countReferencePosts: [],
-    countUnchargedBillableAttempts: [{ purpose: "onboarding_brain" }],
+    // `since: new Date(0)` — the LIFETIME window, so the P4 breach loops count
+    // every seeded row rather than none. The window itself is a product
+    // decision driven in `packages/credits/tests/generation-pricing.test.ts`;
+    // what this file asks of the accessor is the tenancy question.
+    countUnchargedBillableAttempts: [
+      { purpose: "onboarding_brain", since: new Date(0) },
+    ],
+    latestBrainActivation: [],
     countOnboardingInputs: [],
     modelUsage: [],
     countBillableAttempts: [{ purpose: "onboarding_brain" }],
@@ -607,9 +676,8 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // runs zero times (round-3 finding: an empty map agrees with an empty map).
     expect(accessorNames).toEqual(
       [
-        "activeBrainDocs",
-        "activationSnapshots",
         "brainDocs",
+        "brainDocsByIds",
         "brainDocsByKind",
         "countBillableAttempts",
         "countOnboardingInputs",
@@ -621,16 +689,18 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // window `ownPostsNewest`'s docblock names.
         "countReferencePosts",
         "countUnchargedBillableAttempts",
-        // Slice 5: one fixed-size, registry-selected page. Its generic table
-        // parameter is exercised with onboarding_inputs here; export.test.ts
-        // walks every classified table against a same-workspace sibling.
+        // Slice 5: one fixed-size, registry-selected page. The shared P4 loops
+        // can only drive ONE table through it (`accessorArgs` is one tuple per
+        // accessor), so all six branches get their own parameterised cases in
+        // this file — "exportPage: EVERY classified table…", "exportPage:
+        // frameworks is PRIVATE-ONLY…" and "exportPage cross-workspace axis…".
         "exportPage",
+        // Slice 6: the newest coherent brain activation, which every
+        // generation records the id of (R9a).
+        "latestBrainActivation",
         "modelUsage",
         "onboardingInputs",
-        "onboardingInputsForExport",
         "onboardingInputsByIds",
-        "interviewDrafts",
-        "frameworks",
         "ownPostsNewest",
         "profile",
         "referenceCorpusAsOf",
@@ -648,6 +718,18 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // Slice 3b, R8: the coherent-activation wrapper that also records a
         // brain_activation_snapshots row in the same transaction.
         "activateBrainDocCoherent",
+        // Slice 6 (R14/R14b/R14c): the durable claim, its guarded transitions,
+        // the settlement that writes the generation and the transition
+        // together, and the read that lets a re-submission return the stored
+        // record instead of calling a vendor twice.
+        "claimGenerationAttempt",
+        "advanceGenerationAttempt",
+        "settleGeneration",
+        "readGenerationForAttempt",
+        // R14c: the claim re-read INSIDE the settlement lock, which is what
+        // decides which of two callers holding one `vendor_complete` row may
+        // take the debit.
+        "readGenerationAttempt",
       ].sort()
     );
   });
@@ -682,6 +764,192 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     }
   });
 
+  // ------------------------------------------------ exportPage, ALL SIX BRANCHES
+  //
+  // `accessorArgs.exportPage` drives ONE table (`onboarding_inputs`), so the P4
+  // loops above prove one of six branches and the arg map cannot express the
+  // other five — it is one tuple per accessor. Five live branches therefore had
+  // NO cross-profile and NO cross-workspace assertion at all, while
+  // `exportPage` is the single reader the creator-data export streams every
+  // included table through (tenancy gate round 1, 2026-08-31). Parameterised
+  // here instead.
+  const EXPORT_ROW_OWNER: Record<
+    ProfileExportTable,
+    (row: Record<string, unknown>) => { profile: unknown; workspace: unknown }
+  > = {
+    // The anchor row itself: its own `id` is the profile grain.
+    creator_profiles: (row) => ({ profile: row.id, workspace: row.workspaceId }),
+    brain_docs: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    onboarding_inputs: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    onboarding_interview_drafts: (row) => ({
+      profile: row.profileId,
+      workspace: row.workspaceId,
+    }),
+    brain_activation_snapshots: (row) => ({
+      profile: row.profileId,
+      workspace: row.workspaceId,
+    }),
+    generations: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    // `frameworks` names its owner differently, and library rows have NO
+    // owner — which is exactly why R15's private-only rule is a property of
+    // this branch and not of the `both()` helper the others share.
+    frameworks: (row) => ({ profile: row.ownerProfileId, workspace: row.workspaceId }),
+  };
+
+  it("exportPage: EVERY classified table returns this profile's rows only, non-vacuously", async () => {
+    const scopeA = await withWorkspace(db, { authUserId: "user_a" });
+    for (const [self, selfWorkspace] of [
+      [p1, aWorkspaceId],
+      // Run as the sibling too, so "returns only mine" is not satisfied by an
+      // accessor that happens to return the first profile in the workspace.
+      [p2, aWorkspaceId],
+    ] as const) {
+      const scope = await ProfileScope.mint(db, scopeA, self);
+      for (const table of PROFILE_EXPORT_TABLES) {
+        const rows = (await scope.accessors.exportPage(table, 0)) as Record<
+          string,
+          unknown
+        >[];
+        expect(
+          rows.length,
+          `${table} returned no rows for ${self} — the branch is untested, not proven`
+        ).toBeGreaterThan(0);
+        for (const row of rows) {
+          const owner = EXPORT_ROW_OWNER[table](row);
+          expect(owner.profile, `${table} leaked another profile's row`).toBe(self);
+          expect(owner.workspace, `${table} leaked another workspace's row`).toBe(
+            selfWorkspace
+          );
+        }
+      }
+    }
+  });
+
+  it("exportPage: frameworks is PRIVATE-ONLY — a shared library row is never a creator's data", async () => {
+    await db.insert(frameworks).values({
+      slug: "shared-library-row",
+      name: "SHARED-LIBRARY-ROW",
+      beats: [],
+      whyItConverts: "Library content, owned by nobody",
+      applicability: [],
+      sourceReferences: [],
+      evidenceEntries: [],
+      testedCaveats: [],
+      confidence: "observed",
+      saturation: "observed",
+      visibility: "shared",
+    });
+    const scope = await mintP1();
+    const rows = (await scope.accessors.exportPage("frameworks", 0)) as {
+      slug: string;
+      visibility: string;
+    }[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.visibility).toBe("private");
+    expect(rows.map((row) => row.slug)).not.toContain("shared-library-row");
+    // Non-vacuity: the shared row is really in the table this branch reads.
+    expect(
+      (await db.select().from(frameworks)).map((row) => row.slug)
+    ).toContain("shared-library-row");
+  });
+
+  it("exportPage cross-workspace axis: a cross-parented row is invisible in EVERY branch", async () => {
+    const scopeA = await withWorkspace(db, { authUserId: "user_a" });
+    // `creator_profiles` is the ANCHOR, not a child: re-parenting p1's own row
+    // to workspace B makes `ProfileScope.mint` itself refuse, which is P1's
+    // case above. The five child branches are the ones a dropped `workspace_id`
+    // predicate would open.
+    //
+    // `fks` IS A LIST, not a single name (slice 6). The re-parenting UPDATE
+    // below has to be legal once the constraints are dropped, and a table can
+    // be held by MORE THAN ONE composite FK carrying `workspace_id`:
+    // `generations` has its `creator_profiles` one AND a four-column one to
+    // `generation_attempts` (attempt_id, mode, profile_id, workspace_id).
+    // Dropping only the first leaves the UPDATE refused, which would turn this
+    // case into a test that fails for the wrong reason — or, worse, one
+    // somebody "fixes" by removing the branch.
+    const CHILD_BRANCHES = [
+      { table: "brain_docs", fks: ["brain_docs_profile_workspace_fk"], column: "profile_id" },
+      {
+        table: "onboarding_inputs",
+        fks: ["onboarding_inputs_profile_workspace_fk"],
+        column: "profile_id",
+      },
+      {
+        table: "onboarding_interview_drafts",
+        fks: ["onboarding_interview_drafts_profile_workspace_fk"],
+        column: "profile_id",
+      },
+      {
+        table: "brain_activation_snapshots",
+        fks: ["brain_activation_snapshots_profile_workspace_fk"],
+        column: "profile_id",
+      },
+      {
+        table: "generations",
+        fks: ["generations_profile_workspace_fk", "generations_attempt_fk"],
+        column: "profile_id",
+      },
+      {
+        table: "frameworks",
+        fks: ["frameworks_owner_profile_workspace_fk"],
+        column: "owner_profile_id",
+      },
+    ] as const;
+    const covered = new Set<string>(CHILD_BRANCHES.map((b) => b.table));
+    expect(
+      PROFILE_EXPORT_TABLES.filter(
+        (table) => table !== "creator_profiles" && !covered.has(table)
+      ),
+      "an exportable table has no cross-workspace case — adding a branch costs one entry here"
+    ).toEqual([]);
+
+    for (const { table, fks, column } of CHILD_BRANCHES) {
+      await expect(
+        db.transaction(async (tx) => {
+          for (const fk of fks) {
+            await tx.execute(sql.raw(`ALTER TABLE ${table} DROP CONSTRAINT ${fk}`));
+          }
+          await tx.execute(
+            sql.raw(
+              `UPDATE ${table} SET workspace_id = '${bWorkspaceId}' WHERE ${column} = '${p1}'`
+            )
+          );
+          const scope = await ProfileScope.mint(tx, scopeA, p1);
+          expect(
+            await scope.accessors.exportPage(table as ProfileExportTable, 0, tx),
+            `exportPage(${table}) leaked a cross-parented row`
+          ).toHaveLength(0);
+          const profileOnly = await tx.execute(
+            sql.raw(`SELECT id FROM ${table} WHERE ${column} = '${p1}'`)
+          );
+          expect(
+            profileOnly.rows.length,
+            `${table} fixture is vacuous — the re-parented row does not exist`
+          ).toBeGreaterThan(0);
+          throw new Error("rollback");
+        })
+      ).rejects.toThrow("rollback");
+    }
+
+    // THE CONSTRAINTS SURVIVE THE ROLLBACK — the next test is not poisoned.
+    // Moved here (round 2) from `CROSS_PARENTED`'s own loop, which owned this
+    // check for `onboarding_interview_drafts`, `brain_activation_snapshots`
+    // and `frameworks` until their accessors were deleted. Every FK this test
+    // drops is checked, so the population is the one this test actually
+    // touches rather than a second hand-written list.
+    for (const { table, fks } of CHILD_BRANCHES) {
+      for (const fk of fks) {
+        const found = await db.execute(
+          sql.raw(
+            `SELECT 1 FROM pg_constraint WHERE conname = '${fk}' AND conrelid = '${table}'::regclass`
+          )
+        );
+        expect(found.rows.length, `${fk} was not restored`).toBe(1);
+      }
+    }
+  });
+
   /**
    * The CROSS-WORKSPACE axis, which the composite FK makes unrepresentable in
    * normal operation — so the row is created inside a transaction with the
@@ -701,12 +969,19 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       table: "brain_docs",
       fk: "brain_docs_profile_workspace_fk",
       profileColumn: "profile_id",
-      // BOTH accessors over this table, not just one. The tenancy gate noted
-      // that `activeBrainDocs` was applicable and skipped, making AC-4's "per
-      // accessor, both axes" 4/5 in practice — and the two only share the
+      // ALL THREE accessors over this table, not just one. The tenancy gate
+      // once noted that the third was applicable and skipped, making AC-4's
+      // "per accessor, both axes" 4/5 in practice — and they only share the
       // `both()` helper today, which is a property of the current
-      // implementation rather than of the test.
-      accessors: ["brainDocs", "brainDocsByKind", "activeBrainDocs"],
+      // implementation rather than of the test. `brainDocsByIds` (which
+      // replaced `activeBrainDocs` on 2026-09-01, so the generation path reads
+      // the documents its recorded snapshot NAMES rather than whatever is
+      // active at that instant) is now the sharpest of the three, for the
+      // reason `onboardingInputsByIds` is sharpest over its own table: it takes
+      // caller-supplied ids that reach it from an FK-free snapshot column, so
+      // `both()` is the only thing between a named id and another profile's
+      // document.
+      accessors: ["brainDocs", "brainDocsByKind", "brainDocsByIds"],
     },
     {
       table: "onboarding_inputs",
@@ -715,13 +990,13 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       // BOTH accessors over this table. `referenceCorpusAsOf` was omitted when
       // it landed, and a tenancy mutation dropping its workspace predicate
       // survived the entire db suite — the IDENTICAL omission this file's own
-      // comment above records fixing by hand for `activeBrainDocs`. Hand-listing
+      // comment above records fixing by hand for the third brain-docs
+      // accessor. Hand-listing
       // recurred; the completeness assertion below now derives the population
       // from the accessor map so a third accessor over a covered table cannot
       // be skipped by forgetting to type it here.
       accessors: [
         "onboardingInputs",
-        "onboardingInputsForExport",
         "referenceCorpusAsOf",
         "countOnboardingInputs",
         // Slice 3's three, all over this same table. `onboardingInputsByIds`
@@ -738,24 +1013,29 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         "countReferencePosts",
       ],
     },
-    {
-      table: "onboarding_interview_drafts",
-      fk: "onboarding_interview_drafts_profile_workspace_fk",
-      profileColumn: "profile_id",
-      accessors: ["interviewDrafts"],
-    },
+    // Slice 6: `brain_activation_snapshots` HAS AN ACCESSOR AGAIN, so it is
+    // back on this axis. It is the sharpest case in the list:
+    // `generations.brain_activation_id` carries NO foreign key at all
+    // (`generation-schema.ts` records why a bare FK would be worse than none),
+    // so a dropped workspace predicate here would let a stored generation
+    // record — permanently, in an immutable row — that it ran under another
+    // workspace's coherent brain.
     {
       table: "brain_activation_snapshots",
       fk: "brain_activation_snapshots_profile_workspace_fk",
       profileColumn: "profile_id",
-      accessors: ["activationSnapshots"],
+      accessors: ["latestBrainActivation"],
     },
-    {
-      table: "frameworks",
-      fk: "frameworks_owner_profile_workspace_fk",
-      profileColumn: "owner_profile_id",
-      accessors: ["frameworks"],
-    },
+    // `onboarding_interview_drafts` and `frameworks` USED TO HAVE ENTRIES
+    // HERE, one accessor each. Those three
+    // accessors were deleted as unreachable (tenancy gate round 2 — see
+    // `ProfileAccessors` in with-workspace.ts), and an entry with an empty
+    // accessor list is a case that asserts nothing while looking like a case.
+    // NOTHING IS UNTESTED AS A RESULT: `exportPage` is now the only scoped
+    // reader over all three, and "exportPage cross-workspace axis: a
+    // cross-parented row is invisible in EVERY branch" above drives exactly
+    // this drop-constraint / re-parent / rollback mechanism through each of
+    // them — including the constraint-restoration check this list also owned.
     {
       table: "model_usage",
       fk: "model_usage_profile_workspace_fk",
@@ -764,7 +1044,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       // prices a creator's rebuild off this count, so a dropped workspace
       // predicate here would let another workspace's attempts consume this
       // creator's included build — the same class of omission this file
-      // records twice already, for `activeBrainDocs` and `referenceCorpusAsOf`.
+      // records twice already, for `brainDocsByIds` and `referenceCorpusAsOf`.
       accessors: [
         "modelUsage",
         "countBillableAttempts",
@@ -888,12 +1168,8 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       const tableOf: Record<string, string | undefined> = {
         brainDocs: "brain_docs",
         brainDocsByKind: "brain_docs",
-        activeBrainDocs: "brain_docs",
+        brainDocsByIds: "brain_docs",
         onboardingInputs: "onboarding_inputs",
-        onboardingInputsForExport: "onboarding_inputs",
-        interviewDrafts: "onboarding_interview_drafts",
-        activationSnapshots: "brain_activation_snapshots",
-        frameworks: "frameworks",
         referenceCorpusAsOf: "onboarding_inputs",
         modelUsage: "model_usage",
         countBillableAttempts: "model_usage",
@@ -903,10 +1179,13 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         countOwnPosts: "onboarding_inputs",
         countReferencePosts: "onboarding_inputs",
         countUnchargedBillableAttempts: "model_usage",
+        latestBrainActivation: "brain_activation_snapshots",
         profile: "creator_profiles",
-        // One accessor spans every included table. Its all-table same-workspace
-        // isolation is exercised by export.test.ts's composed sibling fixture;
-        // it cannot be assigned one table in this one-table completeness map.
+        // One accessor spans every included table, so it cannot be assigned
+        // ONE table in this one-table completeness map. Its all-table
+        // isolation is not therefore unasserted: the three `exportPage` cases
+        // above cover both axes across every branch, and export.test.ts drives
+        // the same six through `openBrainExport` end to end.
         exportPage: undefined,
       };
       const namedTables = new Set<string>(CROSS_PARENTED.map((c) => c.table));
@@ -1064,7 +1343,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     expect(doc.workspaceId).toBe(aWorkspaceId);
     // ...and the fixture's ACTIVE v1 is still the only active row, which is
     // what a smuggled 'active' would have broken.
-    const active = await scope.accessors.activeBrainDocs();
+    const active = (await scope.accessors.brainDocsByKind("voice")).filter(
+      (d) => d.status === "active"
+    );
     expect(active).toHaveLength(1);
     expect(active[0].version).toBe(1);
   });

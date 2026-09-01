@@ -60,19 +60,14 @@
 // ---------------------------------------------------------------------------
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { and, count, countDistinct, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, count, countDistinct, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import type { DbLike, TxLike } from "./db-like";
 import { memberships, workspaces } from "./schema";
 import type { Membership, MembershipRole, Workspace } from "./schema";
 import { creditLedger, subscriptions } from "./billing-schema";
 import type { CreditLedgerRow, Subscription } from "./billing-schema";
 import { brainDocs, creatorProfiles, frameworks } from "./brain-schema";
-import type {
-  BrainDoc,
-  BrainKind,
-  CreatorProfile,
-  Framework,
-} from "./brain-schema";
+import type { BrainDoc, BrainKind, CreatorProfile } from "./brain-schema";
 import {
   BILLABLE_USAGE_OUTCOMES,
   brainActivationSnapshots,
@@ -86,9 +81,16 @@ import type {
   InputClass,
   ModelUsageRow,
   OnboardingInput,
-  OnboardingInterviewDraft,
   ResolvedTier,
 } from "./onboarding-schema";
+import {
+  generationAttempts,
+  generations,
+  type Generation,
+  type GenerationAttempt,
+  type GenerationAttemptState,
+  type GenerationOutcome,
+} from "./generation-schema";
 import { upsertSpendRollup } from "./spend-rollup";
 import { hasOpenPause } from "./pause";
 import {
@@ -99,7 +101,8 @@ import {
 } from "./brain-content";
 import {
   assertNoReferenceEcho,
-  assertReferenceQuoteBudget,
+  assertReferenceSafety,
+  evaluateReferenceSafety,
   groupReferenceInputs,
   isUsableSpanRange,
   type ReferenceInput,
@@ -242,13 +245,47 @@ export const EXPORT_PAGE_SIZE = 25;
 // docs singly so markdown evidence resolution has a ~5 MB raw-text ceiling,
 // rather than multiplying that envelope by the ordinary 25-row page size.
 const EXPORT_BRAIN_DOC_PAGE_SIZE = 1;
-export type ProfileExportTable =
-  | "creator_profiles"
-  | "brain_docs"
-  | "onboarding_inputs"
-  | "onboarding_interview_drafts"
-  | "brain_activation_snapshots"
-  | "frameworks";
+/**
+ * THE ONE LIST OF EXPORTABLE TABLES, and the reason it is a value rather than
+ * a bare union (tenancy gate round 1, 2026-08-31).
+ *
+ * `export.ts` used to keep a THIRD hand-maintained `Set<string>` of the same
+ * names and cast `entry.table as ProfileExportTable` on the way into
+ * `exportPage`. A future table registered `included: true` in
+ * `CREATOR_DATA_REGISTRY` and added to that Set but NOT to `exportPage`'s
+ * switch would have passed the guard, fallen off the end of the switch,
+ * returned `undefined` and thrown inside the page loop — AFTER the route had
+ * committed HTTP 200 headers. A truncated download where R11 promises a
+ * fail-closed refusal.
+ *
+ * Deriving the union FROM this array closes the half a compiler can close: the
+ * switch below is annotated `Promise<unknown[]>` with no `default`, so adding
+ * a member here without adding its `case` is TS2366 ("lacks ending return
+ * statement"), not a runtime surprise. The half the compiler cannot close —
+ * the registry names arbitrary strings — stays a runtime refusal, raised
+ * before any byte is emitted (`exportPlan` in `export.ts`).
+ */
+export const PROFILE_EXPORT_TABLES = [
+  "creator_profiles",
+  "brain_docs",
+  "onboarding_inputs",
+  "onboarding_interview_drafts",
+  "brain_activation_snapshots",
+  // Slice 6. `generations` is export-included because it holds the scripts,
+  // hooks and captions the product wrote FOR the creator — see its
+  // `CREATOR_DATA_REGISTRY` entry. `generation_attempts` is deliberately NOT
+  // here, and the REASON changed when R14c gave it a `candidate` column: it is
+  // no longer "a payload hash and a state, no words". It holds the validated
+  // output for exactly the window between the response checkpoint and
+  // settlement (an equality CHECK makes that window unextendable), and an
+  // in-flight draft the creator has not been shown — and which may still be
+  // refused — is not their record; the settled `generations` row that
+  // supersedes it is, and it IS exported. Adding a name to this array without
+  // a `case` below is TS2366 rather than a runtime surprise.
+  "generations",
+  "frameworks",
+] as const;
+export type ProfileExportTable = (typeof PROFILE_EXPORT_TABLES)[number];
 
 /**
  * Clamp a caller-supplied page number into `[lo, hi]`, treating anything that
@@ -567,18 +604,240 @@ export async function monthlySpend(
   return { totalDebit, hasAnyDebit: totalDebit > 0, periodStart };
 }
 
+/** Credits and the number of debit rows that produced them. */
+export type BurnByModeBucket = {
+  /** Credits debited, as a positive count. */
+  credits: number;
+  /** How many `credit_ledger` debit rows are in this bucket. */
+  debits: number;
+};
+
+export type BurnByModeRow = BurnByModeBucket & {
+  /** `generations.mode` — the STORED mode, never a guess. */
+  mode: string;
+};
+
+export type BurnByModeResult = {
+  periodStart: Date;
+  /** Debits that reached a terminal settled generation, grouped by its mode. */
+  byMode: BurnByModeRow[];
+  /**
+   * Debits whose `ref_id` names NO generation claim in this workspace. The
+   * onboarding voice-brain build is the one that exists today: it debits with
+   * the SAME `ref_type = 'inference'` and the same attempt-id grain, so it is
+   * not distinguishable from a generation by `ref_type` and is only
+   * distinguishable by this join failing to find a claim.
+   */
+  notAGeneration: BurnByModeBucket;
+  /**
+   * Debits whose `ref_id` DOES name a generation claim in this workspace, but
+   * one that has not reached a terminal `settled` state with a stored
+   * generation. Reported, never bucketed into a mode — see the docblock below.
+   */
+  nonTerminalClaim: BurnByModeBucket;
+};
+
+/**
+ * The creator's credit burn BY MODE for a period (R17a, slice 6).
+ *
+ * THE MODE COMES FROM THE JOIN, NEVER FROM `ref_type`, AND NEVER FROM THE COST
+ * ROLLUP. Two things spend credits today and BOTH debit with
+ * `ref_type = 'inference'` and `ref_id = <attempt id>` (R-63: the generation
+ * debit deliberately reuses `credit_ledger_inference_debit_uq` rather than
+ * minting a sixth constraint). So a reader that treated every `inference`
+ * debit as a generation would file the onboarding voice-brain build under a
+ * mode — which is why the discriminator here is whether the debit's `ref_id`
+ * resolves to a `generation_attempts` row in THIS workspace, and then to the
+ * `generations` row that attempt settled into. The population is a LIST of
+ * outcomes, not one path (CLAUDE.md 2026-08-29): a debit lands in exactly one
+ * of `byMode`, `notAGeneration` or `nonTerminalClaim`, and adding a third
+ * spending purpose costs a decision about which of those it belongs in.
+ *
+ * AND IT IS NOT `workspace_spend_monthly` (mutation M13). That table is OUR
+ * vendor cost in micro-USD, its grain is `(workspace, month, tier)`, and it has
+ * no `purpose` and no `mode` column at all — so any "by mode" number derived
+ * from it would be an allocation of our spending wearing the label of the
+ * creator's. `tests/usage-burn-by-mode.test.ts` reddens on a re-derivation from
+ * it, from two directions: this function's own source may not name the rollup,
+ * and a fixture holds two modes with different credit totals against a single
+ * rollup row that cannot express either.
+ *
+ * NEITHER JOIN CAN FAN OUT, so `count()` counts debit ROWS and `sum(-delta)`
+ * counts each debit once: `generation_attempts_attempt_uq` and
+ * `generations_attempt_uq` are both GLOBAL uniques on `attempt_id`
+ * (`generation-schema.ts`), so a debit matches at most one claim and a claim at
+ * most one generation. That is a property of two indexes, not of today's data.
+ *
+ * A NON-TERMINAL CLAIM IS REPORTED, NOT BUCKETED. `generation_attempts` carries
+ * a `mode` of its own, so bucketing an unsettled claim by it would be one line
+ * — and it would show a creator credits spent on a draft that does not exist.
+ * R14b settles the generation and its debit in one transaction, so this bucket
+ * should be empty in practice; it is a number rather than a silent drop because
+ * "should be empty" is a claim, and a claim with no reader is not checked.
+ * Likewise a `settled` attempt whose `generations` row is missing —
+ * unrepresentable while `generation_attempts_settled_has_generation` holds
+ * (it is an EQUALITY, R-63) — lands here rather than in a mode.
+ *
+ * SCOPED ON BOTH AXES, AND THE TWO HALVES HAVE DIFFERENT WITNESSES — said
+ * plainly rather than claimed uniformly. The debit is pinned to
+ * `scope.workspaceId`. The CLAIM join's own `workspace_id` predicate is
+ * load-bearing and driven: `attempt_id` is globally unique, so a debit whose
+ * `ref_id` names another workspace's attempt would otherwise be labelled with
+ * that workspace's mode — deleting the predicate left every other test in
+ * `burn-by-mode.test.ts` green, which is why that suite has a test that only
+ * this predicate passes. The GENERATION join's `workspace_id`/`profile_id`
+ * predicates are defence in depth that no fixture can falsify, because
+ * `generations_attempt_fk` makes the disagreement unrepresentable; that FK is
+ * asserted by running it rather than argued. `periodStart` is the caller's,
+ * exactly as `monthlySpend`'s is — `packages/credits/src/burn-period.ts` is the
+ * one period authority (paid: the subscription's own `current_period_start`;
+ * Free: the UTC calendar month), and a second derivation here is precisely the
+ * drift `monthlySpend`'s docblock refuses.
+ */
+export async function burnByMode(
+  db: DbLike,
+  scope: WorkspaceScope,
+  periodStart: Date
+): Promise<BurnByModeResult> {
+  assertScoped(scope);
+  // The claim's presence, as a grouping key. `attempt_id` rather than `id`
+  // because it is the column the join matched on.
+  const claimed = sql<boolean>`(${generationAttempts.attemptId} IS NOT NULL)`;
+  const rows = await db
+    .select({
+      mode: generations.mode,
+      claimed,
+      // `kind = 'debit'` is in the WHERE, so every delta here is negative and
+      // `sum(-delta)` is a positive credit count — the same expression, and the
+      // same reason for it, as `monthlySpend` one function up.
+      credits: sql<string | null>`sum(-${creditLedger.delta})`,
+      debits: count(),
+    })
+    .from(creditLedger)
+    // THE FIRST DISCRIMINATOR. No `ref_type` predicate, deliberately: R-63 puts
+    // the generation debit on `ref_type = 'inference'` TODAY, and a debit that
+    // later arrives under a different `ref_type` while still naming an attempt
+    // must still be attributed to its mode rather than silently reported as
+    // "not a generation". The join key is the attempt id and the workspace.
+    .leftJoin(
+      generationAttempts,
+      and(
+        eq(generationAttempts.attemptId, creditLedger.refId),
+        eq(generationAttempts.workspaceId, creditLedger.workspaceId)
+      )
+    )
+    // THE SECOND: terminal or nothing. `state = 'settled'` lives in the ON
+    // clause rather than the WHERE, because a WHERE predicate on the right side
+    // of a LEFT JOIN silently turns it into an inner join and would DROP every
+    // non-terminal claim instead of counting it.
+    .leftJoin(
+      generations,
+      and(
+        eq(generations.attemptId, generationAttempts.attemptId),
+        eq(generations.workspaceId, generationAttempts.workspaceId),
+        eq(generations.profileId, generationAttempts.profileId),
+        eq(generationAttempts.state, "settled")
+      )
+    )
+    .where(
+      and(
+        eq(creditLedger.workspaceId, scope.workspaceId),
+        eq(creditLedger.kind, "debit"),
+        sql`${creditLedger.createdAt} >= ${periodStart}`
+      )
+    )
+    .groupBy(generations.mode, claimed);
+
+  const byMode: BurnByModeRow[] = [];
+  const notAGeneration: BurnByModeBucket = { credits: 0, debits: 0 };
+  const nonTerminalClaim: BurnByModeBucket = { credits: 0, debits: 0 };
+  for (const r of rows) {
+    const credits = r.credits ? Number(r.credits) : 0;
+    const debits = Number(r.debits);
+    if (r.mode !== null) {
+      byMode.push({ mode: r.mode, credits, debits });
+    } else if (r.claimed) {
+      nonTerminalClaim.credits += credits;
+      nonTerminalClaim.debits += debits;
+    } else {
+      notAGeneration.credits += credits;
+      notAGeneration.debits += debits;
+    }
+  }
+  // A STABLE ORDER, so the panel does not reshuffle between two renders of the
+  // same data — the same rule the `ledger` accessor's tie-break exists for.
+  byMode.sort((a, b) => b.credits - a.credits || a.mode.localeCompare(b.mode));
+  return { periodStart, byMode, notAGeneration, nonTerminalClaim };
+}
+
 export type ProfileAccessors = {
   profile: () => Promise<CreatorProfile[]>;
   brainDocs: () => Promise<BrainDoc[]>;
   /** Every version of one kind, newest version first, with every status retained. */
   brainDocsByKind: (kind: BrainKind, tx?: TxLike) => Promise<BrainDoc[]>;
-  activeBrainDocs: () => Promise<BrainDoc[]>;
-  /** Unpaged because a REQ-A04 export must not silently truncate creator-owned rows. */
-  onboardingInputsForExport: () => Promise<OnboardingInput[]>;
-  interviewDrafts: () => Promise<OnboardingInterviewDraft[]>;
-  activationSnapshots: () => Promise<BrainActivationSnapshot[]>;
-  /** Private creator-owned frameworks only; shared rows are library content. */
-  frameworks: () => Promise<Framework[]>;
+  /**
+   * The brain documents a `brain_activation_snapshots` row NAMES, by id.
+   *
+   * IT REPLACED `activeBrainDocs` (tenancy gate, 2026-09-01), which is the
+   * whole point rather than a rename. The generation path read the latest
+   * snapshot and then, in a SECOND statement outside any transaction and
+   * outside the per-profile brain lock, read "the documents whose status is
+   * active". A coherent activation committing between those two statements made
+   * `generations.brain_activation_id` name snapshot N while the prompt had been
+   * built from N+1's documents — the stored explanation wrong from birth, which
+   * is exactly what R9a exists to prevent, and reachable with two tabs or two
+   * members. Two authorities answering "which brain ran" is the defect; there
+   * is now one, and it is the one the row records.
+   *
+   * `brain_activation_snapshots`' doc-id columns carry NO foreign key (that
+   * table's own docblock says so and says why), so THIS is where the tenancy
+   * property is proved: the ids are caller-supplied and the scope predicate
+   * decides what comes back, exactly as `onboardingInputsByIds` does. A
+   * snapshot naming another profile's document therefore yields nothing for it
+   * rather than that document — fail-closed, never a cross-profile read.
+   *
+   * An EMPTY id list returns `[]` without a query: `inArray` with no values is
+   * not a predicate, and building one would be a scan of the table.
+   *
+   * WHAT BOUNDS `ids` — asked because `onboardingInputsByIds` below states its
+   * bound and this one did not (tenancy gate round 2, 2026-09-01). THE
+   * ACCESSOR IMPOSES NONE: the body is one `inArray` with no `limit`, so the
+   * page bound is the caller's, exactly as it is for the sibling. The bound
+   * that holds today is the SNAPSHOT ROW's shape — `brain_activation_snapshots`
+   * has one doc-id column per brain kind, four of them, and the only caller
+   * (`snapshotDocIds` in `packages/credits/src/generate.ts`, which is a list of
+   * those four columns with nulls dropped) therefore passes at most four ids.
+   * A caller passing a set bounded by something else — a history page, a
+   * creator-supplied list — is the change that has to bring a bound with it,
+   * and this sentence is where it would go.
+   *
+   * IT IS ALSO UNFILTERED BY `status`, DELIBERATELY, and that is the point
+   * rather than an omission: the snapshot is the authority for which versions a
+   * generation ran under, so a document that has since been superseded must
+   * still come back when the snapshot names it — filtering to `active` here
+   * would silently re-introduce the second authority R9a deleted.
+   */
+  brainDocsByIds: (ids: readonly string[], tx?: TxLike) => Promise<BrainDoc[]>;
+  /*
+   * FOUR ACCESSORS WERE DELETED HERE (tenancy gate CHANGE, slice 5 round 2):
+   * `onboardingInputsForExport`, `interviewDrafts`, `activationSnapshots` and
+   * `frameworks`. They were the pre-paging export's readers, and once
+   * `exportPage` became the live reader of every included table they had ZERO
+   * `accessors.<name>` call sites in `app/**` or `packages/**` — `frameworks`
+   * had one, in a test written to witness itself. Two of them additionally
+   * carried rule text that had become FALSE: "unpaged because a REQ-A04 export
+   * must not silently truncate creator-owned rows" (the REQ-A04 export did not
+   * use it; the PAGED reader below is the one that must not truncate) and a
+   * duplicate of R-9/T2's private-only `frameworks` rule that `exportPage`'s
+   * own `frameworks` branch now owns.
+   *
+   * This is the same Definition-of-Done reachability rule that deleted the
+   * materialising exporter one round earlier: an unreachable scoped read is not
+   * tenancy surface, it is inventory whose witnesses drive nothing a user can
+   * run. R15/task 21's stated purpose for `frameworks` — "so the export does
+   * not build its own framework query" — is satisfied by `exportPage`, which is
+   * a scoped accessor in the same cage.
+   */
   /** Complete, fixed-size export paging; offset advances until an empty page. */
   exportPage: (
     table: ProfileExportTable,
@@ -667,9 +926,45 @@ export type ProfileAccessors = {
    * Round 1's defect bounded this by accident (the second press cost 50
    * credits); fixing that defect reopened it.
    */
+  /**
+   * @param since the START of the window this count covers — REQUIRED, with no
+   * default, because the two purposes answer it differently and a shared
+   * default would silently make one of them wrong. A LIFETIME count is spelled
+   * `new Date(0)` at the call site, which is a decision somebody wrote down
+   * rather than an omission (billing gate, 2026-09-01: an unwindowed count over
+   * an append-only table refuses a profile FOREVER once it crosses the cap,
+   * with no operator surface listing who is at it).
+   */
   countUnchargedBillableAttempts: (params: {
     purpose: string;
+    since: Date;
   }) => Promise<number>;
+  /**
+   * The profile's NEWEST coherent brain activation (slice 6, R9a).
+   *
+   * `generations.brain_activation_id` is NOT NULL, and its whole purpose is
+   * that "a later brain or metric edit cannot change the historical
+   * explanation" — the snapshot names the exact Voice/Strategy/Kill-Test
+   * versions that were active TOGETHER at one instant, and the row is
+   * append-only. So the generation path needs to read one, and it needs to
+   * read it through the cage: the snapshot id it stores carries NO foreign
+   * key (`generation-schema.ts` records why), so the ONLY thing that keeps a
+   * generation from naming another profile's snapshot is that the writer read
+   * it from this accessor.
+   *
+   * NEWEST FIRST, LIMIT 1 rather than "the active one": there is no `active`
+   * flag on a snapshot — activation APPENDS one — so "the coherent brain right
+   * now" is the last row written. Ordered by `(created_at, id)` desc, the same
+   * total order `exportPage` uses, so two snapshots stamped in the same
+   * millisecond still have one answer (uuidv7 is time-ordered).
+   *
+   * Returns an ARRAY, like `profile()`: an empty one means this creator has
+   * never activated a coherent brain, which is a refusal the generation path
+   * owns rather than a null this accessor guesses about.
+   */
+  latestBrainActivation: (
+    tx?: TxLike
+  ) => Promise<BrainActivationSnapshot[]>;
   /** How many inputs this profile holds — the write-side ceiling's reader. */
   countOnboardingInputs: () => Promise<number>;
   modelUsage: () => Promise<ModelUsageRow[]>;
@@ -810,47 +1105,13 @@ export class ProfileScope {
           .from(brainDocs)
           .where(and(both(brainDocs), eq(brainDocs.kind, kind)))
           .orderBy(desc(brainDocs.version), desc(brainDocs.id)),
-      activeBrainDocs: () =>
-        db
-          .select()
-          .from(brainDocs)
-          .where(and(both(brainDocs), eq(brainDocs.status, "active"))),
-      onboardingInputsForExport: () =>
-        db
-          .select()
-          .from(onboardingInputs)
-          .where(both(onboardingInputs))
-          .orderBy(desc(onboardingInputs.createdAt), desc(onboardingInputs.id)),
-      interviewDrafts: () =>
-        db
-          .select()
-          .from(onboardingInterviewDrafts)
-          .where(both(onboardingInterviewDrafts))
-          .orderBy(
-            desc(onboardingInterviewDrafts.createdAt),
-            desc(onboardingInterviewDrafts.id)
-          ),
-      activationSnapshots: () =>
-        db
-          .select()
-          .from(brainActivationSnapshots)
-          .where(both(brainActivationSnapshots))
-          .orderBy(
-            desc(brainActivationSnapshots.createdAt),
-            desc(brainActivationSnapshots.id)
-          ),
-      frameworks: () =>
-        db
-          .select()
-          .from(frameworks)
-          .where(
-            and(
-              eq(frameworks.ownerProfileId, profileId),
-              eq(frameworks.workspaceId, workspaceId),
-              eq(frameworks.visibility, "private")
-            )
-          )
-          .orderBy(desc(frameworks.createdAt), desc(frameworks.id)),
+      brainDocsByIds: (ids: readonly string[], tx?: TxLike) =>
+        ids.length === 0
+          ? Promise.resolve([])
+          : (tx ?? db)
+              .select()
+              .from(brainDocs)
+              .where(and(both(brainDocs), inArray(brainDocs.id, [...ids]))),
       exportPage: async (
         table: ProfileExportTable,
         offset: number,
@@ -912,6 +1173,26 @@ export class ProfileScope {
                 desc(brainActivationSnapshots.createdAt),
                 desc(brainActivationSnapshots.id)
               )
+              .limit(EXPORT_PAGE_SIZE)
+              .offset(offset);
+          // Slice 6 (stage A). `both()` like every other profile-grained
+          // branch — the composite FK makes a cross-parented row
+          // unrepresentable in normal operation, and the workspace predicate
+          // is what keeps that true when the constraint is not there to help
+          // (which is the axis `exportPage cross-workspace axis` drives by
+          // dropping it).
+          //
+          // The ORDINARY page size, not `brain_docs`' page-of-one: a
+          // `ScriptOutput` is a bounded document, not a citation graph that
+          // multiplies by 250 twenty-thousand-character inputs. Newest first
+          // with `id` as the tie-break, the one display order this file uses
+          // everywhere.
+          case "generations":
+            return conn
+              .select()
+              .from(generations)
+              .where(both(generations))
+              .orderBy(desc(generations.createdAt), desc(generations.id))
               .limit(EXPORT_PAGE_SIZE)
               .offset(offset);
           case "frameworks":
@@ -993,10 +1274,17 @@ export class ProfileScope {
           // caller-side guard (`toBeLessThanOrEqual`) would stay true through
           // it.
           .limit(assertCorpusLimit(limit)),
-      countUnchargedBillableAttempts: async ({ purpose }) => {
+      countUnchargedBillableAttempts: async ({ purpose, since }) => {
         // DISTINCT ATTEMPTS, never rows — the same rule `countBillableAttempts`
         // states one accessor up: a bounded retry inside one attempt is one
         // attempt.
+        //
+        // AND WITHIN A WINDOW. `model_usage` is append-only and only grows, so
+        // an unbounded count is a LIFETIME count: N deterministic failures ever
+        // refuse this profile's purpose permanently, and the only remedy is an
+        // operator raising a GLOBAL config key with no surface telling them who
+        // is stuck. `created_at` is server-stamped on this table, so the window
+        // is measured against the database's own clock.
         const [row] = await db
           .select({ n: countDistinct(modelUsage.attemptId) })
           .from(modelUsage)
@@ -1005,7 +1293,8 @@ export class ProfileScope {
               both(modelUsage),
               eq(modelUsage.purpose, purpose),
               inArray(modelUsage.outcome, [...BILLABLE_USAGE_OUTCOMES]),
-              eq(modelUsage.consumedIncludedBuild, false)
+              eq(modelUsage.consumedIncludedBuild, false),
+              gte(modelUsage.createdAt, since)
             )
           );
         return row?.n ?? 0;
@@ -1034,6 +1323,19 @@ export class ProfileScope {
           );
         return row?.n ?? 0;
       },
+      // `tx` for the same reason `countBillableAttempts` takes a `conn`: the
+      // scope closes over the POOL, and reading the pool from inside an open
+      // transaction deadlocks on a single-connection driver.
+      latestBrainActivation: (tx?: TxLike) =>
+        (tx ?? db)
+          .select()
+          .from(brainActivationSnapshots)
+          .where(both(brainActivationSnapshots))
+          .orderBy(
+            desc(brainActivationSnapshots.createdAt),
+            desc(brainActivationSnapshots.id)
+          )
+          .limit(1),
       countOnboardingInputs: async () => {
         const [row] = await db
           .select({ n: count() })
@@ -1532,7 +1834,190 @@ export type ProfileWriteCapabilities = {
     params: ActivateBrainDocParams,
     tx: TxLike
   ) => Promise<ActivateBrainDocCoherentResult>;
+  /**
+   * THE DURABLE CLAIM (slice 6, R14), committed BEFORE outbound HTTP.
+   *
+   * Insert-or-observe: `onConflictDoNothing` then a SCOPED re-read, so two
+   * concurrent presses of one attempt id produce exactly one row and exactly
+   * one `created: true`. Only that winner may execute the vendor sequence,
+   * and the loser is told the claim is already running rather than calling a
+   * vendor a second time for the same money.
+   *
+   * `created` is derived from whether THIS statement's `.returning()` yielded
+   * a row — not from a prior "does it exist?" read, which is the read-then-
+   * write with no constraint behind it that `credit_ledger`'s partial uniques
+   * exist to refuse. `generation_attempts_attempt_uq` is what decides.
+   */
+  claimGenerationAttempt: (
+    params: ClaimGenerationAttemptParams,
+    tx: TxLike
+  ) => Promise<ClaimGenerationAttemptResult>;
+  /**
+   * Move a claim forward one step (R14's server-derived state machine).
+   *
+   * THE FROM-STATE IS IN THE `WHERE`, not in a read-then-update: the update
+   * matches only rows already in a state this transition is legal from, so a
+   * transition that would skip a step (or replay one) updates ZERO rows and
+   * refuses. That is the half of "forward only" application code owns —
+   * `generation-schema.ts` records that Postgres cannot compare a row to its
+   * own previous value without a trigger.
+   *
+   * `settled` is deliberately NOT reachable here. It is
+   * `settleGeneration`'s alone, because
+   * `generation_attempts_settled_has_generation` is an EQUALITY and the only
+   * way to satisfy it is to write the generation and the transition together.
+   */
+  advanceGenerationAttempt: (
+    params: AdvanceGenerationAttemptParams,
+    tx: TxLike
+  ) => Promise<GenerationAttempt>;
+  /**
+   * THE SETTLEMENT (R14b): the stored generation AND its claim's transition to
+   * `settled`, in ONE call so they are in one transaction by construction.
+   *
+   * The debit is NOT here — it is `debitCredits` in `@respin/credits`, which
+   * this package cannot see — but `debitLedgerId` is, so the row records which
+   * ledger row paid for it. The caller composes both into a single
+   * workspace-locked transaction; `tx` is REQUIRED (never optional) for the
+   * reason `recordModelUsage`'s own docblock gives: an optional `tx` made a
+   * shared-fate claim false with no compiler signal.
+   */
+  settleGeneration: (
+    params: SettleGenerationParams,
+    tx: TxLike
+  ) => Promise<SettleGenerationResult>;
+  /**
+   * The stored generation for an attempt, if one settled (R14c).
+   *
+   * A READ on the WRITE capability, like `countActiveProfiles` one function
+   * over, and for the same reason: its only purpose is to decide a write. A
+   * re-submission of an already-settled attempt must return the stored record
+   * WITHOUT another vendor call, and this is what it returns.
+   */
+  readGenerationForAttempt: (
+    attemptId: string,
+    tx: TxLike
+  ) => Promise<Generation | undefined>;
+  /**
+   * The claim itself, re-read INSIDE the caller's transaction (R14c).
+   *
+   * A READ on the WRITE capability for the same reason as its neighbour: its
+   * only purpose is to decide a write. The settlement takes the workspace
+   * lock and then asks THIS what state the claim is in — because a retry and
+   * the original press can both be holding a `vendor_complete` row they read
+   * before the lock, and only one of them may debit. Deciding that from a
+   * value read before the lock is the read-then-write two connections both
+   * answer "no" to.
+   */
+  readGenerationAttempt: (
+    attemptId: string,
+    tx: TxLike
+  ) => Promise<GenerationAttempt | undefined>;
 };
+
+/**
+ * The attempt-claim's caller-suppliable fields (slice 6, R14).
+ *
+ * EVERY OTHER COLUMN IS BUILT FIELD BY FIELD IN THE CAPABILITY and never
+ * spread from this object — which is a STRONGER guarantee than
+ * `stripGuarded` gives the older capabilities, not a weaker one: a value
+ * smuggled in through `as unknown as` cannot be stripped incorrectly because
+ * it is never copied at all. `state`, the four timestamps and both terminal
+ * ids are therefore unreachable from a caller by construction, and
+ * `profile-scope.test.ts` drives that with a cast rather than only with
+ * `@ts-expect-error` (CLAUDE.md 2026-08-21: proving a field cannot be TYPED is
+ * not proving it cannot be CAST).
+ */
+export type ClaimGenerationAttemptParams = {
+  attemptId: string;
+  /** R12's per-purpose grain — the same value `model_usage.purpose` carries. */
+  purpose: string;
+  mode: string;
+  /** Lowercase hex sha256 of the assembled request. CHECKed by the table. */
+  payloadSha256: string;
+};
+
+export type ClaimGenerationAttemptResult = {
+  attempt: GenerationAttempt;
+  /** True only for the caller whose INSERT landed the row (R14's winner). */
+  created: boolean;
+};
+
+export type AdvanceGenerationAttemptParams =
+  | { attemptId: string; to: "vendor_started" }
+  | {
+      attemptId: string;
+      to: "vendor_complete";
+      /**
+       * THE DURABLE VALIDATED CANDIDATE (R14c) — the settlement's whole input,
+       * stored by the SAME statement that stamps the response checkpoint.
+       *
+       * REQUIRED, WITH NO DEFAULT, and this package deliberately does not
+       * know its shape: `Record<string, unknown>` rather than `unknown`
+       * because `unknown` admits `undefined`, drizzle drops an `undefined`
+       * from the SET, and the row would then reach `vendor_complete` carrying
+       * nothing. The database refuses that anyway
+       * (`generation_attempts_candidate_iff_vendor_complete` is an equality),
+       * so this type is the first of two closed doors rather than the only
+       * one. What the object MEANS is `packages/credits`' — the only caller —
+       * and it parses what it reads back fail-closed rather than trusting
+       * that it wrote it.
+       */
+      candidate: Record<string, unknown>;
+    }
+  | { attemptId: string; to: "refused"; refusalCode: string }
+  | { attemptId: string; to: "recovery_required" };
+
+export type SettleGenerationParams = {
+  attemptId: string;
+  /** Must equal the claim's mode — `generations_attempt_fk` enforces it. */
+  mode: string;
+  brainActivationId: string;
+  frameworkVersions: { id: string; version: number }[];
+  contextInputIds: string[];
+  request: unknown;
+  model: string;
+  promptBundleVersion: string;
+  configVersion: number;
+  outcome: GenerationOutcome;
+  /** Non-null exactly when `outcome === "usable"` (table CHECK). */
+  output: unknown | null;
+  /** Non-blank exactly when `outcome === "usable"` (REQ-I04). */
+  weakestPoint: string | null;
+  /** Non-blank exactly when `outcome === "honest_refusal"` (REQ-C03). */
+  refusalReason: string | null;
+  killTest: unknown;
+  /** R6's bound, CHECKed at 0..1 by the table. */
+  rewriteCount: number;
+  /** The ledger row that paid for it, or null for a zero-cost mode. */
+  debitLedgerId: string | null;
+};
+
+export type SettleGenerationResult = {
+  generation: Generation;
+  attempt: GenerationAttempt;
+};
+
+/**
+ * A generation-attempt transition that the claim's CURRENT state does not
+ * permit, or an attempt id this profile does not own.
+ *
+ * ONE CLASS FOR BOTH, and the message is byte-identical, for the enumeration
+ * reason `mintProfileScope` states: an attempt id that exists under another
+ * workspace and one that does not exist at all must be indistinguishable from
+ * the outside.
+ */
+export class GenerationAttemptStateError extends Error {
+  constructor(
+    readonly attemptId: string,
+    readonly to: string
+  ) {
+    super(
+      `This generation attempt cannot move to '${to}' from where it is. Either it is not this creator's attempt, or it has already moved on. Nothing was changed.`
+    );
+    this.name = "GenerationAttemptStateError";
+  }
+}
 
 /**
  * Confirmation and activation are the two acts that decide what the product
@@ -1747,6 +2232,16 @@ export function writeCapabilities(
     profileId: scope.profileId as string,
     workspaceId: scope.workspaceId as string,
   };
+  // BOTH AXES, for the same reason `ProfileScope`'s own `both()` exists: the
+  // profile predicate alone is wrong for a re-parented row and the workspace
+  // predicate alone is wrong for a sibling profile. Its own local here rather
+  // than the accessors' closure, because `writeCapabilities` is a separate
+  // function and reaching into the scope's constructor scope is not possible.
+  const both = (t: { profileId: unknown; workspaceId: unknown }) =>
+    and(
+      eq(t.profileId as never, ids.profileId),
+      eq(t.workspaceId as never, ids.workspaceId)
+    );
 
   // A `const` BOUND BEFORE ITS OWN LAST PROPERTY REFERENCES IT, not a bare
   // `return {...}` — `activateBrainDocCoherent` below calls
@@ -2082,7 +2577,6 @@ export function writeCapabilities(
           `${uncited.length === 1 ? "the claim at" : "the claims at"} ${uncited.join(", ")} ${uncited.length === 1 ? "is" : "are"} stated as fact with nothing cited for ${uncited.length === 1 ? "it" : "them"}. Every position the schema declares is either backed by a quote from your own material or written as '${CHECK}' so you can see it is unknown — a claim about you that nobody can trace is an invented specific (REQ-I03, REQ-B02)`
         );
       }
-      assertNoReferenceEcho(content, corpus.inputs);
       // The quote budget's unit is `(profile, reference POST BUCKET)` across
       // every retained version and kind (C-41, G-11), so the spans this write
       // adds are measured together with every span already on the profile. The
@@ -2090,11 +2584,16 @@ export function writeCapabilities(
       // citing the same spans free — see `assertReferenceQuoteBudget`.
       // NEW spans and RETAINED spans are passed separately, which is what lets
       // the ceiling refuse only on material this write actually adds. See
-      // `assertReferenceQuoteBudget` — a union that already exceeds the
-      // ceiling must never make a re-citing rebuild impossible.
-      assertReferenceQuoteBudget(
-        referenceSpans,
-        await retainedReferenceSpans(tx, scope, bucketOf)
+      // `evaluateReferenceSafety` preserves the budget's never-brick rule — a
+      // union already over the ceiling must not block a re-citing rebuild.
+      const retainedSpans = await retainedReferenceSpans(tx, scope, bucketOf);
+      assertReferenceSafety(
+        evaluateReferenceSafety({
+          content,
+          references: corpus.inputs,
+          newSpans: referenceSpans,
+          retainedSpans,
+        })
       );
       const documentLength = [
         ...JSON.stringify({ content, sourceEvidence: clean }),
@@ -2526,6 +3025,180 @@ export function writeCapabilities(
         .returning();
       return { doc, snapshot };
     },
+
+    // ---------------------------------------------------- slice 6, R14/R14b/R14c
+    //
+    // FOUR CAPABILITIES, ONE ATTEMPT. Every column below that is not a named
+    // parameter is written HERE, field by field, from the scope or from the
+    // database clock — never spread from the caller's object. The older
+    // capabilities strip a spread with `stripGuarded`; these never build one,
+    // which is the same property one step earlier.
+    claimGenerationAttempt: async (params, tx) => {
+      // A generation spends the workspace's credits, so it is not a read.
+      assertMayWrite(scope.role, "start a generation for this creator");
+      // READ ONCE INTO LOCALS (C-40): `params` is a plain object type, so a
+      // getter could return one value to the insert and another to the
+      // caller's later hash comparison — which is the whole identity check.
+      const attemptId = params.attemptId;
+      const purpose = params.purpose;
+      const mode = params.mode;
+      const payloadSha256 = params.payloadSha256;
+      const [inserted] = await tx
+        .insert(generationAttempts)
+        .values({
+          attemptId,
+          purpose,
+          mode,
+          payloadSha256,
+          ...ids,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (inserted) return { attempt: inserted, created: true };
+      // The insert conflicted, so a row with this attempt id exists SOMEWHERE.
+      // Whether it is THIS creator's is what the scoped read answers, and a
+      // miss is refused with the state error's shared message.
+      const [existing] = await tx
+        .select()
+        .from(generationAttempts)
+        .where(
+          and(both(generationAttempts), eq(generationAttempts.attemptId, attemptId))
+        )
+        .limit(1);
+      if (!existing) throw new GenerationAttemptStateError(attemptId, "claimed");
+      return { attempt: existing, created: false };
+    },
+
+    advanceGenerationAttempt: async (params, tx) => {
+      assertMayWrite(scope.role, "advance a generation for this creator");
+      const attemptId = params.attemptId;
+      const to = params.to;
+      // THE LEGAL PREDECESSORS, as a MAP rather than a chain of `if`s, for the
+      // reason the slice card gives the tier gate: the next state added is a
+      // key that must be given its predecessors, not a branch someone may
+      // forget to write.
+      //
+      // `refused` is legal from every non-terminal state because a refusal can
+      // happen before the vendor call (a zero balance) or after it (an
+      // unparseable reply) — `generation-schema.ts` records that it is the one
+      // state that says nothing about whether HTTP happened.
+      const FROM: Record<typeof to, GenerationAttemptState[]> = {
+        vendor_started: ["claimed"],
+        vendor_complete: ["vendor_started"],
+        refused: ["claimed", "vendor_started", "vendor_complete"],
+        // Only after HTTP has actually left: `recovery_required` MEANS the
+        // vendor may have been paid and we cannot prove what came back.
+        recovery_required: ["vendor_started", "vendor_complete"],
+      };
+      // THE CANDIDATE MOVES WITH THE STATE, in the SAME statement, in both
+      // directions (R14c). Written by the response checkpoint and CLEARED by
+      // either non-settled terminal, so no terminal row keeps a copy of the
+      // words — which is the retention rule
+      // `generation_attempts_candidate_iff_vendor_complete` then refuses to
+      // let anyone forget. Read into a local first (C-40): `params` is a plain
+      // object type, so a getter could hand the UPDATE one document and the
+      // caller's later read another.
+      const candidate =
+        to === "vendor_complete" ? params.candidate : null;
+      const stamps =
+        to === "vendor_started"
+          ? { vendorStartedAt: sql`clock_timestamp()` }
+          : to === "vendor_complete"
+            ? { vendorCompletedAt: sql`clock_timestamp()`, candidate }
+            : { terminalAt: sql`clock_timestamp()`, candidate };
+      const [row] = await tx
+        .update(generationAttempts)
+        .set({
+          state: to,
+          ...stamps,
+          refusalCode: to === "refused" ? params.refusalCode : undefined,
+        })
+        .where(
+          and(
+            both(generationAttempts),
+            eq(generationAttempts.attemptId, attemptId),
+            inArray(generationAttempts.state, FROM[to])
+          )
+        )
+        .returning();
+      if (!row) throw new GenerationAttemptStateError(attemptId, to);
+      return row;
+    },
+
+    settleGeneration: async (params, tx) => {
+      assertMayWrite(scope.role, "settle a generation for this creator");
+      const attemptId = params.attemptId;
+      const outcome = params.outcome;
+      const [generation] = await tx
+        .insert(generations)
+        .values({
+          attemptId,
+          mode: params.mode,
+          brainActivationId: params.brainActivationId,
+          frameworkVersions: params.frameworkVersions,
+          contextInputIds: params.contextInputIds,
+          request: params.request,
+          model: params.model,
+          promptBundleVersion: params.promptBundleVersion,
+          configVersion: params.configVersion,
+          outcome,
+          output: params.output ?? null,
+          weakestPoint: params.weakestPoint,
+          refusalReason: params.refusalReason,
+          killTest: params.killTest,
+          rewriteCount: params.rewriteCount,
+          ...ids,
+        })
+        .returning();
+      // THE TRANSITION IN THE SAME CALL, so `generation_attempts_settled_has_
+      // generation` — an EQUALITY — can never see a `settled` row without its
+      // record. `vendor_complete` is the only legal predecessor: settling
+      // anything the vendor has not finished would be settling nothing.
+      const [attempt] = await tx
+        .update(generationAttempts)
+        .set({
+          state: "settled",
+          generationId: generation.id,
+          debitLedgerId: params.debitLedgerId,
+          terminalAt: sql`clock_timestamp()`,
+          // THE CANDIDATE IS CONSUMED HERE (R14c). The row above is now the
+          // record, so keeping the staging copy would be a second, permanent
+          // copy of the same words — and the equality CHECK refuses a
+          // `settled` row that still carries one, so this is not a line a
+          // later edit can quietly drop.
+          candidate: null,
+        })
+        .where(
+          and(
+            both(generationAttempts),
+            eq(generationAttempts.attemptId, attemptId),
+            eq(generationAttempts.state, "vendor_complete")
+          )
+        )
+        .returning();
+      if (!attempt) throw new GenerationAttemptStateError(attemptId, "settled");
+      return { generation, attempt };
+    },
+
+    readGenerationForAttempt: async (attemptId, tx) => {
+      const [row] = await tx
+        .select()
+        .from(generations)
+        .where(and(both(generations), eq(generations.attemptId, attemptId)))
+        .limit(1);
+      return row;
+    },
+
+    readGenerationAttempt: async (attemptId, tx) => {
+      const [row] = await tx
+        .select()
+        .from(generationAttempts)
+        .where(
+          and(both(generationAttempts), eq(generationAttempts.attemptId, attemptId))
+        )
+        .limit(1);
+      return row;
+    },
   };
   return caps;
 }
@@ -2951,6 +3624,35 @@ async function retainedReferenceSpans(
     }
   }
   return spans;
+}
+
+export type ReferenceSafetyContext = {
+  references: ReferenceInput[];
+  retainedSpans: ReferenceQuoteSpan[];
+};
+
+/**
+ * Load the complete scoped populations consumed by the shared R-3 decision.
+ *
+ * This is read-only and deliberately returns no capability. The caller must
+ * already hold a transaction and a verified ProfileScope, so corpus and
+ * retained spans are loaded under both workspace/profile predicates from the
+ * server-side profile identity. No caller can supply either population.
+ */
+export async function loadReferenceSafetyContext(
+  scope: ProfileScope,
+  tx: TxLike
+): Promise<ReferenceSafetyContext> {
+  assertScoped(scope);
+  if (!profileCage.has(scope)) {
+    throw new ScopeForgeryError("A reference-safety context holder");
+  }
+  const corpus = await scope.accessors.referenceCorpusAsOf(undefined, tx);
+  const bucketOf = groupReferenceInputs(corpus.inputs);
+  return {
+    references: corpus.inputs,
+    retainedSpans: await retainedReferenceSpans(tx, scope, bucketOf),
+  };
 }
 
 export async function withWorkspace(

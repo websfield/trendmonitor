@@ -16,9 +16,11 @@ import {
   createTestDb,
   creatorProfiles,
   ensureUserWorkspace,
+  membershipProfileSelections,
   schema,
   seedAuthUser,
   seedDb,
+  selectedProfileForMember,
   withWorkspace,
   type TestDb,
   type WorkspaceScope,
@@ -76,6 +78,7 @@ describe("createProfile — the cap (R2)", () => {
     // profile created straight into `archived` would cost nothing against the
     // cap while still owning brain documents.
     expect(p.state).toBe("active");
+    expect((await selectedProfileForMember(db, scope))?.id).toBe(p.id);
   });
 
   it("refuses the second on Free, and the error names the tier and the cap", async () => {
@@ -93,6 +96,42 @@ describe("createProfile — the cap (R2)", () => {
       .from(creatorProfiles)
       .where(eq(creatorProfiles.workspaceId, scope.workspaceId as string));
     expect(rows).toHaveLength(1);
+    expect((await selectedProfileForMember(db, scope))?.id).toBe(rows[0].id);
+  });
+
+  it("rolls the profile back when selecting it cannot commit", async () => {
+    const db = await createTestDb();
+    const scope = await setup(db);
+    const [membership] = await db
+      .select()
+      .from(schema.memberships)
+      .where(eq(schema.memberships.workspaceId, scope.workspaceId as string));
+
+    await seedAuthUser(db, "collision_owner");
+    const { workspace: otherWorkspace } = await ensureUserWorkspace(db, {
+      authUserId: "collision_owner",
+      name: "Collision",
+    });
+    const other = await withWorkspace(db, { authUserId: "collision_owner" });
+    const [otherProfile] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId: otherWorkspace.id, displayName: "Other" })
+      .returning();
+    await db.insert(membershipProfileSelections).values({
+      id: membership.id,
+      userId: other.userId as string,
+      workspaceId: other.workspaceId as string,
+      profileId: otherProfile.id,
+    });
+
+    await expect(createProfile(db, scope, "Must roll back", now())).rejects.toThrow();
+    expect(
+      await db
+        .select()
+        .from(creatorProfiles)
+        .where(eq(creatorProfiles.workspaceId, scope.workspaceId as string))
+    ).toHaveLength(0);
+    expect(await selectedProfileForMember(db, scope)).toBeNull();
   });
 
   it("THE CAP IS THE STORED CONFIG DOCUMENT: changing it moves the cap, with no deploy", async () => {

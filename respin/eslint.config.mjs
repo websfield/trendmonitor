@@ -56,6 +56,12 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             "ProfileAccessError",
             "ProvenanceError",
             "BrainEditEmptyError",
+            // SLICE 5, STAGE 2 (G3). The no-op edit refusal, split off
+            // `ProvenanceError` so an unchanged-form submission stops
+            // rendering the stale-page sentence. Another inert refusal
+            // value `billing-errors.ts` maps to copy — the brain WRITE
+            // surface stays absent and therefore still denied.
+            "BrainEditUnchangedError",
             "BrainEditBusyError",
             "BrainEditLimitError",
             "BrainDocumentLimitError",
@@ -147,16 +153,6 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             // `respinDb` (`monthlySpend`/`reconcileSpend` are its methods;
             // the other two are package-internal, never exported to app/**
             // at all).
-            // Slice 2b-c / R4a. `applyReconciliationDelta` has no live caller
-            // in app/** today (no vendor cost-reconciliation webhook exists
-            // yet), but exporting the class from @respin/db's root made
-            // `tests/billing-ui.test.tsx`'s completeness scan demand copy for
-            // it NOW rather than the day a caller is added and forgets to —
-            // the same forcing-function shape this allowlist's own slice-2b
-            // comment above describes. The write/query surface itself
-            // (`applyReconciliationDelta`) stays absent from this allowlist;
-            // only the error class, for copy purposes.
-            "ReconciliationTargetError",
             "SpendReconciliationResult",
             "SpendReconciliationRow",
             "SpendReconciliationClass",
@@ -193,6 +189,41 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             // the `metricDirection` field's two options, one source shared
             // with `brain-content.ts`'s own schema.
             "METRIC_DIRECTIONS",
+            // SLICE 5, STAGE 2 (G0). The SHARED DISPLAY VOCABULARY the screen
+            // and the downloaded file must both use — moved down into
+            // `packages/db/src/export.ts` by stage 1 so `/brain` and
+            // `openBrainExport` cannot say two different things about the same
+            // field, and re-exported (never redeclared) by
+            // `app/(product)/brain/copy.ts` and
+            // `app/(product)/onboarding/interview/copy.ts`.
+            //
+            // ALL INERT: four `Record<string, string>` label maps, two absence
+            // SENTENCES, four pure pointer->label functions, one pure
+            // pointer predicate and one pure sentence builder. None of them
+            // reads, writes or reaches a connection, which is why they can be
+            // on this list at all — the brain WRITE surface
+            // (`writeCapabilities`, `writeBrainDoc`, the tables) stays absent
+            // and therefore still denied. `tests/shared-copy-identity.test.ts`
+            // is what makes the re-export durable: it proves each name arrives
+            // from @respin/db rather than as a second literal that can drift.
+            "INTERVIEW_PLACEHOLDER_ABSENCE",
+            // ROUND 2 (compliance CHANGE): the pure (kind, storedReason)
+            // SELECTOR the two absence constants are two answers of. Inert
+            // like the rest — it reads a closed table and returns a sentence,
+            // reaching no connection — and it is what stops `/brain` telling a
+            // creator "we could not point to a quote from your posts" about a
+            // `[check]` they typed into their own edit.
+            "screenAbsenceSentence",
+            "VOICE_FIELD_LABELS",
+            "STRATEGY_FIELD_LABELS",
+            "STRATEGY_METRIC_FIELD_LABELS",
+            "KILLTEST_FIELD_LABELS",
+            "METRIC_DIRECTION_LABELS",
+            "claimLabel",
+            "strategyClaimLabel",
+            "killtestClaimLabel",
+            "isMetricPointer",
+            "quoteIntro",
           ],
           message:
             "app/** may import only the sanctioned @respin/db surface (respinDb, WorkspaceAccessError, the typed refusals, types) — every query goes through withWorkspace, and the write capabilities are package-only (tenancy T1, M2a A-2b)",
@@ -346,6 +377,42 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
           // message can say what to import instead. This entry's job is the
           // class those entries cannot cover: a package nobody has written yet,
           // and a deep entrypoint nobody has sanctioned yet.
+          //
+          // ---- THE DECISIONS THIS LIST RECORDS BY OMISSION, WRITTEN DOWN.
+          //
+          // A package is "considered and denied" or "never looked at", and a
+          // list that only names the ADMITTED cannot tell those apart. So each
+          // package that arrives and STAYS DENIED says so here, once:
+          //
+          //   `@respin/llm`   (slice 2a) — denied. A server action that could
+          //     build a prompt is a server action that can reach a model with
+          //     arbitrary text; app/** reaches it through `inferVoice` on
+          //     @respin/credits/app-server.
+          //   `@respin/modes` (slice 6, stage B) — DENIED, deliberately, and
+          //     it stays denied. It holds the generation pipeline, so the same
+          //     argument applies with money attached: `runGeneration` takes the
+          //     vendor call as a callback, and the caller that supplies one is
+          //     the caller that meters and debits. app/** reaches a generation
+          //     through @respin/credits/app-server, where the money path
+          //     already is. The TYPES a screen needs are reachable WITHOUT
+          //     naming @respin/modes, but NOT by re-export: the facade's
+          //     `export type` block names no `@respin/modes` type, and this
+          //     comment claimed it did until slice 6 stage D read it back
+          //     (2026-09-01). What is true is INDEXED ACCESS through the
+          //     facade's own result type — `NonNullable<GenerateResult["run"]>`
+          //     and its members — which is what `app/(product)/studio/
+          //     projection.ts` does and documents. A screen therefore names the
+          //     shape without importing the package, which is the property the
+          //     denial needs; re-export would have been a second, wider way to
+          //     the same place. `app/(product)/billing-errors.ts` records the
+          //     precedent, that widening a package boundary so a screen or a
+          //     test can name a class is "loosening a tenancy boundary for a
+          //     convenience".
+          //
+          // Fixtures for both live in tests/import-boundary.test.ts, and slice
+          // 6 adds the packages/**-direction half: `@respin/modes` ROOT is
+          // reachable from packages/credits (stage C composes it) while
+          // `@respin/modes/src/...` is not.
           group: [
             "@respin/*",
             "@respin/*/**",

@@ -381,6 +381,13 @@ const NAMED_PROTECTED_PAGES: {
     gate: "requireUser",
   },
   { file: "(product)/studio/page.tsx", url: "/studio", gate: "requireUser" },
+  // Slice 6, stage D. Named separately from its page for the reason every
+  // other action module on this list is: `studio/actions.ts` is a POST
+  // endpoint in its own right, invocable by its stable action id without
+  // `studio/page.tsx` ever rendering — and it is the one action in the product
+  // that reaches a vendor AND takes a credit debit on the same press, so an
+  // ungated one is not a leak of data alone.
+  { file: "(product)/studio/actions.ts", url: "/studio", gate: "requireUser" },
   { file: "(product)/usage/page.tsx", url: "/usage", gate: "requireUser" },
   {
     file: "(product)/settings/billing/page.tsx",

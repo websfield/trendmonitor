@@ -23,6 +23,7 @@
 import { requireUser } from "@respin/auth";
 import { respinDb, INTERVIEW_FIELDS, type InterviewAnswers } from "@respin/db";
 import { respinCredits } from "@respin/credits/app-server";
+import { redirect } from "next/navigation";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { AccessRefusal } from "../access-refusal";
 import { billingErrorDisplay } from "../billing-errors";
@@ -80,11 +81,20 @@ export default async function BrainPage(props: {
     return <AccessRefusal copy={billingErrorDisplay(err)} />;
   }
 
-  const profile = profiles[0];
+  let profile: Awaited<
+    ReturnType<typeof respinDb.selectedProfileForMember>
+  > = null;
+  try {
+    profile = await respinDb.selectedProfileForMember(scope);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[brain] selected profile unavailable", err);
+    return <AccessRefusal copy={billingErrorDisplay(err)} />;
+  }
   // NO PROFILE, NO BRAIN — and this is a named state, not an error. A creator
   // who has not made a profile yet has nothing to confirm, and telling them
   // where to start is the honest answer.
-  if (!profile) {
+  if (!profile && profiles.length === 0) {
     return (
       <BrainView
         profileName="this creator"
@@ -111,6 +121,10 @@ export default async function BrainPage(props: {
         error={brainErrorFor(typeof search.e === "string" ? search.e : undefined)}
       />
     );
+  }
+
+  if (!profile) {
+    redirect("/onboarding?choose=profile");
   }
 
   // The annotate-mode history is also the current read. An affected version

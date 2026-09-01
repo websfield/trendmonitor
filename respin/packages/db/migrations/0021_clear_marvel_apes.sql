@@ -1,0 +1,3 @@
+ALTER TABLE "generation_attempts" ADD COLUMN "candidate" jsonb;--> statement-breakpoint
+ALTER TABLE "generation_attempts" ADD CONSTRAINT "generation_attempts_candidate_iff_vendor_complete" CHECK (("generation_attempts"."state" = 'vendor_complete') = ("generation_attempts"."candidate" IS NOT NULL));--> statement-breakpoint
+ALTER TABLE "generation_attempts" ADD CONSTRAINT "generation_attempts_candidate_is_object" CHECK ("generation_attempts"."candidate" IS NULL OR jsonb_typeof("generation_attempts"."candidate") = 'object');

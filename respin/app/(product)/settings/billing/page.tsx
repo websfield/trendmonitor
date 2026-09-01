@@ -4,7 +4,6 @@
 // packages/credits (skill B7: the money paths were integration-tested in
 // phases 2–3, before this page existed).
 import { requireUser } from "@respin/auth";
-import { respinDb } from "@respin/db";
 import {
   hasLiveStripeSubscription,
   isStripeConfigured,
@@ -26,6 +25,7 @@ import {
   subscribeAction,
 } from "./actions";
 import { logRefusal } from "../../safe-log";
+import { scopeForUser } from "../../workspace-scope";
 
 const TIER_LABELS: Record<TierOption["tier"], string> = {
   creator: "Creator",
@@ -41,12 +41,12 @@ export default async function BillingSettingsPage(props: {
   const user = await requireUser();
   const search = await props.searchParams;
 
-  // Scoping is a REFUSAL PATH (round-2 NOTE): `WorkspaceAccessError` has
-  // rendered copy in billing-errors.ts and, until this try existed, no way to
-  // reach it from a page.
-  let scope: Awaited<ReturnType<typeof respinDb.withWorkspace>>;
+  // Scoping is a REFUSAL PATH (round-2 NOTE). `scopeForUser` first runs the
+  // idempotent workspace bootstrap, so this page cannot read before the
+  // concurrently-rendered layout commits on a creator's first request.
+  let scope: Awaited<ReturnType<typeof scopeForUser>>;
   try {
-    scope = await respinDb.withWorkspace({ authUserId: user.id });
+    scope = await scopeForUser(user);
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[billing] workspace scope unavailable", err);

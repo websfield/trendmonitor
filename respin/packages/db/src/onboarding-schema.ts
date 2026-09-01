@@ -78,11 +78,10 @@ export const usageOutcome = pgEnum("model_usage_outcome", [
   "refused",
 ]);
 
-// 'estimated' at insert; 'reconciled' when the provider's own figure lands.
-// That transition is this table's ONE sanctioned update — named here rather
-// than discovered, because declaring the table append-only while `cost_state`
-// must transition would make "REQ-G05 prefers reconciled" describe a state the
-// table could never reach.
+// Cost state is fixed at insert until a real provider, job, or operator-import
+// integration owns an authenticated, idempotent transition. `reconciled`
+// therefore means the provider figure was known when this row was inserted;
+// estimated and unknown rows are not mutated by production code today.
 export const costState = pgEnum("model_usage_cost_state", [
   "estimated",
   "reconciled",
@@ -401,8 +400,10 @@ export const workspaceSpendMonthly = pgTable(
     // R4 forbids, because after a deletion there ARE no surviving rows to
     // derive it from. So the count moves onto THIS row at write time, same
     // as `cost_micro_usd` and `call_count` do: incremented by
-    // `upsertSpendRollup` whenever `costState === 'unknown'`, decremented by
-    // `applyReconciliationDelta` (R4a) when that same call later reconciles.
+    // `upsertSpendRollup` whenever `costState === 'unknown'`. It is not
+    // decremented today because no real reconciliation source exists; a future
+    // integration must add the usage transition and same-transaction rollup
+    // delta together, against that integration's proven payload identity.
     unknownCallCount: integer("unknown_call_count").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true })

@@ -41,3 +41,4 @@ Thumbs.db
 .codebase-map/
 # ---- Playwright MCP (generated browser session artifacts, not tracked) ----
 .playwright-mcp/
+.gstack/

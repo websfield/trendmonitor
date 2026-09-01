@@ -28,7 +28,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { uuidv7 } from "uuidv7";
-import { users, workspaces } from "./schema";
+import { memberships, users, workspaces } from "./schema";
 
 const id = () =>
   uuid("id")
@@ -133,6 +133,49 @@ export const creatorProfiles = pgTable(
     // migration, not by reading the emitted SQL: the constraint was present,
     // it was just present too late.
     unique("creator_profiles_id_workspace_uq").on(t.id, t.workspaceId),
+  ]
+);
+
+/**
+ * The active creator profile chosen by ONE workspace member.
+ *
+ * This is deliberately membership-grained rather than cookie-, URL-, or
+ * workspace-grained state: two people in the same Studio workspace may be
+ * working on different creators at the same time. Both composite FKs carry
+ * `workspace_id`, so neither a member nor a profile from another workspace can
+ * be paired into this row even through a raw SQL writer.
+ *
+ * `profile_id` points at an existing profile, but "active" is a mutable state
+ * and cannot be expressed by a foreign key. `profile-selection.ts` therefore
+ * proves `creator_profiles.state = 'active'` while locking the row at every
+ * sanctioned write, and joins the same predicate at every read. An archived
+ * selection is absent, never a fallback to another profile.
+ */
+export const membershipProfileSelections = pgTable(
+  "membership_profile_selections",
+  {
+    id: id(),
+    userId: uuid("user_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    profileId: uuid("profile_id").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.userId, t.workspaceId],
+      foreignColumns: [memberships.userId, memberships.workspaceId],
+      name: "membership_profile_selections_membership_workspace_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.profileId, t.workspaceId],
+      foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
+      name: "membership_profile_selections_profile_workspace_fk",
+    }).onDelete("cascade"),
+    uniqueIndex("membership_profile_selections_member_workspace_uq").on(
+      t.userId,
+      t.workspaceId
+    ),
   ]
 );
 
@@ -346,6 +389,10 @@ export const frameworks = pgTable(
 
 export type CreatorProfile = typeof creatorProfiles.$inferSelect;
 export type NewCreatorProfile = typeof creatorProfiles.$inferInsert;
+export type MembershipProfileSelection =
+  typeof membershipProfileSelections.$inferSelect;
+export type NewMembershipProfileSelection =
+  typeof membershipProfileSelections.$inferInsert;
 export type CreatorProfileState =
   (typeof creatorProfileState.enumValues)[number];
 export type BrainDoc = typeof brainDocs.$inferSelect;

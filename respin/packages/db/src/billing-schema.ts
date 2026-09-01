@@ -217,6 +217,43 @@ export const creditLedger = pgTable(
     uniqueIndex("credit_ledger_inference_debit_uq")
       .on(t.refType, t.refId)
       .where(sql`${t.refType} = 'inference'`),
+    // ONE FREE-TIER ALLOWANCE PER WORKSPACE PER CALENDAR MONTH (R17, slice 6).
+    // The sixth partial unique on this table, and the FIRST one that is
+    // WORKSPACE-KEYED — which is the whole reason it needs its own paragraph
+    // rather than a copy of a sibling's.
+    //
+    // SETTLED IN THE SCHEMA, NOT IN APPLICATION CODE, for exactly the reason
+    // `credit_ledger_inference_debit_uq` states three indexes up. The Free
+    // grant is to be minted LAZILY at balance-derivation time (the mechanism
+    // R-20 already chose for expiry), so an application-level "have we granted
+    // this month?" read would be a read-then-write on a table with no
+    // constraint behind it: two connections both read no, both insert, and a
+    // Free workspace gets 50 credits for a month it is entitled to 25. That
+    // doubling was measured against this schema with the index dropped, which
+    // is why the index is here BEFORE the writer is.
+    //
+    // NO WRITER EXISTS YET, and this sentence is the honest form of the one
+    // above: nothing in `packages/**` or `app/**` inserts a `free_allowance`
+    // row today. `balance.ts` owns the mint — which tiers may mint (a
+    // Free-only rule this index cannot express) and the end-of-month
+    // `expires_at` that gives Free its no-rollover semantics through the
+    // ordinary lot fold — and that is a later stage of slice 6.
+    //
+    // `(workspace_id, ref_id)` AND NOT `(ref_type, ref_id)`, and the departure
+    // from the five siblings is the point rather than an inconsistency. Every
+    // sibling keys on a STRIPE object id — an invoice, a Checkout session, a
+    // PaymentIntent, a ledger lot uuid — each globally unique and belonging to
+    // exactly one customer, so a global index is a guarantee. `ref_id` here is
+    // the PERIOD KEY (`yyyy-MM`, UTC calendar month — the same string
+    // `packages/credits/src/stripe/auto-topup.ts` builds for its per-month
+    // idempotency key), and every workspace on the platform mints '2026-08'. A
+    // global index would let the FIRST Free workspace to derive a balance in a
+    // month take that key and refuse the grant to every other workspace for
+    // the rest of the month — the same index shape, one column short, is a
+    // platform-wide outage instead of a guarantee.
+    uniqueIndex("credit_ledger_free_allowance_uq")
+      .on(t.workspaceId, t.refId)
+      .where(sql`${t.refType} = 'free_allowance'`),
     check("credit_ledger_delta_nonzero", sql`${t.delta} <> 0`),
     check(
       "credit_ledger_delta_sign",
@@ -238,6 +275,19 @@ export const creditLedger = pgTable(
     check(
       "credit_ledger_lot_expiry",
       sql`${t.kind} NOT IN ('grant','pack','refund') OR ${t.expiresAt} IS NOT NULL`
+    ),
+    // A FREE ALLOWANCE MUST NAME ITS PERIOD — the same sentence
+    // `credit_ledger_expiry_ref` two checks up already carries for its own
+    // partial unique, and for the same measured reason: NULLs are DISTINCT in
+    // a unique index, so a `free_allowance` row with a NULL `ref_id` slips
+    // past `credit_ledger_free_allowance_uq` entirely and every balance read
+    // that month mints another 25 credits. Without this the index is
+    // idempotency-unless-the-writer-forgets, which is the shape R17 exists to
+    // refuse. `IS DISTINCT FROM` rather than `<>` because a CHECK passes when
+    // its expression is NULL, and `NULL <> 'free_allowance'` is NULL.
+    check(
+      "credit_ledger_free_allowance_ref",
+      sql`${t.refType} IS DISTINCT FROM 'free_allowance' OR ${t.refId} IS NOT NULL`
     ),
   ]
 );

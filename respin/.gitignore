@@ -10,3 +10,21 @@ next-env.d.ts
 .env.*
 
 .vercel/
+
+# ---- Test PROBE ARTIFACTS (planted violations — never committable) ----
+# A non-vacuity test proves its source scan is not silently broken by WRITING a
+# real violation into the tree it is about to scan and asserting the scan finds
+# it. Every one of those files is a genuine defect while it exists — the app/
+# probes import trustWorkspaceId, the __*_probe.ts files forge a branded id or
+# register a forged scope in the cage — and slice 6 found one on disk after an
+# interrupted run, untracked and committable by `git add -A`.
+#
+# The list is tests/support/probe-artifacts.ts (PROBE_GITIGNORE_PATTERNS pins
+# these three lines; tests/probe-artifacts.test.ts asserts the INSTALLED git
+# really ignores each planted path). Ignoring them also hides them from
+# `git grep --untracked`, so the scans no longer see a probe planted by a
+# concurrently-running test file — and the tests that plant one name it back
+# through `scanFor`'s `includeIgnored`.
+__scan_probe__/
+__stripe_scan_probe__/
+__*_probe.ts

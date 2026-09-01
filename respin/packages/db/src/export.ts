@@ -1,20 +1,18 @@
 import type { DbLike, TxLike } from "./db-like";
 import { sql } from "drizzle-orm";
-import type { BrainDoc } from "./brain-schema";
+import type { BrainDoc, BrainDocStatus, BrainKind } from "./brain-schema";
 import type { OnboardingInput } from "./onboarding-schema";
 import {
   CREATOR_DATA_REGISTRY,
   type CreatorDataEntry,
 } from "./creator-data-registry";
 import { CHECK } from "./brain-content";
+import { classifyBrainReason, type BrainDocReasonCode } from "./brain-reason";
 import { ExportBusyError } from "./errors";
-import {
-  EVIDENCE_UNVERIFIED_ANNOTATION,
-  claimsForHistory,
-  replacementVersionFor,
-} from "./brain-ops";
+import { EVIDENCE_UNVERIFIED_ANNOTATION, claimsForHistory } from "./brain-ops";
 import {
   ProfileScope,
+  PROFILE_EXPORT_TABLES,
   type ProfileExportTable,
   type SourceEvidenceEntry,
   type WorkspaceScope,
@@ -23,21 +21,175 @@ import type { RunSlots } from "./run-slot";
 
 export const EXPORT_EVIDENCE_UNVERIFIED = EVIDENCE_UNVERIFIED_ANNOTATION;
 export const NO_RULES_RECORDED = "no rules recorded";
-export const PLACEHOLDER_ABSENCE =
-  "We could not point to a quote from your posts for this one, so we are not stating it. Confirm it as still unknown.";
+
+/**
+ * WHY THE ABSENCE SENTENCES LIVE HERE, in `@respin/db`, and not on the screen
+ * that shows them (tenancy/compliance/learning gates, all three, 2026-08-31).
+ *
+ * `app/(product)/brain/copy.ts` owned two of these and this file owned a
+ * third copy of one of them, so the export projection printed the VOICE
+ * sentence — "we could not point to a quote from your posts" — for every
+ * document kind. For `strategy`/`killtest` nobody searched anything: the
+ * creator was asked in the interview and left the field undecided. Saying "we
+ * could not find it" about a question nobody answered misattributes a
+ * deliberate choice, in the artefact of record, which is REQ-I03.
+ *
+ * `packages/db` cannot import from `app/**` (that is the layout rule), so the
+ * only way for the screen and the file to say the same thing is for the
+ * sentences to live down here and the screen to re-export them.
+ *
+ * THE STEM/CALL-TO-ACTION SPLIT IS STRUCTURAL, not cosmetic. The screen's
+ * sentence ends in a control the reader can actually operate ("Confirm it as
+ * still unknown"); a downloaded file has no such control, so the projection
+ * emits the stem alone. Composing the screen sentence FROM the stem is what
+ * stops the two drifting into different claims about the same absence — which
+ * is why one `AbsenceCopy` record holds both halves and both readers select
+ * from the SAME table (`exportAbsenceSentence` / `screenAbsenceSentence`).
+ *
+ * AND THE SELECTION IS TWO-DIMENSIONAL, (kind, reason), not one (compliance
+ * gate CHANGE, round 2). Kind alone was round 1's defect one population
+ * narrower: see `ABSENCE_CREATOR_EDIT`'s own docblock below.
+ */
+type AbsenceCopy = {
+  /** What the downloaded file prints — a claim, with no control attached. */
+  stem: string;
+  /** What the screen adds — a control the reader can actually operate. */
+  action: string;
+};
+
+const ABSENCE_VOICE_SEARCHED: AbsenceCopy = {
+  stem: "We could not point to a quote from your posts for this one, so we are not stating it.",
+  action: "Confirm it as still unknown.",
+};
+const ABSENCE_INTERVIEW_UNDECIDED: AbsenceCopy = {
+  stem: "You left this undecided in the interview, so we are not stating it.",
+  action:
+    "Confirm it as still undecided, or answer it in the interview and build a new version.",
+};
+/**
+ * The creator set this position to `[check]` THEMSELVES, in an edit.
+ *
+ * WHY THIS EXISTS (compliance gate CHANGE, slice 5 round 2). Selecting on kind
+ * alone made every VOICE absence "we could not point to a quote from your
+ * posts" — true of an INFERRED version and FALSE of an edited one. Slice 5's
+ * edit form accepts `[check]` for a field and drops its evidence
+ * (`brain-edit.test.ts`, "allows [check] for one field, drops its warrant"),
+ * so the artefact of record attributed the creator's own deliberate decision
+ * to a failed search of ours. That is round 1's REQ-I03 defect one population
+ * wider: the absence sentence is selected by (kind, reason), never by kind.
+ */
+const ABSENCE_CREATOR_EDIT: AbsenceCopy = {
+  stem: "You left this unstated when you edited this version, so we are not stating it.",
+  action: "Confirm it as still unstated, or edit it again to state it.",
+};
+/**
+ * The sentence that claims NOTHING about whose absence this is.
+ *
+ * Used wherever none of the three above is known to be true: the kind nothing
+ * writes and no interview asks about (`performance_meta` is outside
+ * `WRITABLE_BRAIN_KINDS`, so no document of that kind exists to project
+ * today), the `correction` reason code (which has no write path yet, so there
+ * is no fact about who left the field unstated), and a stored reason this
+ * build cannot classify at all. Borrowing one of the other three there would
+ * be inventing the reason for an absence, which is the whole defect.
+ */
+const ABSENCE_UNSTATED: AbsenceCopy = {
+  stem: "This position is recorded as not stated.",
+  action: "Confirm it as still unstated.",
+};
+
+/** What `/brain` says for an ungrounded, INFERRED voice claim (R10). */
+export const PLACEHOLDER_ABSENCE = `${ABSENCE_VOICE_SEARCHED.stem} ${ABSENCE_VOICE_SEARCHED.action}`;
+/**
+ * What `/brain` says for an UNDECIDED interview field — the
+ * `strategy`/`killtest` sibling of `PLACEHOLDER_ABSENCE`, byte-identical to
+ * the sentence `copy.ts` shipped, moved here so both readers share one source.
+ */
+export const INTERVIEW_PLACEHOLDER_ABSENCE = `${ABSENCE_INTERVIEW_UNDECIDED.stem} ${ABSENCE_INTERVIEW_UNDECIDED.action}`;
+
+/**
+ * The absence copy for one document kind, when the version's REASON does not
+ * decide it.
+ *
+ * A `Record<BrainKind, ...>` rather than a lookup with a fallback: a fifth
+ * brain kind must be answered here by its author, at compile time, instead of
+ * silently inheriting whichever sentence happened to be the default. That is
+ * the 2026-08-29 population lesson written as a type.
+ */
+const ABSENCE_BY_KIND: Record<BrainKind, AbsenceCopy> = {
+  voice: ABSENCE_VOICE_SEARCHED,
+  strategy: ABSENCE_INTERVIEW_UNDECIDED,
+  killtest: ABSENCE_INTERVIEW_UNDECIDED,
+  performance_meta: ABSENCE_UNSTATED,
+};
+
+/**
+ * The absence copy one REASON CODE decides on its own, or `null` for "the kind
+ * decides".
+ *
+ * A `Record<BrainDocReasonCode, ...>` for the same reason the kind map is one:
+ * a fourth reason code is a COMPILE error here, answered by its author, rather
+ * than inheriting the kind's sentence silently. `null` is an ANSWER — "this
+ * code says nothing about whose absence it is, so the kind still decides" —
+ * and it is written out per code rather than achieved by omission.
+ */
+const ABSENCE_BY_REASON: Record<BrainDocReasonCode, AbsenceCopy | null> = {
+  // An inferred version's absence IS ours (voice: we searched the posts) or
+  // the creator's own interview answer (strategy/killtest). The kind decides.
+  onboarding_inference: null,
+  creator_edit: ABSENCE_CREATOR_EDIT,
+  // No write path emits this code today, so there is no fact about who left
+  // the position unstated. Claim nothing rather than guess.
+  correction: ABSENCE_UNSTATED,
+};
+
+/** The copy for one absence, selected by BOTH dimensions (kind, stored reason). */
+function absenceCopy(kind: BrainKind, storedReason: string): AbsenceCopy {
+  const code = classifyBrainReason(storedReason);
+  // An unclassifiable stored reason means we cannot say WHY this version
+  // exists, so we must not say why the field is absent either.
+  if (code === null) return ABSENCE_UNSTATED;
+  return ABSENCE_BY_REASON[code] ?? ABSENCE_BY_KIND[kind];
+}
+
+/** The projection's absence sentence — no call to action a file cannot offer. */
+export function exportAbsenceSentence(
+  kind: BrainKind,
+  storedReason: string
+): string {
+  return absenceCopy(kind, storedReason).stem;
+}
+
+/**
+ * `/brain`'s absence sentence: the same stem, plus the control the reader can
+ * operate. ONE selection, two audiences — composing the screen sentence from
+ * the projection's stem is what stops the two drifting into different claims
+ * about the same absence.
+ */
+export function screenAbsenceSentence(
+  kind: BrainKind,
+  storedReason: string
+): string {
+  const copy = absenceCopy(kind, storedReason);
+  return `${copy.stem} ${copy.action}`;
+}
+
 /** Total lifetime of an app-facing export, including a client that never pulls. */
 export const EXPORT_STREAM_DEADLINE_MS = 120_000;
 /** A blocked database statement gets its own tighter ceiling inside that lifetime. */
 export const EXPORT_DB_STATEMENT_TIMEOUT_MS = 15_000;
 
-const EXPORT_READER_TABLES = new Set([
-  "creator_profiles",
-  "brain_docs",
-  "onboarding_inputs",
-  "onboarding_interview_drafts",
-  "brain_activation_snapshots",
-  "frameworks",
-]);
+/**
+ * The registry table name -> the TYPED table the scoped reader understands.
+ *
+ * Derived from `PROFILE_EXPORT_TABLES`, so there is no third hand-maintained
+ * list and no `as ProfileExportTable` cast anywhere in this file. The keys
+ * widen to `string` (an upcast) so an arbitrary registry name can be looked
+ * up; the values stay `ProfileExportTable`, which is what the reader needs.
+ */
+const EXPORT_READER_TABLES: ReadonlyMap<string, ProfileExportTable> = new Map(
+  PROFILE_EXPORT_TABLES.map((table): [string, ProfileExportTable] => [table, table])
+);
 
 export class ExportClassificationError extends Error {
   constructor(table: string) {
@@ -46,36 +198,249 @@ export class ExportClassificationError extends Error {
   }
 }
 
-/** Non-vacuity seam: the canonical exporter calls this before reading any row. */
-export function assertExportRegistryReadable(
+/**
+ * The registry-included tables, in REGISTRY ORDER, as typed reader tables.
+ *
+ * This is the export's whole table population and the only place it is
+ * decided (R11). `openBrainExport` calls it BEFORE the caller commits HTTP 200
+ * headers and hands the result down to the streamer, so a table that is
+ * `included: true` with no scoped reader is a pre-header refusal rather than a
+ * body that aborts halfway through a download.
+ */
+export function exportPlan(
   registry: readonly CreatorDataEntry[] = CREATOR_DATA_REGISTRY
-): void {
+): ProfileExportTable[] {
+  const plan: ProfileExportTable[] = [];
   for (const entry of registry) {
-    if (entry.export.included && !EXPORT_READER_TABLES.has(entry.table)) {
-      throw new ExportClassificationError(entry.table);
-    }
+    if (!entry.export.included) continue;
+    const table = EXPORT_READER_TABLES.get(entry.table);
+    if (table === undefined) throw new ExportClassificationError(entry.table);
+    plan.push(table);
   }
+  return plan;
+}
+
+/**
+ * THE HUMAN NAMES FOR CLAIM POSITIONS, kind by kind — moved down from
+ * `app/(product)/brain/copy.ts` so the screen and the downloaded file use ONE
+ * set (F5, tenancy gate round 1).
+ *
+ * The markdown export used to print RFC-6901 pointers as its headings
+ * (`### /metric/direction`) and enum tokens as its values
+ * (`higher_is_better`), in a file whose own header calls itself
+ * human-readable. `copy.ts` already had the rule in writing — rendering a raw
+ * pointer to a creator "is not a degradation, it is a leak of an internal name
+ * onto a screen making claims about them" — and the export was the one reader
+ * that could not reach it, because `packages/db` cannot import from `app/**`.
+ *
+ * The words describe WHAT THE FIELD IS ABOUT, not what the model concluded.
+ * Copied verbatim; `tests/brain-ui.test.tsx` pins the key sets against the
+ * content schemas, so widening a schema without widening these is still red.
+ */
+export const VOICE_FIELD_LABELS: Record<string, string> = {
+  register: "How formal you are, and who you sound like you are talking to",
+  sentenceRhythm: "How your sentences are paced",
+  signatureMoves: "Things you do that another writer would not",
+  avoid: "Things you visibly never do",
+};
+
+export const STRATEGY_FIELD_LABELS: Record<string, string> = {
+  audience: "Who you're making this for",
+  positioning: "How you position yourself, compared to alternatives",
+  pillars: "Your content pillars",
+  goals: "Your goals with this content",
+  ambitions: "Where you want this to go",
+};
+
+export const STRATEGY_METRIC_FIELD_LABELS: Record<string, string> = {
+  label: "What you're calling this metric",
+  unit: "Unit",
+  direction: "Which direction is better",
+  platform: "Platform (if you named one)",
+  window: "Measurement window (if you named one)",
+};
+
+export const KILLTEST_FIELD_LABELS: Record<string, string> = {
+  rules: "Your kill rules",
+  bannedWords: "Words you never want used",
+  bannedVibes: "Vibes or tones you never want",
+};
+
+/** Readable labels for `METRIC_DIRECTIONS`' two closed values. */
+export const METRIC_DIRECTION_LABELS: Record<string, string> = {
+  higher_is_better: "Higher is better",
+  lower_is_better: "Lower is better",
+};
+
+/** The document kinds as a creator would name them. `killtest` is not a word. */
+export const BRAIN_KIND_LABELS: Record<BrainKind, string> = {
+  voice: "Voice",
+  strategy: "Strategy",
+  killtest: "Kill Test",
+  performance_meta: "Performance notes",
+};
+
+/** What each stored status MEANS, rather than the token it is stored as. */
+export const BRAIN_STATUS_LABELS: Record<BrainDocStatus, string> = {
+  proposed: "proposed — waiting for you to confirm it",
+  active: "in force",
+  superseded: "replaced by a later version",
+};
+
+/** `/register` -> the field's name; `/signatureMoves/0` -> its name plus a 1-BASED position. */
+function indexedLabel(
+  labels: Record<string, string>,
+  parts: readonly string[]
+): string | null {
+  const key = parts[0];
+  if (key === undefined) return null;
+  const base = labels[key];
+  if (base === undefined) return null;
+  if (parts.length === 1) return base;
+  const index = Number(parts[1]);
+  if (!Number.isInteger(index) || index < 0) return null;
+  return `${base} (${index + 1})`;
+}
+
+export function claimLabel(pointer: string): string | null {
+  return indexedLabel(VOICE_FIELD_LABELS, pointer.split("/").filter((p) => p.length > 0));
+}
+
+/**
+ * Same rule as `claimLabel`, plus the `/metric/<subfield>` branch R7 needs.
+ * `/metric` itself, and anything deeper than two segments under it, return
+ * null: the schema has no claim position at `/metric` (it is a container) and
+ * no metric sub-field is a list.
+ */
+export function strategyClaimLabel(pointer: string): string | null {
+  const parts = pointer.split("/").filter((p) => p.length > 0);
+  if (parts[0] === "metric") {
+    if (parts.length !== 2) return null;
+    return STRATEGY_METRIC_FIELD_LABELS[parts[1]] ?? null;
+  }
+  return indexedLabel(STRATEGY_FIELD_LABELS, parts);
+}
+
+export function killtestClaimLabel(pointer: string): string | null {
+  return indexedLabel(KILLTEST_FIELD_LABELS, pointer.split("/").filter((p) => p.length > 0));
+}
+
+/** True for a claim position that belongs in the metric panel, not the general list (R7). */
+export function isMetricPointer(pointer: string): boolean {
+  return pointer.startsWith("/metric/");
+}
+
+const CLAIM_LABELLERS: Record<BrainKind, (pointer: string) => string | null> = {
+  voice: claimLabel,
+  strategy: strategyClaimLabel,
+  killtest: killtestClaimLabel,
+  // Nothing writes this kind (`WRITABLE_BRAIN_KINDS`), so it has no fields and
+  // therefore no field names. Named explicitly rather than defaulted, for the
+  // same reason `EXPORT_ABSENCE_BY_KIND` is a Record.
+  performance_meta: () => null,
+};
+
+/** The human name for one claim position of one kind, or null if we have none. */
+export function claimLabelForKind(kind: BrainKind, pointer: string): string | null {
+  return CLAIM_LABELLERS[kind](pointer);
+}
+
+/**
+ * The export's heading for one claim position.
+ *
+ * The screen REFUSES an unlabelled pointer (`brain-view.tsx`); the export may
+ * not, because R9 says the export never throws — a data-subject right that
+ * fails closed on one unknown field is the control becoming the outage. So the
+ * fallback names the position as one we cannot name, and keeps the pointer
+ * inside that framing rather than presenting an internal name as if it were a
+ * heading a person wrote.
+ */
+export function exportClaimHeading(kind: BrainKind, pointer: string): string {
+  return (
+    claimLabelForKind(kind, pointer) ??
+    `An entry we do not have a name for (${pointer})`
+  );
+}
+
+/**
+ * The export's rendering of one claim VALUE.
+ *
+ * Stored claim values are the creator's own words everywhere except the
+ * declared metric's `direction`, which is a closed enum the interview picked
+ * from a labelled dropdown. `higher_is_better` is a wire value, not a
+ * sentence, and the creator never typed it.
+ */
+export function exportClaimValue(pointer: string, value: string): string {
+  if (pointer !== "/metric/direction") return value;
+  return METRIC_DIRECTION_LABELS[value] ?? value;
+}
+
+/**
+ * The sentence introducing a claim's quote, keyed by WHICH KIND of input row
+ * it came from (F4) — `own_post` reads differently from `creator_authored`,
+ * and one sentence pretending to fit both would misdescribe one of them.
+ *
+ * Without it a creator's own typed declaration renders in the export as an
+ * unattributed blockquote formally identical to a quote lifted from a saved
+ * post, while R5/R6's whole warrant is "you told us so, on this date".
+ *
+ * Takes the already-formatted day string rather than a `Date`, so this stays a
+ * pure string function with no `Intl`/timezone decision of its own.
+ */
+export function quoteIntro(inputClass: string, dayStr: string): string {
+  return inputClass === "creator_authored"
+    ? `Your own answer, from ${dayStr}:`
+    : `From a post you saved on ${dayStr}:`;
+}
+
+/**
+ * WHAT THE MARKDOWN FILE IS, AND WHAT IT IS NOT — said IN THE FILE (N1).
+ *
+ * `/brain` already tells the reader this ("Markdown is a human-readable
+ * projection for reading, not a round-trip format", `brain/copy.ts`), but the
+ * screen is not what a creator opens six months later: the FILE is. A markdown
+ * export that looks re-importable is a data-loss bug waiting for its first
+ * user — someone edits it, tries to bring it back, and finds there is no path.
+ * Nothing in this product reads this format, and the header now says so.
+ */
+export const EXPORT_MARKDOWN_NOT_IMPORTABLE =
+  "It cannot be read back in: nothing in Respin imports this file, so edits made here go nowhere.";
+
+/**
+ * WHAT THE MARKDOWN FILE COVERS — said in the file, because the header already
+ * says what the JSON covers and said nothing about this (tenancy gate round 2,
+ * 2026-09-01).
+ *
+ * `streamMarkdownExport` pages `brain_docs` and resolves the posts its evidence
+ * cites; it walks NOTHING else. That was the whole export once. It is not now:
+ * `generations` joined the registry in slice 6, is `holdsCreatorContent: true`,
+ * and is exported in JSON — so a creator who opens the human-readable file
+ * finds their brain and no trace of what it produced, under a header whose only
+ * scope sentence was about the OTHER file. "JSON is complete" is not the same
+ * statement as "and this one is not", and only the first was being made.
+ *
+ * THE CHOICE TAKEN IS THE SENTENCE, NOT THE PROJECTION, and it is a judgement
+ * rather than a shortcut: rendering generations as markdown is a new artefact
+ * with its own decisions (which sections, how a refusal reads, what a kill-test
+ * verdict looks like on a page) and every one of them is a place to state
+ * something the record does not support. A scope sentence that is TRUE today
+ * costs one line and misleads nobody; a projection built in a fix pass is the
+ * kind of surface that gets its honesty reviewed afterwards. `export.test.ts`
+ * pins the sentence AND the table list the streamer actually walks, so the day
+ * the projection grows, the sentence goes red rather than stale.
+ */
+export const EXPORT_MARKDOWN_SCOPE =
+  "It covers your brain documents and the quotes behind them. Everything else in your export — including your generation history — is in the JSON file only.";
+
+/** The one date rendering in this file: UTC calendar day, like `/brain`'s `day()`. */
+function exportDay(at: Date): string {
+  return at.toISOString().slice(0, 10);
 }
 
 export type BrainExportAnnotation = {
   brainDocId: string;
   pointer: string;
   message: typeof EXPORT_EVIDENCE_UNVERIFIED;
-};
-
-export type BrainExportData = {
-  schemaVersion: "respin.creator-export.v1";
-  generatedAt: string;
-  profileId: string;
-  registry: { table: string; included: boolean; reason: string }[];
-  tables: Record<string, unknown[]>;
-  annotations: BrainExportAnnotation[];
-};
-
-export type BrainExportBundle = {
-  data: BrainExportData;
-  json: string;
-  markdown: string;
 };
 
 type ReplacementMetadata = Pick<
@@ -135,79 +500,28 @@ function emptyArrayPointers(value: unknown, pointer = ""): string[] {
   );
 }
 
-function markdownFor(
-  data: BrainExportData,
-  docs: readonly BrainDoc[],
-  inputs: readonly OnboardingInput[]
-): string {
-  const lines = [
-    "# Creator Brain export",
-    "",
-    "> This markdown file is a human-readable projection. The accompanying JSON is the complete registry-driven export and is the machine-readable record.",
-    "",
-    `Generated: ${data.generatedAt}`,
-    "",
-  ];
-  const inputById = new Map(inputs.map((input) => [input.id, input]));
-  for (const doc of docs) {
-    lines.push(`## ${doc.kind} — version ${doc.version} (${doc.status})`, "");
-    lines.push(`Created: ${doc.createdAt.toISOString()}`);
-    if (doc.supersededAt) {
-      const replacement = replacementVersionFor(doc, docs);
-      lines.push(
-        replacement === null
-          ? `Replaced: ${doc.supersededAt.toISOString()} (replacement version unavailable)`
-          : `Replaced: ${doc.supersededAt.toISOString()} by version ${replacement}`
-      );
-    }
-    lines.push("");
-    let view;
-    try {
-      view = claimsForHistory(doc, inputById);
-    } catch {
-      lines.push(`- ${EXPORT_EVIDENCE_UNVERIFIED}`, "");
-      continue;
-    }
-    for (const claim of view.claims) {
-      lines.push(`### ${claim.pointer}`, "");
-      if (claim.value === CHECK) {
-        lines.push(PLACEHOLDER_ABSENCE, "");
-      } else {
-        lines.push(claim.value, "");
-        if (claim.quote) lines.push(`> ${claim.quote}`, "");
-        if (claim.evidenceAnnotation) lines.push(`> ${claim.evidenceAnnotation}`, "");
-      }
-    }
-    for (const pointer of emptyArrayPointers(doc.content)) {
-      lines.push(`### ${pointer}`, "", NO_RULES_RECORDED, "");
-    }
-  }
-  return `${lines.join("\n").trimEnd()}\n`;
-}
-
-/**
- * Registry-driven REQ-A04 export. It has no pause check: reading a creator's
- * own data remains available while writes are paused.
- */
-export async function exportBrain(
-  db: DbLike,
-  scope: WorkspaceScope,
-  profileId: string,
-  generatedAt = new Date()
-): Promise<BrainExportBundle> {
-  return withPreparedExport(db, scope, profileId, generatedAt, (data, docs, inputs) => ({
-    data,
-    json: JSON.stringify(data, null, 2),
-    markdown: markdownFor(data, docs, inputs),
-  }));
-}
-
 export type BrainExportFormat = "json" | "markdown";
 
 /**
- * Complete bounded-memory export stream. App delivery consumes this iterable
+ * THE registry-driven REQ-A04 export — one implementation, the one the
+ * `/api/export` route reaches (tenancy gate round 1, 2026-08-31).
+ *
+ * There used to be a second, materialised exporter here (`exportBrain`,
+ * `exportBrainFile`, `withPreparedExport`, `markdownFor`) with no `app/**`
+ * caller at all, and R11's registry refusal, R12's pause exemption, R13's
+ * same-workspace sibling case and R15's private-only `frameworks` rule were
+ * every one of them asserted against it. The reviewer proved the consequence
+ * by planting: M1 in the streaming JSON path stayed GREEN and M7 in
+ * `exportPage` SURVIVED, because the witnesses were driving the other
+ * implementation. "A capability nothing can reach is not done, it is
+ * inventory" — so it is gone, and every witness now drives this function.
+ *
+ * Complete bounded-memory stream. App delivery consumes this iterable
  * directly; cancelling iteration cancels the producer transaction, releasing
  * both the workspace transaction lock and the optional global session slot.
+ *
+ * NO PAUSE CHECK, deliberately (R12, PRD §4G's 2026-08-21 amendment): reading
+ * a creator's own data stays available while writes are paused.
  */
 export async function openBrainExport(
   db: DbLike,
@@ -221,7 +535,13 @@ export async function openBrainExport(
   if (!Number.isInteger(deadlineMs) || deadlineMs < 1) {
     throw new Error("Creator export deadline must be a positive integer.");
   }
-  assertExportRegistryReadable();
+  // THE TABLE POPULATION IS DECIDED HERE, before a byte can be emitted, and
+  // the typed result is what the streamer iterates. A registry table with no
+  // scoped reader is therefore an `ExportClassificationError` the route can
+  // still turn into a refusal — not a body that dies mid-download. Passing
+  // `plan` down rather than recomputing it is what makes this call
+  // load-bearing: delete it and the streamer has no tables to walk.
+  const plan = exportPlan();
   // Preflight the profile before the caller commits HTTP 200 headers. A
   // foreign profile must remain a typed 404-capable refusal, never a
   // successful response whose body aborts on first pull.
@@ -233,6 +553,7 @@ export async function openBrainExport(
         profileScope,
         profileId,
         format,
+        plan,
         generatedAt,
         deadlineMs
       ),
@@ -249,6 +570,7 @@ export async function openBrainExport(
         profileScope,
         profileId,
         format,
+        plan,
         generatedAt,
         deadlineMs
       ),
@@ -257,88 +579,12 @@ export async function openBrainExport(
   );
 }
 
-/**
- * Format-selective delivery path: complete data, one representation. The
- * route should call this rather than materialising JSON and markdown together.
- */
-export async function exportBrainFile(
-  db: DbLike,
-  scope: WorkspaceScope,
-  profileId: string,
-  format: BrainExportFormat,
-  generatedAt = new Date()
-): Promise<string> {
-  return withPreparedExport(db, scope, profileId, generatedAt, (data, docs, inputs) =>
-    format === "json" ? JSON.stringify(data, null, 2) : markdownFor(data, docs, inputs)
-  );
-}
-
-async function withPreparedExport<T>(
-  db: DbLike,
-  scope: WorkspaceScope,
-  profileId: string,
-  generatedAt: Date,
-  render: (
-    data: BrainExportData,
-    docs: readonly BrainDoc[],
-    inputs: readonly OnboardingInput[]
-  ) => T
-): Promise<T> {
-  return db.transaction(async (tx) => {
-    const profileScope = await ProfileScope.mint(tx, scope, profileId);
-    await acquireWorkspaceExportLock(tx, scope);
-    assertExportRegistryReadable();
-    const readers: Record<string, () => Promise<unknown[]>> = {
-      creator_profiles: profileScope.accessors.profile,
-      brain_docs: profileScope.accessors.brainDocs,
-      onboarding_inputs: profileScope.accessors.onboardingInputsForExport,
-      onboarding_interview_drafts: profileScope.accessors.interviewDrafts,
-      brain_activation_snapshots: profileScope.accessors.activationSnapshots,
-      frameworks: profileScope.accessors.frameworks,
-    };
-    const tables: Record<string, unknown[]> = {};
-    for (const entry of CREATOR_DATA_REGISTRY) {
-      if (!entry.export.included) continue;
-      const reader = readers[entry.table];
-      if (!reader) throw new ExportClassificationError(entry.table);
-      tables[entry.table] = await reader();
-    }
-    const docs = tables.brain_docs as BrainDoc[];
-    const inputs = tables.onboarding_inputs as OnboardingInput[];
-    const data: BrainExportData = {
-      schemaVersion: "respin.creator-export.v1",
-      generatedAt: generatedAt.toISOString(),
-      profileId,
-      registry: CREATOR_DATA_REGISTRY.map((entry) => ({
-        table: entry.table,
-        included: entry.export.included,
-        reason: entry.export.reason,
-      })),
-      tables,
-      annotations: evidenceAnnotations(docs, inputs),
-    };
-    return render(data, docs, inputs);
-  });
-}
-
-async function acquireWorkspaceExportLock(
-  tx: TxLike,
-  scope: WorkspaceScope
-): Promise<void> {
-  const lockResult = await tx.execute(
-    sql`SELECT pg_try_advisory_xact_lock(hashtextextended(${`export-workspace:${scope.workspaceId}`}, 0)) AS acquired`
-  );
-  const acquired = (
-    lockResult as { rows: Array<{ acquired?: boolean }> }
-  ).rows[0]?.acquired;
-  if (acquired !== true) throw new ExportBusyError();
-}
-
 function createPagedExportStream(
   db: DbLike,
   profileScope: ProfileScope,
   profileId: string,
   format: BrainExportFormat,
+  plan: readonly ProfileExportTable[],
   generatedAt: Date,
   deadlineMs: number
 ): AsyncIterable<string> {
@@ -361,7 +607,7 @@ function createPagedExportStream(
       set_config('idle_in_transaction_session_timeout', ${String(deadlineMs)}, true)`);
     const emit = (chunk: string) => writer.write(chunk);
     if (format === "json") {
-      await streamJsonExport(tx, profileScope, profileId, generatedAt, emit);
+      await streamJsonExport(tx, profileScope, profileId, plan, generatedAt, emit);
     } else {
       await streamMarkdownExport(tx, profileScope, generatedAt, emit);
     }
@@ -535,6 +781,7 @@ async function streamJsonExport(
   tx: TxLike,
   profileScope: ProfileScope,
   profileId: string,
+  plan: readonly ProfileExportTable[],
   generatedAt: Date,
   emit: (chunk: string) => Promise<void>
 ): Promise<void> {
@@ -547,9 +794,11 @@ async function streamJsonExport(
     `{"schemaVersion":"respin.creator-export.v1","generatedAt":${JSON.stringify(generatedAt.toISOString())},"profileId":${JSON.stringify(profileId)},"registry":${JSON.stringify(registry)},"tables":{`
   );
   let firstTable = true;
-  for (const entry of CREATOR_DATA_REGISTRY) {
-    if (!entry.export.included) continue;
-    const table = entry.table as ProfileExportTable;
+  // `plan` IS the registry's included set, typed (`exportPlan`), computed
+  // before headers. No cast, no second list, and a hard-coded list here would
+  // disagree with `registry` above — which is exactly what R11's key-set
+  // equality test compares.
+  for (const table of plan) {
     await emit(`${firstTable ? "" : ","}${JSON.stringify(table)}:[`);
     firstTable = false;
     let firstRow = true;
@@ -598,7 +847,7 @@ async function streamMarkdownExport(
   emit: (chunk: string) => Promise<void>
 ): Promise<void> {
   await emit(
-    `# Creator Brain export\n\n> This markdown file is a human-readable projection. JSON is the complete registry-driven machine-readable export.\n\nGenerated: ${generatedAt.toISOString()}\n\n`
+    `# Creator Brain export\n\n> This markdown file is a human-readable projection. ${EXPORT_MARKDOWN_NOT_IMPORTABLE} ${EXPORT_MARKDOWN_SCOPE} JSON is the complete registry-driven machine-readable export.\n\nGenerated: ${generatedAt.toISOString()}\n\n`
   );
   const metadata: ReplacementMetadata[] = [];
   await forEachExportPage(profileScope, "brain_docs", tx, async (rows) => {
@@ -616,7 +865,23 @@ async function streamMarkdownExport(
     const inputs = await inputsForDocs(profileScope, docs, tx);
     const inputById = new Map(inputs.map((input) => [input.id, input]));
     for (const doc of docs) {
-      const lines = [`## ${doc.kind} — version ${doc.version} (${doc.status})`, ""];
+      const lines = [
+        `## ${BRAIN_KIND_LABELS[doc.kind]} — version ${doc.version} (${BRAIN_STATUS_LABELS[doc.status]})`,
+        "",
+      ];
+      // WHY THIS VERSION EXISTS (N3). `/brain` prints this sentence under
+      // every version it renders and the artefact of record did not — the one
+      // server-composed line that says whether a version was inferred from the
+      // creator's posts or typed by the creator themselves was on the screen
+      // and missing from the file. It is also what softens the absence
+      // sentence chosen just below, so a reader who sees "you left this
+      // unstated when you edited this version" can see the edit named.
+      //
+      // SAFE TO PRINT because of where it came from: `writeBrainDoc` stores
+      // `renderBrainReason(code, facts)`, a sentence the SERVER composed from
+      // a closed code set plus numbers it counted itself. There is no string
+      // parameter in that function (C-42, REQ-I03).
+      lines.push(doc.reason, "");
       lines.push(`Created: ${doc.createdAt.toISOString()}`);
       if (doc.supersededAt) {
         const replacement = replacementFromMetadata(doc, metadata);
@@ -630,11 +895,31 @@ async function streamMarkdownExport(
       try {
         const view = claimsForHistory(doc, inputById);
         for (const claim of view.claims) {
-          lines.push(`### ${claim.pointer}`, "");
-          if (claim.value === CHECK) lines.push(PLACEHOLDER_ABSENCE, "");
+          lines.push(`### ${exportClaimHeading(doc.kind, claim.pointer)}`, "");
+          // SELECTED BY (KIND, REASON), not one sentence for all four and not
+          // one per kind either (F3; compliance gate round 2). For
+          // `strategy`/`killtest` nobody searched anything — the creator left
+          // an interview field undecided — and for ANY kind whose version the
+          // creator EDITED, the `[check]` is their own decision. The voice
+          // sentence in either case attributes their deliberate choice to a
+          // failed search of ours, in the artefact of record (REQ-I03).
+          if (claim.value === CHECK)
+            lines.push(exportAbsenceSentence(doc.kind, doc.reason), "");
           else {
-            lines.push(claim.value, "");
-            if (claim.quote) lines.push(`> ${claim.quote}`, "");
+            lines.push(exportClaimValue(claim.pointer, claim.value), "");
+            if (claim.quote) {
+              // WHOSE WORDS THESE ARE, and when (F4). Without this line a
+              // creator's own typed declaration is an unattributed blockquote
+              // formally identical to a quote lifted from a saved post, and
+              // R5/R6's whole warrant is "you told us so, on this date".
+              if (claim.source) {
+                lines.push(
+                  quoteIntro(claim.source.inputClass, exportDay(claim.source.postedAt)),
+                  ""
+                );
+              }
+              lines.push(`> ${claim.quote}`, "");
+            }
             if (claim.evidenceAnnotation) lines.push(`> ${claim.evidenceAnnotation}`, "");
           }
         }
@@ -642,7 +927,7 @@ async function streamMarkdownExport(
         lines.push(`- ${EXPORT_EVIDENCE_UNVERIFIED}`, "");
       }
       for (const pointer of emptyArrayPointers(doc.content)) {
-        lines.push(`### ${pointer}`, "", NO_RULES_RECORDED, "");
+        lines.push(`### ${exportClaimHeading(doc.kind, pointer)}`, "", NO_RULES_RECORDED, "");
       }
       await emit(`${lines.join("\n").trimEnd()}\n\n`);
     }

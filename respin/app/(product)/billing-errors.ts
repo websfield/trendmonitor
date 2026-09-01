@@ -55,11 +55,42 @@ import {
   RunSlotBusyError,
   TopupInFlightError,
 
-  PostCallDebitError,} from "@respin/credits/app-server";
+  PostCallDebitError,
+  // Slice 6 (stage D) — every refusal `respinCredits.generate` can raise.
+  // FIFTEEN classes, and none of them was reachable before this slice: eleven
+  // are @respin/credits' own, one (`GenerationAttemptStateError`) is @respin/db's
+  // and re-exported by the credits facade because the generate path is what
+  // raises it, and five are `@respin/modes`' — re-exported as VALUES by that
+  // facade precisely so this file can `instanceof` them, since `@respin/modes`
+  // itself is denied to app/** (R-64).
+  BrainNotActivatedError,
+  GenerationAlreadyRefusedError,
+  GenerationAssemblyError,
+  GenerationAttemptStateError,
+  GenerationInFlightError,
+  GenerationPayloadMismatchError,
+  GenerationRecoveryRequiredError,
+  GenerationUnchargedAttemptCapError,
+  KillTestError,
+  ModeNotBuiltYetError,
+  ModeNotInPlanError,
+  NoCreatorRulesError,
+  ScriptOutputError,
+  UnknownModeError,
+  UnpricedOperationError,
+  // Not a class — the one SENTENCE a windowed uncharged-billable cap owes its
+  // reader, imported rather than retyped so this map and the package message
+  // cannot disagree about whether that refusal clears itself.
+  UNCHARGED_CAP_WINDOW_CLAUSE,} from "@respin/credits/app-server";
 import { ConfigUnavailableError } from "@respin/config/app-server";
+import {
+  ECHO_NO_GUARANTEE_CLAUSE,
+  NOTHING_SAVED_CLAUSE,
+} from "./refusal-clauses";
 import {
   BrainEditBusyError,
   BrainEditEmptyError,
+  BrainEditUnchangedError,
   BrainEditLimitError,
   BrainDocumentLimitError,
   BrainReasonError,
@@ -81,7 +112,6 @@ import {
   ProfileNameError,
   ProfileRoleError,
   ProvenanceError,
-  ReconciliationTargetError,
   ReferenceEchoError,
   ScopeForgeryError,
   UsageRawError,
@@ -151,6 +181,12 @@ export const BILLING_ERROR_CODES = [
   "provenance",
   "brain_edit_busy",
   "brain-edit-all-check",
+  // Slice 5 gate round 1 (G3). Its OWN code rather than `provenance`, for the
+  // same reason `reference_echo` and `evidence_unreadable` have theirs: the
+  // `provenance` copy is written for a page that went stale, and this refusal
+  // is a form nobody changed. Told the wrong one, a creator reloads a page
+  // that was never wrong and presses the same button again.
+  "brain_edit_unchanged",
   "brain_edit_limit",
   "brain_document_limit",
   "brain_version_limit",
@@ -242,10 +278,6 @@ export const BILLING_ERROR_CODES = [
   // creator with no runs at all that they have too many.
   "run_slot_busy",
   "server_at_capacity",
-  // Slice 2b-c / R4a. `applyReconciliationDelta` has no live caller in
-  // app/** today, but its class is exported from @respin/db's root — see
-  // the eslint allowlist's entry for the same forcing-function shape.
-  "reconciliation_target",
   // Slice 3b, Stage B1 — the structured interview's two typed refusals.
   // `interview_answer` covers BOTH the real `InterviewAnswerError` (a race —
   // the interview UI validates length/shape client-side before it ever
@@ -254,6 +286,28 @@ export const BILLING_ERROR_CODES = [
   // field-named override of it (see `app/(product)/onboarding/interview/copy.ts`).
   "interview_answer",
   "interview_already_submitted",
+  // SLICE 6 (stage D) — the generation surface's refusals. Fifteen classes,
+  // fifteen codes, and the one-to-one is deliberate rather than lazy: each of
+  // these names a DIFFERENT act for the reader (activate a brain, wait, start
+  // a new one, tell us) or a different truth about whose fault it is, and
+  // collapsing any pair would put a false remedy on the screen that spends a
+  // creator's credits. The pairs it would be most tempting to collapse are
+  // named where their copy is written.
+  "brain_not_activated",
+  "generation_already_refused",
+  "generation_assembly",
+  "generation_attempt_state",
+  "generation_in_flight",
+  "generation_payload_mismatch",
+  "generation_recovery_required",
+  "generation_uncharged_attempt_cap",
+  "generation_unusable",
+  "kill_test_failed",
+  "mode_not_built_yet",
+  "mode_not_in_plan",
+  "no_creator_rules",
+  "unknown_mode",
+  "unpriced_operation",
   "unknown",
 ] as const;
 
@@ -312,6 +366,7 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: ReferenceEchoError, code: "reference_echo" },
   { cls: BrainEditBusyError, code: "brain_edit_busy" },
   { cls: BrainEditEmptyError, code: "brain-edit-all-check" },
+  { cls: BrainEditUnchangedError, code: "brain_edit_unchanged" },
   { cls: BrainEditLimitError, code: "brain_edit_limit" },
   { cls: BrainDocumentLimitError, code: "brain_document_limit" },
   { cls: BrainVersionLimitError, code: "brain_version_limit" },
@@ -371,10 +426,31 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: AutoTopupShortfallError, code: "autotopup_shortfall" },
   { cls: AutoTopupUnnamedRefusalError, code: "autotopup_shortfall" },
   { cls: LlmError, code: "llm_unavailable" },
-  { cls: ReconciliationTargetError, code: "reconciliation_target" },
   // Slice 3b, Stage B1.
   { cls: InterviewAnswerError, code: "interview_answer" },
   { cls: InterviewDraftSubmittedError, code: "interview_already_submitted" },
+  // SLICE 6 (stage D) — the generation path. None of these subclasses another
+  // and none is a subclass of anything already in this table, so the walk order
+  // decides nothing here; they are grouped so the next reader finds them
+  // together. `GenerationAssemblyError` in particular is NOT a subclass of
+  // @respin/llm's `AssemblyError` (different package, different failure: one is
+  // "the vendor's reply was unusable", this one is "we refused to build the
+  // request at all"), so it needs its own entry and its own words.
+  { cls: BrainNotActivatedError, code: "brain_not_activated" },
+  { cls: ModeNotInPlanError, code: "mode_not_in_plan" },
+  { cls: ModeNotBuiltYetError, code: "mode_not_built_yet" },
+  { cls: UnknownModeError, code: "unknown_mode" },
+  { cls: UnpricedOperationError, code: "unpriced_operation" },
+  { cls: GenerationUnchargedAttemptCapError, code: "generation_uncharged_attempt_cap" },
+  { cls: GenerationInFlightError, code: "generation_in_flight" },
+  { cls: GenerationAlreadyRefusedError, code: "generation_already_refused" },
+  { cls: GenerationPayloadMismatchError, code: "generation_payload_mismatch" },
+  { cls: GenerationRecoveryRequiredError, code: "generation_recovery_required" },
+  { cls: GenerationAttemptStateError, code: "generation_attempt_state" },
+  { cls: GenerationAssemblyError, code: "generation_assembly" },
+  { cls: ScriptOutputError, code: "generation_unusable" },
+  { cls: KillTestError, code: "kill_test_failed" },
+  { cls: NoCreatorRulesError, code: "no_creator_rules" },
 ];
 
 /** The class names this module claims to handle (read by the completeness test). */
@@ -552,7 +628,15 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   not_chargeable: {
     title: "There is an unpaid invoice on this subscription",
     detail:
-      "Stripe has stopped collecting on this subscription, so we will not attempt an automatic charge against it. Nothing was charged. Open the Customer Portal and settle the outstanding invoice — the subscription can still be recovered — and this becomes available again.",
+      // "we will not attempt" REWORDED, not exempted (learning honesty gate,
+      // 2026-09-01). `FORBIDDEN_CLAIMS` bans `\bwe will` as a promise about
+      // what the product is going to do; this was the NEGATED form, describing
+      // what does not happen, so the ban was paying for a word rather than a
+      // claim. Narrowing the pattern to spare it would loosen the guard for
+      // every screen; saying the same fact without the first person costs
+      // nothing and is plainer. `/usage` renders any code in this table, and
+      // `tests/usage-honesty.test.tsx` is what now reads them all.
+      "Stripe has stopped collecting on this subscription, so no automatic charge is attempted against it. Nothing was charged. Open the Customer Portal and settle the outstanding invoice — the subscription can still be recovered — and this becomes available again.",
   },
   pack_price_not_mapped: {
     title: "Credit packs are not set up on this server",
@@ -641,6 +725,11 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     detail:
       "Every claim in a brain has to point at something you actually wrote, and one of the quotes did not appear where it said it did — so it was refused rather than stored. Nothing was saved and no credits were spent. Try the build again; if it keeps happening, contact support. The refusal code and error type are recorded without the quote.",
   },
+  brain_edit_unchanged: {
+    title: "Nothing in that submission was different",
+    detail:
+      "The values you submitted match the version already stored, so no replacement draft was created — a Brain version is permanent once written, and one that changes nothing would sit in your history forever saying nothing. Nothing was lost and nothing is out of date: change at least one field and submit again, or leave this document as it is.",
+  },
   "brain-edit-all-check": {
     title: "Keep at least one rule stated",
     detail:
@@ -676,19 +765,43 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     detail:
       "Another export for this workspace is still in progress. Wait for that download to finish, then try the export again. No Brain data was changed.",
   },
-  // Slice 4 (R12, R13). NAMES THE CATEGORY, NEVER THE SPECIFIC POST OR SPAN —
-  // this code arrives through the same `?e=`/return-value channel every other
-  // refusal does, which carries a code and never a message, so the exact quote
-  // and reference id `ReferenceEchoError` names are omitted from both browser
-  // and log. What this copy adds over the generic `provenance`
-  // entry is the ACTUAL remedy for THIS refusal: rewrite in your own words,
-  // not "reload and retry" — retrying an echo refusal unchanged fails
-  // identically. R13: it does not say the result is original or safe to
-  // publish — R-3 is a control, not a guarantee (REQ-I04).
+  // Slice 4 (R12, R13). THIS COPY NAMES THE CATEGORY, NEVER THE SPECIFIC POST
+  // OR SPAN — and that is a statement about the CHANNELS this string travels
+  // on, narrowed in slice 5 because it had come to assert the OPPOSITE of what
+  // the product does (gate round 1, G3). Each half re-checked against the file
+  // that decides it:
+  //
+  //   - THE `?e=` REDIRECT: still true. `failHref` in brain/actions.ts builds
+  //     `/brain?e=${code}` from `logRefusal`'s return value, so a CODE is the
+  //     whole payload; there is no field in that channel a quote could ride in.
+  //   - THE LOG: still true. `safe-log.ts` emits `{code, errorName,
+  //     driverCode?}` plus caller-supplied server ids, and its own rule is that
+  //     NO exception message crosses the boundary — `ReferenceEchoError` is
+  //     named there as one of the reasons why.
+  //   - THE BROWSER: NO LONGER TRUE, deliberately, and by a different route.
+  //     `referenceEchoState` (brain/actions.ts) validates the typed
+  //     `ReferenceEchoError.match` and returns a BOUNDED structured state — a
+  //     pointer, a uuid-shaped input id, and a span truncated at
+  //     `REFERENCE_MATCH_PREVIEW_MAX` code points — which `brain/edit-form.tsx`
+  //     renders inside the form. It is the creator's OWN reference post, shown
+  //     to the creator who saved it, against the field they just edited; the
+  //     bound and the shape validation are what keep it a citation rather than
+  //     an open text channel. THIS copy still carries none of it, because it is
+  //     the fallback for every OTHER path, where nothing has been validated.
+  //
+  // What this copy adds over the generic `provenance` entry is the ACTUAL
+  // remedy for THIS refusal: rewrite in your own words, not "reload and retry"
+  // — retrying an echo refusal unchanged fails identically. R13: it does not
+  // say the result is original or safe to publish — R-3 is a control, not a
+  // guarantee (REQ-I04). That sentence and the "nothing was saved" clause are
+  // `./refusal-clauses`, SHARED with the in-form banner rather than written
+  // twice: the banner had neither, and a refusal that does not say the draft
+  // was dropped, or that quietly implies passing the bar means the field is
+  // clean, is the one this product must not ship (G2).
   reference_echo: {
     title: "This repeats one of your reference posts too closely",
     detail:
-      "A reference post is kept only to find the pattern behind it, never to be repeated word for word — so a draft that echoes a long stretch of one, or quotes more of one than the limit allows, is refused rather than stored. Nothing was saved and no credits were spent. Rewrite the field describing the mechanism in your own words, or cite a shorter piece of the reference post, and try again. This check does not promise the result is original or safe to publish — it only stops the one thing it can measure: repeating a reference post's own wording.",
+      `A reference post is kept only to find the pattern behind it, never to be repeated word for word — so a draft that echoes a long stretch of one, or quotes more of one than the limit allows, is refused rather than stored. ${NOTHING_SAVED_CLAUSE} Rewrite the field describing the mechanism in your own words, or cite a shorter piece of the reference post, and try again. ${ECHO_NO_GUARANTEE_CLAUSE}`,
   },
   scope_forgery: {
     title: "The action was refused before it touched any data",
@@ -699,18 +812,6 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "The action was refused before anything was recorded",
     detail:
       "A safety check on what may be stored alongside a usage record did not pass, so nothing was written. Nothing you typed was lost and no credits were spent. This is never something you can cause by using the product normally, so it means a bug rather than a mistake on your part. Please contact support; the refusal code, error type and any server-derived context are recorded.",
-  },
-  // Slice 2b-c / R4a. There is no product action that reaches this today — it
-  // is `applyReconciliationDelta`'s "this vendor cost-reconciliation event
-  // named an id that no longer exists" refusal, an operator-only path with no
-  // live caller yet. Copy exists only to satisfy the completeness scan (its
-  // own comment: a class exported from @respin/db's root is required to have
-  // copy the moment it exists, not the moment a caller reaches it) — same
-  // "never something you did" shape as scope_forgery/usage_raw above.
-  reconciliation_target: {
-    title: "That reconciliation could not be applied",
-    detail:
-      "A cost-reconciliation event named a record that no longer exists. This is never something you can cause by using the product normally, so it means a bug or a stale reference rather than a mistake on your part. Please contact support; the refusal code, error type and any server-derived context are recorded.",
   },
   // Slice 3b, Stage B1. The interview screen replaces this GENERIC copy with
   // one that names the exact field, drawn entirely from its own closed
@@ -858,11 +959,158 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   uncharged_attempt_cap: {
     title: "This creator's runs keep failing on our side",
     // NOT "recent", and no promised per-creator clearing (billing gate round
-    // 3, 2026-08-29): the count is lifetime over an append-only table, and the
-    // clearing mechanism is an operator fixing the root cause — see R-48's
+    // 3, 2026-08-29; re-verified round 2, 2026-09-01): the count is lifetime
+    // over an append-only table — `unchargedAttemptWindowStart` returns the
+    // epoch for the ONBOARDING purpose, and only for that one — and the
+    // clearing mechanism is an operator fixing the root cause. See R-48's
     // addendum and the class's own comment in @respin/credits errors.ts.
+    // It therefore must NOT carry `UNCHARGED_CAP_WINDOW_CLAUSE`, which its
+    // windowed sibling `generation_uncharged_attempt_cap` does; the split is
+    // asserted against the config in `tests/usage-honesty.test.tsx`.
     detail:
       "Runs for this creator have repeatedly failed in a way that cost us money and cost you nothing, so the product has stopped trying rather than keep burning them. Nothing was spent, no model was called, and your included build is untouched. There is nothing for you to change — this is a fault on our side; please tell us so we can fix it.",
+  },
+  // ---------------------------------------------------- SLICE 6: generation
+  //
+  // Every one of these is read on `/studio`, the screen that turns a creator's
+  // idea into something they would publish and takes a credit for it. Three
+  // rules hold across the block and each was broken at least once elsewhere in
+  // this file before it was written down:
+  //
+  //  1. SAY WHETHER MONEY MOVED, in the same sentence as what happened. Ten of
+  //     these fifteen refuse before the vendor is contacted and say so; the two
+  //     that do not (`generation_recovery_required`, and `debit_refused_after_
+  //     call` one screen up) say the opposite thing rather than staying quiet.
+  //  2. NAME AN ACT THE READER MAY TAKE — or say plainly that there is not one
+  //     and that it is ours to fix. A refusal whose printed remedy is not an
+  //     action the reader can perform is the 2026-07-30 lesson's failure mode.
+  //  3. NO UPGRADE PROMPT. `mode_not_in_plan` is the first refusal in this
+  //     product that a reader could plausibly be sold out of, and it is written
+  //     under the same rule `profile_cap` and `run_slot_busy` already carry.
+  brain_not_activated: {
+    title: "This creator has no activated brain yet",
+    detail:
+      "A draft is written from an activated brain — the Voice, Strategy and Kill Test versions you have confirmed — and this creator has none active, so there was nothing to write from. Nothing was spent and no model was called. Confirm a version on the brain page and activate it, then come back.",
+  },
+  mode_not_in_plan: {
+    // IT DOES NOT NAME AN UPGRADE AS THE REMEDY, and the precedent is
+    // `profile_cap` and `run_slot_busy` above. Two independent reasons, both
+    // load-bearing: which modes a plan includes lives in the tier map in
+    // `@respin/credits`, so a sentence here naming another plan's contents is
+    // a second copy of that map that goes stale silently; and a refusal is not
+    // a sales surface (non-negotiable 6, on a money path). What the reader gets
+    // instead is the fact they can act on — this plan does not include it,
+    // nothing was spent — and the billing page, which is where plans are
+    // compared without a refusal banner steering the comparison.
+    title: "Your plan does not include that mode",
+    detail:
+      "Plans differ in which modes they include, and this workspace's plan does not include the one that was asked for. Nothing was spent and no model was called. The billing page shows what this workspace is on today.",
+  },
+  mode_not_built_yet: {
+    // A SEPARATE CODE FROM `mode_not_in_plan`, because the two say opposite
+    // things about whose fault it is. Telling a paying creator their plan
+    // excludes a mode this product has simply not shipped is a false statement
+    // about what they bought.
+    title: "That mode is not built yet",
+    detail:
+      "This is about what we have shipped, not about your plan: that mode has no pipeline behind it yet, so nothing ran. Nothing was spent and no model was called. Hooks is the mode that works today.",
+  },
+  unknown_mode: {
+    title: "That is not one of this product's modes",
+    detail:
+      "The request named a mode this product does not have, so it stopped rather than guessing which one was meant. Nothing was spent and no model was called. Use the form on the studio page rather than a hand-built link.",
+  },
+  unpriced_operation: {
+    title: "This build could not price that run",
+    detail:
+      "Rather than charge a number nobody chose, the run stopped before it started. Nothing was spent and no model was called. This is a fault in the build rather than anything you did; please tell us so an operator can fix it.",
+  },
+  generation_uncharged_attempt_cap: {
+    // THE OPPOSITE RULE FROM `uncharged_attempt_cap` ABOVE, and that is the
+    // whole reason the two codes exist separately (billing gate round 2,
+    // 2026-09-01). This code shipped carrying its sibling's rule — "the count
+    // is lifetime over an append-only table, and the clearing act is an
+    // operator fixing the cause" — copied at a moment when it was true of both.
+    // `generation.unchargedAttemptWindowMinutes` made it false HERE:
+    // `unchargedAttemptWindowStart` windows the generation count and leaves
+    // onboarding's at the epoch, so this refusal clears itself inside an hour
+    // at the seeded value with no operator involved, and the detail was still
+    // telling the creator "there is nothing for you to change — this is a
+    // fault on our side". That withheld the only remedy that exists.
+    //
+    // THE CLEARING SENTENCE IS IMPORTED, NOT WRITTEN HERE
+    // (`UNCHARGED_CAP_WINDOW_CLAUSE`, `@respin/credits`). Two independent
+    // literals are how the stale one survived; the package message and this
+    // copy now cannot say different things about whether it clears. It names
+    // the mechanism rather than a number for the reason the constant's own
+    // docblock gives: this map is static, the `?e=` channel carries a code and
+    // never a message, so nothing on this path can read the stored config —
+    // and a hard-coded "within the hour" here would be a second copy of a
+    // value an operator can change without touching this file.
+    //
+    // IT STILL DOES NOT PROMISE A FIX. "Clears on its own" and "is fixed" are
+    // different claims: the cause repeats until we deal with it, which is why
+    // the ask to tell us survives the rewrite.
+    title: "Generations for this creator keep failing on our side",
+    detail: `Drafts for this creator have repeatedly failed in a way that cost us money and cost you nothing, so the product has stopped trying rather than keep burning them. Nothing was spent and no model was called this time. ${UNCHARGED_CAP_WINDOW_CLAUSE} The failure itself is ours and will keep happening until we fix the cause, so please tell us.`,
+  },
+  generation_in_flight: {
+    title: "That draft is already running",
+    detail:
+      "The same run was submitted twice, so it was not started a second time and nothing extra was spent. Wait for the one in flight to finish, or start a new draft. If nothing ever arrives, starting a new draft is safe — it takes its own id and is charged on its own.",
+  },
+  generation_already_refused: {
+    // OPPOSITE INSTRUCTIONS from `generation_in_flight`, which is why it is not
+    // the same code: "wait for it" and "it already finished without an answer"
+    // cannot both be printed for one reader.
+    title: "That draft already finished without an answer",
+    detail:
+      "This run ended earlier without producing anything usable, so it was not run again — repeating it would fail the same way and cost us the same money. Nothing extra was spent. Start a new draft.",
+  },
+  generation_payload_mismatch: {
+    title: "That run id is already in use for a different draft",
+    detail:
+      "The request reused an id that belongs to another draft, so it was refused rather than answered with that one's output — you would have been shown a draft for something you did not ask for. Nothing was spent and no model was called. Start the draft again from the studio page.",
+  },
+  generation_recovery_required: {
+    // ONE OF THE TWO ON THIS SCREEN WHERE THE VENDOR WAS ACTUALLY REACHED. The
+    // creator's balance is untouched — `settleGeneration` and `debitCredits`
+    // share one transaction, so a failure there rolls both back — and saying so
+    // is the whole job of this copy.
+    title: "That draft could not be finished safely",
+    detail:
+      "The run got as far as the model and then could not be completed, so it has been flagged for us to look at rather than run again — running it again would be a second real charge for one press. Nothing was taken from your credit balance. Start a new draft when you are ready.",
+  },
+  generation_attempt_state: {
+    title: "That draft has already moved on",
+    detail:
+      "The run was asked to take a step it cannot take from where it is — usually because it has already finished, or because it belongs to a different creator profile. Nothing was changed and nothing extra was spent. Start a new draft.",
+  },
+  generation_assembly: {
+    title: "There was not enough to build a draft from",
+    detail:
+      "A draft needs something to work from: what you typed in, a platform, and an activated brain for this creator. One of those was missing, so nothing was built. Nothing was spent and no model was called. Fill in the box, pick a platform, and make sure this creator has an activated brain.",
+  },
+  generation_unusable: {
+    // OUR PARSE FAILURE, and the money sentence is the point (slice card
+    // question 4): the vendor charged us and the creator is not charged.
+    title: "The model's answer was not usable",
+    detail:
+      "The answer came back in a shape this product could not read, so nothing was stored — a half-parsed draft is worse than none. Nothing was taken from your credit balance. This is our side of the exchange rather than anything you did; try again, and tell us if it keeps happening.",
+  },
+  kill_test_failed: {
+    // THE SCORING CALL'S FAILURE, not the kill test finding fault with a draft.
+    // A draft that fails the hard rules twice is an HONEST REFUSAL rendered on
+    // the studio page with its reasons and a sharper angle — it is the product
+    // working (REQ-C03), it is charged for, and it is not an error code at all.
+    title: "The check on your own criteria did not complete",
+    detail:
+      "Your draft is scored against the kill-test criteria you wrote, and that scoring step did not return something readable, so the run stopped rather than reporting a verdict it did not have. Nothing was taken from your credit balance. Try again, and tell us if it keeps happening.",
+  },
+  no_creator_rules: {
+    title: "This creator has no kill-test criteria yet",
+    detail:
+      "The scoring step was asked to judge a draft against this creator's own criteria and there are none written yet. This is not a failure of the draft: the product's own hard rules still ran. Nothing extra was spent. Add kill-test criteria on the brain page if you want drafts judged against them too.",
   },
   unknown: {
     title: "Something went wrong",

@@ -295,6 +295,26 @@ function customerObject(over: DeepPartial<Stripe.Customer> = {}) {
   return { ...base, ...over };
 }
 
+
+/**
+ * The Free tier's monthly allowance (slice 6, R17).
+ *
+ * SIX ASSERTIONS BELOW ADD THIS TERM, and every one of them is a workspace
+ * whose subscription mirror leaves it resolving to `free` at the moment the
+ * balance is derived — a cancelled subscription, an unpaid pack Checkout, a
+ * `status: "none"` row. `deriveBalance` MINTS a Free workspace's monthly grant
+ * lazily, the way it already materialises expiry, so those balances are now
+ * "what the event minted, PLUS the workspace's own Free allowance".
+ *
+ * WRITTEN AS A SUM RATHER THAN AS THE TOTAL, deliberately: every one of these
+ * cases is about how much the STRIPE EVENT minted (once, never twice), and
+ * collapsing 250 + 25 into 275 would hide the number the test is actually
+ * about. The sibling assertions that did NOT change are the ones whose
+ * workspace resolves to a PAID tier at derive time — which is itself a check
+ * on the mint's tier gate, in a file that was not written for it.
+ */
+const FREE_MINT = CONFIG_V1_SEED.allowances.free;
+
 describe("accept-when: subscribe → grant", () => {
   it("subscription.created mirrors state; invoice.paid (subscription_create) grants the tier allowance expiring the SERVICE period end + 1 month", async () => {
     const { db, ws } = await setup();
@@ -974,7 +994,7 @@ describe("code-review blockers (regression pins)", () => {
     expect(grant.delta).toBe(CONFIG_V1_SEED.allowances.pro);
     expect(grant.delta).not.toBe(CONFIG_V1_SEED.allowances.creator);
     expect((await deriveBalance(db, ws)).balance).toBe(
-      CONFIG_V1_SEED.allowances.pro
+      CONFIG_V1_SEED.allowances.pro + FREE_MINT
     );
     // ...and the expiry from the SUBSCRIPTION line's period, not the
     // proration's short window.
@@ -1078,7 +1098,7 @@ describe("code-review blockers (regression pins)", () => {
     expect(grants, "a paid invoice grants even on a canceled subscription").toHaveLength(1);
     expect(grants[0].delta).toBe(CONFIG_V1_SEED.allowances.creator);
     expect((await deriveBalance(db, ws)).balance).toBe(
-      CONFIG_V1_SEED.allowances.creator
+      CONFIG_V1_SEED.allowances.creator + FREE_MINT
     );
     const [mirror] = await db.select().from(subscriptions);
     expect(mirror.status).toBe("canceled");
@@ -1286,7 +1306,11 @@ describe("code-review blockers (regression pins)", () => {
     );
     expect(out).toBe("ignored");
     expect(await db.select().from(creditLedger)).toHaveLength(0);
-    expect((await deriveBalance(db, ws)).balance).toBe(0);
+    // THE LEDGER ASSERTION ABOVE IS THE ONE THAT MATTERS HERE and it is
+    // unchanged: the unpaid Checkout wrote NO row. The balance read that
+    // follows is what mints the workspace's own Free allowance (R17), which is
+    // why it is `FREE_MINT` and not 0.
+    expect((await deriveBalance(db, ws)).balance).toBe(FREE_MINT);
 
     // Settlement arrives → NOW the credits mint, exactly once.
     const settled = await handleStripeEvent(
@@ -1319,7 +1343,9 @@ describe("code-review blockers (regression pins)", () => {
       (r) => r.kind === "pack"
     );
     expect(packs).toHaveLength(1);
-    expect((await deriveBalance(db, ws)).balance).toBe(CONFIG_V1_SEED.pack.credits);
+    expect((await deriveBalance(db, ws)).balance).toBe(
+      CONFIG_V1_SEED.pack.credits + FREE_MINT
+    );
   });
 
   it("BLOCKER 7b: the per-session guarantee is STRUCTURAL — a second pack row for one session is refused by the database", async () => {
@@ -1372,7 +1398,7 @@ describe("code-review blockers (regression pins)", () => {
     );
     expect(grants).toHaveLength(1);
     expect((await deriveBalance(db, ws)).balance).toBe(
-      CONFIG_V1_SEED.allowances.creator
+      CONFIG_V1_SEED.allowances.creator + FREE_MINT
     );
   });
 
@@ -1584,7 +1610,9 @@ describe("round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)", (
       (r) => r.refType === "auto_topup"
     );
     expect(packs).toHaveLength(1);
-    expect((await deriveBalance(db, ws)).balance).toBe(CONFIG_V1_SEED.pack.credits);
+    expect((await deriveBalance(db, ws)).balance).toBe(
+      CONFIG_V1_SEED.pack.credits + FREE_MINT
+    );
   });
 
   it("FINDING 2: the per-PaymentIntent guarantee is STRUCTURAL — a second auto-top-up row for one PI is refused by the database", async () => {

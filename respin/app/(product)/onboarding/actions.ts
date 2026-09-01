@@ -45,9 +45,23 @@ import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { logRefusal, logSpend } from "../safe-log";
 import type { BillingErrorCode } from "../billing-errors";
 import type { VoiceInferenceState } from "./run-state";
+import type { CandidateSafetyState } from "./candidate-safety-state";
 import { scopeForUser } from "../workspace-scope";
 
 const ONBOARDING_PATH = "/onboarding";
+const SAFETY_FIELD_LIMIT = 120;
+const SAFETY_SPAN_LIMIT = 240;
+
+function bounded(value: string, limit: number): {
+  value: string;
+  truncated: boolean;
+} {
+  const codePoints = [...value];
+  return {
+    value: codePoints.slice(0, limit).join(""),
+    truncated: codePoints.length > limit,
+  };
+}
 
 function failHref(err: unknown): string {
   // `logRefusal`, never a raw error object in a log call. Logging the error
@@ -86,6 +100,76 @@ export async function createProfileAction(formData: FormData): Promise<void> {
     href = failHref(err);
   }
   redirect(href);
+}
+
+export async function selectProfileAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  let href = ONBOARDING_PATH;
+  try {
+    const scope = await scopeForUser(user);
+    await respinDb.selectActiveProfile(
+      scope,
+      String(formData.get("profileId") ?? ""),
+    );
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    href = failHref(err);
+  }
+  redirect(href);
+}
+
+export async function checkCandidateSafetyAction(
+  displayedProfileId: string,
+  _state: CandidateSafetyState,
+  formData: FormData,
+): Promise<CandidateSafetyState> {
+  const user = await requireUser();
+  let scope: Awaited<ReturnType<typeof scopeForUser>> | undefined;
+  try {
+    scope = await scopeForUser(user);
+    if (!displayedProfileId) return { status: "choose_profile" };
+
+    // Pin the check to the profile the server rendered, just like every write
+    // form on this page. Re-reading the mutable selection here lets another
+    // tab switch A -> B between render and submit, so a draft shown beside A
+    // would be checked against B. The bound id is still untrusted on the wire;
+    // the scoped DB operation verifies it belongs to this workspace and
+    // exposes no foreign-profile oracle. Active-only selection was already
+    // enforced when the page resolved the profile it bound here.
+    const result = await respinDb.checkCandidateReferenceSafety(
+      scope,
+      displayedProfileId,
+      String(formData.get("candidate") ?? ""),
+    );
+    if (result.decision === "accept") return { status: "safe" };
+    if (result.reason === "reference_quote_budget") {
+      return {
+        status: "refused",
+        reason: result.reason,
+        referenceInputId: null,
+        field: "",
+        matchedSpan: "",
+        matchedSpanTruncated: false,
+      };
+    }
+    if (!result.match) throw new Error("Invalid safety refusal shape");
+    const field = bounded(result.match.pointer, SAFETY_FIELD_LIMIT);
+    const span = bounded(result.match.span, SAFETY_SPAN_LIMIT);
+    return {
+      status: "refused",
+      reason: result.reason,
+      referenceInputId: bounded(result.match.inputId, 64).value,
+      field: field.value,
+      matchedSpan: span.value,
+      matchedSpanTruncated: span.truncated,
+    };
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[onboarding-action] candidate safety check refused", err, {
+      ...(scope ? { workspaceId: scope.workspaceId } : {}),
+    });
+    return { status: "error" };
+  }
 }
 
 /**

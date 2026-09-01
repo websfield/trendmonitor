@@ -1,10 +1,9 @@
 // Slice 2b: the spend record that outlives deletion (docs/plans/respin-finish-phase-2b.md).
-// Slice 2b-c (this file's R4/R4a additions): the corrective addendum
+// Slice 2b-c (this file's R4 addition): the corrective addendum
 // (docs/plans/respin-finish-phase-2b.md's "correction" section) that gives the
-// rollup a retained unknown-cost denominator and its one reconciliation
-// transition.
+// rollup a retained unknown-cost denominator.
 //
-// Six responsibilities, kept in one file because they are one concern read
+// Four responsibilities, kept in one file because they are one concern read
 // from different sides:
 //  - `periodMonthUtc` — the ONE month-truncation function `recordModelUsage`'s
 //    rollup upsert uses to bucket a row (R2). No caller clock: it takes the
@@ -12,11 +11,6 @@
 //  - `upsertSpendRollup` — the rollup's one sanctioned write path, composed
 //    into `recordModelUsage`'s transaction in `with-workspace.ts` (R1/R6),
 //    now also incrementing the retained `unknown_call_count` denominator (R4).
-//  - `applyReconciliationDelta` — R4a: `model_usage`'s ONE sanctioned UPDATE
-//    (`estimated`/`unknown` -> `reconciled`), applying the exact cost and
-//    unknown-count delta to the rollup in the SAME transaction, exactly once
-//    (idempotent by row-locked state, not a separate dedup table — see the
-//    function's own docblock).
 //  - `pseudonymiseWorkspaceSpend` — R-30.5 / R-54: the deletion executor's
 //    obligation on `workspace_spend_monthly`, six slices before that executor
 //    exists (`tests/retention.test.ts`'s sibling tripwire is what carries the
@@ -37,7 +31,6 @@ import { uuidv7 } from "uuidv7";
 import type { DbLike, TxLike } from "./db-like";
 import { creditLedger } from "./billing-schema";
 import { creatorProfiles } from "./brain-schema";
-import { ReconciliationTargetError } from "./errors";
 import {
   BILLABLE_USAGE_OUTCOMES,
   modelUsage,
@@ -61,25 +54,11 @@ export function periodMonthUtc(d: Date): string {
 }
 
 /**
- * The rollup's ONE sanctioned write path (see `onboarding-schema.ts`'s
- * docblock on `workspaceSpendMonthly`): increment `cost_micro_usd`,
- * `call_count` and `unknown_call_count` for the grain this usage row belongs
- * to, via `onConflictDoUpdate` on `workspace_spend_monthly_grain_uq`.
+ * Increment the retained spend rollup for one newly inserted usage row.
  *
- * MUST run inside the SAME transaction as the `model_usage` insert that
- * produced `usage` (R1/R6) — this function takes a `TxLike`, never a bare
- * `DbLike`, so that composing it outside a transaction is a type error, not a
- * runtime one.
- *
- * `costState: 'unknown'` increments `call_count` AND `unknown_call_count`,
- * and NOT `cost_micro_usd` (R4): `inference.ts:686-690` already states the
- * rule this rollup must honour — a NULL cost is not a zero cost, and folding
- * it in as zero would silently understate spend, which overstates margin,
- * the dangerous direction `tech-spec.md` §2 names. `unknown_call_count` is
- * the RETAINED denominator for that share — it lives on this row, not
- * derived from `model_usage` at read time, because `model_usage` is exactly
- * the detail this table is built to outlive (R4: the share must stay
- * calculable after that detail is gone).
+ * This remains the rollup's one sanctioned insert/upsert path and MUST run in
+ * the same transaction as `model_usage` insertion. Unknown cost contributes
+ * one call and one unknown call, but never a guessed zero-cost amount.
  */
 export async function upsertSpendRollup(
   tx: TxLike,
@@ -116,159 +95,6 @@ export async function upsertSpendRollup(
         updatedAt: sql`now()`,
       },
     });
-}
-
-/**
- * R4a — the rollup's reaction to `model_usage`'s ONE sanctioned UPDATE
- * (`onboarding-schema.ts:75-79`'s own docblock names the transition —
- * `estimated`/`unknown` -> `reconciled` — as the table's one legal write path
- * besides insert; this function and `applyReconciliationDelta` below are
- * that transition's first implementation).
- *
- * WHY A DELTA, NOT A RE-RUN OF `upsertSpendRollup`: reconciliation is not a
- * new call — `call_count` must NOT move, only the two aggregates a better
- * price changes. Sharing `upsertSpendRollup`'s insert-or-increment shape
- * (rather than assuming the grain row already exists) costs nothing and
- * covers the same edge case that function already covers.
- */
-async function applyRollupDelta(
-  tx: TxLike,
-  usage: {
-    workspaceId: string;
-    createdAt: Date;
-    resolvedTier: ResolvedTier;
-    costMicroUsdDelta: bigint;
-    unknownCallCountDelta: number;
-  }
-): Promise<void> {
-  await tx
-    .insert(workspaceSpendMonthly)
-    .values({
-      workspaceId: usage.workspaceId,
-      periodMonth: periodMonthUtc(usage.createdAt),
-      tier: usage.resolvedTier,
-      costMicroUsd: usage.costMicroUsdDelta,
-      callCount: 0,
-      unknownCallCount: usage.unknownCallCountDelta,
-    })
-    .onConflictDoUpdate({
-      target: [
-        workspaceSpendMonthly.workspaceId,
-        workspaceSpendMonthly.periodMonth,
-        workspaceSpendMonthly.tier,
-      ],
-      set: {
-        costMicroUsd: sql`${workspaceSpendMonthly.costMicroUsd} + ${usage.costMicroUsdDelta}`,
-        unknownCallCount: sql`${workspaceSpendMonthly.unknownCallCount} + ${usage.unknownCallCountDelta}`,
-        updatedAt: sql`now()`,
-      },
-    });
-}
-
-/**
- * R4a: apply a vendor's reconciled cost to ONE `model_usage` row, in the same
- * transaction as that row's `estimated`/`unknown` -> `reconciled` transition,
- * exactly once.
- *
- * IDENTIFIED BY `usageId` (the row's own primary key), DELIBERATELY NOT
- * `attemptId` — `model_usage` has no unique index on `attempt_id` by design
- * (a bounded retry writes two rows for one logical attempt, both charged,
- * per this file's header and `onboarding-schema.ts:146-149`), so a vendor's
- * reconciliation event is a fact about one specific call, not one attempt,
- * and only the row id names that unambiguously.
- *
- * IDEMPOTENT BY ROW-LOCKED STATE, not by a separate idempotency table: the
- * row is read with `FOR UPDATE` first (so a concurrent retry blocks on the
- * same row rather than racing this function's check), and if it is already
- * `reconciled` this is a no-op — the second call of a duplicate delivery
- * applies no delta at all (mutation M9's target: "a reconciled retry applies
- * its cost delta twice" must redden `applied: false` on the second call, not
- * a second decrement of `unknown_call_count` or a second cost delta).
- *
- * THE DELTA, computed from the row's OWN prior state (never re-derived from
- * the caller, never re-run through `upsertSpendRollup`'s full-cost/+1-count
- * shape — that would double-count the call this row already contributed to
- * `call_count`):
- *  - prior `unknown`: cost was NULL and contributed 0 to `cost_micro_usd` and
- *    1 to `unknown_call_count`. Delta: `+reconciledCostMicroUsd` to cost,
- *    `-1` to the unknown count.
- *  - prior `estimated`: cost already contributed its estimated figure.
- *    Delta: `reconciledCostMicroUsd - priorCostMicroUsd` to cost only.
- *
- * KNOWN LIMITATION (billing gate round 1, 2026-08-30): the `applied: false`
- * no-op branch cannot tell a DUPLICATE delivery of the SAME price (correctly
- * a no-op) from a SECOND, CORRECTED reconciliation carrying a different
- * price for a row that already went `estimated`/`unknown` -> `reconciled`
- * once (today silently dropped — no log, no error, no signal that a better
- * price arrived and was discarded). There is no reconciliation WEBHOOK yet
- * (this function's own header: "six slices before the executor that must
- * call it exists" is the same shape of gap), so nothing calls this a second
- * time today and the silent drop is unreachable. The no-op branch below
- * returns the row's PRIOR `cost_micro_usd` specifically so that FUTURE
- * caller can do the comparison this function does not: diff
- * `priorCostMicroUsd` against the `reconciledCostMicroUsd` it was about to
- * apply and log/alert on a genuine mismatch, rather than lose it the way a
- * bare `{ applied: false }` would.
- */
-export async function applyReconciliationDelta(
-  tx: TxLike,
-  params: { usageId: string; reconciledCostMicroUsd: bigint }
-): Promise<
-  | { applied: true }
-  | { applied: false; priorCostMicroUsd: bigint }
-> {
-  const [locked] = await tx
-    .select({
-      workspaceId: modelUsage.workspaceId,
-      createdAt: modelUsage.createdAt,
-      resolvedTier: modelUsage.resolvedTier,
-      costState: modelUsage.costState,
-      costMicroUsd: modelUsage.costMicroUsd,
-    })
-    .from(modelUsage)
-    .where(eq(modelUsage.id, params.usageId))
-    .for("update");
-
-  if (!locked) {
-    throw new ReconciliationTargetError(params.usageId);
-  }
-
-  // ALREADY RECONCILED — a no-op, never a second decrement (R4a / M9). This
-  // check runs UNDER the row lock just taken above, so a concurrent retry in
-  // another transaction blocks until this one commits (and then sees
-  // `reconciled` itself) rather than reading a stale pre-transition state
-  // and applying the delta a second time.
-  if (locked.costState === "reconciled") {
-    // `costMicroUsd` is non-null here by construction: the DB CHECK
-    // constraint `(cost_state = 'unknown') = (cost_micro_usd IS NULL)`
-    // (onboarding-schema.ts) makes NULL cost impossible for any state other
-    // than `unknown`, and this branch only runs when state is `reconciled`.
-    return { applied: false, priorCostMicroUsd: locked.costMicroUsd ?? 0n };
-  }
-
-  const costDelta =
-    locked.costState === "unknown"
-      ? params.reconciledCostMicroUsd
-      : params.reconciledCostMicroUsd - (locked.costMicroUsd ?? 0n);
-  const unknownCallCountDelta = locked.costState === "unknown" ? -1 : 0;
-
-  await tx
-    .update(modelUsage)
-    .set({
-      costState: "reconciled",
-      costMicroUsd: params.reconciledCostMicroUsd,
-    })
-    .where(eq(modelUsage.id, params.usageId));
-
-  await applyRollupDelta(tx, {
-    workspaceId: locked.workspaceId,
-    createdAt: locked.createdAt,
-    resolvedTier: locked.resolvedTier,
-    costMicroUsdDelta: costDelta,
-    unknownCallCountDelta,
-  });
-
-  return { applied: true };
 }
 
 // `monthlySpend` (R7, the creator's credit burn this billing period) is

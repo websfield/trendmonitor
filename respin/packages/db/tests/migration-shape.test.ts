@@ -230,3 +230,134 @@ describe("migration 0012 (M2b-1): the confirmation columns, and A-3's corpus set
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("migration 0020 (slice 6, stage A): the generation substrate", () => {
+  const sql = migrationSql("0020_");
+
+  // Every assertion below is paired with a PLANTED violation, for the reason
+  // the 0012 block states: a source scan that matches nothing is
+  // indistinguishable from a source scan that is broken (CLAUDE.md
+  // 2026-08-21). The plant is a doctored copy of the REAL SQL, so the negative
+  // case is this file minus the property rather than a hand-typed fixture.
+  const withoutFirst = (needle: RegExp): string => sql.replace(needle, "");
+
+  it("creates exactly the two generation tables", () => {
+    const created = [...sql.matchAll(/CREATE TABLE\s+"([a-z_]+)"/gi)]
+      .map((m) => m[1])
+      .sort();
+    expect(created).toEqual(["generation_attempts", "generations"]);
+  });
+
+  it("EVERY foreign key names an explicit ON DELETE and an explicit ON UPDATE", () => {
+    // Postgres defaults an unqualified FK to NO ACTION, so a missing clause is
+    // indistinguishable from a decision at runtime — the same reason migration
+    // 0011 is checked for this. ON UPDATE matters here specifically:
+    // `generations_attempt_fk` is RESTRICT deliberately, which is the one
+    // piece of R14's "the attempt's identity is immutable" the database can
+    // hold on its own.
+    const fks = [...sql.matchAll(/FOREIGN KEY[\s\S]*?REFERENCES[^;]*/gi)].map(
+      (m) => m[0]
+    );
+    expect(fks.length, "the scan found no FKs at all").toBe(3);
+    expect(fks.filter((f) => !/ON DELETE/i.test(f))).toEqual([]);
+    expect(fks.filter((f) => !/ON UPDATE/i.test(f))).toEqual([]);
+    const RESTRICT =
+      /"generations_attempt_fk" FOREIGN KEY \("attempt_id","mode","profile_id","workspace_id"\) REFERENCES "public"\."generation_attempts"\("attempt_id","mode","profile_id","workspace_id"\) ON DELETE cascade ON UPDATE restrict/;
+    expect(RESTRICT.test(sql)).toBe(true);
+    expect(
+      RESTRICT.test(withoutFirst(RESTRICT)),
+      "the scan matches a source with the FK removed — it is not reading what it claims to"
+    ).toBe(false);
+  });
+
+  it("both profile children carry the composite FK with BOTH columns NOT NULL", () => {
+    for (const table of ["generation_attempts", "generations"]) {
+      // A literal SUBSTRING, deliberately, not a built-up RegExp — a regex
+      // assembled from a string literal needs doubled backslashes, and a lost
+      // one turns "\s" into "s", which makes the scan match nothing and fail
+      // OPEN.
+      expect(
+        sql,
+        table + " has no composite FK on (profile_id, workspace_id)"
+      ).toContain(
+        table + '_profile_workspace_fk" FOREIGN KEY ("profile_id","workspace_id")'
+      );
+      const start = sql.indexOf('CREATE TABLE "' + table + '"');
+      const create = sql.slice(start, sql.indexOf(");", start));
+      // MATCH SIMPLE skips a composite FK entirely when ANY column is NULL, so
+      // a nullable half admits a row naming a parent that does not exist.
+      expect(
+        /"profile_id" uuid NOT NULL/.test(create),
+        table + ".profile_id is nullable"
+      ).toBe(true);
+      expect(
+        /"workspace_id" uuid NOT NULL/.test(create),
+        table + ".workspace_id is nullable"
+      ).toBe(true);
+    }
+  });
+
+  it("both FK-TARGET uniques are INLINE in CREATE TABLE, not CREATE INDEX", () => {
+    // THE ORDERING TRAP that made the first run of migration 0011 fail:
+    // drizzle-kit emits every CREATE TABLE, then every FK ALTER, then every
+    // CREATE INDEX — so a unique INDEX does not exist yet when an FK
+    // references it, and Postgres answers "there is no unique constraint
+    // matching given keys". `generations_attempt_fk` references the attempt
+    // table's four-column unique TODAY; `generations_id_profile_workspace_uq`
+    // is referenced by slices 7 and 9, which is later but is the same trap.
+    for (const [table, constraint, columns] of [
+      [
+        "generation_attempts",
+        "generation_attempts_attempt_mode_profile_workspace_uq",
+        '"attempt_id","mode","profile_id","workspace_id"',
+      ],
+      [
+        "generations",
+        "generations_id_profile_workspace_uq",
+        '"id","profile_id","workspace_id"',
+      ],
+    ] as const) {
+      const start = sql.indexOf('CREATE TABLE "' + table + '"');
+      const create = sql.slice(start, sql.indexOf(");", start));
+      const needle = `CONSTRAINT "${constraint}" UNIQUE(${columns})`;
+      expect(
+        create.includes(needle),
+        `${constraint} is not inline in CREATE TABLE — an FK referencing it will be added before it exists`
+      ).toBe(true);
+      // NON-VACUITY: the same needle really is absent from a doctored copy.
+      expect(create.replace(needle, "").includes(needle)).toBe(false);
+    }
+  });
+
+  it("R17: the free-allowance index is PARTIAL and WORKSPACE-KEYED", () => {
+    // Two separate properties, and dropping either one is a different outage.
+    //
+    // Without the WHERE it stops being partial and starts constraining every
+    // ledger row that shares a (workspace_id, ref_id) pair across ref_types —
+    // a debit and a grant naming the same business object would collide.
+    //
+    // Without `workspace_id` it becomes GLOBAL on a key that is NOT globally
+    // unique: `ref_id` here is the period key ('2026-08'), which every
+    // workspace on the platform mints, so the first Free workspace to derive a
+    // balance in a month would take the key and refuse the grant to every
+    // other workspace for the rest of it. That is the difference between this
+    // index and its five siblings, which key on globally unique Stripe object
+    // ids.
+    const IDX =
+      /CREATE UNIQUE INDEX "credit_ledger_free_allowance_uq" ON "credit_ledger" USING btree \("workspace_id","ref_id"\) WHERE "credit_ledger"\."ref_type" = 'free_allowance'/;
+    expect(IDX.test(sql)).toBe(true);
+    expect(
+      IDX.test(withoutFirst(IDX)),
+      "the scan matches a source with the index removed — it is not reading what it claims to"
+    ).toBe(false);
+    // ...and the CHECK that stops a NULL `ref_id` slipping past it, which is
+    // the sibling `credit_ledger_expiry_ref` already carries for the expiry
+    // index. Without it the index is idempotency-unless-the-writer-forgets.
+    const CHK =
+      /ADD CONSTRAINT "credit_ledger_free_allowance_ref" CHECK \("credit_ledger"\."ref_type" IS DISTINCT FROM 'free_allowance' OR "credit_ledger"\."ref_id" IS NOT NULL\)/;
+    expect(CHK.test(sql)).toBe(true);
+    expect(CHK.test(withoutFirst(CHK))).toBe(false);
+  });
+});

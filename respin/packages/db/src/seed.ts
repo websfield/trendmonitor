@@ -91,6 +91,19 @@ export const CONFIG_V1_SEED = {
     voiceCorpusMaxPosts: 50,
     maxUnchargedBillableAttempts: 3,
   },
+  // Slice 6 (R16). Generation's own uncharged-billable bound — the same
+  // safety rule as `onboarding`'s, on its own per-purpose grain, because
+  // `countUnchargedBillableAttempts` counts per purpose. Explicit in the seed
+  // as well as defaulted in the schema, so a fresh install writes it.
+  generation: {
+    // BOTH numbers are chosen and cited in `packages/config/src/schema.ts`:
+    // the cap is derived from `concurrencyLimits.studio` (the bound's accepted
+    // width is one burst of the tier's slot limit, so a cap at or below 8 is
+    // one a single legal burst exhausts), and the window exists because an
+    // unwindowed count over an append-only table refuses a profile forever.
+    maxUnchargedBillableAttempts: 10,
+    unchargedAttemptWindowMinutes: 60,
+  },
   // The model layer (slice 2a). Explicit in the seed for the same reason as
   // `profileCaps` and `onboardingBrainRebuild` above: a fresh install writes
   // it, and a merely-defaulted `llm.prices` cannot price a debit (R19).

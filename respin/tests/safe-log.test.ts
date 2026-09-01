@@ -29,7 +29,13 @@ import {
   ProvenanceError,
   ReferenceEchoError,
 } from "@respin/db";
-import { logRefusal, logSpend, safeLogFields } from "../app/(product)/safe-log";
+import {
+  NOT_A_LABEL,
+  logRefusal,
+  logSpend,
+  safeLogFields,
+  wireLabel,
+} from "../app/(product)/safe-log";
 import { PostCallDebitError } from "@respin/credits/app-server";
 
 /** A payload standing in for a creator's unpublished post. */
@@ -285,6 +291,117 @@ describe("a spend log names WHO it happened to (production gate, 2026-08-28)", (
     const fields = seen[0][1] as Record<string, unknown>;
     expect(fields.attemptId).toBe("att-9");
     expect(fields.creditsCharged).toBe(50);
+  });
+
+  it("wireLabel clamps a WIRE value to a shape a log line may carry", () => {
+    // THE CONTRACT `LogContext` STATES: "ONLY SERVER-DERIVED IDENTIFIERS BELONG
+    // HERE… every call site passes ids". `/studio`'s generation action broke it
+    // — it read `mode` off the `FormData` and logged it, so the
+    // `UnknownModeError` path wrote whatever a POST carried. A hidden input is
+    // a browser convenience; a server action is an endpoint.
+    //
+    // A PLAUSIBLE TYPO SURVIVES, because that is the whole diagnostic value: an
+    // operator has to be able to tell "someone typed hookss" from "someone
+    // posted 4kB".
+    expect(wireLabel("hooks")).toBe("hooks");
+    expect(wireLabel("hookss")).toBe("hookss");
+    expect(wireLabel("footageToThesis")).toBe("footageToThesis");
+    expect(wireLabel("source-to-reel")).toBe("source-to-reel");
+    expect(wireLabel("full_script")).toBe("full_script");
+
+    // EVERYTHING ELSE IS THE SENTINEL, NOT A TRUNCATION: a prefix of a hostile
+    // string is still a leak, and 40 characters of a creator's pasted script is
+    // exactly the thing this module exists to keep out of stdout.
+    for (const hostile of [
+      "",
+      " ",
+      "9hooks",
+      "-hooks",
+      "hooks mode",
+      // LOG FORGERY: a newline lets a wire value invent a second log line.
+      "hooks\n[studio-action] generation refused { forged: true }",
+      "a".repeat(41),
+      "I have been trying to lose the same 10 kilos since my daughter was born",
+      '{"mode":"hooks"}',
+      "../../etc/passwd",
+      "<script>alert(1)</script>",
+      "hooks ",
+      "hooks[31m",
+      "モード",
+    ]) {
+      expect(wireLabel(hostile), JSON.stringify(hostile)).toBe(NOT_A_LABEL);
+    }
+    // The boundary is 40, and it is a real boundary rather than an approximate
+    // one.
+    expect(wireLabel("a".repeat(40))).toBe("a".repeat(40));
+    expect(wireLabel("a".repeat(41))).toBe(NOT_A_LABEL);
+    // The sentinel is not itself mistakable for a mode.
+    expect(NOT_A_LABEL).not.toMatch(/^[a-z]+$/);
+  });
+
+  it("the studio action CLAMPS the wire mode, and no LogContext carries a raw one", () => {
+    // The helper existing proves nothing about the call site — the defect was a
+    // call site, not a missing capability.
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const actions = readFileSync(
+      resolve(root, "app/(product)/studio/actions.ts"),
+      "utf8"
+    );
+    expect(actions).toMatch(/mode: wireLabel\(mode\)/);
+    // ...and the SUCCESS line uses the server's own value, which needs no clamp
+    // because it came back from the operation.
+    expect(actions).toMatch(/mode: result\.generation\.mode/);
+
+    // THE CLASS, NOT THE INSTANCE (CLAUDE.md, 2026-08-29: a population written
+    // as one path narrows silently the day a second appears). The population is
+    // "every .ts/.tsx under app/", DERIVED by walking the tree rather than
+    // listed, and the shape refused is a bare `mode,` shorthand inside any
+    // logRefusal/logSpend context — which is exactly the shape the defect had.
+    const walk = (dir: string, acc: string[] = []): string[] => {
+      for (const name of readdirSync(dir, { withFileTypes: true })) {
+        const full = resolve(dir, name.name);
+        if (name.isDirectory()) walk(full, acc);
+        else if (/\.tsx?$/.test(name.name)) acc.push(full);
+      }
+      return acc;
+    };
+    // REGEXP LITERALS, never assembled from strings: one lost backslash turns
+    // `\s` into `s` and the scan silently matches nothing (2026-08-21).
+    const CALL = /log(?:Refusal|Spend)\([\s\S]*?\n\s*\}\)/g;
+    const BARE_MODE = /^\s*mode,\s*$/m;
+
+    const files = walk(resolve(root, "app"));
+    expect(files.length).toBeGreaterThan(20);
+    const offenders: string[] = [];
+    let callsSeen = 0;
+    for (const file of files) {
+      for (const m of readFileSync(file, "utf8").matchAll(CALL)) {
+        callsSeen += 1;
+        if (BARE_MODE.test(m[0])) offenders.push(relative(root, file));
+      }
+    }
+    expect(
+      offenders,
+      "a wire value reaching LogContext by shorthand — clamp it with wireLabel"
+    ).toEqual([]);
+    // NON-VACUITY, TWO WAYS. First: the scan actually found calls to look at, so
+    // "no offenders" is not "no calls".
+    expect(callsSeen).toBeGreaterThan(3);
+    // Second: it catches a PLANTED violation of the shape it claims to cover,
+    // and does NOT fire on the clamped form. Template literals so the fixtures
+    // carry real newlines the way a source file does.
+    const planted = `logRefusal("[x] refused", err, {
+  workspaceId,
+  mode,
+})`;
+    const clean = `logRefusal("[x] refused", err, {
+  workspaceId,
+  mode: wireLabel(mode),
+})`;
+    const first = (text: string) => [...text.matchAll(CALL)][0]?.[0] ?? "";
+    expect(first(planted)).not.toBe("");
+    expect(BARE_MODE.test(first(planted))).toBe(true);
+    expect(BARE_MODE.test(first(clean))).toBe(false);
   });
 
   it("the ACTION passes the ids, rather than the helper merely accepting them", () => {

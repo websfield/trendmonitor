@@ -19,167 +19,52 @@ import {
   type BillingErrorCode,
   type BillingErrorCopy,
 } from "../billing-errors";
-export { PLACEHOLDER_ABSENCE } from "@respin/db";
-
-/**
- * The human name for each claim-bearing field of the `voice` document.
- *
- * KEYED BY THE TOP-LEVEL SCHEMA KEY, and closed. `tests/brain-ui.test.tsx`
- * pins these keys to `BRAIN_CONTENT_SCHEMAS.voice`'s claim-bearing keys
- * exactly — the same instrument `voice-fields.test.ts` uses one layer down —
- * so widening the schema without widening this map is a red test rather than a
- * field that renders as its own variable name to a paying customer.
- *
- * The words describe WHAT THE FIELD IS ABOUT, not what the model concluded.
- * "How formal you are" is a question; "Your register" is jargon; "Your formal,
- * confident register" would be the claim itself, which belongs in the value.
- */
-export const VOICE_FIELD_LABELS: Record<string, string> = {
-  register: "How formal you are, and who you sound like you are talking to",
-  sentenceRhythm: "How your sentences are paced",
-  signatureMoves: "Things you do that another writer would not",
-  avoid: "Things you visibly never do",
-};
-
-/**
- * The label for one claim position, from its RFC-6901 pointer.
- *
- * `/register` → the field's name. `/signatureMoves/0` → the field's name with a
- * 1-BASED position, because the creator is looking at a list and "0" is not
- * where a list starts for anyone who does not write code.
- *
- * AN UNKNOWN KEY RETURNS NULL rather than the raw pointer. Rendering
- * `/newField/0` to a creator is not a degradation, it is a leak of an internal
- * name onto a screen making claims about them — and it would also be silent.
- * The caller refuses instead; see `brain-view.tsx`.
- */
-export function claimLabel(pointer: string): string | null {
-  const parts = pointer.split("/").filter((p) => p.length > 0);
-  const key = parts[0];
-  if (key === undefined) return null;
-  const base = VOICE_FIELD_LABELS[key];
-  if (base === undefined) return null;
-  if (parts.length === 1) return base;
-  const index = Number(parts[1]);
-  if (!Number.isInteger(index) || index < 0) return null;
-  return `${base} (${index + 1})`;
-}
-
-/**
- * The human name for each claim-bearing field of the `strategy` document,
- * EXCLUDING `/metric/...` (slice 3b, R7/R9).
- *
- * `metric` is a nested object, not a top-level scalar/array claim, and R7
- * requires it to have its OWN display rather than sit in this list — see
- * `STRATEGY_METRIC_FIELD_LABELS` and `strategyClaimLabel` below. `pillars` is
- * always written as `[]` by the interview builder (nothing decides it this
- * slice) but stays in this map so a schema/builder that starts populating it
- * renders a real label rather than throwing.
- */
-export const STRATEGY_FIELD_LABELS: Record<string, string> = {
-  audience: "Who you're making this for",
-  positioning: "How you position yourself, compared to alternatives",
-  pillars: "Your content pillars",
-  goals: "Your goals with this content",
-  ambitions: "Where you want this to go",
-};
-
-/**
- * The human name for each declared north-star metric sub-field (R7).
- *
- * `key` is ABSENT — it is `serverOwned` in `brain-content.ts` (a slug the
- * server derives, never a claim), so it carries no evidence and is never a
- * confirmable position; `enumerateClaimFields` never yields `/metric/key`.
- */
-export const STRATEGY_METRIC_FIELD_LABELS: Record<string, string> = {
-  label: "What you're calling this metric",
-  unit: "Unit",
-  direction: "Which direction is better",
-  platform: "Platform (if you named one)",
-  window: "Measurement window (if you named one)",
-};
-
-/**
- * The label for one `strategy` claim position, from its RFC-6901 pointer —
- * same rule as `claimLabel`, plus the `/metric/<subfield>` branch R7 needs.
- *
- * `/metric` itself, and any pointer more than two segments deep under it,
- * return null: the schema has no claim position at `/metric` (it is a
- * container, not a leaf) and no metric sub-field is a list, so a third
- * segment names a shape this screen does not know how to render.
- */
-export function strategyClaimLabel(pointer: string): string | null {
-  const parts = pointer.split("/").filter((p) => p.length > 0);
-  const key = parts[0];
-  if (key === undefined) return null;
-  if (key === "metric") {
-    if (parts.length !== 2) return null;
-    return STRATEGY_METRIC_FIELD_LABELS[parts[1]] ?? null;
-  }
-  const base = STRATEGY_FIELD_LABELS[key];
-  if (base === undefined) return null;
-  if (parts.length === 1) return base;
-  const index = Number(parts[1]);
-  if (!Number.isInteger(index) || index < 0) return null;
-  return `${base} (${index + 1})`;
-}
-
-/** True for a claim position that belongs in the metric panel, not the general list (R7). */
-export function isMetricPointer(pointer: string): boolean {
-  return pointer.startsWith("/metric/");
-}
-
-/** The human name for each claim-bearing field of the `killtest` document. */
-export const KILLTEST_FIELD_LABELS: Record<string, string> = {
-  rules: "Your kill rules",
-  bannedWords: "Words you never want used",
-  bannedVibes: "Vibes or tones you never want",
-};
-
-/** The label for one `killtest` claim position — same rule as `claimLabel`. */
-export function killtestClaimLabel(pointer: string): string | null {
-  const parts = pointer.split("/").filter((p) => p.length > 0);
-  const key = parts[0];
-  if (key === undefined) return null;
-  const base = KILLTEST_FIELD_LABELS[key];
-  if (base === undefined) return null;
-  if (parts.length === 1) return base;
-  const index = Number(parts[1]);
-  if (!Number.isInteger(index) || index < 0) return null;
-  return `${base} (${index + 1})`;
-}
-
-/**
- * The sentence introducing a claim's quote, keyed by WHICH KIND of input row
- * it came from (R4/R10) — `own_post` (voice) reads differently from
- * `creator_authored` (strategy/killtest, an interview answer), and one
- * sentence pretending to fit both would misdescribe one of them.
- *
- * Takes the already-formatted day string rather than a `Date`, so this stays
- * a pure string function with no `Intl`/timezone decision of its own — `day()`
- * in `brain-view.tsx` is the one place that decision is made, matching every
- * other screen's precedent (`usage-view.tsx`, `onboarding-view.tsx`).
- */
-export function quoteIntro(inputClass: string, dayStr: string): string {
-  return inputClass === "creator_authored"
-    ? `Your own answer, from ${dayStr}:`
-    : `From a post you saved on ${dayStr}:`;
-}
-
-/**
- * What the screen says for an UNDECIDED interview field (R1/R11) — the
- * `strategy`/`killtest` sibling of `PLACEHOLDER_ABSENCE`.
- *
- * A DIFFERENT SENTENCE, deliberately, not a reuse: `PLACEHOLDER_ABSENCE` says
- * OUR evidence search came up empty ("we could not point to a quote from your
- * posts"), which is true for `voice` and false here — nobody searched
- * anything; the creator was asked and left it undecided. Saying "we could not
- * find it" about a question nobody answered would misattribute an absence
- * that is squarely the creator's own choice to leave open, on the one screen
- * bound hardest against inventing what is not there.
- */
-export const INTERVIEW_PLACEHOLDER_ABSENCE =
-  "You left this undecided in the interview, so we are not stating it. Confirm it as still undecided, or answer it in the interview and build a new version.";
+// THE SHARED DISPLAY VOCABULARY IS RE-EXPORTED, NEVER REDECLARED (slice 5
+// stage 2, G0 — closing stage 1's handoff).
+//
+// Every name below used to be a SECOND copy of a value `packages/db` also
+// held, and the two drifted in exactly the way a second copy always can: the
+// markdown export printed the VOICE absence sentence ("we could not point to a
+// quote from your posts") for `strategy` and `killtest` documents, where
+// nobody searched anything and the creator simply left an interview field
+// undecided — a false reason for an absence, in the artefact of record
+// (REQ-I03). Stage 1 moved the sentences and the label maps down into
+// `packages/db/src/export.ts`, because `packages/db` cannot import from
+// `app/**` (the tech-spec §1 layout rule) and so the ONLY way for the screen
+// and the downloaded file to say the same thing is for the words to live
+// there and this file to re-export them.
+//
+// STAGE 1 VERIFIED BYTE-IDENTITY BY HAND. That is not a guard, and the tenancy
+// gate said so: `tests/shared-copy-identity.test.ts` is the durable one. It
+// proves each name below arrives from `@respin/db` (a source scan, so a
+// re-introduced literal fails even though two equal STRINGS are `toBe`-equal)
+// and that its value still equals the package's — the class, not the instance.
+//
+// Documentation for each of them lives with the value, in `export.ts`.
+//
+// `screenAbsenceSentence` (round 2) is the (kind, reason) SELECTOR the two
+// absence constants are two answers of. The screen calls it rather than
+// picking a constant per kind: a VOICE version the creator EDITED must not be
+// told "we could not point to a quote from your posts" about a `[check]` the
+// creator typed themselves — see `ABSENCE_CREATOR_EDIT` in `export.ts`.
+//
+// NO COMMENTS INSIDE THE BRACES BELOW. `tests/shared-copy-identity.test.ts`
+// parses this block by splitting on commas, so a comment between two names
+// becomes a garbage "name" and the identity guard reports nonsense.
+export {
+  PLACEHOLDER_ABSENCE,
+  INTERVIEW_PLACEHOLDER_ABSENCE,
+  screenAbsenceSentence,
+  VOICE_FIELD_LABELS,
+  STRATEGY_FIELD_LABELS,
+  STRATEGY_METRIC_FIELD_LABELS,
+  KILLTEST_FIELD_LABELS,
+  claimLabel,
+  strategyClaimLabel,
+  killtestClaimLabel,
+  isMetricPointer,
+  quoteIntro,
+} from "@respin/db";
 
 /**
  * The empty-state sentence for a target (Strategy/Kill Test) the creator
@@ -231,6 +116,58 @@ export const BRAIN_EDIT_MEANING =
 export const BRAIN_EDIT_CHECK_COPY =
   "Use [check] when you do not want the product to state a value yet. At least one rule in the whole document must remain stated.";
 
+/**
+ * What leaving an OPTIONAL declared-metric field blank does (slice 5 gate
+ * round 1, G1).
+ *
+ * NOT `[check]`, and the difference is the whole finding. `[check]` is "we are
+ * not stating this yet" — an open question. A blank platform or measurement
+ * window is an ANSWER: you are not naming one. The interview stores that
+ * answer by omitting the position entirely rather than writing `[check]` into
+ * it (`brain-content.ts`'s own comment on those two fields), and the edit path
+ * now says the same thing — which is also what makes the metric editable at
+ * all for a creator who declined the question in the interview.
+ */
+export const OPTIONAL_METRIC_BLANK_MEANING =
+  "Leave blank if you are not naming one. That is recorded as your answer — the field is left unstated, not marked [check].";
+
+/** The three kinds this screen renders a proposed draft for. */
+type ProposedKind = "voice" | "strategy" | "killtest";
+
+/**
+ * The line above a proposed draft, per kind — ORIGIN-NEUTRAL (slice 5 gate
+ * round 1, G4).
+ *
+ * WHAT WAS WRONG. These sentences named where the draft CAME FROM — "from the
+ * posts you saved and told us you wrote", "built directly from what you told
+ * us in the interview — nothing here is inferred" — and were rendered for
+ * EVERY proposed version, including one whose stored reason is `creator_edit`.
+ * A version the creator typed themselves was introduced as though a model had
+ * read their posts, or as though the interview had produced it. On the screen
+ * whose whole job is provenance, that is the provenance being wrong.
+ *
+ * THE ORIGIN IS STILL ON THE PAGE — twice, and both times DERIVED rather than
+ * assumed, which is why removing it from here loses nothing:
+ *   - the version's own `reason`, rendered directly beneath this line, is a
+ *     sentence the SERVER composed from the stored reason code
+ *     (`renderBrainReason`: "inferred from 3 of your onboarding inputs" /
+ *     "you edited this document") — a closed code set with no caller prose;
+ *   - every claim carries `quoteIntro(claim.source.inputClass, …)`, which says
+ *     "From a post you saved on <date>" or "Your own answer, from <date>" per
+ *     claim, from the input row's own class.
+ * Deriving THIS line from `reason` instead would mean matching on a rendered
+ * English sentence, which is a fragile way to ask a question the two derived
+ * surfaces already answer exactly.
+ */
+export const PROPOSED_INTRO: Record<ProposedKind, (profileName: string) => string> = {
+  voice: (profileName) =>
+    `These are rules this draft states about how ${profileName} writes. Nothing here is in force. Read each one next to the quote it rests on — or next to the plain statement that there is no quote — and confirm it, or leave it unconfirmed and it stays out.`,
+  strategy: (profileName) =>
+    `This is the strategy this draft states for ${profileName}. Nothing here is in force. Read each one next to the words it rests on, and confirm it — or leave it unconfirmed and it stays out.`,
+  killtest: (profileName) =>
+    `These are the words and vibes this draft says ${profileName} never wants used. Nothing here is in force. Read each one next to the words it rests on, and confirm it — or leave it unconfirmed and it stays out.`,
+};
+
 export const BRAIN_EXPORT_JSON_COPY =
   "JSON is the complete machine-readable record from the creator-data registry.";
 
@@ -276,7 +213,10 @@ export function confirmProgress(total: number, confirmed: number): string {
  * a locked, already-scoped write). No new error code was needed.
  *
  * Ordinary edits additionally reach `ProfileRoleError`, the content schema,
- * echo/content walkers and the fixed reason renderer. Their legacy/defect-only
+ * echo/content walkers, the fixed reason renderer and `BrainEditUnchangedError`
+ * (a submission identical to the stored version — easy to reach from the metric
+ * form, which posts all five positions on every press whether or not any moved,
+ * so nothing before the server notices that nothing changed). Their legacy/defect-only
  * typed refusals remain in this closed set too: a typed server refusal must not
  * turn into `unknown` merely because the usual stored data cannot trigger it.
  */
@@ -285,6 +225,7 @@ export const BRAIN_ERROR_CODES = [
   "profile_role",
   "brain_edit_busy",
   "brain-edit-all-check",
+  "brain_edit_unchanged",
   "brain_edit_limit",
   "brain_document_limit",
   "brain_version_limit",

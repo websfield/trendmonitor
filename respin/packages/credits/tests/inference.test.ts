@@ -9,6 +9,7 @@
 // it, having already replaced the module whose non-invocation is the evidence.
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  CONFIG_V1_SEED,
   createTestDb,
   creditLedger,
   ensureUserWorkspace,
@@ -48,6 +49,10 @@ import {
 } from "../src/inference";
 import { InsufficientCreditsError, WorkspacePausedError } from "../src/errors";
 import { ConfigNotMigratedError } from "@respin/config";
+import {
+  setUnchargedAttemptCapMetricSink,
+  type UnchargedAttemptCapMetric,
+} from "../src/metrics";
 import { anySlots, bounded, granting, refusing } from "./support/run-slots";
 
 const REQ = { attemptId: "attempt-1", system: "s", prompt: "p", promptBundleVersion: "test-bundle" };
@@ -322,7 +327,12 @@ describe("runInference", () => {
     const { provider } = ok();
     const first = await runInference(db, owner, profileId, provider, anySlots(), REQ, new Date());
     expect(first.creditsCharged).toBe(0);
-    expect(first.balanceAfter).toBe(500);
+    // 500 GRANTED PLUS THE WORKSPACE'S OWN FREE ALLOWANCE (slice 6, R17): this
+    // workspace has no subscription row, so `getWorkspaceBillingState` resolves
+    // it to `free` and the balance read inside the debit transaction mints its
+    // monthly grant. `creditsCharged` — what this case is actually about — is
+    // unchanged, and the SECOND attempt below still asserts the exact debit.
+    expect(first.balanceAfter).toBe(500 + CONFIG_V1_SEED.allowances.free);
 
     const second = await runInference(
       db,
@@ -334,7 +344,12 @@ describe("runInference", () => {
       new Date()
     );
     expect(second.creditsCharged).toBe(50);
-    expect(second.balanceAfter).toBe(450);
+    // The debit is the number this case is about, and it is exact. The balance
+    // it leaves carries the same Free-allowance term the first assertion
+    // explains (R17), so it is written as the same sum minus the charge.
+    expect(second.balanceAfter).toBe(
+      500 + CONFIG_V1_SEED.allowances.free - 50
+    );
 
     // THE DEBIT NAMES THE ATTEMPT (REQ-G05 joins spend to revenue on it).
     const debits = (await db.select().from(creditLedger)).filter(
@@ -509,6 +524,65 @@ describe("runInference", () => {
         new Date()
       )
     ).rejects.toBeInstanceOf(UnchargedAttemptCapError);
+  });
+
+  it("crossing THIS cap emits the metric too, and says LIFETIME on the wire", async () => {
+    // THE POPULATION IS A LIST OF CAP SITES, NOT ONE PATH (CLAUDE.md
+    // 2026-08-29). The counter was asked for by the GENERATION cap's newly
+    // widened window, and a counter wired only there would be the same
+    // one-path guard this repo has now shipped three times. This site is the
+    // one whose refusal is still PERMANENT — onboarding's count is a lifetime
+    // count — so a profile stuck here is precisely what an operator has no
+    // other way to learn about, and `windowMinutes: null` is that fact on the
+    // wire rather than a missing field.
+    await grant(500);
+    const seen: UnchargedAttemptCapMetric[] = [];
+    setUnchargedAttemptCapMetricSink((m) => seen.push(m));
+    try {
+      const truncate = () =>
+        runInference(
+          db,
+          owner,
+          profileId,
+          failing(new LlmTruncatedError(1024, { tokensIn: 8, tokensOut: 1024 })),
+          anySlots(),
+          { ...REQ, attemptId: `att-${Math.random()}` },
+          new Date()
+        );
+      // UNDER the cap first — the false branch. Three billable truncations
+      // reach the vendor and none of them is a cap crossing.
+      for (let i = 0; i < 3; i++) {
+        await expect(truncate()).rejects.toBeInstanceOf(LlmTruncatedError);
+      }
+      expect(seen, "a metric fired below the cap").toEqual([]);
+
+      await expect(
+        runInference(
+          db,
+          owner,
+          profileId,
+          never(),
+          anySlots(),
+          { ...REQ, attemptId: "att-capped-metric" },
+          new Date()
+        )
+      ).rejects.toBeInstanceOf(UnchargedAttemptCapError);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({
+        workspaceId: ws,
+        profileId,
+        purpose: ONBOARDING_BRAIN_PURPOSE,
+      });
+      // DERIVED FROM THE `since` THE COUNT ACTUALLY USED, not restated as a
+      // literal — the day onboarding is windowed this reports the window
+      // instead of quietly keeping the word "lifetime".
+      expect(seen[0]!.windowMinutes).toBeNull();
+      // The two purposes emit under DIFFERENT purpose strings, which is what
+      // makes the metric splittable by an operator at all.
+      expect(seen[0]!.purpose).not.toBe("generation");
+    } finally {
+      setUnchargedAttemptCapMetricSink(null);
+    }
   });
 
   it("the cap is READ FROM CONFIG, not a literal that happens to agree with it", async () => {

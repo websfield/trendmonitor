@@ -60,8 +60,10 @@ import {
   InsufficientCreditsError,
   UnchargedAttemptCapError,
   PostCallDebitError,
+  UnpricedOperationError,
   WorkspacePausedError,
 } from "./errors";
+import { emitUnchargedAttemptCapMetric } from "./metrics";
 import { maybeAutoTopup } from "./stripe/auto-topup";
 
 /**
@@ -71,6 +73,26 @@ import { maybeAutoTopup } from "./stripe/auto-topup";
  * of included builds.
  */
 export const ONBOARDING_BRAIN_PURPOSE = "onboarding_brain";
+
+/**
+ * The purpose slice 6's generation runs under (R12).
+ *
+ * A SECOND CONSTANT RATHER THAN A SHARED ONE, and the reason is the sentence
+ * above: the purpose is the grain `countBillableAttempts` and
+ * `countUnchargedBillableAttempts` price and bound against. A generation
+ * sharing `ONBOARDING_BRAIN_PURPOSE` would be priced as an onboarding rebuild
+ * — the first generation on a profile that had never rebuilt its brain would
+ * come back FREE, and every one after it would cost `onboardingBrainRebuild`
+ * (50) instead of `hookSet` (2). The mutation that shares them reddens
+ * `priceOf`'s own test.
+ *
+ * ONE PURPOSE FOR ALL SEVEN MODES, not one per mode: the price is looked up
+ * from the MODE's `creditCosts` key (`priceOf` below), so the purpose does not
+ * carry pricing information, and the uncharged-attempt bound R16 asks for is a
+ * safety bound on "generations that cost us money and the creator nothing",
+ * which is one question across modes rather than seven.
+ */
+export const GENERATION_PURPOSE = "generation";
 
 // `PROMPT_BUNDLE_VERSION` LIVED HERE AND IS GONE (billing gate round 2,
 // 2026-08-29). It named slice 2a's connectivity ping, whose action R-46
@@ -219,7 +241,7 @@ export type RunInferenceResult = {
  * What we do NOT do is let it decide the outcome, because by then the creator
  * has already been told the run timed out.
  */
-async function withDeadline<T>(
+export async function withDeadline<T>(
   work: Promise<T>,
   signal: AbortSignal
 ): Promise<T> {
@@ -240,15 +262,206 @@ async function withDeadline<T>(
   }
 }
 
-/** Every config path this operation's price depends on (R19). */
-function requiredConfigPaths(model: string): string[] {
-  return [
-    "creditCosts.onboardingBrainBuild",
-    "creditCosts.onboardingBrainRebuild",
+/**
+ * WHAT A PRICED OPERATION IS, per purpose (R13).
+ *
+ * GENERALISED FROM THE HARD-CODED ONBOARDING PAIR, and it is a discriminated
+ * union rather than a lookup table of numbers because the two purposes price
+ * from different FACTS: onboarding prices from how many billable attempts came
+ * before (the first is included, D-M2-2), and a generation prices from its
+ * MODE. A `Record<purpose, number>` could express neither.
+ *
+ * `creditCostKey` is typed as a key of the config's own `creditCosts` object,
+ * NOT as `@respin/modes`' `CreditCostKey`. The two must agree, and this is the
+ * direction that makes disagreement a compile error at the one place that
+ * matters: `@respin/config` owns the stored document, so a mode naming a key
+ * the config does not have cannot be passed in here at all.
+ */
+export type PricedOperation =
+  | {
+      purpose: typeof ONBOARDING_BRAIN_PURPOSE;
+      priorBillableAttempts: number;
+    }
+  | {
+      purpose: typeof GENERATION_PURPOSE;
+      creditCostKey: keyof RespinConfigV1["creditCosts"];
+    };
+
+/**
+ * The models an operation will actually call, by ROLE.
+ *
+ * A ROLE MAP RATHER THAN A BARE STRING (billing gate, 2026-09-01), because an
+ * operation that makes two calls at two model tiers has two price rows to fail
+ * closed on and the old single-string signature could only ever name one. A
+ * generation runs the draft (and its one rewrite) on
+ * `llm.models.generation` and scores the creator's own kill-test rules on
+ * `llm.models.classification` — card R5's "cheap model call".
+ */
+export type ModelsInUse = {
+  /** Every purpose's main completion. */
+  generation: string;
+  /**
+   * The cheap scoring call's model — named by a caller that is ABOUT TO make
+   * one, omitted by a caller that is not.
+   *
+   * THE ASYMMETRY IS DELIBERATE AND IS THE INTERESTING PART. `generate`'s
+   * PRE-CALL read names it, so a missing `llm.prices.<haiku>` refuses before a
+   * single token is spent. `settle` does NOT, because by then the scoring call
+   * has already happened and already written its `model_usage` row: refusing
+   * there would strand a generation the creator has paid a vendor for over a
+   * price row that can no longer change what we spent — the control becoming
+   * the outage (CLAUDE.md 2026-07-30). What settlement still fails closed on is
+   * the price that decides the DEBIT.
+   */
+  classification?: string;
+};
+
+/**
+ * Every config path an operation's price depends on (R19), per purpose (R13).
+ *
+ * A PRICE ON THIS LIST FAILS CLOSED IF THE STORED DOCUMENT LACKS IT — that is
+ * the A-9 rule for anything that bills, and it is why the generation branch
+ * names the mode's own `creditCosts` key rather than the whole object: the
+ * check is deliberately as narrow as the spend it guards, so a workspace that
+ * only ever generates hooks is never refused for a `spin` price it does not
+ * use.
+ *
+ * `llm.maxOutputTokens` and `llm.models.generation` are on BOTH branches
+ * because both purposes make a vendor call bounded by them. The thresholds
+ * that are NOT here — the deadline, the uncharged-attempt caps — are absent
+ * deliberately: a defaulted bound still bounds, whereas a defaulted price
+ * bills someone against a number nobody chose.
+ *
+ * THE GENERATION BRANCH REQUIRES THE CLASSIFICATION MODEL AND ITS PRICE ROW
+ * TOO, because a generation really calls it: `llm.models.classification` had
+ * ZERO production readers while `generate` ran BOTH its calls on the
+ * generation model, so every successful hook set cost two Sonnet calls where
+ * the card specifies Sonnet plus Haiku — a REQ-G05 margin fact, not a naming
+ * one. A cost we incur and cannot price is exactly what this list exists to
+ * refuse, so the second model joins it rather than being trusted.
+ */
+export function requiredConfigPaths(
+  models: ModelsInUse,
+  op: PricedOperation
+): string[] {
+  const shared = [
     "llm.models.generation",
     "llm.maxOutputTokens",
-    `llm.prices.${model}`,
+    `llm.prices.${models.generation}`,
   ];
+  switch (op.purpose) {
+    case ONBOARDING_BRAIN_PURPOSE:
+      return [
+        "creditCosts.onboardingBrainBuild",
+        "creditCosts.onboardingBrainRebuild",
+        ...shared,
+      ];
+    case GENERATION_PURPOSE:
+      return [
+        `creditCosts.${op.creditCostKey}`,
+        // THE MODEL ID ALWAYS — a generation reads it on every path, so a
+        // stored document that lacks it cannot route the scoring call at all.
+        "llm.models.classification",
+        // ITS PRICE ROW ONLY WHEN A CALLER IS ABOUT TO SPEND AGAINST IT (see
+        // `ModelsInUse.classification`). The behavioural witness is
+        // `generate.test.ts`: a config with no haiku price row refuses BEFORE
+        // the vendor, with a provider that throws if reached.
+        ...(models.classification
+          ? [`llm.prices.${models.classification}`]
+          : []),
+        ...shared,
+      ];
+    default: {
+      // EXHAUSTIVE BY CONSTRUCTION: a third purpose that forgets its price
+      // paths is a compile error here, not an operation that bills against a
+      // document nobody checked. The throw is the runtime half — a cast can
+      // defeat the type, and nothing can defeat this.
+      const never: never = op;
+      throw new UnpricedOperationError((never as PricedOperation).purpose);
+    }
+  }
+}
+
+/**
+ * What this operation costs the creator, in credits (R13).
+ *
+ * GENERALISED FROM `priceOf(content, priorBillableAttempts)`, whose signature
+ * could only ever answer the onboarding question. `creditCosts.hookSet` has
+ * existed and been seeded since M1 and had NO READER; this is its first one.
+ */
+export function priceOf(content: RespinConfigV1, op: PricedOperation): number {
+  switch (op.purpose) {
+    // The included build is free; every rebuild after it is priced (D-M2-2).
+    case ONBOARDING_BRAIN_PURPOSE:
+      return op.priorBillableAttempts === 0
+        ? content.creditCosts.onboardingBrainBuild
+        : content.creditCosts.onboardingBrainRebuild;
+    // A generation is priced by its MODE, every time. There is no included
+    // generation: D-M2-2's "one free build per profile" is a property of the
+    // onboarding brain, not of the product's output.
+    case GENERATION_PURPOSE:
+      return content.creditCosts[op.creditCostKey];
+    default: {
+      const never: never = op;
+      throw new UnpricedOperationError((never as PricedOperation).purpose);
+    }
+  }
+}
+
+/**
+ * The uncharged-billable-attempt cap for a purpose (R16), from config.
+ *
+ * A MAP FROM PURPOSE TO CONFIG KEY, not an `if`, for the reason the slice card
+ * gives the tier gate: the third purpose is a key somebody must fill in, not a
+ * branch they may forget. `countUnchargedBillableAttempts({purpose})` already
+ * takes a purpose, so the accessor was ready; only the cap and its refusal
+ * needed widening.
+ */
+export function unchargedAttemptCap(
+  content: RespinConfigV1,
+  purpose: PricedOperation["purpose"]
+): number {
+  const caps: Record<PricedOperation["purpose"], number> = {
+    [ONBOARDING_BRAIN_PURPOSE]: content.onboarding.maxUnchargedBillableAttempts,
+    [GENERATION_PURPOSE]: content.generation.maxUnchargedBillableAttempts,
+  };
+  return caps[purpose];
+}
+
+/**
+ * WHEN the uncharged-attempt count starts (billing gate, 2026-09-01).
+ *
+ * A TOTAL `Record` over the purposes, like `unchargedAttemptCap` above, so a
+ * third purpose has to ANSWER this rather than inherit somebody's answer —
+ * CLAUDE.md's 2026-08-29 population rule applied before the third path exists.
+ *
+ * THE TWO PURPOSES ANSWER IT DIFFERENTLY, ON PURPOSE:
+ *
+ *  - GENERATION is windowed (`generation.unchargedAttemptWindowMinutes`). The
+ *    thing it bounds is a deterministic failure repeating under a creator's
+ *    finger, which happens within one sitting; an unwindowed count over an
+ *    APPEND-ONLY table refuses that profile's generations forever once it
+ *    crosses the cap, and generation is "the thing a creator does all day".
+ *  - ONBOARDING is still LIFETIME, and that is stated rather than inherited.
+ *    Its cap counts against a once-in-a-while brain build, and narrowing it to
+ *    a window here would silently WIDEN a bound this gate was not asked to
+ *    move. It carries the same permanent-refusal shape at a much lower rate,
+ *    and that residual is recorded in `decisions.md` with its revisit trigger
+ *    rather than left implicit.
+ */
+export function unchargedAttemptWindowStart(
+  content: RespinConfigV1,
+  purpose: PricedOperation["purpose"],
+  now: Date
+): Date {
+  const starts: Record<PricedOperation["purpose"], () => Date> = {
+    [ONBOARDING_BRAIN_PURPOSE]: () => new Date(0),
+    [GENERATION_PURPOSE]: () =>
+      new Date(
+        now.getTime() - content.generation.unchargedAttemptWindowMinutes * 60_000
+      ),
+  };
+  return starts[purpose]();
 }
 
 /**
@@ -313,8 +526,20 @@ export async function runInference(
     "llm.models.generation",
   ]);
   const model = probe.content.llm.models.generation;
+  // R13: the price paths are per PURPOSE now. `priorAttempts` is not known
+  // yet at this point and does not need to be — the onboarding branch's two
+  // price keys are both required whichever one prices this attempt.
   const { version: configVersion, content } =
-    await getActiveConfigRequiringStored(db, requiredConfigPaths(model));
+    await getActiveConfigRequiringStored(
+      db,
+      // ONE ROLE: the onboarding brain build makes a single completion and no
+      // scoring call, so it names no classification model and is never refused
+      // for a price row it does not spend against.
+      requiredConfigPaths({ generation: model }, {
+        purpose: ONBOARDING_BRAIN_PURPOSE,
+        priorBillableAttempts: 0,
+      })
+    );
   // FAIL CLOSED ON THE PRICE BEFORE SPENDING (R6). Looked up here as well as
   // after the call, deliberately: refusing a misconfigured model BEFORE we pay
   // for it costs the creator nothing, whereas the post-call lookup can only
@@ -350,14 +575,47 @@ export async function runInference(
   // and never the creator's. Making it exact would mean counting inside the
   // debit's locked transaction, after the vendor was already paid — a charge
   // where a refusal was owed.
-  const unchargedCap = content.onboarding.maxUnchargedBillableAttempts;
+  const unchargedCap = unchargedAttemptCap(content, ONBOARDING_BRAIN_PURPOSE);
+  // LIFETIME, said out loud rather than defaulted — see
+  // `unchargedAttemptWindowStart` for why onboarding answers this differently
+  // from generation, and `decisions.md` for the residual. Hoisted out of the
+  // accessor call so the metric below can DERIVE its window from the same
+  // value the count was taken over instead of restating "lifetime" as a
+  // literal that the day onboarding is windowed becomes a lie.
+  const unchargedSince = unchargedAttemptWindowStart(
+    content,
+    ONBOARDING_BRAIN_PURPOSE,
+    at
+  );
   const uncharged = await scope.accessors.countUnchargedBillableAttempts({
     purpose: ONBOARDING_BRAIN_PURPOSE,
+    since: unchargedSince,
   });
   if (uncharged >= unchargedCap) {
+    // THE SECOND MEMBER OF THE COUNTER'S POPULATION (billing gate round 2,
+    // 2026-09-01). The metric was asked for by the generation cap's widened
+    // window, but the population it counts is a LIST of cap sites, not one
+    // path (CLAUDE.md 2026-08-29) — and this site is the one whose refusal is
+    // still PERMANENT, so a profile stuck here is exactly what an operator has
+    // no other way to learn about. `windowMinutes: null` is that fact on the
+    // wire rather than a missing field.
+    emitUnchargedAttemptCapMetric({
+      workspaceId: scope.workspaceId,
+      profileId: scope.profileId,
+      purpose: ONBOARDING_BRAIN_PURPOSE,
+      attempts: uncharged,
+      cap: unchargedCap,
+      windowMinutes:
+        unchargedSince.getTime() === 0
+          ? null
+          : Math.round((at.getTime() - unchargedSince.getTime()) / 60_000),
+    });
     throw new UnchargedAttemptCapError(uncharged, unchargedCap);
   }
-  const preCallCost = priceOf(content, priorAttempts);
+  const preCallCost = priceOf(content, {
+    purpose: ONBOARDING_BRAIN_PURPOSE,
+    priorBillableAttempts: priorAttempts,
+  });
   if (preCallCost > 0) {
     const view = await deriveBalance(db, scope.workspaceId);
     if (view.balance < preCallCost) {
@@ -509,6 +767,7 @@ export async function runInference(
         await recordUsage(scope, {
           db,
           params,
+          purpose: ONBOARDING_BRAIN_PURPOSE,
           model: servedModel,
           tokensIn,
           tokensOut,
@@ -516,7 +775,7 @@ export async function runInference(
           outcome,
           consumedIncludedBuild,
           promptBundleVersion: params.promptBundleVersion,
-          billing,
+          resolvedTier: billing.tier,
           content,
           configVersion,
         });
@@ -537,6 +796,7 @@ export async function runInference(
     const usageRow = await recordUsage(scope, {
       db,
       params,
+      purpose: ONBOARDING_BRAIN_PURPOSE,
       model: servedModel,
       tokensIn,
       tokensOut,
@@ -545,7 +805,7 @@ export async function runInference(
       // A successful run is exactly what the included build is for.
       consumedIncludedBuild: true,
       promptBundleVersion: params.promptBundleVersion,
-      billing,
+      resolvedTier: billing.tier,
       content,
       configVersion,
     });
@@ -582,7 +842,10 @@ export async function runInference(
         },
         tx
       );
-      const cost = priceOf(content, priors);
+      const cost = priceOf(content, {
+        purpose: ONBOARDING_BRAIN_PURPOSE,
+        priorBillableAttempts: priors,
+      });
       if (cost === 0) {
         const view = await deriveBalanceInTx(tx, scope.workspaceId);
         return { creditsCharged: 0, balanceAfter: view.balance };
@@ -638,16 +901,6 @@ export async function runInference(
   }
 }
 
-/** The included build is free; every rebuild after it is priced (D-M2-2). */
-function priceOf(
-  content: RespinConfigV1,
-  priorBillableAttempts: number
-): number {
-  return priorBillableAttempts === 0
-    ? content.creditCosts.onboardingBrainBuild
-    : content.creditCosts.onboardingBrainRebuild;
-}
-
 /**
  * Write the settlement row, in its own transaction.
  *
@@ -657,11 +910,18 @@ function priceOf(
  * it inside `packages/db` would invert the dependency graph — so R-30 binding
  * constraint 8 binds the WRITER instead, and this is that writer.
  */
-async function recordUsage(
+export async function recordUsage(
   scope: ProfileScope,
   args: {
     db: DbLike;
     params: RunInferenceParams;
+    /**
+     * WHICH OPERATION THIS SPEND BELONGS TO (R12). A parameter since slice 6:
+     * it was the module constant `ONBOARDING_BRAIN_PURPOSE`, which would have
+     * booked every generation's spend against the onboarding grain and priced
+     * a hook set as a brain rebuild.
+     */
+    purpose: string;
     model: string;
     tokensIn: number;
     tokensOut: number;
@@ -671,7 +931,15 @@ async function recordUsage(
     consumedIncludedBuild: boolean;
     /** The bundle that produced the prompt. Required — see RunInferenceParams. */
     promptBundleVersion: string;
-    billing: BillingState;
+    /**
+     * FROM THE ONE TIER AUTHORITY (`state.ts`), never re-derived here.
+     *
+     * The TIER rather than the whole `BillingState` since slice 6: this
+     * function reads exactly one field of it, and a caller with only a tier in
+     * hand was otherwise forced to invent the other fields — which is a
+     * fabricated `state` on a row a margin dashboard reads.
+     */
+    resolvedTier: BillingState["tier"];
     content: RespinConfigV1;
     configVersion: number;
   }
@@ -726,15 +994,14 @@ async function recordUsage(
     caps.recordModelUsage(
       {
         attemptId: args.params.attemptId,
-        purpose: ONBOARDING_BRAIN_PURPOSE,
+        purpose: args.purpose,
         model: args.model,
         tokensIn: args.tokensIn,
         tokensOut: args.tokensOut,
         usageRaw: args.usageRaw,
         costMicroUsd: cost,
         costState,
-        // FROM THE ONE TIER AUTHORITY (`state.ts`), never re-derived here.
-        resolvedTier: args.billing.tier,
+        resolvedTier: args.resolvedTier,
         promptBundleVersion: args.promptBundleVersion,
         configVersion: args.configVersion,
         outcome: args.outcome,

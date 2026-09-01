@@ -4,6 +4,8 @@
 **Date: 2026-08-30**
 **Plan: [`respin-finish-master-plan.md`](../plans/respin-finish-master-plan.md) · Card: [`respin-finish-phase-2b.md`](../plans/respin-finish-phase-2b.md) (corrective addendum to the closed slice-2b card)**
 
+> **Superseded capability note (Slice 4c, 2026-08-31):** this card is immutable evidence of the Slice 2b-c run, not current reachability proof for R4a. Slice 4c removed `applyReconciliationDelta`, its `model_usage` UPDATE allowance, typed error/copy plumbing, and reconciliation-mutation tests because no real provider/job/operator-import caller exists. The retained unknown denominator, normal spend UPSERT, route rename, and read-only `reconcileSpend` report remain current. Corrected-cost mutation is explicitly re-homed to the future real integration that can prove payload identity and idempotency.
+
 ## The line this addendum closes
 
 **Keep the unknown-cost share after detail deletion, reconcile cost deltas once, use correct Free periods, and see cost at the accurately named route.**

@@ -17,11 +17,16 @@ import type { DbLike } from "./db-like";
 import type { InputClass, OnboardingInput } from "./onboarding-schema";
 import {
   ProfileScope,
+  loadReferenceSafetyContext,
   writeCapabilities,
   type LedgerPage,
   type WorkspaceScope,
 } from "./with-workspace";
 import { PostAttestationError, PostContentError } from "./errors";
+import {
+  evaluateReferenceSafety,
+  type ReferenceSafetyRefusal,
+} from "./echo";
 import { POST_CONTENT_MAX, POST_COUNT_MAX } from "./storage-limits";
 
 export { POST_CONTENT_MAX, POST_COUNT_MAX } from "./storage-limits";
@@ -221,6 +226,67 @@ export async function appendReferencePost(
     inputClass: "reference",
     content,
     ...(sourceUrl !== undefined ? { sourceUrl } : {}),
+  });
+}
+
+export type CandidateReferenceSafetyResult =
+  | {
+      decision: "accept";
+      checkedReferenceCount: number;
+      /** Pasted free text carries no SourceEvidenceEntry citation spans. */
+      candidateReferenceSpanCount: 0;
+    }
+  | {
+      decision: "refuse";
+      reason: ReferenceSafetyRefusal["reason"];
+      message: string;
+      match: ReferenceSafetyRefusal["match"];
+      checkedReferenceCount: number;
+      /** Pasted free text carries no SourceEvidenceEntry citation spans. */
+      candidateReferenceSpanCount: 0;
+    };
+
+/**
+ * Read-only candidate check beside reference intake (R14/R14a).
+ *
+ * Scope, current reference corpus and retained citation spans are all derived
+ * server-side. The candidate and decision are never inserted or updated, no
+ * model is called, and no credit path is reachable from this module.
+ *
+ * Free text has no SourceEvidenceEntry spans. It therefore passes an explicit
+ * empty new-span population to the exact combined decision used by hard
+ * writes. The hard write remains authoritative: it reloads the corpus and
+ * supplies its real spans rather than accepting any preview state or token.
+ */
+export async function checkCandidateReferenceSafety(
+  db: DbLike,
+  scope: WorkspaceScope,
+  profileId: string,
+  candidate: string
+): Promise<CandidateReferenceSafetyResult> {
+  assertPostContent(candidate);
+  return db.transaction(async (tx) => {
+    const profileScope = await ProfileScope.mint(tx, scope, profileId);
+    const context = await loadReferenceSafetyContext(profileScope, tx);
+    const decision = evaluateReferenceSafety({
+      content: candidate,
+      references: context.references,
+      newSpans: [],
+      retainedSpans: context.retainedSpans,
+    });
+    const common = {
+      checkedReferenceCount: context.references.length,
+      candidateReferenceSpanCount: 0 as const,
+    };
+    return decision.decision === "accept"
+      ? { decision: "accept", ...common }
+      : {
+          decision: "refuse",
+          reason: decision.reason,
+          message: decision.detail,
+          match: decision.match,
+          ...common,
+        };
   });
 }
 
