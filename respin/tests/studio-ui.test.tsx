@@ -25,9 +25,10 @@
 //  4. THE TIER→MODE MAP IS NOT COPIED HERE. R18's authority is
 //     `packages/credits/src/mode-access.ts`, and a source scan asserts this
 //     directory does not enumerate the other six modes.
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -38,6 +39,16 @@ import {
   PERFORMANCE_CLAIMS,
   STUDIO_POSITIVE_ASSERTIONS,
 } from "./support/forbidden-claims";
+import {
+  GENERATION_SCREEN_DIRS,
+  STREAM_SHAPES,
+  generationOutcomeImporters,
+  generationScreenFileCounts,
+  generationScreenFiles,
+  shapesMatchingSpecimen,
+  streamingViolations,
+  unlistedGenerationScreenFiles,
+} from "./support/no-streaming";
 import {
   BILLING_ERROR_COPY,
   CODE_FOR_ERROR_CLASS,
@@ -51,29 +62,54 @@ import {
   studioRefusalCopy,
 } from "../app/(product)/studio/copy";
 import {
-  MODE_AVAILABILITY_NOTE,
   NO_RESULTS_BASIS,
   NO_STREAM_NOTE,
   PLATFORM_OPTIONS,
-  STUDIO_MODE,
+  PREPARING_LABEL,
+  FEEDBACK_HEADING,
+  FEEDBACK_TODAY,
+  LINEAGE_SCOPE_NOTE,
+  REVISION_NOTE_HELP,
+  REVISION_SAME_MODE_NOTE,
   checkOffer,
   claimFamilyNote,
+  feedbackNoteLimit,
+  feedbackRecordedSentence,
+  frameworksNotUsedSentence,
+  lineageChoiceLabel,
+  reactionLabel,
   claimsHeading,
   creatorRulesSentence,
   generateChargeSentence,
   generateCostSentence,
   killTestSentence,
+  lineageLineFor,
+  priceLineFor,
+  modeAvailabilityNote,
   replayChargeSentence,
+  revisionCostSentence,
   traceabilityFlagNote,
   traceabilityHeading,
   whyThisPerformsView,
+  type ModeChoiceView,
 } from "../app/(product)/studio/run-copy";
-import { studioStateFor } from "../app/(product)/studio/projection";
+import {
+  LINEAGE_VIEW_MAX,
+  studioActionStateFor,
+  studioStateFor,
+} from "../app/(product)/studio/projection";
 import { GenerationOutcome } from "../app/(product)/studio/generation-outcome";
+import { LineageList } from "../app/(product)/studio/lineage-view";
+import { FeedbackBlock } from "../app/(product)/studio/feedback-block";
 import { StudioView, type StudioViewProps } from "../app/(product)/studio/studio-view";
+import { GENERATION_FEEDBACK_REACTIONS, FEEDBACK_NOTE_MAX } from "@respin/db";
 import type {
   ClaimFlag,
+  FeedbackState,
   KillTestSummary,
+  LineageEntry,
+  ScriptDocument,
+  StudioActionState,
   StudioRunState,
 } from "../app/(product)/studio/run-state";
 
@@ -204,9 +240,14 @@ const KILL_TEST: KillTestSummary = {
   claims: [],
 };
 
-const USABLE: StudioRunState = {
-  status: "usable",
-  generationId: "gen-1",
+/**
+ * THE HOOK-SET DOCUMENT, as slice 7 projects it.
+ *
+ * Slice 6's fixture spread the sections onto the state itself; slice 7 moved
+ * them under `document`, because one renderer now serves six modes and a
+ * per-mode shape on the state is a per-mode renderer waiting to happen.
+ */
+const HOOKS_DOCUMENT: ScriptDocument = {
   hooks: [
     { text: "It took 412 takes to get this right.", mechanic: "confession" },
     { text: "Filmed in Dorset on a Tuesday.", mechanic: "place-anchor" },
@@ -221,8 +262,32 @@ const USABLE: StudioRunState = {
     platform: "TikTok",
     guidance: "Mark this as a paid partnership in the app before you post it.",
   },
+};
+
+const USABLE: StudioRunState = {
+  status: "usable",
+  generationId: "gen-1",
+  modeId: "hooks",
+  modeLabel: "Hooks",
+  document: HOOKS_DOCUMENT,
   killTest: KILL_TEST,
   charge: { creditsChargedNow: 5, balanceAfter: 20 },
+  // ZERO, NOT `null`: this run built an offer and everything fitted. The
+  // drop case has its own fixture beside the R17 cases below.
+  privateFrameworksNotUsed: 0,
+};
+
+/** A usable state carrying a different document — one helper, six modes. */
+const usableWith = (document: ScriptDocument, modeLabel = "Hooks"): StudioRunState => ({
+  ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
+  modeLabel,
+  document,
+});
+
+/** The universal half every mode's document carries (R18). */
+const UNIVERSAL: Pick<ScriptDocument, "whyThisPerforms" | "disclosure"> = {
+  whyThisPerforms: HOOKS_DOCUMENT.whyThisPerforms,
+  disclosure: HOOKS_DOCUMENT.disclosure,
 };
 
 /**
@@ -270,6 +335,8 @@ const claimsOn = (hardFields: string[], flagFields: string[]): ClaimFlag[] => [
 const HONEST_REFUSAL: StudioRunState = {
   status: "honest_refusal",
   generationId: "gen-2",
+  modeId: "hooks",
+  modeLabel: "Hooks",
   headline: "Everything died on the hard rules.",
   why: [
     "Three fragments in a row, twice.",
@@ -279,13 +346,51 @@ const HONEST_REFUSAL: StudioRunState = {
     "Try the angle your own material already supports — a smaller claim you can show.",
   killTest: { ...KILL_TEST, outcome: "failed", attempts: 2, rewritten: true },
   charge: { creditsChargedNow: 5, balanceAfter: 15 },
+  privateFrameworksNotUsed: 0,
 };
+
+/**
+ * THE MODE PICKER'S DATA, as the SERVER produces it.
+ *
+ * Six available, one refused for the plan and one unbuilt — a shape a real
+ * `modeOffers(tier)` produces (Free on a build where `analyseAndSpin` is not
+ * implemented is exactly this, minus the paid ones). It is written out here
+ * rather than imported from `@respin/credits` because these are VIEW fixtures:
+ * the agreement between `modeOffers` and `assertModeAllowed` is asserted in
+ * `packages/credits/tests/mode-access.test.ts`, against the real map.
+ */
+const MODES: ModeChoiceView[] = [
+  { id: "m-a", label: "Footage to thesis", status: "available", cost: 12 },
+  { id: "m-b", label: "Idea to script", status: "available", cost: 12 },
+  { id: "m-c", label: "Source to reel", status: "available", cost: 12 },
+  { id: "m-d", label: "Analyse and spin", status: "not_built_yet", cost: null },
+  { id: "m-e", label: "Hooks", status: "available", cost: 5 },
+  { id: "m-f", label: "Caption", status: "available", cost: 2 },
+  { id: "m-g", label: "Ideation", status: "available", cost: 4 },
+];
+
+/** Free's shape: three modes, four outside the plan, one of them also unbuilt. */
+const FREE_MODES: ModeChoiceView[] = [
+  { id: "m-a", label: "Footage to thesis", status: "not_in_plan", cost: null },
+  { id: "m-b", label: "Idea to script", status: "not_in_plan", cost: null },
+  { id: "m-c", label: "Source to reel", status: "not_in_plan", cost: null },
+  { id: "m-d", label: "Analyse and spin", status: "not_in_plan", cost: null },
+  { id: "m-e", label: "Hooks", status: "available", cost: 5 },
+  { id: "m-f", label: "Caption", status: "available", cost: 2 },
+  { id: "m-g", label: "Ideation", status: "available", cost: 4 },
+];
 
 const baseView: StudioViewProps = {
   profileName: "Anna",
   run: {
-    action: async () => ({ status: "idle" }) as StudioRunState,
-    costSentence: generateCostSentence(5, 25),
+    action: async () => IDLE_ACTION_STATE,
+    feedbackAction: async () => ({ status: "idle" }) as const,
+    modes: MODES,
+    costSentence: generateCostSentence(MODES, 25),
+    revisionCostSentence: revisionCostSentence(2),
+    revisionCost: 2,
+    reactions: GENERATION_FEEDBACK_REACTIONS,
+    noteMax: FEEDBACK_NOTE_MAX,
     block: null,
     refusalCopy: REFUSAL_COPY,
     fallbackCopy: REFUSAL_COPY.unknown,
@@ -294,6 +399,12 @@ const baseView: StudioViewProps = {
   onboardingHref: "/onboarding",
   brainHref: "/brain",
   usageHref: "/usage",
+  frameworksHref: "/studio/frameworks",
+};
+
+const IDLE_ACTION_STATE: StudioActionState = {
+  lineage: [],
+  latest: { status: "idle" },
 };
 
 const renderView = (p: Partial<StudioViewProps> = {}) =>
@@ -311,17 +422,84 @@ const renderOutcome = (state: StudioRunState) =>
 // ------------------------------------------------------ the pure decisions
 
 describe("the pure decisions", () => {
-  it("generateCostSentence states the price and never invents one", () => {
-    expect(generateCostSentence(5, 25)).toBe(
-      "A hook set costs 5 credits, every time — there is no included draft. You have 25 credits."
+  it("generateCostSentence states EVERY offered mode's price and never invents one", () => {
+    const one: ModeChoiceView[] = [
+      { id: "m-e", label: "Hooks", status: "available", cost: 5 },
+    ];
+    expect(generateCostSentence(one, 25)).toBe(
+      "Hooks costs 5 credits, every time — there is no included draft. You have 25 credits."
     );
-    expect(generateCostSentence(1, 1)).toContain("1 credit, every time");
+    // SLICE 7's REAL CHANGE: the selection lives in the browser and this
+    // sentence is rendered on the server, so a control that showed ONE price
+    // would show the wrong one most of the time.
+    const many = generateCostSentence(MODES, 25);
+    for (const mode of MODES.filter((m) => m.status === "available")) {
+      expect(many, mode.label).toContain(`${mode.label} costs`);
+    }
+    // ...and a mode the plan excludes gets no price tag on this screen: a
+    // refusal is not a sales surface (R15).
+    expect(generateCostSentence(FREE_MODES, 25)).not.toContain("Idea to script");
+    expect(
+      generateCostSentence(
+        [{ id: "m-e", label: "Hooks", status: "available", cost: 1 }],
+        1
+      )
+    ).toContain("1 credit, every time");
     // A FAILED READ SAYS SO. Non-negotiable 6: no number is invented, and the
     // sentence still tells the reader the server prices it before spending.
-    expect(generateCostSentence(null, 25)).toMatch(/could not be read/);
-    expect(generateCostSentence(null, 25)).not.toMatch(/\d+ credits/);
+    const unread: ModeChoiceView[] = [
+      { id: "m-e", label: "Hooks", status: "available", cost: null },
+    ];
+    expect(generateCostSentence(unread, 25)).toMatch(/could not be read/);
+    expect(generateCostSentence(unread, 25)).not.toMatch(/costs \d+/);
     // A balance that could not be read simply is not claimed.
-    expect(generateCostSentence(5, null)).not.toMatch(/You have/);
+    expect(generateCostSentence(one, null)).not.toMatch(/You have/);
+    // NO OFFERED MODE AT ALL is a named answer, never an empty sentence.
+    expect(generateCostSentence(FREE_MODES.map((m) => ({ ...m, status: "not_in_plan" as const })), 3)).toMatch(
+      /no mode available/i
+    );
+  });
+
+  it("revisionCostSentence prices a revision AS a revision (R8)", () => {
+    // R8's whole content: `creditCosts.revision`, never the parent mode's key.
+    // The screen states that rule in words as well as printing the number, so a
+    // creator revising a 12-credit script knows the press is priced at 2.
+    expect(revisionCostSentence(2)).toContain("2 credits");
+    expect(revisionCostSentence(2)).toMatch(/whichever mode it revises/i);
+    expect(revisionCostSentence(2)).toMatch(
+      /not at the price of the draft it came from/i
+    );
+    expect(revisionCostSentence(1)).toContain("1 credit,");
+    expect(revisionCostSentence(0)).toContain("nothing");
+    // Non-negotiable 6 again: an unread price is said, never guessed.
+    expect(revisionCostSentence(null)).toMatch(/could not be read/);
+    expect(revisionCostSentence(null)).not.toMatch(/\d+ credit/);
+  });
+
+  it("modeAvailabilityNote tells the two refusals APART, and names neither as a sale", () => {
+    // `ModeNotInPlanError` and `ModeNotBuiltYetError` say opposite things about
+    // whose fault it is, and the picker must say the same thing BEFORE the
+    // press that the refusal says after it.
+    const note = modeAvailabilityNote(MODES);
+    expect(note).toContain("Analyse and spin");
+    expect(note).toMatch(/not built yet/i);
+    expect(note).toMatch(/what we have shipped, not about what you bought/i);
+
+    const free = modeAvailabilityNote(FREE_MODES);
+    expect(free).toMatch(/not part of this workspace's plan/i);
+    expect(free).toContain("Idea to script");
+    // R15: no sale, on either sentence.
+    for (const text of [note, free]) {
+      for (const inducement of ["upgrade", "subscribe", "a plan that includes"]) {
+        expect(text.toLowerCase(), inducement).not.toContain(inducement);
+      }
+    }
+    // EVERYTHING OFFERED is its own honest sentence rather than an awkward tail.
+    const all = modeAvailabilityNote(
+      MODES.map((m) => ({ ...m, status: "available" as const }))
+    );
+    expect(all).toMatch(/Every mode this product has is one of them/);
+    expect(all).not.toMatch(/not built|not part of/i);
   });
 
   it("generateCostSentence NEVER repeats the voice screen's 'first one is included' rule", () => {
@@ -329,9 +507,14 @@ describe("the pure decisions", () => {
     // build is a property of the onboarding brain, not of the product's
     // output. The onboarding sentence copied here would promise a free draft.
     for (const s of [
-      generateCostSentence(5, 25),
-      generateCostSentence(0, 25),
-      generateCostSentence(null, null),
+      generateCostSentence(MODES, 25),
+      generateCostSentence(
+        MODES.map((m) => ({ ...m, cost: m.cost === null ? null : 0 })),
+        25
+      ),
+      generateCostSentence(MODES.map((m) => ({ ...m, cost: null })), null),
+      revisionCostSentence(2),
+      revisionCostSentence(null),
     ]) {
       expect(s.toLowerCase()).not.toMatch(/first (run|draft) .{0,20}is included/);
       expect(s.toLowerCase()).not.toMatch(/included build/);
@@ -478,10 +661,12 @@ describe("R20/REQ-I04: 'why this performs' always names its weakest point", () =
   });
 
   it("the SCREEN withholds it too — the reasoning never renders alone", () => {
-    const html = renderOutcome({
-      ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
-      whyThisPerforms: { reasoning: "SECRET_REASONING", weakestPoint: " " },
-    });
+    const html = renderOutcome(
+      usableWith({
+        ...HOOKS_DOCUMENT,
+        whyThisPerforms: { reasoning: "SECRET_REASONING", weakestPoint: " " },
+      })
+    );
     expect(html).toContain('data-testid="studio-why-withheld"');
     expect(html).not.toContain("SECRET_REASONING");
     expect(html).not.toContain('data-testid="studio-weakest-point"');
@@ -588,7 +773,7 @@ describe("R19/REQ-I03: the traceability scan flags and offers [check], never edi
     const html = renderOutcome({
       ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
       killTest: { ...KILL_TEST, traceability: [] },
-    });
+    } as StudioRunState);
     expect(html).toMatch(/found in your brain or in what you typed in/i);
     expect(html).not.toContain('data-testid="studio-check-offer"');
   });
@@ -850,6 +1035,8 @@ describe("R14c: a replayed attempt says nothing was called and nothing charged",
   const replayed: StudioRunState = {
     status: "replayed",
     generationId: "gen-3",
+    modeId: "hooks",
+    modeLabel: "Hooks",
     outcome: "usable",
     weakestPoint: "The claim in hook two needs a source.",
     refusalReason: null,
@@ -877,7 +1064,7 @@ describe("R14c: a replayed attempt says nothing was called and nothing charged",
     // the pair outright. Deleting the `.trim()` left 84 tests green until this
     // one existed.
     for (const weakestPoint of ["", " ", "\n\t", null]) {
-      const html = renderOutcome({ ...replayed, weakestPoint });
+      const html = renderOutcome({ ...replayed, weakestPoint } as StudioRunState);
       expect(html, JSON.stringify(weakestPoint)).not.toContain(
         'data-testid="studio-weakest-point"'
       );
@@ -891,6 +1078,85 @@ describe("R14c: a replayed attempt says nothing was called and nothing charged",
 });
 
 // --------------------------------------------- the projection off the facade
+
+describe("R17: the creator is told when their OWN frameworks did not fit", () => {
+  // THE GAP THIS CLOSES (slice 7 cross-boundary pass, 2026-09-01).
+  // `frameworksForContext` bounds how much of one prompt the framework library
+  // may occupy and returns `{kept, dropped}`. The eviction of CURATED rows is
+  // impossible (the offer sorts shared-first) and a drop is counted by the
+  // server metric `respin.credits.framework_offer.dropped` — but when a
+  // creator's OWN private frameworks were dropped, no screen said so: they
+  // simply did not get the frameworks they wrote, at full price.
+
+  it("the sentence appears only when frameworks of the creator's really were dropped", () => {
+    // THE THREE ANSWERS ARE NOT TWO. `null` is "this press built no offer" (a
+    // replay settles a stored candidate and assembles no prompt) and `0` is
+    // "it built one and everything fitted". Neither is a line on the screen,
+    // and collapsing them in the STATE would lose a fact a later surface needs.
+    expect(frameworksNotUsedSentence(null)).toBeNull();
+    expect(frameworksNotUsedSentence(0)).toBeNull();
+    expect(frameworksNotUsedSentence(-1)).toBeNull();
+    const one = frameworksNotUsedSentence(1)!;
+    expect(one).toContain("1 of your own framework was not put in");
+    const many = frameworksNotUsedSentence(3)!;
+    expect(many).toContain("3 of your own frameworks were not put in");
+  });
+
+  it("...and it neither promises anything nor sells an upgrade", () => {
+    // R15's rule where it would be easiest to break: "your frameworks did not
+    // fit" reads like a paywall and is not one — the budget is ONE number in
+    // the versioned config for the whole install, the same on Free and on
+    // Studio. And the sentence may not claim the draft would have been better.
+    const sentence = frameworksNotUsedSentence(4)!;
+    const text = sentence.toLowerCase();
+    for (const word of ["upgrade", "plan", "pro ", "studio ", "more credits", "pay"]) {
+      expect(text, `the sentence sells: ${word}`).not.toContain(word);
+    }
+    expect(text).not.toMatch(/would have|better|stronger|improve/);
+    // It names the ONE thing the creator can actually do, and says it is
+    // lossless — the same remedy `framework_limit` gives.
+    expect(text).toContain("retire");
+    // IT STATES THE ORDERING, NOT AN OUTCOME. "the shared library was
+    // unaffected" would be a claim about what happened, and this sentence is
+    // rendered off `droppedPrivate` alone — it cannot know whether a single
+    // curated row larger than the whole budget was also dropped. "curated
+    // first, so none of it was displaced by yours" is true in every case,
+    // because the offer sorts shared rows ahead of private ones.
+    expect(text).toContain("curated library is offered first");
+    expect(text).not.toContain("shared library was unaffected");
+    // The whole canon, on a sentence that ships to a creator.
+    for (const [label, re] of FORBIDDEN_CLAIMS) {
+      expect(text, `"${label}" appears`).not.toMatch(re);
+    }
+    for (const [label, re] of PERFORMANCE_CLAIMS) {
+      expect(text, `"${label}" appears`).not.toMatch(re);
+    }
+  });
+
+  it("the RESULT screen renders it, and only when there is something to say", () => {
+    const dropped = renderOutcome({ ...USABLE, privateFrameworksNotUsed: 2 });
+    expect(dropped).toContain('data-testid="studio-frameworks-not-used"');
+    expect(decoded(dropped)).toContain("2 of your own frameworks were not put in");
+    // A press that dropped nothing renders no line at all — the difference
+    // between telling somebody something and decorating the page.
+    for (const count of [0, null] as const) {
+      expect(
+        renderOutcome({ ...USABLE, privateFrameworksNotUsed: count }),
+        `count=${String(count)}`
+      ).not.toContain('data-testid="studio-frameworks-not-used"');
+    }
+  });
+
+  it("an HONEST REFUSAL says it too, because a refusal is charged", () => {
+    // The asymmetry that would otherwise ship: surfacing the fact only when
+    // the draft came out well. An honest refusal ran the same prompt and took
+    // the same debit.
+    const html = renderOutcome({ ...HONEST_REFUSAL, privateFrameworksNotUsed: 5 });
+    expect(html).toContain('data-testid="studio-frameworks-not-used"');
+    expect(decoded(html)).toContain("5 of your own frameworks were not put in");
+  });
+
+});
 
 describe("studioStateFor projects what the operation returned", () => {
   const generation = {
@@ -936,6 +1202,66 @@ describe("studioStateFor projects what the operation returned", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     }) as any;
 
+  it("the count comes from the OPERATION, and a replay has no answer", () => {
+    // The projection half: the number on the screen is the one `generate`
+    // returned, and a press that built no offer is `null` rather than a zero
+    // that would read as "nothing was dropped".
+    const withOffer = studioStateFor(
+      result({
+        run: {
+          status: "usable",
+          drafts: 1,
+          promptBundleVersion: "hooks@abc",
+          killTest,
+          output: {
+            hooks: [{ text: "H", mechanic: "M" }],
+            whyThisPerforms: { reasoning: "R", weakestPoint: "W" },
+            disclosure: { platform: "TikTok", guidance: "G" },
+          },
+        },
+        frameworkOffer: {
+          eligible: 12,
+          offered: 9,
+          droppedShared: 0,
+          droppedPrivate: 3,
+        },
+      }),
+      "Hooks"
+    );
+    expect(withOffer.status).toBe("usable");
+    if (withOffer.status !== "usable") return;
+    expect(withOffer.privateFrameworksNotUsed).toBe(3);
+
+    const noOffer = studioStateFor(
+      result({ run: null, replayed: true, frameworkOffer: null }),
+      "Hooks"
+    );
+    expect(noOffer.status).toBe("replayed");
+
+    // AND AN ABSENT FIELD FAILS CLOSED TO "no answer", not to a zero. A
+    // rolling deploy runs two builds at once and this value crosses a package
+    // boundary, so `undefined` is reachable however the type reads.
+    const smuggled = studioStateFor(
+      result({
+        run: {
+          status: "usable",
+          drafts: 1,
+          promptBundleVersion: "hooks@abc",
+          killTest,
+          output: {
+            hooks: [{ text: "H", mechanic: "M" }],
+            whyThisPerforms: { reasoning: "R", weakestPoint: "W" },
+            disclosure: { platform: "TikTok", guidance: "G" },
+          },
+        },
+        frameworkOffer: undefined,
+      }),
+      "Hooks"
+    );
+    if (smuggled.status !== "usable") throw new Error("expected a usable state");
+    expect(smuggled.privateFrameworksNotUsed).toBeNull();
+  });
+
   it("a usable run becomes the draft, the pair, the disclosure and the charge", () => {
     const state = studioStateFor(
       result({
@@ -950,11 +1276,16 @@ describe("studioStateFor projects what the operation returned", () => {
             disclosure: { platform: "TikTok", guidance: "G" },
           },
         },
-      })
+      }),
+      "Hooks"
     );
     expect(state.status).toBe("usable");
     if (state.status !== "usable") throw new Error("unreachable");
-    expect(state.hooks).toEqual([{ text: "H", mechanic: "M" }]);
+    expect(state.document.hooks).toEqual([{ text: "H", mechanic: "M" }]);
+    // THE LABEL IS THE CALLER'S and comes from the STORED row's mode, never
+    // from the string the browser posted — see `studioStateFor`'s docblock.
+    expect(state.modeLabel).toBe("Hooks");
+    expect(state.modeId).toBe("hooks");
     expect(state.charge).toEqual({ creditsChargedNow: 5, balanceAfter: 20 });
     expect(state.killTest.limitNote).toBe("LIMIT");
     // THE FINAL ATTEMPT'S findings, never the first: the draft on screen is the
@@ -989,7 +1320,8 @@ describe("studioStateFor projects what the operation returned", () => {
           killTest,
           refusal: { headline: "H", why: ["a", "b"], sharperAngle: "S" },
         },
-      })
+      }),
+      "Hooks"
     );
     expect(state.status).toBe("honest_refusal");
     if (state.status !== "honest_refusal") throw new Error("unreachable");
@@ -1004,7 +1336,7 @@ describe("studioStateFor projects what the operation returned", () => {
       // a fresh one that was just paid for.
       { replayed: true, run: { status: "usable" } },
     ]) {
-      expect(studioStateFor(result(over)).status).toBe("replayed");
+      expect(studioStateFor(result(over), "Hooks").status).toBe("replayed");
     }
   });
 });
@@ -1045,44 +1377,66 @@ describe("R18: the tier→mode gate's creator-facing copy", () => {
     expect(plan.detail).toMatch(/plan/i);
   });
 
-  it("the screen builds NO second tier→mode derivation (source scan)", () => {
+  it("the screen builds NO second tier→mode derivation, and names NO mode at all (source scan)", () => {
     // R18: "the tier authority stays `getWorkspaceBillingState` — no second
-    // derivation". `TIER_MODES` lives in `packages/credits/src/mode-access.ts`;
-    // a screen-side copy would go stale the day slice 7 changes the first.
-    const OTHER_MODE_IDS = [
+    // derivation". `MODE_TIERS` and `IMPLEMENTED_MODES` live in
+    // `packages/credits/src/mode-access.ts` and `@respin/modes`; a screen-side
+    // copy of either would go stale the day one of them changes.
+    //
+    // SLICE 7 MADE THIS SCAN STRICTLY WIDER, and that is the interesting part.
+    // Slice 6's version exempted `hooks`, because the screen submitted that one
+    // id as a hidden field. The picker is now built from `modeOffers(tier)`,
+    // which the SERVER resolves — so this directory names NO mode id at all,
+    // and the scan says so. A widened ban is the opposite of the usual
+    // direction and is only honest because the non-vacuity below drives the
+    // matcher against a planted violation of every id.
+    const ALL_MODE_IDS = [
       "footageToThesis",
       "ideaToScript",
       "sourceToReel",
       "analyseAndSpin",
+      "hooks",
       "caption",
       "ideation",
     ];
-    const files = studioSourceFiles();
-    expect(files.length).toBeGreaterThan(5);
     // COMMENTS STRIPPED, because this scan is about CODE. A docblock naming
-    // `TIER_MODES` to say "the authority is over there, and this file does not
+    // `MODE_TIERS` to say "the authority is over there, and this file does not
     // copy it" is the note a reader needs; banning the mention would delete the
     // explanation and keep the rule.
     const codeOnly = (src: string) =>
       src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    for (const file of files) {
-      const src = codeOnly(readFileSync(file, "utf8"));
-      for (const id of OTHER_MODE_IDS) {
-        expect(src, `${file} names the mode id '${id}'`).not.toContain(`"${id}"`);
-      }
-      // ...and no tier keyed to a mode list.
-      expect(src, file).not.toMatch(/TIER_MODES|planIncludesMode/);
+    /** Every mode id NAMED as a string literal in this source. */
+    const namedModeIds = (src: string): string[] =>
+      ALL_MODE_IDS.filter((id) => codeOnly(src).includes(`"${id}"`));
+
+    // NON-VACUITY FIRST, AND IT IS A PLANTED VIOLATION OF EVERY ID rather than
+    // a sample of one (CLAUDE.md 2026-08-21: a scan that reports zero findings
+    // is indistinguishable from a scan that is broken). It is planted as a
+    // STRING and never as a file: `studioSourceFiles` walks a real app
+    // directory, and a probe written there is visible to every other scan
+    // running concurrently — the defect the probe-artifact incident records.
+    for (const id of ALL_MODE_IDS) {
+      expect(namedModeIds(`const m = "${id}";`), id).toEqual([id]);
     }
-    // NON-VACUITY FOR THE STRIP: it removes comments and nothing else, so a
-    // planted mode id in real code is still caught.
-    expect(codeOnly('/* "caption" */ const m = "caption";')).toContain('"caption"');
-    expect(codeOnly('/* "caption" */ const m = 1;')).not.toContain('"caption"');
-    // NON-VACUITY: the scan reads real files and the one mode this screen DOES
-    // submit is present in them, so a scan that matched nothing would be
-    // visible here.
-    expect(files.some((f) => readFileSync(f, "utf8").includes(`"${STUDIO_MODE}"`))).toBe(
-      true
-    );
+    // ...and the strip removes comments and nothing else, so a mode id in a
+    // docblock is permitted while one in code is not.
+    expect(namedModeIds('/* "caption" */ const m = 1;')).toEqual([]);
+    expect(namedModeIds('/* "caption" */ const m = "caption";')).toEqual(["caption"]);
+
+    const files = studioSourceFiles();
+    // The population is real and includes the sub-directory slice 7 added, so
+    // a walker that stopped at the top level would be visible here.
+    expect(files.length).toBeGreaterThan(8);
+    expect(
+      files.some((f) => f.split(sep).includes("frameworks")),
+      "the walker does not reach app/(product)/studio/frameworks"
+    ).toBe(true);
+    for (const file of files) {
+      const src = readFileSync(file, "utf8");
+      expect(namedModeIds(src), `${file} names a mode id`).toEqual([]);
+      // ...and no tier keyed to a mode list.
+      expect(codeOnly(src), file).not.toMatch(/MODE_TIERS|TIER_MODES|planIncludesMode/);
+    }
   });
 });
 
@@ -1357,7 +1711,14 @@ describe("R20/R21: what /studio may and may not claim", () => {
       "price unknown",
       {
         ...baseView,
-        run: { ...baseView.run!, costSentence: generateCostSentence(null, null) },
+        run: {
+          ...baseView.run!,
+          costSentence: generateCostSentence(
+            MODES.map((m) => ({ ...m, cost: null })),
+            null
+          ),
+          revisionCostSentence: revisionCostSentence(null),
+        },
       },
     ],
     [
@@ -1411,6 +1772,28 @@ describe("R20/R21: what /studio may and may not claim", () => {
     ["a usable draft", USABLE],
     ["an honest refusal", HONEST_REFUSAL],
     [
+      // R17's LINE, IN THE SCAN. Every shared fixture carries
+      // `privateFrameworksNotUsed: 0`, so before this row the sentence existed
+      // and no honesty scan had ever rendered it — the exact shape of the
+      // 2026-08-29 lesson, where a guard's population silently excludes the
+      // new thing. Both charged states are covered: the refusal one is below.
+      "a usable draft whose own frameworks did not all fit",
+      {
+        ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
+        privateFrameworksNotUsed: 3,
+      } as StudioRunState,
+    ],
+    [
+      "an honest refusal whose own frameworks did not all fit",
+      {
+        ...(HONEST_REFUSAL as Extract<
+          StudioRunState,
+          { status: "honest_refusal" }
+        >),
+        privateFrameworksNotUsed: 1,
+      } as StudioRunState,
+    ],
+    [
       // THE CLAIMS BLOCK, RENDERED AND SCANNED (learning honesty gate round 2,
       // 2026-09-01). The shared `KILL_TEST` fixture pins `claims: []`, so
       // before this row the block's markup never entered the honesty scan in
@@ -1429,6 +1812,8 @@ describe("R20/R21: what /studio may and may not claim", () => {
       {
         status: "replayed",
         generationId: "g",
+        modeId: "hooks",
+        modeLabel: "Hooks",
         outcome: "usable",
         weakestPoint: "W",
         refusalReason: null,
@@ -1525,10 +1910,22 @@ describe("R21: /studio left NOT_BUILT_YET, and the removal is paid for", () => {
     expect(actionsSrc).toMatch(/const attemptId = randomUUID\(\);/);
     // The page binds that action into the panel, so the button posts to it.
     const pageSrc = read("app/(product)/studio/page.tsx");
-    expect(pageSrc).toMatch(/generateHooksAction\.bind\(null, profile\.id\)/);
-    // ...and the page is what supplies the price, from the same config
-    // document the operation prices against.
-    expect(pageSrc).toMatch(/creditCosts\.hookSet/);
+    expect(pageSrc).toMatch(/generateAction\.bind\(null, profile\.id\)/);
+    // ...and the FEEDBACK action too (slice 7, R10): a reaction control with
+    // nothing behind it is the same defect one screen over.
+    expect(pageSrc).toMatch(/recordFeedbackAction\.bind\(null, profile\.id\)/);
+    // ...and the page supplies the price through the OPERATION'S OWN pricing
+    // rule rather than by indexing `creditCosts` itself. Slice 6 pinned
+    // `creditCosts.hookSet`, which was right when the screen had one mode and
+    // is a second mode->key map now that it has six: `generationOp` is the one
+    // place a mode's cost key (and a revision's) is chosen, and `priceOf` is
+    // the lookup the debit is taken from.
+    expect(pageSrc).toMatch(/priceOf\(/);
+    expect(pageSrc).toMatch(/generationOp\(/);
+    expect(
+      pageSrc.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, ""),
+      "the page indexes creditCosts directly again"
+    ).not.toMatch(/creditCosts\./);
   });
 
   it("the courtesy read's SAFETY claim: ONE activation entrypoint, so no app path activates without a snapshot", () => {
@@ -1790,9 +2187,13 @@ describe("R21: /studio left NOT_BUILT_YET, and the removal is paid for", () => {
     const gutted = renderOutcome({
       status: "usable",
       generationId: "g",
-      hooks: [],
-      whyThisPerforms: { reasoning: "R", weakestPoint: " " },
-      disclosure: { platform: "TikTok", guidance: "G" },
+      modeId: "hooks",
+      modeLabel: "Hooks",
+      document: {
+        hooks: [],
+        whyThisPerforms: { reasoning: "R", weakestPoint: " " },
+        disclosure: { platform: "TikTok", guidance: "G" },
+      },
       killTest: {
         ...KILL_TEST,
         limitNote: "nothing to say",
@@ -1800,6 +2201,7 @@ describe("R21: /studio left NOT_BUILT_YET, and the removal is paid for", () => {
         traceability: [],
       },
       charge: { creditsChargedNow: 0, balanceAfter: 0 },
+      privateFrameworksNotUsed: null,
     });
     const resultFailures = positiveFailures({ form: renderView(), result: gutted });
     expect(resultFailures.map((f) => f.split(":")[0])).toEqual(
@@ -1880,7 +2282,7 @@ describe("streaming is deferred, and the screen says so rather than implying it"
     const html = renderView();
     expect(html).toContain('data-testid="studio-no-stream"');
     // The idle label is what a reader sees before pressing.
-    expect(html).toContain("Generate a hook set");
+    expect(html).toContain("Make a draft");
     // THE PENDING LABEL IS A SOURCE ASSERTION, and it has to be: `useFormStatus`
     // reports `pending: false` under `renderToStaticMarkup`, so the busy label
     // is a string no static render can produce. Asserting it here is weaker
@@ -1889,7 +2291,12 @@ describe("streaming is deferred, and the screen says so rather than implying it"
     // dozen refusal paths that never contact a vendor (the onboarding control
     // shipped that exact sentence and a gate removed it).
     const panelSrc = read("app/(product)/studio/studio-panel.tsx");
-    expect(panelSrc).toContain('pendingLabel="Working on your draft…"');
+    // SLICE 7 REPLACED THE LITERAL WITH `PREPARING_LABEL`, and the property is
+    // unchanged and stronger: the busy label is a constant a test can read and
+    // scan for the vocabulary of live generation (R16), rather than a string
+    // typed into the component.
+    expect(panelSrc).toContain("pendingLabel={PREPARING_LABEL}");
+    expect(PREPARING_LABEL).toMatch(/prepar/i);
     expect(panelSrc).not.toContain("Running the model");
     expect(panelSrc).not.toContain('pendingLabel="Saving');
   });
@@ -1906,13 +2313,37 @@ describe("streaming is deferred, and the screen says so rather than implying it"
 // ------------------------------------------------------------ the shell itself
 
 describe("the screen's shape", () => {
-  it("offers exactly one mode, and does not oversell the other six", () => {
-    expect(STUDIO_MODE).toBe("hooks");
-    expect(MODE_AVAILABILITY_NOTE).toMatch(/specified and not built/i);
+  it("offers exactly the modes the SERVER said are available, and no others", () => {
     const html = renderView();
-    expect(html).toContain(`value="${STUDIO_MODE}"`);
     expect(html).toContain('name="mode"');
+    for (const mode of MODES) {
+      const offered = mode.status === "available";
+      expect(
+        html.includes(`value="${mode.id}"`),
+        `${mode.label} (${mode.status}) is ${offered ? "missing from" : "offered by"} the picker`
+      ).toBe(offered);
+    }
+    // THE LABELS OF THE REFUSED ONES ARE STILL SAID, in the note above the
+    // control, with WHICH refusal applies — a picker that simply omitted them
+    // would leave a creator unable to tell "not in my plan" from "does not
+    // exist".
+    expect(decoded(html)).toContain(modeAvailabilityNote(MODES));
     for (const p of PLATFORM_OPTIONS) expect(html).toContain(p);
+  });
+
+  it("a plan with NO available mode is a named state, not an empty picker", () => {
+    const none = FREE_MODES.map((m) => ({ ...m, status: "not_in_plan" as const }));
+    const html = renderView({
+      run: {
+        ...baseView.run!,
+        modes: none,
+        costSentence: generateCostSentence(none, 3),
+      },
+    });
+    expect(html).toContain('data-testid="studio-no-modes"');
+    expect(html).not.toContain('name="mode"');
+    // ...and the note still lists every mode and why each is not offered.
+    expect(decoded(html)).toContain(modeAvailabilityNote(none));
   });
 
   it("names where the charge appears and where the brain comes from", () => {
@@ -1933,5 +2364,1033 @@ describe("the screen's shape", () => {
     expect(html).toContain('data-testid="studio-action-error"');
     expect(html).toContain('role="alert"');
     expect(html).toMatch(/no activated brain/i);
+  });
+});
+
+// ===========================================================================
+// SLICE 7 — the rest of the Studio.
+// ===========================================================================
+
+// ------------------------------------------- R18: EVERY mode, not the easy two
+
+describe("R18: 'why this performs' names the weakest point on EVERY mode", () => {
+  /**
+   * ONE DOCUMENT PER SECTION SHAPE the six reachable modes produce.
+   *
+   * THE POPULATION IS THE SECTIONS, NOT THE MODES, and that is deliberate: the
+   * screen has no per-mode branch at all (a mode is "a data entry in the
+   * registry, not a branch" — R1), so what could differ between two modes is
+   * exactly which sections their document carries. Driving every section shape
+   * drives every mode's render, and it keeps driving them if a seventh mode
+   * arrives with the same sections.
+   */
+  const DOCUMENTS: [string, ScriptDocument][] = [
+    ["a hook set", HOOKS_DOCUMENT],
+    [
+      "a caption",
+      { ...UNIVERSAL, caption: { text: "Two minutes on why this fails.", hashtags: ["#one"] } },
+    ],
+    [
+      "an idea batch",
+      {
+        ...UNIVERSAL,
+        ideas: [
+          { hook: "The bit nobody films.", thesis: "Setup costs more than the shoot.", framework: "The Confession Arc" },
+          { hook: "I stopped doing this.", thesis: "Volume was the wrong lever.", framework: "The Reversal" },
+          { hook: "Nine minutes, one take.", thesis: "Constraints make the edit.", framework: "The Constraint" },
+        ],
+      },
+    ],
+    [
+      "a full script",
+      {
+        ...UNIVERSAL,
+        thesis: { statement: "Batch cooking fails on reheating.", why: "It is the step nobody films." },
+        framework: { name: "The Confession Arc", why: "It earns the correction." },
+        hooks: HOOKS_DOCUMENT.hooks,
+        beats: [
+          { atSeconds: 0, vo: "Here is the pan.", isTurn: false },
+          { atSeconds: 7, vo: "And here is where it went wrong.", isTurn: true },
+        ],
+        shotMap: [{ beatIndex: 1, shot: "Close on the pan", note: "Handheld, no tripod" }],
+        onScreenText: [{ atSeconds: 2, text: "day three" }],
+        caption: { text: "The reheating step.", hashtags: ["#batch"] },
+      },
+    ],
+  ];
+
+  it.each(DOCUMENTS)(
+    "%s renders its weakest point beside the reasoning",
+    (_label, document) => {
+      const html = decoded(renderOutcome(usableWith(document)));
+      expect(html).toContain('data-testid="studio-weakest-point"');
+      expect(html).toContain(document.whyThisPerforms.weakestPoint);
+      expect(html).toContain(document.whyThisPerforms.reasoning);
+      expect(html).not.toContain('data-testid="studio-why-withheld"');
+    }
+  );
+
+  it.each(DOCUMENTS)(
+    "%s WITHHOLDS the reasoning when the weakest point is blank — the false branch, per mode",
+    (_label, document) => {
+      // CLAUDE.md, 2026-08-26: a required field reads exactly like a guard and
+      // is not one until a test drives its false branch. R18's whole content is
+      // that this holds on EVERY mode rather than on the two where it was easy,
+      // so the false branch is driven per document shape and not once.
+      const html = renderOutcome(
+        usableWith({
+          ...document,
+          whyThisPerforms: { reasoning: "SECRET_REASONING", weakestPoint: "  " },
+        })
+      );
+      expect(html).toContain('data-testid="studio-why-withheld"');
+      expect(html).not.toContain("SECRET_REASONING");
+      expect(html).not.toContain('data-testid="studio-weakest-point"');
+    }
+  );
+
+  it("ONE renderer, so a mode cannot acquire a second one that forgets", () => {
+    // THE MECHANISM BEHIND THE TWO CASES ABOVE, asserted rather than described.
+    // R18 breaks the day a per-mode block renders `reasoning` on its own, so
+    // the source may hold exactly one `whyThisPerformsView` call site.
+    const src = read("app/(product)/studio/generation-outcome.tsx");
+    const calls = [...src.matchAll(/whyThisPerformsView\(/g)].length;
+    expect(calls, "a second 'why this performs' renderer has appeared").toBe(1);
+    // ...and no per-mode branch: the document decides what renders, not the id.
+    expect(src, "the renderer branches on the mode id").not.toMatch(
+      /state\.modeId ===|document\.modeId|switch \(.*modeId/
+    );
+  });
+
+  it("each mode's OWN sections render, and another mode's do not appear", () => {
+    // NON-VACUITY for the loop above: if `Document` rendered nothing at all,
+    // every weakest-point assertion would still pass on the universal half.
+    const caption = decoded(renderOutcome(usableWith(DOCUMENTS[1][1], "Caption")));
+    expect(caption).toContain('data-testid="studio-caption"');
+    expect(caption).toContain("Two minutes on why this fails.");
+    expect(caption).not.toContain('data-testid="studio-hooks"');
+    expect(caption).not.toContain('data-testid="studio-beats"');
+
+    const ideas = decoded(renderOutcome(usableWith(DOCUMENTS[2][1], "Ideation")));
+    expect(ideas).toContain('data-testid="studio-ideas"');
+    // REQ-C01 mode 7: an idea is hook + thesis + framework, NEVER a topic — so
+    // all three fields are on the page, not just the opening line.
+    expect(ideas).toContain("The bit nobody films.");
+    expect(ideas).toContain("Setup costs more than the shoot.");
+    expect(ideas).toContain("The Confession Arc");
+    expect(ideas).not.toContain('data-testid="studio-caption"');
+
+    const script = decoded(renderOutcome(usableWith(DOCUMENTS[3][1], "Idea to script")));
+    for (const id of [
+      "studio-thesis",
+      "studio-framework",
+      "studio-hooks",
+      "studio-beats",
+      "studio-shot-map",
+      "studio-on-screen-text",
+      "studio-caption",
+    ]) {
+      expect(script, id).toContain(`data-testid="${id}"`);
+    }
+    // PRD §46: the turn is marked IN WORDS, never by styling alone.
+    expect(script).toContain('data-testid="studio-beat-turn"');
+    expect(script).toMatch(/where the piece changes direction/i);
+    expect(script).not.toContain('data-testid="studio-ideas"');
+  });
+
+  it("the mode is NAMED on the result, so a creator knows which one they got", () => {
+    expect(renderOutcome(usableWith(HOOKS_DOCUMENT, "Caption"))).toContain("Caption");
+  });
+});
+
+// ---------------------------------------- R16: streaming deferred, HONESTLY
+
+describe("R16: the output is 'being prepared', and nothing implies a stream", () => {
+  it("the busy label says PREPARED, and never that text is arriving", () => {
+    expect(PREPARING_LABEL).toMatch(/prepar/i);
+    // THE VOCABULARY OF LIVE GENERATION, banned on the one label a creator
+    // reads while the request is in flight. A label saying the model is
+    // "writing" is a claim that a stream exists, and none does.
+    for (const claim of ["writing", "typing", "streaming", "so far", "generating now"]) {
+      expect(PREPARING_LABEL.toLowerCase(), claim).not.toContain(claim);
+    }
+    const panelSrc = read("app/(product)/studio/studio-panel.tsx");
+    expect(panelSrc).toContain("pendingLabel={PREPARING_LABEL}");
+  });
+
+  it("NO progress element, NO percentage and NO placeholder on ANY generation screen", () => {
+    // R16's exact words: "an animated placeholder that suggests live generation
+    // is a claim". A source scan rather than a render assertion, because the
+    // thing being forbidden is markup a styling pass would add, and it must be
+    // forbidden in every state rather than in the one a fixture drives.
+    //
+    // THE SHAPES, THE SPECIMEN AND THE POPULATION MOVED TO
+    // `tests/support/no-streaming.ts` (spin-compliance gate, 2026-09-01). They
+    // were written here and walked `app/(product)/studio/` alone; slice 7 added
+    // a SECOND screen that runs a real generation, and its own scan read one of
+    // that directory's five files and covered three of the six shapes. Both
+    // trees were clean, so nothing was broken — but a `skeleton` class added to
+    // `first-ideas-view.tsx` would have shipped green. The population is now a
+    // LIST of directories, and a third generation screen costs an entry.
+    expect(
+      shapesMatchingSpecimen(),
+      "a shape's pattern matches nothing, so the scan is broken"
+    ).toEqual(STREAM_SHAPES.map(([label]) => label));
+    // ...and the population is not a set of paths that quietly read nothing.
+    const counts = generationScreenFileCounts(ROOT);
+    expect(Object.keys(counts)).toEqual([...GENERATION_SCREEN_DIRS]);
+    for (const [dir, n] of Object.entries(counts)) {
+      expect(n, `${dir} contributes no files to the scan`).toBeGreaterThan(0);
+    }
+    expect(streamingViolations(ROOT)).toEqual([]);
+  });
+
+  it("the studio directory is IN that population, and so is the second screen", () => {
+    // A REGRESSION WITNESS FOR THE INSTANCE, beside the derived scan for the
+    // class: the whole defect was a population that covered one screen, so the
+    // two entries that exist today are pinned by name. Deleting either makes
+    // `streamingViolations` go green by shrinking what it reads.
+    expect(GENERATION_SCREEN_DIRS).toContain("app/(product)/studio");
+    expect(GENERATION_SCREEN_DIRS).toContain(
+      "app/(product)/onboarding/first-ideas"
+    );
+    // Every file the old studio-only walker read is still read by the new one.
+    const covered = new Set(generationScreenFiles(ROOT));
+    for (const file of studioSourceFiles()) expect(covered.has(file)).toBe(true);
+
+    // AND THE LIST IS COMPLETE, DERIVED RATHER THAN TRUSTED. A list narrows the
+    // day somebody forgets an entry — the same failure one level up — so the
+    // completeness is a scan of the WHOLE `app/` tree: R18 puts every mode's
+    // result through one renderer, so a file importing `generation-outcome` is
+    // on a screen that shows a generation and its directory belongs in the
+    // population. A third generation screen turns this red until it is listed.
+    expect(
+      unlistedGenerationScreenFiles(ROOT),
+      "a screen renders a generation and is not in GENERATION_SCREEN_DIRS"
+    ).toEqual([]);
+    // NON-VACUITY: the scan finds real importers rather than nothing at all.
+    expect(generationOutcomeImporters(ROOT)).toBeGreaterThanOrEqual(2);
+  });
+
+  it("NON-VACUITY: the completeness scan CATCHES a planted third screen", () => {
+    // PLANTED IN A SYNTHETIC ROOT, NEVER IN `app/`. These walkers read a real
+    // application directory and a probe written there is visible to every other
+    // scan running concurrently — the same reason the six shapes' specimen is a
+    // string. `unlistedGenerationScreenFiles` takes its root as a parameter
+    // precisely so this can be driven against a tree that is not the product's.
+    const fake = mkdtempSync(join(tmpdir(), "respin-screen-scan-"));
+    try {
+      const dir = join(fake, "app", "(product)", "trends", "spin");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "spin-result.tsx"),
+        [
+          'import { GenerationOutcome } from "../../studio/generation-outcome";',
+          "export const X = GenerationOutcome;",
+        ].join("\n"),
+        "utf8"
+      );
+      // A second file that does NOT import it stays out of the report, so the
+      // scan is measuring the import rather than the directory.
+      writeFileSync(
+        join(dir, "copy.ts"),
+        'export const A = "generation-outcome";',
+        "utf8"
+      );
+      const unlisted = unlistedGenerationScreenFiles(fake);
+      expect(unlisted).toHaveLength(1);
+      expect(unlisted[0]).toContain("spin-result.tsx");
+      expect(generationOutcomeImporters(fake)).toBe(1);
+    } finally {
+      rmSync(fake, { recursive: true, force: true });
+    }
+  });
+
+  it("the rendered screen says what does NOT happen, in both clauses", () => {
+    const html = decoded(renderView());
+    expect(html).toContain('data-testid="studio-no-stream"');
+    expect(html).toContain(NO_STREAM_NOTE);
+    expect(NO_STREAM_NOTE).toMatch(/nothing appears until/i);
+    expect(NO_STREAM_NOTE).toMatch(/part-written draft is never shown/i);
+  });
+
+  it("a killed check leaves NO draft on screen — the refusal replaces it (question 3)", () => {
+    // VERIFICATION 10 / MUTATION M6. A draft that failed the checks is not
+    // rendered greyed, collapsed or behind a warning: `GenerationRun`'s refused
+    // branch carries no output at all, and the screen shows the refusal, its
+    // reasons, a sharper angle — and the SPEND.
+    const html = decoded(renderOutcome(HONEST_REFUSAL));
+    expect(html).toContain('data-testid="studio-honest-refusal"');
+    // NO DRAFT, in any of the six modes' section markers.
+    for (const id of [
+      "studio-hooks",
+      "studio-ideas",
+      "studio-beats",
+      "studio-shot-map",
+      "studio-on-screen-text",
+      "studio-caption",
+      "studio-thesis",
+      "studio-framework",
+    ]) {
+      expect(html, `${id} is rendered on an honest refusal`).not.toContain(
+        `data-testid="${id}"`
+      );
+    }
+    // ...and the refusal NAMES THE SPEND, which is the half a creator who
+    // watched a draft not appear would otherwise read as a bug.
+    expect(html).toContain('data-testid="studio-charge"');
+    expect(html).toContain("That cost 5 credits.");
+    expect(html).toMatch(/An honest refusal is the product working/);
+  });
+});
+
+// ------------------------------------------- R6/R9: revision and its lineage
+
+describe("R6/R9: a revision, and a lineage a creator can read", () => {
+  const entry = (over: Partial<StudioActionState["lineage"][number]> = {}) => ({
+    generationId: "g1",
+    attemptId: "a1",
+    modeId: "hooks",
+    modeLabel: "Hooks",
+    parentGenerationId: null,
+    note: "batch cooking, the reheating step",
+    outcome: "usable" as const,
+    revisable: true,
+    ...over,
+  });
+
+  /**
+   * THE PURE COMPONENT, RENDERED DIRECTLY — and the reason is a defect this
+   * suite caught in its own first draft.
+   *
+   * `useActionState` yields only its INITIAL state under
+   * `renderToStaticMarkup`, so a chain rendered inside `StudioPanel` is a state
+   * no test can drive: every assertion below failed against an empty render
+   * until `LineageList` was extracted. That is the same rule
+   * `generation-outcome.tsx` already obeyed, applied to the two blocks slice 7
+   * added.
+   */
+  const withLineage = (lineage: LineageEntry[]) =>
+    decoded(renderToStaticMarkup(<LineageList lineage={lineage} />));
+
+  it("lineageLineFor says WHICH output came from which, and WHAT the note said", () => {
+    // R9, verbatim. Both halves, from the row's own fields.
+    const root = lineageLineFor({
+      index: 0,
+      modeLabel: "Hooks",
+      parentIndex: null,
+      note: "batch cooking",
+    });
+    expect(root).toContain("#1");
+    expect(root).toMatch(/a first draft, not a revision/i);
+    expect(root).toContain("batch cooking");
+
+    const child = lineageLineFor({
+      index: 2,
+      modeLabel: "Hooks",
+      parentIndex: 0,
+      note: "make the second one blunter",
+    });
+    expect(child).toContain("#3");
+    expect(child).toMatch(/revised from #1/);
+    expect(child).toContain("make the second one blunter");
+
+    // A REVISION WITH NO NOTE SAYS SO rather than rendering an empty quote.
+    expect(
+      lineageLineFor({ index: 1, modeLabel: "Hooks", parentIndex: 0, note: "   " })
+    ).toMatch(/No note was sent with it/);
+  });
+
+  it("the rendered chain resolves a parent by its GENERATION ID, not by position", () => {
+    // THE DEFECT THIS RULES OUT: "the one before it" renders a lineage that
+    // looks right and is a guess. The middle entry below is an original, so a
+    // position-based renderer would call the third a revision of it.
+    const html = withLineage([
+      entry({ generationId: "g1", attemptId: "a1" }),
+      entry({ generationId: "g2", attemptId: "a2", note: "a different idea" }),
+      entry({
+        generationId: "g3",
+        attemptId: "a3",
+        parentGenerationId: "g1",
+        note: "blunter, please",
+      }),
+    ]);
+    expect(html).toContain('data-testid="studio-lineage"');
+    expect(html).toContain(
+      lineageLineFor({ index: 2, modeLabel: "Hooks", parentIndex: 0, note: "blunter, please" })
+    );
+    expect(html).not.toContain(
+      lineageLineFor({ index: 2, modeLabel: "Hooks", parentIndex: 1, note: "blunter, please" })
+    );
+  });
+
+  it("a parent OUTSIDE the view renders as an original's line, never as a wrong number", () => {
+    // The chain is bounded and this page's own; a `parent_id` naming a
+    // generation that is not in view must not be printed as "#0" or "#NaN".
+    const html = withLineage([
+      entry({ generationId: "g9", attemptId: "a9", parentGenerationId: "gone" }),
+    ]);
+    expect(html).not.toMatch(/revised from #(0|NaN|null|undefined)/);
+    expect(html).toMatch(/a first draft, not a revision/i);
+  });
+
+  it("the honest limit of this view is STATED, and it names where the durable record is", () => {
+    // R9's uncomfortable half: `generations.parent_id` is stored, immutable and
+    // same-tenant, and there is no scoped reader for it in `@respin/db` — so
+    // this list is what the page has run since it loaded. A list that looks
+    // like history and empties on reload teaches a creator the product forgot
+    // their work.
+    const html = withLineage([entry()]);
+    expect(html).toContain('data-testid="studio-lineage-scope"');
+    expect(html).toMatch(/a reload empties it/i);
+    expect(html).toMatch(/stored with each draft and are not lost/i);
+    expect(html).toMatch(/export/i);
+  });
+
+  it("...and it names WHICH FILE of the export, because an export is two files", () => {
+    // MEASURED, NOT ASSUMED (tenancy gate, 2026-09-01). The sentence said "your
+    // export carries every draft, which one it was revised from, and the note
+    // you sent with it". That is TRUE of the JSON and FALSE of the markdown
+    // projection, which carries the brain documents and the quotes behind them
+    // and no generation history at all — and the markdown is the file a creator
+    // is most likely to open. `/export`'s own header is the only place the
+    // split was stated, so the studio screen was describing a file its reader
+    // would not find the lineage in.
+    const html = withLineage([entry()]);
+    expect(html).toMatch(/JSON file in your export/i);
+    expect(LINEAGE_SCOPE_NOTE).toMatch(/markdown file/i);
+    // AN UNQUALIFIED PROMISE IS THE DEFECT, so that is what is measured: EVERY
+    // claim about what the export carries has to name the file it is true of.
+    const unqualified = (sentence: string): string[] =>
+      [...sentence.matchAll(/(.{0,40})export carries/gi)]
+        .map(([, before]) => before)
+        .filter((before) => !before.toLowerCase().includes("json"));
+    expect(
+      unqualified(LINEAGE_SCOPE_NOTE),
+      "a claim about the export names no file, so it is false of the markdown"
+    ).toEqual([]);
+    // NON-VACUITY: the check really does catch the sentence that shipped, and
+    // it really does find a claim to check in the sentence that replaced it.
+    expect(
+      unqualified(
+        "The links themselves are stored with each draft and are not lost — your export carries every draft."
+      )
+    ).toHaveLength(1);
+    expect(
+      [...LINEAGE_SCOPE_NOTE.matchAll(/export carries/gi)].length
+    ).toBeGreaterThan(0);
+
+    // THE OTHER HALF OF THE AGREEMENT, read from the file that owns it: the day
+    // the markdown projection grows a generation history, this goes red and the
+    // sentence above gets re-read rather than left stale.
+    const exportSrc = readFileSync(
+      join(ROOT, "packages", "db", "src", "export.ts"),
+      "utf8"
+    );
+    expect(
+      exportSrc,
+      "EXPORT_MARKDOWN_SCOPE no longer says the generation history is JSON-only"
+    ).toMatch(/EXPORT_MARKDOWN_SCOPE =[\s\S]{0,400}?generation history[\s\S]{0,60}?JSON/i);
+  });
+
+  it("a refused run STAYS in the chain, labelled — hiding it would hide a charge", () => {
+    const html = withLineage([
+      entry({ generationId: "g1", attemptId: "a1" }),
+      entry({
+        generationId: "g2",
+        attemptId: "a2",
+        outcome: "honest_refusal",
+        revisable: false,
+        note: "the one that died",
+      }),
+    ]);
+    expect(html).toContain("the one that died");
+    expect(html).toMatch(/this one was refused/i);
+  });
+
+  it("only a REVISABLE entry is offered as a parent — a refusal is not offered", () => {
+    // An honest refusal stored no draft, so `resolveRevisionParent` would
+    // certainly refuse it (`not_revisable`). Offering it would be a control
+    // whose only outcome is a refusal.
+    //
+    // THE PICKER IS CLIENT STATE, so the property is asserted where it is
+    // decided: `revisable` is server-derived (`lineageEntryFor` sets it from
+    // the run's own outcome) and the panel filters on it. Both halves, because
+    // either alone is satisfiable while the other is broken.
+    const projectionSrc = read("app/(product)/studio/projection.ts");
+    expect(projectionSrc).toMatch(/revisable: outcome === "usable"/);
+    const panelSrc = read("app/(product)/studio/studio-panel.tsx");
+    expect(panelSrc).toContain(".filter(({ entry }) => entry.revisable)");
+    expect(panelSrc).toContain("revisable.map(({ entry, index }) =>");
+  });
+
+  it("the picker numbers a draft the way the CHAIN numbers it", () => {
+    // FOUND BY RE-READING THE DIFF (2026-09-01). The picker mapped over the
+    // FILTERED list and passed that index to `lineageChoiceLabel`, while
+    // `LineageList` numbers every entry — refusals included. So an output the
+    // chain called "#3" was offered as "#2": two numbering systems for one
+    // draft, on the control that decides which draft is revised.
+    const panelSrc = read("app/(product)/studio/studio-panel.tsx");
+    // The filter carries the ORIGINAL index alongside the entry.
+    //
+    // TWO `toContain` CALLS RATHER THAN ONE MULTILINE REGEX, and that is not
+    // style: the first draft of this assertion used a `\s*\n?\s*` bridge and
+    // esbuild refused the file — CLAUDE.md's 2026-08-21 lesson, caught by a
+    // parse error rather than by a silently-matching-nothing scan, which is the
+    // lucky half of that class.
+    expect(panelSrc).toContain(".map((entry, index) => ({ entry, index }))");
+    expect(panelSrc).toContain(".filter(({ entry }) => entry.revisable)");
+    // ...and that index — never the position in the filtered list — is what
+    // the label is built from.
+    expect(panelSrc).toMatch(/lineageChoiceLabel\(index, entry\.modeLabel, entry\.note\)/);
+    expect(panelSrc).not.toMatch(/revisable\.map\(\(entry, i\)/);
+    // AND THE TWO LABELLERS AGREE ON WHAT "#n" MEANS: both are 1-based on the
+    // same index, which is the property the defect broke.
+    expect(lineageChoiceLabel(2, "Hooks", "x")).toContain("#3");
+    expect(
+      lineageLineFor({ index: 2, modeLabel: "Hooks", parentIndex: null, note: "x" })
+    ).toContain("#3");
+  });
+
+  it("the chain is KEYED on the attempt id, which is unique per press", () => {
+    // `generationId` is NOT unique within a chain: R14c's replay returns the
+    // generation a CONCURRENT settlement wrote, so two entries can carry the
+    // same one and React would silently reuse a node between two rows.
+    const src = read("app/(product)/studio/lineage-view.tsx");
+    expect(src).toContain("key={entry.attemptId}");
+    expect(src).not.toContain("key={entry.generationId}");
+  });
+
+  it("lineageChoiceLabel names the mode and the note, and never a timestamp", () => {
+    // The chain is this session's, so "3 minutes ago" would be precision about
+    // something the screen is about to admit it does not durably hold.
+    const label = lineageChoiceLabel(0, "Hooks", "batch cooking, the reheating step");
+    expect(label).toContain("#1");
+    expect(label).toContain("Hooks");
+    expect(label).toContain("batch cooking");
+    expect(label).not.toMatch(/\d{1,2}:\d{2}|ago\b|20\d\d/);
+    // A LONG NOTE IS TRUNCATED VISIBLY, never silently: an option element with
+    // 2,000 characters in it is unusable, and a cut with no marker reads as the
+    // note the creator wrote.
+    const long = lineageChoiceLabel(0, "Hooks", "x".repeat(300));
+    expect(long.length).toBeLessThan(120);
+    expect(long).toContain("…");
+    // NO NOTE IS SAID, not left blank.
+    expect(lineageChoiceLabel(2, "Caption", "   ")).toContain("no note");
+  });
+
+  it("the revise control says the kill test RE-RUNS, and that the mode is fixed", () => {
+    // The card's question 2, in the copy a creator reads: their model of
+    // "revise" is "edit", and an edit does not get re-checked. Here it does,
+    // and a revision can be refused where its parent passed — somebody who did
+    // not know that would reasonably call it a bug.
+    expect(REVISION_NOTE_HELP).toMatch(/same checks from scratch/i);
+    expect(REVISION_NOTE_HELP).toMatch(/can be refused where the first one passed/i);
+    expect(REVISION_NOTE_HELP).toMatch(/a refusal is charged for/i);
+    expect(REVISION_SAME_MODE_NOTE).toMatch(/stays in the mode/i);
+    // ...and the panel really renders them, rather than the constants merely
+    // existing (the lying-screen lesson: a constant nobody renders is copy
+    // nobody reads).
+    const panelSrc = read("app/(product)/studio/studio-panel.tsx");
+    expect(panelSrc).toContain("{REVISION_NOTE_HELP}");
+    expect(panelSrc).toContain("{REVISION_SAME_MODE_NOTE}");
+  });
+
+  it("A DISABLED MODE SELECT SUBMITS NOTHING, so a revision carries a hidden mode", () => {
+    // TWO DEFECTS FROM ONE RE-READ OF THIS DIFF, and this is the first.
+    //
+    // A revision stays in its parent's mode, so the mode `<select>` is
+    // `disabled` when a parent is chosen — and HTML bars a disabled control
+    // from submission ENTIRELY, so `mode` reached the action as `""` and every
+    // revision was refused with `UnknownModeError`. The whole revision path was
+    // dead and nothing typed would have said so: `mode` is deliberately cast at
+    // the action boundary, because the set of modes lives in a package
+    // `app/**` may not import.
+    //
+    // Asserted at the SOURCE because the pairing is what matters — a `disabled`
+    // select and a hidden field carrying the parent's mode have to travel
+    // together, and a render of the idle state (which is all a static render
+    // gives) has neither.
+    const src = read("app/(product)/studio/studio-panel.tsx");
+    expect(src).toMatch(/disabled=\{parent !== null\}/);
+    expect(src).toMatch(
+      /\{parent !== null \? \(\s*<input type="hidden" name="mode" value=\{parent\.modeId\} \/>/
+    );
+  });
+
+  it("...and the price line shows the REVISION price, not the mode's (R8)", () => {
+    // THE SECOND DEFECT FROM THE SAME RE-READ. With a parent chosen, the line
+    // beside the picker showed the selected MODE's cost while the press was
+    // going to be charged `creditCosts.revision`. On a 12-credit script revised
+    // for 2 that is a money lie on the control that spends it.
+    const script: ModeChoiceView = {
+      id: "m-b",
+      label: "Idea to script",
+      status: "available",
+      cost: 12,
+    };
+    const revision = priceLineFor({
+      isRevision: true,
+      revisionCost: 2,
+      mode: script,
+      parentModeLabel: "Idea to script",
+    });
+    expect(revision).toContain("2 credits");
+    expect(revision, "the mode's own price is shown for a revision").not.toContain(
+      "12"
+    );
+    expect(revision).toMatch(
+      /not at the price of the draft it came from/i
+    );
+    // ...and an ORIGINAL still shows the mode's price.
+    const original = priceLineFor({
+      isRevision: false,
+      revisionCost: 2,
+      mode: script,
+      parentModeLabel: null,
+    });
+    expect(original).toContain("Idea to script costs 12 credits");
+    // NON-NEGOTIABLE 6 ON BOTH UNREAD BRANCHES: said, never guessed.
+    expect(
+      priceLineFor({
+        isRevision: true,
+        revisionCost: null,
+        mode: script,
+        parentModeLabel: "Idea to script",
+      })
+    ).toMatch(/could not be read/);
+    expect(
+      priceLineFor({
+        isRevision: true,
+        revisionCost: null,
+        mode: script,
+        parentModeLabel: "Idea to script",
+      })
+    ).not.toContain("12");
+    expect(
+      priceLineFor({
+        isRevision: false,
+        revisionCost: 2,
+        mode: { ...script, cost: null },
+        parentModeLabel: null,
+      })
+    ).toMatch(/could not be read/);
+    // A zero price is an ANSWER, never an absence.
+    expect(
+      priceLineFor({
+        isRevision: true,
+        revisionCost: 0,
+        mode: script,
+        parentModeLabel: null,
+      })
+    ).toContain("nothing");
+    // No mode chosen at all is its own sentence rather than a blank.
+    expect(
+      priceLineFor({
+        isRevision: false,
+        revisionCost: 2,
+        mode: null,
+        parentModeLabel: null,
+      })
+    ).toMatch(/Pick a mode/);
+    // ...and the panel really renders this function rather than an inline
+    // ternary that could drift back.
+    const src = read("app/(product)/studio/studio-panel.tsx");
+    expect(src).toContain("priceLineFor({");
+    expect(src).toContain("{priceLine}");
+  });
+
+  it("with nothing to revise, the form still posts a `revisionOf` field", () => {
+    // The action reads ONE name whether or not there is a picker; an absent
+    // field and an empty one must be the same thing, because `""` is what
+    // "not a revision" means to `generateAction`. The idle render is exactly
+    // the "nothing to revise" case, because `useActionState` starts empty.
+    const html = renderView();
+    expect(html).not.toContain('data-testid="studio-revision-picker"');
+    expect(html).toContain('name="revisionOf"');
+  });
+
+  it("the action turns an EMPTY revisionOf into an omitted parameter, never into an id", () => {
+    // A `<select>` and a hidden field both submit `""` for "no parent", and
+    // `GenerateParams` uses `undefined`. Passing `""` through would name an
+    // attempt id that cannot exist and turn EVERY original into a
+    // `RevisionParentError` — a total outage of the ordinary path, produced by
+    // a coercion nobody would look at.
+    const src = read("app/(product)/studio/actions.ts");
+    expect(src).toMatch(/revisionOf === ""\s*\?\s*\{\}\s*:\s*\{ revisionOfAttemptId: revisionOf \}/);
+  });
+
+  it("a refused run REPLACES what is on screen — the previous draft does not stay (M6)", () => {
+    // VERIFICATION 10 / MUTATION M6, at the level the mutation would live.
+    // The card's question 3: "a streamed draft that fails the check must not
+    // remain on screen as though it were output". This architecture does not
+    // stream, so the shape that defect takes here is the projection KEEPING the
+    // previous `latest` when the new run refused — after which a creator whose
+    // revision was killed is looking at the parent's draft with a refusal they
+    // may not scroll to. The chain is appended to either way, so the two facts
+    // are separable and both are asserted.
+    const generation = {
+      id: "g2",
+      mode: "hooks",
+      outcome: "honest_refusal",
+      weakestPoint: null,
+      refusalReason: "broke a hard rule twice",
+      promptBundleVersion: "hooks@abc",
+      rewriteCount: 1,
+      parentId: "g1",
+    };
+    const refusedResult = {
+      attemptId: "a2",
+      replayed: false,
+      generation,
+      run: {
+        status: "refused",
+        drafts: 2,
+        promptBundleVersion: "hooks@abc",
+        killTest: {
+          outcome: "failed",
+          attempts: 2,
+          rewritten: true,
+          creatorRulesScored: false,
+          creatorRuleVerdicts: [],
+          traceabilityLimitNote: "LIMIT",
+          finalAttempt: { traceability: [], claims: [] },
+        },
+        refusal: { headline: "H", why: ["a"], sharperAngle: "S" },
+      },
+      creditsChargedNow: 5,
+      balanceAfter: 10,
+      configVersion: 3,
+      resolvedTier: "free",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const previous: StudioActionState = {
+      lineage: [
+        {
+          generationId: "g1",
+          attemptId: "a1",
+          modeId: "hooks",
+          modeLabel: "Hooks",
+          parentGenerationId: null,
+          note: "the first one",
+          outcome: "usable",
+          revisable: true,
+        },
+      ],
+      latest: USABLE,
+    };
+    const next = studioActionStateFor(previous, refusedResult, "Hooks", "blunter");
+    expect(next.latest.status, "the killed run left the old draft on screen").toBe(
+      "honest_refusal"
+    );
+    // ...and the chain still grew, with the refusal in it and its parent named.
+    expect(next.lineage).toHaveLength(2);
+    expect(next.lineage[1].outcome).toBe("honest_refusal");
+    expect(next.lineage[1].parentGenerationId).toBe("g1");
+    // R6: a refused run is NOT offered as a parent — there is no draft in it.
+    expect(next.lineage[1].revisable).toBe(false);
+    // ...and the note the creator sent is what the chain records for it (R9).
+    expect(next.lineage[1].note).toBe("blunter");
+  });
+
+  it("the chain is BOUNDED, and the oldest is what drops", () => {
+    // It is serialised into the client on every press, so an unbounded list
+    // grows the payload of a money control without limit.
+    let state: StudioActionState = { lineage: [], latest: { status: "idle" } };
+    for (let i = 0; i < LINEAGE_VIEW_MAX + 5; i += 1) {
+      state = {
+        lineage: [
+          ...state.lineage,
+          {
+            generationId: `g${i}`,
+            attemptId: `a${i}`,
+            modeId: "hooks",
+            modeLabel: "Hooks",
+            parentGenerationId: null,
+            note: `n${i}`,
+            outcome: "usable" as const,
+            revisable: true,
+          },
+        ].slice(-LINEAGE_VIEW_MAX),
+        latest: state.latest,
+      };
+    }
+    expect(state.lineage).toHaveLength(LINEAGE_VIEW_MAX);
+    expect(state.lineage[0].generationId).toBe(`g${5}`);
+    // ...and the projection really applies the same bound.
+    expect(read("app/(product)/studio/projection.ts")).toContain(
+      "lineage.slice(-LINEAGE_VIEW_MAX)"
+    );
+  });
+
+  it("the lineage survives a REFUSAL — the drafts already made are not lost", () => {
+    const src = read("app/(product)/studio/actions.ts");
+    // The catch returns `prev.lineage`, not `[]`. A creator whose fourth press
+    // was refused for want of credits must not also lose the three drafts on
+    // screen.
+    expect(src).toMatch(/lineage: prev\.lineage,/);
+  });
+
+  it("every revision-parent reason has its OWN words, and none of them sells anything", () => {
+    // `RevisionParentError` carries a CLOSED reason and the four say different
+    // things: "not yours", "there was no draft", "wrong mode", "we cannot read
+    // it". One code for all four would be false three times out of four.
+    const codes = [
+      "revision_parent_not_yours",
+      "revision_parent_not_revisable",
+      "revision_parent_different_mode",
+      "revision_parent_unreadable",
+      "revision_parent",
+    ];
+    const seen = new Set<string>();
+    for (const code of codes) {
+      const copy = studioErrorFor(code)!;
+      expect(copy, code).not.toBeNull();
+      expect(copy.title.length, code).toBeGreaterThan(5);
+      expect(copy.detail.length, code).toBeGreaterThan(40);
+      seen.add(copy.detail);
+      // R15: no sale on a refusal.
+      const text = `${copy.title} ${copy.detail}`.toLowerCase();
+      for (const inducement of ["upgrade", "subscribe", "a plan that includes"]) {
+        expect(text, `${code}/${inducement}`).not.toContain(inducement);
+      }
+      // ...and each says what happened to the money.
+      expect(text, code).toMatch(/nothing was (generated|spent|taken)/);
+    }
+    expect(seen.size, "two reasons share one sentence").toBe(codes.length);
+  });
+});
+
+// ------------------------------------------------- R10/R12: feedback capture
+
+describe("R10/R12: feedback is captured, and the screen says what it does NOT do", () => {
+  /**
+   * THE PURE COMPONENT, RENDERED DIRECTLY — same reason as the lineage list
+   * one describe up: `useActionState` yields only its initial state under a
+   * static render, so a feedback block inside `StudioPanel` would be a control
+   * no test could drive, on the one control whose entire purpose is a promise
+   * about what the product does NOT do with what a creator says.
+   */
+  const withResult = (state: FeedbackState = { status: "idle" }) =>
+    decoded(
+      renderToStaticMarkup(
+        <FeedbackBlock
+          generationId="gen-1"
+          reactions={GENERATION_FEEDBACK_REACTIONS}
+          noteMax={FEEDBACK_NOTE_MAX}
+          formAction={() => {}}
+          pending={false}
+          state={state}
+          refusalCopy={REFUSAL_COPY}
+          fallbackCopy={REFUSAL_COPY.unknown}
+        />
+      )
+    );
+
+  it("every reaction the DATABASE has is offered, with real words", () => {
+    const html = withResult();
+    expect(html).toContain('data-testid="studio-feedback-reactions"');
+    expect(GENERATION_FEEDBACK_REACTIONS.length).toBeGreaterThan(3);
+    for (const code of GENERATION_FEEDBACK_REACTIONS) {
+      expect(html, code).toContain(`value="${code}"`);
+      const label = reactionLabel(code);
+      // A CODE IS NOT A LABEL. `reactionLabel` falls back to the raw code so a
+      // reaction added to the enum shows as SOMETHING rather than vanishing —
+      // and this asserts the fallback is not the normal path.
+      expect(label, code).not.toBe(code);
+      expect(html, code).toContain(label);
+    }
+  });
+
+  it("the note's ceiling is the DATABASE's number, stated and enforced on the control", () => {
+    const html = withResult();
+    expect(html).toContain(`maxLength="${FEEDBACK_NOTE_MAX}"`);
+    expect(html).toContain(String(FEEDBACK_NOTE_MAX));
+    expect(html).toContain('data-testid="studio-feedback-note-limit"');
+  });
+
+  it("the note copy does NOT claim the words are stored byte for byte", () => {
+    // FOUND BY RE-READING THE DIFF AGAINST THE CAPABILITY (2026-09-01). The
+    // first draft said "stored exactly as you type it", and
+    // `recordGenerationFeedback` runs `normaliseContent` — NFC plus CRLF→LF —
+    // before it writes. `/onboarding`'s paste form already words this honestly
+    // ("only line endings are normalised"), and a smaller-than-that claim on
+    // the screen whose whole subject is what the product does with a creator's
+    // words is the wrong place to round up.
+    const limit = feedbackNoteLimit(FEEDBACK_NOTE_MAX);
+    expect(limit).not.toMatch(/exactly as you type/i);
+    expect(limit).toMatch(/only line endings and unicode form are normalised/i);
+    expect(feedbackRecordedSentence("off_voice", true)).not.toMatch(
+      /word for word/i
+    );
+  });
+
+  it("R12: it says what feedback DOES and DOES NOT do today", () => {
+    const html = withResult();
+    expect(html).toContain('data-testid="studio-feedback-today"');
+    // The three claims, each asserted: it is stored, nothing reads it, and a
+    // later slice may PROPOSE rather than apply.
+    expect(html).toMatch(/stored as a record of what you said/i);
+    expect(html).toMatch(/Nothing reads it today/i);
+    expect(html).toMatch(/it does not change your brain/i);
+    expect(html).toMatch(/suggest/i);
+    expect(html).toMatch(/approve or reject/i);
+    expect(html).toMatch(/never applied to your brain without you|Nothing is ever applied to your brain without you/i);
+  });
+
+  it("R12: the feedback screen says NOTHING about learning, improving or training", () => {
+    // `tests/support/forbidden-claims.ts` bans `learn`, `improv` and `train` on
+    // every creator-facing surface, and THIS is the screen where the ban earns
+    // its keep: a reaction button is exactly where a reader forms the belief
+    // that the product is adjusting to them.
+    //
+    // SCANNED OVER THE RENDER *AND* OVER THE COPY MODULE, because a sentence
+    // that only appears in a state this fixture does not drive is still a
+    // sentence a creator can read.
+    // SCANNED OVER THE EXPORTED VALUES, not over the source text: the block's
+    // own docblock has to be able to say "this avoids `learn`, `improve` and
+    // `train`", and a source scan bans the explanation along with the claim.
+    // The values are what a creator reads.
+    const surfaces = [
+      visibleCopy(withResult()),
+      visibleCopy(withResult({ status: "recorded", generationId: "g", reaction: "off_voice", noteKept: true })),
+      visibleCopy(withResult({ status: "recorded", generationId: "g", reaction: "used_as_is", noteKept: false })),
+      visibleCopy(withResult({ status: "refused", code: "feedback_duplicate" })),
+      visibleCopy(withResult({ status: "refused", code: "feedback_note" })),
+      FEEDBACK_TODAY,
+      FEEDBACK_HEADING,
+      feedbackNoteLimit(FEEDBACK_NOTE_MAX),
+      ...GENERATION_FEEDBACK_REACTIONS.map(reactionLabel),
+      ...GENERATION_FEEDBACK_REACTIONS.flatMap((c) => [
+        feedbackRecordedSentence(c, true),
+        feedbackRecordedSentence(c, false),
+      ]),
+    ];
+    for (const [label, pattern] of [
+      ...FORBIDDEN_CLAIMS,
+      ...PERFORMANCE_CLAIMS,
+    ] as [string, RegExp][]) {
+      for (const surface of surfaces) {
+        expect(
+          pattern.test(surface.toLowerCase()),
+          `${label} in: ${surface.slice(0, 80)}`
+        ).toBe(false);
+      }
+    }
+    // NON-VACUITY, per word: the specimen for each banned claim really matches
+    // its own pattern, so a typo in one pattern cannot leave a word sayable.
+    for (const [label, pattern] of FORBIDDEN_CLAIMS) {
+      expect(pattern.test(CLAIM_SPECIMENS[label]), label).toBe(true);
+    }
+  });
+
+  it("feedbackRecordedSentence reports what was STORED, note included or not", () => {
+    // `noteKept` is its own fact and is NOT derivable from "a note was sent":
+    // the capability refuses a blank-but-present note outright, so telling
+    // somebody their words were kept when the column is NULL is a lie about
+    // their own record.
+    const kept = feedbackRecordedSentence("off_voice", true);
+    expect(kept).toContain(reactionLabel("off_voice"));
+    expect(kept).toMatch(/note was stored with it, as you typed it/i);
+    const not = feedbackRecordedSentence("off_voice", false);
+    expect(not).toMatch(/No note was sent with it/i);
+    // AND NEITHER THANKS THE CREATOR FOR TEACHING THE PRODUCT ANYTHING.
+    for (const sentence of [kept, not]) {
+      expect(sentence).toMatch(/nothing in the product has changed because of it/i);
+    }
+  });
+
+  it("the control is offered only where there is an output to be about", () => {
+    // `generationId` is what the composite foreign key needs; a control with no
+    // target would post an empty id and earn `FeedbackTargetError`. The idle
+    // screen has no target, so it renders no control at all.
+    expect(renderView()).not.toContain('data-testid="studio-feedback"');
+    // THE TARGET IS DECIDED IN THE PANEL, from the LATEST outcome — and it
+    // includes an HONEST REFUSAL, which is a stored generation a creator paid
+    // for and may well have an opinion about.
+    const panelSrc = read("app/(product)/studio/studio-panel.tsx");
+    expect(panelSrc).toMatch(
+      /state\.latest\.status === "usable" \|\| state\.latest\.status === "honest_refusal"/
+    );
+    expect(panelSrc).toMatch(/feedbackTargetId !== null \? \(/);
+  });
+
+  it("a recorded reaction and a refusal each render their own state", () => {
+    const recorded = withResult({
+      status: "recorded",
+      generationId: "gen-1",
+      reaction: "off_voice",
+      noteKept: true,
+    });
+    expect(recorded).toContain('data-testid="studio-feedback-recorded"');
+    expect(recorded).toContain(feedbackRecordedSentence("off_voice", true));
+
+    const refused = withResult({ status: "refused", code: "feedback_duplicate" });
+    expect(refused).toContain('data-testid="studio-feedback-refused"');
+    expect(refused).toContain(REFUSAL_COPY.feedback_duplicate.title);
+    // ...and it says the NOTE was not kept, which is the fact a creator who
+    // typed one needs and which a silent no-op would hide.
+    expect(refused).toMatch(/was NOT kept|not kept/i);
+
+    // A CODE WITH NO ENTRY falls back to neutral words, never to nothing.
+    const unknownCode = withResult({
+      status: "refused",
+      code: "app_base_url_missing",
+    });
+    expect(unknownCode).toContain('data-testid="studio-feedback-refused"');
+    expect(unknownCode).toContain(REFUSAL_COPY.unknown.title);
+  });
+
+  it("the action derives `noteKept` from the ROW, never from the parameter", () => {
+    // The creator is told whether their WORDS were stored, and only the stored
+    // value can answer that: a note the capability refused, or one trimmed to
+    // nothing, must not be reported as kept.
+    const src = read("app/(product)/studio/actions.ts");
+    expect(src).toMatch(/noteKept: row\.note !== null/);
+    expect(src).not.toMatch(/noteKept: note !== undefined/);
+  });
+
+  it("the action does NOT count, group or summarise anything (R11)", () => {
+    // R11: this slice captures feedback and must be structurally unable to
+    // derive from it — `packages/brain` is the sole construction site for a
+    // proposal and does not exist yet. `tests/feedback-readers.test.ts` is the
+    // repo-wide scan; this is the app-surface half.
+    const src = read("app/(product)/studio/actions.ts")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const shape of [
+      /\.reduce\(/,
+      /\.filter\(/,
+      /listFeedback/,
+      /\bcount\b/i,
+      /\bproposal\b/i,
+      /\baggregate\b/i,
+    ]) {
+      expect(shape.test(src), `${shape} appears on the feedback action path`).toBe(
+        false
+      );
+    }
+  });
+});
+
+// -------------------------------- R19: what is OUT of scope, said out loud
+
+describe("R19: REQ-C07 and REQ-C08 are absent, and the screen implies neither", () => {
+  it("nothing on this screen offers a series planner or an anti-homogenisation control", () => {
+    // REQ-C08's anti-homogenisation is `[Could]` and is explicitly out of
+    // scope; REQ-C07's series planner is `[Should]` and Pro+ and is DEFERRED.
+    // Both dispositions belong in `decisions.md` — what belongs HERE is that
+    // the screen does not imply either exists, because a control that is
+    // deferred and a control that is broken look identical to a creator.
+    const html = decoded(renderView());
+    for (const shape of [/series/i, /\bcarousel\b/i, /homogen/i, /\bvariety\b/i]) {
+      expect(shape.test(html), String(shape)).toBe(false);
+    }
+    for (const file of studioSourceFiles()) {
+      const src = readFileSync(file, "utf8")
+        .replace(/\/\/[^\n]*/g, "")
+        .replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(/seriesPlanner|SERIES_PLAN/.test(src), file).toBe(false);
+    }
   });
 });

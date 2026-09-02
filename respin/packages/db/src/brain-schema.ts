@@ -347,6 +347,13 @@ export const frameworks = pgTable(
     // REQ-D01's "source references, evidence entries". `confidence` is derived
     // from these at load, never hand-typed in the seed — a value that can
     // exceed its evidence is the authority-borrowing R-29 forbids.
+    //
+    // SLICE 7 MADE THAT A CONSTRAINT (`frameworks_confidence_matches_evidence`
+    // below). It was a comment for two milestones, on a `text NOT NULL` column
+    // any writer could set to anything, in the one place the product states
+    // how sure it is about somebody else's mechanism. `deriveFrameworkConfidence`
+    // in `frameworks.ts` is the one producer and the CHECK is what makes it
+    // the only one.
     sourceReferences: jsonb("source_references").notNull(),
     evidenceEntries: jsonb("evidence_entries").notNull(),
     testedCaveats: jsonb("tested_caveats").notNull(),
@@ -362,6 +369,42 @@ export const frameworks = pgTable(
     curatorStatus: curatorStatus("curator_status").notNull().default("proposed"),
     curatedBy: text("curated_by"),
     version: integer("version").notNull().default(1),
+    /**
+     * WHEN THIS FRAMEWORK WAS RETIRED (slice 7, R5b / REQ-D02).
+     *
+     * A COLUMN AND NOT ONLY THE `saturation = 'retired'` VALUE THAT ALREADY
+     * EXISTED, and the reason is that two things needed saying and one enum
+     * slot could only say one of them. `saturation` is a claim about the
+     * MARKET (how worn out the mechanism is); retirement is a claim about the
+     * LIBRARY (we no longer recommend this). They usually coincide and
+     * sometimes do not — a private framework its owner is done with is
+     * retired without any claim about saturation at all.
+     *
+     * SO THEY ARE ONE FACT WITH TWO SPELLINGS, AND THE DATABASE KEEPS THEM
+     * AGREEING (`frameworks_retired_stamp`, an EQUALITY). Two independent
+     * columns answering "is this retired?" is the second-authority defect this
+     * repo has paid for twice; an equality means the reader may filter on
+     * either and get the same set, which is what lets R5b's stated rule
+     * (`approved AND retired_at IS NULL`) be implemented literally without
+     * inventing a second answer.
+     */
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    /**
+     * WHEN A LATER VERSION REPLACED THIS ROW (slice 7, R5c).
+     *
+     * VERSIONING IS A NEW ROW, exactly as `brain_docs` versioning is, and that
+     * is forced rather than chosen: `generations.framework_versions` records
+     * `[{id, version}]` and its own docblock promises "a framework edited
+     * later does not rewrite this generation's explanation". In-place editing
+     * would make that sentence false the first time anyone edited anything —
+     * the recorded version number would name text that no longer exists.
+     *
+     * `NULL` means THIS is the live version. The two partial unique indexes
+     * below are what make "at most one live version per framework identity"
+     * a property rather than an application-code race, the same way
+     * `brain_docs_one_active_uq` does for a brain document.
+     */
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -371,7 +414,35 @@ export const frameworks = pgTable(
       foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
       name: "frameworks_owner_profile_workspace_fk",
     }).onDelete("cascade"),
-    uniqueIndex("frameworks_slug_uq").on(t.slug),
+    // FOUR PARTIAL UNIQUES REPLACING ONE GLOBAL `frameworks_slug_uq` (slice 7).
+    //
+    // The old index was `UNIQUE (slug)` over the whole table, which had two
+    // consequences nobody had needed until private frameworks became writable:
+    // a creator naming their own framework `confession-arc` would have been
+    // refused because the LIBRARY has one, and versioning could not be a new
+    // row at all because the second version would collide with the first.
+    //
+    // SPLIT BY VISIBILITY rather than expressed with `coalesce(owner, nil)` or
+    // `NULLS NOT DISTINCT`, because within each predicate every key column is
+    // non-NULL (a shared row has no owner by CHECK; a private row has one by
+    // CHECK), so the ordinary NULL-distinct semantics cannot silently widen
+    // either index.
+    uniqueIndex("frameworks_shared_slug_version_uq")
+      .on(t.slug, t.version)
+      .where(sql`${t.visibility} = 'shared'`),
+    uniqueIndex("frameworks_private_slug_version_uq")
+      .on(t.ownerProfileId, t.slug, t.version)
+      .where(sql`${t.visibility} = 'private'`),
+    // ONE LIVE VERSION PER IDENTITY. Without these, `editPrivateFramework`'s
+    // supersede-then-insert pair is a read-then-write two connections can both
+    // win — the same reason `brain_docs_one_active_uq` exists rather than a
+    // check in application code.
+    uniqueIndex("frameworks_shared_live_uq")
+      .on(t.slug)
+      .where(sql`${t.visibility} = 'shared' AND ${t.supersededAt} IS NULL`),
+    uniqueIndex("frameworks_private_live_uq")
+      .on(t.ownerProfileId, t.slug)
+      .where(sql`${t.visibility} = 'private' AND ${t.supersededAt} IS NULL`),
     // R-9 as a constraint rather than a seeder convention. `owner_profile_id IS
     // NULL` is the marker for "library-owned", so a private framework that lost
     // its owner would silently BECOME library content — creator data entering
@@ -383,6 +454,51 @@ export const frameworks = pgTable(
     check(
       "frameworks_private_has_owner",
       sql`${t.visibility} <> 'private' OR (${t.ownerProfileId} IS NOT NULL AND ${t.workspaceId} IS NOT NULL)`
+    ),
+    // THE TWO SPELLINGS OF "RETIRED", AS AN EQUALITY — see `retiredAt` above.
+    // Not an implication: a row stamped `retired_at` while still claiming an
+    // active saturation is exactly the disagreement this closes, and so is a
+    // `saturation = 'retired'` row with no stamp (the reader R5b specifies
+    // filters on the stamp, so that row would come BACK as recommendable).
+    check(
+      "frameworks_retired_stamp",
+      sql`(${t.saturation} = 'retired') = (${t.retiredAt} IS NOT NULL)`
+    ),
+    // `version` IS A SEQUENCE POSITION, so 0 and negatives are not versions.
+    check("frameworks_version_positive", sql`${t.version} >= 1`),
+    // CONFIDENCE CANNOT EXCEED ITS EVIDENCE (R-29), as a constraint.
+    //
+    // A `CASE`, NOT AN `AND` CHAIN, deliberately: `jsonb_array_length` RAISES
+    // on a non-array, and Postgres does not guarantee that the left operand of
+    // an `AND` is evaluated first — so an `AND` form would sometimes surface a
+    // driver error instead of a constraint violation. `CASE` evaluates its
+    // branches in order, by definition.
+    //
+    // The ladder is `deriveFrameworkConfidence`'s, and
+    // `packages/db/tests/frameworks.test.ts` drives the two against each other
+    // across the range rather than trusting that they were typed together
+    // (CLAUDE.md 2026-08-18: a property that depends on two things agreeing is
+    // proved generatively against the real producer).
+    check(
+      "frameworks_confidence_matches_evidence",
+      sql`CASE
+            WHEN jsonb_typeof(${t.evidenceEntries}) <> 'array' THEN false
+            WHEN jsonb_array_length(${t.evidenceEntries}) = 0 THEN ${t.confidence} = 'unsupported'
+            WHEN jsonb_array_length(${t.evidenceEntries}) = 1 THEN ${t.confidence} = 'single_case'
+            WHEN jsonb_array_length(${t.evidenceEntries}) < 5 THEN ${t.confidence} = 'repeated'
+            ELSE ${t.confidence} = 'contrasted'
+          END`
+    ),
+    // ...and the four remaining jsonb columns really are arrays. `jsonb`
+    // accepts the scalar `'null'::jsonb` and the string `'"x"'::jsonb`, both of
+    // which satisfy NOT NULL while carrying nothing a reader can iterate — the
+    // same hole `generation_attempts_candidate_is_object` closes one file over.
+    check(
+      "frameworks_json_columns_are_arrays",
+      sql`jsonb_typeof(${t.beats}) = 'array'
+          AND jsonb_typeof(${t.applicability}) = 'array'
+          AND jsonb_typeof(${t.sourceReferences}) = 'array'
+          AND jsonb_typeof(${t.testedCaveats}) = 'array'`
     ),
   ]
 );

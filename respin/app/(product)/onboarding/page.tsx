@@ -136,10 +136,15 @@ export default async function OnboardingPage(props: {
   // Read once, used by `writeBlock` below. A failure here must not take the
   // page down — the pause is a courtesy on this screen, and the authority is
   // the refusal `createProfile` raises.
+  //
+  // FROM THE AUTHORITY, not from `BillingState` (tenancy gate round 2,
+  // 2026-09-01): `state.state === "paused"` is the `subscriptions.pausedAt`
+  // MIRROR, and `createProfile` refuses on `hasOpenPause` over `pause_periods`.
+  // Where they disagree this screen withheld or offered the profile form
+  // against a fact the server does not use.
   let paused = false;
   try {
-    const state = await respinCredits.getBillingState(scope.workspaceId, new Date());
-    paused = state.state === "paused";
+    paused = await respinCredits.hasOpenPause(scope.workspaceId);
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[onboarding] pause state unavailable", err);

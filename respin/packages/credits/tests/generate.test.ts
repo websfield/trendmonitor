@@ -27,6 +27,7 @@ import {
   generations,
   modelUsage,
   seedAuthUser,
+  subscriptions,
   seedDb,
   withWorkspace,
   type TestDb,
@@ -34,6 +35,7 @@ import {
   type WorkspaceScope,
 } from "@respin/db";
 import { appendConfigVersion, getActiveConfig } from "@respin/config";
+import { IMPLEMENTED_MODES, MODE_IDS } from "@respin/modes";
 import {
   LlmRateLimitedError,
   LlmSchemaInvalidError,
@@ -57,9 +59,15 @@ import {
   PostCallDebitError,
   WorkspacePausedError,
 } from "../src/errors";
-import { ModeNotBuiltYetError, ModeNotInPlanError } from "../src/mode-access";
 import {
+  ModeNotBuiltYetError,
+  ModeNotInPlanError,
+  planIncludesMode,
+} from "../src/mode-access";
+import {
+  setFrameworkOfferDroppedMetricSink,
   setUnchargedAttemptCapMetricSink,
+  type FrameworkOfferDroppedMetric,
   type UnchargedAttemptCapMetric,
 } from "../src/metrics";
 import { InferenceRoleError, ProfileArchivedError, RunSlotBusyError } from "../src/inference";
@@ -256,6 +264,30 @@ describe("generate", () => {
       })
     );
 
+  /**
+   * Move this workspace onto a paid tier THROUGH THE ONE AUTHORITY.
+   *
+   * `getWorkspaceBillingState` resolves the tier from a live `subscriptions`
+   * row plus the config's `stripePriceMap`, so both halves are written — a
+   * subscription with an unmapped price resolves to FREE, which is the exact
+   * trap `free-mint.test.ts` records.
+   */
+  async function setTier(tier: "creator" | "pro" | "studio"): Promise<void> {
+    const { content } = await getActiveConfig(db);
+    await appendConfigVersion(
+      db,
+      { ...content, stripePriceMap: { [`price_${tier}`]: tier } },
+      "test-admin"
+    );
+    await db.insert(subscriptions).values({
+      workspaceId: ws,
+      stripeCustomerId: "cus_tier",
+      stripeSubscriptionId: "sub_tier",
+      stripePriceId: `price_${tier}`,
+      status: "active",
+    });
+  }
+
   const attemptsOf = () =>
     db.select().from(generationAttempts).where(eq(generationAttempts.workspaceId, ws));
   const attemptRow = async (attemptId = "gen-1") =>
@@ -338,20 +370,6 @@ describe("generate", () => {
         new Date()
       )
     ).rejects.toThrow(/not one of this product's modes/);
-    // ...and a mode that IS in the plan but is not built is a DIFFERENT
-    // refusal, because "your plan excludes it" and "we have not shipped it"
-    // are opposite statements about whose fault it is.
-    await expect(
-      generate(
-        db,
-        owner,
-        profileId,
-        never(),
-        anySlots(),
-        { ...params(), mode: "caption" },
-        new Date()
-      )
-    ).rejects.toBeInstanceOf(ModeNotBuiltYetError);
     // ...and `ideaToScript` IS a real mode id that Free does not include.
     await expect(
       generate(
@@ -364,6 +382,46 @@ describe("generate", () => {
         new Date()
       )
     ).rejects.toBeInstanceOf(ModeNotInPlanError);
+
+    // ...and a mode that IS in the plan but is not built is a DIFFERENT
+    // refusal, because "your plan excludes it" and "we have not shipped it"
+    // are opposite statements about whose fault it is.
+    //
+    // THIS CASE USED `caption` ON FREE AND WENT RED WHEN STAGE B BUILT IT.
+    // Both halves of the fix are derived rather than written down, because the
+    // reason it broke is that a literal stopped being an example of what it was
+    // chosen for (CLAUDE.md 2026-08-29): the mode is whatever is still unbuilt,
+    // and the tier is whatever tier's plan includes that mode. When slice 8
+    // ships `analyseAndSpin`, the non-vacuity assertions below go RED rather
+    // than the case quietly testing nothing.
+    const unbuilt = MODE_IDS.filter((m) => !IMPLEMENTED_MODES.includes(m));
+    expect(
+      unbuilt,
+      "every mode is built, so ModeNotBuiltYetError has no witness on the generate path — delete the built gate or add the mode that needs it"
+    ).not.toHaveLength(0);
+    const unbuiltMode = unbuilt[0];
+    const tierThatIncludesIt = (
+      ["free", "creator", "pro", "studio"] as const
+    ).find((t) => planIncludesMode(t, unbuiltMode));
+    expect(
+      tierThatIncludesIt,
+      `no tier's plan includes ${unbuiltMode}, so the plan gate always answers first and the built gate is unreachable`
+    ).toBeDefined();
+    // The tier gate reads `subscriptions` through `getWorkspaceBillingState`,
+    // which is the ONE authority — so the fixture moves the workspace onto that
+    // plan rather than the test asserting about a tier nobody resolved.
+    if (tierThatIncludesIt !== "free") await setTier(tierThatIncludesIt!);
+    await expect(
+      generate(
+        db,
+        owner,
+        profileId,
+        never(),
+        anySlots(),
+        { ...params(), mode: unbuiltMode },
+        new Date()
+      )
+    ).rejects.toBeInstanceOf(ModeNotBuiltYetError);
     expect(await attemptsOf()).toHaveLength(0);
   });
 
@@ -587,6 +645,198 @@ describe("generate", () => {
       ).rejects.toBeInstanceOf(GenerationUnchargedAttemptCapError);
     } finally {
       setUnchargedAttemptCapMetricSink(null);
+    }
+  });
+
+  it("6e. a framework the budget DROPS is recorded, and an ordinary offer records nothing", async () => {
+    // WHY THIS METRIC EXISTS (billing gate, 2026-09-01). A row that does not
+    // fit the framework context budget is simply not offered — the model never
+    // sees it, `framework_eligibility` refuses any output that names it, and
+    // NOTHING anywhere said so. Measured before the fix: with private
+    // frameworks of ordinary size (526 characters against a curated average of
+    // 593), a profile at 40 private rows lost ALL NINE seeded frameworks and
+    // paid full price for the generation that lost them.
+    // offer order; this is the half that makes the remaining drops visible.
+    await activateBrain();
+    const seen: FrameworkOfferDroppedMetric[] = [];
+    setFrameworkOfferDroppedMetricSink((m) => seen.push(m));
+    try {
+      const { content } = await getActiveConfig(db);
+      // NON-VACUITY FIRST: on the seeded budget the whole curated library
+      // fits, so an ordinary generation emits NOTHING. A metric that fired on
+      // every press would be a line with no information in it.
+      const clean = scripted([reply(hooksOutput()), killTestReply(["/rules/0"])]);
+      await generate(
+        db,
+        owner,
+        profileId,
+        clean.provider,
+        anySlots(),
+        params(),
+        new Date()
+      );
+      expect(
+        seen,
+        "a drop was recorded on a generation where the whole library fits"
+      ).toEqual([]);
+
+      // Now a budget that cannot carry the library. It is CONFIG, so this is
+      // the operator's own dial rather than a stub — and the refusal it
+      // produces is silent by design, which is the thing being measured.
+      await appendConfigVersion(
+        db,
+        {
+          ...content,
+          generation: { ...content.generation, frameworkContextCharBudget: 900 },
+        },
+        "test-admin"
+      );
+      const s = scripted([reply(hooksOutput()), killTestReply(["/rules/0"])]);
+      await generate(
+        db,
+        owner,
+        profileId,
+        s.provider,
+        anySlots(),
+        params({ attemptId: "drop-1" }),
+        new Date()
+      );
+
+      expect(seen).toHaveLength(1);
+      // ACTIONABLE WITHOUT A SECOND QUERY, the rule its sibling states: which
+      // profile, in which workspace, on which mode, how much of the library
+      // was lost, and against what budget.
+      expect(seen[0]).toMatchObject({
+        workspaceId: ws,
+        profileId,
+        mode: "hooks",
+        charBudget: 900,
+      });
+      expect(seen[0]!.eligible).toBeGreaterThan(seen[0]!.offered);
+      // THE SPLIT IS THE POINT: a dropped CURATED row is the product
+      // rationing its own library, which is a different fact from a creator
+      // filling the budget with their own frameworks.
+      expect(seen[0]!.droppedShared).toBeGreaterThan(0);
+      expect(seen[0]!.droppedPrivate).toBe(0);
+    } finally {
+      setFrameworkOfferDroppedMetricSink(null);
+    }
+  });
+
+  it("6e-bis. the DROP LEAVES THE PACKAGE, so a screen can say it (R17)", async () => {
+    // THE GAP THIS CLOSES (slice 7 cross-boundary pass, 2026-09-01). Until
+    // this field the only thing that learned about a drop was the server
+    // metric above: a creator whose own frameworks did not fit paid full price
+    // for a prompt missing material they wrote, and no screen could say so
+    // because `generate` did not return it.
+    await activateBrain();
+    const { content } = await getActiveConfig(db);
+
+    // ON THE SEEDED BUDGET: an offer was built and NOTHING was dropped, which
+    // is a real answer and is reported as one.
+    const clean = scripted([reply(hooksOutput()), killTestReply(["/rules/0"])]);
+    const fits = await generate(
+      db,
+      owner,
+      profileId,
+      clean.provider,
+      anySlots(),
+      params({ attemptId: "offer-fits" }),
+      new Date()
+    );
+    expect(fits.frameworkOffer).not.toBeNull();
+    expect(fits.frameworkOffer!.droppedPrivate).toBe(0);
+    expect(fits.frameworkOffer!.droppedShared).toBe(0);
+    expect(fits.frameworkOffer!.offered).toBe(fits.frameworkOffer!.eligible);
+
+    // ON A BUDGET THAT CANNOT CARRY IT: the same four numbers the metric got.
+    await appendConfigVersion(
+      db,
+      {
+        ...content,
+        generation: { ...content.generation, frameworkContextCharBudget: 900 },
+      },
+      "test-admin"
+    );
+    const seen: FrameworkOfferDroppedMetric[] = [];
+    setFrameworkOfferDroppedMetricSink((m) => seen.push(m));
+    let dropped;
+    try {
+      const s = scripted([reply(hooksOutput()), killTestReply(["/rules/0"])]);
+      dropped = await generate(
+        db,
+        owner,
+        profileId,
+        s.provider,
+        anySlots(),
+        params({ attemptId: "offer-drops" }),
+        new Date()
+      );
+    } finally {
+      setFrameworkOfferDroppedMetricSink(null);
+    }
+    expect(dropped.frameworkOffer).not.toBeNull();
+    expect(dropped.frameworkOffer!.eligible).toBeGreaterThan(
+      dropped.frameworkOffer!.offered
+    );
+    // ONE COMPUTATION, TWO CONSUMERS: the operator's dashboard and the
+    // creator's screen cannot disagree about how many rows the budget dropped.
+    expect(seen).toHaveLength(1);
+    expect(dropped.frameworkOffer).toEqual({
+      eligible: seen[0]!.eligible,
+      offered: seen[0]!.offered,
+      droppedShared: seen[0]!.droppedShared,
+      droppedPrivate: seen[0]!.droppedPrivate,
+    });
+
+    // A REPLAY HAS NO ANSWER, and `null` is how it says so. Re-submitting a
+    // settled attempt id assembles no prompt, so a zero here would claim
+    // nothing was dropped on a press that never built an offer.
+    const replay = await generate(
+      db,
+      owner,
+      profileId,
+      scripted([]).provider,
+      anySlots(),
+      params({ attemptId: "offer-drops" }),
+      new Date()
+    );
+    expect(replay.replayed).toBe(true);
+    expect(replay.frameworkOffer).toBeNull();
+  });
+
+  it("6f. a dropped-offer sink that THROWS cannot break the generation it observed", async () => {
+    // THE FALSE BRANCH OF "NEVER THROWS INTO THE CALLER". This one fires on
+    // the SUCCESS path, before the vendor call, so a sink that raised would
+    // turn a working generation into an error the creator learns nothing from
+    // — worse than the refusal case, because nothing was even wrong.
+    await activateBrain();
+    const { content } = await getActiveConfig(db);
+    await appendConfigVersion(
+      db,
+      {
+        ...content,
+        generation: { ...content.generation, frameworkContextCharBudget: 900 },
+      },
+      "test-admin"
+    );
+    setFrameworkOfferDroppedMetricSink(() => {
+      throw new Error("collector down");
+    });
+    try {
+      const s = scripted([reply(hooksOutput()), killTestReply(["/rules/0"])]);
+      const result = await generate(
+        db,
+        owner,
+        profileId,
+        s.provider,
+        anySlots(),
+        params(),
+        new Date()
+      );
+      expect(result.generation.outcome).toBe("usable");
+    } finally {
+      setFrameworkOfferDroppedMetricSink(null);
     }
   });
 
@@ -827,6 +1077,15 @@ describe("generate", () => {
     expect(settled.run).toBeNull();
     expect(settled.creditsChargedNow).toBe(HOOK_SET_COST);
     expect(settled.generation.outcome).toBe("usable");
+    // NO OFFER WAS BUILT BY THIS CALL, and `null` is the honest answer rather
+    // than a zeroed summary (round 2, 2026-09-01 — the billing reviewer drove
+    // this and found it true, unasserted). This call assembled no prompt: it
+    // settled a candidate the FIRST call had already validated. A
+    // `{eligible: 0, offered: 0, dropped…: 0}` here would tell a creator
+    // "nothing was dropped" about a question this call never asked — and it is
+    // `settle`'s `frameworkOffer: null` sitting BEFORE `...outcome.settled`
+    // that makes it so.
+    expect(settled.frameworkOffer).toBeNull();
     // ...and what settled is what the VENDOR said, round-tripped through the
     // column and re-parsed by the mode's own parser.
     expect(settled.generation.output).toEqual(hooksOutput());

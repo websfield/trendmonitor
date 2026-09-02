@@ -58,6 +58,7 @@ import * as setupMod from "../src/stripe/setup";
 import * as packPriceMod from "../src/stripe/pack-price";
 import * as burnPeriodMod from "../src/burn-period";
 import * as modeLabelMod from "../src/mode-label";
+import * as includedBuildMod from "../src/included-build";
 import { handleStripeEvent } from "../src/stripe/webhooks";
 import { workspaceForCustomer, getOrCreateCustomer } from "../src/stripe/customers";
 import { createPortalUrl } from "../src/stripe/actions";
@@ -143,6 +144,21 @@ const NOT_DB_FACING: Record<string, string> = {
   ModeNotBuiltYetError: "error class",
   ModeNotInPlanError: "error class",
   UnpricedOperationError: "error class",
+  // Slice 7.
+  RevisionParentError: "error class",
+  UnknownEntitlementTierError: "error class",
+  generationOp:
+    "pure function — maps (mode, isRevision) onto a `creditCosts` key, runs no query. R8's whole pricing decision, in one place, so a revision cannot be priced at its parent mode's cost by a branch somebody forgot",
+  includedBuildPurposes:
+    "pure function — drives `generationOp` and `priceOf` over every priced operation of each purpose against a config document the CALLER has already read, and runs no query of its own. R-82: it replaced a frozen constant, because which purposes price their first billable attempt at zero is a fact `/admin/config` can change; `/admin/model-spend` reads the active document and hands the answer to `reconcileSpend`",
+  modeTiers:
+    "pure lookup in the MODE_TIERS record — no query, no workspace data (R14)",
+  modesIncludedIn:
+    "pure derivation of the per-tier view from the same record — no query (R13)",
+  modeOffers:
+    "pure: `assertModeAllowed` read FORWARDS, over the same two authorities in the same order (the plan map here, IMPLEMENTED_MODES in @respin/modes) plus `modeLabel`. No query, no config, no workspace data — it is handed a resolved tier, like everything else in mode-access.ts. It exists so the mode picker in app/** is not a second derivation of the gate that refuses it (slice 7, R1/R13/R14)",
+  privateFrameworkEntitlement:
+    "pure lookup in the TIER_PRIVATE_FRAMEWORKS record. The tier it is handed comes from getWorkspaceBillingState, which is the one authority and IS covered below (R5c/REQ-D05)",
   GenerationAssemblyError: "error class (re-exported from @respin/modes)",
   KillTestError: "error class (re-exported from @respin/modes)",
   NoCreatorRulesError: "error class (re-exported from @respin/modes)",
@@ -161,9 +177,9 @@ const NOT_DB_FACING: Record<string, string> = {
   freeAllowanceExpiry:
     "pure function — the first instant of the next UTC calendar month (R17's no-rollover expiry)",
   hashRequest:
-    "pure function — sha256 over five strings the caller already holds; no query, and deliberately no creator identifier in it",
+    "pure function — sha256 over SIX strings the caller already holds (slice 7 added `parentGenerationId`); no query, and deliberately no creator identifier in it",
   planIncludesMode:
-    "pure predicate over the TIER_MODES map and a resolved tier — no query, no workspace data (R18)",
+    "pure predicate over the MODE_TIERS map and a resolved tier — no query, no workspace data (R18)",
   assertModeAllowed:
     "pure refusal over the same map — the tier it is handed comes from getWorkspaceBillingState, which is the one authority and IS covered below (R18)",
   generate:
@@ -422,6 +438,18 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
     // during-pause invoice.
     internalOnly: ["clearPauseMirror", "openPauseStartedKnownAt"],
   },
+  "included-build.ts": {
+    reason:
+      "R-82: WHICH PURPOSES PRICE THEIR FIRST BILLABLE ATTEMPT AT ZERO, under a config document the caller has already read. Pure — it drives `priceOf` over every priced operation of each purpose and touches no database, no workspace and no scope — and it is in this package rather than in `@respin/db` because `priceOf` is what decides it and `@respin/db` may not import this package. `/admin/model-spend` carries its answer to `reconcileSpend`, whose parameter has no default.",
+    viaIndex: ["includedBuildPurposes"],
+    // `purposeIsIncluded` is the one-purpose half, split out so the EMPTY
+    // operation list has a witness — `[].every(…)` is `true`, which would
+    // exempt a purpose nobody classified. It stays package-private because
+    // `app/**` must never be able to ask "is this purpose free" about a list
+    // it composed itself: the only question a screen may ask is the derived
+    // one, over the document it read.
+    internalOnly: ["purposeIsIncluded"],
+  },
   "profiles.ts": {
     reason:
       "the creator-profile ENTITLEMENT decision (slice 1, R-30 constraint 2). It is in this package rather than @respin/db because the cap is priced off the resolved tier, whose sole authority is state.ts here, and @respin/db cannot import it without creating a second tier authority. It owns no db-facing surface of its own: the INSERT and the COUNT are scope-caged write capabilities in @respin/db, and this module composes them behind the lock, the pause gate, the role gate and the cap.",
@@ -470,12 +498,14 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   },
   "metrics.ts": {
     reason:
-      "money-path observability, now TWO metrics. (1) Fold observability (audit 2026-08-17 #22 / R-25 D-AUDIT-3) — two named metrics and a workspace id, caller balance.ts. (2) The uncharged-billable CAP crossing (billing gate round 2, 2026-09-01), whose callers are the two cap sites, generate.ts and inference.ts: windowing the generation cap converted a bounded-forever exposure into an unbounded-RATE one on a tier that needs no card, and nothing counted or surfaced it. It runs NO query of its own — every value is already in the caller's hand — and the whole module stays off src/index because app/** has no business emitting or redirecting money-path telemetry, still less pointing a cap counter at a sink of its choosing",
+      "money-path observability, now THREE metrics. (1) Fold observability (audit 2026-08-17 #22 / R-25 D-AUDIT-3) — two named metrics and a workspace id, caller balance.ts. (2) The uncharged-billable CAP crossing (billing gate round 2, 2026-09-01), whose callers are the two cap sites, generate.ts and inference.ts: windowing the generation cap converted a bounded-forever exposure into an unbounded-RATE one on a tier that needs no card, and nothing counted or surfaced it. It runs NO query of its own — every value is already in the caller's hand — and the whole module stays off src/index because app/** has no business emitting or redirecting money-path telemetry, still less pointing a cap counter at a sink of its choosing. (3) The framework offer's DROPPED rows (billing gate, 2026-09-01), whose caller is generate.ts: a framework the context budget cannot carry is simply not offered, and the accessor's `slug ASC` order meant an ordinary set of private frameworks could push the WHOLE curated library out of a prompt the creator paid full price for — with nothing counting it. Same discipline as its siblings: no query of its own, and off src/index",
     internalOnly: [
       "setFoldMetricSink",
       "emitFoldMetric",
       "setUnchargedAttemptCapMetricSink",
       "emitUnchargedAttemptCapMetric",
+      "setFrameworkOfferDroppedMetricSink",
+      "emitFrameworkOfferDroppedMetric",
     ],
   },
   "infer-voice.ts": {
@@ -513,6 +543,11 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "GenerationRecoveryRequiredError",
       "GenerationUnchargedAttemptCapError",
       "UnpricedOperationError",
+      // Slice 7 (R6/R8). The pre-call revision refusal — same reason again:
+      // `respinCredits.generate` can raise it, so `app/**` must be able to
+      // `instanceof` it or a named refusal about somebody else's output
+      // renders as "Something went wrong".
+      "RevisionParentError",
     ],
   },
   "stripe/adapter.ts": {
@@ -532,8 +567,24 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   },
   "generate.ts": {
     reason:
-      "the COMPOSED GENERATION (slice 6). Here rather than in @respin/db for the same layering reason as profiles.ts and inference.ts: it needs the resolved tier (state.ts), the active config, the ledger and the scoped write capabilities, and @respin/db can see only the last. It owns NO query of its own — every db touch is a caged accessor, a write capability, `debitCredits` or `deriveBalance*`, each isolated where it lives. `generate` itself reaches app/** through app-server.ts, which IS enumerated; `hashRequest` is pure and is on the public surface so the payload identity can be asserted without a database.",
-    viaIndex: ["generate", "hashRequest"],
+      "the COMPOSED GENERATION (slice 6). Here rather than in @respin/db for the same layering reason as profiles.ts and inference.ts: it needs the resolved tier (state.ts), the active config, the ledger and the scoped write capabilities, and @respin/db can see only the last. It owns NO query of its own — every db touch is a caged accessor, a write capability, `debitCredits` or `deriveBalance*`, each isolated where it lives. `generate` itself reaches app/** through app-server.ts, which IS enumerated; `hashRequest` is pure and is on the public surface so the payload identity can be asserted without a database. Slice 7 added the framework read (`scope.accessors.eligibleFrameworks()`, a caged accessor breach-tested in profile-scope.test.ts) and the revision's parent read (`caps.readGenerationForAttempt`, an already-isolated write capability) — both somebody else's authority, so the sentence above still holds.",
+    viaIndex: ["generate", "generationOp", "hashRequest"],
+    internalOnly: [
+      "promptFramework",
+      "frameworksForContext",
+      "frameworkVersionsUsed",
+      "revisionInput",
+      // THE REVISION'S TRACEABILITY HALF (spin-compliance gate, 2026-09-01),
+      // both PURE and both package-private. `reportedSpecificsOf` reads a
+      // parent's already-fetched `kill_test` jsonb — no query — and
+      // `unvouchedSpecifics` compares two lists of strings through
+      // `@respin/modes`' own corpus index. They are exported for the tests
+      // that drive their false branches (a fail-closed refusal on an
+      // unreadable document, and a filter that must never deny a specific the
+      // creator typed), not for a caller.
+      "reportedSpecificsOf",
+      "unvouchedSpecifics",
+    ],
   },
   "mode-access.ts": {
     reason:
@@ -541,8 +592,13 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
     viaIndex: [
       "planIncludesMode",
       "assertModeAllowed",
+      "modeTiers",
+      "modesIncludedIn",
+      "modeOffers",
+      "privateFrameworkEntitlement",
       "ModeNotInPlanError",
       "ModeNotBuiltYetError",
+      "UnknownEntitlementTierError",
     ],
   },
   "burn-period.ts": {
@@ -592,6 +648,7 @@ const INTERNAL_NAMESPACES: Record<string, object> = {
   "stripe/pack-price.ts": packPriceMod,
   "burn-period.ts": burnPeriodMod,
   "mode-label.ts": modeLabelMod,
+  "included-build.ts": includedBuildMod,
 };
 
 /**
@@ -1458,10 +1515,11 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     // THE ISOLATION QUESTION THIS OPERATION ACTUALLY POSES is not "does the
     // row carry the right workspace id" — it is "whose history decides what
     // this creator is charged". D-M2-2 gives each profile ONE included build
-    // and prices every rebuild after it off `countBillableAttempts`, so a
-    // dropped workspace predicate on that count would let B's spending consume
-    // A's included build: A would be charged 50 credits for the first thing
-    // they ever ran, because a stranger had run one first.
+    // and prices every rebuild after it off the included-build CLAIM
+    // (`firstBillableAttempt`, R-80), so a dropped workspace predicate on that
+    // read would let B's spending consume A's included build: A would be
+    // charged 50 credits for the first thing they ever ran, because a stranger
+    // had run one first.
     const db = await createTestDb();
     await seedDb(db);
     const { A, B } = await twoWorkspaces(db);

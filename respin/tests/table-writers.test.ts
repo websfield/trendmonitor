@@ -41,12 +41,14 @@ const TABLES: Record<string, string> = {
   frameworks: "frameworks",
   onboardingInputs: "onboarding_inputs",
   modelUsage: "model_usage",
+  firstBillableAttempts: "first_billable_attempts",
   workspaceSpendMonthly: "workspace_spend_monthly",
   onboardingInterviewDrafts: "onboarding_interview_drafts",
   brainActivationSnapshots: "brain_activation_snapshots",
   membershipProfileSelections: "membership_profile_selections",
   generationAttempts: "generation_attempts",
   generations: "generations",
+  generationFeedback: "generation_feedback",
 };
 
 const VERBS = ["insert", "update", "delete"] as const;
@@ -316,6 +318,17 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().recordModelUsage — the append-only spend record",
   },
+  // R-80. INSERT ONLY, and the absence of `::update` and of any delete is the
+  // assertion rather than an oversight: the claim on a profile's included build
+  // is decided ONCE, by whoever wins the unique index, and a claim that could be
+  // MOVED is a free build that can be handed out twice — the exact defect this
+  // table replaced. Its one writer is the same transaction that writes the
+  // `model_usage` row it names, which is what makes the decision a commit-time
+  // one rather than a comparison of timestamps in somebody's snapshot.
+  first_billable_attempts: {
+    "packages/db/src/with-workspace.ts::insert":
+      "writeCapabilities().recordModelUsage — the claim rides with the spend record, in one transaction, via onConflictDoNothing on (profile_id, purpose). Both scope columns, the purpose and the attempt id are read off the RETURNED usage row, never from the caller's params, so what is claimed is what was actually stored.",
+  },
   // Written from slice 1. ONE writer, and the split is the point: the INSERT
   // lives in `packages/db` (a scope-caged workspace write capability) while the
   // DECISION — the per-tier cap, priced off the resolved tier — lives in
@@ -347,10 +360,21 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/db/src/spend-rollup.ts::update":
       "pseudonymiseWorkspaceSpend — R-30.5/R-54's deletion-executor obligation: moves every row of a deleted workspace to one fresh random id, discarding the mapping.",
   },
-  // Written by NOTHING, and that is the point: frameworks is created by M2a and
-  // seeded by a later milestone under R-29's evidence rules. An empty
-  // expectation is the strongest assertion this file can carry.
-  frameworks: {},
+  // Slice 7 (R5a-R5c) — THE EMPTY EXPECTATION M2A LEFT HERE IS NOW FILLED IN,
+  // which was the point of leaving it: the first `.insert` or `.update` of this
+  // table anywhere in `packages/**` or `app/**` had to fail here and be named.
+  //
+  // ONE FILE FOR BOTH VERBS, and the split by verb is what makes the entries
+  // say something. `frameworks.ts` is the only writer because the shared seed,
+  // the creator's private CRUD and the versioning supersede all funnel through
+  // it — there is deliberately no framework writer in `with-workspace.ts`,
+  // which is where a reader would look first.
+  frameworks: {
+    "packages/db/src/frameworks.ts::insert":
+      "seedSharedFrameworks (the approved F1-F9 library, `onConflictDoNothing` so a re-run never overwrites a curator decision), createPrivateFramework (version 1) and editPrivateFramework (the NEXT version — versioning appends a row, like brain_docs, because `generations.framework_versions` promises a later edit does not rewrite an earlier generation's explanation). All three build `visibility`, both owner ids, `curator_status`, `version` and `confidence` field by field from the scope and from the parsed content — never a spread — and all three run the REQ-D04 mechanism-level content scan first.",
+    "packages/db/src/frameworks.ts::update":
+      "editPrivateFramework's SUPERSEDE (stamping `superseded_at` on the version being replaced, in the same transaction and under the same advisory key as the insert that replaces it), approvePrivateFramework (the creator approving their own row; `curated_by` records the profile id so a private approval is distinguishable from an operator's library approval) and retirePrivateFramework (which sets `retired_at` AND `saturation = 'retired'` together, because `frameworks_retired_stamp` is an EQUALITY that refuses either half alone). Every one of them carries both owner scope columns in its WHERE.",
+  },
   // Slice 3b (Stage A). ONE writer file for both verbs — `saveInterviewDraft`
   // and `submitInterview` share the same two private helpers
   // (`readDraftRow`/the insert-or-update pair), so there is exactly one
@@ -376,6 +400,15 @@ const EXPECTED: Record<string, Record<string, string>> = {
   generations: {
     "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().settleGeneration — the ONE writer, and it writes the row and moves its claim to `settled` in the same call, because `generation_attempts_settled_has_generation` is an EQUALITY that neither half can satisfy alone. Role-gated, cage-asserted, every column built field by field from the scope (no spread to strip). There is deliberately NO `::update` entry: `generations` is immutable, has no `updated_at`, and adding an UPDATE here is now a deliberate edit to this file rather than a silent one.",
+  },
+  // Slice 7 (R10). APPEND-ONLY, INSERT ONLY, like `generations` and
+  // `brain_activation_snapshots` — and the absence of a `::update` key is the
+  // assertion, not an oversight: feedback is a record of what a creator said,
+  // and an event log that can be rewritten is not evidence. A creator who
+  // changes their mind records a DIFFERENT reaction.
+  generation_feedback: {
+    "packages/db/src/with-workspace.ts::insert":
+      "writeCapabilities().recordGenerationFeedback — the ONE writer. Role-gated (a viewer may not), cage-asserted, both scope columns written from the scope rather than from the caller, the closed reaction set checked at RUNTIME as well as in the type (a cast otherwise reaches the pgEnum and the creator sees a driver error), and the note normalised/bounded/refused-if-blank. Insert-or-REFUSE via `onConflictDoNothing` against `generation_feedback_generation_reaction_uq`: a swallowed duplicate would report success on a note that was not kept.",
   },
   generation_attempts: {
     "packages/db/src/with-workspace.ts::insert":
@@ -461,7 +494,26 @@ describe("P8 — every M2a table's writers are enumerated", () => {
     expect(editComposer).toContain('inputClass: "creator_authored"');
     expect(editComposer).toContain('fieldKey: "creator_edit"');
     expect(editComposer).toContain("caps.writeBrainDoc(");
-    expect(EXPECTED.frameworks).toEqual({});
+    // `EXPECTED.frameworks` USED TO BE ASSERTED EMPTY HERE, and slice 7 made
+    // that assertion FALSE rather than obsolete: private frameworks are
+    // writable now (R5c), so the empty expectation could not survive. What the
+    // case was actually about is asserted directly instead — a creator EDIT of
+    // a brain document must not write a framework — which is a statement about
+    // `brain-ops.ts` and stays true whatever the library surface grows into.
+    // Deriving it from the scanner rather than from an equality means the
+    // shapes an import rename or a raw INSERT would take are covered too.
+    expect(
+      scanWriters(new Map([["packages/db/src/brain-ops.ts", editComposer!]])).filter(
+        (f) => f.table === "frameworks"
+      ),
+      "the creator-edit path writes a framework — a brain edit is not a library contribution (REQ-D04)"
+    ).toEqual([]);
+    // ...and the framework writers that DO exist are exactly the two reviewed
+    // files, so a third one appearing anywhere fails the per-table case below.
+    expect(Object.keys(EXPECTED.frameworks).sort()).toEqual([
+      "packages/db/src/frameworks.ts::insert",
+      "packages/db/src/frameworks.ts::update",
+    ]);
   });
 
   it.each(Object.keys(EXPECTED))("%s has exactly its expected writers", (table) => {

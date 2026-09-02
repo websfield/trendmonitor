@@ -66,6 +66,38 @@ export const SECTION_KEYS = [
 export type SectionKey = (typeof SECTION_KEYS)[number];
 
 /**
+ * The OUTPUT checks a mode runs after its draft is parsed (slice 7, R3/R4/R5,
+ * R18).
+ *
+ * THEY ARE DATA ON THE MODE, NOT BRANCHES IN A SCANNER, because the card's R1
+ * says a mode is "a data entry in the mode registry, not a branch". The
+ * consequence is the one that matters: `mode-checks.ts` holds a
+ * `Record<ModeCheckId, …>`, so a check id nothing implements is a compile
+ * error, and `mode-checks.test.ts` derives each mode's expected list from the
+ * SECTIONS it permits, so a mode that carries hooks and forgets `hook_spread`
+ * is a red test rather than one mode quietly running REQ-C04 unenforced.
+ *
+ * WHAT THEY ARE NOT. Three of the five are stand-ins for properties of MEANING
+ * (does it summarise, do the hooks differ in creative thesis, is the weakest
+ * point real). `mode-checks.ts` records what each one is measured not to catch;
+ * none of them is the requirement, and none is reported as if it were.
+ */
+export const MODE_CHECK_IDS = [
+  /** REQ-C01 mode 3: source-to-reel rebuilds, never summarises. */
+  "source_fidelity",
+  /** REQ-C04: a hook set spans different mechanics, never five of one. */
+  "hook_spread",
+  /** REQ-C01 mode 7: ideas are hook + thesis + framework, never topics. */
+  "ideas_not_topics",
+  /** The named framework is one this profile was actually offered. */
+  "framework_eligibility",
+  /** REQ-I04: the weakest point names something. */
+  "weakest_point",
+] as const;
+
+export type ModeCheckId = (typeof MODE_CHECK_IDS)[number];
+
+/**
  * The sections EVERY mode must produce, whatever it is.
  *
  * `whyThisPerforms` carries the weakest point (REQ-I04, REQ-C02, non-negotiable
@@ -100,6 +132,14 @@ export type ModeSpec = {
   required: readonly SectionKey[];
   /** Sections the output MAY carry. Anything outside this is a refusal. */
   permitted: readonly SectionKey[];
+  /**
+   * The output checks this mode runs (slice 7, R1).
+   *
+   * REQUIRED, so a new mode states its list rather than inheriting silence:
+   * `Record<ModeId, ModeSpec>` makes the field's absence a compile error, and
+   * `[]` is then a decision somebody wrote down.
+   */
+  checks: readonly ModeCheckId[];
   /** How many hooks, when the mode produces them (PRD REQ-C01: 3-5). */
   hookCount?: { min: number; max: number };
   /** How many ideas, when the mode produces them. */
@@ -130,19 +170,30 @@ const SCRIPT_SECTIONS = [
   "disclosure",
 ] as const satisfies readonly SectionKey[];
 
+/** The checks every full-script mode runs: it carries hooks and a framework. */
+const SCRIPT_CHECKS = [
+  "hook_spread",
+  "framework_eligibility",
+  "weakest_point",
+] as const satisfies readonly ModeCheckId[];
+
 const scriptMode = (
   id: ModeId,
   label: string,
   creditCostKey: CreditCostKey,
-  similarityGated = false
+  options: {
+    similarityGated?: boolean;
+    checks?: readonly ModeCheckId[];
+  } = {}
 ): ModeSpec => ({
   id,
   label,
   creditCostKey,
   required: SCRIPT_SECTIONS,
   permitted: SCRIPT_SECTIONS,
+  checks: options.checks ?? SCRIPT_CHECKS,
   hookCount: { min: 3, max: 5 },
-  similarityGated,
+  similarityGated: options.similarityGated ?? false,
 });
 
 export const MODE_SPECS: Record<ModeId, ModeSpec> = {
@@ -152,13 +203,14 @@ export const MODE_SPECS: Record<ModeId, ModeSpec> = {
     "fullScript"
   ),
   ideaToScript: scriptMode("ideaToScript", "Idea to script", "fullScript"),
-  sourceToReel: scriptMode("sourceToReel", "Source to reel", "fullScript"),
-  analyseAndSpin: scriptMode(
-    "analyseAndSpin",
-    "Analyse and spin",
-    "spin",
-    true
-  ),
+  sourceToReel: scriptMode("sourceToReel", "Source to reel", "fullScript", {
+    // THE ONE MODE WHOSE INPUT IS SOMEBODY ELSE'S MATERIAL, so it is the one
+    // mode that can be refused for repeating it (REQ-C01 mode 3, card R3).
+    checks: ["source_fidelity", ...SCRIPT_CHECKS],
+  }),
+  analyseAndSpin: scriptMode("analyseAndSpin", "Analyse and spin", "spin", {
+    similarityGated: true,
+  }),
   hooks: {
     id: "hooks",
     label: "Hooks",
@@ -168,6 +220,10 @@ export const MODE_SPECS: Record<ModeId, ModeSpec> = {
     // that omits them has still done the job it was asked to do.
     required: ["hooks", "whyThisPerforms", "disclosure"],
     permitted: ["thesis", "framework", "hooks", "whyThisPerforms", "disclosure"],
+    // `framework_eligibility` is here because the mode PERMITS a framework —
+    // the check is about the sections a document may carry, not about the ones
+    // it must.
+    checks: ["hook_spread", "framework_eligibility", "weakest_point"],
     hookCount: { min: 3, max: 5 },
     similarityGated: false,
   },
@@ -177,6 +233,11 @@ export const MODE_SPECS: Record<ModeId, ModeSpec> = {
     creditCostKey: "caption",
     required: ["caption", "whyThisPerforms", "disclosure"],
     permitted: ["thesis", "caption", "whyThisPerforms", "disclosure"],
+    // NO HOOKS AND NO FRAMEWORK IN A CAPTION, so this is the shortest list any
+    // mode carries: the universal check and nothing else. Writing it out is
+    // what the required field is for — a caption mode that silently ran no
+    // checks would look exactly like this one and mean something different.
+    checks: ["weakest_point"],
     similarityGated: false,
   },
   ideation: {
@@ -188,6 +249,15 @@ export const MODE_SPECS: Record<ModeId, ModeSpec> = {
     // list of strings.
     required: ["ideas", "whyThisPerforms", "disclosure"],
     permitted: ["ideas", "whyThisPerforms", "disclosure"],
+    // AN IDEA CARRIES A HOOK, so `hook_spread` applies here as surely as it
+    // does to a hook set — three ideas that open the same way are one idea,
+    // whatever the theses underneath say.
+    checks: [
+      "hook_spread",
+      "ideas_not_topics",
+      "framework_eligibility",
+      "weakest_point",
+    ],
     ideaCount: { min: 3, max: 5 },
     similarityGated: false,
   },
@@ -214,12 +284,26 @@ export function modeSpec(mode: ModeId): ModeSpec {
 }
 
 /**
- * The modes that are built end to end today. Slice 7 adds the other six.
+ * The modes that are built end to end today.
  *
- * IT HAS NO PRODUCT READER YET, and saying so is the point: its first one is
- * stage C's mode gate. It matters because PRD §4G gives the Free tier "Hooks,
- * Captions, Ideas" — three modes — while slice 6 builds ONE, so a tier-only
- * gate would offer a creator two modes with no pipeline behind them. The tier
- * map (card R18) decides what a plan includes; this decides what exists.
+ * SIX OF SEVEN AFTER SLICE 7, and the one that is missing is missing for a
+ * stated reason rather than for lack of time: `analyseAndSpin` is the only
+ * `similarityGated` mode (tech-spec §3 step 4, non-negotiable 1), the gate
+ * itself is slice 8's `packages/trends` work, and `output.test.ts` holds the
+ * RELATION — a similarity-gated mode may not appear in this list while the gate
+ * does not exist. Adding it here is therefore a deliberate act that turns a
+ * test red, not an oversight that ships a spin ungated.
+ *
+ * THE TIER MAP DECIDES WHAT A PLAN INCLUDES; THIS DECIDES WHAT EXISTS. PRD §4G
+ * gives Free "Hooks, Captions, Ideas" and all seven to Creator and above, so a
+ * tier-only gate would offer a paying creator a mode with no pipeline behind
+ * it. Its reader is `packages/credits/src/mode-access.ts`.
  */
-export const IMPLEMENTED_MODES: readonly ModeId[] = ["hooks"];
+export const IMPLEMENTED_MODES: readonly ModeId[] = [
+  "footageToThesis",
+  "ideaToScript",
+  "sourceToReel",
+  "hooks",
+  "caption",
+  "ideation",
+];

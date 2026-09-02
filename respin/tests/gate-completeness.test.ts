@@ -388,6 +388,37 @@ const NAMED_PROTECTED_PAGES: {
   // that reaches a vendor AND takes a credit debit on the same press, so an
   // ungated one is not a leak of data alone.
   { file: "(product)/studio/actions.ts", url: "/studio", gate: "requireUser" },
+  // Slice 7, stage D. The private-framework surface, UNDER `/studio` on
+  // purpose: `/studio` is already a PROTECTED_PREFIX, so this page and its
+  // actions inherit the middleware redirect and this suite's demand for a gate
+  // without anybody having to remember to add a prefix — which is the hole
+  // `findUngatedGroupFiles` exists to catch. The actions module is named
+  // separately for the same reason every other one on this list is: it is a
+  // POST endpoint in its own right, invocable by its stable action id without
+  // the page ever rendering, and it writes permanently into a creator's record.
+  {
+    file: "(product)/studio/frameworks/page.tsx",
+    url: "/studio/frameworks",
+    gate: "requireUser",
+  },
+  {
+    file: "(product)/studio/frameworks/actions.ts",
+    url: "/studio/frameworks",
+    gate: "requireUser",
+  },
+  // Slice 7, stage D — PRD B04's step. Under `/onboarding` for the same reason,
+  // and its action reaches a vendor AND takes a credit debit on one press, so
+  // an ungated one is not a leak of data alone.
+  {
+    file: "(product)/onboarding/first-ideas/page.tsx",
+    url: "/onboarding/first-ideas",
+    gate: "requireUser",
+  },
+  {
+    file: "(product)/onboarding/first-ideas/actions.ts",
+    url: "/onboarding/first-ideas",
+    gate: "requireUser",
+  },
   { file: "(product)/usage/page.tsx", url: "/usage", gate: "requireUser" },
   {
     file: "(product)/settings/billing/page.tsx",

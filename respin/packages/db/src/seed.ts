@@ -4,6 +4,7 @@
 // requires the explicit RESPIN_SEED_FORCE=1 opt-in.
 import { eq } from "drizzle-orm";
 import type { DbLike } from "./db-like";
+import { seedSharedFrameworks } from "./frameworks";
 import {
   configVersions,
   memberships,
@@ -103,6 +104,15 @@ export const CONFIG_V1_SEED = {
     // unwindowed count over an append-only table refuses a profile forever.
     maxUnchargedBillableAttempts: 10,
     unchargedAttemptWindowMinutes: 60,
+    // How much of one generation's prompt the framework library may occupy
+    // (slice 7, R17). A SPEND DIAL — it sets the input-token floor of every
+    // generation that offers frameworks — which is why it is config and not a
+    // module constant; the number, and why 20,000, are argued in
+    // `packages/config/src/schema.ts` beside the key. Explicit here as well as
+    // defaulted in the schema, for the reason `profileCaps` carries: a fresh
+    // install writes it, so only databases seeded before slice 7 need
+    // `config:migrate` at all.
+    frameworkContextCharBudget: 20_000,
   },
   // The model layer (slice 2a). Explicit in the seed for the same reason as
   // `profileCaps` and `onboardingBrainRebuild` above: a fresh install writes
@@ -191,5 +201,22 @@ export async function seedDb(db: DbLike): Promise<void> {
         .insert(configVersions)
         .values({ content: CONFIG_V1_SEED, createdBy: "seed" });
     }
+
+    // THE APPROVED SHARED FRAMEWORK LIBRARY, F1-F9 (slice 7, R5a).
+    //
+    // NOT DEV-ONLY, unlike everything above it in this function, and that
+    // distinction is worth stating because this file's whole header is about a
+    // dev guard. The fake user, the workspace and the membership must never
+    // land in a real database; the framework library MUST, because it is
+    // product data every workspace reads and it belongs to nobody
+    // (`owner_profile_id`/`workspace_id` NULL by CHECK). `assertSeedAllowed`
+    // still gates the whole command, so the library reaches production
+    // through the same deliberate run — the alternative, a second seed
+    // command nobody runs, is how a library ships empty.
+    //
+    // Idempotent by `onConflictDoNothing` and NEVER overwriting: see
+    // `seedSharedFrameworks` for why re-running must not reassert this file's
+    // opinion over a curator's later decision.
+    await seedSharedFrameworks(tx);
   });
 }

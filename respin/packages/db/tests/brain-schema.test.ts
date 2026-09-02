@@ -24,12 +24,17 @@ import {
 } from "../src/brain-schema";
 import {
   brainActivationSnapshots,
+  firstBillableAttempts,
   modelUsage,
   onboardingInputs,
   onboardingInterviewDrafts,
   workspaceSpendMonthly,
 } from "../src/onboarding-schema";
-import { generationAttempts, generations } from "../src/generation-schema";
+import {
+  generationAttempts,
+  generationFeedback,
+  generations,
+} from "../src/generation-schema";
 import { CREATOR_DATA_REGISTRY } from "../src/creator-data-registry";
 
 const NIL = "00000000-0000-0000-0000-000000000000";
@@ -146,16 +151,25 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
   });
 
   it("frameworks: shared must have NO owner, private must have one, in both directions", async () => {
+    // TWO SLICE-7 CONSTRAINTS CORRECTED THIS FIXTURE, and both corrections are
+    // the constraints doing their job on the day they landed (the same thing
+    // B-5's widened CHECK did to twenty-one fixtures in slice 3):
+    //   `applicability: {}` was an OBJECT, which `jsonb` accepts and no reader
+    //   can iterate — `frameworks_json_columns_are_arrays` now refuses it.
+    //   `confidence: "low"` was a rung nothing supported — R-29's
+    //   `frameworks_confidence_matches_evidence` ties the value to
+    //   `jsonb_array_length(evidence_entries)`, and zero entries is
+    //   `unsupported`.
     const base = {
       slug: "f",
       name: "F",
       beats: [],
       whyItConverts: "w",
-      applicability: {},
+      applicability: [],
       sourceReferences: [],
       evidenceEntries: [],
       testedCaveats: [],
-      confidence: "low",
+      confidence: "unsupported",
       saturation: "observed" as const,
     };
     // shared WITH an owner: refused. This is R-9 as a constraint rather than a
@@ -255,6 +269,10 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
     const shared = children({});
     const ATTEMPT = "att-cascade";
     const SHA = "a".repeat(64);
+    // A FIXED id for the generation, so slice 7's `generation_feedback` row
+    // can name it in the same declarative map rather than being built by a
+    // second pass that reads back what the first inserted.
+    const GENERATION_ID = "01a00000-0000-7000-8000-00000000cade";
     return [
       {
         table: "creator_profiles",
@@ -291,6 +309,19 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
         drizzle: shared.model_usage.table,
         row: shared.model_usage.row,
       },
+      // R-80. The included-build claim cascades with the profile, and it MUST:
+      // a claim outliving the `model_usage` rows it ranks would price a
+      // re-created profile off a build nobody can see any more.
+      {
+        table: "first_billable_attempts",
+        drizzle: firstBillableAttempts,
+        row: {
+          profileId: profileA,
+          workspaceId: wsA,
+          purpose: "onboarding_brain",
+          attemptId: ATTEMPT,
+        },
+      },
       {
         table: "generation_attempts",
         drizzle: generationAttempts,
@@ -307,6 +338,7 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
         table: "generations",
         drizzle: generations,
         row: {
+          id: GENERATION_ID,
           profileId: profileA,
           workspaceId: wsA,
           attemptId: ATTEMPT,
@@ -322,6 +354,19 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
           killTest: {},
         },
       },
+      // Slice 7 (R10). ORDERED AFTER `generations`, because its three-column
+      // FK names that row — which is what the ordering note above this map is
+      // about, and the second entry in the set to have a parent inside it.
+      {
+        table: "generation_feedback",
+        drizzle: generationFeedback,
+        row: {
+          profileId: profileA,
+          workspaceId: wsA,
+          generationId: GENERATION_ID,
+          reaction: "used_as_is",
+        },
+      },
       {
         table: "frameworks",
         drizzle: frameworks,
@@ -330,11 +375,11 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
           name: "F",
           beats: [],
           whyItConverts: "w",
-          applicability: {},
+          applicability: [],
           sourceReferences: [],
           evidenceEntries: [],
           testedCaveats: [],
-          confidence: "low",
+          confidence: "unsupported",
           saturation: "observed",
           visibility: "private",
           ownerProfileId: profileA,

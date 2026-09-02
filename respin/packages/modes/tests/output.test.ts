@@ -71,10 +71,18 @@ describe("the mode registry covers all seven modes (question 3)", () => {
     expect(() => modeSpec("notAMode" as ModeId)).toThrow(UnknownModeError);
   });
 
-  it("IMPLEMENTED_MODES names real modes, and only `hooks` today", () => {
-    // PRD §4G gives Free three modes and this slice builds one, so a tier-only
-    // gate would offer two modes with no pipeline behind them.
-    expect(IMPLEMENTED_MODES).toEqual(["hooks"]);
+  it("IMPLEMENTED_MODES names real modes — six of seven after slice 7", () => {
+    // PRD §4G gives Free three modes (hooks, captions, ideas) and Creator and
+    // above all seven. Six have a pipeline; `analyseAndSpin` is held back by
+    // the relation asserted below, not by a preference.
+    expect([...IMPLEMENTED_MODES].sort()).toEqual([
+      "caption",
+      "footageToThesis",
+      "hooks",
+      "ideaToScript",
+      "ideation",
+      "sourceToReel",
+    ]);
     for (const m of IMPLEMENTED_MODES) expect(MODE_IDS).toContain(m);
   });
 

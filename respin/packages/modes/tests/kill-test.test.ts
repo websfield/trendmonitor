@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import { CHECK } from "@respin/llm";
 
+import { type GenerationContext } from "../src/assemble";
+
 import {
   FORBIDDEN_CLAIMS,
   CLAIM_SPECIMENS,
@@ -39,6 +41,27 @@ import { remedyFor, HARD_RULE_IDS, type HardRuleFinding } from "../src/hard-rule
 import { parseScriptOutput, type ScriptOutput } from "../src/output";
 import { TRACEABILITY_LIMIT_NOTE, type TraceabilityFinding } from "../src/traceability";
 import { CLEAN_HOOKS, asReply } from "./support/fixtures";
+
+/**
+ * The context every `runKillTest` call here is made against.
+ *
+ * IT REPLACED A HAND-BUILT `corpus: { brain: [], input: [] }` when slice 7 gave
+ * `runKillTest` the mode and the whole context: the corpus is now DERIVED from
+ * the value the prompt was built from, so a test cannot score a draft against a
+ * corpus no prompt could have produced. Empty brain and empty input keep every
+ * traceability assertion below saying exactly what it said before.
+ */
+const BARE_CONTEXT: GenerationContext = {
+  universalLaws: [],
+  frameworks: [],
+  brain: { voice: [], strategy: [], killtest: [] },
+  input: "",
+  platform: "",
+  // STATED, NOT DEFAULTED (billing gate round 2): `unvouchedSpecifics` is
+  // required, so "this document vouches for everything in it" is a sentence a
+  // caller writes rather than a key it can forget.
+  unvouchedSpecifics: [],
+};
 
 const RULES: CreatorRule[] = [
   { id: "r1", text: "never open on a question" },
@@ -236,7 +259,7 @@ describe("the fourth hard rule is derived from the traceability scan", () => {
         ...CLEAN_HOOKS.hooks.slice(1),
       ],
     });
-    const out = runKillTest({ output: dirty, corpus: { brain: [], input: [] } });
+    const out = runKillTest({ output: dirty, mode: "hooks", context: BARE_CONTEXT });
     expect(out.hardRules.map((f) => f.rule)).toContain("invented_specific");
     expect(out.traceability.some((f) => f.token === "$4,000")).toBe(true);
   });
@@ -257,7 +280,8 @@ describe("the fourth hard rule is derived from the traceability scan", () => {
     });
     const out = runKillTest({
       output: listicle,
-      corpus: { brain: [], input: [] },
+      mode: "hooks",
+      context: BARE_CONTEXT,
     });
     expect(out.traceability.some((f) => f.token === "5")).toBe(true);
     expect(out.hardRules).toEqual([]);
@@ -266,7 +290,8 @@ describe("the fourth hard rule is derived from the traceability scan", () => {
   it("a clean draft against an EMPTY corpus produces nothing — the fixture is not lucky", () => {
     const out = runKillTest({
       output: hooks(CLEAN_HOOKS),
-      corpus: { brain: [], input: [] },
+      mode: "hooks",
+      context: BARE_CONTEXT,
     });
     expect(out.hardRules).toEqual([]);
     expect(out.traceability).toEqual([]);
@@ -310,7 +335,7 @@ describe("the FIFTH hard rule is derived from the claim scan (REQ-I04, REQ-I05)"
         weakestPoint: "Nothing here has been checked against your own results.",
       },
     });
-    const out = runKillTest({ output: dirty, corpus: { brain: [], input: [] } });
+    const out = runKillTest({ output: dirty, mode: "hooks", context: BARE_CONTEXT });
     expect(out.hardRules.map((f) => f.rule)).toContain("forbidden_claim");
     expect(out.claims.some((f) => f.shape === "will perform")).toBe(true);
   });
@@ -330,7 +355,7 @@ describe("the FIFTH hard rule is derived from the claim scan (REQ-I04, REQ-I05)"
         guidance: "Most people skip the label on a short like this.",
       },
     });
-    const out = runKillTest({ output: dirty, corpus: { brain: [], input: [] } });
+    const out = runKillTest({ output: dirty, mode: "hooks", context: BARE_CONTEXT });
     expect(out.claims.map((f) => f.shape)).toContain("skip the label");
     expect(out.hardRules.map((f) => f.rule)).toContain("forbidden_claim");
     // The remedy a creator reads is the CONCEALMENT family's, not the
@@ -353,7 +378,8 @@ describe("the FIFTH hard rule is derived from the claim scan (REQ-I04, REQ-I05)"
           ...CLEAN_HOOKS,
           disclosure: { platform: "tiktok", guidance },
         }),
-        corpus: { brain: [], input: [] },
+        mode: "hooks",
+      context: BARE_CONTEXT,
       });
       expect(out.hardRules.map((f) => f.rule), guidance).not.toContain(
         "forbidden_claim"
@@ -364,7 +390,8 @@ describe("the FIFTH hard rule is derived from the claim scan (REQ-I04, REQ-I05)"
   it("a clean draft produces NO claim findings — the fixture is not lucky", () => {
     const out = runKillTest({
       output: hooks(CLEAN_HOOKS),
-      corpus: { brain: [], input: [] },
+      mode: "hooks",
+      context: BARE_CONTEXT,
     });
     expect(out.claims).toEqual([]);
   });

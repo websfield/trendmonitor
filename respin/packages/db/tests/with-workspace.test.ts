@@ -3,6 +3,10 @@
 // nothing foreign. Enumeration is programmatic over the accessor map (AC-1),
 // with a completeness assertion so a new accessor without a validator fails
 // loudly (AC-7), instead of escaping to reviewer memory.
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ensureUserWorkspace } from "../src/bootstrap";
@@ -12,6 +16,7 @@ import { creatorProfiles } from "../src/brain-schema";
 import {
   LEDGER_PAGE_MAX,
   WorkspaceAccessError,
+  WRITE_PAUSE_POLICY,
   withWorkspace,
   type WorkspaceScope,
 } from "../src/with-workspace";
@@ -348,5 +353,189 @@ describe("withWorkspace tenancy scope", () => {
       workspaceId: bWorkspaceId,
     });
     expect(scope.role).toBe("viewer");
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * REQ-G08: EVERY CAPABILITY IS CLASSIFIED, AND THE POPULATION IS THE SOURCE.
+ *
+ * THE DEFECT (billing gate, 2026-09-02). A-7's exemptions from the pause gate
+ * lived in ONE COMMENT inside `writeBrainDoc`, naming two capabilities. Slice 7
+ * added a third unpaused write — `recordGenerationFeedback`, measured ACCEPTED
+ * against a live database with an open `pause_periods` row — and the comment
+ * was not touched. The behaviour is defensible; "defensible" and "decided" are
+ * different, and only one of them is written down. A hand-maintained list is
+ * what failed, so the list is no longer what this suite trusts.
+ *
+ * WHAT IT DOES. It parses `with-workspace.ts`, finds the object literal each
+ * capability factory returns, and classifies every member from its own body:
+ *   - it WRITES if its subtree calls `.insert(` / `.update(` / `.delete(`;
+ *   - it is GATED if its subtree names `hasOpenPause`, or CALLS a sibling
+ *     capability that is gated (`activateBrainDocCoherent` is the second
+ *     shape — it delegates rather than repeating the gate).
+ * Then every member must agree with `WRITE_PAUSE_POLICY`, and an ungated write
+ * must carry a NON-EMPTY WARRANT. A capability added tomorrow is in the
+ * population the moment it is written.
+ *
+ * IT IS A SOURCE SCAN, SO IT PLANTS ITS OWN VIOLATIONS (CLAUDE.md 2026-08-21):
+ * a scan that reports zero findings is indistinguishable from a scan whose
+ * pattern broke, and this one would fail OPEN in the direction that matters.
+ */
+describe("REQ-G08: the pause policy covers every capability, derived from source", () => {
+  const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const source = () => readFileSync(join(SRC, "with-workspace.ts"), "utf8");
+
+  type Member = { name: string; writes: boolean; gated: boolean; calls: string[] };
+
+  /** Classify every capability member of a `with-workspace.ts` source text. */
+  function classifyCapabilities(text: string): Member[] {
+    const sf = ts.createSourceFile("w.ts", text, ts.ScriptTarget.Latest, true);
+    const members: Member[] = [];
+    const readMember = (prop: ts.PropertyAssignment) => {
+      const name = prop.name.getText(sf);
+      let writes = false;
+      let gated = false;
+      const calls: string[] = [];
+      const walk = (n: ts.Node): void => {
+        if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+          const method = n.expression.name.getText(sf);
+          if (["insert", "update", "delete"].includes(method)) writes = true;
+          // `caps.activateBrainDoc(...)` — a delegated gate.
+          if (n.expression.expression.getText(sf) === "caps") calls.push(method);
+        }
+        if (ts.isIdentifier(n) && n.getText(sf) === "hasOpenPause") gated = true;
+        ts.forEachChild(n, walk);
+      };
+      walk(prop.initializer);
+      members.push({ name, writes, gated, calls });
+    };
+    const visit = (node: ts.Node): void => {
+      // The two capability factories return one object literal each; every
+      // property of those literals is a capability. Nothing else in this file
+      // returns an object of arrow functions, and the count assertion below is
+      // what makes that claim checkable rather than assumed.
+      if (ts.isFunctionDeclaration(node) && node.name) {
+        const fn = node.name.getText(sf);
+        if (fn === "writeCapabilities" || fn === "workspaceWriteCapabilities") {
+          const inner = (n: ts.Node): void => {
+            if (ts.isObjectLiteralExpression(n)) {
+              for (const prop of n.properties) {
+                if (
+                  ts.isPropertyAssignment(prop) &&
+                  (ts.isArrowFunction(prop.initializer) ||
+                    ts.isFunctionExpression(prop.initializer))
+                ) {
+                  readMember(prop);
+                }
+              }
+            }
+            ts.forEachChild(n, inner);
+          };
+          inner(node);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    return members;
+  }
+
+  /** Gated directly, or by delegation to a sibling that is. */
+  const isGated = (m: Member, all: Member[]): boolean =>
+    m.gated ||
+    m.calls.some((c) => {
+      const target = all.find((x) => x.name === c);
+      return target ? target.gated : false;
+    });
+
+  it("the classifier SEES the real capabilities (it is not scanning nothing)", () => {
+    const members = classifyCapabilities(source());
+    const names = members.map((m) => m.name);
+    // Non-vacuity by count AND by naming one of each answer, so a parse that
+    // silently returned fewer members cannot pass.
+    expect(names.length, "the capability walk found nothing").toBeGreaterThanOrEqual(
+      12
+    );
+    expect(names).toContain("writeBrainDoc");
+    expect(names).toContain("recordGenerationFeedback");
+    expect(names).toContain("createProfile");
+    const brain = members.find((m) => m.name === "writeBrainDoc");
+    expect(brain?.writes, "writeBrainDoc does not look like a write").toBe(true);
+    expect(brain?.gated, "writeBrainDoc does not look gated").toBe(true);
+    const read = members.find((m) => m.name === "readGenerationAttempt");
+    expect(read?.writes, "a select was classified as a write").toBe(false);
+  });
+
+  it("EVERY capability is in WRITE_PAUSE_POLICY, and the policy matches the code", () => {
+    const members = classifyCapabilities(source());
+    for (const m of members) {
+      const policy = WRITE_PAUSE_POLICY[m.name];
+      expect(
+        policy,
+        `\`${m.name}\` is a capability with no entry in WRITE_PAUSE_POLICY. If it writes and is deliberately not pause-gated, add it WITH ITS WARRANT — an unpaused write nobody wrote down is exactly the finding this guard exists for (REQ-G08, A-7).`
+      ).toBeDefined();
+      const gated = isGated(m, members);
+      if (policy === "gated") {
+        expect(gated, `${m.name} is declared gated and takes no pause gate`).toBe(true);
+      } else if (policy === "read") {
+        expect(m.writes, `${m.name} is declared a read and it writes`).toBe(false);
+        expect(gated, `${m.name} is declared a read and takes a pause gate`).toBe(false);
+      } else {
+        expect(m.writes, `${m.name} is declared an exempt WRITE and writes nothing`).toBe(
+          true
+        );
+        expect(gated, `${m.name} is declared exempt and IS gated — update the policy`).toBe(
+          false
+        );
+        expect(
+          typeof policy === "object" ? policy.exempt.length : 0,
+          `${m.name}'s exemption has no warrant`
+        ).toBeGreaterThan(80);
+      }
+    }
+    // ...and nothing in the policy names a capability that no longer exists.
+    const names = new Set(members.map((m) => m.name));
+    expect(
+      Object.keys(WRITE_PAUSE_POLICY).filter((k) => !names.has(k)),
+      "WRITE_PAUSE_POLICY names a capability that is gone — a policy about nothing"
+    ).toEqual([]);
+  });
+
+  it("...and a PLANTED unlisted write is caught (the scan is not vacuous)", () => {
+    // The mutation this exists for: a new capability that writes, takes no
+    // pause gate, and is in nobody's list. Planted into a doctored copy of the
+    // REAL source, so the negative case is this repo minus the property.
+    const doctored = source().replace(
+      "    recordGenerationFeedback: async (params, tx) => {",
+      [
+        "    recordSomethingNew: async (params, tx) => {",
+        "      return tx.insert(generations).values(params).returning();",
+        "    },",
+        "    recordGenerationFeedback: async (params, tx) => {",
+      ].join("\n")
+    );
+    expect(
+      doctored,
+      "the doctoring anchor is gone — this probe is measuring nothing"
+    ).not.toBe(source());
+    const planted = classifyCapabilities(doctored).find(
+      (m) => m.name === "recordSomethingNew"
+    );
+    expect(planted?.writes, "the planted write was not seen as a write").toBe(true);
+    expect(WRITE_PAUSE_POLICY[planted!.name]).toBeUndefined();
+
+    // ...and the GATE half of the classifier is planted too: removing
+    // `hasOpenPause` from `writeBrainDoc` must make it read as ungated, or
+    // "declared gated and takes no pause gate" is an assertion about nothing.
+    const ungated = source().replace(
+      "      if (await hasOpenPause(tx, scope.workspaceId)) {\n        throw new WorkspacePausedError();\n      }\n      // EVERY FIELD OF `doc` IS READ EXACTLY ONCE",
+      "      // EVERY FIELD OF `doc` IS READ EXACTLY ONCE"
+    );
+    expect(ungated, "the pause-gate anchor is gone").not.toBe(source());
+    const members = classifyCapabilities(ungated);
+    const brain = members.find((m) => m.name === "writeBrainDoc");
+    expect(isGated(brain!, members), "the classifier still calls it gated").toBe(false);
   });
 });

@@ -17,9 +17,12 @@
 // write capabilities, both denied to `app/**`); this file owns the decision.
 // `respin/tests/profile-cage.test.ts` asserts this function is the capability's
 // only call site, so the decision cannot be routed around. (The path was wrong
-// here until the 2026-08-27 tenancy gate followed it: there is no
-// `packages/db/tests/profile-cage.test.ts`, and a reader chasing the cap's own
-// guarantee found nothing.)
+// here until the 2026-08-27 tenancy gate followed it: it named a `profile-cage`
+// suite under `packages/db/tests`, which has never existed, and a reader
+// chasing the cap's own guarantee found nothing. The wrong path is DESCRIBED
+// rather than spelled out, because `tests/source-citations.test.ts` resolves
+// every test filename written in a comment — including one quoted as an
+// example of a bad one, which is the hole that scan closed in its own prose.)
 //
 // The package is "credits" rather than "billing" only by name. A per-tier
 // profile allowance IS a billing entitlement — the same kind of thing as a

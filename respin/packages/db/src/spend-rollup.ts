@@ -33,6 +33,7 @@ import { creditLedger } from "./billing-schema";
 import { creatorProfiles } from "./brain-schema";
 import {
   BILLABLE_USAGE_OUTCOMES,
+  firstBillableAttempts,
   modelUsage,
   workspaceSpendMonthly,
   type ResolvedTier,
@@ -178,15 +179,36 @@ export type SpendReconciliationResult = {
    * forever.
    *
    * NEITHER IS PRICE RECORDED ANYWHERE ON `model_usage` — the free-vs-priced
-   * decision is never stored on the row itself; it is implicit in ORDER
-   * (`inference.ts`'s `countBillableAttempts`: the profile's first
-   * successful, purpose-matched attempt is free, every later one is priced).
-   * So this reads the SAME total order `countBillableAttempts` uses —
-   * `(created_at, attempt_id)`, partitioned by `(profile_id, purpose)` — and
-   * calls a row unbilled only when it is NOT rank 1 for its partition (i.e.
-   * genuinely not the free build) and no debit exists for it. This needs no
-   * price, no config, no tier — only the SAME ordering fact `@respin/credits`
-   * already computes, so it does not invert the dependency graph
+   * decision is never stored on the row itself. It is the
+   * `first_billable_attempts` CLAIM (R-80), READ ONLY FOR THE PURPOSES THAT
+   * ACTUALLY HAVE AN INCLUDED BUILD (R-81): for such a purpose the attempt
+   * holding the claim is the free one and every other attempt is priced; for a
+   * purpose with no included build, EVERY successful attempt is priced and the
+   * claim exempts nothing. So an attempt is unbilled here when it succeeded,
+   * has no debit, and is not the claim holder of a purpose whose first build
+   * is included.
+   *
+   * WHY THE CALLER STATES THE LIST (billing gate round 1, 2026-09-02). The
+   * claim table is purpose-NEUTRAL — `recordModelUsage` writes a claim for the
+   * first billable, entitlement-consuming attempt of every purpose, because
+   * `@respin/db` does not own the purpose vocabulary. `priceOf`
+   * (`@respin/credits`) does, and its `generation` branch charges every
+   * generation, so an unconditional `NOT EXISTS (claim)` silently exempted
+   * each profile's FIRST generation — a lost debit on the press most likely to
+   * hit R-41's crash window on a fresh workspace, invisible to the only
+   * reconciliation reader there is. That blind spot predates R-80 (the
+   * `ROW_NUMBER()` ranking it replaced hid exactly the same attempt); what
+   * R-80 added was a docblock asserting the opposite, which is why it is
+   * closed here rather than documented.
+   *
+   * THE POPULATION IS NOW LITERALLY THE SAME ROW `@respin/credits` PRICES
+   * FROM, not a re-implementation of the same rule. It used to be: this file
+   * ranked `(created_at, attempt_id)` partitioned by `(profile_id, purpose)`
+   * and called rank 1 free, in a comment that said in terms that "THE RANKED
+   * POPULATION MUST MATCH `countBillableAttempts`'s EXACTLY". Two
+   * implementations of one rule is a promise that they agree; reading the one
+   * row the database decided is that agreement. It still needs no price, no
+   * config and no tier, so it still does not invert the dependency graph
    * `resolvedTier`'s docblock forbids crossing.
    */
   unbilledAttempts: UnbilledAttempt[];
@@ -222,9 +244,21 @@ export type SpendReconciliationResult = {
  * workspace, this comparison needs to move to a `(workspace_id, profile_id)`
  * grain before that ships — recorded here so that slice's author finds the
  * assumption instead of re-discovering it.
+ *
+ * `includedBuildPurposes` (R-81) is REQUIRED and has NO DEFAULT. It is the
+ * caller's answer to a question this package cannot answer — which purposes
+ * price their first billable attempt at zero — the same seam the framework
+ * writes' `entitlement` argument opens for the tier, and for the same reason:
+ * `@respin/db` may not import `@respin/credits`. `@respin/credits` owns the
+ * answer and computes it, from the ACTIVE CONFIG DOCUMENT, in its
+ * `includedBuildPurposes` function (R-82 — it was a frozen constant, which was
+ * a static answer to a price `/admin/config` can raise). Passing `[]` means
+ * "nothing is ever included", which is a real, testable position rather than
+ * an omission, and `tests/spend-rollup.test.ts` drives it.
  */
 export async function reconcileSpend(
-  db: DbLike
+  db: DbLike,
+  includedBuildPurposes: readonly string[]
 ): Promise<SpendReconciliationResult> {
   const rollupRows = await db.select().from(workspaceSpendMonthly);
   const rows: SpendReconciliationRow[] = [];
@@ -283,55 +317,51 @@ export async function reconcileSpend(
     });
   }
 
+  // WHICH ATTEMPTS ARE EXPECTED TO CARRY A DEBIT, and the population is the
+  // same one `@respin/credits` prices from — one table, one answer (R-80).
+  // The claim table answers "which attempt got here first"; `priceOf` answers
+  // "does first mean free", and only the caller can carry that second answer
+  // across the package boundary (R-81, `includedBuildPurposes`).
+  //
+  // THE POPULATION IS WIDE ON PURPOSE, and the billing gate's 2026-08-29
+  // finding is why: `BILLABLE_USAGE_OUTCOMES` includes `refused` and
+  // `schema_invalid`, not only `succeeded`. `LlmRefusedError` is billable AND
+  // consumes the included build (`packages/llm/src/errors.ts`), so a profile
+  // whose FIRST attempt is a policy refusal has its free slot consumed by THAT
+  // row — and its claim, written by `recordModelUsage` in the same transaction
+  // as that row, says so. Restricting the population to `succeeded` would have
+  // made the second attempt look like the free build and skipped it from this
+  // check entirely — silently missing exactly the R-41 crash case on the one
+  // attempt most likely to have it (a paid attempt whose debit failed).
+  //
+  // ONLY `succeeded` ATTEMPTS ARE REPORTED, though: refusals and other
+  // failures never reach the debit step at all (`inference.ts`'s debit is step
+  // 9, inside the success path only), so they can never be "unbilled"
+  // themselves.
+  //
+  // AT ATTEMPT GRAIN, NOT ROW GRAIN (billing gate round 3, 2026-08-29). A
+  // bounded retry writes two rows for ONE logical attempt
+  // (`onboarding-schema.ts`'s own docblock plans for it), and the claim is
+  // keyed on `attempt_id`, so grouping here keeps the two sides speaking about
+  // the same object. `bool_or(outcome = 'succeeded')` because a debit is only
+  // ever expected for an attempt that ultimately succeeded, whichever of its
+  // rows carries that outcome. NOT LIVE-REACHABLE TODAY — every server-action
+  // caller mints one fresh `attemptId` per press — but the table's own schema
+  // was built to anticipate the shape.
+  //
+  // WHICH PURPOSES THE CLAIM CAN EXEMPT AT ALL (R-81). A literal `false` for
+  // an empty list rather than `purpose IN ()`, which is a Postgres syntax
+  // error — and `false` is the honest reading of "no purpose has an included
+  // build", so every successful attempt then owes a debit.
+  const exemptiblePurpose =
+    includedBuildPurposes.length === 0
+      ? sql`false`
+      : sql`attempts.purpose IN ${includedBuildPurposes}`;
+
   // `db.execute` returns `{ rows }` on both drivers (node-postgres and
   // PGlite); the generic `PgDatabase` type erases that shape, hence the cast
   // — the same pattern `packages/credits/src/clock.ts`'s `getDbNow` already
   // uses for a raw-SQL read.
-  //
-  // THE RANKED POPULATION MUST MATCH `countBillableAttempts`'s EXACTLY
-  // (billing gate round 2, 2026-08-29 — the first draft's `WHERE outcome =
-  // 'succeeded'` was too narrow and this fixed it). `countBillableAttempts`
-  // (with-workspace.ts) counts `outcome IN BILLABLE_USAGE_OUTCOMES AND
-  // consumed_included_build = true` as "prior attempts" when pricing a new
-  // one — and `BILLABLE_USAGE_OUTCOMES` includes `refused` and
-  // `schema_invalid`, not only `succeeded`: `LlmRefusedError` is billable
-  // AND consumes the included build (`packages/llm/src/errors.ts`), so a
-  // profile whose FIRST attempt is a policy refusal has its free slot
-  // consumed by THAT row — the real pricing logic then charges the profile's
-  // SECOND attempt (even though it is the first to succeed). Ranking only
-  // `succeeded` rows would have put that second attempt at rank 1, wrongly
-  // read it as the free build, and skipped it from the unbilled check
-  // entirely — silently missing exactly the R-41 crash case on the one
-  // attempt most likely to have it (a paid attempt whose debit failed).
-  //
-  // So the window function ranks the SAME wide population
-  // `countBillableAttempts` does, and only THEN restricts to `succeeded`
-  // rows: refusals and other failures never reach the debit step
-  // (`inference.ts`'s debit is step 9, inside the success path only) so they
-  // can never be "unbilled" themselves, but they still occupy a rank that
-  // must be counted so a later successful attempt's true rank is not
-  // understated.
-  //
-  // RANKED AT ATTEMPT GRAIN, NOT ROW GRAIN (billing gate round 3,
-  // 2026-08-29). `countBillableAttempts` counts DISTINCT `attempt_id`s
-  // (`with-workspace.ts`'s `countDistinct(modelUsage.attemptId)`), because
-  // `onboarding-schema.ts`'s own docblock plans for it: "a bounded retry
-  // writes two rows" for ONE logical attempt. A first draft here ranked
-  // every ROW, so two rows sharing one `attempt_id` (e.g. an early
-  // `schema_invalid` retried into a `succeeded`) would rank as two separate
-  // attempts, one of them wrongly bumped past rank 1 and reported unbilled
-  // for a free build that owes no debit at all. NOT LIVE-REACHABLE TODAY —
-  // every server-action caller mints one fresh `attemptId` per press
-  // (`app/(product)/onboarding/actions.ts`) and `recordUsage` is invoked at
-  // most once per `runInference` call — but the table's own schema was
-  // built to anticipate the shape, so the query is written to match it
-  // rather than to match today's callers.
-  //
-  // The CTE groups to `attempt_id` FIRST (`MIN(created_at)` as the attempt's
-  // instant, matching `countBillableAttempts`'s `me.firstAt` semantics;
-  // `bool_or(outcome = 'succeeded')` because a debit is only ever expected
-  // for an attempt that ultimately succeeded, whichever of its rows carries
-  // that outcome), THEN ranks attempts, THEN restricts to succeeded ones.
   const unbilledResult = (await db.execute(sql`
     WITH attempts AS (
       SELECT
@@ -339,7 +369,6 @@ export async function reconcileSpend(
         ${modelUsage.workspaceId} AS workspace_id,
         ${modelUsage.purpose} AS purpose,
         ${modelUsage.attemptId} AS attempt_id,
-        MIN(${modelUsage.createdAt}) AS first_at,
         bool_or(${modelUsage.outcome} = 'succeeded') AS has_succeeded
       FROM ${modelUsage}
       WHERE ${modelUsage.outcome} IN ${BILLABLE_USAGE_OUTCOMES}
@@ -349,29 +378,29 @@ export async function reconcileSpend(
         ${modelUsage.workspaceId},
         ${modelUsage.purpose},
         ${modelUsage.attemptId}
-    ),
-    ranked AS (
-      SELECT
-        attempt_id,
-        workspace_id,
-        purpose,
-        has_succeeded,
-        ROW_NUMBER() OVER (
-          PARTITION BY profile_id, purpose
-          ORDER BY first_at, attempt_id
-        ) AS rn
-      FROM attempts
     )
-    SELECT ranked.attempt_id, ranked.workspace_id, ranked.purpose
-    FROM ranked
-    WHERE ranked.has_succeeded = true
-      AND ranked.rn > 1
+    SELECT attempts.attempt_id, attempts.workspace_id, attempts.purpose
+    FROM attempts
+    WHERE attempts.has_succeeded = true
+      -- NOT the profile's included build. TWO CONDITIONS, not one (R-81):
+      -- this purpose must actually HAVE an included build, and this attempt
+      -- must hold its claim. Dropping the first half exempts every profile's
+      -- first generation, which is never free.
+      AND NOT (
+        ${exemptiblePurpose}
+        AND EXISTS (
+          SELECT 1 FROM ${firstBillableAttempts}
+          WHERE ${firstBillableAttempts.profileId} = attempts.profile_id
+            AND ${firstBillableAttempts.purpose} = attempts.purpose
+            AND ${firstBillableAttempts.attemptId} = attempts.attempt_id
+        )
+      )
       AND NOT EXISTS (
         SELECT 1 FROM ${creditLedger}
-        WHERE ${creditLedger.workspaceId} = ranked.workspace_id
+        WHERE ${creditLedger.workspaceId} = attempts.workspace_id
           AND ${creditLedger.kind} = 'debit'
           AND ${creditLedger.refType} = 'inference'
-          AND ${creditLedger.refId} = ranked.attempt_id
+          AND ${creditLedger.refId} = attempts.attempt_id
       )
   `)) as unknown as {
     rows: { attempt_id: string; workspace_id: string; purpose: string }[];

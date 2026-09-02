@@ -18,6 +18,7 @@
 // reaches a generation through `@respin/credits/app-server`, where the money
 // path already is — exactly as `@respin/llm` is reached through `inferVoice`.
 export {
+  MODE_CHECK_IDS,
   MODE_IDS,
   MODE_SPECS,
   SECTION_KEYS,
@@ -26,10 +27,35 @@ export {
   modeSpec,
   UnknownModeError,
   type CreditCostKey,
+  type ModeCheckId,
   type ModeId,
   type ModeSpec,
   type SectionKey,
 } from "./modes";
+
+// The per-mode OUTPUT checks (slice 7, R3/R4/R5/R18).
+//
+// EXPORTED BUT NOT SEPARATELY CALLABLE BY DESIGN: `scanModeChecks` runs INSIDE
+// `runKillTest`, so a caller cannot run the kill test without running these,
+// and card R7's "a revision re-runs the kill test" therefore covers them
+// structurally rather than by anyone remembering. What the exports are for is
+// the surface that explains a finding, and the honest-limit list.
+export {
+  HOOK_SPREAD_MAX_OVERLAP,
+  HOOK_SPREAD_MIN_CONTENT_WORDS,
+  IDEA_THESIS_MIN_WORDS,
+  KNOWN_MODE_CHECK_GAPS,
+  MODE_CHECK_GAP_IDS,
+  NAMES_NOTHING_SHAPES,
+  SOURCE_RUN_WORDS,
+  SUMMARY_REGISTER_SHAPES,
+  WEAKEST_POINT_MIN_WORDS,
+  contentOverlap,
+  contentWords,
+  scanModeChecks,
+  type ModeCheckArgs,
+  type ModeCheckGapId,
+} from "./mode-checks";
 
 export {
   excerpt,
@@ -88,6 +114,7 @@ export {
   buildCorpusIndex,
   offerCheck,
   scanTraceability,
+  stripMarkedSpecifics,
   type SpecificKind,
   type TraceabilityCorpus,
   type TraceabilityEnforcement,
@@ -95,6 +122,10 @@ export {
 } from "./traceability";
 
 export {
+  // The per-row prefix `packages/credits` writes the evidence rung under. The
+  // sentence that EXPLAINS the rung lives beside it in `assemble.ts` and is
+  // not exported: nothing outside this package writes that sentence.
+  FRAMEWORK_EVIDENCE_LABEL,
   GENERATION_SYSTEM,
   GenerationAssemblyError,
   HARD_RULE_BRIEF,

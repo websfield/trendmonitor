@@ -10,21 +10,27 @@
 // WHAT THIS FILE DELIBERATELY DOES NOT CONTAIN: A SECOND TIER→MODE DERIVATION.
 //
 // R18's authority is `TIER_MODES` / `assertModeAllowed` in
-// `packages/credits/src/mode-access.ts`, and it stays there. This screen offers
-// the ONE mode that has a pipeline (`hooks`), submits its id, and renders the
-// refusal if the server says the plan does not include it. It does not know
-// which modes any tier includes, does not enumerate the other six, and must not
-// start to: a screen-side copy of that map is a second answer that goes stale
-// the day slice 7 changes the first. `tests/studio-ui.test.tsx` asserts the
-// absence by scanning this directory's source for the other mode ids.
+// `packages/credits/src/mode-access.ts`, and slice 7 did NOT move it here. The
+// screen now offers six modes rather than one, and the list it offers is
+// `modeOffers(tier)` — the same two authorities `assertModeAllowed` reads,
+// resolved server-side in the package that owns them and handed to the view as
+// data. This directory still does not know which modes any tier includes, still
+// names no mode id in code, and must not start to: a screen-side copy of that
+// map is a second answer that goes stale the day the first one changes.
+// `tests/studio-ui.test.tsx` asserts the absence by scanning this directory's
+// source for EVERY mode id — a strictly wider ban than slice 6's, which
+// exempted `hooks` because the screen submitted it as a hidden field. The
+// picker's options are server-resolved, so no file here needs to name one.
 import {
   BILLING_ERROR_COPY,
   type BillingErrorCode,
   type BillingErrorCopy,
 } from "../billing-errors";
 
-// THE MODE ID, THE MODE NOTE AND THE PLATFORM LIST LIVE IN `./run-copy.ts`,
-// not here, and the reason is a real build failure this repo has already had
+// THE PLATFORM LIST AND EVERY SENTENCE THE CLIENT PANEL RENDERS LIVE IN
+// `./run-copy.ts`, not here — and the mode ids live in NEITHER, because
+// `modeOffers(tier)` resolves them on the server (see the block above). The
+// reason for the split is a real build failure this repo has already had
 // once: this module imports `../billing-errors` for its refusal table, which
 // imports `@respin/credits/app-server`, which reaches `pg`. The client panel
 // needs all three values, so importing them from here would put a Postgres
@@ -130,6 +136,42 @@ export const STUDIO_ERROR_CODES = [
   // — and narrowing the population to dodge it is how a real refusal goes
   // missing.
   "uncharged_attempt_cap",
+  // A SECOND OVER-CAPTURE, KEPT FOR THE SAME REASON AND FOUND THE SAME WAY
+  // (slice 7). `mode-access.ts` is in the derived population as a whole file
+  // because it holds the plan gate this operation runs, so its
+  // `UnknownEntitlementTierError` is demanded here — even though `generate`
+  // never calls `privateFrameworkEntitlement`, which is the only thing that
+  // raises it. The over-capture direction asks for MORE copy, never less, and
+  // narrowing the population to dodge it is how a real refusal goes missing.
+  //
+  // ITS OWN SCREEN IS `/studio/frameworks`, whose closed set names it too and
+  // where it is genuinely reachable.
+  "unknown_entitlement_tier",
+  // --- SLICE 7: THE REVISION (R6/R8). Five codes for one class, because
+  // `RevisionParentError` carries a closed `reason` and its four values are
+  // four different true sentences — see `billing-errors.ts`'s own block. The
+  // neutral `revision_parent` is the fallback for a reason this build does not
+  // know, and `generation_lineage` is @respin/db's AUTHORITY refusal, raised
+  // inside the settlement transaction rather than before the vendor call.
+  "revision_parent",
+  "revision_parent_not_yours",
+  "revision_parent_not_revisable",
+  "revision_parent_different_mode",
+  "revision_parent_unreadable",
+  "generation_lineage",
+  // --- SLICE 7: THE FEEDBACK EVENT (R10). A DIFFERENT ACTION on the same
+  // screen, and its refusals belong to this closed set for exactly the reason
+  // the generation's do: `recordFeedbackAction` returns a code, the panel
+  // renders `refusalCopy[code]`, and a code with no entry here falls back to
+  // `unknown`'s neutral words on a control the creator just pressed.
+  //
+  // FEEDBACK SPENDS NOTHING, which is why none of these four is in the money
+  // group above — and why the copy for them says what was NOT changed rather
+  // than what was not charged.
+  "feedback_reaction",
+  "feedback_target",
+  "feedback_note",
+  "feedback_duplicate",
   // --- the cage, and the scope read this page performs before anything else.
   "scope_forgery",
   "workspace_access",
@@ -176,7 +218,7 @@ const STUDIO_OVERRIDES: Partial<Record<BillingErrorCode, BillingErrorCopy>> = {
   insufficient_credits: {
     title: "Not enough credits for this draft",
     detail:
-      "This was refused before anything was called, so nothing was spent and nothing of yours was sent anywhere. A hook set is priced every time — there is no included draft. Buy a credit pack from Billing, or turn on auto-top-up so credits are bought automatically next time; the press that triggers it is still refused, so try again once they land.",
+      "This was refused before anything was called, so nothing was spent and nothing of yours was sent anywhere. Every draft is priced every time, whichever mode makes it — there is no included draft. Buy a credit pack from Billing, or turn on auto-top-up so credits are bought automatically next time; the press that triggers it is still refused, so try again once they land.",
   },
   topup_in_flight: {
     title: "Not enough credits yet — a top-up is on its way",

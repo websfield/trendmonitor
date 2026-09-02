@@ -430,6 +430,214 @@ export class OnboardingInputFieldKeyError extends Error {
 }
 
 /**
+ * A revision named a parent this creator cannot revise from (slice 7, R6).
+ *
+ * ONE CLASS AND ONE MESSAGE for foreign, nonexistent and not-yet-existing
+ * parents alike, for the enumeration reason `ProfileAccessError` and
+ * `GenerationAttemptStateError` both state: a refusal that distinguished
+ * "another creator's output" from "no such output" would be an oracle over
+ * every workspace's generation ids, and generation ids are uuidv7 — they leak
+ * creation TIME as well as existence.
+ *
+ * IT ALSO COVERS "NOT EARLIER", which is not the same thing as "nonexistent"
+ * and is the case a reader would not predict. `generations.created_at` is
+ * `now()`, i.e. TRANSACTION START, so a long transaction that began before a
+ * sibling committed can insert a row whose stamp PRECEDES the parent it names
+ * — a lineage that reads backwards on every screen that renders it, with no
+ * constraint able to see it (Postgres cannot compare two rows in a CHECK).
+ * `settleGeneration` therefore requires the parent to be strictly earlier than
+ * this transaction's clock, and this is what that refusal is called.
+ */
+export class GenerationLineageError extends Error {
+  constructor() {
+    super(
+      "That revision could not be linked to the output it revises. Either that output is not this creator's, or it no longer exists, or it is not older than this one. Nothing was generated and nothing was spent — reopen the output you want to revise and try from there."
+    );
+    this.name = "GenerationLineageError";
+  }
+}
+
+/**
+ * Feedback carried a reaction that is not one of the closed set (slice 7, R10).
+ *
+ * NOT A CREATOR'S MISTAKE, and the copy says so rather than asking them to fix
+ * something they did not type. The reaction set is rendered by the server as a
+ * fixed list of buttons, so an unknown code means the page is older than the
+ * server or the form was tampered with — reloading is the only thing a person
+ * can usefully do.
+ *
+ * IT EXISTS SO THE ENUM'S OWN 22P02 NEVER REACHES A SCREEN. `reaction` is a
+ * pgEnum; an unknown value raises `invalid input value for enum`, which
+ * `billing-errors.ts` has no case for and which would therefore render as
+ * "Something went wrong" — the outcome every typed refusal in this file exists
+ * to prevent.
+ */
+export class FeedbackReactionError extends Error {
+  constructor(readonly received: unknown) {
+    super(
+      "That feedback was not recorded because it named a reaction this product does not have. The reactions are a fixed list the page renders — reload the page and choose one of them."
+    );
+    this.name = "FeedbackReactionError";
+  }
+}
+
+/**
+ * Feedback named an output that is not this creator's (slice 7, R10).
+ *
+ * ADDED IN THE AUTHOR'S OWN ADVERSARIAL RE-READ, and the defect it closes had
+ * TWO halves that were both live. A malformed `generation_id` was raising
+ * `FeedbackReactionError`, whose copy says the page named a reaction the
+ * product does not have — a refusal that sends the reader to fix something
+ * that is not broken, which is exactly the split `BrainEditUnchangedError`
+ * exists for one class up. And a well-formed id belonging to another profile
+ * reached the composite FK and came back as a raw 23503, which
+ * `billing-errors.ts` has no case for and which therefore renders as
+ * "Something went wrong".
+ *
+ * ONE BYTE-IDENTICAL MESSAGE for foreign, nonexistent and malformed ids, the
+ * `ProfileAccessError` rule — sharpened here for the reason
+ * `GenerationLineageError` states: a generation id is a uuidv7, so a
+ * distinguishable refusal leaks creation TIME as well as existence.
+ */
+export class FeedbackTargetError extends Error {
+  constructor() {
+    super(
+      "That feedback was not recorded because the output it is about is not available on this creator profile. Reopen the output from your own history and leave the feedback from there — nothing was changed."
+    );
+    this.name = "FeedbackTargetError";
+  }
+}
+
+/** A feedback note that is blank-but-present, or past its ceiling. */
+export class FeedbackNoteError extends Error {
+  constructor(detail: string) {
+    super(
+      `That feedback was not recorded: ${detail}. The note is optional — leave it empty, or shorten what you wrote and send it again.`
+    );
+    this.name = "FeedbackNoteError";
+  }
+}
+
+/**
+ * The same reaction was already recorded about this output (slice 7, R10).
+ *
+ * A REFUSAL RATHER THAN A SILENT NO-OP, deliberately. `generation_feedback` is
+ * append-only with a unique index on (generation, reaction), so a second press
+ * could only ever be swallowed — and swallowing it would discard a note the
+ * creator typed the second time while showing them a success state. Telling
+ * them the reaction is already recorded is the honest version, and it is the
+ * one message that does not imply their words were kept.
+ */
+export class FeedbackDuplicateError extends Error {
+  constructor() {
+    super(
+      "That reaction is already recorded on this output, so nothing was changed and any note you just typed was not saved. Feedback is kept as a record of what you said the first time; choose a different reaction if you have something to add."
+    );
+    this.name = "FeedbackDuplicateError";
+  }
+}
+
+/**
+ * A private framework this profile does not own, or that does not exist
+ * (slice 7, R5c).
+ *
+ * BYTE-IDENTICAL FOR BOTH, the `ProfileAccessError` rule again — and it covers
+ * a third case for the same reason: a SHARED library row addressed as if it
+ * were a private one. A distinguishable refusal there would tell any caller
+ * which slugs the curated library holds before it is published.
+ */
+export class FrameworkAccessError extends Error {
+  constructor() {
+    super(
+      "That framework is not available on this creator profile. Private frameworks belong to one profile, and the shared library is not edited from here."
+    );
+    this.name = "FrameworkAccessError";
+  }
+}
+
+/**
+ * An edit was submitted against a framework version that is no longer the live
+ * one (slice 7, R5c).
+ *
+ * SEPARATE FROM `FrameworkAccessError`, for the reason `BrainEditUnchangedError`
+ * is separate from `ProvenanceError`: the remedy differs. That class means "not
+ * yours / not there", and reloading will not produce it; this one means "yours,
+ * still there, and somebody (possibly you, in another tab) has already written
+ * a newer version", where reloading is exactly the fix.
+ */
+export class FrameworkStaleError extends Error {
+  constructor() {
+    super(
+      "That framework has a newer version than the one this page was showing, so nothing was written. Reload to see the current version, then make the edit again — every version is kept, so nothing was lost."
+    );
+    this.name = "FrameworkStaleError";
+  }
+}
+
+/**
+ * Framework content carried something a MECHANISM never carries (REQ-D04,
+ * slice 7 R5a).
+ *
+ * WHAT IT ENFORCES AND WHAT IT CANNOT — stated here rather than left to be
+ * assumed, because "the mechanism-level content scan" is a name that promises
+ * more than any scan can deliver. It refuses four STRUCTURALLY DETECTABLE
+ * classes: an @handle, a URL, a follower count or other metric value, and a
+ * phrase attributing the mechanism to a named person. It cannot detect an
+ * arbitrary personal name — "a devout Catholic mother in Leeds" is the
+ * counterexample `brain-reason.ts`'s header already records, and the lesson
+ * there was that a detector for such a thing is "a list of counterexamples
+ * wearing the word class". The control for the residue is REQ-D02's HUMAN
+ * curator: nothing becomes recommendable without `curator_status = 'approved'`,
+ * which no writer here can set.
+ */
+export class FrameworkContentError extends Error {
+  constructor(
+    readonly field: string,
+    detail: string
+  ) {
+    super(
+      `That framework was not stored: ${field} ${detail}. A framework describes a MECHANISM anyone could apply — never a person, an account, or a number somebody hit (REQ-D04). Describe what the move does and why it works, without naming who did it or how it performed.`
+    );
+    this.name = "FrameworkContentError";
+  }
+}
+
+/** A private framework exceeded one of the closed size/count bounds. */
+export class FrameworkLimitError extends Error {
+  constructor(detail: string) {
+    super(
+      `That framework was not stored: ${detail}. Shorten it, or retire a framework you no longer use, then try again.`
+    );
+    this.name = "FrameworkLimitError";
+  }
+}
+
+/**
+ * Private frameworks are not part of this workspace's plan (REQ-D05, PRD §4G
+ * "Private frameworks": Pro and Studio only).
+ *
+ * THE TIER IS NOT DECIDED HERE AND CANNOT BE. `@respin/db` has no access to
+ * the resolved tier — its sole authority is `getWorkspaceBillingState` in
+ * `@respin/credits`, which depends on this package, and a second derivation is
+ * the defect class behind two M1 round-6 findings (R-30 constraint 2). The
+ * write capability therefore takes an `entitlement` argument with NO DEFAULT,
+ * and this is what it raises when that argument says the plan does not include
+ * the feature. The db half fails closed; the tier→entitlement mapping is
+ * `@respin/credits`' and is owed by whichever slice wires the screen.
+ *
+ * ITS COPY DOES NOT SELL AN UPGRADE, following `ModeNotInPlanError` and
+ * `profile_cap`: it states what happened and what the creator can do instead.
+ */
+export class PrivateFrameworkTierError extends Error {
+  constructor() {
+    super(
+      "This plan does not include private frameworks, so nothing was stored and nothing was spent. The shared framework library is available on every plan, and the frameworks it holds are the ones this product generates from."
+    );
+    this.name = "PrivateFrameworkTierError";
+  }
+}
+
+/**
  * The interview draft named by `submitInterview` (or a second
  * `saveInterviewDraft`) has already been submitted (slice 3b, R11).
  *

@@ -33,9 +33,14 @@ export const respinConfigV1 = z
         // document written before this key existed must still parse or
         // `getActiveConfig` throws inside the Stripe webhook's transaction.
         // The default is what makes the deploy-then-`config:migrate` order
-        // safe. It is NOT what prices a debit — see R19 and
-        // `assertStoredConfigKeys`: a debit is refused outright while the key
-        // is only defaulted, because a defaulted price is not a priced debit.
+        // safe. It is NOT what prices a debit — see R19,
+        // `getActiveConfigRequiringStored` (index.ts) and the price paths
+        // `requiredConfigPaths` (@respin/credits) names for each purpose: a
+        // debit is refused outright while the key is only defaulted, because a
+        // defaulted price is not a priced debit. (The name this sentence used
+        // to give that pair, `assertStoredConfigKeys`, is a symbol that has
+        // never existed in this repo — corrected 2026-09-01 in the same action
+        // that grepped for it.)
         onboardingBrainRebuild: z.number().int().min(0).default(50),
       })
       .strict(),
@@ -280,15 +285,77 @@ export const respinConfigV1 = z
     // are THRESHOLDS and not prices, so they are deliberately NOT on
     // `requiredConfigPaths` — a defaulted bound still bounds; a defaulted
     // price would bill someone against a number nobody chose.
+    // `frameworkContextCharBudget: 20000` — HOW MUCH OF ONE GENERATION'S
+    // PROMPT THE FRAMEWORK LIBRARY MAY OCCUPY (slice 7 R17; moved here from a
+    // module constant by the billing gate, 2026-09-01).
+    //
+    // IT IS A SPEND DIAL, WHICH IS WHY IT IS NOT A CONSTANT. It sets the INPUT
+    // token floor of every generation that offers frameworks, and input is
+    // billed at `llm.prices.<model>.inputNanoUsdPerToken` on every one of an
+    // attempt's calls — so this number is a REQ-G05 margin input in exactly
+    // the way `llm.maxOutputTokens` is, and that one is config. The constant's
+    // own docblock said so and named the handoff; this is the handoff landing.
+    //
+    // WHAT THE NUMBER MEANS, measured rather than chosen by taste: the nine
+    // seeded shared frameworks assemble to 5,335 characters
+    // (`generation-frameworks.test.ts` recomputes both halves from the seed),
+    // so the whole curated library fits nearly four times over. The budget is
+    // not a ration on the product's own material — it is a ceiling on the part
+    // a creator can grow, because `PRIVATE_FRAMEWORK_COUNT_MAX` is 50 live
+    // private frameworks and `FRAMEWORK_TEXT_MAX` x `FRAMEWORK_LIST_MAX` makes
+    // ONE row ~100,000 characters.
+    //
+    // NOT on `requiredConfigPaths`, for the reason
+    // `onboarding.voiceCorpusMaxPosts` states one key up: a defaulted BOUND
+    // still bounds, and the A-9 deploy order (deploy code, then
+    // `config:migrate`) needs a stored document written before this key
+    // existed to keep parsing inside the Stripe webhook's transaction. A
+    // defaulted PRICE is the different case — that one is refused outright,
+    // because a defaulted price bills someone against a number nobody chose.
+    //
+    // `min(1)`: a 0 here is not "no ceiling", it is "no framework ever fits",
+    // which would silently turn the whole library off for every generation
+    // while `framework_eligibility` went on refusing any output that named
+    // one — the same fail-closed reading `concurrencyLimits` takes.
+    //
+    // `.default(20_000)`, LIKE EVERY SIBLING KEY HERE. It shipped `.optional()`
+    // for one concurrent round because `.default(...)` makes the key REQUIRED
+    // on the parsed type and `CONFIG_V1_SEED` — the literal in
+    // `packages/db/src/seed.ts`, another owner's file that round — had to gain
+    // the same line in the same change or the parity test fails and every call
+    // site that spreads the seed stops typechecking. `decisions.md` R-74
+    // recorded the deviation and named the seed line as its revisit trigger;
+    // R-77 records the trigger firing. The seed carries it now, so the
+    // `.optional()` shape, its `FRAMEWORK_CONTEXT_CHAR_BUDGET_FALLBACK` and
+    // the `frameworkContextCharBudget(content)` reader are all gone: a
+    // `.default(...)` key needs no reader, because the parse hands the value
+    // to every consumer at once.
+    //
+    // WHAT THE FLIP BOUGHT: `mergeMissing` in `migrate-config.ts` copies keys
+    // out of the PARSED document, and an `.optional()` key is absent there
+    // too — so `pnpm config:migrate` could not materialise this one into a
+    // stored document at all, and an operator's only route to it was
+    // `/admin/config`. It is carried like every other key now.
     generation: z
       .object({
         maxUnchargedBillableAttempts: z.number().int().min(1).default(10),
         unchargedAttemptWindowMinutes: z.number().int().min(1).default(60),
+        frameworkContextCharBudget: z.number().int().min(1).default(20_000),
       })
       .strict()
+      // EVERY KEY, NOT JUST THE ONES A STORED DOCUMENT USUALLY LACKS. In Zod 4
+      // an object-level `.default(...)` SHORT-CIRCUITS — when the whole
+      // `generation` key is absent this literal is returned as written, and the
+      // inner `.default(...)`s never run (verified against the installed
+      // zod@4.4.3, and pinned by `config.test.ts`'s "a stored document written
+      // before an object key existed" case). A key omitted here would therefore
+      // be `undefined` at runtime while its type says `number` — which for
+      // THIS key means `charBudget` arriving as `undefined`, every comparison
+      // against it false, and the whole framework library silently dropped.
       .default({
         maxUnchargedBillableAttempts: 10,
         unchargedAttemptWindowMinutes: 60,
+        frameworkContextCharBudget: 20_000,
       }),
     // THE MODEL LAYER (slice 2a, tech-spec §1 / R-5). Everything the
     // provider adapter needs that must be changeable without a deploy: which

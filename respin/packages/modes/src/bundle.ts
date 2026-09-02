@@ -29,10 +29,14 @@
 import { createHash } from "node:crypto";
 
 import {
+  FRAMEWORK_BLOCK_EMPTY,
+  FRAMEWORK_BLOCK_HEADER,
+  FRAMEWORK_EVIDENCE_LABEL,
+  FRAMEWORK_EVIDENCE_NOTE,
   GENERATION_SYSTEM,
   HARD_RULE_BRIEF,
-  MODE_BRIEFS,
   REWRITE_INSTRUCTION,
+  modeBriefText,
   outputContractFor,
 } from "./assemble";
 import { OUTPUT_CLAIM_SHAPES } from "./claims";
@@ -44,7 +48,16 @@ import {
   HOOK_MAX_WORDS,
 } from "./hard-rules";
 import { KILL_TEST_SYSTEM } from "./kill-test";
-import { type ModeId } from "./modes";
+import {
+  HOOK_SPREAD_MAX_OVERLAP,
+  HOOK_SPREAD_MIN_CONTENT_WORDS,
+  IDEA_THESIS_MIN_WORDS,
+  NAMES_NOTHING_SHAPES,
+  SOURCE_RUN_WORDS,
+  SUMMARY_REGISTER_SHAPES,
+  WEAKEST_POINT_MIN_WORDS,
+} from "./mode-checks";
+import { modeSpec, type ModeId } from "./modes";
 import { SPECIFIC_SHAPES } from "./traceability";
 
 /** The prefix every version this package mints carries. */
@@ -86,6 +99,17 @@ function gateDescription(): string {
     // pattern changing.
     "claimEnforcement=" +
       OUTPUT_CLAIM_SHAPES.map((s) => s.id + "=" + s.enforcement).join(","),
+    // THE PER-MODE CHECKS' CONSTANTS AND PATTERN SOURCES, for the reason every
+    // other line here exists: moving the hook-overlap threshold or the thesis
+    // word floor changes which drafts reach a creator without touching a single
+    // prompt, and REQ-J02's question is "what changed?".
+    `modeCheck=hookSpread${HOOK_SPREAD_MAX_OVERLAP}/${HOOK_SPREAD_MIN_CONTENT_WORDS} sourceRun${SOURCE_RUN_WORDS} thesisMin${IDEA_THESIS_MIN_WORDS} weakestMin${WEAKEST_POINT_MIN_WORDS}`,
+    "summaryRegister=" +
+      SUMMARY_REGISTER_SHAPES.map((s) => s.id + "~" + s.pattern.source).join(
+        "|"
+      ),
+    "namesNothing=" +
+      NAMES_NOTHING_SHAPES.map((s) => s.id + "~" + s.pattern.source).join("|"),
   ].join("\n");
 }
 
@@ -98,11 +122,29 @@ function gateDescription(): string {
 export function bundlePartsFor(mode: ModeId): Record<string, string> {
   return {
     generationSystem: GENERATION_SYSTEM,
-    modeBrief: MODE_BRIEFS[mode],
+    modeBrief: modeBriefText(mode),
     outputContract: outputContractFor(mode),
     hardRuleBrief: HARD_RULE_BRIEF,
     rewriteInstruction: REWRITE_INSTRUCTION,
     killTestSystem: KILL_TEST_SYSTEM,
+    // WHICH CHECKS THIS MODE RUNS, and it is a per-mode part rather than a line
+    // in `gateDescription` for the reason the mode brief is: two modes with the
+    // same prompt and different gates produce different populations of surviving
+    // drafts, which is exactly the question REQ-J02 asks a version to answer.
+    modeChecks: modeSpec(mode).checks.join(","),
+    // THE FRAMEWORK BLOCK'S STATIC WORDS (billing gate round 2, 2026-09-01).
+    // The list itself is creator-dependent and stays OUT — but the header, the
+    // evidence note and the empty-case line are the product's own instructions,
+    // and they decide what a model does with the library on every generation
+    // that offers one. They were literals inside `contextBlock`, which nothing
+    // hashes, so rewriting or deleting the evidence note moved no version at
+    // all.
+    frameworkBlock: [
+      FRAMEWORK_BLOCK_HEADER,
+      FRAMEWORK_EVIDENCE_NOTE,
+      FRAMEWORK_EVIDENCE_LABEL,
+      FRAMEWORK_BLOCK_EMPTY,
+    ].join("\n"),
     gates: gateDescription(),
   };
 }

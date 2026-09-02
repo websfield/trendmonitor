@@ -43,11 +43,16 @@ type NoServerFieldsProbe = {
 };
 import {
   brainActivationSnapshots,
+  firstBillableAttempts,
   modelUsage,
   onboardingInputs,
   onboardingInterviewDrafts,
 } from "../src/onboarding-schema";
-import { generationAttempts, generations } from "../src/generation-schema";
+import {
+  generationAttempts,
+  generationFeedback,
+  generations,
+} from "../src/generation-schema";
 import {
   PROFILE_EXPORT_TABLES,
   ProfileAccessError,
@@ -288,6 +293,17 @@ describe("ProfileScope — the profile tenancy cage", () => {
         workspaceId,
         ...usageInput(`att_${profileId}`),
       });
+      // R-80: the claim `recordModelUsage` would have written for that row.
+      // Inserted directly, like the usage row above it — this fixture builds
+      // rows for all three profiles including the FOREIGN one, which the write
+      // capability cannot do (it only ever writes inside its own cage), and the
+      // P4 loops refuse an accessor that returns nothing.
+      await db.insert(firstBillableAttempts).values({
+        profileId,
+        workspaceId,
+        purpose: "onboarding_brain",
+        attemptId: `att_${profileId}`,
+      });
       await db.insert(onboardingInterviewDrafts).values({
         profileId,
         workspaceId,
@@ -356,6 +372,12 @@ describe("ProfileScope — the profile tenancy cage", () => {
           candidate: null,
         })
         .where(eq(generationAttempts.id, attempt.id));
+      // `confidence: "unsupported"` because `evidenceEntries` is `[]` —
+      // slice 7's `frameworks_confidence_matches_evidence` CHECK ties the two,
+      // so a fixture claiming a rung its evidence does not support is now
+      // UNSTORABLE. That is the R-29 property doing its job on the fixtures the
+      // day it landed, exactly as B-5's widened CHECK did to twenty-one
+      // fixtures in slice 3.
       await db.insert(frameworks).values({
         slug: `private-${profileId}`,
         name: `Private ${profileId}`,
@@ -365,11 +387,40 @@ describe("ProfileScope — the profile tenancy cage", () => {
         sourceReferences: [],
         evidenceEntries: [],
         testedCaveats: [],
-        confidence: "observed",
+        confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
         ownerProfileId: profileId,
         workspaceId,
+      });
+      // A SECOND private framework that IS recommendable, so
+      // `eligibleFrameworks`' private arm is non-vacuous on both axes: the P4
+      // loops refuse an accessor that returns nothing, and an approved,
+      // non-retired, non-superseded row is the only kind that arm can return.
+      await db.insert(frameworks).values({
+        slug: `approved-private-${profileId}`,
+        name: `Approved private ${profileId}`,
+        beats: [],
+        whyItConverts: "Approved private fixture",
+        applicability: [],
+        sourceReferences: [],
+        evidenceEntries: [],
+        testedCaveats: [],
+        confidence: "unsupported",
+        saturation: "observed",
+        visibility: "private",
+        curatorStatus: "approved",
+        ownerProfileId: profileId,
+        workspaceId,
+      });
+      // Slice 7 (R10): one feedback event per profile, so every
+      // `generation_feedback` branch has something foreign to leak.
+      await db.insert(generationFeedback).values({
+        profileId,
+        workspaceId,
+        generationId: generation.id,
+        reaction: "used_as_is",
+        note: `feedback for ${profileId}`,
       });
     }
   });
@@ -431,11 +482,11 @@ describe("ProfileScope — the profile tenancy cage", () => {
  */
 const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
   "countOnboardingInputs",
-  // Slice 2a. Same shape as its sibling: a number, so the row loops have
-  // nothing to walk, and its both-axes isolation is asserted BY VALUE in
-  // "countBillableAttempts counts THIS profile's billed attempts only" below.
-  // That case did not exist when this comment first claimed it did.
-  "countBillableAttempts",
+  // Slice 2a's `countBillableAttempts` WAS HERE and is gone (R-80). Its
+  // replacement, `firstBillableAttempt`, returns ROWS — so it is not a scalar,
+  // it walks the P4 row loops with a breach validator like every other row
+  // accessor, and its isolation is asserted on both axes there rather than by
+  // a number in a case of its own.
   // Slice 3. A number, like its two siblings; its both-axes isolation is
   // asserted BY VALUE in "countOwnPosts counts THIS profile's own posts only".
   "countOwnPosts",
@@ -578,12 +629,68 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         expect(owner.inputClass).toBe("reference");
       }
     },
-    // A scalar accessor: it yields no rows for this loop to walk, so the
-    // breach it could commit is a COUNT that includes someone else's attempts.
-    // That is asserted by value in its own case below; here the contract is
-    // only that it never hands back rows to inspect.
-    countBillableAttempts: (rows) => {
-      expect(rows).toEqual([]);
+    // R-80. The durable included-build claim. A leak here is the sharpest one
+    // over this table: the row it returns DECIDES A PRICE, so a claim from
+    // another profile would either charge a creator for the build they were
+    // promised or hand a second one out free.
+    firstBillableAttempt: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // Slice 7 (R10/R11). The ONE raw feedback reader — both scope columns, like
+    // every profile-grained accessor above it.
+    generationFeedback: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // Slice 7 (R5c). `frameworks` names its owner differently and library rows
+    // have NO owner, which is why these two get their own validators rather
+    // than the shared profileId/workspaceId one — and why the `visibility`
+    // assertion is here: a shared row leaking into the PRIVATE list would pass
+    // a null-owner check and fails this.
+    privateFrameworks: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as {
+        ownerProfileId: string;
+        workspaceId: string;
+        visibility: string;
+      }[]) {
+        expect(row.ownerProfileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+        expect(row.visibility).toBe("private");
+      }
+    },
+    // Slice 7 (R5b + R5c). TWO ARMS, so the assertion is a disjunction rather
+    // than an equality: a shared library row legitimately has NULL owner
+    // columns, and a private row must be THIS profile's. A row that is neither
+    // is the leak.
+    eligibleFrameworks: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as {
+        ownerProfileId: string | null;
+        workspaceId: string | null;
+        visibility: string;
+        curatorStatus: string;
+        retiredAt: Date | null;
+        supersededAt: Date | null;
+      }[]) {
+        if (row.visibility === "shared") {
+          expect(row.ownerProfileId).toBeNull();
+          expect(row.workspaceId).toBeNull();
+        } else {
+          expect(row.visibility).toBe("private");
+          expect(row.ownerProfileId).toBe(ownProfile);
+          expect(row.workspaceId).toBe(ownWorkspace);
+        }
+        // ...and R5b's recommendability rule, asserted on every row this
+        // accessor hands out. M8 ("a reader that returns proposed or retired
+        // frameworks") reddens here as well as in `frameworks.test.ts`.
+        expect(row.curatorStatus).toBe("approved");
+        expect(row.retiredAt).toBeNull();
+        expect(row.supersededAt).toBeNull();
+      }
     },
   };
 
@@ -627,10 +734,20 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     latestBrainActivation: [],
     countOnboardingInputs: [],
     modelUsage: [],
-    countBillableAttempts: [{ purpose: "onboarding_brain" }],
+    // `settlement: "unsettled"` is the branch that may answer "no claim". The
+    // `"settled"` branch REFUSES that answer and is driven by its own case
+    // below — a required parameter no test drives the false side of is not a
+    // guard (CLAUDE.md, 2026-08-29).
+    firstBillableAttempt: [
+      { purpose: "onboarding_brain", settlement: "unsettled" },
+    ],
     // No ids => "the corpus as it stands now", the write-time shape. The
     // activation shape (an explicit recorded set) is exercised in activate.test.ts.
     referenceCorpusAsOf: [],
+    // Slice 7.
+    generationFeedback: [],
+    privateFrameworks: [],
+    eligibleFrameworks: [],
   };
 
   const invoke = async (
@@ -679,7 +796,6 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         "brainDocs",
         "brainDocsByIds",
         "brainDocsByKind",
-        "countBillableAttempts",
         "countOnboardingInputs",
         // Slice 3, added deliberately: the id-keyed evidence read the confirm
         // screen resolves quotes through, the class-filtered corpus the priced
@@ -689,6 +805,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // window `ownPostsNewest`'s docblock names.
         "countReferencePosts",
         "countUnchargedBillableAttempts",
+        // R-80: the durable per-(profile, purpose) included-build claim, which
+        // replaced the derived `countBillableAttempts` ranking.
+        "firstBillableAttempt",
         // Slice 5: one fixed-size, registry-selected page. The shared P4 loops
         // can only drive ONE table through it (`accessorArgs` is one tuple per
         // accessor), so all six branches get their own parameterised cases in
@@ -704,6 +823,14 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         "ownPostsNewest",
         "profile",
         "referenceCorpusAsOf",
+        // Slice 7: the ONE raw feedback reader (R11), the creator's own live
+        // private frameworks, and the recommendable set generation reads
+        // (R5b/R5c). Named here rather than left to the loop because the point
+        // of this list is that a new accessor is a decision somebody made, not
+        // a diff nobody read.
+        "generationFeedback",
+        "privateFrameworks",
+        "eligibleFrameworks",
       ].sort()
     );
     expect(Object.keys(breachValidators).sort()).toEqual(accessorNames);
@@ -730,6 +857,10 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // decides which of two callers holding one `vendor_complete` row may
         // take the debit.
         "readGenerationAttempt",
+        // Slice 7 (R10): the append-only feedback event. Role-gated,
+        // cage-asserted, every scope column built from the scope, and the
+        // closed reaction set checked at RUNTIME rather than only in the type.
+        "recordGenerationFeedback",
       ].sort()
     );
   });
@@ -794,6 +925,11 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // owner — which is exactly why R15's private-only rule is a property of
     // this branch and not of the `both()` helper the others share.
     frameworks: (row) => ({ profile: row.ownerProfileId, workspace: row.workspaceId }),
+    // Slice 7 (R10). The ordinary shape — both scope columns on the row.
+    generation_feedback: (row) => ({
+      profile: row.profileId,
+      workspace: row.workspaceId,
+    }),
   };
 
   it("exportPage: EVERY classified table returns this profile's rows only, non-vacuously", async () => {
@@ -835,7 +971,10 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       sourceReferences: [],
       evidenceEntries: [],
       testedCaveats: [],
-      confidence: "observed",
+      // `unsupported`, because `evidenceEntries` is `[]` — slice 7's
+      // `frameworks_confidence_matches_evidence` CHECK makes any other rung
+      // unstorable for a row with no evidence (R-29).
+      confidence: "unsupported",
       saturation: "observed",
       visibility: "shared",
     });
@@ -868,32 +1007,103 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // Dropping only the first leaves the UPDATE refused, which would turn this
     // case into a test that fails for the wrong reason — or, worse, one
     // somebody "fixes" by removing the branch.
+    //
+    // AND A CONSTRAINT IS NOT THE ONLY THING THAT REFUSES THE RE-PARENTING
+    // UPDATE (tenancy gate, 2026-09-01). Migration 0023 added
+    // `frameworks_ownership_immutable`, a BEFORE UPDATE TRIGGER that refuses a
+    // change to `visibility`, `owner_profile_id` or `workspace_id` — the guard
+    // that stops a private framework becoming shared library content in one
+    // statement. It refuses this fixture's UPDATE too, and it must: a fixture
+    // that could still perform the move would mean the trigger was not there.
+    // So `triggers` is a second list beside `fks`, disabled inside the same
+    // transaction and restored by the same rollback. Found by running the full
+    // suite, exactly as the four constraints below were.
     const CHILD_BRANCHES = [
-      { table: "brain_docs", fks: ["brain_docs_profile_workspace_fk"], column: "profile_id" },
+      {
+        table: "brain_docs",
+        fks: [["brain_docs", "brain_docs_profile_workspace_fk"]],
+        triggers: [],
+        column: "profile_id",
+      },
       {
         table: "onboarding_inputs",
-        fks: ["onboarding_inputs_profile_workspace_fk"],
+        fks: [["onboarding_inputs", "onboarding_inputs_profile_workspace_fk"]],
+        triggers: [],
         column: "profile_id",
       },
       {
         table: "onboarding_interview_drafts",
-        fks: ["onboarding_interview_drafts_profile_workspace_fk"],
+        fks: [
+          [
+            "onboarding_interview_drafts",
+            "onboarding_interview_drafts_profile_workspace_fk",
+          ],
+        ],
+        triggers: [],
         column: "profile_id",
       },
       {
         table: "brain_activation_snapshots",
-        fks: ["brain_activation_snapshots_profile_workspace_fk"],
+        fks: [
+          [
+            "brain_activation_snapshots",
+            "brain_activation_snapshots_profile_workspace_fk",
+          ],
+        ],
+        triggers: [],
         column: "profile_id",
       },
+      // FOUR CONSTRAINTS FROM SLICE 7, AND ONE OF THEM IS ON ANOTHER TABLE —
+      // which is why `fks` is now a list of (table, constraint) PAIRS rather
+      // than of names. Two things changed at once and each broke the
+      // re-parenting UPDATE on its own:
+      //
+      //   `generations_parent_fk` is a SELF-referencing composite FK carrying
+      //   `workspace_id`, exactly the second-FK shape this list's own comment
+      //   predicted for `generations`.
+      //
+      //   `generation_feedback_generation_fk` lives on the CHILD table and
+      //   references `generations(id, profile_id, workspace_id)` with ON
+      //   UPDATE RESTRICT, so it refuses a change to the parent's
+      //   `workspace_id` from the other side. Nothing in the previous shape
+      //   could express that, and the failure it produced ("expected to throw
+      //   rollback") named neither the table nor the constraint.
+      //
+      // Found by running the full suite, not by reading the list.
       {
         table: "generations",
-        fks: ["generations_profile_workspace_fk", "generations_attempt_fk"],
+        fks: [
+          ["generations", "generations_profile_workspace_fk"],
+          ["generations", "generations_attempt_fk"],
+          ["generations", "generations_parent_fk"],
+          ["generation_feedback", "generation_feedback_generation_fk"],
+        ],
+        // `generations_parent_id_immutable` (migration 0022) is NOT here, and
+        // that is the narrowness working rather than an omission: it compares
+        // `parent_id` only, and this fixture rewrites `workspace_id`.
+        triggers: [],
         column: "profile_id",
       },
       {
         table: "frameworks",
-        fks: ["frameworks_owner_profile_workspace_fk"],
+        fks: [["frameworks", "frameworks_owner_profile_workspace_fk"]],
+        triggers: [["frameworks", "frameworks_ownership_immutable"]],
         column: "owner_profile_id",
+      },
+      // Slice 7 (R10). TWO FKs, for the reason `generations` has two: the
+      // re-parenting UPDATE below must be legal once the constraints are
+      // dropped, and this table is held by its `creator_profiles` FK AND by
+      // the three-column `generation_feedback_generation_fk`, which also
+      // carries `workspace_id`. Dropping only the first leaves the UPDATE
+      // refused — a case that fails for the wrong reason.
+      {
+        table: "generation_feedback",
+        fks: [
+          ["generation_feedback", "generation_feedback_profile_workspace_fk"],
+          ["generation_feedback", "generation_feedback_generation_fk"],
+        ],
+        triggers: [],
+        column: "profile_id",
       },
     ] as const;
     const covered = new Set<string>(CHILD_BRANCHES.map((b) => b.table));
@@ -904,11 +1114,21 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       "an exportable table has no cross-workspace case — adding a branch costs one entry here"
     ).toEqual([]);
 
-    for (const { table, fks, column } of CHILD_BRANCHES) {
+    for (const { table, fks, triggers, column } of CHILD_BRANCHES) {
       await expect(
         db.transaction(async (tx) => {
-          for (const fk of fks) {
-            await tx.execute(sql.raw(`ALTER TABLE ${table} DROP CONSTRAINT ${fk}`));
+          // Each entry names its OWN table: slice 7's
+          // `generation_feedback_generation_fk` sits on the child and refuses
+          // a change to the parent's `workspace_id` from the other side.
+          for (const [fkTable, fk] of fks) {
+            await tx.execute(sql.raw(`ALTER TABLE ${fkTable} DROP CONSTRAINT ${fk}`));
+          }
+          // ...and the same for a TRIGGER that refuses the move. DISABLE
+          // rather than DROP, so the rollback restores it by definition.
+          for (const [trTable, trigger] of triggers as readonly (readonly [string, string])[]) {
+            await tx.execute(
+              sql.raw(`ALTER TABLE ${trTable} DISABLE TRIGGER ${trigger}`)
+            );
           }
           await tx.execute(
             sql.raw(
@@ -938,14 +1158,30 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // and `frameworks` until their accessors were deleted. Every FK this test
     // drops is checked, so the population is the one this test actually
     // touches rather than a second hand-written list.
-    for (const { table, fks } of CHILD_BRANCHES) {
-      for (const fk of fks) {
+    for (const { fks, triggers } of CHILD_BRANCHES) {
+      for (const [fkTable, fk] of fks) {
         const found = await db.execute(
           sql.raw(
-            `SELECT 1 FROM pg_constraint WHERE conname = '${fk}' AND conrelid = '${table}'::regclass`
+            `SELECT 1 FROM pg_constraint WHERE conname = '${fk}' AND conrelid = '${fkTable}'::regclass`
           )
         );
         expect(found.rows.length, `${fk} was not restored`).toBe(1);
+      }
+      // A DISABLED TRIGGER IS STILL PRESENT, so `EXISTS` would pass on one the
+      // rollback failed to re-enable. `tgenabled = 'O'` is Postgres' "enabled,
+      // origin" state — the default — and it is what makes this check about
+      // the guard being ARMED rather than about the row existing.
+      for (const [trTable, trigger] of triggers as readonly (readonly [string, string])[]) {
+        const found = await db.execute(
+          sql.raw(
+            `SELECT tgenabled FROM pg_trigger WHERE tgname = '${trigger}' AND tgrelid = '${trTable}'::regclass`
+          )
+        );
+        expect(found.rows.length, `${trigger} is gone entirely`).toBe(1);
+        expect(
+          (found.rows[0] as { tgenabled: string }).tgenabled,
+          `${trigger} was left DISABLED — every later test in this file runs without it`
+        ).toBe("O");
       }
     }
   });
@@ -967,7 +1203,8 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
   const CROSS_PARENTED = [
     {
       table: "brain_docs",
-      fk: "brain_docs_profile_workspace_fk",
+      fks: ["brain_docs_profile_workspace_fk"],
+      triggers: [],
       profileColumn: "profile_id",
       // ALL THREE accessors over this table, not just one. The tenancy gate
       // once noted that the third was applicable and skipped, making AC-4's
@@ -985,7 +1222,8 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     },
     {
       table: "onboarding_inputs",
-      fk: "onboarding_inputs_profile_workspace_fk",
+      fks: ["onboarding_inputs_profile_workspace_fk"],
+      triggers: [],
       profileColumn: "profile_id",
       // BOTH accessors over this table. `referenceCorpusAsOf` was omitted when
       // it landed, and a tenancy mutation dropping its workspace predicate
@@ -1022,7 +1260,8 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // workspace's coherent brain.
     {
       table: "brain_activation_snapshots",
-      fk: "brain_activation_snapshots_profile_workspace_fk",
+      fks: ["brain_activation_snapshots_profile_workspace_fk"],
+      triggers: [],
       profileColumn: "profile_id",
       accessors: ["latestBrainActivation"],
     },
@@ -1036,37 +1275,94 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // cross-parented row is invisible in EVERY branch" above drives exactly
     // this drop-constraint / re-parent / rollback mechanism through each of
     // them — including the constraint-restoration check this list also owned.
+    // Slice 7 (R10/R11). `generation_feedback` HAS an accessor —
+    // `generationFeedback`, the ONE sanctioned raw reader — so it belongs on
+    // this axis, and it is a sharp case: that accessor is the single door
+    // between these rows and every consumer, including `packages/brain` in
+    // slice 9. A dropped workspace predicate here would put another
+    // workspace's reactions into whatever slice 9 eventually counts, which is
+    // the leak R-9 and R-10 are both about.
+    {
+      table: "generation_feedback",
+      // TWO, like `generations` above: this table is held by its
+      // `creator_profiles` FK AND by the three-column
+      // `generation_feedback_generation_fk`, which also carries `workspace_id`.
+      fks: [
+        "generation_feedback_profile_workspace_fk",
+        "generation_feedback_generation_fk",
+      ],
+      triggers: [],
+      profileColumn: "profile_id",
+      accessors: ["generationFeedback"],
+    },
+    // Slice 7 (R5c). `frameworks` HAS accessors again — the note further up
+    // this list records that its old single accessor was deleted as
+    // unreachable, and these two are not: `privateFrameworks` is the creator's
+    // own list and `eligibleFrameworks` is what generation reads. Both are
+    // covered here because a dropped workspace predicate on the private arm
+    // would put another creator's framework into this creator's prompt.
+    {
+      table: "frameworks",
+      fks: ["frameworks_owner_profile_workspace_fk"],
+      // A TRIGGER REFUSES THIS FIXTURE'S UPDATE TOO (migration 0023).
+      // `frameworks_ownership_immutable` is what stops a private framework
+      // becoming shared library content in one statement, and it therefore
+      // also stops the fixture that manufactures a cross-parented row on
+      // purpose. Disabling it inside the transaction is the same move the
+      // constraint drops above are, and its presence is re-asserted after the
+      // rollback beside them.
+      triggers: ["frameworks_ownership_immutable"],
+      profileColumn: "owner_profile_id",
+      accessors: ["privateFrameworks", "eligibleFrameworks"],
+    },
     {
       table: "model_usage",
-      fk: "model_usage_profile_workspace_fk",
+      fks: ["model_usage_profile_workspace_fk"],
+      triggers: [],
       profileColumn: "profile_id",
-      // BOTH accessors over this table (slice 2a). `countBillableAttempts`
-      // prices a creator's rebuild off this count, so a dropped workspace
-      // predicate here would let another workspace's attempts consume this
-      // creator's included build — the same class of omission this file
-      // records twice already, for `brainDocsByIds` and `referenceCorpusAsOf`.
+      // BOTH accessors over this table (slice 2a). `countBillableAttempts` was
+      // the third and is gone (R-80) — the pricing question it answered moved
+      // to `first_billable_attempts`, which has its own entry below.
       accessors: [
         "modelUsage",
-        "countBillableAttempts",
         // Slice 3, billing round 2: the bound on attempts we paid for and did
         // not charge for. A dropped workspace predicate here would let another
         // workspace's failures exhaust this creator's cap.
         "countUnchargedBillableAttempts",
       ],
     },
+    // R-80. The durable included-build claim, and the sharpest money case on
+    // this axis: the row `firstBillableAttempt` returns decides whether a
+    // build is free or costs a rebuild, so a cross-parented claim leaking in
+    // would price one creator's run off another workspace's history.
+    {
+      table: "first_billable_attempts",
+      fks: ["first_billable_attempts_profile_workspace_fk"],
+      triggers: [],
+      profileColumn: "profile_id",
+      accessors: ["firstBillableAttempt"],
+    },
   ] as const;
 
-  // ------------------------------------------- the two BY-VALUE count cases
+  // ------------------------------------------- the BY-VALUE count cases
   //
   // Two comments in this file cited these by name for weeks and neither
   // existed (tenancy gate, 2026-08-28). A count has no rows for the P4 loops
   // to walk, so the row validators skip it entirely — which means a scalar
-  // accessor's isolation is asserted here or nowhere. `countBillableAttempts`
-  // is the accessor that PRICES A DEBIT: if its profile predicate were ever
-  // dropped, a creator's included run would be consumed by a sibling profile's
-  // history, and until this case existed the whole suite stayed green.
+  // accessor's isolation is asserted here or nowhere.
+  //
+  // `countBillableAttempts`'s case USED TO OPEN THIS BLOCK. The accessor is
+  // gone (R-80) and its replacement returns rows, so its isolation now runs in
+  // the P4 loops with every other row accessor. What replaces the case here is
+  // the property no loop can express: the claim is written ONCE, by the FIRST
+  // billable attempt, and no later attempt moves it.
 
-  it("countBillableAttempts counts THIS profile's billed attempts only", async () => {
+  it("the included-build claim is written ONCE, by the first billable attempt, per profile", async () => {
+    // THE MONEY PROPERTY, by value. `firstBillableAttempt` decides whether a
+    // build is free or costs a rebuild, so two things have to hold: my later
+    // attempts must not MOVE my claim (or every run would be free), and the
+    // sibling's attempts must not APPEAR as mine (or their history would price
+    // my debit).
     const scope = await mintP1();
     const caps = writeCapabilities(scope);
     const sibling = await ProfileScope.mint(
@@ -1074,13 +1370,19 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       await withWorkspace(db, { authUserId: "user_a" }),
       p2
     );
-    const count = (sc: typeof scope) =>
-      sc.accessors.countBillableAttempts({ purpose: "onboarding_brain" });
-
-    // DELTAS, not absolutes: the shared fixture already seeds rows, and a case
-    // that pins totals would break every time a fixture gains one. The
-    // property is that MY writes move MY count and the sibling's do not.
-    const before = { mine: await count(scope), theirs: await count(sibling) };
+    const holder = async (sc: typeof scope): Promise<string | undefined> => {
+      const [row] = await sc.accessors.firstBillableAttempt({
+        purpose: "onboarding_brain",
+        settlement: "unsettled",
+      });
+      return row?.attemptId;
+    };
+    // The shared fixture already seeded one claim per profile, naming that
+    // profile's own attempt — which is the state a real profile is in after
+    // its first build, and the state the "does a later attempt move it" half
+    // needs.
+    expect(await holder(scope)).toBe(`att_${p1}`);
+    expect(await holder(sibling)).toBe(`att_${p2}`);
 
     for (const id of ["p1-a", "p1-b"]) {
       await db.transaction((tx) => caps.recordModelUsage(usageInput(id), tx));
@@ -1092,14 +1394,107 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       );
     }
 
-    // BOTH AXES, BY VALUE. +2 is only correct if the profile predicate holds;
-    // without it this is +5, and the sibling's attempts would price my debit.
+    // FIVE more billable attempts across two profiles, and NEITHER claim moved.
     expect(
-      (await count(scope)) - before.mine,
-      "the sibling's attempts leaked into this profile's count"
-    ).toBe(2);
-    // ...and from the SIBLING's side, so the check is not one-directional.
-    expect((await count(sibling)) - before.theirs).toBe(3);
+      await holder(scope),
+      "a later attempt took over this profile's included build"
+    ).toBe(`att_${p1}`);
+    expect(await holder(sibling)).toBe(`att_${p2}`);
+    // ...and there is exactly ONE claim row per (profile, purpose) — the
+    // database's own count, not the accessor's.
+    const claims = await db
+      .select()
+      .from(firstBillableAttempts)
+      .where(eq(firstBillableAttempts.profileId, p1));
+    expect(claims).toHaveLength(1);
+  });
+
+  it("a NON-CONSUMING billable attempt claims nothing — a truncation is not a free build", async () => {
+    // The 2026-08-29 billing gate's property, restated against the claim
+    // writer. A truncated reply is billable (the vendor generated a full
+    // ceiling and charged us) and NON-consuming (the cause is our own reply
+    // limit). If the claim writer read `outcome` alone, this row would take the
+    // creator's included build for an outage they did not cause and cannot fix.
+    const [fresh] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId: aWorkspaceId, displayName: "A-three" })
+      .returning();
+    const scope = await ProfileScope.mint(
+      db,
+      await withWorkspace(db, { authUserId: "user_a" }),
+      fresh.id
+    );
+    const caps = writeCapabilities(scope);
+    await db.transaction((tx) =>
+      caps.recordModelUsage(
+        {
+          ...usageInput("truncated-1"),
+          outcome: "schema_invalid",
+          consumedIncludedBuild: false,
+        },
+        tx
+      )
+    );
+    expect(
+      await scope.accessors.firstBillableAttempt({
+        purpose: "onboarding_brain",
+        settlement: "unsettled",
+      }),
+      "a truncated reply consumed the creator's included build"
+    ).toEqual([]);
+
+    // ...and the NEXT attempt, which really does consume it, takes it. Without
+    // this half the case passes against a writer that claims nothing ever.
+    await db.transaction((tx) =>
+      caps.recordModelUsage(usageInput("real-1"), tx)
+    );
+    const [claim] = await scope.accessors.firstBillableAttempt({
+      purpose: "onboarding_brain",
+      settlement: "unsettled",
+    });
+    expect(claim?.attemptId).toBe("real-1");
+  });
+
+  it("`settlement: settled` REFUSES an absent claim; `unsettled` reports it", async () => {
+    // BOTH BRANCHES OF THE REQUIRED PARAMETER, driven. A required parameter
+    // whose false side no test drives reads like a guard and is not one
+    // (CLAUDE.md, 2026-08-29) — and this one is the reason a missing claim
+    // cannot be read as an entitlement: at the debit, R11 guarantees this
+    // attempt's billable usage row has already committed, so no claim means
+    // the claim writer did not run, and answering "unclaimed" would hand out a
+    // free build on the strength of a missing record.
+    const [fresh] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId: aWorkspaceId, displayName: "A-four" })
+      .returning();
+    const scope = await ProfileScope.mint(
+      db,
+      await withWorkspace(db, { authUserId: "user_a" }),
+      fresh.id
+    );
+    expect(
+      await scope.accessors.firstBillableAttempt({
+        purpose: "onboarding_brain",
+        settlement: "unsettled",
+      })
+    ).toEqual([]);
+    await expect(
+      scope.accessors.firstBillableAttempt({
+        purpose: "onboarding_brain",
+        settlement: "settled",
+      })
+    ).rejects.toThrow(/no first-billable claim exists/);
+
+    // ...and once a claim exists, the settled read returns it rather than
+    // throwing — so the refusal is about ABSENCE, not about the parameter.
+    await db.transaction((tx) =>
+      writeCapabilities(scope).recordModelUsage(usageInput("settled-1"), tx)
+    );
+    const [claim] = await scope.accessors.firstBillableAttempt({
+      purpose: "onboarding_brain",
+      settlement: "settled",
+    });
+    expect(claim?.attemptId).toBe("settled-1");
   });
 
   it("countOnboardingInputs counts THIS profile's inputs only", async () => {
@@ -1172,7 +1567,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         onboardingInputs: "onboarding_inputs",
         referenceCorpusAsOf: "onboarding_inputs",
         modelUsage: "model_usage",
-        countBillableAttempts: "model_usage",
+        firstBillableAttempt: "first_billable_attempts",
         countOnboardingInputs: "onboarding_inputs",
         onboardingInputsByIds: "onboarding_inputs",
         ownPostsNewest: "onboarding_inputs",
@@ -1187,6 +1582,10 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // above cover both axes across every branch, and export.test.ts drives
         // the same six through `openBrainExport` end to end.
         exportPage: undefined,
+        // Slice 7.
+        generationFeedback: "generation_feedback",
+        privateFrameworks: "frameworks",
+        eligibleFrameworks: "frameworks",
       };
       const namedTables = new Set<string>(CROSS_PARENTED.map((c) => c.table));
       const missing = Object.keys(scope.accessors).filter((a) => {
@@ -1203,12 +1602,27 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         Object.keys(scope.accessors).filter((a) => !(a in tableOf))
       ).toEqual([]);
     }
-    for (const { table, fk, profileColumn, accessors } of CROSS_PARENTED) {
+    for (const { table, fks, triggers, profileColumn, accessors } of CROSS_PARENTED) {
       await expect(
         db.transaction(async (tx) => {
-          await tx.execute(
-            sql.raw(`ALTER TABLE ${table} DROP CONSTRAINT ${fk}`)
-          );
+          // `fks` IS A LIST, not a single name (slice 7) — the same correction
+          // `CHILD_BRANCHES` above took in slice 6, and for the identical
+          // reason: the re-parenting UPDATE has to be LEGAL once the
+          // constraints are dropped, and a table can be held by more than one
+          // composite FK carrying `workspace_id`. `generation_feedback` is the
+          // first entry here that is.
+          for (const fk of fks) {
+            await tx.execute(
+              sql.raw(`ALTER TABLE ${table} DROP CONSTRAINT ${fk}`)
+            );
+          }
+          // A CONSTRAINT IS NOT THE ONLY THING THAT REFUSES THE UPDATE.
+          // DISABLE rather than DROP, so the rollback restores it.
+          for (const trigger of triggers as readonly string[]) {
+            await tx.execute(
+              sql.raw(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`)
+            );
+          }
           // p1's id, but B's workspace: the shape the composite FK forbids.
           await tx.execute(
             sql.raw(
@@ -1247,13 +1661,17 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       ).rejects.toThrow("rollback");
     }
     // The constraints survive the rollback — the next test is not poisoned.
-    for (const { table, fk } of CROSS_PARENTED) {
-      const found = await db.execute(
-        sql.raw(
-          `SELECT 1 FROM pg_constraint WHERE conname = '${fk}' AND conrelid = '${table}'::regclass`
-        )
-      );
-      expect(found.rows.length, `${fk} was not restored`).toBe(1);
+    // EVERY FK this test drops is checked, so the population is the one the
+    // test actually touches rather than a second hand-written list.
+    for (const { table, fks } of CROSS_PARENTED) {
+      for (const fk of fks) {
+        const found = await db.execute(
+          sql.raw(
+            `SELECT 1 FROM pg_constraint WHERE conname = '${fk}' AND conrelid = '${table}'::regclass`
+          )
+        );
+        expect(found.rows.length, `${fk} was not restored`).toBe(1);
+      }
     }
   });
 

@@ -224,6 +224,62 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             "killtestClaimLabel",
             "isMetricPointer",
             "quoteIntro",
+            // SLICE 7 (stage A). Inert VALUES and TYPES only — the framework
+            // and feedback WRITE surfaces stay absent and therefore denied:
+            // `createPrivateFramework`, `editPrivateFramework`,
+            // `retirePrivateFramework`, `approvePrivateFramework`,
+            // `recordFeedback`, `listFeedback`, `seedSharedFrameworks`,
+            // `sharedFrameworkLibrary`, `eligibleFrameworks` and every table
+            // object reach `app/**` through `respinDb` alone.
+            //
+            // `GENERATION_FEEDBACK_REACTIONS` is the closed reaction list the
+            // feedback UI renders its buttons from — one source rather than a
+            // hand-copied list that can drift from the pgEnum, exactly the
+            // reason `INTERVIEW_FIELDS` and `POST_CONTENT_MAX` are here.
+            // `SATURATION_NOTICE` is the single sentence a saturated framework
+            // carries (R5b), for the `INTERVIEW_PLACEHOLDER_ABSENCE` reason:
+            // the screen and the artefact must not say two different things.
+            // `FEEDBACK_NOTE_MAX` is the ceiling the note textarea states.
+            "GENERATION_FEEDBACK_REACTIONS",
+            "SATURATION_NOTICE",
+            "FEEDBACK_NOTE_MAX",
+            "FRAMEWORK_NAME_MAX",
+            "FRAMEWORK_TEXT_MAX",
+            "FRAMEWORK_LIST_MAX",
+            "PRIVATE_FRAMEWORK_COUNT_MAX",
+            "FRAMEWORK_GOALS",
+            "FRAMEWORK_NICHES",
+            // Type-only exports (a value import of either is TS1362 at the
+            // export, not here — the AC-15 rule).
+            "GenerationFeedbackReaction",
+            "GenerationFeedbackRow",
+            "EligibleFramework",
+            "FrameworkContent",
+            "FrameworkGoal",
+            "FrameworkNiche",
+            "PrivateFrameworkEntitlement",
+            "Framework",
+            // SLICE 7 (stage D). Stage A's TEN typed refusals, landed here in
+            // the SAME change as their copy in `app/(product)/billing-errors.ts`
+            // and their root export in `packages/db/src/index.ts` — the
+            // obligation that file's header names, discharged whole rather than
+            // in three commits that each look fine alone. Same rule as every
+            // refusal class above: inert values that `billing-errors.ts` maps to
+            // copy, so a typed refusal cannot degrade to "Something went wrong"
+            // on the screens that generate, revise, react and curate. The
+            // framework and feedback WRITE surfaces stay absent and therefore
+            // still denied — `createPrivateFramework`, `recordFeedback` and
+            // their siblings reach `app/**` through `respinDb` alone.
+            "GenerationLineageError",
+            "FeedbackReactionError",
+            "FeedbackNoteError",
+            "FeedbackDuplicateError",
+            "FeedbackTargetError",
+            "FrameworkAccessError",
+            "FrameworkStaleError",
+            "FrameworkContentError",
+            "FrameworkLimitError",
+            "PrivateFrameworkTierError",
           ],
           message:
             "app/** may import only the sanctioned @respin/db surface (respinDb, WorkspaceAccessError, the typed refusals, types) — every query goes through withWorkspace, and the write capabilities are package-only (tenancy T1, M2a A-2b)",

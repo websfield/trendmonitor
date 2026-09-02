@@ -254,7 +254,17 @@ export class BrainNotActivatedError extends Error {
 export class GenerationPayloadMismatchError extends Error {
   constructor(readonly attemptId: string) {
     super(
-      "This request reuses an id that is already in use for a different generation, so it was refused rather than answered with the other one's output. Nothing was spent and no model was called. Start the generation again."
+      // IT COVERS A SECOND CAUSE, and says so rather than asserting the one it
+      // cannot tell apart — `GenerationInFlightError`'s "stuck case"
+      // precedent, twenty lines down. All this refusal knows is that the hash
+      // stored against the attempt id is not the hash of the request that
+      // arrived, and slice 7 gave that two causes: a genuinely different
+      // request, and an attempt STARTED BY AN EARLIER BUILD, whose stored hash
+      // was taken over five fields before `parentGenerationId` became the
+      // sixth. Telling the second creator they "submitted a different request"
+      // is a sentence about them that is not true. The remedy is the same for
+      // both, which is what makes one refusal honest.
+      "This id was already used for a generation whose request does not match this one, so it was refused rather than answered with that one's output. An attempt started before this product was last updated reads the same way. Nothing was spent and no model was called. Start the generation again."
     );
     this.name = "GenerationPayloadMismatchError";
   }
@@ -370,3 +380,123 @@ export class UnpricedOperationError extends Error {
     this.name = "UnpricedOperationError";
   }
 }
+
+/**
+ * WHY A REVISION COULD NOT BE STARTED FROM THE OUTPUT IT NAMED (slice 7, R6).
+ *
+ * A CLOSED SET OF FOUR, and they are four because they are four different
+ * facts a creator needs told apart. The alternative — one message for all of
+ * them — would either leak (see below) or say nothing actionable.
+ *
+ * IT SAID "THREE" ABOVE FOUR MEMBERS until the billing gate counted them
+ * (2026-09-01): `parent_unreadable` was added with the rest and the sentence
+ * was not. `app/(product)/billing-errors.ts` carries a FIFTH answer — the
+ * neutral fallback for a reason this build does not know — which is copy
+ * rather than a code, and R-72 records why it names no cause.
+ */
+export const REVISION_PARENT_REFUSALS = {
+  /**
+   * FOREIGN, NONEXISTENT AND MALFORMED, DELIBERATELY COLLAPSED INTO ONE.
+   *
+   * The enumeration rule `ProfileAccessError` and `GenerationAttemptStateError`
+   * both state: a refusal that distinguished "another creator's output" from
+   * "no such output" is an oracle over every workspace's ids. Splitting these
+   * would be exactly that oracle, so the split does not exist.
+   */
+  not_this_creators: "not_this_creators",
+  /**
+   * The named output is an HONEST REFUSAL, so there is no text to revise.
+   *
+   * NOT AN ENUMERATION RISK, because reaching this answer already required
+   * owning the row. And not merely tidy either: it closes a PRICING hole.
+   * `creditCosts.revision` (2) is below every script price (5), so if a
+   * refusal — which produces no output — could be "revised", a creator could
+   * generate at the revision price indefinitely by revising the thing that
+   * failed. A refusal names a sharper angle to try; trying it is a new
+   * generation, and it is priced as one.
+   */
+  not_revisable: "not_revisable",
+  /**
+   * The revision asked for a DIFFERENT mode from the output it revises.
+   *
+   * A revision keeps its parent's mode. The parent's own document is the
+   * material a revision is built from, and every mode has a different output
+   * contract (`ModeSpec.required`/`permitted`), so "revise this hook set as a
+   * caption" is a new generation that happens to start from an old one — which
+   * is priced as a generation, not as a revision.
+   *
+   * REVISIT TRIGGER: a creator surface that genuinely wants cross-mode
+   * derivation. Widening this later is safe (it admits pairs that are refused
+   * today); narrowing it later would orphan lineage rows already stored.
+   */
+  different_mode: "different_mode",
+  /**
+   * The stored output no longer parses as a document of its own mode.
+   *
+   * NOT AN EXPECTED CASE and not dead code either: `generations.output` is
+   * `jsonb`, it was written by whatever build was deployed when it settled, and
+   * `parseScriptOutput` is fail-closed. It is `readCandidate`'s envelope-version
+   * branch one table over — the difference between refusing to build on bytes
+   * this build cannot read and casting them into the next generation's prompt.
+   */
+  parent_unreadable: "parent_unreadable",
+} as const;
+
+export type RevisionParentRefusal =
+  (typeof REVISION_PARENT_REFUSALS)[keyof typeof REVISION_PARENT_REFUSALS];
+
+/**
+ * A revision named a parent it cannot be built from (slice 7, R6/R8).
+ *
+ * RAISED BEFORE THE VENDOR IS CONTACTED, which is the whole reason it exists as
+ * a separate class from `@respin/db`'s `GenerationLineageError`. That one is
+ * the AUTHORITY — `settleGeneration` re-reads the parent through the profile's
+ * own scoped predicate inside the settlement transaction and refuses there —
+ * but the settlement runs AFTER the model has been called and paid for, so a
+ * creator whose parent id did not resolve would have burned a vendor call to
+ * learn it. This is the same question asked one step earlier, where the answer
+ * costs nothing.
+ *
+ * IT DOES NOT REPLACE THE AUTHORITY, and the ordering is what makes that true:
+ * the parent this class checks is read through the profile's write capability
+ * and it is the ROW'S OWN id that is then handed to `settleGeneration`, so the
+ * settlement's check is over a server-derived value rather than a caller's.
+ *
+ * `reason` IS A CLOSED CODE, never prose, so a screen can branch on it and an
+ * operator can filter on it — the `BrainDocReason` discipline (C-42).
+ */
+export class RevisionParentError extends Error {
+  constructor(readonly reason: RevisionParentRefusal) {
+    super(REVISION_PARENT_MESSAGES[reason]);
+    this.name = "RevisionParentError";
+  }
+}
+
+/**
+ * What each refusal says, as a total `Record` over the closed set.
+ *
+ * NONE OF THEM NAMES AN UPGRADE (R15), and none of them claims the creator did
+ * something wrong: three of the four are about what the product can do with the
+ * row they picked, and the fourth is about ownership, which a creator cannot
+ * meaningfully act on beyond reopening the output they meant.
+ *
+ * IT SAID "TWO OF THE THREE" ABOVE FOUR MEMBERS until the billing gate counted
+ * them (round 2, 2026-09-01) — the SAME miscount `REVISION_PARENT_REFUSALS`
+ * records fixing twelve lines above, in the same file, in the same slice: the
+ * first fix closed the case it was handed and left its sibling. Both counts are
+ * now BOUND to `REVISION_PARENT_REFUSALS` itself by
+ * `tests/billing-ui.test.tsx` ("the counts these two docblocks assert are the
+ * counts the collection has"), which reads this sentence and fails if the words
+ * and the member count disagree — or if the sentence is reworded out from under
+ * it. A count asserted in prose is a claim; this one has a run behind it.
+ */
+const REVISION_PARENT_MESSAGES: Record<RevisionParentRefusal, string> = {
+  not_this_creators:
+    "That revision could not be linked to the output it revises. Either that output is not this creator's, or it no longer exists. Nothing was generated and nothing was spent — reopen the output you want to revise and start the revision from there.",
+  not_revisable:
+    "That output was an honest refusal, so there is no draft to revise. Nothing was generated and nothing was spent — the refusal names a sharper angle, and trying it is a new generation rather than a revision.",
+  different_mode:
+    "A revision stays in the mode it was written in, and this one asked for a different one. Nothing was generated and nothing was spent — revise it as it is, or start a new generation in the mode you want.",
+  parent_unreadable:
+    "That output cannot be read back in the shape this version of the product expects, so nothing was built from it. Nothing was generated and nothing was spent — the output itself is untouched, and a new generation in the same mode is the way forward while we look at it.",
+};

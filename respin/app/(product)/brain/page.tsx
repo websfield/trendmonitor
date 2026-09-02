@@ -153,13 +153,19 @@ export default async function BrainPage(props: {
   // Read once for the courtesy block below. A failure must not take the page
   // down: the pause is a courtesy here and the authority is the refusal
   // `confirmBrainDocFields` / `activateBrainDocCoherent` raise.
+  //
+  // AND IT ASKS THE AUTHORITY THE GATES ASK (tenancy gate round 2,
+  // 2026-09-01). This read was `getBillingState(...).state === "paused"` —
+  // `isPausedSubscription`, the `subscriptions.pausedAt` MIRROR — while
+  // `writeBrainDoc` and `activateBrainDocCoherent` refuse on `hasOpenPause`
+  // over `pause_periods`. Where the two disagree the screen offered edit,
+  // confirm and activate to a workspace the server refuses, after the creator
+  // had written the edit. `@respin/db`'s `hasOpenPause` docblock names the
+  // mirror as "the drift bug this function exists to make impossible"; this
+  // screen was reading the mirror.
   let paused = false;
   try {
-    const state = await respinCredits.getBillingState(
-      scope.workspaceId,
-      new Date()
-    );
-    paused = state.state === "paused";
+    paused = await respinCredits.hasOpenPause(scope.workspaceId);
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[brain] pause state unavailable", err);

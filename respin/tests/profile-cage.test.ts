@@ -1204,6 +1204,44 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // `scope` argument, which is what the argument-identity rule requires.
         "packages/db/src/with-workspace.ts:burnByMode",
         "packages/db/src/app-server.ts:burnByMode",
+
+        // Slice 7 stage A: the framework surface and the feedback pair, plus
+        // their bound facade methods. Covered exactly the way slice 1's intake
+        // pair and slice 3b's interview trio are — the FIRST scope-touching
+        // act of every `frameworks.ts` / `feedback-ops.ts` function is
+        // `ProfileScope.mint(db, scope, profileId)`, and the mint runs
+        // `assertScoped` on the workspace scope before it will hand back a
+        // profile grain; the `app-server.ts` binds are thin forwards of the
+        // SAME `scope` argument, which is what the argument-identity rule
+        // requires.
+        //
+        // `sharedFrameworkLibrary` and `seedSharedFrameworks` are DELIBERATELY
+        // ABSENT and that is not an omission: neither takes a scope, because a
+        // shared framework has both owner columns NULL by CHECK — it belongs
+        // to nobody and is the same set for every workspace, the same shape
+        // `reconcileSpend` uses for an operator query with no tenant. An entry
+        // for either would be a scope parameter that decides nothing.
+        //
+        // The FOUR WRITES additionally take an `entitlement` argument with no
+        // default (REQ-D05, Pro+). That is a TIER gate, not a tenancy one, and
+        // this list is about the tenancy cage — `packages/db/tests/frameworks.
+        // test.ts` drives its false branch.
+        "packages/db/src/frameworks.ts:listPrivateFrameworks",
+        "packages/db/src/frameworks.ts:eligibleFrameworks",
+        "packages/db/src/frameworks.ts:createPrivateFramework",
+        "packages/db/src/frameworks.ts:editPrivateFramework",
+        "packages/db/src/frameworks.ts:approvePrivateFramework",
+        "packages/db/src/frameworks.ts:retirePrivateFramework",
+        "packages/db/src/feedback-ops.ts:recordFeedback",
+        "packages/db/src/feedback-ops.ts:listFeedback",
+        "packages/db/src/app-server.ts:listPrivateFrameworks",
+        "packages/db/src/app-server.ts:eligibleFrameworks",
+        "packages/db/src/app-server.ts:createPrivateFramework",
+        "packages/db/src/app-server.ts:editPrivateFramework",
+        "packages/db/src/app-server.ts:approvePrivateFramework",
+        "packages/db/src/app-server.ts:retirePrivateFramework",
+        "packages/db/src/app-server.ts:recordFeedback",
+        "packages/db/src/app-server.ts:listFeedback",
       ].sort()
     );
 

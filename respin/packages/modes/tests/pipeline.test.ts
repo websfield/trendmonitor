@@ -44,6 +44,10 @@ const CONTEXT: GenerationContext = {
   input:
     "today I shot three takes of the same lens change and one of them worked",
   platform: "youtube",
+  // An ORIGINAL: its input is entirely the creator's own, and it says so
+  // rather than leaving the key out (billing gate round 2 — the omitted key
+  // WAS the laundering).
+  unvouchedSpecifics: [],
 };
 
 const CREATOR_RULES: CreatorRule[] = [
@@ -108,7 +112,8 @@ describe("the fixtures are what they claim to be", () => {
   it("the clean fixture violates nothing", () => {
     const out = runKillTest({
       output: parseScriptOutput({ text: CLEAN, mode: "hooks" }),
-      corpus: traceabilityCorpusFor(CONTEXT),
+      mode: "hooks",
+      context: CONTEXT,
     });
     expect(out.hardRules).toEqual([]);
   });
@@ -120,7 +125,8 @@ describe("the fixtures are what they claim to be", () => {
         text: asReply(withHook(planted.text)),
         mode: "hooks",
       }),
-      corpus: traceabilityCorpusFor(CONTEXT),
+      mode: "hooks",
+      context: CONTEXT,
     });
     expect(out.hardRules.map((f) => f.rule)).toContain(planted.rule);
   });
@@ -383,7 +389,8 @@ describe("assembly is pure and refuses before any vendor call (R2)", () => {
     });
     const found = runKillTest({
       output,
-      corpus: traceabilityCorpusFor(CONTEXT),
+      mode: "hooks",
+      context: CONTEXT,
     });
     const { prompt } = assembleRewritePrompt({
       mode: "hooks",
@@ -411,6 +418,64 @@ describe("the traceability corpus comes from the same value the prompt did (R19)
     // been "checked against what you gave this generation".
     expect(corpus.input).toEqual([CONTEXT.input, CONTEXT.platform]);
     expect(JSON.stringify(corpus)).not.toContain("cost reveal");
+  });
+
+  // ------------------------------------------------------------------
+  // THE FIELD THAT USED TO BE OPTIONAL (billing gate round 2, 2026-09-01).
+  //
+  // `unvouchedSpecifics` was `?: readonly string[]` read through a `?? []`, and
+  // the measured consequence was the whole of REQ-I05 coming back on an
+  // omission: same parent, same revision, key dropped — `usable`,
+  // `hardRules: []`, `traceability: []`. It is REQUIRED now, and CLAUDE.md's
+  // 2026-08-29 lesson is that a required parameter is a guard only once a test
+  // drives its false branch. Both halves are driven: the compile refusal, and
+  // the runtime refusal when a caller CASTS around the type (2026-08-21 —
+  // proving a field cannot be typed is not proving it cannot be cast).
+  // ------------------------------------------------------------------
+
+  it("a context that does not state what is unvouched does not COMPILE", () => {
+    const stated: GenerationContext = { ...CONTEXT, unvouchedSpecifics: [] };
+    expect(traceabilityCorpusFor(stated).unvouched).toEqual([]);
+    // @ts-expect-error — omitting it is the defect, so omitting it is an error.
+    const omitted: GenerationContext = {
+      universalLaws: CONTEXT.universalLaws,
+      frameworks: CONTEXT.frameworks,
+      brain: CONTEXT.brain,
+      input: CONTEXT.input,
+      platform: CONTEXT.platform,
+    };
+    expect(omitted.platform).toBe(CONTEXT.platform);
+  });
+
+  it("...and a caller that CASTS around it is refused at runtime, before the vendor call", async () => {
+    const smuggled = {
+      universalLaws: CONTEXT.universalLaws,
+      frameworks: CONTEXT.frameworks,
+      brain: CONTEXT.brain,
+      input: CONTEXT.input,
+      platform: CONTEXT.platform,
+    } as unknown as GenerationContext;
+    // The corpus builder itself — the function that would do the laundering.
+    expect(() => traceabilityCorpusFor(smuggled)).toThrow(
+      GenerationAssemblyError
+    );
+    // And the prompt assembler, which is where the refusal costs no money.
+    expect(() =>
+      assembleGenerationPrompt({ mode: "hooks", context: smuggled })
+    ).toThrow(GenerationAssemblyError);
+    // END TO END: no vendor call happens at all.
+    let calls = 0;
+    await expect(
+      runGeneration({
+        mode: "hooks",
+        context: smuggled,
+        generate: async () => {
+          calls += 1;
+          return asReply(CLEAN_HOOKS);
+        },
+      })
+    ).rejects.toThrow(GenerationAssemblyError);
+    expect(calls).toBe(0);
   });
 
   it("the creator's OWN PLATFORM does not flag (measured end to end)", async () => {

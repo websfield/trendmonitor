@@ -310,19 +310,33 @@ export function InterviewView({
             </form>
           )}
           {/*
-            R13, THE HONEST B04 ABSENCE. PRD B04 is "create my first three
-            ideas into Studio's Ideation mode" and it is owned by slice 7,
-            not this one. Naming that here rather than rendering a button
-            that goes nowhere, or a claim that ideas exist, is the whole
-            point of this paragraph.
+            SLICE 3b's R13 WROTE THE HONEST B04 ABSENCE HERE, and slice 7 built
+            the step it was the absence of. What replaces the paragraph is a
+            SIGNPOST, not a control: this screen still does nothing but store
+            answers, and the order matters — submit, then confirm and activate a
+            brain, and only then is there anything to write in this creator's
+            voice. A button here would jump two steps and land on a refusal.
+
+            THE `data-testid` IS UNCHANGED so the assertion that used to pin the
+            absence now pins what replaced it, rather than silently going
+            missing along with the sentence it watched (CLAUDE.md, 2026-07-30:
+            a claim recorded is only as good as the test that holds it up).
+
+            IT AVOIDS `generat`, `script`, `hook` AND `analy`, which
+            `tests/onboarding-interview-ui.test.tsx` bans on this screen: this
+            screen does not do the thing, and a signpost to a screen that does
+            must not read as a promise that this one does.
           */}
           <p className="muted" data-testid="interview-b04-absence">
-            After you submit, creating your first three ideas in Studio is
-            not part of this product yet. Submitting turns any answers you
-            decided above into a draft Strategy and/or Kill Test — only for
-            whichever of the two your answers actually touch — that you
-            review, correct and activate on the brain screen; nothing runs on
-            its own.
+            Submitting turns any answers you decided above into a draft Strategy
+            and/or Kill Test — only for whichever of the two your answers
+            actually touch — that you review, correct and activate on the brain
+            screen; nothing runs on its own. Once a brain is activated, the{" "}
+            <a href="/onboarding/first-ideas" data-testid="interview-b04-link">
+              first ideas step
+            </a>{" "}
+            is where this creator&apos;s first ideas are made. It costs credits
+            like anything else the product makes.
           </p>
         </div>
       )}

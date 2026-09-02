@@ -9,9 +9,21 @@
 // timeout printed a creator's post to stdout (`decisions.md` R-36).
 //
 // The complement of a blocklist, same as `app/(product)/safe-log.ts`: these
-// constructors take NUMBERS, ENUMS and OUR OWN LITERALS. There is no parameter
-// that can carry vendor or creator text, so there is nothing to remember to
-// strip. `tests/no-text.test.ts` asserts that property by construction.
+// constructors take NUMBERS, BOOLEANS, ENUMS and OUR OWN LITERALS, so there is
+// nothing to remember to strip. `tests/no-text.test.ts` asserts that by parsing
+// this file and classifying every constructor parameter, with a planted
+// violation of each shape.
+//
+// THREE PARAMETERS ARE STRINGS, AND THE RULE NAMES THEM RATHER THAN OVERSTATING
+// ITSELF (slice 7, 2026-09-01 — the sentence here used to read "there is no
+// parameter that can carry vendor or creator text", which the guard measured
+// false the day it was written). `LlmError`'s own `message`, whose only callers
+// are the `super(...)` literals below — no code under `packages/*/src` or
+// `app/**` constructs the base, and that is scanned. And
+// `LlmHostNotAllowedError`'s two origins, which are `new URL(raw).origin` and
+// the pinned constant: an ORIGIN is scheme://host:port and structurally cannot
+// carry a path, a query or a body, which is driven through the real
+// `pinnedFetch` with a creator's post in every one of those positions.
 import type { InferenceOutcome } from "./types";
 
 /** Base class, so a caller can catch the whole family. */

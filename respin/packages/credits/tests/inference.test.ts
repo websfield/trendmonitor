@@ -447,9 +447,12 @@ describe("runInference", () => {
   it("a TRUNCATION is billable but does NOT consume the included build", async () => {
     // THE WITNESS THE ROUND-2 FIX SHIPPED WITHOUT (billing gate). Every
     // `model_usage` row any other test writes carries `consumed_included_build
-    // = true`, so `eq(consumedIncludedBuild, true)` in `countBillableAttempts`
-    // was a tautology under test and deleting it stayed green. This is the only
-    // case that writes `false`.
+    // = true`, so the `consumedIncludedBuild` half of the condition that
+    // decides the free build was a tautology under test and deleting it stayed
+    // green. This is the only case that writes `false`. R-80 moved that
+    // condition from a ranking query into `recordModelUsage`'s claim write
+    // (`USAGE_OUTCOME_BILLABLE[row.outcome] && row.consumedIncludedBuild`,
+    // with-workspace.ts); this case is what keeps the second half live there.
     await grant(500);
     await expect(
       runInference(

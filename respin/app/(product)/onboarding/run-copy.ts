@@ -19,9 +19,10 @@
  *
  * It states the RULE and the PRICE, and deliberately does not predict which of
  * the two branches this press will take. Predicting it would mean a second read
- * of `countBillableAttempts` — the same authority `runInference` consults
- * inside its debit transaction — and a prediction that has gone stale between
- * the render and the press is a wrong number about money on the screen. The
+ * of the included-build claim (`firstBillableAttempt` — the same authority
+ * `runInference` consults inside its debit transaction) and a prediction that
+ * has gone stale between the render and the press is a wrong number about
+ * money on the screen. The
  * authority is the operation; the screen states the rule it will be judged by,
  * and reports the ACTUAL charge afterwards.
  *

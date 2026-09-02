@@ -68,9 +68,10 @@ import { maybeAutoTopup } from "./stripe/auto-topup";
 
 /**
  * The one purpose slice 2a runs. A named constant rather than a free string,
- * because it is the grain `countBillableAttempts` prices against: a typo at one
- * of the two call sites would silently hand every creator an unlimited supply
- * of included builds.
+ * because it is the grain the included-build CLAIM is keyed on
+ * (`first_billable_attempts`, one row per `(profile_id, purpose)` — R-80): a
+ * typo at one of the two call sites would name a purpose nobody has claimed
+ * and silently hand every creator an unlimited supply of included builds.
  */
 export const ONBOARDING_BRAIN_PURPOSE = "onboarding_brain";
 
@@ -78,8 +79,8 @@ export const ONBOARDING_BRAIN_PURPOSE = "onboarding_brain";
  * The purpose slice 6's generation runs under (R12).
  *
  * A SECOND CONSTANT RATHER THAN A SHARED ONE, and the reason is the sentence
- * above: the purpose is the grain `countBillableAttempts` and
- * `countUnchargedBillableAttempts` price and bound against. A generation
+ * above: the purpose is the grain the included-build claim is keyed on and the
+ * grain `countUnchargedBillableAttempts` bounds against. A generation
  * sharing `ONBOARDING_BRAIN_PURPOSE` would be priced as an onboarding rebuild
  * — the first generation on a profile that had never rebuilt its brain would
  * come back FREE, and every one after it would cost `onboardingBrainRebuild`
@@ -280,7 +281,22 @@ export async function withDeadline<T>(
 export type PricedOperation =
   | {
       purpose: typeof ONBOARDING_BRAIN_PURPOSE;
-      priorBillableAttempts: number;
+      /**
+       * WHICH ATTEMPT HOLDS this profile's included build for this purpose,
+       * or null when nothing has claimed it yet.
+       *
+       * A CLAIM, NOT A COUNT (R-80). It was `priorBillableAttempts: number`,
+       * derived by ranking `model_usage` on `(created_at, attempt_id)` — and
+       * that ranking read a READ COMMITTED snapshot, in which an attempt that
+       * inserted first and committed second is invisible to the one that
+       * committed before it. Two concurrent first-ever attempts each counted
+       * zero priors and each took the included build. This is the row
+       * `first_billable_attempts` decided under a unique index instead, which
+       * no interleaving can give two winners.
+       */
+      includedBuildHolder: string | null;
+      /** The attempt being priced — free only if it is the holder. */
+      attemptId: string;
     }
   | {
       purpose: typeof GENERATION_PURPOSE;
@@ -388,12 +404,24 @@ export function requiredConfigPaths(
  * GENERALISED FROM `priceOf(content, priorBillableAttempts)`, whose signature
  * could only ever answer the onboarding question. `creditCosts.hookSet` has
  * existed and been seeded since M1 and had NO READER; this is its first one.
+ *
+ * PURE, AND THAT IS WHY IT IS SAFE TO CALL IT TWICE (step 6 and step 9). Both
+ * call sites pass the same expression over the same claim row; what differs is
+ * only WHEN the row is read — before this attempt has written anything, and
+ * again after its own billable row and claim have committed.
  */
 export function priceOf(content: RespinConfigV1, op: PricedOperation): number {
   switch (op.purpose) {
     // The included build is free; every rebuild after it is priced (D-M2-2).
+    //
+    // UNCLAIMED IS FREE, AND MINE IS FREE. The first is the pre-call price of a
+    // profile that has never had a billable attempt; the second is the debit
+    // price of the attempt that WON the claim. Everything else — a claim held
+    // by another attempt — is a rebuild. The loser of a race lands on that
+    // third branch, which is the whole fix.
     case ONBOARDING_BRAIN_PURPOSE:
-      return op.priorBillableAttempts === 0
+      return op.includedBuildHolder === null ||
+        op.includedBuildHolder === op.attemptId
         ? content.creditCosts.onboardingBrainBuild
         : content.creditCosts.onboardingBrainRebuild;
     // A generation is priced by its MODE, every time. There is no included
@@ -407,6 +435,15 @@ export function priceOf(content: RespinConfigV1, op: PricedOperation): number {
     }
   }
 }
+
+// WHICH PURPOSES HAVE AN INCLUDED BUILD AT ALL: `included-build.ts`, and it is
+// a FUNCTION OF THE CONFIG DOCUMENT rather than a constant beside this one
+// (R-82). R-81 answered it here, with a total `Record<purpose, boolean>` whose
+// onboarding entry said `true` — a static answer to a fact `/admin/config` can
+// change, since `creditCosts.onboardingBrainBuild` is `min(0)` and not
+// `literal(0)`. The derivation drives
+// `priceOf` above on every priced operation of each purpose, so the two
+// cannot disagree.
 
 /**
  * The uncharged-billable-attempt cap for a purpose (R16), from config.
@@ -537,7 +574,11 @@ export async function runInference(
       // for a price row it does not spend against.
       requiredConfigPaths({ generation: model }, {
         purpose: ONBOARDING_BRAIN_PURPOSE,
-        priorBillableAttempts: 0,
+        // NEITHER FIELD IS READ HERE — `requiredConfigPaths` branches on the
+        // PURPOSE only, and the onboarding branch requires both price keys
+        // whichever one ends up pricing this attempt.
+        includedBuildHolder: null,
+        attemptId: params.attemptId,
       })
     );
   // FAIL CLOSED ON THE PRICE BEFORE SPENDING (R6). Looked up here as well as
@@ -548,10 +589,19 @@ export async function runInference(
 
   // 6. WHAT THIS ATTEMPT WOULD COST, AND WHETHER IT CAN BE PAID.
   //
-  // Counted over DISTINCT BILLED attempt_ids, never rows: a bounded retry is
-  // one attempt, and a 429 is not a billed attempt (R14).
-  const priorAttempts = await scope.accessors.countBillableAttempts({
+  // READ FROM THE CLAIM, not from a count (R-80): `first_billable_attempts`
+  // holds at most one row per (profile, purpose) and it is the row step 9
+  // prices from too — one population, one answer, whereas the count this
+  // replaced was one of THREE implementations of the same rule.
+  //
+  // `settlement: "unsettled"` is the truthful description of this moment: this
+  // attempt has written nothing yet, so an absent claim means the included
+  // build is genuinely unclaimed and this press is provisionally free. It is
+  // provisional in exactly one way — another attempt may claim it while the
+  // vendor is answering — and step 9 is where that is settled.
+  const [priorClaim] = await scope.accessors.firstBillableAttempt({
     purpose: ONBOARDING_BRAIN_PURPOSE,
+    settlement: "unsettled",
   });
   // THE UNCHARGED-ATTEMPT CAP, BEFORE THE VENDOR (billing gate round 2).
   //
@@ -614,7 +664,8 @@ export async function runInference(
   }
   const preCallCost = priceOf(content, {
     purpose: ONBOARDING_BRAIN_PURPOSE,
-    priorBillableAttempts: priorAttempts,
+    includedBuildHolder: priorClaim?.attemptId ?? null,
+    attemptId: params.attemptId,
   });
   if (preCallCost > 0) {
     const view = await deriveBalance(db, scope.workspaceId);
@@ -793,6 +844,14 @@ export async function runInference(
     //     settlement-tail exemption). It commits BEFORE the debit is attempted,
     //     so a refused debit, or a crash between the two, leaves the spend
     //     recorded rather than rolled away. The round-1 defect was the reverse.
+    //
+    //     AND IT IS WHERE THE INCLUDED BUILD IS CLAIMED (R-80).
+    //     `recordModelUsage` inserts the `first_billable_attempts` row in this
+    //     same transaction, so the winner is decided by a unique index at
+    //     COMMIT time rather than by comparing timestamps in a snapshot. R11's
+    //     ordering is UNCHANGED by that: the spend record still commits before
+    //     the debit is attempted, and the claim commits with it — which is
+    //     precisely what makes it readable, and final, at step 9.
     const usageRow = await recordUsage(scope, {
       db,
       params,
@@ -813,21 +872,39 @@ export async function runInference(
     // 9. THE DEBIT, AFTER, UNDER THE WORKSPACE LOCK.
     //
     // THE PRICE IS DECIDED AGAIN HERE, and this is the race step 6 cannot close:
-    // two concurrent first-ever attempts both read "no prior attempts" before
-    // either had written a row, so on step 6's answer alone both would be free.
+    // two concurrent first-ever attempts both read "the included build is
+    // unclaimed" before either had written a row, so on step 6's answer alone
+    // both would be free.
     //
-    // COUNTED BY ORDER, NOT BY EXCLUSION, and the difference is a defect this
-    // code shipped with. `excludeAttemptId` alone is SYMMETRIC: by the time
-    // either attempt reaches this transaction, BOTH usage rows have committed
-    // (step 8b), so each excludes itself, counts the other, and both are charged
-    // — the creator loses the included build they were promised. Serialising on
-    // the lock does not help, because a tie cannot be broken by a predicate that
-    // says the same thing about both sides. `earlierThanAttemptId` counts only
-    // attempts strictly earlier by `(first row's created_at, attempt_id)`, which
-    // is a total order, so exactly one attempt has zero predecessors whatever the
-    // interleaving. Proved on real Postgres in
-    // `packages/credits/tests/inference-race.docker.test.ts`; PGlite is
-    // single-connection and could never have expressed it.
+    // DECIDED BY A DURABLE CLAIM, NOT BY AN ORDER (R-80), and the difference is
+    // a defect this code shipped with TWICE.
+    //   - `excludeAttemptId` alone was SYMMETRIC: by the time either attempt
+    //     reached this transaction BOTH usage rows had committed (step 8b), so
+    //     each excluded itself, counted the other, and both were charged.
+    //   - `earlierThanAttemptId` then ranked attempts by `(first row's
+    //     created_at, attempt_id)` and called that "a total order, so exactly
+    //     one attempt has zero predecessors whatever the interleaving". THE
+    //     VALUES ARE A TOTAL ORDER; THE READER'S SNAPSHOT IS NOT. `created_at`
+    //     is `clock_timestamp()` at INSERT and a row appears at COMMIT, so an
+    //     attempt that inserted first and committed second is invisible to the
+    //     one that committed before it — and then finds that one LATER by the
+    //     key. Both free, one debit never written. That claim cited the docker
+    //     race test as proof and the test had no case for it; it does now
+    //     ("INSERTED FIRST, COMMITTED SECOND"), and it fails on the old code
+    //     deterministically.
+    // Step 8b has already claimed `first_billable_attempts` for this attempt,
+    // or conflicted onto the winner's row, INSIDE the transaction that wrote
+    // the usage row — a unique index is enforced against committed state, so
+    // there is no interleaving with two winners. This read only reports it.
+    //
+    // `settlement: "settled"` is the R11 fact stated to the accessor: this
+    // attempt's billable row has committed, so a missing claim is a broken
+    // writer and is refused rather than read as an entitlement.
+    //
+    // STILL INSIDE THE LOCKED TRANSACTION, though the claim can no longer
+    // change once written: the lock is what the pause gate and the balance
+    // derivation need (B-10), and reading the price outside it would put the
+    // price and the debit in two different instants for no gain.
     //
     // The loser is charged, and if its balance cannot cover the charge the debit
     // refuses AFTER the tokens were burnt; that narrow case is the accepted cost
@@ -835,16 +912,17 @@ export async function runInference(
     // because of step 8b.
     const { creditsCharged, balanceAfter } = await db.transaction(async (tx) => {
       await takeWorkspaceLock(tx, scope.workspaceId);
-      const priors = await scope.accessors.countBillableAttempts(
+      const [claim] = await scope.accessors.firstBillableAttempt(
         {
           purpose: ONBOARDING_BRAIN_PURPOSE,
-          earlierThanAttemptId: params.attemptId,
+          settlement: "settled",
         },
         tx
       );
       const cost = priceOf(content, {
         purpose: ONBOARDING_BRAIN_PURPOSE,
-        priorBillableAttempts: priors,
+        includedBuildHolder: claim?.attemptId ?? null,
+        attemptId: params.attemptId,
       });
       if (cost === 0) {
         const view = await deriveBalanceInTx(tx, scope.workspaceId);

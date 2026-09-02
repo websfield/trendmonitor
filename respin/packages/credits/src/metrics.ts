@@ -190,3 +190,102 @@ export function emitUnchargedAttemptCapMetric(
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// THE FRAMEWORK OFFER'S DROPPED ROWS (billing gate, 2026-09-01).
+//
+// WHY THIS COUNTER EXISTS. `frameworksForContext` bounds how much of one
+// prompt the framework library may occupy, and a row that does not fit is
+// simply not offered — the model never sees it, and nothing anywhere says so.
+// The gate measured what that hides: with private frameworks of 526 characters
+// against a curated average of 593 — ordinary rows, not pathological ones — a
+// profile at 30 private frameworks lost two of the nine seeded ones and at 40
+// lost ALL NINE, because the accessor ORDERED BY `slug ASC` alone and every
+// curated framework is named "The ..." (it sorts shared rows first now — see
+// `eligibleFrameworks` — which is the other half of the same fix).
+// The eviction is fixed at the offer (curated first); this is the other half —
+// a creator can still fill the budget with their OWN rows, and when the
+// product stops offering material a paying creator's plan includes, that must
+// be a line somewhere rather than a silence. It is the
+// `UNCHARGED_ATTEMPT_CAP_METRIC` precedent one file over: the first abuse of
+// an unmeasured channel is learned about from an invoice.
+//
+// WHAT ONE SAMPLE CAN HONESTLY ASSERT: "this generation offered N of M
+// eligible frameworks, and here is the split by visibility". It does NOT say a
+// rate, and no rate is faked here. It is emitted on the drop only, not on
+// every generation — a metric on the ordinary path would be a line per press
+// with nothing in it.
+//
+// PII: a workspace UUID, a profile UUID, a mode id and four numbers. No
+// framework name, no creator content, no prompt text — a private framework's
+// NAME is the creator's own material and must never be added here.
+
+/** The metric name. Changing it is a decision edit, like its siblings. */
+export const FRAMEWORK_OFFER_DROPPED_METRIC =
+  "respin.credits.framework_offer.dropped";
+
+export type FrameworkOfferDroppedMetric = {
+  workspaceId: VerifiedWorkspaceId;
+  profileId: VerifiedProfileId;
+  /** The mode whose prompt this offer was built for. */
+  mode: string;
+  /** Eligible rows the accessor returned. */
+  eligible: number;
+  /** Rows actually offered to the model. */
+  offered: number;
+  /**
+   * SHARED rows dropped — the number that should be ZERO, always.
+   *
+   * It is a separate field rather than a total because the two mean different
+   * things to an operator: a dropped PRIVATE row is a creator who has written
+   * more frameworks than one prompt can carry, which is working as designed; a
+   * dropped SHARED row is the curated library being rationed, which the offer
+   * order is supposed to make impossible and which a single curated row larger
+   * than the whole budget could still cause.
+   */
+  droppedShared: number;
+  droppedPrivate: number;
+  /** The budget this offer was measured against, in characters. */
+  charBudget: number;
+};
+
+export type FrameworkOfferDroppedMetricSink = (
+  m: FrameworkOfferDroppedMetric
+) => void;
+
+function defaultOfferSink(m: FrameworkOfferDroppedMetric): void {
+  // `warn` when a CURATED row was dropped, `info` otherwise, and the split is
+  // the point: one of those is the product rationing its own library and the
+  // other is a creator using theirs.
+  const line = `[respin-metric] ${FRAMEWORK_OFFER_DROPPED_METRIC}=1 mode=${m.mode} eligible=${m.eligible} offered=${m.offered} dropped_shared=${m.droppedShared} dropped_private=${m.droppedPrivate} char_budget=${m.charBudget} workspace=${m.workspaceId} profile=${m.profileId}`;
+  if (m.droppedShared > 0) console.warn(line);
+  else console.info(line);
+}
+
+let offerSink: FrameworkOfferDroppedMetricSink = defaultOfferSink;
+
+/** Point the offer metric somewhere else (a collector, or a test's recorder). */
+export function setFrameworkOfferDroppedMetricSink(
+  next: FrameworkOfferDroppedMetricSink | null
+): void {
+  offerSink = next ?? defaultOfferSink;
+}
+
+/**
+ * Emit one dropped-offer sample. NEVER throws into the caller: this runs on
+ * the generation path BEFORE the vendor call, so a sink that threw would turn
+ * a working generation into an error the creator was charged nothing for and
+ * learned nothing from.
+ */
+export function emitFrameworkOfferDroppedMetric(
+  m: FrameworkOfferDroppedMetric
+): void {
+  try {
+    offerSink(m);
+  } catch (err) {
+    console.warn(
+      "[respin-metric] framework offer metric sink threw; ignoring",
+      err
+    );
+  }
+}

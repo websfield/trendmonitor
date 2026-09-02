@@ -18,7 +18,6 @@ import { type AssembledPrompt } from "@respin/llm";
 import {
   assembleGenerationPrompt,
   assembleRewritePrompt,
-  traceabilityCorpusFor,
   type GenerationContext,
 } from "./assemble";
 import { promptBundleVersion } from "./bundle";
@@ -110,7 +109,6 @@ export async function runGeneration(params: {
   const { mode, context, generate, scoreCreatorRules } = params;
   const creatorRules = params.creatorRules ?? [];
   const bundle = promptBundleVersion(mode);
-  const corpus = traceabilityCorpusFor(context);
 
   // ---- Draft 1.
   const firstReply = await generate(
@@ -118,7 +116,7 @@ export async function runGeneration(params: {
     1
   );
   const firstOutput = parseScriptOutput({ text: firstReply, mode });
-  const firstFindings = runKillTest({ output: firstOutput, corpus });
+  const firstFindings = runKillTest({ output: firstOutput, mode, context });
 
   if (decideAfterKillTest({ attempt: 1, findings: firstFindings }) === "accept") {
     return settle({
@@ -144,7 +142,7 @@ export async function runGeneration(params: {
     2
   );
   const secondOutput = parseScriptOutput({ text: secondReply, mode });
-  const secondFindings = runKillTest({ output: secondOutput, corpus });
+  const secondFindings = runKillTest({ output: secondOutput, mode, context });
 
   if (
     decideAfterKillTest({ attempt: 2, findings: secondFindings }) === "accept"

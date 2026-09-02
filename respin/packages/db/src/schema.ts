@@ -100,9 +100,15 @@ export * from "./billing-schema";
 export * from "./brain-schema";
 export * from "./onboarding-schema";
 
-// Slice 6 generation tables (generation_attempts, generations). Intended sole
-// writers: stage C's settlement path — enforced by the repo-wide writer
-// enumeration in `respin/tests/table-writers.test.ts`, which carries an EMPTY
-// expectation for both today, so the first writer anywhere is a red test
-// rather than a comment nobody re-read.
+// Slice 6 + 7 generation tables (generation_attempts, generations, and slice
+// 7's generation_feedback). Sole writers: the settlement path and
+// `recordGenerationFeedback`, both `writeCapabilities` closures — enforced by
+// the repo-wide writer enumeration in `respin/tests/table-writers.test.ts`,
+// which NAMES them per table and per verb.
+//
+// THIS COMMENT SAID "an EMPTY expectation for both today" until slice 7, and
+// that had been false since slice 6's stage C filled them in — the same shape
+// `generation-schema.ts`'s own header records correcting for itself
+// ("this header used to say there were none"). Corrected here rather than
+// deleted, because the list is the thing a reader of this line actually needs.
 export * from "./generation-schema";

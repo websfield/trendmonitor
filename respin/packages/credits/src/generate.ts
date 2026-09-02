@@ -32,11 +32,18 @@
 //   5.   TIER + MODE + CONFIG + PRICE   — the plan gate (R18) and then a fail
 //        closed on the STORED document and on a missing price row, before a
 //        vendor is contacted.
+//   5b.  THE REVISION'S PARENT (slice 7, R6/R8) — resolved through a SCOPED
+//        capability read, before the price, because it is what decides the
+//        price: a revision costs `creditCosts.revision`, an original costs its
+//        mode's key, and the boolean that chooses between them is
+//        `parent !== null` rather than a caller's flag. Also before the run
+//        slot, so a parent this creator cannot revise from does not burn one.
 //   6.   UNCHARGED CAP, then BALANCE (+ auto-top-up) — before tokens are
 //        spent, never after (R15/R16).
 //   6b.  THE RUN SLOT                   — after every refusal above, so an
 //        attempt refused on its way out does not burn one.
-//   6c.  THE BRAIN AND THE ASSEMBLY     — reads and pure functions only. They
+//   6c.  THE BRAIN, THE FRAMEWORKS AND THE ASSEMBLY — reads and pure functions
+//        only (the framework library joins them in slice 7). They
 //        are AFTER the slot because they are the last thing that can refuse
 //        for free, and BEFORE the claim because the claim's payload hash is
 //        taken over what they produced.
@@ -64,6 +71,7 @@ import { createHash } from "node:crypto";
 
 import {
   GenerationAttemptStateError,
+  SATURATION_NOTICE,
   mintProfileScope,
   readPointer,
   enumerateClaimFields,
@@ -74,6 +82,7 @@ import {
   type BrainKind,
   type CreditLedgerRow,
   type DbLike,
+  type Framework as FrameworkRow,
   type Generation,
   type GenerationAttempt,
   type ProfileScope,
@@ -94,12 +103,17 @@ import {
   type LlmProvider,
 } from "@respin/llm";
 import {
+  FRAMEWORK_EVIDENCE_LABEL,
+  buildCorpusIndex,
   modeSpec,
   parseKillTestReply,
   parseScriptOutput,
   promptBundleVersion,
+  renderDraft,
   runGeneration,
+  words,
   type CreatorRule,
+  type Framework,
   type GenerationContext,
   type HonestRefusal,
   type GenerationRun,
@@ -119,6 +133,7 @@ import {
   GenerationUnchargedAttemptCapError,
   InsufficientCreditsError,
   PostCallDebitError,
+  RevisionParentError,
   WorkspacePausedError,
 } from "./errors";
 import {
@@ -135,7 +150,10 @@ import {
   withDeadline,
   type PricedOperation,
 } from "./inference";
-import { emitUnchargedAttemptCapMetric } from "./metrics";
+import {
+  emitFrameworkOfferDroppedMetric,
+  emitUnchargedAttemptCapMetric,
+} from "./metrics";
 import { assertModeAllowed, type EntitlementTier } from "./mode-access";
 import { getWorkspaceBillingState } from "./state";
 import { maybeAutoTopup } from "./stripe/auto-topup";
@@ -174,6 +192,27 @@ export type GenerateParams = {
   input: string;
   /** The platform the output is for — it drives the disclosure section. */
   platform: string;
+  /**
+   * REVISE THE OUTPUT THIS ATTEMPT ID PRODUCED (slice 7, R6/R8), or omit for
+   * an original. When it is set, `input` is the creator's revision NOTE.
+   *
+   * AN ATTEMPT ID RATHER THAN A GENERATION ID, and that is the tenancy
+   * decision in this parameter rather than a spelling. `readGenerationForAttempt`
+   * is an existing SCOPED capability — it reads through the profile's own
+   * predicate — so the row it returns is this creator's by construction, and it
+   * is the ROW'S OWN `id` that is then handed to `settleGeneration` as the
+   * parent. A generation id taken from the caller would have needed a second
+   * scoped reader that does not exist in `@respin/db`, written here, outside
+   * the cage; this way the id `generations.parent_id` stores is
+   * SERVER-DERIVED, which is what R6's "the server derives scope" asks for.
+   *
+   * WHAT IT DOES *NOT* DO: it does not carry the price. The price key is
+   * decided from the RESOLVED parent (`generationOp(mode, parent !== null)`),
+   * so a call that names a parent it cannot revise is refused rather than
+   * discounted, and a revision cannot be priced as an original by omitting a
+   * flag — there is no flag.
+   */
+  revisionOfAttemptId?: string;
 };
 
 export type GenerateResult = {
@@ -213,6 +252,44 @@ export type GenerateResult = {
   configVersion: number;
   /** The tier resolved INSIDE the settlement lock (R14b). */
   resolvedTier: EntitlementTier;
+  /**
+   * WHAT THE CONTEXT BUDGET COULD NOT CARRY, for the ONE call that built an
+   * offer (R17, slice 7 cross-boundary pass 2026-09-01).
+   *
+   * WHY IT LEAVES THE PACKAGE AT ALL. `frameworksForContext` returns
+   * `{kept, dropped}` and until now only the SERVER learned about a drop, via
+   * `respin.credits.framework_offer.dropped`. A creator whose own private
+   * frameworks fill the budget stops being offered some of the material they
+   * wrote, pays the same price for that generation, and reads nothing about
+   * it — which is the silence the metric was added to stop an OPERATOR
+   * suffering, applied to the person who actually wrote the frameworks.
+   *
+   * `null` RATHER THAN ZEROES WHEN NO OFFER WAS BUILT, and the distinction is
+   * the point: a replay and a retry ran no pipeline and computed no offer, and
+   * a mode with no `framework_eligibility` check is never offered a library at
+   * all. Zeroes there would say "nothing was dropped", which is an answer this
+   * call does not have.
+   *
+   * COUNTS ONLY — no names. A private framework's NAME is the creator's own
+   * material and this shape is projected to a screen; the same rule
+   * `FrameworkOfferDroppedMetric` states for the metric.
+   */
+  frameworkOffer: FrameworkOfferSummary | null;
+};
+
+/** One generation's framework offer, in numbers a screen can render. */
+export type FrameworkOfferSummary = {
+  /** Rows `eligibleFrameworks()` returned for this profile. */
+  eligible: number;
+  /** Rows actually put in the prompt. */
+  offered: number;
+  /**
+   * CURATED rows dropped — zero unless one curated row is larger than the
+   * whole budget, because the offer sorts shared-first.
+   */
+  droppedShared: number;
+  /** The creator's OWN rows that did not fit. */
+  droppedPrivate: number;
 };
 
 /**
@@ -298,12 +375,28 @@ export async function generate(
   // tier asking for a mode slice 7 has not shipped is told we have not built
   // it — opposite statements about whose fault it is.
   assertModeAllowed(billing.tier, params.mode);
-  const op: PricedOperation = {
-    purpose: GENERATION_PURPOSE,
-    // The mode's OWN credit-cost key (R13). `creditCosts.hookSet` has been
-    // seeded since M1 with no reader; this is its first one.
-    creditCostKey: spec.creditCostKey,
-  };
+  // The scoped write capabilities, minted here rather than after the run slot
+  // because the parent read below needs them and is a refusal that must happen
+  // BEFORE a slot is burned. `writeCapabilities` is a pure factory over an
+  // already-asserted `ProfileScope` — it runs no query.
+  const caps = writeCapabilities(scope);
+  // 5b. THE REVISION'S PARENT (R6/R8), RESOLVED BEFORE THE PRICE AND BEFORE
+  //     THE VENDOR. Three things come out of this one read and they cannot
+  //     disagree with each other: whether this is a revision at all, which
+  //     generation `parent_id` will name, and the draft the revision is built
+  //     from. `settleGeneration` re-reads the parent through the profile's own
+  //     predicate inside the settlement transaction and is still the
+  //     AUTHORITY; this is the same question asked where the answer is free.
+  const revisionOfAttemptId = params.revisionOfAttemptId;
+  const parent =
+    revisionOfAttemptId === undefined
+      ? null
+      : await resolveRevisionParent(db, caps, params.mode, revisionOfAttemptId);
+  // R8: a revision is priced as `creditCosts.revision`, NEVER at the parent
+  // mode's price — and the boolean that decides it is `parent !== null`, which
+  // is the resolved read above rather than a caller's flag. There is no input
+  // to this call that prices a revision as an original.
+  const op: PricedOperation = generationOp(params.mode, parent !== null);
   // Read once WITHOUT the model-specific paths to learn which models are
   // configured, then again requiring their price rows — two reads because the
   // paths being asserted DEPEND on the values being read.
@@ -438,8 +531,6 @@ export async function generate(
     throw new RunSlotBusyError(slot.reason, concurrencyLimit, billing.tier);
   }
 
-  const caps = writeCapabilities(scope);
-
   try {
     // 6c. THE BRAIN AND THE ASSEMBLY. Reads and pure functions only.
     const [activation] = await scope.accessors.latestBrainActivation();
@@ -471,20 +562,131 @@ export async function generate(
     const activeDocs = await scope.accessors.brainDocsByIds(
       snapshotDocIds(activation)
     );
+    // THE FRAMEWORK LIBRARY (slice 7, R1/R5a-R5c), through the ONE caged
+    // accessor. `eligibleFrameworks()` is a single query over the approved,
+    // non-retired, non-superseded rows that are EITHER shared (both owner
+    // columns NULL by CHECK) OR this profile's own private ones — so a
+    // cross-profile private framework cannot enter an assembly, and the
+    // predicate that decides "recommendable" is the same expression for both
+    // halves. Slice 6 passed `[]` here under R-29; the library exists now, and
+    // `framework_eligibility` in `@respin/modes` stops being vacuous with it.
+    //
+    // ONLY FOR MODES THAT CAN NAME ONE, and the population is the registry's
+    // own: `checks.includes("framework_eligibility")` is exactly the set of
+    // modes whose output carries a framework (a caption does not), so the
+    // caption mode neither pays the context for nine frameworks nor gets an
+    // instruction it cannot follow. Deriving it from the SPEC rather than from
+    // a second list here is CLAUDE.md's 2026-08-29 lesson: a population written
+    // out twice narrows silently the day one copy is edited.
+    //
+    // AND IT IS BOUNDED (R17), which is not a defensive extra — it is what the
+    // card's "measure the context growth rather than asserting it is fine"
+    // turned up. `eligibleFrameworks()` is unbounded by construction:
+    // `PRIVATE_FRAMEWORK_COUNT_MAX` is 50 live private frameworks per profile
+    // and `FRAMEWORK_TEXT_MAX`/`FRAMEWORK_LIST_MAX` allow 24 beats of 4,000
+    // characters each, so ONE row can be ~100k characters and fifty of them
+    // ~5MB — on every generation, in the same call §7 gives 45 seconds and
+    // REQ-G05 measures margin on. See `frameworksForContext`.
+    //
+    // AND A DROPPED ROW IS RECORDED (billing gate, 2026-09-01). The budget is
+    // config now, and what it drops is a metric rather than a silence: a
+    // creator whose own frameworks fill the prompt stops being offered the
+    // curated library, pays the same price for that generation, and — before
+    // this line — nothing anywhere said so. `emitUnchargedAttemptCapMetric`
+    // twenty lines up exists for the same reason and says it plainly: the
+    // first abuse of an unmeasured channel is learned about from an invoice.
+    const eligibleFrameworks = spec.checks.includes("framework_eligibility")
+      ? await scope.accessors.eligibleFrameworks()
+      : [];
+    const charBudget = content.generation.frameworkContextCharBudget;
+    const offer = frameworksForContext(eligibleFrameworks, charBudget);
+    // COUNTS ONLY, AND COMPUTED ONCE. The metric below and `GenerateResult`
+    // read the SAME four numbers, so an operator's dashboard and the creator's
+    // screen can never disagree about how many rows the budget dropped.
+    const offerSummary: FrameworkOfferSummary = {
+      eligible: eligibleFrameworks.length,
+      offered: offer.kept.length,
+      droppedShared: offer.dropped.filter((r) => r.visibility === "shared").length,
+      droppedPrivate: offer.dropped.filter((r) => r.visibility !== "shared").length,
+    };
+    if (offer.dropped.length > 0) {
+      // BEFORE the prompt is built and outside any transaction; it cannot
+      // throw (see `emitFrameworkOfferDroppedMetric`), so it can never turn a
+      // working generation into an error.
+      emitFrameworkOfferDroppedMetric({
+        workspaceId: scope.workspaceId,
+        profileId: scope.profileId,
+        mode: params.mode,
+        ...offerSummary,
+        charBudget,
+      });
+    }
+    const offeredFrameworks = offer.kept;
+    const brain = {
+      voice: brainSentences(activeDocs, "voice"),
+      strategy: brainSentences(activeDocs, "strategy"),
+      killtest: brainSentences(activeDocs, "killtest"),
+    };
     const context: GenerationContext = {
       universalLaws: UNIVERSAL_LAWS,
-      // NO FRAMEWORKS YET, and `[]` is a real answer rather than a placeholder:
-      // R-29 defers seeding the shared framework library to a later milestone
-      // with its own evidence rules, and `generations.framework_versions`
-      // defaults to `[]` for exactly this reason ("no framework was used").
-      frameworks: [],
-      brain: {
-        voice: brainSentences(activeDocs, "voice"),
-        strategy: brainSentences(activeDocs, "strategy"),
-        killtest: brainSentences(activeDocs, "killtest"),
-      },
-      input: params.input,
+      frameworks: offeredFrameworks.map(promptFramework),
+      brain,
+      // A REVISION'S MATERIAL IS ITS NOTE *AND* THE DRAFT IT REVISES, and
+      // both have to be in `input` because that is the only channel
+      // `GenerationContext` has for creator material — which has a consequence
+      // stated rather than hidden: `traceabilityCorpusFor` builds the REQ-I03
+      // corpus from `brain` plus `input`, so the parent draft is traceable
+      // material for the revision.
+      //
+      // WHAT THAT COST, AND WHAT THE CORRECTED SENTENCE IS (spin-compliance
+      // gate, 2026-09-01). The sentence here used to read "the parent passed
+      // the same gate before it was stored ... a specific that survived the
+      // parent's scan as a FLAG is one the revision's scan will accept
+      // outright". BOTH HALVES WERE TOO NARROW, and each was measured:
+      //
+      //   `[check]`. The model is INSTRUCTED to mark an unsupported specific
+      //   (`GENERATION_SYSTEM`), and a marked specific produces NO finding at
+      //   all — it is not a flag, it is the model's own statement that the
+      //   material does not carry it. `The $4,000 [check] rig...` in a parent
+      //   put `4000` in the revision's corpus, so the revision emitted
+      //   `$4,000` with no marker, `hardRules: []`, and the creator read it
+      //   under "Every number, date and name in this draft was found in your
+      //   brain or in what you typed in." That is REQ-I05, and it is now
+      //   closed in `stripMarkedSpecifics` — in the INDEX, so every channel
+      //   that carries gated output into a corpus is covered, not just this
+      //   one.
+      //
+      //   FLAG-ONLY BY FIELD, not only by shape. R-68 demoted the whole
+      //   `/disclosure/` section, so a `$4,000` written there is reported as a
+      //   flag whatever its shape and was never traced to anything — and it
+      //   vouched for a `$4,000` in the revision's HOOK. Measured on this
+      //   build.
+      //
+      // So the parent's draft now vouches for exactly what its own scan
+      // neither REPORTED nor EXCUSED WITH A MARKER — two different exclusions,
+      // because a `[check]`ed specific produces no finding and would sail
+      // through a findings-only rule. `stripMarkedSpecifics` removes the
+      // marked ones inside the index; `unvouchedSpecifics` below removes the
+      // reported ones, filtered against the creator's own material so nothing
+      // they typed is removed.
+      // WHAT REMAINS, and it is the intended widening rather than a hole: a
+      // specific the parent's scan CLEARED — because the parent's own input or
+      // brain carried it — still vouches for this revision even when this
+      // note does not repeat it. `revision.test.ts`'s last describe block pins
+      // every one of these as a MEASURED fact.
+      input: parent === null ? params.input : revisionInput(params.input, parent.draft),
       platform: params.platform,
+      unvouchedSpecifics:
+        parent === null
+          ? []
+          : unvouchedSpecifics(
+              // THE CREATOR'S OWN MATERIAL, WITHOUT THE PARENT DRAFT — which
+              // is the whole point: asking "does the creator carry this" of a
+              // corpus that includes the parent would answer yes every time.
+              { brain: [...brain.voice, ...brain.strategy, ...brain.killtest],
+                input: [params.input, params.platform] },
+              parent.reportedSpecifics
+            ),
     };
     // THE CREATOR'S OWN CRITERIA, and only those, go to the scoring model (R5).
     // The four hard rules are deterministic code inside `@respin/modes` and are
@@ -495,12 +697,23 @@ export async function generate(
     // an empty brain — all BEFORE the claim, so none of them leaves a row.
     // Calling it here as well as inside the pipeline is deliberate: the payload
     // hash must be taken over a request we already know is assemblable.
-    const request = {
+    const request: GenerationRequest = {
       mode: params.mode,
       platform: params.platform,
+      // THE CREATOR'S OWN WORDS, which for a revision is the NOTE and not the
+      // composed block above: `generations.request` is the record of what the
+      // creator asked for, and the parent's draft is named by
+      // `parentGenerationId` beside it rather than copied into it. The hash
+      // below is still total over the request, because the composed block is a
+      // function of exactly these two fields.
       input: params.input,
       brainActivationId: activation.id,
       promptBundleVersion: bundleVersion,
+      // SERVER-DERIVED (R6), from the scoped read above — never the caller's
+      // value. `null` means original; it is in the hash because a revision of
+      // X and an original with the same note are different requests, and
+      // colliding them would serve one creator the other's stored answer.
+      parentGenerationId: parent?.id ?? null,
     };
     const payloadSha256 = hashRequest(request);
 
@@ -525,7 +738,7 @@ export async function generate(
     }
     if (!claim.created) {
       return await observeExistingClaim(
-        { db, caps, scope, params, op, at },
+        { db, caps, scope, params, at },
         claim.attempt
       );
     }
@@ -633,7 +846,7 @@ export async function generate(
             attemptId: params.attemptId,
             to: "vendor_complete",
             candidate: candidateEnvelope(
-              candidateOf(run, model, request)
+              candidateOf(run, model, request, offeredFrameworks)
             ),
           },
           tx
@@ -653,16 +866,20 @@ export async function generate(
     // that runs a hundred times a day would never exercise the reader the
     // recovery path depends on. Settling both ways through `readCandidate`
     // makes the round trip part of the happy path.
-    return await settle({
+    const settled = await settle({
       db,
       caps,
       scope,
       params,
-      op,
       at,
       candidate: readCandidate(params.mode, checkpointed),
       run,
     });
+    // THE ONE PATH THAT REALLY BUILT AN OFFER. Overridden here rather than
+    // threaded through `SettlementCtx`, because settlement neither reads nor
+    // decides anything about the offer — passing it in would put a display
+    // fact inside the money transaction's parameter object.
+    return { ...settled, frameworkOffer: offerSummary };
   } finally {
     // UNCONDITIONAL, and the only release site. `release()` is idempotent and
     // never throws — a leaked slot would shrink the workspace's concurrency
@@ -688,9 +905,18 @@ type SettlementCtx = {
   caps: Caps;
   scope: ProfileScope;
   params: GenerateParams;
-  op: PricedOperation;
   at: Date;
 };
+
+// THE PRICED OPERATION IS DELIBERATELY NOT ON THIS STRUCT ANY MORE (slice 7,
+// R8). It used to be built once from `params` and carried into the settlement,
+// which was correct while every generation was priced by its mode and became a
+// hole the moment a revision was priced differently: a RETRY that re-submitted
+// the same attempt id WITHOUT `revisionOfAttemptId` would have carried the
+// mode's price into a settlement whose stored candidate was a revision. The
+// settlement now derives the key from the CANDIDATE — the same bytes it takes
+// every other field from — so params and the stored answer cannot disagree
+// about what this generation costs.
 
 /**
  * What a duplicate or repeated submission gets (R14/R14c).
@@ -748,6 +974,10 @@ async function observeExistingClaim(
         run: null,
         creditsChargedNow: 0,
         balanceAfter: view.balance,
+        // NO OFFER WAS BUILT BY THIS CALL. A replay reads a settled row; no
+        // prompt was assembled, so "nothing was dropped" is not something this
+        // call knows (see `GenerateResult.frameworkOffer`).
+        frameworkOffer: null,
         configVersion: generation.configVersion,
         resolvedTier: (
           await getWorkspaceBillingState(db, scope.workspaceId, view.asOf)
@@ -923,6 +1153,13 @@ async function settle(
   }
 ): Promise<GenerateResult> {
   const { db, caps, scope, params, candidate, run } = args;
+  // R8, FROM THE STORED BYTES. `parentGenerationId` is on the candidate, so
+  // "is this a revision?" has exactly one answer on the fresh path and on a
+  // retry — see the note on `SettlementCtx` for the hole this closes.
+  const op: PricedOperation = generationOp(
+    params.mode,
+    candidate.request.parentGenerationId !== null
+  );
   let outcome: SettlementOutcome;
   try {
     outcome = await db.transaction(async (tx) => {
@@ -1002,9 +1239,9 @@ async function settle(
           // the money path, and that is a change that deserves its own tests
           // rather than a ride-along. `generation-pricing.test.ts` asserts the
           // residual explicitly so it is a witnessed fact and not a surprise.
-          requiredConfigPaths({ generation: candidate.model }, args.op)
+          requiredConfigPaths({ generation: candidate.model }, op)
         );
-      const cost = priceOf(content, args.op);
+      const cost = priceOf(content, op);
       let debit: CreditLedgerRow | null = null;
       if (cost > 0) {
         // `debitCredits` re-reads the pause, the write clock AND the balance
@@ -1042,7 +1279,12 @@ async function settle(
           attemptId: params.attemptId,
           mode: params.mode,
           brainActivationId: candidate.request.brainActivationId,
-          frameworkVersions: [],
+          // WHICH FRAMEWORKS THE OUTPUT ACTUALLY NAMED (R9a), resolved when the
+          // candidate was built and read back from it here — never the whole
+          // offered library. The column's own contract is "the exact framework
+          // versions USED", and recording nine offered rows as used would be a
+          // false provenance claim on every generation that named one of them.
+          frameworkVersions: candidate.frameworkVersions,
           // NO STORED CONTEXT ROWS YET. The creator's input for a generation is
           // typed into the studio and is not an `onboarding_inputs` row, so
           // there is no id to name — and the input itself is on `request`
@@ -1067,6 +1309,14 @@ async function settle(
           killTest: candidate.killTest,
           rewriteCount: candidate.rewriteCount,
           debitLedgerId: debit?.id ?? null,
+          // R6's LINEAGE, from the stored candidate. `undefined` means original
+          // — `SettleGenerationParams` deliberately has no `null` spelling —
+          // and `settleGeneration` re-reads a non-undefined parent through the
+          // profile's own predicate before it writes, which is what makes a
+          // cross-tenant or not-yet-earlier parent a NAMED refusal rather than
+          // a 23503. That check is the authority; `resolveRevisionParent` in
+          // this file is the same question asked before the vendor is paid.
+          parentId: candidate.request.parentGenerationId ?? undefined,
         },
         tx
       );
@@ -1132,6 +1382,11 @@ async function settle(
     attemptId: params.attemptId,
     replayed: false,
     run,
+    // SETTLEMENT DOES NOT BUILD THE OFFER, so the honest value here is `null`
+    // — which is also the right answer for the RETRY path that settles a
+    // stored candidate without assembling a prompt. The fresh path overrides
+    // it with the offer it really built; see `generate`'s final return.
+    frameworkOffer: null,
     ...outcome.settled,
   };
 }
@@ -1242,6 +1497,17 @@ export type GenerationRequest = {
   input: string;
   brainActivationId: string;
   promptBundleVersion: string;
+  /**
+   * THE OUTPUT THIS ONE REVISES (slice 7, R6), or `null` for an original.
+   *
+   * A GENERATION ID, resolved by the server from the attempt id the caller
+   * named — see `GenerateParams.revisionOfAttemptId`. It is here rather than
+   * only on the row because all three consumers of this shape need it: the
+   * payload hash (two different requests must not collide), the stored
+   * `generations.request`, and the candidate a retry settles from, which is
+   * where the settlement reads the lineage AND the price from.
+   */
+  parentGenerationId: string | null;
 };
 
 /**
@@ -1274,6 +1540,17 @@ export type StoredCandidate = {
   killTest: unknown;
   /** R6's bound. `generations_one_rewrite` CHECKs 0..1 on the way in. */
   rewriteCount: 0 | 1;
+  /**
+   * The frameworks the OUTPUT NAMED, as `{id, version}` (slice 7, R9a).
+   *
+   * RESOLVED WHEN THE CANDIDATE IS BUILT, not at settlement, because settlement
+   * has no access to the offered library — a retry settles minutes later, from
+   * bytes, with no scope read of `frameworks` in sight. Resolving it here and
+   * storing the answer is the same discipline the rest of this shape follows:
+   * the settlement reads one document and never re-derives anything from a
+   * world that has moved.
+   */
+  frameworkVersions: FrameworkVersion[];
 } & (
   | { outcome: "usable"; output: ScriptOutput; refusalReason: null }
   | { outcome: "honest_refusal"; output: null; refusalReason: string }
@@ -1289,13 +1566,43 @@ export type StoredCandidate = {
  * the failure is "an operator must look at this" and never "settled from a
  * shape we half-understood".
  */
-const CANDIDATE_VERSION = 1;
+const CANDIDATE_VERSION = 2;
+
+/**
+ * WHY 2 AND NOT 1 (slice 7). Version 1's envelope had no `frameworkVersions`
+ * and its `request` had no `parentGenerationId`, and both are fields the
+ * settlement now READS — the first decides a provenance column, the second
+ * decides the lineage AND the price. Reading a v1 document leniently (missing
+ * means `[]`, missing means `null`) would settle a revision at the mode's
+ * price, which is the one outcome R8 exists to prevent.
+ *
+ * AND THE REFUSAL THAT ACTUALLY FIRES IS NOT THIS ONE (billing gate,
+ * 2026-09-01). This paragraph used to end "a v1 row therefore refuses, stays
+ * at `vendor_complete` with its bytes intact, and is visible to an operator —
+ * the behaviour `readCandidate`'s docblock already specifies". The OUTCOME is
+ * right and the MECHANISM named was not: a v1 candidate cannot reach
+ * `readCandidate` at all. `hashRequest` gained its sixth field in the same
+ * change, so a pre-deploy attempt's stored `payload_sha256` — taken over five
+ * — cannot equal the hash this build computes, and the equality check twenty
+ * lines into `generate` throws `GenerationPayloadMismatchError` first. Both
+ * halves are RUN rather than argued: `revision.test.ts` computes the five-field
+ * canonical string and asserts the hashes differ, and its "a retry that DROPS
+ * the revision flag" case proves the ordering — an attempt sitting at
+ * `vendor_complete` WITH a stored candidate is refused on the hash without the
+ * candidate being read.
+ *
+ * SO THE STORED BYTES ARE STILL INTACT AND THE ATTEMPT IS STILL AT
+ * `vendor_complete` for an operator; what changes is which sentence the
+ * creator gets, and `GenerationPayloadMismatchError`'s message now covers this
+ * cause instead of telling them they submitted a different request.
+ */
 
 /** The settlement input, derived from the pipeline's result. Pure. */
 function candidateOf(
   run: GenerationRun,
   model: string,
-  request: GenerationRequest
+  request: GenerationRequest,
+  offered: readonly FrameworkRow[]
 ): StoredCandidate {
   const shared = {
     model,
@@ -1304,6 +1611,10 @@ function candidateOf(
     // `drafts` is 1 or 2 by its own type, so this is 0 or 1 by construction —
     // the bound `generations_one_rewrite` also holds, from the other side.
     rewriteCount: (run.drafts - 1) as 0 | 1,
+    frameworkVersions: frameworkVersionsUsed(
+      run.status === "usable" ? run.output : null,
+      offered
+    ),
   };
   return run.status === "usable"
     ? { ...shared, outcome: "usable", output: run.output, refusalReason: null }
@@ -1326,6 +1637,7 @@ function candidateEnvelope(c: StoredCandidate): Record<string, unknown> {
     refusalReason: c.refusalReason,
     killTest: c.killTest,
     rewriteCount: c.rewriteCount,
+    frameworkVersions: c.frameworkVersions,
   };
 }
 
@@ -1419,6 +1731,14 @@ function readCandidate(
       req.promptBundleVersion,
       "request.promptBundleVersion"
     ),
+    // `null` OR a non-blank string, and nothing else — never `undefined`
+    // coerced to `null`. This value decides both the stored lineage and the
+    // PRICE, so a document that merely omits it is a document this build cannot
+    // settle correctly, which is what the envelope version bump is for.
+    parentGenerationId:
+      req.parentGenerationId === null
+        ? null
+        : nonBlank(req.parentGenerationId, "request.parentGenerationId"),
   };
   const killTest = object(env.killTest, "killTest");
   const shared = {
@@ -1426,6 +1746,7 @@ function readCandidate(
     request,
     killTest,
     rewriteCount: rewriteCountOf(env.rewriteCount),
+    frameworkVersions: frameworkVersionsOf(env.frameworkVersions, unreadable),
   };
   if (env.outcome === "usable") {
     // THROUGH THE MODE'S OWN PARSER, not a shape check written here. It is the
@@ -1490,6 +1811,14 @@ export function hashRequest(request: GenerationRequest): string {
     "input" + FIELD_SEP + request.input,
     "brainActivationId" + FIELD_SEP + request.brainActivationId,
     "promptBundleVersion" + FIELD_SEP + request.promptBundleVersion,
+    // SIX FIELDS, NOT FIVE (slice 7, R6). Without it, "revise output X with
+    // this note" and a plain generation whose input happened to be the same
+    // note hash identically — so a creator submitting the second under an
+    // attempt id the first already used would be handed the first's stored
+    // output as though it were theirs. `""` for an original is a real value
+    // rather than an omission, because omitting a field shortens the canonical
+    // string and is itself a collision surface.
+    "parentGenerationId" + FIELD_SEP + (request.parentGenerationId ?? ""),
   ].join(RECORD_SEP);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
@@ -1560,4 +1889,480 @@ function creatorRulesOf(docs: readonly BrainDoc[]): CreatorRule[] {
     rules.push({ id: pointer, text: value });
   }
   return rules;
+}
+
+// ------------------------------------------------- the price key (R8/R13)
+
+/**
+ * The `creditCosts` key a REVISION is priced from (slice 7, R8).
+ *
+ * SEEDED AT 2 SINCE M1 WITH NO READER, exactly as `hookSet` was before slice
+ * 6. It is deliberately NOT in `@respin/modes`' `CreditCostKey` union: a
+ * revision is not a mode, and putting it there would have made
+ * `Record<ModeId, ModeSpec>` able to price a mode as a revision.
+ */
+export const REVISION_CREDIT_COST_KEY = "revision" as const;
+
+/**
+ * What this generation is priced as (R8/R13).
+ *
+ * THE ONE PLACE THE REVISION PRICE IS DECIDED, and it is a function of two
+ * values rather than a branch at a call site: a revision costs
+ * `creditCosts.revision`, everything else costs its MODE's key. Mutation M3
+ * ("revision priced at the parent mode's cost") is a one-line edit here and
+ * reddens `generation-pricing.test.ts`'s table and `generate.test.ts`'s
+ * behavioural debit case together.
+ *
+ * `modeSpec` REFUSES A STRING THAT IS NOT A MODE, so there is no path through
+ * this function that returns a key nobody chose — and it is resolved
+ * UNCONDITIONALLY rather than only on the non-revision branch. The ternary
+ * version short-circuited: `generationOp("seriesPlanner", true)` priced a
+ * revision of a mode that does not exist, because the revision key does not
+ * need the spec. Unreachable today (`generate` calls `modeSpec` before this and
+ * `settle` prices a mode that call already validated), and closed anyway, for
+ * the reason the file's other fail-closed reads give: a price is the one thing
+ * that must not be answerable for an input nobody checked.
+ */
+export function generationOp(
+  mode: ModeId,
+  isRevision: boolean
+): PricedOperation {
+  const spec = modeSpec(mode);
+  return {
+    purpose: GENERATION_PURPOSE,
+    creditCostKey: isRevision ? REVISION_CREDIT_COST_KEY : spec.creditCostKey,
+  };
+}
+
+// ------------------------------------------------------ the revision (R6-R8)
+
+/**
+ * The parent an attempt id names, or a typed refusal (slice 7, R6).
+ *
+ * THE READ IS `readGenerationForAttempt`, WHICH IS ALREADY SCOPED. It is a
+ * capability on `writeCapabilities(scope)` and its predicate carries both scope
+ * columns, so a foreign, deleted or simply wrong attempt id comes back
+ * `undefined` — indistinguishable from each other, which is the enumeration
+ * rule `ProfileAccessError` states and the reason all three collapse into one
+ * refusal code here. Nothing in this function trusts an id.
+ *
+ * IT RETURNS THE ROW'S OWN `id`, and that is the point of taking an ATTEMPT id
+ * in the first place: the value that reaches `generations.parent_id` is one
+ * this server read out of a scoped query, not one a caller supplied.
+ *
+ * THE DRAFT IS RE-PARSED THROUGH THE MODE'S OWN PARSER before it is rendered,
+ * for `readCandidate`'s reason one table over: the stored output crossed a
+ * `jsonb` round trip and may have been written by an earlier build, and the
+ * alternative to checking it is a cast that puts an unvalidated document into
+ * the next generation's prompt.
+ *
+ * IT ALSO RETURNS WHAT THE PARENT'S OWN GATE REPORTED, and that is the half
+ * the spin-compliance gate added. The parent's draft becomes traceability
+ * corpus for the revision (see the context block in `generate`), and "this
+ * document was gated" is NOT "this document was vouched for": a `plain-number`
+ * or a `proper-noun` is reported as a FLAG, and every shape inside a
+ * `FLAG_ONLY_FIELD_PREFIXES` section is reported as a flag whatever its shape
+ * — so a `$4,000` in a stored parent's `/disclosure/guidance` had never been
+ * traced to anything and still vouched for a `$4,000` in the revision's hook.
+ * Measured on this build before the fix. Those tokens travel with the draft.
+ */
+async function resolveRevisionParent(
+  db: DbLike,
+  caps: Caps,
+  mode: ModeId,
+  parentAttemptId: string
+): Promise<{ id: string; draft: string; reportedSpecifics: string[] }> {
+  const row = await db.transaction((tx) =>
+    caps.readGenerationForAttempt(parentAttemptId, tx)
+  );
+  if (!row) throw new RevisionParentError("not_this_creators");
+  // A REVISION KEEPS ITS PARENT'S MODE. Checked before the outcome, and
+  // checked at all because every mode has a different output contract — see
+  // `REVISION_PARENT_REFUSALS.different_mode` for the decision and its revisit
+  // trigger. Nothing leaks: reaching this line already proved ownership.
+  if (row.mode !== mode) throw new RevisionParentError("different_mode");
+  // AN HONEST REFUSAL HAS NO DRAFT TO REVISE, and pricing one as a revision
+  // would be a discount on generating from scratch — see `not_revisable`.
+  if (row.outcome !== "usable" || row.output === null) {
+    throw new RevisionParentError("not_revisable");
+  }
+  let output: ScriptOutput;
+  try {
+    output = parseScriptOutput({ text: JSON.stringify(row.output), mode });
+  } catch {
+    throw new RevisionParentError("parent_unreadable");
+  }
+  return {
+    id: row.id,
+    draft: renderDraft(output),
+    reportedSpecifics: reportedSpecificsOf(row.killTest),
+  };
+}
+
+/**
+ * THE SPECIFICS THE PARENT'S OWN SCAN REPORTED, out of its stored `kill_test`.
+ *
+ * FAIL-CLOSED, AND THE REFUSAL IS `parent_unreadable` — the same answer this
+ * function's neighbour gives for an output that no longer parses, for the same
+ * reason its docblock states: `kill_test` is `jsonb`, it was written by
+ * whatever build settled it, and the alternative to checking it is a silent
+ * `[]`. A silent `[]` here is not a smaller answer, it is the WRONG one: it
+ * says "the parent's scan reported nothing", which is precisely the sentence
+ * that lets a never-traced specific vouch for the revision.
+ *
+ * `finalAttempt` AND NOT `firstAttempt`, because `generations.output` is the
+ * FINAL draft. The first attempt's findings are about a document that was
+ * rewritten and never stored, and carrying them would deny the revision
+ * specifics that the accepted draft was actually traced on.
+ *
+ * AN EMPTY `traceability` ARRAY IS A REAL ANSWER and is not confused with an
+ * unreadable one: a clean draft reports nothing. What is refused is a document
+ * with no `finalAttempt`, a `traceability` that is not an array, or an entry
+ * with no string `token` — three shapes this product never writes.
+ */
+export function reportedSpecificsOf(killTest: unknown): string[] {
+  const root = killTest as Record<string, unknown> | null | undefined;
+  const final =
+    root && typeof root === "object"
+      ? (root.finalAttempt as Record<string, unknown> | undefined)
+      : undefined;
+  if (!final || typeof final !== "object") {
+    throw new RevisionParentError("parent_unreadable");
+  }
+  const findings = final.traceability;
+  if (!Array.isArray(findings)) {
+    throw new RevisionParentError("parent_unreadable");
+  }
+  return findings.map((f) => {
+    const token = (f as { token?: unknown } | null)?.token;
+    if (typeof token !== "string" || token.length === 0) {
+      throw new RevisionParentError("parent_unreadable");
+    }
+    return token;
+  });
+}
+
+/**
+ * Which of the parent's reported specifics the creator's OWN material does not
+ * already carry (slice 7 gate).
+ *
+ * THE FILTER IS WHAT MAKES THE SUBTRACTION SAFE, and it is the whole reason
+ * this lives here rather than inside `@respin/modes`. `buildCorpusIndex`
+ * removes `unvouched` tokens from the index GLOBALLY — it holds one string for
+ * `input` and cannot tell the creator's note from the parent draft glued to
+ * it. So a token the creator typed themselves must never reach that list: the
+ * revision would flag a specific its own author supplied, which costs a
+ * rewrite and possibly a refusal they were debited for — the exact direction
+ * R-68 corrected one slice earlier.
+ *
+ * BOTH SIDES GO THROUGH `buildCorpusIndex`, the creator's material and the
+ * token itself, so there is NO second tokeniser and NO second normaliser here:
+ * `$1,200` and `1200` are one specific because `@respin/modes` says they are,
+ * not because this file agrees with it today.
+ *
+ * IT IS DELIBERATELY THE LENIENT SIDE OF `traceable`, and the asymmetry is
+ * stated rather than discovered. `traceable` requires EVERY word of a
+ * multi-word name and never decomposes a number; this asks whether ANY
+ * normalised form of the token appears in the creator's own material. The two
+ * differ only by keeping a token that `traceable` would have called
+ * untraceable — which leaves the parent draft vouching for it, exactly as it
+ * did before this function existed. The error direction is therefore "no new
+ * refusal", never "a new silent acceptance of something the parent's gate
+ * reported".
+ */
+export function unvouchedSpecifics(
+  creatorMaterial: { brain: readonly string[]; input: readonly string[] },
+  reported: readonly string[]
+): string[] {
+  const own = buildCorpusIndex(creatorMaterial);
+  const out: string[] = [];
+  for (const token of reported) {
+    const forms = buildCorpusIndex({ brain: [], input: [token] });
+    let carried = false;
+    for (const form of forms) if (own.has(form)) carried = true;
+    if (!carried) out.push(token);
+  }
+  return out;
+}
+
+/**
+ * What a revision is generated FROM: the creator's note, then the draft.
+ *
+ * THE NOTE COMES FIRST, deliberately — it is the instruction, and a model that
+ * reads the draft first tends to continue it rather than change it. Both are
+ * plain labelled text rather than a second prompt template, because prompt
+ * assembly belongs to `@respin/modes` and this package must not grow a private
+ * one: what is built here is the creator MATERIAL, and
+ * `assembleGenerationPrompt` is still the only thing that turns material into
+ * a prompt.
+ */
+export function revisionInput(note: string, parentDraft: string): string {
+  return [
+    "This is a revision of a draft you produced earlier. What the creator asked to change:",
+    note,
+    "",
+    "The draft being revised — rewrite it to answer the note above, and keep everything the note does not ask you to change:",
+    parentDraft,
+  ].join("\n");
+}
+
+// ------------------------------------------------------- frameworks (R5/R9a)
+
+/** `generations.framework_versions`' element shape. */
+type FrameworkVersion = { id: string; version: number };
+
+/**
+ * One eligible row, as the two strings `@respin/modes` puts in a prompt.
+ *
+ * THE SATURATION NOTICE RIDES ON THE SUMMARY (R5b / REQ-D02). A saturated
+ * framework "warns and demands a fresh interpretation", and a warning each
+ * consumer has to remember to add is a warning one of them will omit — so it is
+ * part of the value rather than part of a screen. The string is
+ * `@respin/db`'s `SATURATION_NOTICE`, not a second wording.
+ *
+ * `beats` IS `jsonb`, therefore `unknown`, therefore GUARDED rather than cast:
+ * a row whose beats are not strings contributes no beats instead of putting
+ * `[object Object]` in a prompt.
+ *
+ * THE EVIDENCE RUNG RIDES ALONG TOO, and it did not until round 2 of the
+ * billing gate (2026-09-01). `confidence` is DERIVED from how many evidence
+ * entries a framework carries (`deriveFrameworkConfidence`, and a CHECK
+ * constraint), it is on the screen with what it counts beside it
+ * (`frameworks-view.tsx`), and it was dropped here — so a framework at
+ * `unsupported` ("a shape somebody wrote down, and nothing more") reached the
+ * model IDENTICALLY to one at `contrasted`, and the model then wrote
+ * `whyThisPerforms.reasoning` and a weakest point about it. That is the
+ * non-negotiable-6 question ("every output names its weakest point") answered
+ * without the one fact that most often IS the weakest point.
+ *
+ * THE WORD ONLY, NEVER THE LADDER. What the rung means is stated ONCE, in
+ * `@respin/modes`' `FRAMEWORK_EVIDENCE_NOTE`, above the list — not repeated per
+ * row, and not restated as a count here, which would be a second copy of a
+ * ladder `@respin/db` owns and a CHECK constraint enforces.
+ *
+ * IT COSTS BUDGET AND THE BUDGET SEES IT: `frameworksForContext` measures
+ * `promptFramework`'s own output, so the extra characters are rationed by
+ * `config.generation.frameworkContextCharBudget` like every other character
+ * rather than being spent behind its back. Measured in
+ * `generation-frameworks.test.ts`.
+ */
+export function promptFramework(row: FrameworkRow): Framework {
+  const beats = Array.isArray(row.beats)
+    ? row.beats.filter((b): b is string => typeof b === "string")
+    : [];
+  return {
+    name: row.name,
+    summary: [
+      beats.length > 0 ? "Beats: " + beats.join(" -> ") : "",
+      row.whyItConverts,
+      row.saturation === "saturated" ? SATURATION_NOTICE : "",
+      // LAST, so it reads as a label on the row rather than as part of the
+      // claim, and unconditional: "no rung stated" would be indistinguishable
+      // from a rung nobody wrote down, which is exactly what `unsupported`
+      // means and exactly the confusion this is closing.
+      FRAMEWORK_EVIDENCE_LABEL + row.confidence,
+    ]
+      .filter((part) => part.length > 0)
+      .join(" "),
+  };
+}
+
+/**
+ * HOW MUCH OF ONE GENERATION'S PROMPT THE FRAMEWORK LIBRARY MAY OCCUPY (R17).
+ *
+ * IT IS CONFIG NOW, NOT A CONSTANT (billing gate, 2026-09-01), and this
+ * paragraph is what used to argue the other way. The constant's own docblock
+ * called itself "a safety ceiling on one call's size, closer to
+ * `llm.maxOutputTokens` (which IS config) than to a price" and named the
+ * handoff it could not make from that stage. `llm.maxOutputTokens` bounds the
+ * REPLY; this bounds the PROMPT, on every generation that offers frameworks,
+ * and input is billed per token on every call an attempt makes — so it is a
+ * REQ-G05 margin input held where an operator cannot move it without a deploy.
+ * `config.generation.frameworkContextCharBudget` is the dial; its number, its
+ * `.default(...)` and its absence from `requiredConfigPaths` are all argued in
+ * `packages/config/src/schema.ts` beside the value.
+ *
+ * WHAT REMAINS HERE is the SHAPE of the offer, which is not a dial: whole rows
+ * only, curated before private, and a dropped row recorded rather than
+ * silent.
+ */
+
+/** One eligible library, split by what fits the budget. */
+export type FrameworkOffer = {
+  /** Offered to the model, in offer order. */
+  kept: FrameworkRow[];
+  /** Eligible, and NOT offered — the rows the budget could not take. */
+  dropped: FrameworkRow[];
+};
+
+/**
+ * The frameworks that FIT (R17) — whole rows only, never truncated.
+ *
+ * TRUNCATION IS THE OBVIOUS FIX AND IT IS THE WRONG ONE. A framework is a
+ * sequence of beats plus why they work; half of that is not a smaller
+ * framework, it is a corrupted one, and a model handed three and a half beats
+ * will invent the fourth. So a row either arrives whole or does not arrive.
+ *
+ * `continue`, NOT `break`, so one oversized row does not hide every row after
+ * it — the pathological private framework a creator can write under
+ * `FRAMEWORK_TEXT_MAX` would otherwise silently cost them the entire curated
+ * library.
+ *
+ * THE OFFER ORDER IS CURATED FIRST, AND THAT REPLACED "the accessor's order,
+ * which is alphabetical and arbitrary" (billing gate, 2026-09-01). The old
+ * paragraph here said the drop order "is arbitrary and it is SAID rather than
+ * dressed up". Alphabetical is not neutral once you know what the library is
+ * called: ALL NINE seeded frameworks are named "The …", so every one of their
+ * slugs begins `the-`, and `eligibleFrameworks()` ORDERED BY `slug ASC` alone.
+ * A private framework named with an earlier letter therefore sorted AHEAD of
+ * the entire curated library. Measured on this build, with private rows the
+ * same average size as the curated ones (559 characters — no pathological row
+ * needed):
+ *
+ *   private=20  curated lost 0
+ *   private=25  curated lost 0
+ *   private=30  curated lost 4
+ *   private=40  curated lost 8
+ *   private=50  curated lost 8   (PRIVATE_FRAMEWORK_COUNT_MAX)
+ *
+ * A creator on the tier that lets them write frameworks silently loses the
+ * product's own library — the thing they pay for — and pays full price for the
+ * generation that lost it. Sorting the OFFER puts that decision here rather
+ * than in an ORDER BY chosen for pagination: a private row can no longer evict
+ * a curated one at any count, whatever order the accessor returns.
+ *
+ * WHAT THE ACCESSOR DOES NOW, because the sentence above stopped being the
+ * whole story in the same gate round (R-76, and `packages/db` owns that half).
+ * `eligibleFrameworks()` orders SHARED ROWS FIRST and only then
+ * `slug ASC, version DESC`, and the leading key is a raw `CASE` expression
+ * rather than `asc(visibility)` — the pgEnum happens to declare `shared`
+ * before `private`, so ordering by the column would be correct today and would
+ * invert silently the day somebody re-orders the enum for an unrelated reason.
+ *
+ * THE TWO SORTS ARE NOT REDUNDANT, WHICH IS WHY BOTH STAYED. The accessor's is
+ * what makes the READ deterministic in the right direction; this one is what
+ * makes the property hold for any caller and any future accessor, including a
+ * paginated or differently-ordered one. `generation-frameworks.test.ts` drives
+ * them apart on purpose: the eviction case feeds this function the slug-only
+ * order the accessor NO LONGER returns, because a fixture already sorted
+ * curated-first would pass against a `frameworksForContext` that did no
+ * sorting at all.
+ *
+ * WITHIN each group the accessor's order is PRESERVED (`sort` is stable in
+ * every engine this runs on, and it is asserted rather than assumed), so the
+ * same profile still gets the same offer twice.
+ *
+ * A DROPPED FRAMEWORK IS SIMPLY NOT OFFERED, with the consequences that follow
+ * for free: the model never sees it, `framework_eligibility` refuses the output
+ * if it names one anyway, and `frameworkVersionsUsed` is computed over the
+ * KEPT list, so no provenance is recorded for a row the generation never had.
+ * What is NOT free is that nobody knew it happened — see
+ * `emitFrameworkOfferDroppedMetric` at the call site.
+ */
+export function frameworksForContext(
+  rows: readonly FrameworkRow[],
+  charBudget: number
+): FrameworkOffer {
+  // CURATED FIRST. `visibility` is the row's own column and the same value
+  // `eligibleFrameworks()`' `or` branches on, so this cannot disagree with
+  // which arm a row arrived through.
+  const inOfferOrder = [...rows].sort((a, b) => {
+    const shared = (r: FrameworkRow) => (r.visibility === "shared" ? 0 : 1);
+    return shared(a) - shared(b);
+  });
+  const kept: FrameworkRow[] = [];
+  const dropped: FrameworkRow[] = [];
+  let used = 0;
+  for (const row of inOfferOrder) {
+    const framework = promptFramework(row);
+    const size = framework.name.length + framework.summary.length;
+    if (used + size > charBudget) {
+      dropped.push(row);
+      continue;
+    }
+    used += size;
+    kept.push(row);
+  }
+  return { kept, dropped };
+}
+
+/**
+ * Two framework names compared the way `@respin/modes` compares them.
+ *
+ * IT SHARES THE TOKENISER RATHER THAN RE-IMPLEMENTING IT — `words` is
+ * `@respin/modes`' own export and is what `flatten` there is built on — so the
+ * two can only disagree about composition, never about what a word is.
+ * `generation-frameworks.test.ts` drives that agreement against
+ * `scanModeChecks` itself rather than asserting it: a name the eligibility
+ * check ACCEPTS must be a name this resolver FINDS, or the row records no
+ * provenance for a framework the output was allowed to name.
+ */
+function flattenFrameworkName(name: string): string {
+  return words(name)
+    .map((w) => w.toLowerCase())
+    .join(" ");
+}
+
+/**
+ * Which offered frameworks the output actually NAMED (R9a).
+ *
+ * THE SAME TWO POSITIONS `framework_eligibility` reads — the document's own
+ * `/framework/name` and each idea's `/ideas/N/framework` — and the same
+ * either-direction containment, because a model decorates ("The Cost Reveal
+ * framework" is the offered "cost reveal").
+ *
+ * ITS FAILURE DIRECTION IS UNDER-RECORDING, and that is deliberate: a name this
+ * resolver cannot match records no provenance, whereas a looser match would
+ * record a framework the generation did not use. For a mode carrying the
+ * eligibility check the two cannot come apart on a SETTLED usable output —
+ * a name outside the offered set is a hard-rule finding, so it never settles.
+ */
+export function frameworkVersionsUsed(
+  output: ScriptOutput | null,
+  offered: readonly FrameworkRow[]
+): FrameworkVersion[] {
+  if (!output) return [];
+  const named = [
+    ...(output.framework ? [output.framework.name] : []),
+    ...(output.ideas ?? []).map((idea) => idea.framework),
+  ].map(flattenFrameworkName);
+  if (named.length === 0) return [];
+  const used = new Map<string, FrameworkVersion>();
+  for (const row of offered) {
+    const flat = flattenFrameworkName(row.name);
+    if (flat.length === 0) continue;
+    if (named.some((n) => n.includes(flat) || flat.includes(n))) {
+      used.set(row.id, { id: row.id, version: row.version });
+    }
+  }
+  return [...used.values()];
+}
+
+/**
+ * Read the stored `frameworkVersions` back, FAIL-CLOSED.
+ *
+ * The same contract as every other field of the envelope: it is written to
+ * `jsonb`, it crossed a process boundary, and the alternative to checking it is
+ * a cast that puts an unchecked array into a NOT NULL provenance column. An
+ * empty array is a real answer ("no framework was named"); a missing or
+ * mis-shaped one is not.
+ */
+function frameworkVersionsOf(
+  value: unknown,
+  unreadable: (what: string) => never
+): FrameworkVersion[] {
+  if (!Array.isArray(value)) unreadable("frameworkVersions is not an array");
+  return (value as unknown[]).map((entry, i) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      unreadable("frameworkVersions[" + i + "] is not an object");
+    }
+    const record = entry as Record<string, unknown>;
+    if (typeof record.id !== "string" || record.id.trim() === "") {
+      unreadable("frameworkVersions[" + i + "].id is not a non-blank string");
+    }
+    if (typeof record.version !== "number" || !Number.isInteger(record.version)) {
+      unreadable("frameworkVersions[" + i + "].version is not an integer");
+    }
+    return { id: record.id as string, version: record.version as number };
+  });
 }

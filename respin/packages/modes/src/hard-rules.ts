@@ -50,6 +50,21 @@ export const HARD_RULE_IDS = [
   // `invented_specific`.
   "forbidden_claim",
   "hook_too_long",
+  // ---------------------------------------------------------------- slice 7
+  //
+  // THE PER-MODE RULES (`mode-checks.ts`), which are hard for the same reason
+  // the five above are: each one is a property of the DOCUMENT that no prompt
+  // can be trusted to hold. They differ from the first five in one way worth
+  // stating — three of them (`summarised_source`, `collapsed_variants`,
+  // `empty_weakest_point`) are computable STAND-INS for properties of meaning,
+  // and `mode-checks.ts` carries the measured list of what each one misses.
+  // They are appended rather than interleaved so `honestRefusal`'s declared
+  // ordering does not shift for the rules that were already stored.
+  "summarised_source",
+  "collapsed_variants",
+  "idea_is_a_topic",
+  "framework_not_offered",
+  "empty_weakest_point",
 ] as const;
 
 export type HardRuleId = (typeof HARD_RULE_IDS)[number];
@@ -123,6 +138,16 @@ const REMEDIES: Record<HardRuleId, string> = {
   forbidden_claim:
     "This says how the post will do once it is up, or how to avoid disclosing it. Neither is something this product can stand behind. Say what the idea does, and name what is weakest about it.",
   hook_too_long: `A hook over ${HOOK_MAX_WORDS} words stops being a hook. Cut it to the one claim that makes someone stay.`,
+  summarised_source:
+    "This repeats the source instead of rebuilding it. Take the one insight that changed something for you, drop the source's words and its order, and say what it cost you.",
+  collapsed_variants:
+    "These are wordings of one idea. A set earns its place when each entry could fail for a different reason — change what one of them claims, not how it is phrased.",
+  idea_is_a_topic:
+    "This is a subject, not an idea. An idea is a claim somebody could disagree with, plus the hook that opens it and the framework that carries it.",
+  framework_not_offered:
+    "This names a framework you were not given. Use one from the list you were offered, or say in the weakest point that none of them fits.",
+  empty_weakest_point:
+    "Every output names its weakest point, and this one names nothing. Say what would have to be true for this to work, and what you do not know yet.",
 };
 
 function finding(

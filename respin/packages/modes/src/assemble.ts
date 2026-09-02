@@ -69,6 +69,35 @@ export type GenerationContext = {
   input: string;
   /** The platform the output is for — it drives the disclosure section. */
   platform: string;
+  /**
+   * Specifics that are IN `input` and vouch for NOTHING (slice 7 gate).
+   *
+   * A revision's `input` is the creator's note AND the draft it revises, so
+   * this product's own output is corpus material for the next scan. That draft
+   * was gated, not vouched for: everything its own scan REPORTED — a flagged
+   * bare number, a flagged name, any shape inside a flag-only section — is a
+   * specific nothing ever traced. Those tokens belong here, and
+   * `traceabilityCorpusFor` hands them to the scan as `unvouched`.
+   *
+   * FILLED BY THE CALLER THAT HOLDS THE PARENT (`generate.ts`), because only
+   * that layer can read the parent's stored findings, and only that layer can
+   * check the creator's own material does not carry the same token — deleting
+   * one the creator typed would refuse an honest draft, which is the direction
+   * R-68 already paid for.
+   *
+   * REQUIRED, AND `[]` IS A DECISION AN ORIGINAL HAS TO STATE (billing gate
+   * round 2, 2026-09-01). This was `?: readonly string[]` with a `?? []` on the
+   * read, and MEASURED: same parent, same revision, field omitted — `usable`,
+   * `hardRules: []`, `traceability: []`. The whole `[check]` laundering came
+   * straight back, silently, from a caller that forgot a key. One composition
+   * site exists today and it passes the field on both branches, so nothing was
+   * broken — but "nothing is broken today" is the state a default preserves
+   * until the second caller arrives. A required parameter with no default is a
+   * guard only once a test drives its false branch, so `assemble.test.ts`
+   * drives BOTH: the compile refusal, and the runtime refusal when a caller
+   * casts around it (CLAUDE.md, 2026-08-21 and 2026-08-29).
+   */
+  unvouchedSpecifics: readonly string[];
 };
 
 /**
@@ -92,6 +121,7 @@ export type GenerationContext = {
 export function traceabilityCorpusFor(
   context: GenerationContext
 ): TraceabilityCorpus {
+  assertUnvouchedStated(context);
   return {
     brain: [
       ...context.brain.voice,
@@ -99,6 +129,10 @@ export function traceabilityCorpusFor(
       ...context.brain.killtest,
     ],
     input: [context.input, context.platform],
+    // WHAT `input` DOES NOT VOUCH FOR (see `unvouchedSpecifics`). `[]` for an
+    // original, because an original's input is entirely the creator's own —
+    // and the caller says so rather than the absence of a key saying it.
+    unvouched: context.unvouchedSpecifics,
   };
 }
 
@@ -148,6 +182,55 @@ export const REWRITE_INSTRUCTION = [
   `A "${CHECK}" elsewhere in the sentence does not cover it: the marker has to sit next to the specific it is about.`,
 ].join("\n");
 
+/**
+ * The framework block's own words — STATIC, so `bundle.ts` can hash them.
+ *
+ * WHY THEY ARE CONSTANTS NOW (billing gate round 2, 2026-09-01). They were
+ * literals inside `contextBlock`, which is built per creator and is therefore
+ * not hashed — so `FRAMEWORK_EVIDENCE_NOTE` could be rewritten, or deleted,
+ * and every generation would keep booking its spend against an unchanged
+ * `prompt_bundle_version`. REQ-J02's whole question is "what changed?", and a
+ * rewritten instruction changes which drafts a creator gets.
+ */
+export const FRAMEWORK_BLOCK_HEADER =
+  "Frameworks available — use one of these, by its own name:";
+
+/**
+ * WHAT THE EVIDENCE RUNG ON EACH ROW MEANS — said ONCE, above the list.
+ *
+ * `packages/credits` puts each framework's own rung on its row
+ * (`promptFramework`); this is the sentence that stops the word being read as a
+ * score. It states what the rung counts, states what it is not, and turns the
+ * weak case into an instruction rather than a hint, because REQ-I03's weakest
+ * point is a required section and "the shape I built this on has one recorded
+ * example" is very often the true answer to it.
+ *
+ * IT NAMES NO RUNGS AND NO NUMBERS. The ladder is `@respin/db`'s
+ * `deriveFrameworkConfidence` with a CHECK constraint behind it, and this
+ * package cannot import it — so a list of rung names here would be a copy that
+ * drifts silently the day the ladder gains one.
+ */
+export const FRAMEWORK_EVIDENCE_NOTE =
+  "Each one states how much evidence is recorded behind it. That is a count of examples somebody recorded — not a prediction, and not a promise. If the framework you use has little evidence behind it, say so in the weakest point.";
+
+/**
+ * The per-row prefix the rung is written under.
+ *
+ * IT LIVES BESIDE THE SENTENCE THAT EXPLAINS IT, not in the package that
+ * supplies the value: `FRAMEWORK_EVIDENCE_NOTE` says "each one states how much
+ * evidence is recorded behind it", and a label written somewhere else is a
+ * label that can stop matching that sentence. `packages/credits` imports it
+ * (`promptFramework`) rather than writing its own.
+ */
+export const FRAMEWORK_EVIDENCE_LABEL = "Evidence recorded: ";
+
+/**
+ * The empty case, and it does NOT say "do not name a framework" — see
+ * `contextBlock`.
+ */
+export const FRAMEWORK_BLOCK_EMPTY =
+  "Frameworks available: none this time. Where the contract below asks for a framework, name the shape you are actually using, in plain words.";
+
 /** What each section looks like in the reply, one line per section. */
 const SECTION_CONTRACTS: Record<SectionKey, string> = {
   thesis: '"thesis": {"statement": string, "why": string}',
@@ -168,27 +251,118 @@ const SECTION_CONTRACTS: Record<SectionKey, string> = {
 };
 
 /**
- * The one-line task brief per mode (PRD REQ-C01).
+ * One mode's brief (PRD REQ-C01).
  *
- * A `Record<ModeId, …>`, so slice 7 cannot add a mode without writing its
- * brief — the same map-not-a-chain-of-ifs discipline the card's R18 asks of the
- * tier gate. Only `hooks` is wired end to end in slice 6; the other six exist
- * so the contract and the bundle hash are per-mode from the start.
+ * A ONE-LINE TASK IS NOT A PROMPT TEMPLATE, and slice 6 shipped one line per
+ * mode because only one mode had a pipeline. The three parts here are the ones
+ * that turned out to differ per mode when the other six were built:
+ *
+ *   `task` — the job, in a sentence.
+ *   `inputLabel` — WHAT THE CREATOR'S MATERIAL IS. It is a list of clips in one
+ *     mode and somebody else's article in another, and a prompt that calls both
+ *     "what they gave you for this one" is asking the model to guess which.
+ *   `instructions` — what to do and, more importantly, WHAT NOT TO DO. Every
+ *     mode has a default failure (source-to-reel summarises, ideation returns
+ *     topics, a caption restates the hook), and naming it is the cheap half of
+ *     avoiding it. The expensive half is the check on the output, which is
+ *     `mode-checks.ts` — none of these lines decides anything.
  */
-export const MODE_BRIEFS: Record<ModeId, string> = {
-  footageToThesis:
-    "The creator has listed what today's clips can prove. Build the thesis they chose into a full script.",
-  ideaToScript: "Turn the creator's idea into a full script.",
-  sourceToReel:
-    "Rebuild the source's insights through the creator's own stakes. Never summarise the source.",
-  analyseAndSpin:
-    "Adapt the mechanism behind the reference into the creator's own material. Never reuse its wording, its structure or its specifics.",
-  hooks:
-    "Write a set of hooks. Each one uses a different mechanic — never five variants of one.",
-  caption: "Write the caption.",
-  ideation:
-    "Propose ideas. Each idea is a hook, a thesis and a framework — never a topic.",
+export type ModeBrief = {
+  task: string;
+  inputLabel: string;
+  instructions: readonly string[];
 };
+
+/**
+ * The task brief per mode (PRD REQ-C01).
+ *
+ * A `Record<ModeId, …>`, so a new mode cannot arrive without a brief — the same
+ * map-not-a-chain-of-ifs discipline the tier gate uses.
+ */
+export const MODE_BRIEFS: Record<ModeId, ModeBrief> = {
+  footageToThesis: {
+    task: "The creator has listed what today's footage can prove. Build the one thesis that footage supports into a full script.",
+    inputLabel: "What their footage can prove today:",
+    instructions: [
+      "Choose ONE thesis their clips can actually show. A thesis their footage cannot show is a thesis they cannot film today.",
+      "Every beat maps to a shot they already named. Never write a beat that needs footage they do not have.",
+      "If the footage supports a smaller claim than they were hoping for, write the smaller claim and say so in the weakest point.",
+    ],
+  },
+  ideaToScript: {
+    task: "Turn the creator's idea into a full script they can film.",
+    inputLabel: "The idea:",
+    instructions: [
+      "Keep their idea. Sharpen it; never replace it with a nearby one you like better.",
+      "The turn is the beat where the viewer's understanding changes. There is exactly one.",
+      "Every shot is one a person filming alone can actually get.",
+    ],
+  },
+  sourceToReel: {
+    task: "Rebuild what the source knows through this creator's own stakes.",
+    inputLabel: "The source they want to work from:",
+    instructions: [
+      "Never summarise the source. Take the insight, then put the source down: the output is this creator making an argument, not a report on somebody else's work.",
+      "Never restate the source in its own order, never reuse its phrasing, and never open by describing it (\"in this article\", \"the authors argue\").",
+      "Rebuild every insight through a stake this creator has: what it costs them, what they had to change, who it is for.",
+      "If the insight does not touch anything in their brain, say so in the weakest point rather than reaching.",
+    ],
+  },
+  analyseAndSpin: {
+    task: "Adapt the mechanism behind the reference into the creator's own material.",
+    inputLabel: "The reference they want to learn from:",
+    instructions: [
+      "Name the mechanism — WHY the reference works — and then leave the reference behind.",
+      "Never reuse its wording, its structure, its examples or its specifics. The output has to stand up with the reference deleted.",
+      "The material is this creator's own: their stakes, their footage, their audience.",
+    ],
+  },
+  hooks: {
+    task: "Write a set of hooks for what the creator is making.",
+    inputLabel: "What the hooks are for:",
+    instructions: [
+      "Each hook is a DIFFERENT creative thesis, never a rewording of one. If two hooks would survive or die together, one of them is not a second hook.",
+      "Name each hook's mechanic in your own words — what it does to the viewer.",
+      "One claim per hook, and nothing that needs a second sentence to land.",
+    ],
+  },
+  caption: {
+    task: "Write the caption for this post.",
+    inputLabel: "The post the caption is for:",
+    instructions: [
+      "The caption carries what the video cannot: the context, the ask, or the thing worth arguing with underneath.",
+      "Never restate the hook as the caption. A viewer who has watched has already read it.",
+      "Hashtags are ones this creator's own material supports. Never invent a community you cannot point to.",
+    ],
+  },
+  ideation: {
+    task: "Propose ideas. Every idea is a hook, a thesis and a framework — never a topic.",
+    inputLabel: "What they want ideas about:",
+    instructions: [
+      "A topic is a subject (\"morning routines\"). An idea is a CLAIM somebody could disagree with, plus the hook that opens it and the framework that carries it.",
+      "The thesis is a full sentence that asserts something. If it would fit on a folder tab, it is a topic and not a thesis.",
+      // NOT "say none of them fits": every idea REQUIRES a framework, so an
+      // instruction that offers the model a way out of naming one contradicts
+      // the output contract in the same prompt, and the eligibility check would
+      // then refuse whatever it wrote instead.
+      "Use a framework from the list above by its own name. If one only half fits, use that one and say where it does not fit in the weakest point.",
+      "Ideas differ from each other in what they CLAIM, never in how they are worded.",
+    ],
+  },
+};
+
+/**
+ * The brief as the model reads it.
+ *
+ * STATIC PER MODE — no creator content — so `bundle.ts` hashes it and REQ-J02's
+ * `prompt_bundle_version` moves when a mode's instructions change. A rewritten
+ * instruction changes which drafts a creator gets as surely as a rewritten
+ * system prompt does.
+ */
+export function modeBriefText(mode: ModeId): string {
+  const brief = MODE_BRIEFS[mode];
+  return [brief.task, ...brief.instructions.map((s) => "- " + s)].join("\n");
+}
 
 /**
  * The JSON contract for a mode: its required keys, then the ones it may add.
@@ -232,30 +406,92 @@ export function outputContractFor(mode: ModeId): string {
 
 // --------------------------------------------------------------- assembling
 
-function contextBlock(context: GenerationContext): string {
+/**
+ * The context, headed by what this MODE's input actually is.
+ *
+ * THE INPUT LABEL IS PER MODE (slice 7). "What they gave you for this one" was
+ * true of every mode and useful to none: the same heading sat above a list of
+ * today's clips, an idea, and somebody else's article, and the mode that must
+ * never summarise its source was not told which of those it was reading.
+ *
+ * THE FRAMEWORK LINE IS CONDITIONAL, because an instruction to "use one of the
+ * frameworks above" above an empty list is an instruction to invent one.
+ *
+ * THE EMPTY CASE IS STILL LIVE, AND THE REASON CHANGED (slice 7, stage C). It
+ * used to be "`packages/credits` passes no frameworks today (R-29)" — true when
+ * this was written, false now: `generate.ts` reads
+ * `scope.accessors.eligibleFrameworks()` and passes them through
+ * `frameworksForContext`. What reaches this branch today is a mode whose spec
+ * does NOT declare the `framework_eligibility` check (`caption` is one, and
+ * stage C offers frameworks only to the modes that declare it), a profile whose
+ * eligible set is genuinely empty, and a server whose shared library has not
+ * been seeded.
+ */
+function contextBlock(mode: ModeId, context: GenerationContext): string {
   const brain = [
     ...context.brain.voice.map((s) => "- voice: " + s),
     ...context.brain.strategy.map((s) => "- strategy: " + s),
     ...context.brain.killtest.map((s) => "- kill test: " + s),
   ];
+  // THE EMPTY CASE DOES NOT SAY "do not name a framework", and the first draft
+  // of this block did. Three modes REQUIRE a `framework` section, so that
+  // instruction would contradict the output contract in the same prompt —
+  // originally on every script generation the product ran, because
+  // `packages/credits` then offered no frameworks at all, and today on any run
+  // whose eligible set comes back empty (see the docblock above).
+  const frameworks =
+    context.frameworks.length > 0
+      ? [
+          FRAMEWORK_BLOCK_HEADER,
+          FRAMEWORK_EVIDENCE_NOTE,
+          ...context.frameworks.map((f) => `- ${f.name}: ${f.summary}`),
+        ]
+      : [FRAMEWORK_BLOCK_EMPTY];
   return [
     "Universal laws:",
     ...context.universalLaws.map((s) => "- " + s),
     "",
-    "Frameworks available:",
-    ...context.frameworks.map((f) => `- ${f.name}: ${f.summary}`),
+    ...frameworks,
     "",
     "This creator's brain:",
     ...brain,
     "",
     "Platform: " + context.platform,
     "",
-    "What they gave you for this one:",
+    MODE_BRIEFS[mode].inputLabel,
     context.input,
   ].join("\n");
 }
 
+/**
+ * THE UNVOUCHED LIST IS STATED, EVEN WHEN IT IS EMPTY.
+ *
+ * NO `?? []` ANYWHERE, and that absence is the fix (billing gate round 2). The
+ * default this product used to carry read as "an original has nothing
+ * unvouched" and ACTED as "a caller that forgot the key has nothing unvouched"
+ * — which is a revision's `[check]` laundering, restored in silence by an
+ * omission. MEASURED before the field was made required: same parent, same
+ * revision, key dropped, `usable` / `hardRules: []` / `traceability: []`.
+ *
+ * TYPED SHUT IS NOT SHUT (CLAUDE.md, 2026-08-21), so this is a RUNTIME check on
+ * a required field: a `as unknown as` cast reaches it, and it refuses instead
+ * of assuming the safe-looking answer.
+ *
+ * CALLED FROM BOTH BOUNDARIES, one population rather than two: `assertUsable`,
+ * so the refusal lands BEFORE the vendor call and no money is spent, and
+ * `traceabilityCorpusFor`, which is the function that would otherwise do the
+ * laundering and is reachable on its own (`kill-test.ts` calls it).
+ */
+function assertUnvouchedStated(context: GenerationContext): void {
+  if (!Array.isArray(context.unvouchedSpecifics)) {
+    throw new GenerationAssemblyError(
+      "this generation named nothing as unvouched-for, not even an empty list — an original passes [] and a revision passes what its parent's own scan reported"
+    );
+  }
+}
+
 function assertUsable(context: GenerationContext): void {
+  assertUnvouchedStated(context);
   if (context.input.trim().length === 0) {
     throw new GenerationAssemblyError(
       "there is nothing to generate from — this generation was given no input"
@@ -290,9 +526,9 @@ export function assembleGenerationPrompt(params: {
   return {
     system: GENERATION_SYSTEM,
     prompt: [
-      MODE_BRIEFS[mode],
+      modeBriefText(mode),
       "",
-      contextBlock(context),
+      contextBlock(mode, context),
       "",
       HARD_RULE_BRIEF,
       "",
@@ -331,9 +567,9 @@ export function assembleRewritePrompt(params: {
   return {
     system: GENERATION_SYSTEM,
     prompt: [
-      MODE_BRIEFS[mode],
+      modeBriefText(mode),
       "",
-      contextBlock(context),
+      contextBlock(mode, context),
       "",
       "Your previous draft:",
       draft,

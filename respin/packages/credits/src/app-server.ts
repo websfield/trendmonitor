@@ -21,6 +21,8 @@ import {
   hasLiveStripeSubscription,
   type BillingState,
 } from "./state";
+// THE AUTHORITY, not the mirror on `BillingState` (see `hasOpenPause` below).
+import { hasOpenPause } from "./pause";
 import { LedgerIntegrityError } from "./fold";
 import {
   ClockSkewError,
@@ -89,6 +91,7 @@ import {
   GenerationPayloadMismatchError,
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
+  RevisionParentError,
   UnpricedOperationError,
 } from "./errors";
 import {
@@ -96,7 +99,11 @@ import {
   type GenerateParams,
   type GenerateResult,
 } from "./generate";
-import { ModeNotBuiltYetError, ModeNotInPlanError } from "./mode-access";
+import {
+  ModeNotBuiltYetError,
+  ModeNotInPlanError,
+  UnknownEntitlementTierError,
+} from "./mode-access";
 import { GenerationAttemptStateError } from "@respin/db";
 // THE PIPELINE'S OWN REFUSALS, RE-EXPORTED AS VALUES (the `LlmError`
 // precedent, four imports up). `@respin/modes` is denied from `app/**`, so a
@@ -149,6 +156,54 @@ export type { BurnPeriod, BurnPeriodKind, BurnPeriodTier } from "./burn-period";
 // Pure, and the ONLY route from `app/**` to `MODE_SPECS[…].label` — see
 // `mode-label.ts` for why the label does not live in the view.
 export { modeLabel } from "./mode-label";
+// Slice 7, R1/R13/R14 (stage D) — THE MODE PICKER'S DATA, and it is here for
+// the reason `modeLabel` one line up is: `@respin/modes` is denied to `app/**`
+// (R-64), so a screen cannot read `IMPLEMENTED_MODES`, and `mode-access.ts`
+// records why it must not re-derive the plan map either. `modeOffers` is
+// `assertModeAllowed` read forwards — same two authorities, same order — so
+// the control a creator is offered and the gate that refuses them cannot
+// disagree. Pure: a resolved tier in, three fields out, no query.
+export { modeOffers } from "./mode-access";
+// ...and PRD B04's mode, as a NAMED `ModeId` rather than a string typed into
+// `app/**`. See its docblock: a literal there is invisible to a rename in
+// `MODE_IDS`, and `@respin/modes` is denied to `app/**` so a screen cannot
+// check one. Whether a workspace may RUN it is still `modeOffers`' answer.
+export { ONBOARDING_FIRST_IDEAS_MODE } from "./mode-access";
+export type { ModeOffer } from "./mode-access";
+// ...and R5c's ONE producer of the `entitlement` argument every
+// private-framework write in `@respin/db` requires with no default. A screen
+// must never pass a literal here: `privateFrameworkEntitlement` is the only
+// place in the product that maps a resolved tier onto that answer (PRD §4G,
+// Pro and Studio only), and `UnknownEntitlementTierError` above is what it
+// raises rather than returning `undefined`, which `assertEntitled` would treat
+// as "not included" by accident rather than by decision.
+export { privateFrameworkEntitlement } from "./mode-access";
+// Slice 7, R8 — WHAT A PRESS WILL COST, BEFORE THE PRESS, for a screen that
+// now offers six modes and a revision instead of one fixed price.
+//
+// These are the OPERATION'S OWN price functions, not a screen-side copy of the
+// pricing rule: `generationOp` is the one place a revision's `creditCosts.
+// revision` key is chosen over the mode's own (M3 is a one-line edit in it),
+// and `priceOf` is the same lookup `generate` takes the debit from. A screen
+// that indexed `creditCosts` itself would need a second mode->key map, which
+// is exactly the shape `copy.ts` refuses for the tier map. Both are pure and
+// take an ALREADY-READ config document — no query, no second config read that
+// could disagree with the one the page rendered.
+export { generationOp } from "./generate";
+export { priceOf } from "./inference";
+
+// R-81/R-82: the same pricing fact, in the shape `reconcileSpend` needs it —
+// and it is a FUNCTION OF THE ACTIVE CONFIG DOCUMENT, not a frozen list. R-81
+// shipped the constant `INCLUDED_BUILD_PURPOSES` here, which was a static
+// answer to a fact `/admin/config` can change: with a non-zero
+// `creditCosts.onboardingBrainBuild` the claim holder owes a debit and must
+// stop being exempted from the unbilled report. Pure — it takes an
+// ALREADY-READ document, like `priceOf` and `generationOp` above, so the page
+// reconciles against exactly the document it read. It is here rather than in
+// `@respin/db` because `priceOf` is what decides it and `@respin/db` may not
+// import this package; `/admin/model-spend` hands the derived list to
+// `respinDb.reconcileSpend`, whose parameter has no default.
+export { includedBuildPurposes } from "./included-build";
 
 // Every error class a facade method can throw must be re-exported here, or
 // `app/**` — which may import ONLY this entrypoint — cannot `instanceof` it
@@ -267,6 +322,16 @@ export {
   ModeNotBuiltYetError,
   ModeNotInPlanError,
   UnpricedOperationError,
+  // Slice 7 (R5c/REQ-D05) — no tier→entitlement answer for this plan. Not a
+  // creator's fault and not a creator's remedy, which is exactly why it needs
+  // copy: `privateFrameworkEntitlement` is the ONE producer of the argument
+  // every private-framework write requires, and a bare throw on that path would
+  // render as "Something went wrong" on a screen that changed nothing.
+  UnknownEntitlementTierError,
+  // Slice 7 (R6/R8) — a revision whose parent this creator cannot revise from.
+  // Raised BEFORE the vendor call, so the copy's job is to say that nothing was
+  // spent and which output to reopen, never to sell anything.
+  RevisionParentError,
   // ...and the pipeline's, from `@respin/modes`.
   GenerationAssemblyError,
   KillTestError,
@@ -406,6 +471,29 @@ export const respinCredits = {
     at: Date
   ): Promise<BillingState> =>
     getWorkspaceBillingState(getServerDb(), workspaceId, at),
+  /**
+   * IS THIS WORKSPACE PAUSED — the AUTHORITY, for screens that offer a control
+   * a paused server will refuse.
+   *
+   * WHY IT IS ON THE FACADE AT ALL (tenancy gate round 2, 2026-09-01). Two
+   * screens derived "paused" from `BillingState.state === "paused"`, which is
+   * `isPausedSubscription` — the `subscriptions.pausedAt` MIRROR, whose own
+   * docblock says it is "not the authority, and deliberately not used to gate
+   * money", and whose sibling in `@respin/db` names mirror-reading as "the
+   * drift bug this function exists to make impossible". Every server gate those
+   * screens front (`writeBrainDoc`, `activateBrainDocCoherent`, the framework
+   * CRUD) refuses on `hasOpenPause` — `pause_periods`. Where the two disagree
+   * the screen offered a form the server refuses AFTER the creator had written
+   * something, which is the over-offering the pause courtesy exists to prevent.
+   *
+   * IT IS STILL A COURTESY AND NEVER THE GATE: the same `hasOpenPause` runs
+   * inside every one of those operations, at operation time. This just makes
+   * the screen ask the same question the server will.
+   *
+   * NO CLOCK, unlike `getBillingState`: an open pause period is open now.
+   */
+  hasOpenPause: (workspaceId: VerifiedWorkspaceId): Promise<boolean> =>
+    hasOpenPause(getServerDb(), workspaceId),
   createTierCheckoutUrl: (
     scope: WorkspaceScope,
     tier: "creator" | "pro" | "studio",

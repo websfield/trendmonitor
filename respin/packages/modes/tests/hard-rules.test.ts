@@ -40,10 +40,22 @@ const hook = (text: string, field = "hooks/0/text"): TextUnit => ({
 });
 
 describe("the rule ids are a closed set", () => {
-  it("names the four rules tech-spec §3 step 3 lists, plus the claim rule", () => {
-    // FIVE, and the fifth is not in the spec's list: `forbidden_claim` is
-    // REQ-I04 and REQ-I05 made deterministic on model-authored text, which
-    // until this change were enforced only by the prompt. See `claims.ts`.
+  it("names the spec's four, the claim rule, and slice 7's five per-mode rules", () => {
+    // THE FIRST FIVE are the product-wide rules: tech-spec §3 step 3's four,
+    // plus `forbidden_claim` — REQ-I04 and REQ-I05 made deterministic on
+    // model-authored text, which until slice 6 were enforced only by the
+    // prompt (see `claims.ts`).
+    //
+    // THE LAST FIVE are slice 7's PER-MODE checks (`mode-checks.ts`), which a
+    // mode declares in the registry rather than a scanner deciding by
+    // inspection. They are hard rules for the same reason the first five are —
+    // each is a property of the document no prompt can be trusted to hold —
+    // and three of them are stand-ins for properties of meaning, with their
+    // measured gaps recorded in `KNOWN_MODE_CHECK_GAPS`.
+    //
+    // THE LIST IS PINNED rather than counted so adding a rule is a visible
+    // edit here: a rule id with no remedy, no sharper angle and no place in a
+    // refusal is a rule a creator cannot act on.
     expect([...HARD_RULE_IDS].sort()).toEqual(
       [
         "antithesis",
@@ -51,6 +63,11 @@ describe("the rule ids are a closed set", () => {
         "fragment_triad",
         "hook_too_long",
         "invented_specific",
+        "collapsed_variants",
+        "empty_weakest_point",
+        "framework_not_offered",
+        "idea_is_a_topic",
+        "summarised_source",
       ].sort()
     );
   });

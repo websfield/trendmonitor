@@ -60,17 +60,24 @@
 // ---------------------------------------------------------------------------
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { and, count, countDistinct, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, count, countDistinct, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { DbLike, TxLike } from "./db-like";
 import { memberships, workspaces } from "./schema";
 import type { Membership, MembershipRole, Workspace } from "./schema";
 import { creditLedger, subscriptions } from "./billing-schema";
 import type { CreditLedgerRow, Subscription } from "./billing-schema";
 import { brainDocs, creatorProfiles, frameworks } from "./brain-schema";
-import type { BrainDoc, BrainKind, CreatorProfile } from "./brain-schema";
+import type {
+  BrainDoc,
+  BrainKind,
+  CreatorProfile,
+  Framework,
+} from "./brain-schema";
 import {
   BILLABLE_USAGE_OUTCOMES,
+  USAGE_OUTCOME_BILLABLE,
   brainActivationSnapshots,
+  firstBillableAttempts,
   modelUsage,
   onboardingInterviewDrafts,
   onboardingInputs,
@@ -78,17 +85,22 @@ import {
 import type {
   BrainActivationSnapshot,
   CostState,
+  FirstBillableAttempt,
   InputClass,
   ModelUsageRow,
   OnboardingInput,
   ResolvedTier,
 } from "./onboarding-schema";
 import {
+  GENERATION_FEEDBACK_REACTIONS,
   generationAttempts,
+  generationFeedback,
   generations,
   type Generation,
   type GenerationAttempt,
   type GenerationAttemptState,
+  type GenerationFeedbackReaction,
+  type GenerationFeedbackRow,
   type GenerationOutcome,
 } from "./generation-schema";
 import { upsertSpendRollup } from "./spend-rollup";
@@ -117,6 +129,11 @@ import {
   BrainDocumentLimitError,
   BrainRoleError,
   BrainVersionLimitError,
+  FeedbackDuplicateError,
+  FeedbackNoteError,
+  FeedbackReactionError,
+  FeedbackTargetError,
+  GenerationLineageError,
   OnboardingInputLimitError,
   OnboardingInputFieldKeyError,
   ProfileAccessError,
@@ -132,6 +149,7 @@ import {
   BRAIN_DOCUMENT_TEXT_MAX,
   BRAIN_EVIDENCE_ENTRY_MAX,
   BRAIN_VERSION_MAX,
+  FEEDBACK_NOTE_MAX,
   ONBOARDING_FIELD_KEY_MAX,
   ONBOARDING_SOURCE_URL_MAX,
   POST_CONTENT_MAX,
@@ -140,6 +158,11 @@ import {
 
 export {
   BrainRoleError,
+  FeedbackDuplicateError,
+  FeedbackNoteError,
+  FeedbackReactionError,
+  FeedbackTargetError,
+  GenerationLineageError,
   OnboardingInputFieldKeyError,
   ProfileAccessError,
   ProfileCapError,
@@ -284,6 +307,14 @@ export const PROFILE_EXPORT_TABLES = [
   // a `case` below is TS2366 rather than a runtime surprise.
   "generations",
   "frameworks",
+  // Slice 7 (R10/R11). The creator's own reactions to their own outputs, plus
+  // whatever they typed beside them — theirs to take, and its registry entry
+  // says why. Its export reader is the SAME query the one sanctioned raw
+  // accessor uses (`feedbackPage` below), not a second one:
+  // `tests/feedback-readers.test.ts` permits exactly one `.from(
+  // generationFeedback)` in the repo, and two branches sharing one helper is
+  // how this table gets an export without spending that permit.
+  "generation_feedback",
 ] as const;
 export type ProfileExportTable = (typeof PROFILE_EXPORT_TABLES)[number];
 
@@ -969,51 +1000,65 @@ export type ProfileAccessors = {
   countOnboardingInputs: () => Promise<number>;
   modelUsage: () => Promise<ModelUsageRow[]>;
   /**
-   * How many DISTINCT `attempt_id`s of one purpose this profile has that the
-   * vendor BILLED US FOR (D-M2-2, slice 2a).
+   * WHICH ATTEMPT HOLDS this profile's first billable attempt of a purpose —
+   * the row `first_billable_attempts` decided, never a count (R-80).
    *
-   * COUNTED, NOT LISTED, and that is not an optimisation. `modelUsage()` above
-   * is an unbounded read of a table that only ever grows, so pricing a rebuild
-   * off `modelUsage().length` would load a creator's entire spend history into
-   * memory to compute one integer, and would get the integer WRONG twice over:
-   * rows are not attempts (a bounded retry may write two rows for one attempt),
-   * and a 429 is not a billed attempt.
+   * WHAT IT REPLACED, AND WHY THE OLD SHAPE COULD NOT WORK.
+   * `countBillableAttempts` lived here and answered "how many billable
+   * attempts came before me", ranking on `(created_at, attempt_id)`. The
+   * docblock claimed that was "a total order, so exactly one attempt in any
+   * set has zero predecessors, whatever the interleaving". THE VALUES ARE A
+   * TOTAL ORDER; THE READER'S SNAPSHOT IS NOT. `created_at` is
+   * `clock_timestamp()` at INSERT and a row becomes visible at COMMIT, so an
+   * attempt that inserted first and committed second is invisible to the one
+   * that committed before it — and then finds that one LATER by the key. Both
+   * counted zero predecessors, both took the included build, and one debit was
+   * never written. Reproduced deterministically on real Postgres in
+   * `packages/credits/tests/inference-race.docker.test.ts` ("INSERTED FIRST,
+   * COMMITTED SECOND"), which is what the old claim never was.
    *
-   * `excludeAttemptId` exists because the authoritative pricing decision
-   * happens AFTER `model_usage` for this attempt has already committed — the
-   * A-7 settlement-tail order — so "how many came before me" has to be
-   * expressible without counting oneself.
+   * SO THE ANSWER IS READ, NOT DERIVED. `recordModelUsage` claims the row in
+   * the SAME transaction as the billable `model_usage` row (see there), under
+   * a unique index — enforced against committed state, so exactly one claim
+   * can exist per (profile, purpose) whatever the interleaving. This accessor
+   * only reports what the database decided.
    *
-   * `earlierThanAttemptId` EXISTS BECAUSE `excludeAttemptId` ALONE IS NOT A
-   * TIE-BREAK, AND THE DOCBLOCK HERE USED TO CLAIM IT WAS. The old sentence
-   * read "two concurrent first-ever attempts then serialise on the workspace
-   * lock and exactly one of them is free, rather than both". They do serialise
-   * — and both are charged, because by the time either reaches its debit BOTH
-   * usage rows have already committed (R11 commits the spend record before the
-   * debit is attempted), so each one excludes itself and counts the other.
-   * The creator loses the included build they were promised. Proved by
-   * `packages/credits/tests/inference-race.docker.test.ts`, which PGlite could
-   * not have caught: it is single-connection, so its "race" is a sequence.
+   * ONE ROW OR ZERO, returned as an ARRAY like `profile()` and
+   * `latestBrainActivation()`: empty means nothing billable has been recorded
+   * for this purpose yet, which is a fact the caller owns rather than a null
+   * this accessor guesses about — EXCEPT in the `settled` case below.
    *
-   * The fix is an ORDER, because a symmetric predicate cannot break a tie.
-   * Passing `earlierThanAttemptId` counts only attempts that are strictly
-   * EARLIER than that attempt by `(first billable row's created_at,
-   * attempt_id)` — a total order over attempts, so exactly one attempt in any
-   * set has zero predecessors, whatever the interleaving. `created_at` is
-   * `clock_timestamp()` per row, and `attempt_id` breaks a same-instant tie.
+   * `settlement` IS REQUIRED AND IS NOT A BOOLEAN FLAG, because the two
+   * callers mean genuinely different things by an absent claim:
    *
-   * It is monotone over time, which a cheaper-looking rule is not: "the free
-   * build belongs to the smallest attempt_id" would hand a SECOND free build
-   * to any later attempt that happened to sort below the first.
+   *   - `"unsettled"` — the caller has NOT written its `model_usage` row yet
+   *     (the pre-call price, step 6 of `runInference`). No claim means the
+   *     included build is genuinely unclaimed, and the caller prices
+   *     optimistically; the authoritative price is taken again after the row
+   *     exists.
+   *   - `"settled"` — the caller's own billable row HAS committed (R11, the
+   *     A-7 settlement tail; the debit at step 9). A claim therefore MUST
+   *     exist, and its absence means the claim writer did not run. It is
+   *     REFUSED rather than answered, for the reason the old code refused the
+   *     same shape: answering "unclaimed" would hand out a free build on the
+   *     strength of a missing record — absence read as an entitlement — and
+   *     answering "somebody else's" would charge a creator for the build they
+   *     were promised. Both branches are driven by tests; a required
+   *     parameter no test drives the false side of is not a guard (CLAUDE.md,
+   *     2026-08-29).
+   *
+   * `conn` for the same reason `referenceCorpusAsOf` takes one: the scope
+   * closes over the POOL, and reading the pool from inside an open transaction
+   * deadlocks on a single-connection driver. The debit transaction is exactly
+   * that caller.
    */
-  countBillableAttempts: (
+  firstBillableAttempt: (
     params: {
       purpose: string;
-      excludeAttemptId?: string;
-      earlierThanAttemptId?: string;
+      settlement: "unsettled" | "settled";
     },
     conn?: TxLike
-  ) => Promise<number>;
+  ) => Promise<FirstBillableAttempt[]>;
   /**
    * THE ONE REFERENCE CORPUS (C-29). Both R-3 bars take it; neither builds one.
    *
@@ -1033,6 +1078,73 @@ export type ProfileAccessors = {
     ids?: readonly string[],
     conn?: TxLike
   ) => Promise<{ ids: string[]; inputs: ReferenceInput[] }>;
+  /**
+   * THE ONE RAW READER OF `generation_feedback` (slice 7, R11).
+   *
+   * "One" is a MEASURED property, not a convention:
+   * `tests/feedback-readers.test.ts` scans every product source in
+   * `packages/**` and `app/**` for a read of that table — through a table
+   * object, an alias, an import rename, a cast, a computed member or raw SQL —
+   * and permits exactly one FILE. `exportPage`'s `generation_feedback` branch
+   * shares this accessor's query helper rather than writing a second one, so
+   * the export costs no second permit.
+   *
+   * WHAT IT RETURNS IS RAW, and that is the requirement rather than laziness:
+   * R11 says nothing in this slice derives a rule, proposal or aggregate from
+   * feedback. There is no count here, no grouping, no "top reaction", no
+   * scoring. UI and export get the stored events; `packages/brain` (slice 9,
+   * which does not exist) is the only place a proposal may be constructed
+   * from them, and the same test file pre-registers that boundary the way
+   * `tests/import-boundary.test.ts` pre-registered `@respin/trends`.
+   *
+   * ITS HONEST LIMIT, stated: a source scan cannot infer semantic intent. It
+   * can enforce raw-access ownership and constructor location, and that is
+   * all it claims. The tests that prove UI and export return raw scoped events
+   * are separate, and they are behavioural.
+   *
+   * CLAMPED, like `ledger` and `onboardingInputs`, and for the same reason:
+   * an append-only table that only grows, read by a server component whose
+   * caller may pass a URL-derived page size.
+   */
+  generationFeedback: (
+    page?: LedgerPage,
+    tx?: TxLike
+  ) => Promise<GenerationFeedbackRow[]>;
+  /**
+   * This profile's LIVE private frameworks (slice 7, R5c).
+   *
+   * `visibility = 'private'` PLUS both scope columns — the same three-part
+   * predicate `exportPage`'s `frameworks` branch has carried since slice 5,
+   * and for the reason recorded there: a shared library row has NULL owner
+   * columns, so the private predicate is what makes "the creator's own" mean
+   * something rather than "everything with no owner".
+   *
+   * SUPERSEDED AND RETIRED VERSIONS ARE EXCLUDED, and that is the difference
+   * between this and the export branch: the export returns every version
+   * because history is the creator's too, and this returns what they can act
+   * on now.
+   */
+  privateFrameworks: () => Promise<Framework[]>;
+  /**
+   * Every framework this profile may GENERATE from (slice 7, R5b + R5c).
+   *
+   * ONE QUERY over both halves, not two reads merged afterwards, so the
+   * recommendability predicate — approved, not retired, not superseded — is
+   * applied to the shared library and to the creator's own rows by the same
+   * expression. Two copies of that predicate is two places for M8 to hide.
+   *
+   * THE SHARED HALF IS DELIBERATELY UNSCOPED, because a shared framework has
+   * both owner columns NULL by CHECK: it belongs to nobody and is the same
+   * set for every workspace. The PRIVATE half carries both scope columns, so
+   * no other creator's framework can enter this list — which
+   * `packages/db/tests/profile-scope.test.ts` drives from both sides.
+   *
+   * THE ORDER IS PART OF THE CONTRACT, not a detail (billing gate,
+   * 2026-09-01): every SHARED row precedes every private one, because the
+   * consumer fills a bounded prompt budget in the order it receives and drops
+   * whole rows once it is spent. See the `orderBy` for the measurement.
+   */
+  eligibleFrameworks: () => Promise<Framework[]>;
 };
 
 /** Postgres would raise 22P02 on a non-uuid, which is an enumeration oracle. */
@@ -1081,6 +1193,52 @@ export class ProfileScope {
       and(
         eq(t.profileId as never, profileId),
         eq(t.workspaceId as never, workspaceId)
+      );
+    /**
+     * THE ONLY QUERY IN THIS REPO THAT READS `generation_feedback` (R11).
+     *
+     * A local helper rather than two similar queries, because the accessor and
+     * `exportPage`'s branch need the same rows in the same order with a
+     * different page size — and `tests/feedback-readers.test.ts` permits ONE
+     * raw reader. Two copies would spend a permit on a duplicate; one helper
+     * with a page-size parameter spends none, and it means the export and the
+     * screen cannot drift into different orderings of the same table.
+     *
+     * NO AGGREGATION, DELIBERATELY. See the accessor's docblock: this slice
+     * captures feedback and must be structurally unable to derive from it.
+     */
+    const feedbackPage = (
+      conn: DbLike | TxLike,
+      limit: number,
+      offset: number
+    ) =>
+      conn
+        .select()
+        .from(generationFeedback)
+        .where(both(generationFeedback))
+        .orderBy(desc(generationFeedback.createdAt), desc(generationFeedback.id))
+        .limit(limit)
+        .offset(offset);
+    /**
+     * WHAT MAKES A FRAMEWORK RECOMMENDABLE (R5b), as ONE expression.
+     *
+     * Duplicated from `frameworks.ts`'s `recommendable()` is exactly what this
+     * is NOT: that file's readers call these accessors. The predicate lives
+     * here because both branches below need it and neither may have its own
+     * version — M8 ("a reader that returns proposed or retired frameworks") is
+     * a one-line edit in whichever copy a reviewer is not looking at.
+     */
+    const frameworkIsRecommendable = () =>
+      and(
+        eq(frameworks.curatorStatus, "approved"),
+        isNull(frameworks.retiredAt),
+        isNull(frameworks.supersededAt)
+      );
+    const ownPrivateFramework = () =>
+      and(
+        eq(frameworks.ownerProfileId, profileId),
+        eq(frameworks.workspaceId, workspaceId),
+        eq(frameworks.visibility, "private")
       );
     this.accessors = {
       profile: () =>
@@ -1199,16 +1357,23 @@ export class ProfileScope {
             return conn
               .select()
               .from(frameworks)
-              .where(
-                and(
-                  eq(frameworks.ownerProfileId, profileId),
-                  eq(frameworks.workspaceId, workspaceId),
-                  eq(frameworks.visibility, "private")
-                )
-              )
+              // EVERY VERSION, INCLUDING SUPERSEDED AND RETIRED ONES, and that
+              // is the deliberate difference from `privateFrameworks()` below.
+              // Slice 7 made framework versioning append a row, so the earlier
+              // versions of a creator's own framework are their history — an
+              // export that returned only the live one would hand back less
+              // than the creator holds, which is the truncation R11 calls a
+              // fail-closed refusal everywhere else.
+              .where(ownPrivateFramework())
               .orderBy(desc(frameworks.createdAt), desc(frameworks.id))
               .limit(EXPORT_PAGE_SIZE)
               .offset(offset);
+          // Slice 7 (R10/R11). THE SAME QUERY the one sanctioned raw accessor
+          // uses — see `feedbackPage` above — at the export page size. Sharing
+          // it is what keeps "exactly one raw reader of this table" true while
+          // still exporting it.
+          case "generation_feedback":
+            return feedbackPage(conn, EXPORT_PAGE_SIZE, offset);
         }
       },
       // NEWEST FIRST, with `id` as the tie-break — the ONE display order for a
@@ -1275,9 +1440,11 @@ export class ProfileScope {
           // it.
           .limit(assertCorpusLimit(limit)),
       countUnchargedBillableAttempts: async ({ purpose, since }) => {
-        // DISTINCT ATTEMPTS, never rows — the same rule `countBillableAttempts`
-        // states one accessor up: a bounded retry inside one attempt is one
-        // attempt.
+        // DISTINCT ATTEMPTS, never rows: a bounded retry inside one attempt
+        // is one attempt. (The accessor that used to state this rule one
+        // position up, `countBillableAttempts`, is gone — R-80 replaced the
+        // derived ranking it computed with the `first_billable_attempts`
+        // claim. The rule survives it, and this is now its only statement.)
         //
         // AND WITHIN A WINDOW. `model_usage` is append-only and only grows, so
         // an unbounded count is a LIFETIME count: N deterministic failures ever
@@ -1323,7 +1490,7 @@ export class ProfileScope {
           );
         return row?.n ?? 0;
       },
-      // `tx` for the same reason `countBillableAttempts` takes a `conn`: the
+      // `tx` for the same reason `firstBillableAttempt` takes a `conn`: the
       // scope closes over the POOL, and reading the pool from inside an open
       // transaction deadlocks on a single-connection driver.
       latestBrainActivation: (tx?: TxLike) =>
@@ -1344,78 +1511,36 @@ export class ProfileScope {
         return row?.n ?? 0;
       },
       modelUsage: () => db.select().from(modelUsage).where(both(modelUsage)),
-      // `conn` for the same reason `referenceCorpusAsOf` takes one: the scope
-      // closes over the POOL, and reading the pool from inside an open
-      // transaction deadlocks on a single-connection driver. The debit
-      // transaction is exactly that caller.
-      countBillableAttempts: async (
-        { purpose, excludeAttemptId, earlierThanAttemptId },
-        conn
-      ) => {
-        const on = conn ?? db;
-        // The billable rows of this purpose for this profile, in the cage:
-        // `both()` is the workspace+profile predicate every accessor here
-        // shares, and it is applied to BOTH queries below.
-        const scoped = and(
-          both(modelUsage),
-          eq(modelUsage.purpose, purpose),
-          inArray(modelUsage.outcome, [...BILLABLE_USAGE_OUTCOMES]),
-          // ...AND IT ACTUALLY CONSUMED THE INCLUDED BUILD (billing gate,
-          // 2026-08-29). `outcome` alone counted a truncated reply — an outage
-          // caused by this server's own reply ceiling — as the creator's one
-          // free build, so their next press cost 50 credits and failed
-          // identically. The column defaults to `true`, so this predicate
-          // changes nothing for any row written before it existed.
-          eq(modelUsage.consumedIncludedBuild, true)
-        );
-
-        let earlierThan: ReturnType<typeof sql> | undefined;
-        if (earlierThanAttemptId !== undefined) {
-          // WHERE THIS ATTEMPT SITS IN THE ORDER: its FIRST billable row. An
-          // attempt may write several rows (a bounded retry), and its position
-          // is where it started, not where it finished — otherwise a retrying
-          // attempt could be overtaken by one that began after it.
-          const [me] = await on
-            // `string | null`, NOT `Date`: drizzle's node-postgres driver
-            // installs string parsers for `timestamptz`, so this arrives with
-            // FULL microsecond precision and is re-bound unchanged. Annotating
-            // it `Date` was wrong and mattered: two reviewers read the `Date`
-            // and concluded the ordering was truncated to milliseconds, which
-            // measurement against the real driver refuted. A `.getTime()` here
-            // would crash today.
-            .select({ firstAt: sql<string | null>`min(${modelUsage.createdAt})` })
-            .from(modelUsage)
-            .where(and(scoped, eq(modelUsage.attemptId, earlierThanAttemptId)));
-
-          if (me?.firstAt == null) {
-            // UNREACHABLE ON THE PRICING PATH and deliberately not silent: R11
-            // commits this attempt's `model_usage` row before the debit is
-            // attempted, so asking where an attempt sits when it has no row is
-            // asking about an attempt that does not exist. Answering 0 would
-            // hand out a free build on the strength of a missing record —
-            // absence read as an entitlement.
-            throw new WorkspaceAccessError(
-              "countBillableAttempts: cannot order against an attempt with no billable usage row"
-            );
-          }
-          // STRICTLY earlier by (created_at, attempt_id) — a total order, so
-          // exactly one attempt in any set has zero predecessors.
-          earlierThan = sql`(${modelUsage.createdAt}, ${modelUsage.attemptId}) < (${me.firstAt}::timestamptz, ${earlierThanAttemptId})`;
-        }
-
-        const [row] = await on
-          .select({ n: countDistinct(modelUsage.attemptId) })
-          .from(modelUsage)
+      // ONE QUERY, ONE POPULATION (R-80). The claim row is written by
+      // `recordModelUsage`; nothing here re-derives it, which is the point —
+      // three readers of one "which attempt is first" rule is how the rule
+      // came to disagree with itself.
+      firstBillableAttempt: async ({ purpose, settlement }, conn) => {
+        const rows = await (conn ?? db)
+          .select()
+          .from(firstBillableAttempts)
+          // `both()` is the workspace+profile predicate every accessor here
+          // shares. Dropping it would let a sibling profile's claim price this
+          // creator's build.
           .where(
             and(
-              scoped,
-              excludeAttemptId === undefined
-                ? undefined
-                : ne(modelUsage.attemptId, excludeAttemptId),
-              earlierThan
+              both(firstBillableAttempts),
+              eq(firstBillableAttempts.purpose, purpose)
             )
+          )
+          // `limit(1)` WITH NO ORDER BY IS EXACT HERE, AND ONLY HERE: the
+          // unique index makes at most one row satisfy this predicate, so
+          // there is no second row for an order to choose between. If that
+          // index were ever lost, this would become an arbitrary pick — which
+          // is why the index is asserted structurally in
+          // `packages/db/tests/migration-shape.test.ts` rather than assumed.
+          .limit(1);
+        if (rows.length === 0 && settlement === "settled") {
+          throw new WorkspaceAccessError(
+            "firstBillableAttempt: this attempt's billable usage row has committed (R11) but no first-billable claim exists for it — refusing to price from a missing record"
           );
-        return row?.n ?? 0;
+        }
+        return rows;
       },
       // `conn` EXISTS BECAUSE THE CALLER IS USUALLY INSIDE A TRANSACTION, and
       // that is not a detail: the scope closes over the pool, so reading the
@@ -1455,6 +1580,70 @@ export class ProfileScope {
           inputs: found.map((r) => ({ id: r.id, content: r.content })),
         };
       },
+      // Slice 7 (R10/R11). Clamped like every other growing list, and reading
+      // through the ONE helper — see `feedbackPage`.
+      generationFeedback: (
+        page: LedgerPage = { limit: LEDGER_PAGE_MAX },
+        tx?: TxLike
+      ) =>
+        feedbackPage(
+          tx ?? db,
+          clampPageNumber(page.limit, 1, LEDGER_PAGE_MAX, 1),
+          clampPageNumber(page.offset, 0, Number.MAX_SAFE_INTEGER, 0)
+        ),
+      privateFrameworks: () =>
+        db
+          .select()
+          .from(frameworks)
+          .where(
+            and(
+              ownPrivateFramework(),
+              isNull(frameworks.supersededAt),
+              isNull(frameworks.retiredAt)
+            )
+          )
+          .orderBy(desc(frameworks.createdAt), desc(frameworks.id)),
+      eligibleFrameworks: () =>
+        db
+          .select()
+          .from(frameworks)
+          .where(
+            and(
+              frameworkIsRecommendable(),
+              // SHARED (owned by nobody) OR THIS PROFILE'S PRIVATE ROWS. The
+              // `or` is the whole R5c reader: without the second arm a Pro
+              // creator's own framework never reaches generation, and without
+              // the first arm the library does not either.
+              or(eq(frameworks.visibility, "shared"), ownPrivateFramework())
+            )
+          )
+          // CURATED LIBRARY FIRST, THEN THE CREATOR'S OWN (billing gate,
+          // 2026-09-01, MEASURED). The order used to be `slug ASC, version
+          // DESC` alone, and the consumer of this list — `frameworksForContext`
+          // in `@respin/credits` — fills a character budget in the order it
+          // receives, dropping whole rows once the budget is spent. EVERY ONE
+          // of the nine seeded slugs begins `the-`, so a creator's private
+          // frameworks sort ahead of most of the library: at 25 private rows
+          // one curated framework was evicted, and at 40 all nine were. A
+          // creator can silently lose the entire product's curated library from
+          // their own prompts by writing enough frameworks — and nothing tells
+          // them, because a dropped framework is simply not offered.
+          //
+          // A CASE EXPRESSION, NOT `asc(visibility)`. The enum happens to
+          // declare `shared` before `private`, so ordering by the column would
+          // work TODAY and would silently invert the day somebody re-orders the
+          // enum for an unrelated reason — a correctness property resting on a
+          // declaration order nobody would think to check.
+          //
+          // The remaining order is unchanged and still arbitrary-but-
+          // deterministic within each half, which is what `frameworksForContext`
+          // says about it. What is no longer arbitrary is WHICH HALF pays: the
+          // budget can only ration the part a creator can grow.
+          .orderBy(
+            sql`case when ${frameworks.visibility} = 'shared' then 0 else 1 end`,
+            asc(frameworks.slug),
+            desc(frameworks.version)
+          ),
     };
     profileCage.add(this);
   }
@@ -1913,7 +2102,49 @@ export type ProfileWriteCapabilities = {
     attemptId: string,
     tx: TxLike
   ) => Promise<GenerationAttempt | undefined>;
+  /**
+   * RECORD ONE STRUCTURED REACTION to one of this creator's outputs (slice 7,
+   * R10 / REQ-C05).
+   *
+   * EVERY COLUMN IS BUILT HERE FROM THE SCOPE OR FROM A VALIDATED PARAMETER —
+   * the same "never build a spread to strip" property the four slice-6
+   * capabilities have. `profile_id` and `workspace_id` come off the scope, so
+   * a caller cannot record feedback into another creator's record even by
+   * casting; `generation_id` is caller-supplied and is proved to belong to
+   * this scope by the composite FK, which is why that FK carries all three
+   * columns rather than one.
+   *
+   * IT DERIVES NOTHING (R11). It writes a row and returns it. There is no
+   * counter, no rollup, no "this is the third time you said that" — those are
+   * `packages/brain`'s to build in slice 9, and the scan that keeps them out
+   * of everywhere else is `tests/feedback-readers.test.ts`.
+   *
+   * `tx` IS REQUIRED, not optional, for the reason `recordModelUsage`'s
+   * docblock gives: an optional `tx` made a shared-fate claim false with no
+   * compiler signal. The caller decides what this shares fate with.
+   */
+  recordGenerationFeedback: (
+    params: RecordGenerationFeedbackParams,
+    tx: TxLike
+  ) => Promise<GenerationFeedbackRow>;
 };
+
+/**
+ * The caller-suppliable half of one feedback event (slice 7, R10).
+ *
+ * THREE FIELDS, and two of them are validated before anything is written:
+ * `reaction` against the closed set (so an unknown code is
+ * `FeedbackReactionError` rather than a raw enum 22P02), and `note` against
+ * its blank/length rules (so an oversized paste is `FeedbackNoteError` rather
+ * than an unbounded column). `generationId` is validated by the DATABASE — the
+ * composite FK is the thing that can actually prove it is this creator's.
+ */
+export type RecordGenerationFeedbackParams = {
+  generationId: string;
+  reaction: GenerationFeedbackReaction;
+  /** Optional creator words. `undefined` and a blank string are not the same. */
+  note?: string;
+} & NoServerFields;
 
 /**
  * The attempt-claim's caller-suppliable fields (slice 6, R14).
@@ -1991,6 +2222,22 @@ export type SettleGenerationParams = {
   rewriteCount: number;
   /** The ledger row that paid for it, or null for a zero-cost mode. */
   debitLedgerId: string | null;
+  /**
+   * THE OUTPUT THIS ONE REVISES (slice 7, R6), or absent for an original.
+   *
+   * A PLAIN STRING, like `profileId` at every other boundary in this package,
+   * and for the same reason: there is no `trustGenerationId` and there never
+   * will be. `settleGeneration` re-reads the id through the scope's own
+   * predicate before it writes, so a foreign, nonexistent, or not-yet-earlier
+   * parent produces `GenerationLineageError` — one message for all three (the
+   * enumeration rule `ProfileAccessError` states, sharpened here because a
+   * uuidv7 leaks creation time as well as existence).
+   *
+   * `undefined` MEANS ORIGINAL. There is deliberately no `null` in the type:
+   * two spellings of "no parent" is two things a caller can mean by accident,
+   * and the column's own default handles the absent case.
+   */
+  parentId?: string;
 };
 
 export type SettleGenerationResult = {
@@ -2211,6 +2458,76 @@ export function workspaceWriteCapabilities(
 }
 
 /**
+ * REQ-G08: WHICH CAPABILITY IS REFUSED WHILE THE WORKSPACE IS PAUSED — as a
+ * RECORD a new write cannot escape, rather than a sentence in one comment.
+ *
+ * WHY IT EXISTS (billing gate, 2026-09-02). `writeBrainDoc`'s docblock was the
+ * only place A-7's exemptions were written down, it named two
+ * (`appendOnboardingInput`, `recordModelUsage`), and slice 7 added a THIRD
+ * unpaused write — `recordGenerationFeedback`, measured ACCEPTED under an open
+ * pause — without touching that sentence. The behaviour is defensible;
+ * "defensible" and "decided" are different, and only one of them is written
+ * down. A hand-maintained list in prose is exactly what failed, so this is a
+ * MAP KEYED BY CAPABILITY NAME and `packages/db/tests/with-workspace.test.ts`
+ * derives its population from the source of `writeCapabilities` and
+ * `workspaceWriteCapabilities` themselves: a member that writes, is not gated,
+ * and is not named here is a RED TEST, not a discovery for the next reviewer.
+ *
+ * THREE ANSWERS, and only one of them is free:
+ *   `"gated"`  — refuses with `WorkspacePausedError` (directly, or by calling
+ *                a capability that does; `activateBrainDocCoherent` is the
+ *                second shape and delegates to `activateBrainDoc`).
+ *   `"read"`   — writes nothing. REQ-G08 is "frozen and READ-ONLY", so reads
+ *                are deliberately never gated.
+ *   `{exempt}` — writes, deliberately ungated, WITH ITS WARRANT. The warrant
+ *                is the thing being recorded; an entry without one is a
+ *                decision nobody made.
+ */
+export type CapabilityPausePolicy = "gated" | "read" | { exempt: string };
+
+export const WRITE_PAUSE_POLICY: Readonly<
+  Record<string, CapabilityPausePolicy>
+> = {
+  // --- the workspace grain (`workspaceWriteCapabilities`)
+  countActiveProfiles: "read",
+  createProfile: {
+    exempt:
+      "Gated ONE LAYER UP, where the tier lives: `createProfile` in packages/credits/src/profiles.ts throws WorkspacePausedError before it reaches this capability. This half stays ungated for the R-30 constraint-2 reason its own docblock gives — @respin/db cannot resolve a tier — and the belt-and-braces guard it DOES carry is the role gate.",
+  },
+  // --- the profile grain (`writeCapabilities`)
+  appendOnboardingInput: {
+    exempt:
+      "A-7 exemption 1: storing input the creator SUBMITTED. Refusing it would silently discard their own work, which is a worse outcome than letting a paused workspace keep its own text.",
+  },
+  recordModelUsage: {
+    exempt:
+      "A-7 exemption 2: the settlement tail. It records spend ALREADY INCURRED; refusing it would lose the record of money we have spent, and the act to gate is the generation, not its receipt.",
+  },
+  writeBrainDoc: "gated",
+  confirmBrainDocFields: "gated",
+  activateBrainDoc: "gated",
+  activateBrainDocCoherent: "gated",
+  claimGenerationAttempt: {
+    exempt:
+      "The generation itself is refused BEFORE this runs: `generate` in packages/credits/src/generate.ts takes the pause gate at step 4, before it claims an attempt, and `debitCredits` refuses again at the debit. Gating here as well would refuse nothing new.",
+  },
+  advanceGenerationAttempt: {
+    exempt:
+      "The SETTLEMENT TAIL of a generation that was already permitted — including the refusal path that records `paused` when a pause opens mid-flight. A pause gate here would refuse the recording of the refusal it caused.",
+  },
+  settleGeneration: {
+    exempt:
+      "Same tail as `advanceGenerationAttempt`: the vendor has answered and the debit is in this transaction. Refusing here would take the money and drop the draft.",
+  },
+  recordGenerationFeedback: {
+    exempt:
+      "A-7 exemption 1 again, and NAMED HERE because slice 7 added it without touching the list (billing gate, 2026-09-02): a closed reaction code plus the creator's own words about their own output is input they submitted, not an entitlement they spend. It derives nothing (R11), so a paused workspace gains no capability by writing one.",
+  },
+  readGenerationForAttempt: "read",
+  readGenerationAttempt: "read",
+};
+
+/**
  * The write surface. Deliberately NOT a property of the scope: a scope is
  * handed to `app/**` (as a type) and to @respin/credits, and a write method
  * living on the instance would travel with it. This function is denied to
@@ -2384,15 +2701,65 @@ export function writeCapabilities(
         costMicroUsd: row.costMicroUsd,
         costState: row.costState,
       });
+      // R-80: THE INCLUDED BUILD IS CLAIMED HERE, IN THIS TRANSACTION, AND THE
+      // DATABASE DECIDES THE WINNER.
+      //
+      // WHY HERE AND NOT AT THE DEBIT. Three reasons, and each one is a
+      // behaviour that would change if this moved:
+      //   - COMMIT TIME IS THE ONLY HONEST TIE-BREAK. The rule this replaces
+      //     ranked attempts on `(created_at, attempt_id)` read from a READ
+      //     COMMITTED snapshot, and an attempt that inserted first and
+      //     committed second was invisible to the one that committed before
+      //     it — so two attempts each saw zero predecessors and each took the
+      //     included build. A unique index is evaluated against committed
+      //     state: the second writer BLOCKS until the first commits, then
+      //     conflicts. There is no interleaving with two winners.
+      //   - THE CLAIM RIDES WITH THE SPEND RECORD (R11). The usage row commits
+      //     before the debit is attempted, so a claim written at the debit
+      //     would not exist for the attempts that never reach one.
+      //   - A BILLABLE FAILURE THAT CONSUMES THE ENTITLEMENT NEVER REACHES THE
+      //     DEBIT. A policy `refused` is billable and consuming
+      //     (`USAGE_OUTCOME_BILLABLE`, `LlmError.consumesIncludedBuild`) and
+      //     `inference.ts` throws before step 9 — claiming at the debit would
+      //     silently hand that profile's free build to the next attempt.
+      //
+      // THE CONDITION IS THE SAME PAIR THE OLD RANKING FILTERED ON — billable
+      // outcome AND `consumed_included_build` — read from the RETURNED ROW,
+      // never from `usage`, so what is claimed is what was actually stored.
+      // A truncated reply (`schema_invalid`, non-consuming: our own reply
+      // ceiling, not the creator's doing) writes a usage row and claims
+      // nothing, which is the property the 2026-08-29 billing gate closed.
+      //
+      // `onConflictDoNothing` rather than an upsert: the claim is decided
+      // ONCE. A second row for the same attempt (a bounded retry writes two
+      // usage rows for one attempt) conflicts onto its own claim and stays
+      // free, which is exactly what the old `min(created_at)` grouping meant.
+      if (USAGE_OUTCOME_BILLABLE[row.outcome] && row.consumedIncludedBuild) {
+        await tx
+          .insert(firstBillableAttempts)
+          .values({
+            workspaceId: row.workspaceId,
+            profileId: row.profileId,
+            purpose: row.purpose,
+            attemptId: row.attemptId,
+          })
+          .onConflictDoNothing({
+            target: [firstBillableAttempts.profileId, firstBillableAttempts.purpose],
+          });
+      }
       return row;
     },
 
     writeBrainDoc: async (doc, tx, expectedEditableBaseId) => {
       // REQ-G08: a brain write is an ENTITLEMENT, so it is refused while the
-      // workspace is paused. `appendOnboardingInput` and `recordModelUsage`
-      // deliberately are not (A-7): storing the creator's own submitted text
-      // is not an entitlement and refusing it would silently discard their
-      // work, and recording spend already incurred is the settlement tail.
+      // workspace is paused. WHICH WRITES ARE NOT, AND WHY, IS NO LONGER A
+      // SENTENCE HERE: it is `WRITE_PAUSE_POLICY` above, one entry per
+      // capability with its warrant, because this sentence named two
+      // exemptions and slice 7 added a third (`recordGenerationFeedback`,
+      // measured accepted under an open pause) without touching it. The
+      // population is now derived from this object's own members in
+      // `packages/db/tests/with-workspace.test.ts`, so a new ungated write
+      // cannot escape the list by nobody remembering this paragraph.
       assertMayWrite(scope.role, "write a brain document for this creator");
       if (await hasOpenPause(tx, scope.workspaceId)) {
         throw new WorkspacePausedError();
@@ -3129,10 +3496,50 @@ export function writeCapabilities(
       assertMayWrite(scope.role, "settle a generation for this creator");
       const attemptId = params.attemptId;
       const outcome = params.outcome;
+      // READ ONCE INTO A LOCAL (C-40) and then RESOLVE IT AGAINST THE SCOPE.
+      // `params` is a plain object type, so a getter could hand one id to the
+      // check and another to the insert — which on THIS field would mean the
+      // stored lineage naming a row the check never saw.
+      const parentId = params.parentId;
+      if (parentId !== undefined) {
+        if (!UUID_RE.test(parentId)) throw new GenerationLineageError();
+        const [parent] = await tx
+          .select({ id: generations.id })
+          .from(generations)
+          .where(
+            and(
+              // BOTH SCOPE COLUMNS. The composite FK below refuses a
+              // cross-tenant parent anyway; this is what turns that refusal
+              // into a NAMED one — a 23503 reaching a creator is the
+              // "Something went wrong" every typed refusal here exists to
+              // prevent.
+              both(generations),
+              eq(generations.id, parentId),
+              // ...AND STRICTLY EARLIER THAN THIS TRANSACTION (R6's "an
+              // earlier same-scope parent"). `generations.created_at` is
+              // `now()`, i.e. TRANSACTION START, so a transaction that began
+              // before a sibling committed can otherwise insert a row whose
+              // stamp PRECEDES the parent it names — lineage that reads
+              // backwards on every screen that renders it. Postgres cannot
+              // compare two rows in a CHECK, so this is the half application
+              // code owns, and `lineage-feedback.test.ts` drives its
+              // false branch with a future-stamped parent rather than
+              // trusting that a required parameter is a guard.
+              lt(generations.createdAt, sql`now()`)
+            )
+          )
+          .limit(1);
+        if (!parent) throw new GenerationLineageError();
+      }
       const [generation] = await tx
         .insert(generations)
         .values({
           attemptId,
+          // Written EXPLICITLY, from the local checked above — not spread, and
+          // not defaulted. M5 ("parent_id written as null on revision") is a
+          // one-word edit here, and `lineage-feedback.test.ts` asserts
+          // the stored value equals the requested one.
+          parentId: parentId ?? null,
           mode: params.mode,
           brainActivationId: params.brainActivationId,
           frameworkVersions: params.frameworkVersions,
@@ -3197,6 +3604,99 @@ export function writeCapabilities(
           and(both(generationAttempts), eq(generationAttempts.attemptId, attemptId))
         )
         .limit(1);
+      return row;
+    },
+
+    // ------------------------------------------------------ slice 7, R10
+    recordGenerationFeedback: async (params, tx) => {
+      // A VIEWER MAY NOT. Feedback is an assertion about a creator's output
+      // that slice 9 may build a promotion proposal from — the same class of
+      // act as confirming a brain document, which `assertMayDecide` already
+      // refuses a viewer. `assertMayWrite` rather than `assertMayDecide`
+      // because nothing here decides what the product BELIEVES yet; it lands
+      // permanently in an append-only record, which is what that gate's own
+      // docblock names.
+      assertMayWrite(scope.role, "record feedback on this creator's output");
+      // READ ONCE INTO LOCALS (C-40): a getter could pass validation with one
+      // value and store another — on `reaction` that would defeat the closed
+      // set entirely.
+      const generationId = params.generationId;
+      const reaction = params.reaction;
+      const rawNote = params.note;
+      // THE CLOSED SET, CHECKED AT RUNTIME AND NOT ONLY IN THE TYPE
+      // (CLAUDE.md 2026-08-21: proving a field cannot be TYPED is not proving
+      // it cannot be CAST). Without this a cast reaches the pgEnum and the
+      // creator sees a driver error.
+      if (
+        typeof reaction !== "string" ||
+        !(GENERATION_FEEDBACK_REACTIONS as readonly string[]).includes(reaction)
+      ) {
+        throw new FeedbackReactionError(reaction);
+      }
+      // THE TARGET IS RESOLVED THROUGH THE SCOPE BEFORE THE INSERT, and this
+      // is a defect the author's own adversarial re-read found rather than a
+      // precaution. Two halves were live: a malformed id raised
+      // `FeedbackReactionError`, whose copy tells the reader the page named a
+      // reaction that does not exist (a refusal about the wrong event), and a
+      // well-formed id belonging to another profile reached the composite FK
+      // and came back as a raw 23503 — which `billing-errors.ts` has no case
+      // for and which therefore renders as "Something went wrong".
+      //
+      // The FK is still what makes a cross-tenant row UNREPRESENTABLE; this
+      // read is what makes the refusal SAYABLE. Foreign, nonexistent and
+      // malformed all raise the one byte-identical `FeedbackTargetError`.
+      if (typeof generationId !== "string" || !UUID_RE.test(generationId)) {
+        throw new FeedbackTargetError();
+      }
+      const [target] = await tx
+        .select({ id: generations.id })
+        .from(generations)
+        .where(and(both(generations), eq(generations.id, generationId)))
+        .limit(1);
+      if (!target) throw new FeedbackTargetError();
+      let note: string | null = null;
+      if (rawNote !== undefined) {
+        if (typeof rawNote !== "string") {
+          throw new FeedbackNoteError("the note was not text");
+        }
+        // NFC + CRLF->LF, the one normalisation this package stores text
+        // under (`normaliseContent`, A-8), so two notes a person cannot tell
+        // apart are one note here too.
+        const normalised = normaliseContent(rawNote);
+        if (normalised.trim().length === 0) {
+          // A BLANK NOTE IS NOT A NOTE. Refusing rather than silently storing
+          // NULL, because a creator who typed only whitespace and pressed
+          // send has not been told their words were dropped — and the CHECK
+          // would refuse the row anyway.
+          throw new FeedbackNoteError("the note was blank");
+        }
+        const points = [...normalised].length;
+        if (points > FEEDBACK_NOTE_MAX) {
+          throw new FeedbackNoteError(
+            `the note is ${points} characters and the limit is ${FEEDBACK_NOTE_MAX}`
+          );
+        }
+        note = normalised;
+      }
+      const [row] = await tx
+        .insert(generationFeedback)
+        .values({
+          generationId,
+          reaction,
+          note,
+          // LAST, from the scope — never from the caller's object.
+          ...ids,
+        })
+        // INSERT-OR-REFUSE, not insert-or-swallow. The unique index on
+        // (generation_id, reaction) is what decides; a `.returning()` that
+        // yields nothing means the pair already exists, and
+        // `FeedbackDuplicateError` says so rather than reporting success on a
+        // note that was not kept. The alternative — reading first and then
+        // inserting — is the read-then-write with no constraint behind it
+        // that `credit_ledger`'s partial uniques exist to refuse.
+        .onConflictDoNothing()
+        .returning();
+      if (!row) throw new FeedbackDuplicateError();
       return row;
     },
   };

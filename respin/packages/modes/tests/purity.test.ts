@@ -238,7 +238,15 @@ describe("R5: the hard gates take no model input, structurally", () => {
   // A LIST, and adding a gate costs a line here (CLAUDE.md, 2026-08-29): a
   // population written as one path narrows silently the day a second appears.
   // `claims.ts` is the fifth rule's gate and joined this list with it.
-  const GATE_FILES = ["hard-rules.ts", "traceability.ts", "claims.ts"];
+  // `mode-checks.ts` joined it in slice 7, and paying that line is the whole
+  // point of writing the population as a list: the per-mode checks decide
+  // whether a draft reaches a creator exactly as the other three do.
+  const GATE_FILES = [
+    "hard-rules.ts",
+    "traceability.ts",
+    "claims.ts",
+    "mode-checks.ts",
+  ];
 
   it("neither gate file is async, and neither names the scorer", () => {
     // A hard integrity rule decided by a model is a rule that can be talked out

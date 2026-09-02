@@ -78,6 +78,12 @@ import {
   ScriptOutputError,
   UnknownModeError,
   UnpricedOperationError,
+  // SLICE 7 (stage D) — the two classes `@respin/credits` added and stage C
+  // left without copy, deliberately, because this file is stage D's. Both are
+  // raised BEFORE the vendor is contacted, so both copies say plainly that
+  // nothing was spent, and neither sells anything.
+  RevisionParentError,
+  UnknownEntitlementTierError,
   // Not a class — the one SENTENCE a windowed uncharged-billable cap owes its
   // reader, imported rather than retyped so this map and the package message
   // cannot disagree about whether that refusal clears itself.
@@ -121,6 +127,23 @@ import {
   InterviewAnswerError,
   InterviewDraftSubmittedError,
   OnboardingInputLimitError,
+  // SLICE 7 (stage D) — stage A's TEN typed refusals. They landed on
+  // `@respin/db`'s root export, in `eslint.config.mjs`'s allowlist and here in
+  // ONE change, which is what that package's index header asked for: the
+  // completeness scan in `tests/billing-ui.test.tsx` enumerates the whole root
+  // export, so exporting them without copy would have left the suite red on a
+  // contract nobody had broken, and shipping them without the export would
+  // have left ten refusals rendering "Something went wrong".
+  GenerationLineageError,
+  FeedbackReactionError,
+  FeedbackNoteError,
+  FeedbackDuplicateError,
+  FeedbackTargetError,
+  FrameworkAccessError,
+  FrameworkStaleError,
+  FrameworkContentError,
+  FrameworkLimitError,
+  PrivateFrameworkTierError,
 } from "@respin/db";
 
 /**
@@ -308,6 +331,38 @@ export const BILLING_ERROR_CODES = [
   "no_creator_rules",
   "unknown_mode",
   "unpriced_operation",
+  // SLICE 7 (stage D) — the revision, the feedback event, the private
+  // framework library, and the one refusal that is about our configuration
+  // rather than about anybody's plan.
+  //
+  // THE REVISION'S PARENT IS FIVE CODES FOR ONE CLASS, and that is the
+  // `RunSlotBusyError` precedent rather than a new idea: `RevisionParentError`
+  // carries a CLOSED `reason` (`not_this_creators` | `not_revisable` |
+  // `different_mode` | `parent_unreadable`), and those are four different true
+  // sentences about four different situations. A class-only mapping could pick
+  // only one of them, and whichever it picked would be false for the other
+  // three — telling a creator whose parent was an honest refusal that the
+  // output "is not this creator's" sends them to look for a permissions
+  // problem that does not exist. `revision_parent` is the neutral fallback for
+  // a reason this build does not know, and it is neutral BECAUSE it names no
+  // cause: unlike the run-slot pair there is no "the one that blames us" here,
+  // so the honest fallback is the one that claims nothing.
+  "revision_parent",
+  "revision_parent_not_yours",
+  "revision_parent_not_revisable",
+  "revision_parent_different_mode",
+  "revision_parent_unreadable",
+  "generation_lineage",
+  "feedback_reaction",
+  "feedback_target",
+  "feedback_note",
+  "feedback_duplicate",
+  "framework_access",
+  "framework_stale",
+  "framework_content",
+  "framework_limit",
+  "private_framework_tier",
+  "unknown_entitlement_tier",
   "unknown",
 ] as const;
 
@@ -451,6 +506,27 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: ScriptOutputError, code: "generation_unusable" },
   { cls: KillTestError, code: "kill_test_failed" },
   { cls: NoCreatorRulesError, code: "no_creator_rules" },
+  // SLICE 7 (stage D). None of these subclasses another and none is a subclass
+  // of anything already in this table, so the walk order decides nothing here.
+  //
+  // `RevisionParentError`'s ENTRY IS THE FALLBACK, NOT THE USUAL PATH:
+  // `billingErrorCode` branches on its closed `reason` BEFORE walking this
+  // table, exactly as it does for `RunSlotBusyError`. The entry exists because
+  // the completeness test enumerates the facades' error CLASSES, and a class
+  // reachable only through an instance branch would read to that test as a
+  // class with no copy.
+  { cls: RevisionParentError, code: "revision_parent" },
+  { cls: GenerationLineageError, code: "generation_lineage" },
+  { cls: FeedbackReactionError, code: "feedback_reaction" },
+  { cls: FeedbackTargetError, code: "feedback_target" },
+  { cls: FeedbackNoteError, code: "feedback_note" },
+  { cls: FeedbackDuplicateError, code: "feedback_duplicate" },
+  { cls: FrameworkAccessError, code: "framework_access" },
+  { cls: FrameworkStaleError, code: "framework_stale" },
+  { cls: FrameworkContentError, code: "framework_content" },
+  { cls: FrameworkLimitError, code: "framework_limit" },
+  { cls: PrivateFrameworkTierError, code: "private_framework_tier" },
+  { cls: UnknownEntitlementTierError, code: "unknown_entitlement_tier" },
 ];
 
 /** The class names this module claims to handle (read by the completeness test). */
@@ -484,6 +560,14 @@ export const INSTANCE_BRANCH_CODES: Readonly<
 > = {
   LlmError: ["llm_attempt_recorded", "llm_truncated"],
   RunSlotBusyError: ["run_slot_busy", "server_at_capacity"],
+  // Slice 7. Four reasons, four sentences — see the codes' own block above for
+  // why one code for this class would be false three times out of four.
+  RevisionParentError: [
+    "revision_parent_not_yours",
+    "revision_parent_not_revisable",
+    "revision_parent_different_mode",
+    "revision_parent_unreadable",
+  ],
 };
 
 /**
@@ -1068,9 +1152,21 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
       "This run ended earlier without producing anything usable, so it was not run again — repeating it would fail the same way and cost us the same money. Nothing extra was spent. Start a new draft.",
   },
   generation_payload_mismatch: {
-    title: "That run id is already in use for a different draft",
+    // TWO CAUSES, AND THE SCREEN MAY NOT PICK ONE (slice 7 cross-boundary
+    // pass, 2026-09-01). This copy asserted that the request "reused an id
+    // that belongs to another draft". All the server knows is that the hash
+    // stored against this attempt id is not the hash of the request that
+    // arrived, and `hashRequest` gained a SIXTH field in slice 7 — so an
+    // attempt started by an earlier build has a stored hash taken over five
+    // fields and cannot match, however faithfully the creator resubmitted.
+    // `GenerationPayloadMismatchError`'s own message already named both; this
+    // one named the accusing half. Telling a creator they submitted a
+    // different request when they did not is the defect class this slice has
+    // fixed twice already, so the screen states the OBSERVATION and the
+    // remedy, which is the same either way.
+    title: "That run id does not match this request",
     detail:
-      "The request reused an id that belongs to another draft, so it was refused rather than answered with that one's output — you would have been shown a draft for something you did not ask for. Nothing was spent and no model was called. Start the draft again from the studio page.",
+      "This id was already used for a request that does not match this one, so it was refused rather than answered with that one's output — you would have been shown a draft for something you did not ask for. A draft started before this product was last updated reads the same way, so this does not necessarily mean you asked for anything different. Nothing was spent and no model was called. Start the draft again from the studio page.",
   },
   generation_recovery_required: {
     // ONE OF THE TWO ON THIS SCREEN WHERE THE VENDOR WAS ACTUALLY REACHED. The
@@ -1112,11 +1208,175 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     detail:
       "The scoring step was asked to judge a draft against this creator's own criteria and there are none written yet. This is not a failure of the draft: the product's own hard rules still ran. Nothing extra was spent. Add kill-test criteria on the brain page if you want drafts judged against them too.",
   },
+  // ------------------------------------------------------- SLICE 7 (stage D)
+  //
+  // THE RULE EVERY SENTENCE BELOW OBEYS, and it is R15: none of them names an
+  // upgrade, another plan, or "subscribing" as the remedy — the
+  // `profile_cap` / `ModeNotInPlanError` precedent. Two of them are about a
+  // plan boundary (`private_framework_tier`) or our own configuration
+  // (`unknown_entitlement_tier`), which is exactly where the temptation is.
+  //
+  // WHERE THAT IS ENFORCED, corrected after a billing gate measured the claim
+  // that used to be here (2026-09-01). This comment named
+  // `tests/billing-ui.test.tsx` as scanning "this whole map for the shape", and
+  // that file contained no such scan — zero matches for `upgrade` in it. The
+  // property held anyway, on the two SCREENS: `tests/studio-ui.test.tsx`
+  // derives the pattern over `STUDIO_ERROR_CODES` with a planted-violation
+  // case, and `tests/framework-ui.test.tsx` does the same over
+  // `FRAMEWORK_ERROR_CODES`. A comment naming the wrong witness is how the real
+  // witness gets deleted later, so the missing map-wide scan has now been
+  // written too: "no billing copy sells a plan" in `tests/billing-ui.test.tsx`
+  // runs the same pattern over EVERY `BILLING_ERROR_CODES` entry, with the two
+  // codes that legitimately say "subscribe" — `no_stripe_customer` and
+  // `no_live_subscription`, which are about opening a billing account at all
+  // rather than about a bigger plan — pinned as a named, justified exception
+  // instead of the pattern being narrowed to hide them.
+  //
+  // AND THE SECOND RULE: every one of them says what happened to the MONEY.
+  // All but one are raised before a vendor is contacted, so they say nothing
+  // was spent — plainly, not by omission. `generation_lineage` is the
+  // exception and its own comment says why it is worded differently.
+  revision_parent: {
+    title: "That revision could not be linked to the output it revises",
+    detail:
+      "Nothing was generated and nothing was spent. A revision is built from the output it revises, and this one could not be tied to that output. Reopen the draft you meant to revise and start the revision from there, or start a fresh draft in the same mode.",
+  },
+  revision_parent_not_yours: {
+    title: "That revision could not be linked to the output it revises",
+    detail:
+      "Either that output is not this creator's, or it no longer exists. Nothing was generated and nothing was spent. Reopen the output you want to revise from this creator's own drafts and start the revision from there.",
+  },
+  revision_parent_not_revisable: {
+    title: "There is no draft there to revise",
+    detail:
+      "That output was an honest refusal — the checks stopped it, so no draft was ever stored and there is nothing for a revision to work from. Nothing was generated and nothing was spent. The refusal names a sharper angle; trying it is a new draft rather than a revision, and it is priced as one.",
+  },
+  revision_parent_different_mode: {
+    title: "A revision stays in the mode it was written in",
+    detail:
+      "This one asked for a different mode from the output it revises, and the two produce different documents — so it was refused rather than quietly rewritten as something else. Nothing was generated and nothing was spent. Revise it in the mode it was written in, or start a new draft in the mode you want.",
+  },
+  revision_parent_unreadable: {
+    title: "That output cannot be read back",
+    detail:
+      "The stored draft is not in a shape this version of the product can build on, so nothing was made from it. Nothing was generated and nothing was spent, and the output itself is untouched — it is still in your export. This one is ours to look at; a new draft in the same mode is the way forward meanwhile.",
+  },
+  generation_lineage: {
+    // The AUTHORITY's refusal, raised inside the settlement transaction —
+    // `RevisionParentError` above is the same question asked one step earlier,
+    // where the answer costs nothing. Reaching THIS one means the parent
+    // stopped resolving between the two checks, i.e. after the model was
+    // called, so the copy must not repeat the earlier one's "nothing was
+    // generated" wording about work that has by then already happened.
+    title: "That revision could not be stored against the output it revises",
+    detail:
+      "The link between this revision and the draft it came from could not be made, so the revision was not stored. Nothing was taken from your credit balance. Reopen the output you meant to revise and try again; if it keeps happening, tell us rather than retrying, because this one is on our side.",
+  },
+  feedback_reaction: {
+    title: "That reaction is not one this product has",
+    detail:
+      "Your feedback was not recorded. The reactions are a fixed list this page renders, so this usually means the page has been open since before an update. Reload and choose one of the reactions shown. Nothing about your draft changed.",
+  },
+  feedback_target: {
+    title: "That output is not available on this creator profile",
+    detail:
+      "The feedback was not recorded, because the draft it is about could not be found for this creator. Reopen the output from this creator's own drafts and leave the feedback from there. Nothing was changed and nothing was spent.",
+  },
+  feedback_note: {
+    title: "That note could not be saved with your reaction",
+    detail:
+      "The note beside a reaction is optional, and this one was either empty-but-sent or longer than the limit shown under the box. Nothing was recorded — including the reaction — so choose the reaction again with the note shortened, or with no note at all.",
+  },
+  feedback_duplicate: {
+    title: "You have already recorded that reaction on this output",
+    detail:
+      "Nothing was changed, and any note you just typed was NOT kept. Feedback is a record of what you said the first time, so it is never overwritten. If you have something to add, choose a different reaction — you can record more than one about the same draft.",
+  },
+  framework_access: {
+    title: "That framework is not available on this creator profile",
+    detail:
+      "Nothing was changed. Private frameworks belong to one creator profile, and the shared library is not edited from here — it is curated, and every profile sees the same approved set. Open the framework from this creator's own list and try again.",
+  },
+  framework_stale: {
+    title: "That framework has a newer version than this page was showing",
+    detail:
+      "Nothing was written, and nothing was lost: every version of a framework is kept, so the newer one is intact and so is the one you were editing. Reload to see the current version, then make your change again.",
+  },
+  framework_content: {
+    // THE SCREEN MAY NOT BE MORE CERTAIN THAN THE CHECK (slice 7
+    // cross-boundary pass, 2026-09-01). This detail asserted as FACT that the
+    // framework "carried" a phrase "crediting the move to a named person".
+    // The rule behind that clause (`attributed_person` in
+    // `packages/db/src/frameworks.ts`) is lexical: it can see that a phrase has
+    // the SHAPE of an attribution and cannot know a capitalised word is a
+    // person — which is why the same gate round hedged the server's own detail
+    // to "reads like it credits the move to a named person" after the rule
+    // over-refused five of seven ordinary sentences ("a concept from
+    // Japanese", "from Reels"). A refusal naming a cause that did not happen is
+    // the class R-76 corrected; a screen restating that cause as certain
+    // reopens it one layer up.
+    //
+    // THE MATCHED SPAN IS NOT HERE, AND THAT IS A RECORDED RESIDUAL RATHER
+    // THAN AN OVERSIGHT. `FrameworkContentError` carries `field` and `detail`,
+    // and this table maps a CODE to canned copy — nothing on the action
+    // contract carries per-instance context to a screen. Naming the field
+    // would need that contract widened, which is a change to every action that
+    // reports a refusal, not to this entry. Recorded in `decisions.md` R-77.
+    // Until then the copy says which classes the check looks for and admits it
+    // reads wording, so a creator can find the phrase themselves rather than
+    // being told a sentence they did not write.
+    title: "A framework describes a mechanism, not a person or a number",
+    detail:
+      "This one was not stored because something in it reads like a thing a mechanism never carries — a handle, a link, a follower count or another metric, or a phrase crediting the move to a named person. Those checks read wording rather than meaning, so one of them can be wrong about a sentence you meant plainly. Describe what the move does and why it works, without naming who did it or how it did. Nothing was stored and nothing was spent.",
+  },
+  framework_limit: {
+    title: "That framework is past one of the limits",
+    detail:
+      "Nothing was stored. Either a field is longer than the limit shown beside it, a list holds more entries than allowed, or this creator profile already holds as many live frameworks as it can. Shorten it, or retire one you no longer use, and try again — a retired framework keeps every version of its text.",
+  },
+  private_framework_tier: {
+    // R15, AND THIS IS THE ENTRY THE RULE WAS WRITTEN FOR. A tier refusal is
+    // where "upgrade for this" writes itself, and it is a sales prompt on a
+    // screen that has just refused somebody. What the copy does instead is
+    // state the boundary and name the thing that IS available on every plan —
+    // a fact the reader can act on rather than a price.
+    title: "This plan does not include private frameworks",
+    detail:
+      "Nothing was stored and nothing was spent. The shared framework library is on every plan, it is what this product builds drafts from, and it is curated rather than editable — so your drafts still draw on it exactly as they did. Private frameworks are the ability to add your own alongside it.",
+  },
+  unknown_entitlement_tier: {
+    title: "We could not tell what your plan includes",
+    detail:
+      "This build has no answer for the plan on this workspace, so nothing was changed rather than guessed at. That is about our configuration, not about your plan, and nothing you can change from here will fix it. Nothing was spent. Please tell us; the shared framework library is unaffected meanwhile.",
+  },
   unknown: {
     title: "Something went wrong",
     detail:
       "The action did not complete and nothing was charged. Try again; if it keeps happening, contact support. The refusal code, error type and any server-derived context are recorded without exception details.",
   },
+};
+
+/**
+ * `RevisionParentError.reason` -> the sentence that is true for it.
+ *
+ * The keys are `packages/credits/src/errors.ts`'s `REVISION_PARENT_REFUSALS`
+ * values. They are written out rather than imported because the union type is
+ * not on the facade and a screen must not reach into a package's internals for
+ * one; what keeps them honest is `tests/billing-ui.test.tsx`'s
+ * "EVERY `RevisionParentError` reason has its own code, and the `??` fallback
+ * is live", which derives its population from `REVISION_PARENT_REFUSALS`
+ * itself, drives every reason through `billingErrorCode`, and fails on one this
+ * map does not answer for — including by falling through to `revision_parent`.
+ *
+ * THAT TEST WAS WRITTEN IN THE ACTION THAT WROTE THIS SENTENCE (billing gate,
+ * 2026-09-01). The comment claimed it before it existed; the file had no
+ * `revision_parent` case at all.
+ */
+const REVISION_PARENT_CODES: Readonly<Record<string, BillingErrorCode>> = {
+  not_this_creators: "revision_parent_not_yours",
+  not_revisable: "revision_parent_not_revisable",
+  different_mode: "revision_parent_different_mode",
+  parent_unreadable: "revision_parent_unreadable",
 };
 
 export function billingErrorCode(err: unknown): BillingErrorCode {
@@ -1150,6 +1410,24 @@ export function billingErrorCode(err: unknown): BillingErrorCode {
     return err.reason === "workspace_limit"
       ? "run_slot_busy"
       : "server_at_capacity";
+  }
+  // SAME REASON, THIRD INSTANCE (slice 7). `RevisionParentError` carries a
+  // CLOSED `reason` code — the `BrainDocReason` discipline, so a screen can
+  // branch and an operator can filter — and its four values are four different
+  // true sentences. A class-only mapping would tell a creator whose parent was
+  // an honest refusal that the output "is not this creator's", which sends them
+  // to look for a permissions problem that does not exist.
+  //
+  // `??` IS THE FALLBACK AND IT IS NOT DEAD: `reason` arrives on an object this
+  // build did not necessarily construct (a rolling deploy runs two builds at
+  // once), and `tests/billing-ui.test.tsx`'s "EVERY `RevisionParentError`
+  // reason has its own code, and the `??` fallback is live" drives this branch
+  // with a reason cast in through `as never` — CLAUDE.md 2026-08-21, proving a
+  // field cannot be TYPED is not proving it cannot be CAST. (That case was
+  // written in the same action as this sentence, 2026-09-01: the comment named
+  // it before it existed.)
+  if (err instanceof RevisionParentError) {
+    return REVISION_PARENT_CODES[err.reason] ?? "revision_parent";
   }
   for (const h of HANDLERS) {
     if (err instanceof h.cls) return h.code;

@@ -1,10 +1,10 @@
-// PURE presentation for `/studio` (slice 6, stage D). The page component does
-// the gate, the scoping and the reads; this file only renders what it is handed
-// — so every state below (no profile, no activated brain, viewer, paused, a
-// draft, an honest refusal, a refusal code) is reachable from a test with a
-// fixture instead of a database. That is the same contract `usage-view.tsx` and
-// `onboarding-view.tsx` hold, and it is what lets the honesty scan run over
-// this screen's REAL copy rather than a sample of it.
+// PURE presentation for `/studio` (slice 6, stage D; widened by slice 7). The
+// page component does the gate, the scoping and the reads; this file only
+// renders what it is handed — so every state below (no profile, no activated
+// brain, viewer, paused, a draft, an honest refusal, a refusal code) is
+// reachable from a test with a fixture instead of a database. That is the same
+// contract `usage-view.tsx` and `onboarding-view.tsx` hold, and it is what lets
+// the honesty scan run over this screen's REAL copy rather than a sample of it.
 //
 // WHAT THIS SCREEN MAY NOT SAY (non-negotiable 6, and R20/R21 in particular).
 // It hands a creator something they might publish, and the product has logged
@@ -14,7 +14,14 @@
 // state of this file against the shared canon in
 // `tests/support/forbidden-claims.ts` plus that file's PERFORMANCE_CLAIMS.
 //
-// AND WHAT IT MAY: `/studio` LEFT the `NOT_BUILT_YET` ban list in this slice
+// SLICE 7 ADDS THE HARDEST CASE OF THAT RULE: this screen now RECORDS FEEDBACK,
+// and a reaction button is exactly where a reader forms the belief that the
+// product is adjusting to them. `learn`, `improv` and `train` are banned on
+// every creator-facing surface and this is the screen where the ban earns its
+// keep — `FEEDBACK_TODAY` in `./run-copy.ts` is the sentence that says what
+// feedback does and does not do without reaching for any of the three.
+//
+// AND WHAT IT MAY: `/studio` LEFT the `NOT_BUILT_YET` ban list in slice 6
 // (R21), because it genuinely generates now — see `STUDIO_POSITIVE_ASSERTIONS`
 // in that same file for the markers that replaced the three bans, and why a
 // word leaving a ban has to be paid for rather than simply removed.
@@ -31,6 +38,8 @@ export type StudioViewProps = {
   onboardingHref: string;
   brainHref: string;
   usageHref: string;
+  /** Where the creator curates their own frameworks (R5c). */
+  frameworksHref: string;
 };
 
 export function StudioView({
@@ -40,6 +49,7 @@ export function StudioView({
   onboardingHref,
   brainHref,
   usageHref,
+  frameworksHref,
 }: StudioViewProps) {
   return (
     <section>
@@ -65,12 +75,14 @@ export function StudioView({
         </div>
       ) : (
         <div className="panel" data-testid="studio-generate">
-          <h2 style={{ marginTop: 0 }}>Hook set for {profileName}</h2>
+          <h2 style={{ marginTop: 0 }}>Make something for {profileName}</h2>
           <p className="muted">
-            A hook set is written from the brain you confirmed and activated for
+            Every draft is written from the brain you confirmed and activated for
             this creator on the <a href={brainHref}>brain page</a>, plus what you
-            type in below. Every charge appears in your credit history on the{" "}
-            <a href={usageHref}>usage page</a>.
+            type in below, plus the frameworks this creator can draw on — the
+            shared library and any of your own, on the{" "}
+            <a href={frameworksHref}>frameworks page</a>. Every charge appears in
+            your credit history on the <a href={usageHref}>usage page</a>.
           </p>
           {run ? <StudioPanel {...run} /> : null}
         </div>

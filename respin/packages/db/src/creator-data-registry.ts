@@ -17,6 +17,30 @@
 // FK so that it OUTLIVES the workspace it records. An FK-based predicate would
 // have yielded five, and the one table it excluded is the one whose retention
 // most needed a decision.
+//
+// WHAT THIS REGISTRY DOES NOT RECORD, NAMED BECAUSE THE ROUND-1 FINDING TURNED
+// ON IT (tenancy gate NOTE, 2026-09-02): OWNERSHIP IMMUTABILITY. Two tables
+// have it — `generations.parent_id` (migration 0022) and `frameworks`'
+// ownership triple (0023) — and no other. `UPDATE onboarding_inputs SET
+// profile_id = …, workspace_id = …` and `UPDATE creator_profiles SET
+// workspace_id = …` are both ACCEPTED by the database today; what keeps them
+// still is that no application path issues either, which is a scan over our
+// own source rather than a property of the database — the exact sentence 0023
+// exists because of.
+//
+// IT IS A STATED RESIDUAL RATHER THAN A MISSING MIGRATION, and the reason is a
+// counterexample rather than a preference: `pseudonymiseWorkspaceSpend`
+// (`spend-rollup.ts`) RE-PARENTS `workspace_spend_monthly.workspace_id` on
+// purpose — it is R-54's deletion obligation — so a trigger swept across every
+// table here would make the deletion executor an outage, which is the
+// 2026-07-30 lesson and the reason 0022 and 0023 are both narrow. The two
+// tables that DO carry one are measured from `pg_trigger` in
+// `packages/db/tests/frameworks.test.ts`, so this paragraph cannot quietly
+// stop being true. **Owner: whoever writes the R-54 deletion/pseudonymisation
+// executor, because that is the code which decides, per table, whether an
+// identifier may ever be rewritten. Revisit trigger: the first table here that
+// needs its owner columns frozen, or the executor landing — whichever comes
+// first (R-79).**
 
 export type ExportDecision = {
   /** Does a REQ-A04 export include this table's rows? */
@@ -136,6 +160,20 @@ export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = [
     },
   },
   {
+    table: "first_billable_attempts",
+    holdsCreatorContent: false,
+    export: {
+      included: false,
+      reason:
+        "one row per (profile, purpose) naming which ATTEMPT ID took the included build (R-80). It is a pricing marker, not creator content: no text, no vendor payload, and every field is either a scope id or the same attempt id `model_usage` already carries. What a creator can see of the consequence is the credit ledger — the charge, or the absence of one — which the usage page already renders, and the ledger is the authority on money anyway",
+    },
+    deletion: {
+      behaviour: "cascade",
+      reason:
+        "composite FK to creator_profiles ON DELETE CASCADE, the same shape model_usage uses — and it must be the same shape, because a claim outliving the usage rows it ranks would price a rebuilt profile off a build nobody can see any more",
+    },
+  },
+  {
     table: "workspace_spend_monthly",
     holdsCreatorContent: false,
     export: {
@@ -236,6 +274,25 @@ export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = [
     },
   },
   {
+    table: "generation_feedback",
+    // TRUE, and the discriminator this field's own docblock states is what
+    // decides it rather than authorship: these rows are THEIRS TO TAKE. The
+    // reaction is the creator's judgement of their own output and the note is
+    // literally their words — the only column in the slice-7 schema that holds
+    // free creator prose at all.
+    holdsCreatorContent: true,
+    export: {
+      included: true,
+      reason:
+        "what the creator said about each of their own outputs — a closed reaction code plus, where they wrote one, their own words. It is the only record of their judgement of the work this product made for them, and slice 9 may build promotion proposals from exactly these rows, so a creator asking what we hold about their opinions is asking for this table. Exported as RAW EVENTS, deliberately: nothing here is aggregated, scored or summarised on the way out (R11), so what the export returns is what was stored",
+    },
+    deletion: {
+      behaviour: "cascade",
+      reason:
+        "TWO composite FKs, both ON DELETE CASCADE — one to creator_profiles like every other profile-grained child, and one to generations. The second is not redundant: deleting a single generation must take its feedback with it, because a reaction with no output to be about is an orphaned opinion nobody could interpret, and the row would still name the profile that gave it",
+    },
+  },
+  {
     table: "frameworks",
     holdsCreatorContent: true,
     export: {
@@ -246,7 +303,7 @@ export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = [
     deletion: {
       behaviour: "cascade",
       reason:
-        "private rows cascade from creator_profiles. Shared rows have no owner to cascade from and are library content, so they are untouched — and the `shared implies both NULL` CHECK is what stops a private row BECOMING library content by losing its owner",
+        "private rows cascade from creator_profiles. Shared rows have no owner to cascade from and are library content, so they are untouched. What stops a private row BECOMING library content is the `frameworks_ownership_immutable` TRIGGER (migration 0023), not the two CHECKs: each CHECK refuses one HALF of the move (nulling the owner alone, or flipping visibility alone) and the combined `SET visibility='shared', owner_profile_id=NULL, workspace_id=NULL` was measured ACCEPTED before the trigger landed. The trigger covers the whole ownership triple, so re-parenting a private row to another profile is refused too",
     },
   },
 ];

@@ -358,6 +358,101 @@ export const modelUsage = pgTable(
   ]
 );
 
+/**
+ * WHICH ATTEMPT IS A PROFILE'S FIRST BILLABLE ONE, per purpose — decided by the
+ * DATABASE, at COMMIT TIME (R-80).
+ *
+ * WHAT THIS REPLACES AND WHY IT IS A TABLE. The same fact used to be DERIVED
+ * from `model_usage` by ranking attempts on `(created_at, attempt_id)` and
+ * calling the one with no predecessors free. Those VALUES are a total order.
+ * The READER'S SNAPSHOT is not: `created_at` is `clock_timestamp()` assigned at
+ * INSERT and a row becomes visible at COMMIT, so under READ COMMITTED an
+ * attempt that inserted FIRST and committed SECOND is invisible to the attempt
+ * that committed before it, and then finds that attempt LATER by the ordering
+ * key. Both read "no predecessors"; both took the included build; one debit was
+ * never written. Reproduced on real Postgres, deterministically, in
+ * `packages/credits/tests/inference-race.docker.test.ts` ("INSERTED FIRST,
+ * COMMITTED SECOND").
+ *
+ * A unique index cannot be fooled that way: it is enforced against COMMITTED
+ * state, so the second inserter BLOCKS until the first commits and then
+ * conflicts. Exactly one row can exist per (profile, purpose), whatever the
+ * interleaving — which is the property the ordering only ever claimed.
+ *
+ * WRITTEN IN THE SAME TRANSACTION AS THE `model_usage` ROW IT NAMES, by
+ * `recordModelUsage` (with-workspace.ts) — never by the debit. Two reasons, and
+ * both are load-bearing:
+ *   - R11 (the A-7 settlement tail) commits the spend record BEFORE the debit
+ *     is attempted, so a claim written at the debit would not exist for the
+ *     attempts that never reach one.
+ *   - A billable failure that CONSUMES the entitlement (a policy `refused`,
+ *     `LlmError.consumesIncludedBuild`) never reaches the debit at all, and it
+ *     is exactly the case the old ranking counted. Claiming at the debit would
+ *     silently hand the free build back to the next attempt.
+ *
+ * PURPOSE-NEUTRAL, DELIBERATELY. It records "the first attempt of this purpose
+ * we were billed for", which is a true fact for every purpose; whether that
+ * attempt is PRICED differently is a question `priceOf` (@respin/credits)
+ * answers, and only the onboarding brain answers it "yes" today. The
+ * alternative — writing rows only for purposes that have an included build —
+ * needs a list of those purposes inside @respin/db, which does not own them.
+ *
+ * NO `updated_at`, and no writer that updates: the row is claimed once and is
+ * never moved. Its lifetime is the profile's (composite FK, cascade), the same
+ * as the `model_usage` rows it ranks.
+ */
+export const firstBillableAttempts = pgTable(
+  "first_billable_attempts",
+  {
+    id: id(),
+    profileId: uuid("profile_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    purpose: text("purpose").notNull(),
+    // A BARE `text`, WITH NO FOREIGN KEY TO `model_usage` — a stated residual,
+    // not an oversight (tenancy gate NOTE, 2026-09-02).
+    //
+    // AT THE DATABASE LEVEL this column could therefore name an attempt
+    // belonging to another profile, or no usage row at all. THE FK IS NOT
+    // AVAILABLE: it would reference `model_usage(profile_id, attempt_id)`,
+    // which Postgres requires to be UNIQUE, and that table has no such unique
+    // ON PURPOSE — "a bounded retry writes two rows" for one logical attempt
+    // (`modelUsage.attemptId`'s own comment above). The constraint that would
+    // prove this column would forbid the shape the table was built to allow.
+    //
+    // SO THE PROPERTY RESTS ON ONE WRITER, and it is named here so the next
+    // reader does not have to rediscover it: `recordModelUsage`
+    // (`with-workspace.ts`) builds EVERY column of this row from the RETURNED
+    // `model_usage` row, in that row's own transaction — never from caller
+    // input — so a claim always names a usage row of the same profile. Both
+    // readers narrow by profile as well: the `firstBillableAttempt` accessor
+    // matches `(workspace, profile, purpose)` through the shared `both()`
+    // predicate, and `reconcileSpend`'s subquery matches
+    // `(profile_id, purpose, attempt_id)`. A second writer would be the thing
+    // that breaks this, and it would break it silently — which is why "one
+    // writer" is not left as a sentence: `tests/table-writers.test.ts`
+    // enumerates this table's write surface and a second `.insert` anywhere,
+    // in any of its four shapes, fails there.
+    attemptId: text("attempt_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.profileId, t.workspaceId],
+      foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
+      name: "first_billable_attempts_profile_workspace_fk",
+    }).onDelete("cascade"),
+    // THE WHOLE CONTROL. `profile_id` is globally unique (it is
+    // `creator_profiles.id`), so keying on it alone is already per-workspace —
+    // and the composite FK above is what proves the pair on the row is real, so
+    // adding `workspace_id` to the key would widen it, not narrow it: a second
+    // row could then exist for the same profile under a forged workspace id.
+    uniqueIndex("first_billable_attempts_profile_purpose_uq").on(
+      t.profileId,
+      t.purpose
+    ),
+  ]
+);
+
 // The margin history that must OUTLIVE a REQ-A04 deletion.
 //
 // `model_usage` cascades from the profile, because `restrict` plus the
@@ -455,6 +550,9 @@ export type NewOnboardingInput = typeof onboardingInputs.$inferInsert;
 export type ModelUsageRow = typeof modelUsage.$inferSelect;
 export type NewModelUsage = typeof modelUsage.$inferInsert;
 export type WorkspaceSpendMonthlyRow = typeof workspaceSpendMonthly.$inferSelect;
+export type FirstBillableAttempt = typeof firstBillableAttempts.$inferSelect;
+export type NewFirstBillableAttempt =
+  typeof firstBillableAttempts.$inferInsert;
 export type InputClass = (typeof inputClass.enumValues)[number];
 export type CostState = (typeof costState.enumValues)[number];
 export type ResolvedTier = (typeof resolvedTier.enumValues)[number];

@@ -33,6 +33,7 @@ import {
   seedAuthUser,
   seedDb,
   withWorkspace,
+  workspaceSpendMonthly,
   type VerifiedWorkspaceId,
   type WorkspaceScope,
 } from "@respin/db";
@@ -313,6 +314,160 @@ describe.skipIf(!MAINTENANCE_URL)("runInference under REAL concurrency", () => {
     // because the debit transaction re-counted under the lock.
     expect(a.creditsCharged).toBe(REBUILD_COST);
     expect(held.callCount()).toBe(1);
+  }, 60_000);
+
+  /**
+   * A `db` whose `model_usage` TRANSACTION IS HELD OPEN between the usage
+   * INSERT and its rollup upsert — i.e. the row exists, with its
+   * `clock_timestamp()` already assigned, and has NOT committed.
+   *
+   * WHY THE HOLD IS AT THE ROLLUP AND NOT AFTER THE WHOLE TRANSACTION:
+   * `recordModelUsage` composes `upsertSpendRollup` into the SAME transaction,
+   * and that upsert contends on one row per (workspace, month, tier). Holding
+   * the whole transaction open would park the racer on THAT row lock instead,
+   * and the interleaving under test — inserted first, committed second — could
+   * never be reached. Holding between the two statements is the real
+   * production window: two statements on one connection, which is small and is
+   * not zero.
+   */
+  function dbHoldingTheUsageCommit(gate: Promise<void>): {
+    db: typeof harness.db;
+    reached: Promise<void>;
+  } {
+    let signalReached!: () => void;
+    const reached = new Promise<void>((r) => {
+      signalReached = r;
+    });
+    let armed = true;
+    const real = harness.db;
+
+    type Chain = Record<string | symbol, unknown>;
+    const gatedChain = (target: Chain): Chain =>
+      new Proxy(target, {
+        get(t, prop) {
+          const value = Reflect.get(t, prop, t);
+          if (typeof value !== "function") return value;
+          if (prop === "then") {
+            // THE AWAIT POINT: hold BEFORE the statement runs, so the usage row
+            // is inserted and the rollup upsert has not yet taken its lock.
+            return (onOk: unknown, onErr: unknown) =>
+              (async () => {
+                if (armed) {
+                  armed = false;
+                  signalReached();
+                  await gate;
+                }
+                return await (t as unknown as PromiseLike<unknown>);
+              })().then(
+                onOk as (v: unknown) => unknown,
+                onErr as (e: unknown) => unknown
+              );
+          }
+          return (...args: unknown[]) =>
+            gatedChain(
+              (value as (...a: unknown[]) => Chain).apply(t, args) as Chain
+            );
+        },
+      }) as Chain;
+
+    const held = Object.create(real) as typeof real;
+    (held as unknown as { transaction: unknown }).transaction = (
+      fn: (tx: unknown) => Promise<unknown>,
+      ...rest: unknown[]
+    ) =>
+      (
+        real.transaction as unknown as (
+          f: (tx: unknown) => Promise<unknown>,
+          ...r: unknown[]
+        ) => Promise<unknown>
+      )(async (tx: unknown) => {
+        const proxiedTx = Object.create(tx as object) as {
+          insert: (table: unknown) => unknown;
+        };
+        proxiedTx.insert = (table: unknown) => {
+          const builder = (tx as { insert: (t: unknown) => Chain }).insert(
+            table
+          );
+          // ONLY the rollup upsert is gated. The usage INSERT itself runs
+          // untouched, so its `clock_timestamp()` is the earlier one.
+          return table === workspaceSpendMonthly
+            ? gatedChain(builder)
+            : builder;
+        };
+        return fn(proxiedTx);
+      }, ...rest);
+
+    return { db: held, reached };
+  }
+
+  it("INSERTED FIRST, COMMITTED SECOND: still exactly one included build", async () => {
+    // THE INTERLEAVING THE `(created_at, attempt_id)` ORDER CANNOT SEE.
+    //
+    // The values are a total order. The READER'S SNAPSHOT is not: `created_at`
+    // is `clock_timestamp()` assigned at INSERT, but a row becomes visible at
+    // COMMIT, and under READ COMMITTED the two can disagree.
+    //
+    //   A inserts (earlier clock_timestamp) and does NOT commit
+    //   B inserts, commits, takes the lock, counts priors -> sees nothing
+    //     earlier -> B IS FREE
+    //   A commits, takes the lock, sees B's row -> B is LATER by the ordering
+    //     key -> A IS FREE TOO
+    //
+    // Two included builds on one profile, one debit never written. Revenue
+    // lost, never an overcharge — which is why it is not an emergency and is
+    // not a reason to leave it.
+    await grant(REBUILD_COST * 4);
+    await prewarmPool(6);
+
+    let releaseA!: () => void;
+    const aMayCommit = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    const holder = dbHoldingTheUsageCommit(aMayCommit);
+
+    const a = runInference(
+      holder.db,
+      owner,
+      profileId,
+      fastProvider(),
+      anySlots(),
+      {
+        attemptId: `att-a-${n}`,
+        system: "s",
+        prompt: "p",
+        promptBundleVersion: "test-bundle",
+      },
+      new Date()
+    );
+    // A's usage row now EXISTS and is UNCOMMITTED.
+    await holder.reached;
+
+    // B runs start to finish inside A's open window.
+    const b = await run(`att-b-${n}`, fastProvider());
+
+    releaseA();
+    const aResult = await a;
+
+    const charges = [aResult.creditsCharged, b.creditsCharged].sort(
+      (x, y) => x - y
+    );
+    expect(
+      charges,
+      "two attempts, one included build: one free and one charged"
+    ).toEqual([0, REBUILD_COST]);
+
+    const debits = await inferenceDebits();
+    expect(debits, "the ledger is the balance — one debit, not zero").toHaveLength(
+      1
+    );
+    expect(debits[0].delta).toBe(-REBUILD_COST);
+
+    // Both attempts are still recorded as spend (R11), free one included.
+    const usage = await harness.db
+      .select()
+      .from(modelUsage)
+      .where(eq(modelUsage.workspaceId, ws));
+    expect(usage).toHaveLength(2);
   }, 60_000);
 
   it("a pause still UNCOMMITTED when the debit begins is not sailed past", async () => {

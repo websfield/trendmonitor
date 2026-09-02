@@ -497,13 +497,34 @@ describe("InterviewView — review mode (R2)", () => {
     expect(html.toLowerCase()).toMatch(/not lost/);
   });
 
-  it("carries a submit control, and the honest B04 absence — never a fake ideation button", () => {
+  it("carries a submit control, and a SIGNPOST to the step that used to be absent", () => {
+    // SLICE 3b's R13 WROTE THE HONEST B04 ABSENCE HERE — "creating your first
+    // three ideas in Studio is not part of this product yet" — and slice 7
+    // built the step. The `data-testid` is deliberately unchanged, so this
+    // assertion now pins what REPLACED the sentence rather than going missing
+    // along with it (CLAUDE.md 2026-07-30: a claim recorded is only as good as
+    // the test that holds it up).
     const html = render({ mode: "review", fields: filled });
     expect(html).toContain("Submit my interview");
     expect(html).toContain('data-testid="interview-b04-absence"');
-    expect(html).toMatch(/not part of this product yet/i);
-    // No fake control claiming ideas were created or a button that goes nowhere.
+    // THE ABSENCE SENTENCE IS GONE, and its going is asserted rather than
+    // assumed: a screen still claiming the step does not exist would be as
+    // wrong as one that claimed it happens here.
+    expect(html).not.toMatch(/not part of this product yet/i);
+    // WHAT IT SAYS INSTEAD IS A SIGNPOST, NOT A CONTROL. This screen still
+    // stores answers and nothing else, and the ORDER matters — submit, then
+    // confirm and activate a brain, and only then is there anything to write in
+    // this creator's voice — so a button here would jump two steps and land on
+    // a refusal.
+    expect(html).toContain('href="/onboarding/first-ideas"');
+    expect(html).toContain('data-testid="interview-b04-link"');
+    expect(html).toMatch(/Once a brain is activated/i);
+    // ...and it says the step COSTS, because it does: B04 is a real run on the
+    // real pipeline, priced like anything else.
+    expect(html).toMatch(/costs credits/i);
+    // No fake control claiming ideas were created, and no submit that runs one.
     expect(html.toLowerCase()).not.toMatch(/create my first three ideas/);
+    expect(html).not.toMatch(/<form[^>]*>[^<]*<[^>]*first-ideas/);
   });
 
   it("a blocked viewer sees the review, but not the submit form", () => {

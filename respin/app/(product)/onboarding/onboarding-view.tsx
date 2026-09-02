@@ -326,6 +326,37 @@ export function OnboardingView({
             </a>
           </div>
 
+          {/*
+            SLICE 7, PRD B04 — "onboarding ends by ... the creator's first three
+            ideas through their new brain, so the aha moment happens inside the
+            first session". A plain link, like the interview panel above, and
+            for the same reason: the step is its own screen with its own control
+            and its own money copy.
+
+            IT IS A SIGNPOST, NOT A CONTROL, and the order is stated rather than
+            enforced here: the step needs an activated brain and refuses without
+            one, with copy. Putting a spending button on this page would be a
+            second spend control on a screen whose own control does something
+            else.
+
+            THE WORDING AVOIDS `generat`, `script`, `hook` AND `analy`, which
+            `tests/onboarding-ui.test.tsx` bans on this screen — this screen
+            does not do that thing, and a link to one that does must not read as
+            a claim that it does.
+          */}
+          <div className="panel" data-testid="first-ideas-link-panel">
+            <h2>Make this creator&apos;s first ideas</h2>
+            <p className="muted">
+              Once you have confirmed and activated a brain for this creator,
+              this is the first thing the product makes for them — ideas, each
+              with an opening line, the point it makes, and the framework behind
+              it. It costs credits like anything else the product makes.
+            </p>
+            <a href="/onboarding/first-ideas" data-testid="first-ideas-link">
+              Go to the first ideas step
+            </a>
+          </div>
+
           <div className="panel">
             <h2>Add your own past posts</h2>
             <p className="muted">

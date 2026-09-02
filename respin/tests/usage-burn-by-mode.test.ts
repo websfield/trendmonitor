@@ -81,8 +81,8 @@ describe("R9/R17a: the by-mode note's claim is derived from the real purposes, n
     expect(purposes.size).toBeGreaterThan(0);
     expect(purposes).toContain("onboarding_brain");
     // Slice 6's generation purpose (R12). It is a SEPARATE constant from
-    // `ONBOARDING_BRAIN_PURPOSE` on purpose — the grain `countBillableAttempts`
-    // prices against — and its arrival is exactly what made the previous
+    // `ONBOARDING_BRAIN_PURPOSE` on purpose — the grain the included-build
+    // claim is keyed on — and its arrival is exactly what made the previous
     // version of this note ("exactly one thing spends credits today") false.
     expect(purposes).toContain("generation");
   });
@@ -243,7 +243,7 @@ vi.mock("@respin/db", async (importOriginal) => ({
   },
 }));
 
-// `importOriginal` so `burnPeriodStart` and `modeLabel` are the REAL ones —
+// `importOriginal` so `burnPeriod` and `modeLabel` are the REAL ones —
 // the period assertions below are only worth something if the authority under
 // test is the authority that ships.
 vi.mock("@respin/credits/app-server", async (importOriginal) => ({

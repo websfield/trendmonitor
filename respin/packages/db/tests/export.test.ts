@@ -20,7 +20,11 @@ import {
   brainActivationSnapshots,
   onboardingInterviewDrafts,
 } from "../src/onboarding-schema";
-import { generationAttempts, generations } from "../src/generation-schema";
+import {
+  generationAttempts,
+  generationFeedback,
+  generations,
+} from "../src/generation-schema";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 import {
   ProfileScope,
@@ -703,20 +707,35 @@ describe("REQ-A04 brain export", () => {
         mode: "hookSet",
         payloadSha256: "a".repeat(64),
       });
-      await db.insert(generations).values({
+      const [generation] = await db
+        .insert(generations)
+        .values({
+          profileId: owner,
+          workspaceId,
+          attemptId: `att_export_${index}`,
+          mode: "hookSet",
+          brainActivationId: snapshots[index].id,
+          request: { idea: marker },
+          model: "claude-opus-5",
+          promptBundleVersion: "pb-1",
+          configVersion: 1,
+          outcome: "usable",
+          output: { hooks: [marker] },
+          weakestPoint: "you have logged no results, so this is not evidence about you",
+          killTest: { rulesFired: [], rewritten: false },
+        })
+        .returning();
+      // Slice 7 (R10/R11): one feedback event for each, for exactly the reason
+      // the generation above carries one — this test refuses a table that
+      // returns nothing ("its check is vacuous"), and the leak check needs a
+      // sibling row to leak. The NOTE carries the marker, so a leaked row is
+      // identifiable in the emitted JSON rather than merely counted.
+      await db.insert(generationFeedback).values({
         profileId: owner,
         workspaceId,
-        attemptId: `att_export_${index}`,
-        mode: "hookSet",
-        brainActivationId: snapshots[index].id,
-        request: { idea: marker },
-        model: "claude-opus-5",
-        promptBundleVersion: "pb-1",
-        configVersion: 1,
-        outcome: "usable",
-        output: { hooks: [marker] },
-        weakestPoint: "you have logged no results, so this is not evidence about you",
-        killTest: { rulesFired: [], rewritten: false },
+        generationId: generation.id,
+        reaction: "used_as_is",
+        note: `${marker}-FEEDBACK`,
       });
     }
     await db.insert(frameworks).values([
@@ -729,7 +748,7 @@ describe("REQ-A04 brain export", () => {
         sourceReferences: [],
         evidenceEntries: [],
         testedCaveats: [],
-        confidence: "observed",
+        confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
         ownerProfileId: profileId,
@@ -744,7 +763,7 @@ describe("REQ-A04 brain export", () => {
         sourceReferences: [],
         evidenceEntries: [],
         testedCaveats: [],
-        confidence: "observed",
+        confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
         ownerProfileId: sibling.id,
@@ -802,7 +821,7 @@ describe("REQ-A04 brain export", () => {
         sourceReferences: [],
         evidenceEntries: [],
         testedCaveats: [],
-        confidence: "observed",
+        confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
         ownerProfileId: profileId,
@@ -820,7 +839,7 @@ describe("REQ-A04 brain export", () => {
         sourceReferences: [],
         evidenceEntries: [],
         testedCaveats: [],
-        confidence: "observed",
+        confidence: "unsupported",
         saturation: "observed",
         visibility: "shared",
       },
@@ -849,7 +868,7 @@ describe("REQ-A04 brain export", () => {
         sourceReferences: [],
         evidenceEntries: [],
         testedCaveats: [],
-        confidence: "observed" as const,
+        confidence: "unsupported" as const,
         saturation: "observed" as const,
         visibility: "private" as const,
         ownerProfileId: profileId,
@@ -865,7 +884,7 @@ describe("REQ-A04 brain export", () => {
       sourceReferences: [],
       evidenceEntries: [],
       testedCaveats: [],
-      confidence: "observed",
+      confidence: "unsupported",
       saturation: "observed",
       visibility: "shared",
     });

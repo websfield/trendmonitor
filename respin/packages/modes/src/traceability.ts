@@ -101,6 +101,26 @@ export type TraceabilityFinding = {
 export type TraceabilityCorpus = {
   brain: readonly string[];
   input: readonly string[];
+  /**
+   * Specifics that appear in `input` but that `input` DOES NOT VOUCH FOR.
+   *
+   * WHY THE CORPUS NEEDS A NEGATIVE AT ALL. A revision's `input` carries the
+   * draft it revises, and that draft is this product's own output rather than
+   * the creator's words. It was gated once — but "gated" is not "vouched for":
+   * `traceability.ts` reports a `plain-number` or a `proper-noun` as a FLAG
+   * and reports EVERY shape in a `FLAG_ONLY_FIELD_PREFIXES` section as a flag,
+   * so a hard-shaped specific can sit in a stored parent draft having never
+   * been traced to anything. Measured, on this build: a `$4,000` in a parent's
+   * `/disclosure/guidance` (flag-only by field) was accepted with no finding
+   * at all when the revision put it in a HOOK.
+   *
+   * So a revision's caller passes the parent's own reported specifics here and
+   * they are removed from the index. It is the caller's job — and only the
+   * caller can do it — to remove nothing the creator's own material carries;
+   * `generate.ts`'s `unvouchedSpecifics` is that filter, and its false branch
+   * is driven.
+   */
+  unvouched?: readonly string[];
 };
 
 /**
@@ -277,18 +297,111 @@ function normalise(token: string): string {
 }
 
 /**
+ * A CORPUS DOCUMENT WITH ITS `[check]`-MARKED SPECIFICS REMOVED.
+ *
+ * WHY A DOCUMENT IN THE CORPUS MAY CARRY A MARKER AT ALL. `GenerationContext`
+ * has one channel for creator material, so a revision's `input` is the
+ * creator's note AND the parent draft this product produced (see
+ * `generate.ts`). That draft went through this same scan, and the model is
+ * INSTRUCTED to write `[check]` beside any specific the material did not
+ * support (`assemble.ts`'s `GENERATION_SYSTEM`) — so a stored, gated,
+ * displayed draft can legitimately contain `$4,000 [check]`.
+ *
+ * WHAT THAT COST BEFORE THIS FUNCTION EXISTED, measured end to end on this
+ * build (spin-compliance gate, 2026-09-01):
+ *
+ *   parent hook "The $4,000 [check] rig cost you the whole year"
+ *     as an ORIGINAL             -> hardRules []          (correct: marked)
+ *   the same hook, marker dropped
+ *     as an ORIGINAL             -> invented_specific/currency  (correct)
+ *     as a REVISION of that parent -> hardRules [], traceability []
+ *
+ * The third line is the defect: the marker put `4000` in the corpus index, the
+ * revision's scan then found it "traceable", and the creator was shown an
+ * unsupported amount UNDER the sentence "Every number, date and name in this
+ * draft was found in your brain or in what you typed in." A marker is the
+ * model's own statement that the material does NOT carry this specific, so it
+ * is the one token that can never make the material carry it. REQ-I05.
+ *
+ * IT IS DONE HERE, IN THE INDEX, RATHER THAN AT THE REVISION CALL SITE,
+ * because the class is "a `[check]` in corpus text", not "a `[check]` in a
+ * parent draft" — CLAUDE.md's 2026-08-29 lesson about a population written as
+ * one path. Every present and future channel that puts gated output into the
+ * corpus is covered by construction.
+ *
+ * BLANKED, NOT DELETED: each removed span becomes spaces, so nothing either
+ * side of it joins into a token that was never written — and the blanking is
+ * done with STRING SLICES, in UTF-16 units, because that is what `m.index` and
+ * `span.start` are. The first version of this function built a `[...text]`
+ * array, which iterates CODE POINTS: measured on `the rig 🎥 cost $4,000
+ * [check] last year`, the window landed one unit to the right and left the
+ * `$` in the corpus, and enough leading astral characters would have left the
+ * whole amount there — the laundering this function exists to stop, back
+ * again, on any draft with an emoji in it. `traceability.test.ts` pins the
+ * emoji case.
+ *
+ * THE ERROR DIRECTION, stated: a creator who types `[check]` next to a number
+ * in their OWN note loses that number as corpus material and may see it
+ * flagged. That is the safe direction — they wrote "I am not sure about this"
+ * beside it — and the price is a `[check]` offer, not a deletion.
+ */
+export function stripMarkedSpecifics(text: string): string {
+  if (!text.includes(CHECK)) return text;
+  const blank: [number, number][] = [];
+  for (const span of spans(text)) {
+    const markers = markerPositions(span.text);
+    if (markers.length === 0) continue;
+    for (const shape of SPECIFIC_SHAPES) {
+      // A FRESH RegExp PER SPAN, for `scanTraceability`'s reason: a shared /g
+      // regex carries `lastIndex` between calls.
+      const re = new RegExp(shape.pattern.source, shape.pattern.flags);
+      for (const m of span.text.matchAll(re)) {
+        const end = m.index + m[0].length;
+        if (!markedAdjacently(span.text, m.index, end, markers)) continue;
+        blank.push([span.start + m.index, span.start + end]);
+      }
+    }
+  }
+  // Right to left, so an earlier replacement cannot shift a later offset —
+  // `offerCheck`'s discipline, and here the replacement is the same LENGTH
+  // anyway, which is the second reason the offsets stay meaningful.
+  let out = text;
+  for (const [from, to] of blank.sort((a, b) => b[0] - a[0])) {
+    out = out.slice(0, from) + " ".repeat(to - from) + out.slice(to);
+  }
+  return out;
+}
+
+/**
  * Every token the corpus can vouch for.
  *
  * TWO PASSES, because one tokeniser cannot do both jobs: `WORDLIKE` reads
  * `1,200` as `1` and `200` (the comma is not part of a word), so a second pass
  * over `WRITTEN_NUMBER` adds the separator-stripped `1200` a draft would be
  * compared against.
+ *
+ * A `[check]`-MARKED SPECIFIC CONTRIBUTES NOTHING — see `stripMarkedSpecifics`.
+ *
+ * `unvouched` IS SUBTRACTED LAST, and it is the caller's answer to a question
+ * this module cannot ask: which specifics a document already inside `input`
+ * was GATED ON rather than vouched for. `traceabilityCorpusFor` fills it from
+ * the parent generation's own stored findings for a revision, and it is
+ * DELIBERATELY safe to apply globally because the caller only ever puts a
+ * token here after checking the creator's own material does not carry it —
+ * that check is `unvouchedSpecifics` in `generate.ts`, and it is what stops
+ * this from deleting a number the creator typed in their note.
  */
 export function buildCorpusIndex(corpus: TraceabilityCorpus): Set<string> {
   const index = new Set<string>();
-  for (const text of [...corpus.brain, ...corpus.input]) {
+  for (const raw of [...corpus.brain, ...corpus.input]) {
+    const text = stripMarkedSpecifics(raw);
     for (const m of text.matchAll(WORDLIKE)) index.add(normalise(m[0]));
     for (const m of text.matchAll(WRITTEN_NUMBER)) index.add(normalise(m[0]));
+  }
+  for (const token of corpus.unvouched ?? []) {
+    index.delete(normalise(token));
+    for (const m of token.matchAll(WORDLIKE)) index.delete(normalise(m[0]));
+    for (const m of token.matchAll(WRITTEN_NUMBER)) index.delete(normalise(m[0]));
   }
   index.delete("");
   return index;

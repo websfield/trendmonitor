@@ -150,6 +150,61 @@ export {
   InterviewAnswerError,
   InterviewDraftSubmittedError,
 } from "./errors";
+// ---------------------------------------------------------------------------
+// SLICE 7's TEN TYPED REFUSALS — EXPORTED HERE BY STAGE D, WITH THEIR COPY.
+//
+// STAGE A WROTE THEM AND DELIBERATELY WITHHELD THE ROOT EXPORT, for a real
+// coupling rather than caution: `tests/billing-ui.test.tsx` enumerates every
+// `Error` subclass this root exports and fails unless
+// `app/(product)/billing-errors.ts` carries copy for it — by design, so that a
+// refusal can never degrade to "Something went wrong" — and that file is the
+// app surface, which stage A did not own. Exporting first would have left the
+// suite red on a contract nobody had broken.
+//
+// THIS IS THE DISCHARGE. Verified in the same action that records it: each of
+// the ten below has a `HANDLERS` entry and a `BILLING_ERROR_COPY` entry in
+// `app/(product)/billing-errors.ts`, and each is named in the `@respin/db`
+// `allowImportNames` block in `eslint.config.mjs` — all three in one change,
+// which is what stage A's obligation asked for.
+//
+//   GenerationLineageError     — the revision's parent is not this creator's,
+//                                does not exist, or is not older than it.
+//   FeedbackReactionError      — an unknown reaction code (a stale page or a
+//                                tampered form; reloading is the remedy).
+//   FeedbackNoteError          — a blank-but-present or oversized note.
+//   FeedbackDuplicateError     — that reaction is already recorded here, and
+//                                the note just typed was NOT kept.
+//   FeedbackTargetError        — the output the feedback is about is not this
+//                                creator's (byte-identical for foreign,
+//                                missing and malformed ids).
+//   FrameworkAccessError       — not this profile's framework (byte-identical
+//                                for foreign, missing and shared-row ids).
+//   FrameworkStaleError        — edited against a superseded version; reload.
+//   FrameworkContentError      — REQ-D04: a handle, link, metric or named
+//                                person in framework content.
+//   FrameworkLimitError        — a framework size/count ceiling.
+//   PrivateFrameworkTierError  — REQ-D05: the plan does not include private
+//                                frameworks (copy must NOT sell an upgrade —
+//                                the `profile_cap`/`ModeNotInPlanError` rule).
+//
+// TEN, not the seven the sentence above this list first claimed when stage A
+// wrote it — the list is the authority, and it grew twice while that stage was
+// written (once when the framework limits and the tier refusal were split out,
+// once when the author's adversarial re-read found `FeedbackTargetError`'s two
+// live defects). Count the entries, never the adjective.
+export {
+  GenerationLineageError,
+  FeedbackReactionError,
+  FeedbackNoteError,
+  FeedbackDuplicateError,
+  FeedbackTargetError,
+  FrameworkAccessError,
+  FrameworkStaleError,
+  FrameworkContentError,
+  FrameworkLimitError,
+  PrivateFrameworkTierError,
+} from "./errors";
+// ---------------------------------------------------------------------------
 // The creator-data registry is a SOURCE module so M2b's export and deletion
 // paths can read it — which requires it to be reachable, and it was not: the
 // package `exports` map has only ".", and `CROSS_PACKAGE_DENY` denies
@@ -198,7 +253,65 @@ export {
   type GenerationOutcome,
   type NewGeneration,
   type NewGenerationAttempt,
+  // Slice 7 (R10). The feedback table and its CLOSED reaction vocabulary. The
+  // table object is denied to `app/**` by the same default-deny that denies
+  // every other one; the reaction list is inert data the feedback UI renders
+  // its buttons from, so it is allowlisted there rather than hand-copied —
+  // the `INTERVIEW_FIELDS` precedent.
+  GENERATION_FEEDBACK_REACTIONS,
+  generationFeedback,
+  generationFeedbackReaction,
+  type GenerationFeedbackReaction,
+  type GenerationFeedbackRow,
+  type NewGenerationFeedback,
 } from "./generation-schema";
+// Slice 7 (R5a-R5c). The shared library, the mechanism-level content scan and
+// the private-framework operations. The WRITE surface here takes a
+// `WorkspaceScope` and a `db` handle, so — like `appendOwnPost` and the
+// interview trio — `app/**` reaches it only through `respinDb`, never by
+// importing these functions; the default-deny allowlist is what enforces that.
+export {
+  approvePrivateFramework,
+  assertMechanismLevel,
+  createPrivateFramework,
+  deriveFrameworkConfidence,
+  editPrivateFramework,
+  eligibleFrameworks,
+  frameworkContentSchema,
+  frameworkSlug,
+  listPrivateFrameworks,
+  retirePrivateFramework,
+  seedSharedFrameworks,
+  sharedFrameworkLibrary,
+  FRAMEWORK_GOALS,
+  FRAMEWORK_NICHES,
+  FRAMEWORK_SOURCE_KINDS,
+  FRAMEWORK_CONFIDENCE_RUNGS,
+  MECHANISM_CONTENT_RULES,
+  SATURATION_NOTICE,
+  SHARED_FRAMEWORK_SEED,
+  type EligibleFramework,
+  type FrameworkConfidence,
+  type FrameworkContent,
+  type FrameworkGoal,
+  type FrameworkNiche,
+  type FrameworkSourceKind,
+  type PrivateFrameworkEntitlement,
+  // The bounds the framework UI states. Inert numbers re-exported from
+  // `storage-limits.ts` through `frameworks.ts`, for the reason
+  // `POST_CONTENT_MAX` is exported through `onboarding-ops.ts`: one source, so
+  // a form attribute and the copy beside it cannot drift from the refusal.
+  FRAMEWORK_LIST_MAX,
+  FRAMEWORK_NAME_MAX,
+  FRAMEWORK_TEXT_MAX,
+  FRAMEWORK_VERSION_MAX,
+  PRIVATE_FRAMEWORK_COUNT_MAX,
+} from "./frameworks";
+// Slice 7 (R10/R11). The two feedback operations. Like every other module-level
+// operation in this package they take a `db` handle, so `app/**` reaches them
+// through `respinDb.recordFeedback` / `.listFeedback` only — the allowlist
+// denies the functions themselves, the same rule `appendOwnPost` follows.
+export { listFeedback, recordFeedback } from "./feedback-ops";
 export {
   selectActiveProfile,
   selectActiveProfileInTx,
@@ -211,6 +324,10 @@ export {
   // `tests/table-writers.test.ts` pins.
   brainActivationSnapshots,
   costState,
+  // R-80: the durable per-(profile, purpose) claim on the included build.
+  // Exported so tests can read the row the database decided on, and so the
+  // migration-shape and table-writer scans can name the table.
+  firstBillableAttempts,
   inputClass,
   modelUsage,
   onboardingInputs,
@@ -224,6 +341,7 @@ export {
   USAGE_OUTCOME_BILLABLE,
   BILLABLE_USAGE_OUTCOMES,
   type CostState,
+  type FirstBillableAttempt,
   type InputClass,
   type ModelUsageRow,
   type OnboardingInput,
@@ -390,6 +508,8 @@ export {
   BRAIN_CLAIM_POSITION_MAX,
   BRAIN_EVIDENCE_ENTRY_MAX,
   BRAIN_DOCUMENT_TEXT_MAX,
+  // Slice 7 (R10): the ceiling the feedback note's textarea states.
+  FEEDBACK_NOTE_MAX,
 } from "./storage-limits";
 // Slice 2a's concurrency bound (tech-spec §6). `RunSlots` is the PORT and
 // `pgRunSlots` the real implementation; the server's singleton is

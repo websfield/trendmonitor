@@ -24,6 +24,12 @@
 //                                    `settleGeneration` (the `settled`
 //                                    transition, deliberately unreachable from
 //                                    the first).
+//   generation_feedback    INSERT  — `recordGenerationFeedback` (slice 7 R10).
+//                                    Append-only like `generations`: no
+//                                    `updated_at`, no update path, and the
+//                                    same "the list is checked" rule applies —
+//                                    `tests/table-writers.test.ts` fails on a
+//                                    second writer or a second verb.
 //
 // Every one of them is role-gated, scope-caged, and builds each column from the
 // scope rather than from a caller's object — the state, the timestamps, the
@@ -474,6 +480,34 @@ export const generations = pgTable(
      * only if it obeyed.
      */
     rewriteCount: integer("rewrite_count").notNull().default(0),
+    /**
+     * THE REVISION'S PARENT (slice 7, R6) — the generation this one was
+     * revised FROM, or NULL for an original.
+     *
+     * NULLABLE, and that nullability is what makes MATCH SIMPLE correct here
+     * rather than dangerous: a root generation names no parent, so the
+     * composite FK below is skipped entirely for it — which is the intended
+     * meaning — while any non-NULL value drags `profile_id` and
+     * `workspace_id` (both NOT NULL) into the check and so can only name a
+     * generation of the SAME creator in the SAME workspace. That is the exact
+     * inverse of `brain-schema.ts`'s warning about a nullable half, and the
+     * difference is that here the nullable column is the one being CHECKED,
+     * not one of the ones being matched against.
+     *
+     * CYCLES: THE FK IS NOT ENOUGH, AND THIS WAS MEASURED, NOT ARGUED.
+     * `INSERT INTO g (id, parent_id) VALUES (x, x)` against a
+     * self-referencing FK SUCCEEDS — Postgres checks the row against itself
+     * after inserting it — so a one-row cycle is representable with the FK
+     * alone. (Run on the PGlite build this repo tests against, 2026-09-01;
+     * the same behaviour holds on server Postgres.) The CHECK below is what
+     * refuses it. Longer cycles need an UPDATE, which
+     * `generations_parent_id_immutable` (a trigger, migration 0022) refuses:
+     * every parent must already exist at INSERT time, so the relation is a
+     * subrelation of "was inserted earlier", which is a strict partial order.
+     * Three enforced properties, not a paragraph — and the paragraph is here
+     * only to say which property does which job.
+     */
+    parentId: uuid("parent_id"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -537,6 +571,137 @@ export const generations = pgTable(
       "generations_one_rewrite",
       sql`${t.rewriteCount} >= 0 AND ${t.rewriteCount} <= 1`
     ),
+    // THE SAME-TENANT LINEAGE FK (R6). THREE columns, so a revision cannot
+    // name a parent belonging to another profile or another workspace: the
+    // target is `generations_id_profile_workspace_uq`, which the slice-6
+    // schema put here for exactly this arrival ("slices 7 and 9 add lineage").
+    //
+    // `onDelete: "cascade"` — a revision of a deleted generation is a record
+    // of an explanation whose subject is gone, and REQ-A04 deletion removes
+    // the whole profile tree anyway; `onUpdate: "restrict"` for the reason
+    // `generations_attempt_fk` gives, one constraint up: the identity columns
+    // of a row something else names cannot be rewritten underneath it.
+    foreignKey({
+      columns: [t.parentId, t.profileId, t.workspaceId],
+      foreignColumns: [t.id, t.profileId, t.workspaceId],
+      name: "generations_parent_fk",
+    })
+      .onDelete("cascade")
+      .onUpdate("restrict"),
+    // ...and the one-row cycle the FK accepts. See `parentId`'s docblock: this
+    // is a measured hole, not a defensive extra.
+    check(
+      "generations_parent_is_not_self",
+      sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`
+    ),
+  ]
+);
+
+/**
+ * WHAT A CREATOR SAID ABOUT ONE OUTPUT (slice 7, R10 / REQ-C05).
+ *
+ * A STRUCTURED EVENT, NOT PROSE IN A COLUMN. The reaction is a value from a
+ * closed enum the database itself holds, and the creator's optional words live
+ * in a SEPARATE column that nothing in this slice reads for meaning. That
+ * split is `brain-reason.ts`'s discipline one table over, and it is here for
+ * the same reason C-42 removed the caller-prose channel from `brain_docs.
+ * reason`: this table is export-included and is the input slice 9's promotion
+ * proposals will be built from, so "what the creator meant" has to be
+ * countable without parsing a sentence nobody validated.
+ *
+ * APPEND-ONLY, LIKE `generations`: no `updated_at`, no update path, no delete
+ * path. A creator who changes their mind records a DIFFERENT reaction; the
+ * first one still happened, and an event log that can be rewritten is not
+ * evidence. `tests/table-writers.test.ts` is the instrument — the absence of a
+ * `::update` key there is the assertion, not this sentence.
+ *
+ * NOTHING IN SLICE 7 DERIVES ANYTHING FROM THESE ROWS (R11). There is exactly
+ * one raw reader (`ProfileScope.accessors.generationFeedback`, which
+ * `exportPage`'s branch also calls rather than writing a second query), and
+ * `tests/feedback-readers.test.ts` fails on a second one anywhere in
+ * `packages/**` or `app/**`. Aggregation and proposal construction belong to
+ * `packages/brain`, which does not exist yet — the scan is pre-registered
+ * against it, the same shape `tests/import-boundary.test.ts` already uses for
+ * `@respin/trends`.
+ */
+export const generationFeedbackReaction = pgEnum(
+  "generation_feedback_reaction",
+  [
+    /** Posted it essentially as written. */
+    "used_as_is",
+    /** Posted it, but rewrote parts first. */
+    "used_with_edits",
+    /** Does not sound like me. */
+    "off_voice",
+    /** True of anyone; says nothing only I could say. */
+    "too_generic",
+    /** The thesis is not the point I wanted to make. */
+    "wrong_angle",
+    /** I cannot actually film this. */
+    "not_filmable",
+    /** Will not use it, and none of the above is why. */
+    "discarded",
+  ]
+);
+
+export const generationFeedback = pgTable(
+  "generation_feedback",
+  {
+    id: id(),
+    profileId: uuid("profile_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    /** Which output this is about. Same-tenant by the composite FK below. */
+    generationId: uuid("generation_id").notNull(),
+    reaction: generationFeedbackReaction("reaction").notNull(),
+    /**
+     * The creator's own words, optional.
+     *
+     * NOT A SECOND VOCABULARY. Nothing branches on this column, nothing counts
+     * it, and no rule may be derived from it — it exists so a creator can say
+     * something the seven codes cannot, and so that a human reading the export
+     * sees it. The CHECK below refuses a blank-but-present note for the reason
+     * `generations_usable_names_weakest_point` refuses a whitespace weakest
+     * point: NOT NULL is not the property, "says something" is, and `''` and
+     * `'\n'` both satisfy the first while failing the second.
+     */
+    note: text("note"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // BOTH FKs, like `generations` itself carries both its profile FK and its
+    // attempt FK. The profile one is what the deletion decision in
+    // `creator-data-registry.ts` names; the generation one is R10's
+    // same-tenant requirement and is not implied by it (a row could otherwise
+    // name this profile and ANOTHER profile's generation).
+    foreignKey({
+      columns: [t.profileId, t.workspaceId],
+      foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
+      name: "generation_feedback_profile_workspace_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.generationId, t.profileId, t.workspaceId],
+      foreignColumns: [generations.id, generations.profileId, generations.workspaceId],
+      name: "generation_feedback_generation_fk",
+    })
+      .onDelete("cascade")
+      .onUpdate("restrict"),
+    // ONE ROW PER (OUTPUT, REACTION). Pressing the same button twice is one
+    // fact, not two, and slice 9's "n >= 3 comparable results" must not be
+    // reachable by one creator clicking seven times. A creator may still
+    // record SEVERAL DIFFERENT reactions about one output — "used with edits"
+    // and "off voice" is a coherent pair, and collapsing it to one row would
+    // discard the second half.
+    //
+    // A UNIQUE INDEX rather than a table `unique()`: nothing references it, so
+    // the CREATE-TABLE-ordering trap `creator_profiles` records does not apply.
+    uniqueIndex("generation_feedback_generation_reaction_uq").on(
+      t.generationId,
+      t.reaction
+    ),
+    check(
+      "generation_feedback_note_says_something",
+      sql`${t.note} IS NULL OR ${t.note} ~ '[^[:space:]]'`
+    ),
   ]
 );
 
@@ -547,3 +712,20 @@ export type GenerationAttemptState =
 export type Generation = typeof generations.$inferSelect;
 export type NewGeneration = typeof generations.$inferInsert;
 export type GenerationOutcome = (typeof generationOutcome.enumValues)[number];
+export type GenerationFeedbackRow = typeof generationFeedback.$inferSelect;
+export type NewGenerationFeedback = typeof generationFeedback.$inferInsert;
+export type GenerationFeedbackReaction =
+  (typeof generationFeedbackReaction.enumValues)[number];
+
+/**
+ * The closed reaction set as a VALUE, so the writer can refuse an unknown code
+ * by name instead of letting a raw 22P02 (`invalid input value for enum`)
+ * surface as "Something went wrong".
+ *
+ * The same two-halves discipline `renderBrainReason` uses: the enum is the
+ * database's half, this array is application code's, and
+ * `packages/db/tests/lineage-feedback.test.ts` asserts they are the
+ * same set rather than trusting that they were typed the same day.
+ */
+export const GENERATION_FEEDBACK_REACTIONS: readonly GenerationFeedbackReaction[] =
+  generationFeedbackReaction.enumValues;

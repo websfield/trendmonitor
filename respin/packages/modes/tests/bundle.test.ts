@@ -42,11 +42,20 @@ describe("what is in the hash", () => {
   it("covers the system prompt, the brief, the contract, the rewrite text, the scorer and the gates", () => {
     // Named rather than counted, so adding a part is a visible edit here.
     expect(Object.keys(bundlePartsFor("hooks")).sort()).toEqual([
+      // Slice 7 round 2: the framework block's STATIC words — its header, the
+      // evidence note and the empty-case line. The list is creator-dependent
+      // and stays out; these three are instructions the product wrote, and
+      // they lived in `contextBlock` where nothing hashed them.
+      "frameworkBlock",
       "gates",
       "generationSystem",
       "hardRuleBrief",
       "killTestSystem",
       "modeBrief",
+      // Slice 7: which OUTPUT checks this mode runs. Two modes with the same
+      // prompt and different gates produce different populations of surviving
+      // drafts, which is the question REQ-J02 asks a version to answer.
+      "modeChecks",
       "outputContract",
       "rewriteInstruction",
     ]);
@@ -71,6 +80,39 @@ describe("what is in the hash", () => {
     const gates = bundlePartsFor("hooks").gates;
     expect(gates).toContain("plain-number=flag");
     expect(gates).toContain("currency=hard");
+  });
+
+  it("...and the per-mode checks' constants and patterns (slice 7)", () => {
+    // Same argument as `hookMaxWords`: moving the hook-overlap threshold or the
+    // thesis word floor changes which drafts reach a creator with no prompt
+    // edit at all, so a version that did not move for it would misattribute the
+    // change.
+    const gates = bundlePartsFor("hooks").gates;
+    expect(gates).toContain("modeCheck=hookSpread0.6/3");
+    expect(gates).toContain("summaryRegister=describes-the-source~");
+    expect(gates).toContain("namesNothing=bare-none~");
+  });
+
+  it("...and the framework block's own instructions, which are not per creator", () => {
+    // The evidence note is what stops a rung being read as a score. Deleting
+    // it changes what a model does with an `unsupported` framework on every
+    // generation that offers one, and REQ-J02's question is "what changed?".
+    const block = bundlePartsFor("hooks").frameworkBlock;
+    expect(block).toContain("use one of these, by its own name");
+    expect(block).toContain("not a prediction, and not a promise");
+    expect(block).toContain("say so in the weakest point");
+    // ...and it is the SAME for two modes: it is the product's words, not the
+    // creator's, which is why it belongs in a version at all.
+    expect(bundlePartsFor("caption").frameworkBlock).toBe(block);
+  });
+
+  it("...and WHICH checks the mode declares, which differs per mode", () => {
+    expect(bundlePartsFor("sourceToReel").modeChecks).toContain(
+      "source_fidelity"
+    );
+    expect(bundlePartsFor("caption").modeChecks).not.toContain(
+      "source_fidelity"
+    );
   });
 
   it("...and the claim vocabulary, which is the fifth rule", () => {

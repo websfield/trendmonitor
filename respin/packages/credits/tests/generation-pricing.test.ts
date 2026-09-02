@@ -12,7 +12,8 @@
 import { describe, expect, it } from "vitest";
 import { CONFIG_V1_SEED } from "@respin/db";
 import { respinConfigV1, type RespinConfigV1 } from "@respin/config";
-import { MODE_IDS, MODE_SPECS } from "@respin/modes";
+import { MODE_IDS, MODE_SPECS, UnknownModeError } from "@respin/modes";
+import { REVISION_CREDIT_COST_KEY, generationOp } from "../src/generate";
 import {
   GENERATION_PURPOSE,
   ONBOARDING_BRAIN_PURPOSE,
@@ -31,18 +32,34 @@ import {
 const content: RespinConfigV1 = respinConfigV1.parse(CONFIG_V1_SEED);
 
 describe("priceOf, per purpose (R12/R13)", () => {
-  it("onboarding prices from PRIOR ATTEMPTS: the first is included, the rest are rebuilds", () => {
+  it("onboarding prices from THE CLAIM: unclaimed is free, mine is free, somebody else's is a rebuild", () => {
+    // THE THREE BRANCHES, and the third is the fix (R-80). The old signature
+    // took a COUNT of prior attempts and could not express "the claim is held
+    // by another attempt" at all — which is exactly the state the loser of a
+    // race is in, and exactly the state that used to price as a free build.
     expect(
       priceOf(content, {
         purpose: ONBOARDING_BRAIN_PURPOSE,
-        priorBillableAttempts: 0,
-      })
+        includedBuildHolder: null,
+        attemptId: "att-a",
+      }),
+      "nothing has claimed this profile's included build yet"
     ).toBe(content.creditCosts.onboardingBrainBuild);
     expect(
       priceOf(content, {
         purpose: ONBOARDING_BRAIN_PURPOSE,
-        priorBillableAttempts: 1,
-      })
+        includedBuildHolder: "att-a",
+        attemptId: "att-a",
+      }),
+      "this attempt WON the claim — it is the included build"
+    ).toBe(content.creditCosts.onboardingBrainBuild);
+    expect(
+      priceOf(content, {
+        purpose: ONBOARDING_BRAIN_PURPOSE,
+        includedBuildHolder: "att-a",
+        attemptId: "att-b",
+      }),
+      "another attempt holds the claim — this one is a rebuild"
     ).toBe(content.creditCosts.onboardingBrainRebuild);
   });
 
@@ -70,11 +87,13 @@ describe("priceOf, per purpose (R12/R13)", () => {
     });
     const asFirstOnboarding = priceOf(content, {
       purpose: ONBOARDING_BRAIN_PURPOSE,
-      priorBillableAttempts: 0,
+      includedBuildHolder: null,
+      attemptId: "att-a",
     });
     const asLaterOnboarding = priceOf(content, {
       purpose: ONBOARDING_BRAIN_PURPOSE,
-      priorBillableAttempts: 3,
+      includedBuildHolder: "att-earlier",
+      attemptId: "att-a",
     });
     expect(asGeneration).not.toBe(asFirstOnboarding); // 2 vs a free build
     expect(asGeneration).not.toBe(asLaterOnboarding); // 2 vs 50
@@ -90,6 +109,87 @@ describe("priceOf, per purpose (R12/R13)", () => {
   });
 });
 
+describe("generationOp: what a generation is priced AS (slice 7, R8)", () => {
+  it("an original is priced by its MODE — every one of the seven", () => {
+    for (const mode of MODE_IDS) {
+      const op = generationOp(mode, false);
+      expect(op.purpose).toBe(GENERATION_PURPOSE);
+      expect(op, mode).toEqual({
+        purpose: GENERATION_PURPOSE,
+        creditCostKey: MODE_SPECS[mode].creditCostKey,
+      });
+      expect(priceOf(content, op), mode).toBe(
+        content.creditCosts[MODE_SPECS[mode].creditCostKey]
+      );
+    }
+  });
+
+  it("M3: a REVISION is priced as a revision WHATEVER the parent mode was", () => {
+    // THE MUTATION THIS REDDENS is "revision priced at the parent mode's cost",
+    // which is a one-line edit in `generationOp`. Driving it over ALL SEVEN
+    // modes is what makes it a real assertion rather than a coincidence: two of
+    // the modes (`hooks`, and any other mode an operator prices at 2) have a
+    // cost EQUAL to the revision price, so a test on one mode could pass while
+    // the mutation was live.
+    for (const mode of MODE_IDS) {
+      expect(generationOp(mode, true), mode).toEqual({
+        purpose: GENERATION_PURPOSE,
+        creditCostKey: REVISION_CREDIT_COST_KEY,
+      });
+      expect(priceOf(content, generationOp(mode, true)), mode).toBe(
+        content.creditCosts.revision
+      );
+    }
+    // NON-VACUITY: the revision price differs from at least one mode's price,
+    // so "priced as a revision" is a distinguishable claim. It deliberately
+    // does not require it to differ from EVERY mode — `hookSet` is also 2 in
+    // the seed, and that is an operator's number to set, not this test's.
+    const modePrices = MODE_IDS.map(
+      (m) => content.creditCosts[MODE_SPECS[m].creditCostKey]
+    );
+    expect(
+      modePrices.filter((p) => p !== content.creditCosts.revision).length,
+      "every mode costs exactly what a revision costs, so nothing here can distinguish the two"
+    ).toBeGreaterThan(0);
+  });
+
+  it("the revision key is a REAL key of the stored document, and it is not a mode's", () => {
+    // `creditCosts.revision` has been seeded at 2 since M1 with no reader.
+    // This is that reader, and the value it reads is the PRD's launch default.
+    expect(Object.keys(content.creditCosts)).toContain(REVISION_CREDIT_COST_KEY);
+    expect(content.creditCosts.revision).toBe(2);
+    expect(MODE_IDS.map((m) => MODE_SPECS[m].creditCostKey)).not.toContain(
+      REVISION_CREDIT_COST_KEY
+    );
+  });
+
+  it("a revision fails closed on its OWN price row, never the mode's", () => {
+    // R19/A-9: the config paths a REVISION depends on name
+    // `creditCosts.revision`, so a stored document that lost that key refuses
+    // the revision rather than silently charging the mode's number.
+    const paths = requiredConfigPaths(
+      { generation: "claude-sonnet-5", classification: "claude-haiku-4-5" },
+      generationOp("ideaToScript", true)
+    );
+    expect(paths).toContain("creditCosts.revision");
+    expect(paths).not.toContain("creditCosts.fullScript");
+  });
+
+  it("an unknown mode cannot be priced at all", () => {
+    // `generationOp` goes through `modeSpec`, which refuses a string that is
+    // not one of the seven — so there is no path through the price lookup that
+    // returns a key nobody chose.
+    expect(() => generationOp("seriesPlanner" as never, false)).toThrow(
+      UnknownModeError
+    );
+    // ...and the REVISION branch refuses it too, rather than pricing an
+    // unknown mode's revision because the mode never had to be resolved.
+    expect(() => generationOp("seriesPlanner" as never, true)).toThrow(
+      UnknownModeError
+    );
+  });
+});
+
 describe("requiredConfigPaths, per purpose (R13/A-9)", () => {
   const model = "claude-sonnet-5";
   const cheap = "claude-haiku-4-5";
@@ -99,7 +199,8 @@ describe("requiredConfigPaths, per purpose (R13/A-9)", () => {
   it("names the price keys the OPERATION depends on, and nothing wider", () => {
     const onboarding = requiredConfigPaths({ generation: model }, {
       purpose: ONBOARDING_BRAIN_PURPOSE,
-      priorBillableAttempts: 0,
+      includedBuildHolder: null,
+      attemptId: "att-a",
     });
     expect(onboarding).toContain("creditCosts.onboardingBrainBuild");
     expect(onboarding).toContain("creditCosts.onboardingBrainRebuild");
@@ -130,7 +231,11 @@ describe("requiredConfigPaths, per purpose (R13/A-9)", () => {
 
   it("both purposes require the generation model, the reply ceiling and THAT model's price row", () => {
     for (const op of [
-      { purpose: ONBOARDING_BRAIN_PURPOSE, priorBillableAttempts: 0 } as const,
+      {
+        purpose: ONBOARDING_BRAIN_PURPOSE,
+        includedBuildHolder: null,
+        attemptId: "att-a",
+      } as const,
       { purpose: GENERATION_PURPOSE, creditCostKey: "hookSet" } as const,
     ]) {
       const paths = requiredConfigPaths(both, op);
@@ -167,7 +272,8 @@ describe("requiredConfigPaths, per purpose (R13/A-9)", () => {
     // price row it never spends against.
     const paths = requiredConfigPaths({ generation: model }, {
       purpose: ONBOARDING_BRAIN_PURPOSE,
-      priorBillableAttempts: 0,
+      includedBuildHolder: null,
+      attemptId: "att-a",
     });
     expect(paths).not.toContain("llm.models.classification");
     expect(paths).not.toContain(`llm.prices.${cheap}`);

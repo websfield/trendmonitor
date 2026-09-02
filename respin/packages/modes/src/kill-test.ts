@@ -28,6 +28,10 @@ import { CHECK, stripFence } from "@respin/llm";
 import { z } from "zod";
 
 import {
+  traceabilityCorpusFor,
+  type GenerationContext,
+} from "./assemble";
+import {
   claimRemedyFor,
   scanOutputClaims,
   type ClaimFinding,
@@ -39,6 +43,8 @@ import {
   type HardRuleFinding,
   type HardRuleId,
 } from "./hard-rules";
+import { scanModeChecks } from "./mode-checks";
+import { type ModeId } from "./modes";
 import { outputTextUnits, type ScriptOutput } from "./output";
 import {
   scanTraceability,
@@ -295,19 +301,46 @@ export function claimHardRuleFindings(
  * influence a hard-rule verdict, and `pipeline.test.ts` drives the behavioural
  * half — a scorer that passes everything cannot save a draft that violates a
  * hard rule.
+ *
+ * IT TAKES THE MODE AND THE WHOLE CONTEXT (slice 7), and both of those are
+ * decisions rather than plumbing:
+ *
+ *   THE MODE, because slice 7's checks are per-mode data (`ModeSpec.checks`) —
+ *   source-to-reel is the one mode that can be refused for repeating its
+ *   source, and ideation is the one that can be refused for handing back
+ *   topics. A gate that did not know the mode would have to guess, and a guess
+ *   here is a fail-open.
+ *
+ *   THE CONTEXT RATHER THAN A PRE-BUILT CORPUS, because the corpus, the source
+ *   text and the offered frameworks are then all DERIVED FROM THE VALUE THE
+ *   PROMPT WAS BUILT FROM. A caller assembling a second corpus is the shape
+ *   `traceabilityCorpusFor`'s own docblock warns about: "what stops the scan
+ *   from being run against a corpus the model never saw".
+ *
+ * THE WHOLE GATE IS THIS ONE FUNCTION, which is what makes card R7 structural:
+ * a revision re-runs `runKillTest` and therefore re-runs every rule, every
+ * scan and every mode check. There is no path that re-runs some of them.
  */
 export function runKillTest(params: {
   output: ScriptOutput;
-  corpus: TraceabilityCorpus;
+  mode: ModeId;
+  context: GenerationContext;
 }): AttemptFindings {
   const units = outputTextUnits(params.output);
-  const traceability = scanTraceability(units, params.corpus);
+  const corpus: TraceabilityCorpus = traceabilityCorpusFor(params.context);
+  const traceability = scanTraceability(units, corpus);
   const claims = scanOutputClaims(units);
   return {
     hardRules: [
       ...scanTextOnlyHardRules(units),
       ...inventedSpecificFindings(traceability),
       ...claimHardRuleFindings(claims),
+      ...scanModeChecks({
+        mode: params.mode,
+        output: params.output,
+        input: params.context.input,
+        frameworks: params.context.frameworks,
+      }),
     ],
     traceability,
     claims,
@@ -365,6 +398,16 @@ const SHARPER_ANGLES: Record<HardRuleId, string> = {
     "Try naming what the idea asks a viewer to do, and leave what happens after they see it out of the draft — nothing here has any evidence about that yet.",
   hook_too_long:
     "Try the hook that is one clause long: what would make you stop, said in a breath.",
+  summarised_source:
+    "Try starting from the thing the source made you change about your own work, and leave the source off screen entirely.",
+  collapsed_variants:
+    "Try writing the one you would actually post, then write the one you would post if that first one turned out to be wrong.",
+  idea_is_a_topic:
+    "Try finishing the sentence 'most people think this, and what I filmed says that' — the subject on its own is not an idea.",
+  framework_not_offered:
+    "Try the framework on your list that comes closest, and say where it does not fit rather than reaching for one you were not given.",
+  empty_weakest_point:
+    "Try naming the person this would not work for. That is usually the weakest point, and it is worth saying out loud.",
 };
 
 export function honestRefusal(findings: AttemptFindings): HonestRefusal {

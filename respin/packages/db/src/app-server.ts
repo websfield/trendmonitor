@@ -66,6 +66,31 @@ import {
   submitInterview,
   type SubmitInterviewResult,
 } from "./interview-ops";
+// Slice 7 (stage A). The framework surface, bound here for the same reason the
+// interview trio is: these functions take a `db` handle, and the facade is what
+// supplies the pooled one. Positional `WorkspaceScope` on every one of them,
+// which is not a style choice — `tests/profile-cage.test.ts`'s AC-13 scan finds
+// scope-taking entries by reading parameter TYPE TEXT, so folding them into an
+// options object would hide five new entries from the completeness check whose
+// whole job is proving each reaches `assertScoped`.
+import {
+  approvePrivateFramework,
+  createPrivateFramework,
+  editPrivateFramework,
+  eligibleFrameworks,
+  listPrivateFrameworks,
+  retirePrivateFramework,
+  sharedFrameworkLibrary,
+  type EligibleFramework,
+  type PrivateFrameworkEntitlement,
+} from "./frameworks";
+import type { Framework } from "./brain-schema";
+// Slice 7 (stage A). The feedback pair. Positional `WorkspaceScope`, AC-13
+// reason as above; `listFeedback` returns RAW stored events by requirement
+// (R11), so there is deliberately no summary method here to bind.
+import { listFeedback, recordFeedback } from "./feedback-ops";
+import type { GenerationFeedbackRow } from "./generation-schema";
+import type { RecordGenerationFeedbackParams } from "./with-workspace";
 import type { OnboardingInterviewDraft } from "./onboarding-schema";
 import {
   selectActiveProfile,
@@ -301,10 +326,16 @@ export const respinDb = {
   ): Promise<ActivateBrainDocCoherentResult> =>
     activateBrainCoherent(getServerDb(), scope, profileId, brainDocId),
   // Slice 2b. `monthlySpend` is positional `WorkspaceScope` for the AC-13 scan,
-  // like every entry above; `reconcileSpend` takes none, deliberately — it is
-  // the cross-workspace operator query `/admin/model-spend` calls behind
+  // like every entry above; `reconcileSpend` takes no SCOPE, deliberately — it
+  // is the cross-workspace operator query `/admin/model-spend` calls behind
   // `requireAdmin()`, the same shape as `@respin/config`'s
   // `getActiveConfigServer` taking no scope.
+  //
+  // It does take `includedBuildPurposes` (R-81), with no default: which
+  // purposes price their first billable attempt at zero is `priceOf`'s answer
+  // and `@respin/db` may not import `@respin/credits`, so the caller carries
+  // it — the same seam the framework writes' `entitlement` argument opens for
+  // the tier. A tier gate, not a tenancy one, so it is not an AC-13 entry.
   monthlySpend: (
     scope: WorkspaceScope,
     periodStart: Date
@@ -318,8 +349,10 @@ export const respinDb = {
     scope: WorkspaceScope,
     periodStart: Date
   ): Promise<BurnByModeResult> => burnByMode(getServerDb(), scope, periodStart),
-  reconcileSpend: (): Promise<SpendReconciliationResult> =>
-    reconcileSpend(getServerDb()),
+  reconcileSpend: (
+    includedBuildPurposes: readonly string[]
+  ): Promise<SpendReconciliationResult> =>
+    reconcileSpend(getServerDb(), includedBuildPurposes),
   // Slice 3b, Stage B1: the structured-interview trio. Positional
   // `WorkspaceScope`, the same AC-13 reason as every entry above — see
   // `tests/profile-cage.test.ts`'s pinned list, which already named these
@@ -345,4 +378,95 @@ export const respinDb = {
     profileId: string
   ): Promise<SubmitInterviewResult> =>
     submitInterview(getServerDb(), scope, profileId),
+  // ---------------------------------------------------------------- slice 7
+  //
+  // THE FRAMEWORK SURFACE (R5a-R5c). Six methods, and the `entitlement`
+  // argument on the four WRITES is the seam this stage deliberately leaves
+  // open: `@respin/db` cannot resolve a tier (R-30 constraint 2), so the
+  // caller must state whether this workspace's plan includes private
+  // frameworks. It has NO DEFAULT — an omitted answer is a compile error, not
+  // a permissive one — and `@respin/credits` owns the mapping from
+  // `getWorkspaceBillingState().tier` to `"included" | "not_included"`
+  // (PRD §4G: Pro and Studio only).
+  //
+  // `sharedFrameworkLibrary` takes NO scope, and that is correct rather than
+  // an omission: a shared framework has both owner columns NULL by CHECK, so
+  // it belongs to nobody and is the same set for every workspace — the same
+  // shape `reconcileSpend` above uses for a query with no tenant.
+  sharedFrameworkLibrary: (): Promise<EligibleFramework[]> =>
+    sharedFrameworkLibrary(getServerDb()),
+  eligibleFrameworks: (
+    scope: WorkspaceScope,
+    profileId: string
+  ): Promise<EligibleFramework[]> =>
+    eligibleFrameworks(getServerDb(), scope, profileId),
+  listPrivateFrameworks: (
+    scope: WorkspaceScope,
+    profileId: string
+  ): Promise<EligibleFramework[]> =>
+    listPrivateFrameworks(getServerDb(), scope, profileId),
+  createPrivateFramework: (
+    scope: WorkspaceScope,
+    profileId: string,
+    content: unknown,
+    entitlement: PrivateFrameworkEntitlement
+  ): Promise<Framework> =>
+    createPrivateFramework(getServerDb(), scope, profileId, {
+      content,
+      entitlement,
+    }),
+  editPrivateFramework: (
+    scope: WorkspaceScope,
+    profileId: string,
+    baseFrameworkId: string,
+    content: unknown,
+    entitlement: PrivateFrameworkEntitlement
+  ): Promise<Framework> =>
+    editPrivateFramework(getServerDb(), scope, profileId, {
+      baseFrameworkId,
+      content,
+      entitlement,
+    }),
+  approvePrivateFramework: (
+    scope: WorkspaceScope,
+    profileId: string,
+    frameworkId: string,
+    entitlement: PrivateFrameworkEntitlement
+  ): Promise<Framework> =>
+    approvePrivateFramework(
+      getServerDb(),
+      scope,
+      profileId,
+      frameworkId,
+      entitlement
+    ),
+  retirePrivateFramework: (
+    scope: WorkspaceScope,
+    profileId: string,
+    frameworkId: string,
+    entitlement: PrivateFrameworkEntitlement
+  ): Promise<Framework> =>
+    retirePrivateFramework(
+      getServerDb(),
+      scope,
+      profileId,
+      frameworkId,
+      entitlement
+    ),
+  // Slice 7, R10/R11. `params` is the capability's own param type — validation
+  // (the closed reaction set, the note's blank/length rules) belongs to the
+  // capability, the same "validate at the boundary" discipline
+  // `saveInterviewDraft`'s `patch: unknown` uses one entry up.
+  recordFeedback: (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: RecordGenerationFeedbackParams
+  ): Promise<GenerationFeedbackRow> =>
+    recordFeedback(getServerDb(), scope, profileId, params),
+  listFeedback: (
+    scope: WorkspaceScope,
+    profileId: string,
+    page?: LedgerPage
+  ): Promise<GenerationFeedbackRow[]> =>
+    listFeedback(getServerDb(), scope, profileId, page),
 };

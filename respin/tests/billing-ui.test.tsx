@@ -9,6 +9,9 @@
 // proven is "given this state, the page renders this", not "the page computes
 // this state". The state-computing half lives in packages/credits and was
 // tested there in phases 2–3.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as creditsFacade from "@respin/credits/app-server";
@@ -20,10 +23,18 @@ import {
   BILLING_ERROR_CODES,
   BILLING_ERROR_COPY,
   HANDLED_ERROR_CLASS_NAMES,
+  type BillingErrorCode,
   billingErrorCode,
   billingErrorDisplay,
   billingErrorFromCode,
 } from "../app/(product)/billing-errors";
+// The VALUE, from the package that owns the closed set — `billing-errors.ts`
+// writes the four reasons out because the union TYPE is not on the facade, and
+// a test that repeated that list would be a third copy of it.
+import { REVISION_PARENT_REFUSALS } from "@respin/credits";
+
+/** This file's own directory — the anchor for the source reads below. */
+const HERE = dirname(fileURLToPath(import.meta.url));
 import {
   UsageView,
   burnByModeNote,
@@ -938,6 +949,149 @@ describe("billing error copy: completeness and hygiene", () => {
     expect(message).toContain("Nothing was charged");
   });
 
+  it("NO billing copy sells a plan — every code, derived", () => {
+    // THE SCAN THIS FILE WAS ALREADY CREDITED WITH AND DID NOT HAVE (billing
+    // gate, 2026-09-01). `billing-errors.ts`'s slice-7 block said
+    // "`tests/billing-ui.test.tsx` scans this whole map for the shape"; this
+    // file contained no `upgrade` scan at all. The property held on the two
+    // SCREENS — `tests/studio-ui.test.tsx` over `STUDIO_ERROR_CODES`,
+    // `tests/framework-ui.test.tsx` over `FRAMEWORK_ERROR_CODES` — and nowhere
+    // over the map itself, so a code with no screen-side override could say
+    // "upgrade for this" with the suite green.
+    //
+    // THE PATTERN IS `/studio`'s, UNCHANGED, and the two honest exceptions are
+    // NAMED rather than the pattern being narrowed to hide them: dropping
+    // `\bsubscribe\b` would silence them and every future misuse of the word
+    // together, which is the shape of every population defect in this repo.
+    const SELLS_A_PLAN =
+      /\bupgrad|move to a (higher |paid )?plan|a plan that includes|\bsubscribe\b/;
+    const offenders = (BILLING_ERROR_CODES as readonly string[]).filter((code) => {
+      const copy = BILLING_ERROR_COPY[code as BillingErrorCode];
+      return SELLS_A_PLAN.test(`${copy.title} ${copy.detail}`.toLowerCase());
+    });
+    // `no_stripe_customer` — "a billing account is created the first time you
+    // subscribe" — and `no_live_subscription` — "a cancelled subscription
+    // cannot be reused, subscribe again" — are about HAVING a subscription at
+    // all, on the billing surface, where subscribing IS the remedy. Neither
+    // names another plan or its contents, which is what R15 forbids. A third
+    // entry here is a judgement somebody has to make, and that is the point.
+    expect(offenders, "a billing refusal sells a plan").toEqual([
+      "no_stripe_customer",
+      "no_live_subscription",
+    ]);
+    // NON-VACUITY: the pattern catches a planted violation of each clause.
+    for (const planted of [
+      "upgrading raises the number",
+      "move to a higher plan to continue",
+      "choose a plan that includes this mode",
+      "subscribe to continue",
+    ]) {
+      expect(SELLS_A_PLAN.test(planted), planted).toBe(true);
+    }
+    // ...and it reads a population worth deriving.
+    expect(BILLING_ERROR_CODES.length).toBeGreaterThan(20);
+  });
+
+  it("the counts these two docblocks assert are the counts the collection has", () => {
+    // A COUNT IN PROSE IS BOUND TO NOTHING, WHICH IS WHY IT ROTTED TWICE
+    // (billing gate rounds 1 and 2, 2026-09-01). `REVISION_PARENT_REFUSALS`'
+    // docblock said "three" above four members; round 1 fixed it and left
+    // `REVISION_PARENT_MESSAGES` twelve lines below saying "two of the three"
+    // above the same four. The same shape was live in `@respin/llm`'s
+    // `errors.ts` header ("TWO PARAMETERS ARE STRINGS", naming three), bound
+    // there by `packages/llm/tests/no-text.test.ts`.
+    //
+    // THIS IS THE BINDING: the words are read out of the file and compared to
+    // the real member count. It cannot pass vacuously — a reworded sentence
+    // makes the match `null`, which is a failure, not a silence (CLAUDE.md,
+    // 2026-08-21: a scan that finds nothing is indistinguishable from a scan
+    // that is broken).
+    const NUMBER_WORDS: Readonly<Record<number, string>> = {
+      1: "one",
+      2: "two",
+      3: "three",
+      4: "four",
+      5: "five",
+      6: "six",
+    };
+    const ORDINALS: Readonly<Record<number, string>> = {
+      2: "second",
+      3: "third",
+      4: "fourth",
+      5: "fifth",
+      6: "sixth",
+    };
+    const n = Object.keys(REVISION_PARENT_REFUSALS).length;
+    const source = readFileSync(
+      join(HERE, "..", "packages", "credits", "src", "errors.ts"),
+      "utf8"
+    );
+    // `REVISION_PARENT_REFUSALS`: "…FOUR MEMBERS…" — the round-1 correction.
+    const members = /ABOVE (\w+) MEMBERS/.exec(source);
+    expect(members, "the refusal docblock no longer states its size").not.toBeNull();
+    expect(members?.[1].toLowerCase()).toBe(NUMBER_WORDS[n]);
+    // `REVISION_PARENT_MESSAGES`: "three of the four … and the fourth …".
+    const split = /(\w+) of the (\w+) are about what the product can do/.exec(
+      source
+    );
+    expect(split, "the message docblock no longer splits the set").not.toBeNull();
+    expect(split?.[1]).toBe(NUMBER_WORDS[n - 1]);
+    expect(split?.[2]).toBe(NUMBER_WORDS[n]);
+    const odd = /and the (\w+) is about ownership/.exec(source);
+    expect(odd, "the message docblock no longer names the odd one out").not.toBeNull();
+    expect(odd?.[1]).toBe(ORDINALS[n]);
+  });
+
+  it("EVERY `RevisionParentError` reason has its own code, and the `??` fallback is live", () => {
+    // THE WITNESS `billing-errors.ts` NAMED AND THIS FILE DID NOT CARRY (billing
+    // gate, 2026-09-01). Two comments there said this file "drives EVERY reason
+    // the class can carry through `billingErrorCode`" and "drives [the `??`
+    // fallback] with a cast-in reason". It did neither: `revision_parent`
+    // appeared nowhere in this file.
+    //
+    // THE POPULATION IS `REVISION_PARENT_REFUSALS` ITSELF, so a fifth reason
+    // added in the package reddens here rather than degrading to the neutral
+    // fallback for a creator (CLAUDE.md, 2026-08-29).
+    const reasons = Object.values(REVISION_PARENT_REFUSALS);
+    expect(reasons.length).toBeGreaterThanOrEqual(4);
+    const codes = reasons.map((reason) =>
+      billingErrorCode(new creditsFacade.RevisionParentError(reason))
+    );
+    // FOUR REASONS, FOUR DIFFERENT SENTENCES — the whole reason the class gets
+    // five codes. Telling a creator whose parent was an honest refusal that the
+    // output "is not this creator's" sends them to look for a permissions
+    // problem that does not exist.
+    expect(new Set(codes).size, "two reasons share one code").toBe(reasons.length);
+    for (const code of codes) {
+      expect(code, "a reason fell through to the neutral fallback").not.toBe(
+        "revision_parent"
+      );
+      expect(BILLING_ERROR_CODES as readonly string[]).toContain(code);
+      expect(BILLING_ERROR_COPY[code].detail.length).toBeGreaterThan(30);
+    }
+    const details = codes.map((c) => BILLING_ERROR_COPY[c].detail);
+    expect(new Set(details).size, "two reasons render one sentence").toBe(
+      reasons.length
+    );
+
+    // THE `??` FALLBACK IS NOT DEAD CODE, and proving a field cannot be TYPED
+    // is not proving it cannot be CAST (CLAUDE.md, 2026-08-21). `reason`
+    // arrives on an object this build did not necessarily construct — a rolling
+    // deploy runs two builds at once — so the branch is driven with a value the
+    // type forbids.
+    const fromAnotherBuild = new creditsFacade.RevisionParentError(
+      "a_reason_this_build_has_never_heard_of" as never
+    );
+    expect(billingErrorCode(fromAnotherBuild)).toBe("revision_parent");
+    // ...and the fallback CLAIMS NO CAUSE, which is why it is safe to land on:
+    // unlike the run-slot pair there is no "the one that blames us" here.
+    const fallback = BILLING_ERROR_COPY.revision_parent;
+    expect(fallback.detail).toMatch(/nothing was (generated and nothing was )?spent/i);
+    expect(fallback.detail.toLowerCase()).not.toMatch(
+      /not this creator|another creator|your fault|permission/
+    );
+  });
+
   it("billingErrorCode maps a real instance to its code, and anything else to unknown", () => {
     expect(billingErrorCode(new creditsFacade.NotPausedError())).toBe("not_paused");
     expect(billingErrorCode(new creditsFacade.BillingRoleError("viewer"))).toBe(
@@ -1326,6 +1480,40 @@ describe("a refusal names what happened to the money (fix round, 2026-08-28)", (
     expect(BILLING_ERROR_COPY.insufficient_credits.detail).toMatch(
       /before anything was called/i
     );
+  });
+
+  it("the payload-mismatch copy carries BOTH causes, like the error it renders", () => {
+    // THE DEFECT (slice 7 cross-boundary pass, 2026-09-01). The screen said
+    // "the request reused an id that belongs to another draft" — an accusation
+    // — while `GenerationPayloadMismatchError`'s own message already named a
+    // second cause it cannot tell apart: `hashRequest` gained a SIXTH field in
+    // slice 7, so an attempt started by an EARLIER BUILD carries a hash taken
+    // over five and cannot match however faithfully the creator resubmitted.
+    // Telling a creator they submitted a different request when they did not
+    // is the defect class this slice fixed twice already.
+    //
+    // DERIVED FROM THE PACKAGE'S MESSAGE, not pinned as a string: the class is
+    // the authority on how many causes this refusal has, so a third cause
+    // added there reddens here rather than leaving the screen a cause short.
+    const err = new creditsFacade.GenerationPayloadMismatchError("att-1");
+    expect(billingErrorCode(err)).toBe("generation_payload_mismatch");
+    expect(
+      err.message,
+      "the ERROR stopped naming the pre-update cause — then this binding is backwards"
+    ).toMatch(/before this product was last updated/i);
+
+    const copy = BILLING_ERROR_COPY.generation_payload_mismatch;
+    const text = `${copy.title} ${copy.detail}`;
+    // The second cause reaches the screen...
+    expect(text).toMatch(/before this product was last updated/i);
+    // ...and the screen no longer asserts the first one as fact about the
+    // creator, in the title or in the detail.
+    expect(text).not.toMatch(/belongs to another draft/i);
+    expect(text).not.toMatch(/already in use for a different draft/i);
+    expect(text).not.toMatch(/\breused an id\b/i);
+    // The money and the remedy are unchanged, and both are still true.
+    expect(copy.detail).toMatch(/nothing was spent and no model was called/i);
+    expect(copy.detail).toMatch(/start the draft again/i);
   });
 });
 

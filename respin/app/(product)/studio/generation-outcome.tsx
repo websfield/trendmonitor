@@ -16,8 +16,8 @@
 //  1. IT NEVER EDITS THE DRAFT. The traceability scan is a recall control with
 //     known false positives (R-64), so the product FLAGS and OFFERS `[check]`;
 //     deleting or rewriting a flagged token would corrupt a creator's script on
-//     a false positive. Every hook below is rendered as the operation returned
-//     it, and the `[check]` offer is a separate suggestion beside it.
+//     a false positive. Every section below is rendered as the operation
+//     returned it, and the `[check]` offer is a separate suggestion beside it.
 //  2. IT NEVER STATES HOW THE DRAFT WILL DO. No result of this creator's has
 //     been logged — the results loop is slice 9 — so any hint that the draft is
 //     shaped by what has worked for them is a claim about evidence that does
@@ -25,7 +25,11 @@
 //     is scanned over this file's rendered output.
 //  3. IT NEVER SHOWS "why this performs" WITHOUT ITS WEAKEST POINT. That is
 //     `whyThisPerformsView`'s job and its false branch withholds the reasoning
-//     rather than rendering half a pair (REQ-I04).
+//     rather than rendering half a pair (REQ-I04). SLICE 7's R18 is that this
+//     holds on EVERY mode, not the two where it was easy: there is exactly ONE
+//     path from a usable run to the screen and it goes through
+//     `WhyThisPerforms` below, so a mode cannot acquire a second renderer that
+//     forgets.
 import type { ReactNode } from "react";
 import { Banner } from "../../ui/banner";
 import {
@@ -34,6 +38,7 @@ import {
   claimFamilyNote,
   claimsHeading,
   creatorRulesSentence,
+  frameworksNotUsedSentence,
   generateChargeSentence,
   killTestSentence,
   replayChargeSentence,
@@ -44,6 +49,7 @@ import {
 import type {
   ClaimFlag,
   KillTestSummary,
+  ScriptDocument,
   StudioRunState,
   TraceabilityFlag,
 } from "./run-state";
@@ -55,6 +61,31 @@ export type GenerationOutcomeProps = {
   /** The words for a code with no entry. Never invented here. */
   fallbackCopy: { title: string; detail: string };
 };
+
+/**
+ * WHAT THE CONTEXT BUDGET COULD NOT CARRY OF THE CREATOR'S OWN FRAMEWORKS
+ * (R17, slice 7 cross-boundary pass 2026-09-01).
+ *
+ * IT RENDERS NOTHING WHEN THERE IS NOTHING TO SAY, and that is the whole
+ * shape of it: `frameworksNotUsedSentence` returns `null` for a zero drop AND
+ * for a press that built no offer, so this is not a permanent line that says
+ * "0 frameworks were dropped" on every draft. A line that appears only when
+ * the fact is true is the difference between telling somebody something and
+ * decorating the page.
+ *
+ * `muted` AND BELOW THE CHARGE, deliberately: it is not a refusal and not an
+ * error. The draft is real, it is theirs, and this is one thing about how it
+ * was built.
+ */
+function FrameworksNotUsed({ count }: { count: number | null }) {
+  const sentence = frameworksNotUsedSentence(count);
+  if (sentence === null) return null;
+  return (
+    <p className="muted" data-testid="studio-frameworks-not-used">
+      {sentence}
+    </p>
+  );
+}
 
 function KillTestBlock({ summary }: { summary: KillTestSummary }) {
   const hard = summary.traceability.filter((f) => f.enforcement === "hard");
@@ -179,6 +210,193 @@ function KillTestBlock({ summary }: { summary: KillTestSummary }) {
   );
 }
 
+/**
+ * "Why this performs", with its weakest point — R18, ON EVERY MODE.
+ *
+ * ONE COMPONENT, ONE CALL SITE, and that is the mechanism rather than a tidy
+ * habit: R18 says the weakest point is named on every mode, "not just the two
+ * where it was easy", and the way a screen breaks that is by growing a second
+ * per-mode renderer that prints `reasoning` and forgets the pair. `Document`
+ * below renders this exactly once, outside every per-section branch, so there
+ * is no mode-shaped place for a second one to appear.
+ */
+function WhyThisPerforms({
+  section,
+}: {
+  section: { reasoning: string; weakestPoint: string };
+}) {
+  const why = whyThisPerformsView(section);
+  return (
+    <>
+      <h3 style={{ marginBottom: "0.25rem" }}>Why this performs</h3>
+      {why.ok ? (
+        <>
+          <p data-testid="studio-why-reasoning">{why.reasoning}</p>
+          <p data-testid="studio-weakest-point">
+            <strong>Weakest point:</strong> {why.weakestPoint}
+          </p>
+        </>
+      ) : (
+        <p data-testid="studio-why-withheld" className="muted">
+          {why.note}
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * THE DOCUMENT, SECTION BY SECTION — one renderer for all six modes (R1/R18).
+ *
+ * EVERY SECTION IS RENDERED IF PRESENT AND OMITTED IF ABSENT, and the absence
+ * is the mode's rather than this file's: `parseScriptOutput` has already
+ * refused a document carrying a section its mode does not permit, and required
+ * a section its mode does not have. So there is no per-mode branch here at all
+ * — a mode is "a data entry in the registry, not a branch" (R1), and a screen
+ * that switched on the mode id would be the branch the registry exists to
+ * remove. It would also be a second list of mode ids in `app/**`, which
+ * `tests/studio-ui.test.tsx` scans this directory to forbid.
+ *
+ * NOTHING IS RENDERED AS TEXT THAT WAS NOT IN THE DOCUMENT. Every heading below
+ * is this screen's label for a field the model filled in; no section is
+ * summarised, reordered within itself, or given a value it did not carry.
+ */
+function Document({ document: doc }: { document: ScriptDocument }) {
+  return (
+    <>
+      {doc.thesis ? (
+        <div data-testid="studio-thesis">
+          <h3 style={{ marginBottom: "0.25rem" }}>The thesis</h3>
+          <p>{doc.thesis.statement}</p>
+          <p className="muted">{doc.thesis.why}</p>
+        </div>
+      ) : null}
+
+      {doc.framework ? (
+        <div data-testid="studio-framework">
+          <h3 style={{ marginBottom: "0.25rem" }}>The framework it uses</h3>
+          <p>
+            <strong>{doc.framework.name}</strong>
+          </p>
+          <p className="muted">{doc.framework.why}</p>
+        </div>
+      ) : null}
+
+      {doc.hooks ? (
+        <>
+          <h3 style={{ marginBottom: "0.25rem" }}>Hooks</h3>
+          <ol data-testid="studio-hooks">
+            {doc.hooks.map((h, i) => (
+              <li key={i} style={{ marginBottom: "0.5rem" }}>
+                {/*
+                  RENDERED EXACTLY AS RETURNED. No trimming, no `[check]`
+                  inserted, no flagged token removed — this file's header rule 1.
+                */}
+                <div>{h.text}</div>
+                <div className="muted">Mechanic: {h.mechanic}</div>
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : null}
+
+      {doc.ideas ? (
+        <>
+          <h3 style={{ marginBottom: "0.25rem" }}>Ideas</h3>
+          {/*
+            ALL THREE FIELDS, ALWAYS (REQ-C01 mode 7). An idea is hook + thesis
+            + framework and never a topic; a view that showed the hook alone
+            would turn the output back into a list of topics on its way to the
+            page, which is the failure this mode has by default.
+          */}
+          <ol data-testid="studio-ideas">
+            {doc.ideas.map((idea, i) => (
+              <li key={i} style={{ marginBottom: "0.75rem" }}>
+                <div>{idea.hook}</div>
+                <div className="muted">Thesis: {idea.thesis}</div>
+                <div className="muted">Framework: {idea.framework}</div>
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : null}
+
+      {doc.beats ? (
+        <>
+          <h3 style={{ marginBottom: "0.25rem" }}>The script, beat by beat</h3>
+          <ol data-testid="studio-beats">
+            {doc.beats.map((b, i) => (
+              <li key={i} style={{ marginBottom: "0.5rem" }}>
+                <div>
+                  <code>{b.atSeconds}s</code> {b.vo}
+                </div>
+                {/*
+                  THE TURN IS MARKED IN WORDS (PRD §46), never by styling alone
+                  — DESIGN.md's rule that status is never colour-only, and the
+                  turn is the one beat a creator most needs to find.
+                */}
+                {b.isTurn ? (
+                  <div className="muted" data-testid="studio-beat-turn">
+                    This is the turn — where the piece changes direction.
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : null}
+
+      {doc.shotMap ? (
+        <>
+          <h3 style={{ marginBottom: "0.25rem" }}>What to film</h3>
+          <ul data-testid="studio-shot-map">
+            {doc.shotMap.map((s, i) => (
+              <li key={i} style={{ marginBottom: "0.5rem" }}>
+                <div>
+                  <strong>Beat {s.beatIndex + 1}:</strong> {s.shot}
+                </div>
+                <div className="muted">{s.note}</div>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {doc.onScreenText ? (
+        <>
+          <h3 style={{ marginBottom: "0.25rem" }}>On-screen text</h3>
+          <ul data-testid="studio-on-screen-text">
+            {doc.onScreenText.map((t, i) => (
+              <li key={i}>
+                <code>{t.atSeconds}s</code> {t.text}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {doc.caption ? (
+        <div data-testid="studio-caption">
+          <h3 style={{ marginBottom: "0.25rem" }}>Caption</h3>
+          <p>{doc.caption.text}</p>
+          {doc.caption.hashtags.length > 0 ? (
+            <p className="muted" data-testid="studio-hashtags">
+              {doc.caption.hashtags.join(" ")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      <WhyThisPerforms section={doc.whyThisPerforms} />
+
+      <h3 style={{ marginBottom: "0.25rem" }}>Disclosure</h3>
+      <p data-testid="studio-disclosure">
+        <strong>{doc.disclosure.platform}:</strong> {doc.disclosure.guidance}
+      </p>
+    </>
+  );
+}
+
 export function GenerationOutcome({
   state,
   refusalCopy,
@@ -215,8 +433,8 @@ export function GenerationOutcome({
         <p data-testid="studio-charge">{replayChargeSentence(state.balanceAfter)}</p>
         <p>
           {state.outcome === "usable"
-            ? "That draft finished and is stored."
-            : "That draft ended in an honest refusal, which is stored with its reasons."}
+            ? `That ${state.modeLabel} draft finished and is stored.`
+            : `That ${state.modeLabel} draft ended in an honest refusal, which is stored with its reasons.`}
         </p>
         {/*
           `.trim()`, NOT TRUTHINESS. `weakestPoint` arrives from a stored
@@ -239,12 +457,14 @@ export function GenerationOutcome({
           THE DOCUMENT IS NOT RE-RENDERED HERE, and the screen says so rather
           than showing a blank space. `generations.output` is jsonb typed
           `unknown`; parsing it in `app/**` would be a second parser for a
-          contract `parseScriptOutput` owns, free to disagree with it. Slice 7's
-          draft history is where a stored draft is read back.
+          contract `parseScriptOutput` owns, free to disagree with it. A stored
+          draft is read back through the creator's export, which carries every
+          generation with its parent and its request.
         */}
         <p className="muted">
           The draft itself is not shown again here — this press did not run
-          anything. Start a new draft to get a fresh one.
+          anything. Start a new draft to get a fresh one; your export carries
+          the stored one.
         </p>
       </div>
     );
@@ -276,6 +496,11 @@ export function GenerationOutcome({
           rendered — `GenerationRun`'s refused branch carries no output at all,
           and showing it would hand a creator the text the product just refused
           to stand behind.
+
+          THIS IS ALSO R16's ANSWER FOR A REVISION (the card's question 3): a
+          revision re-runs the kill test from scratch, so a revision of a draft
+          that passed can land here — and when it does, what replaces the
+          prepared draft is this refusal, not the parent's text greyed out.
         */}
         <p className="muted">
           The draft that failed is not shown: it broke a rule this product does
@@ -289,6 +514,7 @@ export function GenerationOutcome({
             state.charge.balanceAfter
           )}
         </p>
+        <FrameworksNotUsed count={state.privateFrameworksNotUsed} />
         <p className="muted">
           This ran, and was charged for. An honest refusal is the product
           working: it is what happens instead of a draft that would have gone
@@ -297,8 +523,6 @@ export function GenerationOutcome({
       </div>
     );
   }
-
-  const why = whyThisPerformsView(state.whyThisPerforms);
 
   return (
     // `role="status"` — the same live-region reasoning `../onboarding/run-outcome.tsx`
@@ -312,38 +536,9 @@ export function GenerationOutcome({
       className="panel"
       style={{ marginTop: "1rem" }}
     >
-      <h2 style={{ marginTop: 0 }}>Your hooks</h2>
-      <ol data-testid="studio-hooks">
-        {state.hooks.map((h, i) => (
-          <li key={i} style={{ marginBottom: "0.5rem" }}>
-            {/*
-              RENDERED EXACTLY AS RETURNED. No trimming, no `[check]` inserted,
-              no flagged token removed — see this file's header rule 1.
-            */}
-            <div>{h.text}</div>
-            <div className="muted">Mechanic: {h.mechanic}</div>
-          </li>
-        ))}
-      </ol>
+      <h2 style={{ marginTop: 0 }}>{state.modeLabel}</h2>
 
-      <h3 style={{ marginBottom: "0.25rem" }}>Why this performs</h3>
-      {why.ok ? (
-        <>
-          <p data-testid="studio-why-reasoning">{why.reasoning}</p>
-          <p data-testid="studio-weakest-point">
-            <strong>Weakest point:</strong> {why.weakestPoint}
-          </p>
-        </>
-      ) : (
-        <p data-testid="studio-why-withheld" className="muted">
-          {why.note}
-        </p>
-      )}
-
-      <h3 style={{ marginBottom: "0.25rem" }}>Disclosure</h3>
-      <p data-testid="studio-disclosure">
-        <strong>{state.disclosure.platform}:</strong> {state.disclosure.guidance}
-      </p>
+      <Document document={state.document} />
 
       <KillTestBlock summary={state.killTest} />
 
@@ -353,6 +548,7 @@ export function GenerationOutcome({
           state.charge.balanceAfter
         )}
       </p>
+      <FrameworksNotUsed count={state.privateFrameworksNotUsed} />
       <p className="muted" data-testid="studio-check-legend">
         {CHECK_MARKER} is this product&apos;s marker for &quot;not stated
         yet&quot;. Where one is offered above, it is a suggestion you can take or

@@ -15,6 +15,8 @@
 // is not working.
 import { describe, expect, it } from "vitest";
 
+import { CHECK } from "@respin/llm";
+
 import {
   COMMON_OPENERS,
   FLAG_ONLY_FIELD_PREFIXES,
@@ -23,6 +25,7 @@ import {
   buildCorpusIndex,
   offerCheck,
   scanTraceability,
+  stripMarkedSpecifics,
   type TraceabilityCorpus,
 } from "../src/traceability";
 import { type TextUnit } from "../src/text";
@@ -425,6 +428,75 @@ describe("the corpus index", () => {
   it("is EMPTY for an empty corpus — so a passing scan is never vacuous", () => {
     expect(buildCorpusIndex(EMPTY).size).toBe(0);
   });
+
+  // ------------------------------------------------------------------
+  // A `[check]`-MARKED SPECIFIC VOUCHES FOR NOTHING (spin-compliance gate,
+  // 2026-09-01). The marker is the model's own statement that the material
+  // does not carry this specific, so it is the one token that can never put it
+  // into the corpus — see `stripMarkedSpecifics`.
+  // ------------------------------------------------------------------
+
+  it("a `[check]`-MARKED specific contributes nothing to the index", () => {
+    const marked = `The $4,000 ${CHECK} rig cost you the whole year`;
+    expect(buildCorpusIndex(corpus([marked])).has("4000")).toBe(false);
+    // NON-VACUITY: the same sentence WITHOUT the marker does index it, so this
+    // is the marker doing the work rather than the tokeniser missing it.
+    const bare = "The $4,000 rig cost you the whole year";
+    expect(buildCorpusIndex(corpus([bare])).has("4000")).toBe(true);
+  });
+
+  it("...and only the marked one — an unmarked specific beside it still counts", () => {
+    const both = `We shot 12% ${CHECK} of it in March 2024`;
+    const ix = buildCorpusIndex(corpus([both]));
+    expect(ix.has("12")).toBe(false);
+    expect(ix.has("march")).toBe(true);
+    expect(ix.has("2024")).toBe(true);
+  });
+
+  it("the words around a marked specific survive — nothing is joined or lost", () => {
+    const ix = buildCorpusIndex(corpus([`the ${"$4,000"} ${CHECK} rig`]));
+    expect(ix.has("the")).toBe(true);
+    expect(ix.has("rig")).toBe(true);
+  });
+
+  it("an EMOJI before the marked specific does not shift the blanking (UTF-16)", () => {
+    // THE DEFECT THIS PINS, found by running the fix rather than by reading it.
+    // `m.index` and `span.start` are UTF-16 offsets; the first version of
+    // `stripMarkedSpecifics` blanked into a `[...text]` array, which iterates
+    // CODE POINTS — so every astral character before the specific shifted the
+    // window one unit right. At six the whole amount survived and the
+    // laundering was back, on a draft whose only unusual property is that a
+    // creator used emoji.
+    const emoji = "🎥🎬📸🎞️🎥🎬";
+    const text = `the rig ${emoji} cost $4,000 ${CHECK} last year`;
+    expect(buildCorpusIndex(corpus([text])).has("4000")).toBe(false);
+    // ...and the strip is length-preserving, so no offset computed against the
+    // original text can point somewhere else afterwards.
+    expect(stripMarkedSpecifics(text)).toHaveLength(text.length);
+  });
+
+  it("`unvouched` tokens are subtracted from the index, in every written form", () => {
+    // The caller's half of REQ-I05's revision case: a specific the parent's
+    // own gate REPORTED rather than traced is removed from what the parent's
+    // draft can vouch for. `generate.ts`'s `unvouchedSpecifics` is what
+    // guarantees nothing the creator typed reaches this list.
+    const ix = buildCorpusIndex({
+      brain: [],
+      input: ["the rig cost $4,000 and we shot it in March 2024"],
+      unvouched: ["$4,000"],
+    });
+    expect(ix.has("4000")).toBe(false);
+    // Only that one: the rest of the document still vouches for itself.
+    expect(ix.has("2024")).toBe(true);
+    expect(ix.has("march")).toBe(true);
+  });
+
+  it("an EMPTY `unvouched` list removes nothing — the original behaviour", () => {
+    const both = { brain: [], input: ["the rig cost $4,000"] };
+    expect(buildCorpusIndex({ ...both, unvouched: [] }).has("4000")).toBe(true);
+    expect(buildCorpusIndex(both).has("4000")).toBe(true);
+  });
+
 });
 
 describe("the stated limit (question 2)", () => {
