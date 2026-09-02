@@ -762,12 +762,12 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   topup_in_flight: {
     title: "Not enough credits yet — a top-up is on its way",
     detail:
-      "This attempt was refused and nothing was spent: no model was called and your included build was not used. A top-up has been started, and credits land when your bank settles it. Try again once your balance updates on this page — and if it does not, buy a pack from Billing rather than waiting.",
+      "This attempt was refused and nothing was spent: no model was called and this attempt did not use up your first run for this creator. A top-up has been started, and credits land when your bank settles it. Try again once your balance updates on this page — and if it does not, buy a pack from Billing rather than waiting.",
   },
   insufficient_credits: {
     title: "Not enough credits for this",
     detail:
-      "This attempt was refused BEFORE anything was called, so nothing was spent and your included build was not used. Buy an overage pack from Billing, or turn on auto-top-up so the credits are bought automatically next time — the attempt that triggers it is still refused, so you retry once they land.",
+      "This attempt was refused BEFORE anything was called, so nothing was spent and this attempt did not use up your first run for this creator. Buy an overage pack from Billing, or turn on auto-top-up so the credits are bought automatically next time — the attempt that triggers it is still refused, so you retry once they land.",
   },
   config_not_migrated: {
     title: "This server's pricing configuration is mid-deploy",
@@ -782,7 +782,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   llm_attempt_recorded: {
     title: "The model answered, but not usably",
     detail:
-      "The provider returned something we could not use, and it charged us for the attempt — so this one counted: if it was your included run for this creator, that run is now used. Nothing was taken from your credit balance. Try again; if it keeps happening, tell us rather than rewording anything, because this attempt sends a fixed message of ours and nothing you wrote.",
+      "The provider returned something we could not use, and it charged us for the attempt — so this one counted: if this was your first run for this creator, that run is now used. Nothing was taken from your credit balance. Try again; if it keeps happening, tell us rather than rewording anything, because this attempt sends a fixed message of ours and nothing you wrote.",
   },
   debit_refused_after_call: {
     title: "The run completed but could not be charged",
@@ -792,7 +792,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   llm_unavailable: {
     title: "The model provider did not answer",
     detail:
-      "Nothing was spent and your included run was not used. This is almost always brief — try again in a minute. There is nothing for you to reword: this attempt sends a fixed message of ours, never anything you wrote."
+      "Nothing was spent and this attempt did not use up your first run for this creator. This is almost always brief — try again in a minute. There is nothing for you to reword: this attempt sends a fixed message of ours, never anything you wrote."
   },
   workspace_paused: {
     title: "This workspace is paused",
@@ -1015,7 +1015,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   run_slot_busy: {
     title: "This creator already has as many runs going as your plan allows",
     detail:
-      "Nothing was spent, no model was called, and your included build was not used — this attempt was refused before any of that. Your plan allows a set number of model calls at the same time; wait for one of the runs already going to finish, then try again.",
+      "Nothing was spent, no model was called, and this attempt did not use up your first run for this creator — it was refused before any of that. Your plan allows a set number of model calls at the same time; wait for one of the runs already going to finish, then try again.",
   },
   // THE SENTENCE THAT IS NOT HERE: "Upgrading raises the number." Three
   // reviewers found it independently and it is false for two tiers of four —
@@ -1033,12 +1033,42 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   server_at_capacity: {
     title: "We are at capacity right now",
     detail:
-      "This is us, not you, and not your plan: the server is already running as many model calls as it allows at once. Nothing was spent, no model was called, and your included build was not used. Try again in a moment.",
+      "This is us, not you, and not your plan: the server is already running as many model calls as it allows at once. Nothing was spent, no model was called, and this attempt did not use up your first run for this creator. Try again in a moment.",
   },
   llm_truncated: {
     title: "The model's answer was cut off",
     detail:
-      "The answer came back longer than this server's reply-length limit allows, so nothing usable arrived. Nothing was taken from your credit balance, and it did NOT use your included build — your next run is still included. This is a server setting rather than anything you did, and trying again will hit the same limit until an operator raises it, so tell us rather than retrying.",
+      // "your next run is still included" WAS A PRICE CLAIM THIS TABLE CANNOT
+      // READ (billing gate, 2026-09-02). `BILLING_ERROR_COPY` is a static map —
+      // the `?e=` channel carries a code, never a message — so it has no
+      // config and cannot say what the included build costs. The FACT it can
+      // state is the one this path actually establishes: the claim was not
+      // consumed, so the next run is still the first one for this creator, at
+      // whatever that first run is priced (the run control on the brain page
+      // reads and states both prices).
+      //
+      // AND THE FIRST FIX STOPPED ONE PHRASE SHORT, INSIDE THIS SENTENCE
+      // (round 2 of the same gate). It removed "still included" and left "it
+      // did NOT use your included build" three words later, justified as
+      // "true whatever the document prices it at" — which is true of the
+      // CLAIM ROW and false of what a creator reads: "your included build" is
+      // itself the promise of a free build. Under the document R-82's own
+      // test appends (`onboardingBrainBuild: 25`) a creator is told they
+      // still hold a free first build they do not have. Eight strings in this
+      // map said one of "your included build was not used", "your included
+      // run was not used", "your included build is untouched"; ALL EIGHT now
+      // name the CLAIM without naming its price — "your first run for this
+      // creator" — which is the fact these refusal paths establish. No wrong
+      // debit followed from any of them (nothing was spent on a refusal
+      // path), which is why this is a change and not an incident.
+      //
+      // THE PHRASE IS BANNED ON `/studio` BY THE SAME SCAN THE OLD ONE WAS.
+      // `/studio` has no per-creator first run either, so replacing the
+      // wording without widening `tests/studio-ui.test.tsx`'s
+      // `FALSE_ON_THIS_SCREEN` pattern would have narrowed that control
+      // silently — the 2026-08-29 population lesson, in the fix for a copy
+      // defect. It is widened, with a planted specimen.
+      "The answer came back longer than this server's reply-length limit allows, so nothing usable arrived. Nothing was taken from your credit balance, and it did NOT use up your first run for this creator — your next run is still that first one. This is a server setting rather than anything you did, and trying again will hit the same limit until an operator raises it, so tell us rather than retrying.",
   },
   uncharged_attempt_cap: {
     title: "This creator's runs keep failing on our side",
@@ -1052,7 +1082,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     // windowed sibling `generation_uncharged_attempt_cap` does; the split is
     // asserted against the config in `tests/usage-honesty.test.tsx`.
     detail:
-      "Runs for this creator have repeatedly failed in a way that cost us money and cost you nothing, so the product has stopped trying rather than keep burning them. Nothing was spent, no model was called, and your included build is untouched. There is nothing for you to change — this is a fault on our side; please tell us so we can fix it.",
+      "Runs for this creator have repeatedly failed in a way that cost us money and cost you nothing, so the product has stopped trying rather than keep burning them. Nothing was spent, no model was called, and your first run for this creator is untouched. There is nothing for you to change — this is a fault on our side; please tell us so we can fix it.",
   },
   // ---------------------------------------------------- SLICE 6: generation
   //

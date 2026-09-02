@@ -42,6 +42,7 @@ import {
 import {
   GENERATION_SCREEN_DIRS,
   STREAM_SHAPES,
+  STREAM_SPECIMEN,
   generationOutcomeImporters,
   generationScreenFileCounts,
   generationScreenFiles,
@@ -1614,7 +1615,16 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
       // does not exist. "there is no included draft" — a DENIAL — is what the
       // studio copy says instead, and banning that phrase too would ban the
       // correction along with the error, so the pattern names the two nouns.
-      /included (build|run)\b/,
+      //
+      // AND `first run for this creator` IS THE SAME CLAIM IN THE WORDING THE
+      // SHARED COPY ADOPTED (billing gate round 2, 2026-09-02). Eight shared
+      // strings moved off "your included build" — a price claim a static map
+      // cannot make — and onto "your first run for this creator", which is
+      // true on `/onboarding` and just as false here: `/studio` has no
+      // per-creator first run at all. Adding the new wording without adding
+      // it HERE would have narrowed this scan silently while the copy it was
+      // written for walked out from under it.
+      /included (build|run)\b|first run for this creator/,
       "promises a free draft this screen does not have",
     ],
     [
@@ -1680,8 +1690,14 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
       const studio = studioErrorFor(code)!;
       const shared = BILLING_ERROR_COPY[code];
       expect(studio.detail, code).not.toBe(shared.detail);
+      // THE SHARED COPY STILL CARRIES THE CLAIM THIS SCREEN DOES NOT HAVE —
+      // in the wording it moved to on 2026-09-02. It said "included build"
+      // until the billing gate found that a static map cannot state a price;
+      // it now says "your first run for this creator", which is true on
+      // `/onboarding` and false here, so the override is still load-bearing
+      // and this witness still witnesses something.
       expect(shared.detail.toLowerCase(), `${code}'s SHARED copy`).toContain(
-        "included build"
+        "first run for this creator"
       );
       // The remedy that is true for every tier survives the rewrite.
       expect(studio.detail.toLowerCase(), code).toMatch(/try again|wait for/);
@@ -2601,6 +2617,64 @@ describe("R16: the output is 'being prepared', and nothing implies a stream", ()
       expect(unlisted).toHaveLength(1);
       expect(unlisted[0]).toContain("spin-result.tsx");
       expect(generationOutcomeImporters(fake)).toBe(1);
+    } finally {
+      rmSync(fake, { recursive: true, force: true });
+    }
+  });
+
+  it("NON-VACUITY: the SHAPE scan catches the specimen planted as a FILE, in EVERY listed directory", () => {
+    // A GUARD THAT SCANS SOURCE FAILS OPEN WHEN ITS PATTERN BREAKS, AND THIS
+    // ONE HAD NO WITNESS AT ALL AS A SCAN (spin-compliance gate, 2026-09-02).
+    // `shapesMatchingSpecimen` tests the six patterns against a STRING; nothing
+    // tested the composed walk against a FILE. MEASURED: replacing `codeOnly`'s
+    // body with `return ""` left `streamingViolations(ROOT) = []`, all six
+    // labels still matching the specimen and every file count unchanged — so
+    // all three assertions above stayed green while `skeleton`, `shimmer` and
+    // the whole streaming vocabulary were sayable on both screens. That is the
+    // 2026-08-21 lesson in the file whose header claims to have closed it.
+    //
+    // PLANTED AS A FILE, IN A SYNTHETIC ROOT, PER DIRECTORY — the same
+    // discipline as the completeness plant above, and per-directory because a
+    // walker that silently reads only the first entry would otherwise pass.
+    const fake = mkdtempSync(join(tmpdir(), "respin-stream-scan-"));
+    try {
+      for (const rel of GENERATION_SCREEN_DIRS) {
+        const dir = join(fake, rel);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "planted-view.tsx"), STREAM_SPECIMEN, "utf8");
+        // ...and a file whose ONLY carrier of the word shapes is a comment.
+        // It must NOT appear: the sentences explaining why nothing streams
+        // necessarily say "skeleton", "shimmer" and "streaming", and a scan
+        // that reported them would delete the explanation and keep the rule.
+        // This is also the half that fails if `codeOnly` stops stripping.
+        writeFileSync(
+          join(dir, "prose-only.tsx"),
+          [
+            "// No skeleton, no shimmer, and nothing streaming here.",
+            "/* A shimmer animation would be a claim. */",
+            "export const A = 1;",
+          ].join("\n"),
+          "utf8"
+        );
+      }
+      const violations = streamingViolations(fake);
+      for (const rel of GENERATION_SCREEN_DIRS) {
+        const forDir = violations.filter((v) => v.includes("planted-view"));
+        const here = forDir.filter((v) => v.replace(/\\/g, "/").includes(rel));
+        expect(
+          here.map((v) => v.slice(v.indexOf(": ") + 2)).sort(),
+          `the scan missed a shape in ${rel}`
+        ).toEqual([...STREAM_SHAPES.map(([label, , scope]) => `${label} (${scope})`)].sort());
+      }
+      expect(
+        violations.filter((v) => v.includes("prose-only")),
+        "a comment-only file was reported — the stripper is gone and the prose is now unwritable"
+      ).toEqual([]);
+      // The count is the whole population's, so a walker that read one
+      // directory would fail here even if the per-directory filter did not.
+      expect(violations).toHaveLength(
+        STREAM_SHAPES.length * GENERATION_SCREEN_DIRS.length
+      );
     } finally {
       rmSync(fake, { recursive: true, force: true });
     }

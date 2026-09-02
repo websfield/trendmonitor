@@ -393,6 +393,15 @@ export class UnpricedOperationError extends Error {
  * was not. `app/(product)/billing-errors.ts` carries a FIFTH answer — the
  * neutral fallback for a reason this build does not know — which is copy
  * rather than a code, and R-72 records why it names no cause.
+ *
+ * ALL FOUR COUNTS IN THIS FILE ARE NOW BOUND, and the third recurrence is why
+ * (billing gate, 2026-09-02). Round 1 bound nothing and fixed one sentence;
+ * round 2 bound "ABOVE FOUR MEMBERS" and the messages docblock below and left
+ * the three counts in the paragraph ABOVE — in the same docblock — free to rot
+ * the same way. `tests/billing-ui.test.tsx` ("the counts these two docblocks
+ * assert are the counts the collection has") now reads this paragraph too and
+ * fails if any of its numbers, or the words they are written in, drift from
+ * `Object.keys(REVISION_PARENT_REFUSALS).length`.
  */
 export const REVISION_PARENT_REFUSALS = {
   /**

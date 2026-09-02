@@ -344,13 +344,25 @@ describe("B04 is priced like anything else, and the screen never says otherwise"
       expect(s.toLowerCase()).not.toMatch(/included (run|build)\b/);
       expect(s.toLowerCase()).not.toMatch(/\bfree\b|on us|no charge/);
     }
-    // ...and the priced branch says WHAT the product actually gives away, so a
-    // creator who half-remembers "something is free" is corrected rather than
-    // left to find out from their balance.
+    // ...and the priced branch CORRECTS the half-memory "something is free"
+    // by naming where the first-run rule lives — WITHOUT asserting that rule's
+    // price, which is a number this file cannot read (billing gate,
+    // 2026-09-02: the clause used to say the brain build is "given away",
+    // which is false under any document that prices `onboardingBrainBuild`
+    // above zero — the same frozen assumption `/onboarding` was carrying).
     expect(firstIdeasCostSentence(4, 25)).toMatch(/there is no included draft/i);
     expect(firstIdeasCostSentence(4, 25)).toMatch(
-      /gives away once per creator is the brain build/i
+      /only run this product prices as a creator's first is the brain build/i
     );
+    for (const s of [
+      firstIdeasCostSentence(4, 25),
+      firstIdeasCostSentence(1, 1),
+    ]) {
+      expect(
+        s.toLowerCase(),
+        "this screen states another screen's price rule as a fact"
+      ).not.toMatch(/gives away|included build|included run|is included/);
+    }
   });
 
   it("the page prices through the OPERATION'S own rule, not by indexing config", () => {

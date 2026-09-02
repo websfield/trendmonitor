@@ -23,11 +23,21 @@ export const FIRST_IDEAS_INTRO =
 /**
  * WHAT THE PRICE SENTENCE SAYS, and what it must never say.
  *
- * NO "this one is included" CLAUSE. The one included run in this product is the
- * onboarding BRAIN BUILD (D-M2-2), which happens on a different screen; an
- * ideation batch is priced by `creditCosts.ideationBatch` every time, exactly
- * like any other output. A first-session screen is precisely where "your first
- * one is on us" would be written by reflex, and it would be false.
+ * NO "this one is included" CLAUSE. The one run this product prices as a
+ * creator's FIRST is the onboarding BRAIN BUILD (D-M2-2), which happens on a
+ * different screen; an ideation batch is priced by `creditCosts.ideationBatch`
+ * every time, exactly like any other output. A first-session screen is
+ * precisely where "your first one is on us" would be written by reflex, and it
+ * would be false.
+ *
+ * AND IT NO LONGER SAYS THE BRAIN BUILD IS FREE (billing gate, 2026-09-02).
+ * The priced branch used to read "what this product gives away once per creator
+ * is the brain build" — a claim about ANOTHER screen's price, stated
+ * unconditionally by a file that cannot read it, and false under any document
+ * that prices `creditCosts.onboardingBrainBuild` above zero (the schema types
+ * it `min(0)`, not `literal(0)`, and `/admin/config` can append one). It now
+ * names WHERE that rule lives and leaves the number to the screen that reads
+ * it, which is the same correction `runCostSentence` took in this pass.
  */
 export function firstIdeasCostSentence(
   cost: number | null,
@@ -38,7 +48,7 @@ export function firstIdeasCostSentence(
       ? "The price of this could not be read just now, so it is not shown here. Pressing the button still prices and checks it on the server before anything is spent."
       : cost === 0
         ? "This costs nothing on this server's current settings."
-        : `This costs ${cost} ${cost === 1 ? "credit" : "credits"}, like any other output — there is no included draft. What this product gives away once per creator is the brain build, on the brain page, and not what the brain then writes.`;
+        : `This costs ${cost} ${cost === 1 ? "credit" : "credits"}, like any other output — there is no included draft. The only run this product prices as a creator's first is the brain build, on the brain page, which states its own price; what the brain then writes is priced like this.`;
   if (balance === null) return rule;
   return `${rule} You have ${balance} ${balance === 1 ? "credit" : "credits"}.`;
 }

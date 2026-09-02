@@ -192,18 +192,30 @@ export { privateFrameworkEntitlement } from "./mode-access";
 export { generationOp } from "./generate";
 export { priceOf } from "./inference";
 
-// R-81/R-82: the same pricing fact, in the shape `reconcileSpend` needs it —
-// and it is a FUNCTION OF THE ACTIVE CONFIG DOCUMENT, not a frozen list. R-81
-// shipped the constant `INCLUDED_BUILD_PURPOSES` here, which was a static
-// answer to a fact `/admin/config` can change: with a non-zero
+// R-81/R-82/R-85: the same pricing fact, in the shape `reconcileSpend` needs it
+// — and it is a FUNCTION OF A CONFIG DOCUMENT, not a frozen list. R-81 shipped
+// the constant `INCLUDED_BUILD_PURPOSES` here, which was a static answer to a
+// fact `/admin/config` can change: with a non-zero
 // `creditCosts.onboardingBrainBuild` the claim holder owes a debit and must
 // stop being exempted from the unbilled report. Pure — it takes an
-// ALREADY-READ document, like `priceOf` and `generationOp` above, so the page
-// reconciles against exactly the document it read. It is here rather than in
-// `@respin/db` because `priceOf` is what decides it and `@respin/db` may not
-// import this package; `/admin/model-spend` hands the derived list to
-// `respinDb.reconcileSpend`, whose parameter has no default.
+// ALREADY-READ document, like `priceOf` and `generationOp` above.
+//
+// ONE CALL PER STORED VERSION, NOT ONE PER REPORT (R-85). `reconcileSpend`
+// takes a RESOLVER and asks which `config_version`s its own rows carry;
+// `/admin/model-spend` reads those documents (`configVersionContentsServer`)
+// and runs this function over each. Handing over the ACTIVE document's answer
+// alone let a price cut hide every lost debit incurred before it. It is here
+// rather than in `@respin/db` because `priceOf` is what decides it and
+// `@respin/db` may not import this package.
 export { includedBuildPurposes } from "./included-build";
+
+// THE TWO PRICES `/onboarding`'s RUN CONTROL STATES (billing gate,
+// 2026-09-02). Pure, and from `priceOf` rather than from a `creditCosts`
+// index: the screen said "your first run is included" unconditionally while
+// reading only the REBUILD price, which is false under any document that
+// prices `onboardingBrainBuild` above zero — the very document R-82's own
+// test appends. A screen that states a price RULE has to read that rule.
+export { onboardingBrainPrices } from "./included-build";
 
 // Every error class a facade method can throw must be re-exported here, or
 // `app/**` — which may import ONLY this entrypoint — cannot `instanceof` it

@@ -247,12 +247,24 @@ export default async function FrameworksPage(props: {
   const block = curateBlock({
     isViewer: scope.role === "viewer",
     entitlement,
-    // REQ-G08's pre-emptive half, from the SAME billing read the entitlement
-    // comes from — one call, so the screen cannot say "your plan includes this"
-    // and "your subscription is paused" out of two different snapshots. A
-    // failed read leaves `paused` false AND `entitlement` at `not_included`,
-    // so the control is still withheld; the fail-closed direction is carried by
-    // the entitlement default above rather than by guessing at a pause.
+    // REQ-G08's pre-emptive half, from the PAUSE AUTHORITY — a SECOND read,
+    // separately caught, and the paragraph above states why the one-call
+    // consistency was given up (the mirror and `pause_periods` can disagree,
+    // and only one of them gates the write).
+    //
+    // THIS COMMENT SAID THE OPPOSITE UNTIL 2026-09-02, and it was the exact
+    // half a reader checks: it claimed the pause came from "the SAME billing
+    // read the entitlement comes from — one call", and that "a failed read
+    // leaves `paused` false AND `entitlement` at `not_included`, so the control
+    // is still withheld". Both were true before the authority split and false
+    // after it. THE TWO FAILURE DIRECTIONS ARE NOW DIFFERENT, deliberately, and
+    // `tests/pause-authority.test.tsx` drives each one: a failed TIER read
+    // withholds the form (`entitlement` defaults to `not_included` — fail
+    // CLOSED, because over-offering costs a creator a written framework), while
+    // a failed PAUSE read OFFERS it (`paused` defaults to false — fail SOFT,
+    // because guessing "paused" tells a workspace something untrue about its
+    // own billing). Enforcement is `hasOpenPause` inside every framework action
+    // either way; this is the courtesy, never the gate.
     paused,
     viewerReason: VIEWER_CANNOT_CURATE,
     notInPlanReason: PRIVATE_FRAMEWORKS_NOT_IN_PLAN,

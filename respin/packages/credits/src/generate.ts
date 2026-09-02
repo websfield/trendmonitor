@@ -104,6 +104,7 @@ import {
 } from "@respin/llm";
 import {
   FRAMEWORK_EVIDENCE_LABEL,
+  GenerationAssemblyError,
   buildCorpusIndex,
   modeSpec,
   parseKillTestReply,
@@ -312,6 +313,17 @@ export const GENERATION_REFUSAL_CODES = {
   post_call_debit: "post_call_debit",
   /** The workspace was paused between the pre-call gate and settlement. */
   paused: "paused",
+  /**
+   * THE PROMPT COULD NOT BE ASSEMBLED FROM WHAT THIS ATTEMPT WAS GIVEN.
+   *
+   * `GenerationAssemblyError` — an empty input, a blank platform, an empty
+   * brain, an unstated `unvouchedSpecifics` list. A CALLER-SIDE refusal, and
+   * it needed its own code because it was recorded as `parse_failed`: the
+   * operator-facing column blamed the vendor for a reply the vendor never
+   * sent, on rows where no vendor call happened at all (billing gate,
+   * 2026-09-02).
+   */
+  assembly_refused: "assembly_refused",
 } as const;
 
 export type GenerationRefusalCode =
@@ -693,10 +705,18 @@ export async function generate(
     // never asked about here.
     const creatorRules = creatorRulesOf(activeDocs);
     const bundleVersion = promptBundleVersion(params.mode);
-    // `assembleGenerationPrompt` refuses an empty input, a missing platform and
-    // an empty brain — all BEFORE the claim, so none of them leaves a row.
-    // Calling it here as well as inside the pipeline is deliberate: the payload
-    // hash must be taken over a request we already know is assemblable.
+    // WHAT THIS FILE DOES NOT DO, SAID PLAINLY (billing gate, 2026-09-02).
+    // This paragraph used to claim `assembleGenerationPrompt` was called here
+    // as well as inside the pipeline, "so the payload hash is taken over a
+    // request we already know is assemblable". IT IS NOT CALLED HERE — this
+    // module neither imports nor invokes it (`GenerationAssemblyError` is
+    // imported for `refusalCodeFor`, and that is the only mention). The
+    // assembly refusal lands inside `runGeneration`, AFTER the claim and after
+    // `advanceGenerationAttempt(to: "vendor_started")`. What follows from that,
+    // measured: no vendor call and no debit — so "it costs nothing" holds in
+    // the money sense — but a `generation_attempts` row IS written and settled
+    // as `refused`, which is why that refusal now has its own code
+    // (`assembly_refused`) instead of being recorded as `parse_failed`.
     const request: GenerationRequest = {
       mode: params.mode,
       platform: params.platform,
@@ -1461,9 +1481,20 @@ function refusalCodeFor(e: unknown): GenerationRefusalCode {
   if (e instanceof Error && e.name === "KillTestError") {
     return GENERATION_REFUSAL_CODES.kill_test_failed;
   }
+  // A CALLER-SIDE REFUSAL IS NOT A VENDOR FAILURE (billing gate, 2026-09-02).
+  // `runGeneration` calls `assembleGenerationPrompt`, which refuses an empty
+  // input, a blank platform, an empty brain and an unstated unvouched list —
+  // INSIDE the pipeline, so after the claim and after `vendor_started`, and
+  // therefore on this path rather than before it. It used to fall through to
+  // `parse_failed`, which told an operator reading `generation_attempts` that
+  // the model had answered with something unusable when no model was called.
+  // Nothing was spent either way; the row said the wrong thing about why.
+  if (e instanceof GenerationAssemblyError) {
+    return GENERATION_REFUSAL_CODES.assembly_refused;
+  }
   // EVERYTHING ELSE IS A PARSE FAILURE, and that is the honest default rather
-  // than a lazy one: the only other thing that can throw between the claim and
-  // the settlement is `parseScriptOutput` (R3's fail-closed contract) or
+  // than a lazy one: what remains that can throw between the claim and the
+  // settlement is `parseScriptOutput` (R3's fail-closed contract) or
   // `parseKillTestReply`, both of which mean "the reply was not usable".
   return GENERATION_REFUSAL_CODES.parse_failed;
 }

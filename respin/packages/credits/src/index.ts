@@ -88,6 +88,10 @@ export {
 // database, and `/admin/model-spend` carries its answer to `reconcileSpend`,
 // which lives in a package that may not import this one.
 export { includedBuildPurposes } from "./included-build";
+// The same module's screen-facing read: BOTH prices of an onboarding brain run,
+// each from `priceOf`'s own branch, so `/onboarding` cannot state a rule it did
+// not read (billing gate, 2026-09-02).
+export { onboardingBrainPrices } from "./included-build";
 // Slice 6, R17: the Free mint's two period functions. Exported so the period
 // key and the no-rollover expiry can be asserted directly rather than inferred
 // from a stored row — the mint itself has no export, because `deriveBalance`

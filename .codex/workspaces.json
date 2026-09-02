@@ -1,0 +1,12 @@
+{
+  "_README": "Codex-owned focused post-edit routing; this is not a replacement for CLAUDE.md gates.",
+  "checks": [
+    { "match": "(^|/)(AGENTS\\.md|\\.codex/.*|\\.agents/skills/.*)$", "command": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .codex/scripts/doctor.ps1", "cwd": ".", "label": "Codex workflow doctor (normal, nonrecursive)", "timeoutMs": 120000 },
+    { "match": "(^|/)respin/packages/db/migrations/.*", "command": "pnpm -C respin db:check", "cwd": ".", "label": "Respin migration drift check", "timeoutMs": 120000 },
+    { "match": "(^|/)respin/packages/db/src/.*schema\\.ts$", "command": "pnpm -C respin db:check", "cwd": ".", "label": "Respin schema migration drift check", "timeoutMs": 120000 },
+    { "match": "(^|/)respin/.*\\.(ts|tsx|mts|cts)$", "command": "pnpm -C respin typecheck", "cwd": ".", "label": "Respin TypeScript typecheck", "timeoutMs": 180000 },
+    { "match": "(^|/)src/Frontend/.*\\.(ts|tsx)$", "command": "npm --prefix src/Frontend run typecheck", "cwd": ".", "label": "UGC frontend typecheck", "timeoutMs": 180000 },
+    { "match": "(^|/)(src/ControlPlane/.*\\.cs|tests/Architecture/.*\\.cs)$", "command": "dotnet test tests/Architecture --nologo -v q", "cwd": ".", "label": "UGC architecture tests", "timeoutMs": 300000 },
+    { "match": "(^|/)(src/IntelligencePlane/.*\\.py|tests/Architecture/.*\\.py)$", "command": "uv run --with pytest pytest tests/Architecture", "cwd": ".", "label": "UGC intelligence architecture tests", "timeoutMs": 300000 }
+  ]
+}

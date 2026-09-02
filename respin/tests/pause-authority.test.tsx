@@ -22,11 +22,24 @@
 //   — mirror paused / authority open, and mirror active / authority open — so
 //   "the screen asks the authority" is a run rather than a claim.
 //
-//   A POPULATION LIST. Every remaining reader of the mirror is named, with the
-//   reason it is allowed to be one. A new screen deriving a pause courtesy from
-//   `BillingState` turns this red, which is the cost of adding to the
-//   population (CLAUDE.md, 2026-08-29 — a guard is only as wide as the list it
-//   states, and a population written as one path narrows silently).
+//   A POPULATION LIST. Every remaining reader of the mirror UNDER `app/` is
+//   named, with the reason it is allowed to be one. A new screen deriving a
+//   pause courtesy from `BillingState` turns this red, which is the cost of
+//   adding to the population (CLAUDE.md, 2026-08-29 — a guard is only as wide
+//   as the list it states, and a population written as one path narrows
+//   silently).
+//
+//   `app/` IS THE WHOLE POPULATION, AND THAT IS NOW SAID RATHER THAN IMPLIED
+//   (tenancy gate, 2026-09-02). The claim read "every remaining reader of the
+//   mirror is named" while the scan walked `app/` alone, and there is a live
+//   reader outside it: `packages/credits/src/balance.ts` asks
+//   `billing.state === "paused"` before minting a Free month's allowance. That
+//   read is CORRECT and is deliberately not in the list above, because it is
+//   not the same question: it asks the mirror AND `hasOpenPause` and freezes
+//   the grant if EITHER says paused — a union, where a screen's courtesy is a
+//   single answer that decides whether a control is offered. The one property
+//   that matters there is that it keeps asking both, and the case below asserts
+//   exactly that rather than leaving a package-side reader unmentioned.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -232,6 +245,31 @@ describe("the population of mirror readers is a stated list", () => {
     for (const rel of PAUSE_COURTESY_PAGES) {
       expect(MIRROR_READ.test(codeOf(read(rel))), rel).toBe(false);
     }
+  });
+
+  it("the ONE mirror reader outside `app/` asks BOTH questions — it is a union, not a courtesy", () => {
+    // THE READ THE `app/`-ONLY SCAN CANNOT SEE, named rather than left out of a
+    // claim that said "every remaining reader" (tenancy gate, 2026-09-02).
+    // `mintFreeAllowanceIfDue` withholds a Free month's grant if the mirror
+    // OR the authority says paused. Dropping either half is a real defect in
+    // opposite directions — dropping `hasOpenPause` mints credits into a
+    // workspace Stripe has paused, dropping the mirror re-opens the drift the
+    // mirror exists to cover — so both halves are pinned here.
+    const src = readFileSync(
+      join(HERE, "..", "packages", "credits", "src", "balance.ts"),
+      "utf8"
+    );
+    const code = codeOf(src);
+    expect(MIRROR_READ.test(code), "the mirror half of the union is gone").toBe(
+      true
+    );
+    // THE CALL, NOT THE NAME. `hasOpenPause` is also an import specifier in
+    // this file, so asserting the word is satisfied by a file that imports it
+    // and never asks it — measured: deleting the call left that assertion
+    // green. This asks for the invocation.
+    expect(code, "the authority half of the union is gone").toMatch(
+      /await hasOpenPause\(/
+    );
   });
 
   it("every pause-courtesy page asks the AUTHORITY by name", () => {

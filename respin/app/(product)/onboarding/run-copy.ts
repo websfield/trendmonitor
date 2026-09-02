@@ -17,7 +17,7 @@
 /**
  * What the run control says BEFORE it is pressed.
  *
- * It states the RULE and the PRICE, and deliberately does not predict which of
+ * It states the RULE and the PRICES, and deliberately does not predict which of
  * the two branches this press will take. Predicting it would mean a second read
  * of the included-build claim (`firstBillableAttempt` — the same authority
  * `runInference` consults inside its debit transaction) and a prediction that
@@ -26,19 +26,46 @@
  * authority is the operation; the screen states the rule it will be judged by,
  * and reports the ACTUAL charge afterwards.
  *
- * `cost` and `balance` are nullable for the reason the cap sentence is: when
- * the server could not read them, the screen says so rather than inventing a
- * number (non-negotiable 6).
+ * IT TAKES BOTH PRICES, AND "INCLUDED" IS A BRANCH RATHER THAN THE RULE
+ * (billing gate, 2026-09-02). This sentence asserted "Your first run for a
+ * creator is included" unconditionally while the page read ONE number,
+ * `creditCosts.onboardingBrainRebuild`. R-82 exists because
+ * `creditCosts.onboardingBrainBuild` is `z.number().int().min(0)` and not
+ * `literal(0)`: under the document R-82's own test appends
+ * (`onboardingBrainBuild: 25`) the creator was told their first build was free
+ * and was then debited 25 — the debit correct, the sentence a frozen
+ * assumption. Both numbers now come from `onboardingBrainPrices`, which is
+ * `priceOf`'s two onboarding branches, so the screen states the rule it read.
+ *
+ * `included`, `rebuild` and `balance` are nullable for the reason the cap
+ * sentence is: when the server could not read them, the screen says so rather
+ * than inventing a number (non-negotiable 6).
  */
 export function runCostSentence(
-  cost: number | null,
+  included: number | null,
+  rebuild: number | null,
   balance: number | null
 ): string {
-  if (cost === null) {
+  if (included === null || rebuild === null) {
     return "The price of a run could not be read just now, so it is not shown here. Running it still prices and checks it on the server.";
   }
-  const plural = cost === 1 ? "credit" : "credits";
-  const rule = `Your first run for a creator is included. Every run after that costs ${cost} ${plural}.`;
+  const credits = (n: number) => `${n} ${n === 1 ? "credit" : "credits"}`;
+  // FOUR BRANCHES, because a document that prices two runs has four shapes and
+  // only one of them is the one this product ships with: both free, first free
+  // and later priced (today's), both priced the same, both priced differently.
+  // This comment said THREE until 2026-09-02 (learning gate) — an unbound
+  // count written by the pass that was correcting unbound counts three files
+  // over, above the expression it was miscounting. It is bound now:
+  // `tests/onboarding-ui.test.tsx` asserts the four shapes are four DISTINCT
+  // sentences, so a branch added or merged reddens the number with the code.
+  const rule =
+    included === 0
+      ? rebuild === 0
+        ? "Runs for this creator cost nothing on this server's current settings."
+        : `Your first run for a creator is included. Every run after that costs ${credits(rebuild)}.`
+      : included === rebuild
+        ? `Every run for a creator costs ${credits(included)}.`
+        : `Your first run for a creator costs ${credits(included)}. Every run after that costs ${credits(rebuild)}.`;
   if (balance === null) return rule;
   const bal = balance === 1 ? "credit" : "credits";
   return `${rule} You have ${balance} ${bal}.`;

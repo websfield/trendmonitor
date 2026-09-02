@@ -401,6 +401,27 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
    */
   const INCLUDED_BUILD_PURPOSES: readonly string[] = ["onboarding_brain"];
 
+  /**
+   * The resolver `reconcileSpend` now takes (R-85), for a suite whose rows are
+   * all written under `configVersion: 1`.
+   *
+   * A FUNCTION OF THE VERSIONS IT IS HANDED, never a constant map: it answers
+   * for exactly the versions the query found, so a case that writes rows under
+   * two versions gets two answers without touching this helper — and a query
+   * that stopped asking about versions at all would hand it an empty list and
+   * fail the assertions below rather than quietly exempting everything.
+   */
+  const includedFor =
+    (purposes: readonly string[]) =>
+    async (versions: readonly number[]) =>
+      new Map(versions.map((v) => [v, purposes] as const));
+
+  /** Per-version answers, for the cases that write rows under two documents. */
+  const includedPerVersion =
+    (byVersion: Readonly<Record<number, readonly string[]>>) =>
+    async (versions: readonly number[]) =>
+      new Map(versions.map((v) => [v, byVersion[v] ?? []] as const));
+
   let db: TestDb;
   let workspaceId: string;
   let profileId: string;
@@ -441,7 +462,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
       outcome: "succeeded",
       consumedIncludedBuild: false,
     });
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     const row = result.rows.find((r) => r.workspaceId === workspaceId);
     expect(row?.class).toBe("reconciled");
     expect(result.counts.reconciled).toBeGreaterThanOrEqual(1);
@@ -468,7 +489,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     // the rollup row has no FK and survives untouched.
     await db.delete(creatorProfiles).where(eq(creatorProfiles.id, profileId));
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     const row = result.rows.find((r) => r.workspaceId === workspaceId);
     expect(row?.class).toBe("orphaned");
     expect(result.counts.drift).toBe(0);
@@ -523,7 +544,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     // is removed, cascading only its own model_usage.
     await db.delete(creatorProfiles).where(eq(creatorProfiles.id, profileId));
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     const row = result.rows.find((r) => r.workspaceId === workspaceId);
     // THE DOCUMENTED LIMITATION, PINNED: the survivor keeps hasProfiles
     // true, so this reads DRIFT (rollup 1500 vs surviving usage 500) rather
@@ -558,7 +579,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
       .set({ costMicroUsd: 999_999n })
       .where(eq(workspaceSpendMonthly.workspaceId, workspaceId));
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     const row = result.rows.find((r) => r.workspaceId === workspaceId);
     expect(row?.class).toBe("drift");
     expect(result.counts.drift).toBe(1);
@@ -591,7 +612,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     const caps = writeCapabilities(await scopeFor());
     await record(db, caps, succeed("att_first"));
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     expect(result.unbilledAttempts.map((a) => a.attemptId)).not.toContain(
       "att_first"
     );
@@ -611,7 +632,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     // than through the whole debit path.
     await record(db, caps, succeed("att_second"));
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     const ids = result.unbilledAttempts.map((a) => a.attemptId);
     expect(ids).not.toContain("att_first");
     expect(ids).toContain("att_second");
@@ -648,7 +669,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     // to catch, on the one attempt the bug would have hidden it on.
     await record(db, caps, succeed("att_after_refusal"));
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     const ids = result.unbilledAttempts.map((a) => a.attemptId);
     expect(
       ids,
@@ -691,7 +712,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     // reporting it unbilled despite owing no debit.
     await record(db, caps, { ...retried, outcome: "succeeded" });
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     expect(
       result.unbilledAttempts.map((a) => a.attemptId),
       "two rows sharing one attempt_id must not inflate that attempt's rank — it is still the free first build"
@@ -709,7 +730,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
       refType: "inference",
       refId: "att_paid",
     });
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     expect(result.unbilledAttempts.map((a) => a.attemptId)).not.toContain(
       "att_paid"
     );
@@ -735,7 +756,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     // partition were missing.
     await record(db, capsB, succeed("att_b_first"));
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     const ids = result.unbilledAttempts.map((a) => a.attemptId);
     expect(ids).toContain("att_a_second");
     expect(ids).not.toContain("att_a_first");
@@ -760,7 +781,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     const caps = writeCapabilities(await scopeFor());
     await record(db, caps, generate("att_gen_first"));
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     expect(
       result.unbilledAttempts.map((a) => a.attemptId),
       "the first generation holds the (profile,'generation') claim, but generation has no included build — a lost debit here must be reported"
@@ -772,7 +793,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     await record(db, caps, generate("att_gen_first"));
     await record(db, caps, generate("att_gen_second"));
 
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     const ids = result.unbilledAttempts.map((a) => a.attemptId);
     expect(ids).toContain("att_gen_first");
     expect(ids).toContain("att_gen_second");
@@ -788,10 +809,153 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
       refType: "inference",
       refId: "att_gen_paid",
     });
-    const result = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     expect(result.unbilledAttempts.map((a) => a.attemptId)).not.toContain(
       "att_gen_paid"
     );
+  });
+
+  // ------------------------------------------------------------------ R-85
+  //
+  // TODAY'S CONFIG MUST NOT JUDGE YESTERDAY'S ATTEMPTS. `model_usage.
+  // config_version` is NOT NULL and records the document each attempt was
+  // priced under; this query had no `config_version` term at all, so the
+  // exemption was whatever the ACTIVE document said. A price CUT (25 -> 0)
+  // therefore hid every claim holder's lost debit incurred while it was 25 —
+  // the fail-open direction `included-build.ts` names as the one that must
+  // never happen.
+
+  it("THE VERSION DECIDES, PER ROW: a claim holder priced under a document that charged it is REPORTED, even when today's document would exempt it", async () => {
+    const caps = writeCapabilities(await scopeFor());
+    // Profile A's claim holder, priced under version 1 — the document where
+    // `onboardingBrainBuild` was 25, so this attempt OWED a debit and never
+    // got one.
+    await record(db, caps, { ...succeed("att_v1_holder"), configVersion: 1 });
+
+    // Profile B's claim holder, priced under version 2 — the document that
+    // prices the included build at 0. It owes nothing.
+    const [second] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId, displayName: "B" })
+      .returning();
+    const capsB = writeCapabilities(
+      await ProfileScope.mint(
+        db,
+        await withWorkspace(db, { authUserId: "recon_user" }),
+        second.id
+      )
+    );
+    await record(db, capsB, { ...succeed("att_v2_holder"), configVersion: 2 });
+
+    const result = await reconcileSpend(
+      db,
+      includedPerVersion({ 1: [], 2: ["onboarding_brain"] })
+    );
+    const ids = result.unbilledAttempts.map((a) => a.attemptId);
+    expect(
+      ids,
+      "an attempt priced under a document that charged its claim holder must be reported — judging it by today's cheaper document HIDES that lost debit"
+    ).toContain("att_v1_holder");
+    expect(
+      ids,
+      "the attempt priced under the free document owes nothing and must stay out of the report"
+    ).not.toContain("att_v2_holder");
+
+    // AND THE OTHER DIRECTION, so this is a per-version rule and not a
+    // per-attempt accident: answer for BOTH versions and both are exempt.
+    const bothFree = await reconcileSpend(
+      db,
+      includedPerVersion({
+        1: ["onboarding_brain"],
+        2: ["onboarding_brain"],
+      })
+    );
+    expect(bothFree.unbilledAttempts.map((a) => a.attemptId)).toEqual([]);
+  });
+
+  it("AN ATTEMPT STRADDLING A PRICE CHANGE IS JUDGED BY ITS STRICTER HALF — the only case `bool_and` and `bool_or` disagree on", async () => {
+    // THE WITNESS THE `bool_and` NEVER HAD (billing gate, 2026-09-02). The
+    // operator was chosen for its DIRECTION — "an attempt is exempt only if
+    // EVERY one of its rows was priced under a document that exempts it" — and
+    // all fourteen `configVersion` call sites in both rollup suites wrote
+    // groups that were UNIFORM in `config_version`, including the two-row
+    // retry case above. On a uniform group `bool_and` and `bool_or` are the
+    // same function, so nothing could tell them apart and a directional choice
+    // about MONEY had no test at all.
+    //
+    // THE SHAPE `model_usage` WAS BUILT TO ALLOW: no unique constraint on
+    // `attempt_id`, because "a bounded retry writes two rows" — and a retry
+    // that spans an operator's price change writes them under two documents.
+    // Row 1 was priced under version 1, which CHARGED the included build; row
+    // 2 under version 2, which gives it away. `bool_or` would exempt this
+    // attempt on the strength of the cheaper row and HIDE the debit the first
+    // row owed, which is the exact fail-open direction R-85 exists to close.
+    const caps = writeCapabilities(await scopeFor());
+    const straddling = {
+      attemptId: "att_straddles_versions",
+      purpose: "onboarding_brain",
+      model: "claude-test",
+      tokensIn: 10,
+      tokensOut: 0,
+      costMicroUsd: 1_000n,
+      costState: "estimated" as const,
+      resolvedTier: "creator" as const,
+      promptBundleVersion: "v1",
+      consumedIncludedBuild: true,
+    };
+    await record(db, caps, {
+      ...straddling,
+      configVersion: 1,
+      outcome: "schema_invalid",
+    });
+    await record(db, caps, {
+      ...straddling,
+      configVersion: 2,
+      outcome: "succeeded",
+    });
+
+    const result = await reconcileSpend(
+      db,
+      includedPerVersion({ 1: [], 2: ["onboarding_brain"] })
+    );
+    expect(
+      result.unbilledAttempts.map((a) => a.attemptId),
+      "an attempt with a row priced under a document that CHARGED it was exempted anyway — `bool_or` hides that lost debit"
+    ).toContain("att_straddles_versions");
+
+    // NON-VACUITY, so this is a statement about the STRADDLE and not about the
+    // attempt: with BOTH versions exempting, the same two rows drop out.
+    const bothExempt = await reconcileSpend(
+      db,
+      includedPerVersion({ 1: ["onboarding_brain"], 2: ["onboarding_brain"] })
+    );
+    expect(
+      bothExempt.unbilledAttempts.map((a) => a.attemptId),
+      "the attempt is reported even when every one of its rows was priced under an exempting document — this case is not about the straddle at all"
+    ).not.toContain("att_straddles_versions");
+  });
+
+  it("the resolver is asked about the versions THE DATA carries, and a version it does not answer for is NOT exempt", async () => {
+    // The population half. A resolver handed the wrong versions — or a query
+    // that stopped asking — cannot be caught by an assertion about the report
+    // alone, so the argument itself is captured. And an omitted version fails
+    // SAFE: it reports an attempt that may have owed nothing rather than
+    // hiding one that did.
+    const caps = writeCapabilities(await scopeFor());
+    await record(db, caps, { ...succeed("att_v9"), configVersion: 9 });
+
+    const asked: number[][] = [];
+    const result = await reconcileSpend(db, async (versions) => {
+      asked.push([...versions].sort((a, b) => a - b));
+      return new Map();
+    });
+    expect(asked, "the query no longer asks which versions the data was priced under").toEqual([
+      [9],
+    ]);
+    expect(
+      result.unbilledAttempts.map((a) => a.attemptId),
+      "a version the caller could not answer for must not be exempt"
+    ).toContain("att_v9");
   });
 
   it("THE PARAMETER'S FALSE BRANCH: with an EMPTY included-build list, even the onboarding claim holder is reported — the exemption is the caller's answer, not a constant", async () => {
@@ -802,12 +966,12 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     const caps = writeCapabilities(await scopeFor());
     await record(db, caps, succeed("att_first"));
 
-    const exempted = await reconcileSpend(db, INCLUDED_BUILD_PURPOSES);
+    const exempted = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     expect(exempted.unbilledAttempts.map((a) => a.attemptId)).not.toContain(
       "att_first"
     );
 
-    const notExempted = await reconcileSpend(db, []);
+    const notExempted = await reconcileSpend(db, includedFor([]));
     expect(
       notExempted.unbilledAttempts.map((a) => a.attemptId),
       "with no purpose holding an included build, every successful attempt owes a debit"

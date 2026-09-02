@@ -125,8 +125,10 @@ export function RunInferencePanel({
             model…" either — the second draft was also false.
 
             "Saving…" was wrong because this control does not save the creator's
-            data: it calls a model provider and, after the included run, spends
-            a credit. But "Running the model…" asserts a vendor call that SIX
+            data: it calls a model provider and spends whatever this run is
+            priced at (the sentence above the button states both prices — the
+            first run for a creator and every run after it — and neither is
+            assumed here). But "Running the model…" asserts a vendor call that SIX
             refusal paths never make — role, archived profile, pause, config,
             price and the run slot all refuse strictly before `provider.complete`
             (compliance gate, 2026-08-28). A label on a money control that

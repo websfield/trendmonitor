@@ -591,9 +591,35 @@ export class FrameworkStaleError extends Error {
  * which no writer here can set.
  */
 export class FrameworkContentError extends Error {
+  /**
+   * `ruleId` IS THE RULE THAT REFUSED, and it exists because three revisit
+   * triggers in `frameworks.ts` named an event nothing could observe
+   * (learning gate, 2026-09-02). They said "the first framework refused by
+   * `claim:viral`" and "the first refused for an unlisted acronym" while this
+   * error carried `field` and `detail` only — so the rule that fired was not
+   * merely uncounted, it was unrecorded, and no counter anybody added later
+   * could have answered those questions.
+   *
+   * IT IS NOT A COUNTER, AND THIS DOCBLOCK MUST NOT BE READ AS ONE. Nothing
+   * in this workspace logs, counts or stores a framework refusal. GREPPED
+   * 2026-09-02: outside tests the name appears in exactly four places — this
+   * file, the three throws in `frameworks.ts`, the re-export in
+   * `packages/db/src/index.ts`, and `app/(product)/billing-errors.ts`, where
+   * the only use is one row of the class-to-code map (`framework_content`).
+   * The single `app/(product)/studio/frameworks/actions.ts` occurrence is a
+   * COMMENT, not a read. This field is what a counter would need; the
+   * triggers that depended on one are rewritten to name events a person can
+   * actually see. `null` for the refusals that come from no rule (the shape
+   * and bounds checks).
+   *
+   * IT IS AN ID, NEVER THE VALUE. The rule id is a constant in this repo, so
+   * recording it can never carry creator prose — which is why a refusal LOG
+   * is not the fix here and this field is.
+   */
   constructor(
     readonly field: string,
-    detail: string
+    detail: string,
+    readonly ruleId: string | null = null
   ) {
     super(
       `That framework was not stored: ${field} ${detail}. A framework describes a MECHANISM anyone could apply — never a person, an account, or a number somebody hit (REQ-D04). Describe what the move does and why it works, without naming who did it or how it performed.`

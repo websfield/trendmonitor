@@ -215,10 +215,67 @@ export type MechanismContentRule = {
    * `tests/framework-content-honesty.test.ts`: a case-sensitive rule must
    * answer differently for its own specimen lowercased, or the flag is
    * refused.
+   *
+   * AND THE OPT-OUT IS NOT FREE — IT TOOK THE RULE'S OWN VOCABULARY WITH IT
+   * (BLOCK, tenancy + compliance gates, 2026-09-02). Opting out of the fold
+   * kept `[A-Z][a-z]+` working and made the TRIGGER WORDS case-sensitive too,
+   * so an attribution that starts a sentence matched nothing. MEASURED STORED
+   * on the live `createPrivateFramework` path: "Credited to Sarah, who ran it
+   * first. By Marcus it was refined. From Sarah came the double confession."
+   * in `whyItConverts` (which rides into every generation's prompt),
+   * "According to Marcus the turn lands late." in a beat, "Credited to Sarah"
+   * as the NAME, and the shouted "CREDITED TO SARAH." / "INVENTED BY MARCUS."
+   * — every lowercase equivalent refused. That is a personal name reaching
+   * shared-library-bound content, REQ-D03's queue and REQ-A04's export
+   * (REQ-D04 / R-9).
+   *
+   * SO A CASE-SENSITIVE RULE MUST SAY WHICH OF ITS PARTS ARE VOCABULARY —
+   * `caseFold` below. The case signal is the DISCRIMINATOR only where the rule
+   * says so; everywhere else it is noise, and noise that silences a rule is
+   * the defect above. `tests/framework-content-honesty.test.ts` refuses a
+   * `caseSensitive` rule that declares no `caseFold`, and drives EVERY rule's
+   * specimen sentence-initial and shouted through the write path — the two
+   * witnesses the one-specimen-per-rule case above never had.
    */
   caseSensitive?: true;
   /**
-   * Matched spans this rule does NOT count.
+   * The spans of a CASE-SENSITIVE rule that are VOCABULARY, not discriminator.
+   *
+   * Lowercased before the pattern runs, so `attributed_person`'s trigger words
+   * ("By", "Credited To", "ACCORDING TO") and its possessive nouns ("'s
+   * VERSION") mean the same thing in any case, while the CAPTURE — a token
+   * that opens with an upper-case letter — keeps doing the one job the case
+   * is actually for. This is what makes "from the top" still ordinary prose
+   * and "From Sarah" still an attribution.
+   *
+   * IT CARRIES `g` AND `i`, AND BOTH ARE LOAD-BEARING. Without `g`,
+   * `String.replace` folds only the FIRST occurrence and a second attribution
+   * later in the same string keeps its capitals — the span-local failure this
+   * rule has already had once, in the exemption. Without `i` the fold matches
+   * nothing it was written for. Both flags are asserted in
+   * `tests/framework-content-honesty.test.ts`; `pattern` and `exempt` are
+   * asserted to carry NO `g` in the same case, because those two are matched
+   * rather than replaced and a stateful `lastIndex` would make this scan's
+   * answer depend on how many strings preceded it.
+   *
+   * THE FOLDED VALUE IS THE ONLY SUBJECT, and an earlier version of this
+   * paragraph said otherwise. `matchesMechanismRule` briefly matched the raw
+   * value too, because the shouted alternative then required a SHOUTED
+   * TRIGGER and the fold destroys one. That requirement is gone (see
+   * `NOT_A_PERSON_ACRONYM`), every alternative now spells its triggers in
+   * lower case, and the folded view is a strict superset of the raw one — so
+   * a second pass could only cost time and mislead a reader.
+   */
+  caseFold?: RegExp;
+  /**
+   * Matched spans this rule does NOT count — A LIST, because two exemption
+   * classes need DIFFERENT CASE SEMANTICS (2026-09-02). Every list is tested
+   * against the capture and any one of them exempts the match.
+   * `NOT_A_PERSON` carries `i` so a shouted platform name is exempt;
+   * `NOT_A_PERSON_ACRONYM` must NOT, because several of its entries are real
+   * surnames in Title case (`SEO`/`Seo`, `VO`/`Vo`). One regex cannot hold
+   * two flag sets, and merging them reopens a leak in whichever direction
+   * loses.
    *
    * TESTED AGAINST THE RULE'S CAPTURE GROUP, not against the span — the token
    * the rule is actually making a claim about (2026-09-02). Anchoring
@@ -246,7 +303,7 @@ export type MechanismContentRule = {
    * recorded below with the rest of the scan's limits, and the rule's `detail`
    * is HEDGED to match what a lexical rule can actually know.
    */
-  exempt?: RegExp;
+  exempt?: readonly RegExp[];
 };
 
 /**
@@ -305,42 +362,155 @@ export type MechanismContentRule = {
  *  - an arbitrary personal name in ordinary prose. "a devout Catholic mother
  *    in Leeds" is `brain-reason.ts`'s own recorded counterexample, and the
  *    lesson recorded beside it is that every detector proposed for that class
- *    is "a list of counterexamples wearing the word class";
+ *    is "a list of counterexamples wearing the word class". A name introduced
+ *    by a particle this rule does not list (`credited to bint Ahmed`) is
+ *    INSIDE this bullet, not a separate one: the particle set is closed and
+ *    adding an entry is a line and a test;
+ *  - A POSSESSIVE ATTRIBUTION WHOSE NOUN IS NOT IN THE RULE'S NOUN LIST.
+ *    `Sarah's framework`, `Sarah's hook` and `Sarah's method` were MEASURED
+ *    STORED against a six-word list while `Sarah's version` refused, and this
+ *    list claimed no such limit (learning gate, 2026-09-02). The list is now
+ *    twenty-nine words and the limit is still real — `Sarah's timing` stores.
+ *    Removing the noun gate entirely was MEASURED, not argued about, and
+ *    rejected: it refuses `It's the turn that lands`, `That's the whole move`,
+ *    `Here's the shape in one line` and `The Reversal's second beat lands
+ *    late.`, the last being a FRAMEWORK NAME possessive in a file whose own
+ *    seed names frameworks that way. What the current list DOES cost is the
+ *    same shape with a listed noun — `The Reversal's hook opens cold.`
+ *    refuses — which is asserted rather than promised;
+ *  - THE EXEMPTION ENTRIES THAT ARE NOT NAMES. `credited to Scottish.`,
+ *    `created by Latin.` and `from Greek came the reveal.` are STORABLE and
+ *    stay so. They are silly sentences, not leaks: no person's name is
+ *    stored, which is the only thing the exemption is judged on. The entries
+ *    that WERE names — `French`, `German`, `English`, `Dutch`, `Welsh`,
+ *    `Irish`, `March`, `July` — are gone (see `NOT_A_PERSON`);
  *  - a PROPER NOUN that is not a person and is not in `NOT_A_PERSON` — a city,
  *    a brand, a book. Those still refuse after `by`/`from`, and the refusal
- *    says "reads like", which is the true statement a lexical rule can make;
+ *    says "reads like", which is the true statement a lexical rule can make.
+ *    THE UNICODE CAPTURE EXTENDS THIS EXISTING COST TO NON-ASCII WORDS and
+ *    that is the whole of what it costs, measured: `lifted from Kabuki` and
+ *    `borrowed from Zoetrope` refused BEFORE the widening, and
+ *    `borrowed from Kishōtenketsu` refuses AFTER it — one class, now applied
+ *    evenly instead of stopping at the ASCII boundary, which is the arbitrary
+ *    behaviour the widening was for. The sayable form is one article away
+ *    ("from the Kishōtenketsu form"), and lower-case borrowings
+ *    (`from cinéma vérité`) never matched at all;
  *  - a BARE NUMBER with no unit and no listed noun beside it: `The piece
  *    earned 4000 in template sales.` A rule over large integers would refuse
  *    "a 2019 trend", and a rule over durations would refuse the craft
  *    sentences this file's own tests keep sayable ("Hold the first 2 seconds",
  *    `Average watch time was 14 seconds`). The unit or the noun is what makes
  *    a number a metric claim, and with neither present this scan cannot tell;
+ *  - THE OTHER DIRECTION, and this list is the place it is owed: three
+ *    OVER-REACHES measured on the live write path, named here because the
+ *    paragraph above claims to name every measured class and named neither
+ *    (compliance gate, 2026-09-02). `metric_unit` refuses a RESOLUTION and a
+ *    FRAME PERCENTAGE — `Shoot 4k footage so you can crop in post.`, `Cut the
+ *    4K master down to a 9:16 crop.`, `Leave 20% of the frame empty.` — none
+ *    of which states a performance. The rule is KEPT and its `detail` is
+ *    HEDGED instead ("carries a number with a unit, which on this surface
+ *    reads as a metric"), for the reason the three bare nouns are hedged: `%`
+ *    is the ordinary spelling of a conversion rate and cannot be carved out,
+ *    and a resolution exemption would be a list of counterexamples wearing the
+ *    word class. The sayable form is qualitative ("shoot wide so you can crop
+ *    in post"). And `attributed_person`'s shouted
+ *    alternative refuses ordinary prose shouted after a trigger word (`CUT IT
+ *    FROM THE TOP.`), which its own `detail` says out loud;
+ *  - AN IMPERATIVE MULTIPLIER OVER A BARE METRIC NOUN: `Double the reach of
+ *    the original.` is promise-shaped and ACCEPTED. This bullet first said
+ *    "refused", written by the pass correcting exactly that kind of false
+ *    description, and a test caught it — so it is recorded in the direction it
+ *    was measured. `metric_multiplier` requires an INFLECTED multiplier before
+ *    a bare metric noun (`It doubled the reach…` refuses) because the only
+ *    lexical difference from `Double the comments you address on camera.` is
+ *    what follows the noun, which no pattern here can read; closing this hole
+ *    re-refuses the craft sentence. A POSSESSIVE closes the promise half
+ *    (`Double your reach` refuses);
+ *  - ALL-CAPS EMPHASIS AFTER A TRIGGER WORD, refused: `Learn from EVERY
+ *    comment you get.`, `Cut it from THE TOP.`, `Borrowed from OLD films.`,
+ *    `It works by REPETITION, not by novelty.` — four measured. This is the
+ *    PRICE OF CLOSING the `credited to SARAH` hole, and the trade is stated
+ *    rather than implied: an all-caps token after a trigger is a person
+ *    unless `NOT_A_PERSON_ACRONYM` names it, because `SARAH` and `ASMR` are
+ *    lexically identical. The direction is deliberate — the failure of an
+ *    incomplete acronym list is a REFUSAL a writer can fix by removing the
+ *    shout, never a name stored — and the `detail` names the capitals rather
+ *    than accusing the writer of crediting a person. AN UNLISTED ACRONYM IS
+ *    THE FAILURE DIRECTION: `borrowed from XYZ` refuses until `XYZ` is added,
+ *    which is a one-line change and a test;
  *  - a NAMED STATISTIC used as a bare noun — "watch time", "retention",
  *    "conversion" — deliberately: "cut on the beat to hold watch time" is an
  *    honest mechanism sentence, and refusing it would be the same over-reach
  *    the three bare metric nouns in `PERFORMANCE_CLAIM_RULES` are already
  *    recorded for;
- *  - a comparative with NO VOCABULARY AT ALL ("it did better than the
- *    others"). SAID PRECISELY, because the previous version of this bullet
- *    read as covered and was not: `tests/framework-content-honesty.test.ts`
+ *  - a comparative with NO VOCABULARY AT ALL: `It did better than anything
+ *    else we tried.`, `This one went further than the rest.`, `It beat
+ *    everything else we posted that month.` — three MEASURED accepted. The
+ *    example this bullet used to give, "it did better than the others", is
+ *    REFUSED by `claim:better than your last`, whose pattern ends in
+ *    `(your|my|our|their|the)` — so the bullet illustrated an uncovered class
+ *    with a covered sentence and would have taught a reader the scan was
+ *    narrower than it is (learning-gate sweep, 2026-09-02, which ran every
+ *    example sentence in this file's comments through the scan). SAID
+ *    PRECISELY, because the previous version of this bullet read as covered
+ *    and was not: `tests/framework-content-honesty.test.ts`
  *    runs the VOCABULARY over this file's seed, and a ranking that uses none
  *    of those words matches nothing — five such sentences sat in the seed for
  *    a whole review round under that sentence, rendering on
  *    `/studio/frameworks` and riding into every generation's prompt. For the
- *    SEED the class now has a control: that file's CORPUS-COMPARATIVE scan
- *    requires a ranking or superlative marker to be accompanied by the
- *    population it is over. For CREATOR-WRITTEN private frameworks the class
- *    is UNCOVERED, and REQ-D02's curator is its only control.
+ *    SEED the class now has a control, and it is TWO INDEPENDENT CASES rather
+ *    than the one the previous version of this bullet described (learning
+ *    gate, 2026-09-02). It said the scan "requires a ranking or superlative
+ *    marker to be accompanied by the population it is over", and a curator
+ *    following that sentence writes something that goes RED: `The strongest
+ *    follow mechanism of the three pieces in corpus-batch-0.` names its
+ *    population and is refused, measured. What the two cases actually are:
+ *    (1) the seed carries NO ranking marker at all — "strongest", "led the
+ *    corpus", "heavily", "more … than the others", "above the baseline" — and
+ *    (2) SEVEN named population and recording-status phrases ("Two pieces in
+ *    the corpus", "Whether that is a zero or an absence was not recorded", …)
+ *    are still PRESENT, so the first case cannot be satisfied by deleting the
+ *    observations. It said FOUR until 2026-09-02 — an unbound count written in
+ *    the same pass that bound three others one file over, and wrong because
+ *    the recording-status half was added beside it (learning-gate sweep).
+ *    Neither case reads the other. For CREATOR-WRITTEN private frameworks the
+ *    class is UNCOVERED.
  *
- * The control for every class above is REQ-D02's HUMAN CURATOR: nothing is
- * recommendable until `curator_status = 'approved'`, and no writer in this
- * file can set that — `createPrivateFramework` hard-codes `proposed` for
- * private rows, and the shared seed is approved by an operator running the
- * seed, which is a person taking responsibility for nine documents they read.
+ * The control for every class above is REQ-D02's HUMAN CURATOR — nothing is
+ * recommendable until `curator_status = 'approved'` — and WHO THAT CURATOR IS
+ * DIFFERS BY HALF, which the previous version of this paragraph got wrong in
+ * the permissive direction (learning gate, 2026-09-02). It said "no writer in
+ * this file can set that", and two writers in this file do: `seedSharedFrameworks`
+ * writes `curated_by = 'seed:respin-library-v1'` — an OPERATOR running the
+ * seed, a person taking responsibility for nine documents they read — and
+ * `approvePrivateFramework` writes `curated_by = 'profile:<ownerProfileId>'`,
+ * which is THE AUTHOR OF THE PROSE APPROVING THEIR OWN PROSE. That is stated
+ * where it is created (`createPrivateFramework`'s docblock) and was missing
+ * here, where it matters most: for a private framework the "REQ-D02 human
+ * curator" is the same person who wrote the sentence, so THE RANKING CLASS
+ * ABOVE HAS NO INDEPENDENT CONTROL ON THE PRIVATE HALF — and once approved,
+ * `whyItConverts` rides into every generation's prompt (`promptFramework` in
+ * `packages/credits/src/generate.ts`). The scan in this file is the only
+ * machine control that half has, which is why its over-reaches are hedged
+ * rather than widened and why its residue is named class by class.
  *
  * REVISIT TRIGGER: a measured claim reaching a creator through a class not
  * named above — that is a gap this limit did not predict, and it is the signal
  * to change the MECHANISM rather than to add a nineteenth pattern.
+ *
+ * **IT FIRED, ON 2026-09-02, AND THIS IS THE RECORD OF THAT** rather than a
+ * trigger left standing as though it never had. A review measured personal
+ * names reaching stored, approved, prompt-bound content through a class this
+ * list did not name — `Credited to Müller`, `From Élodie`, `Credited to
+ * Анна`, `credited to van Gogh`, `credited to J. Smith`, `credited to
+ * O'BRIEN` — because `attributed_person`'s capture was ASCII. The response
+ * WAS the mechanism and not a nineteenth pattern: the three ad-hoc name
+ * alternatives collapsed into one Unicode shape under `\p{Lu}`/`\p{L}`, which
+ * is what `frameworkSlug` in this file already used. Unlike the two rounds
+ * before it, this change did not add a counterexample to a list; if the
+ * trigger fires again on the SAME rule, the next honest move is to stop
+ * matching names at all and gate creator-written frameworks on a human
+ * curator who is not their author (see the paragraph below on who that is).
  *
  * WHY IT RUNS ON PRIVATE ROWS TOO. REQ-D04's subject is library contributions,
  * and a private framework is not one — yet. It is the exact material REQ-D03
@@ -355,10 +525,11 @@ export type MechanismContentRule = {
  * Capitalised words that are NOT people, for `attributed_person`'s `exempt`.
  *
  * A CLOSED SET OF CLASSES, not a list of counterexamples: every platform this
- * product's PRD names, every weekday, every month, and the language/demonym
- * adjectives a borrowed-concept framework is written in. Each class is
- * enumerable and finite, which is what separates this from the personal-name
- * detector `brain-reason.ts` refuses to build.
+ * product's PRD names, every weekday, the unambiguous months, the three
+ * relative-day words, and the language/demonym adjectives a borrowed-concept
+ * framework is written in. Each class is enumerable and finite, which is what
+ * separates this from the personal-name detector `brain-reason.ts` refuses to
+ * build.
  *
  * A REGEXP LITERAL, like every other pattern here, and anchored on BOTH ENDS
  * because it is tested against the TOKEN the rule CAPTURED — never against the
@@ -368,13 +539,88 @@ export type MechanismContentRule = {
  * "Instagram's version of this loop is one beat shorter." refused with
  * `Instagram` sitting first in this very list.
  *
- * `May` IS DELIBERATELY ABSENT from the months, and that is a decision rather
- * than an oversight: it is also a person's name, so exempting it would open
- * the one month that carries the risk the rule exists for. "from May" refuses,
- * with the hedged wording, which is the honest outcome for an ambiguous token.
+ * ONE WARRANT, RUN OVER EVERY ENTRY — and the previous version of this
+ * docblock ran it over one HALF of the list, which is the "fix the class, not
+ * the instance" lesson failing INSIDE the fix made for it (learning gate,
+ * 2026-09-02). It removed `April`, `June` and `August` beside `May` because
+ * "those three are common given names in English exactly as `May` is", and
+ * left the language/demonym half untouched — a half full of ordinary English
+ * surnames. MEASURED STORED under that list, through the live write path:
+ * "credited to French for the shape.", "invented by German, refined since.",
+ * "from Welsh came the double confession.", "according to Irish the turn lands
+ * late." — and `March` and `July` sat among the "unambiguous" months while
+ * `March` is a surname and a given name exactly as `May` is.
+ *
+ * THE WARRANT, STATED SO A FUTURE ENTRY CAN BE JUDGED BY IT: an entry stays
+ * only if it is NOT also used as a personal name in English. Removed for that
+ * reason and no other — `May`, `April`, `June`, `August`, `March`, `July`,
+ * `French`, `German`, `English`, `Dutch`, `Welsh`, `Irish`. Adding a word here
+ * is asserting it is not somebody's name.
+ *
+ * WHAT THE WARRANT DELIBERATELY DOES **NOT** REMOVE, because the finding that
+ * raised it listed these and they are a DIFFERENT class: "credited to
+ * Scottish.", "created by Latin." and "from Greek came the reveal." remain
+ * STORABLE. They are silly sentences, not leaks — no person's name is stored,
+ * which is the whole thing this exemption is judged on. Removing them would
+ * buy nothing and would cost "borrowed from Greek theatre". That residue is
+ * asserted in `tests/framework-content-honesty.test.ts` rather than left as a
+ * claim here.
+ *
+ * THE COST IS A REFUSAL, NOT A LEAK, and it is the honest outcome for an
+ * ambiguous token: "Cut from April footage" and "borrowed from French cinema"
+ * are refused with the HEDGED wording ("reads like it credits the move to a
+ * named person"), which is the true statement a lexical rule can make about a
+ * word that is both. Neither is load-bearing in a description of a MOVE, and
+ * the sayable form is one article away — "from a French tradition", "from the
+ * English music hall" — because the rule only reads the token IMMEDIATELY
+ * after the trigger. The unambiguous months and languages stay, because a rule
+ * that refuses "from September" buys nothing at all.
+ *
+ * `Today`, `Tomorrow` and `Yesterday` ARE HERE FOR THE POSSESSIVE HALF, and
+ * they were the one measured false refusal left by the Unicode widening below:
+ * "Today's post opens on the claim." refused as a named person. They are the
+ * same closed temporal class as the weekdays and are nobody's name.
+ *
+ * IT CARRIES `i`. The rule's shouted alternative captures ALL-CAPS tokens, so
+ * a case-sensitive exemption would refuse "THE SHAPE TRAVELLED FROM INSTAGRAM
+ * TO TIKTOK" with `Instagram` sitting first in this list — the same
+ * structurally-unreachable failure the anchors above are about, in a second
+ * place. Every capture this is tested against is a single run of letters that
+ * STARTS with an upper-case one, so `i` widens nothing else.
  */
 const NOT_A_PERSON =
-  /^(?:Instagram|TikTok|YouTube|Youtube|Twitter|Threads|Reels|Reel|Shorts|Stories|Snapchat|LinkedIn|Facebook|Pinterest|Twitch|Reddit|Tumblr|Substack|Discord|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|April|June|July|August|September|October|November|December|Japanese|Chinese|Korean|Spanish|French|German|Italian|Portuguese|Russian|Arabic|Hindi|Greek|Latin|English|Dutch|Swedish|Danish|Norwegian|Finnish|Polish|Turkish|Hebrew|Welsh|Irish|Scottish)$/;
+  /^(?:Instagram|TikTok|YouTube|Youtube|Twitter|Threads|Reels|Reel|Shorts|Stories|Snapchat|LinkedIn|Facebook|Pinterest|Twitch|Reddit|Tumblr|Substack|Discord|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Today|Tomorrow|Yesterday|January|February|September|October|November|December|Japanese|Chinese|Korean|Spanish|Italian|Portuguese|Russian|Arabic|Hindi|Greek|Latin|Swedish|Danish|Norwegian|Finnish|Polish|Turkish|Hebrew|Scottish)$/i;
+
+/**
+ * ALL-CAPS TOKENS THAT ARE NOT PEOPLE — the second exemption, and it is
+ * DELIBERATELY CASE-SENSITIVE where the first one is not.
+ *
+ * WHY IT EXISTS (coordinator escalation, 2026-09-02). The first fix for the
+ * BLOCK closed the shouted attribution only where the TRIGGER was shouted too
+ * ("FROM SARAH"), which left `credited to SARAH` — lower-case trigger, shouted
+ * name — STORABLE, measured. That is a live instance of the very class the
+ * BLOCK was raised for, kept because refusing every all-caps token after a
+ * trigger also refuses `lifted from ASMR`: an acronym and a shouted name are
+ * lexically identical. The answer is the one the file already uses for proper
+ * nouns — NAME THE NON-PEOPLE — so the rule refuses by default and this list
+ * is what buys the acronyms back.
+ *
+ * IT FAILS TOWARD REFUSAL, WHICH IS THE POINT AND ALSO ITS COST. An acronym
+ * nobody listed is refused with the hedged wording, never stored — so the
+ * incompleteness of this list can cost a creator a rewording and can never
+ * cost a name. That is the opposite failure direction from a detector, and it
+ * is why a list is defensible here and is not in `brain-reason.ts`.
+ *
+ * NO `i` FLAG, AND THAT IS THE WHOLE REASON IT IS A SECOND LIST RATHER THAN
+ * MORE ENTRIES IN `NOT_A_PERSON`. That one carries `i` so a shouted platform
+ * name is exempt; an `i` over THESE entries would exempt their Title-case
+ * forms too, and several are real surnames — `SEO`/`Seo`, `VO`/`Vo`,
+ * `AI`/`Ai`. `credited to Seo` must refuse while `borrowed from SEO` passes,
+ * which only an all-caps-anchored list can say. Both directions are driven in
+ * `tests/framework-content-honesty.test.ts`.
+ */
+const NOT_A_PERSON_ACRONYM =
+  /^(?:ASMR|SEO|POV|UGC|CTA|CGI|VFX|SFX|BTS|GRWM|OOTD|DIY|FAQ|TLDR|HDR|LUT|VO|AI|AR|VR|UI|UX|EQ|BPM|FPS|ISO|RGB|NSFW|IRL|DM|DMS|CC|TTS|PSA|OG|MV|HD|SD)$/;
 
 /**
  * THE THIRD COPY OF ONE VOCABULARY, AND WHY IT HAD TO EXIST (learning-honesty
@@ -445,11 +691,20 @@ const NOT_A_PERSON =
  * surface it reads as a claim about how a piece performed. The direction stays
  * fail-closed — this is content curated into a shared library and fed to a
  * vendor — and nothing here has been measured against real Pro-creator
- * framework prose, because no creator has written one yet. **Revisit trigger:
- * the first creator-written private framework refused by `claim:viral`,
- * `claim:views` or `claim:engagement`. The honest move then is the demotion
- * above — a canon change touching `claims.ts`, `forbidden-claims.ts` and this
- * file together — not a widened exception here.**
+ * framework prose, because no creator has written one yet.
+ *
+ * **Revisit trigger: the SECOND commit that hedges, exempts or narrows one of
+ * these three rules.** It named "the first creator-written private framework
+ * refused by `claim:viral`" until 2026-09-02, which is an event NOTHING IN
+ * THIS WORKSPACE CAN SEE: no code logs, counts or stores a framework refusal
+ * (grepped — see `FrameworkContentError`, which now carries `ruleId` so a
+ * future counter has something to count, and which no caller reads). A
+ * trigger whose subject is unobservable is a residual with no owner, so this
+ * one names an event that leaves a trace a person can actually find — a
+ * commit touching these six lines — and the owner is whoever writes it. The
+ * honest move at that point is the demotion above: a canon change touching
+ * `claims.ts`, `forbidden-claims.ts` and this file together, not a widened
+ * exception here.
  */
 const PERFORMANCE_CLAIM_RULES: readonly MechanismContentRule[] = [
   {
@@ -580,8 +835,21 @@ export const MECHANISM_CONTENT_RULES: readonly MechanismContentRule[] = [
   {
     id: "metric_unit",
     // `40k`, `1.2M`, `3.75x`, `12%`, `£4,000`, `$60`.
+    //
+    // THE DETAIL IS HEDGED, and the hedge is the fix (compliance gate,
+    // 2026-09-02). This rule over-reaches on a RESOLUTION and on a FRAME
+    // PERCENTAGE — `Shoot 4k footage so you can crop in post.`, `Cut the 4K
+    // master down to a 9:16 crop.`, `Leave 20% of the frame empty.` were all
+    // MEASURED refused as "states a metric value", which is false about what
+    // the creator wrote. The pattern is KEPT because `%` is the ordinary
+    // spelling of a conversion rate and `4k` of a follower count, and neither
+    // can be carved out without a list of counterexamples wearing the word
+    // class; the `detail` says only what the rule KNOWS, exactly as
+    // `attributed_person`'s and the three bare nouns' do. The class is named
+    // in the residue above rather than left to be rediscovered.
     pattern: /(?:[£$€]\s?\d)|(?:\d(?:[\d,.]*\d)?\s*(?:[kKmM]\b|[xX]\b|%))/,
-    detail: "states a metric value",
+    detail:
+      "carries a number with a unit, which on this surface reads as a metric",
   },
   {
     id: "metric_noun",
@@ -638,8 +906,39 @@ export const MECHANISM_CONTENT_RULES: readonly MechanismContentRule[] = [
     // `The cut lands on a double-take`, `Escalate by tripling the stakes`.
     // A multiplier is only a performance claim when there is a performance
     // beside it, so the noun is now required within four words.
+    //
+    // AND THAT NOUN LIST RE-CREATED THE SAME OVER-REACH IT WAS CORRECTING,
+    // THREE RULES UP (learning gate, 2026-09-02). It carried
+    // `number(s)|baseline|average`, which are not performances, so FIVE of six
+    // plausible craft sentences were MEASURED refused as "states a performance
+    // multiple" with no performance in them: `Double the number of beats in
+    // the middle.`, `Triple the number of cuts at the turn.`, `Double the
+    // baseline shot count for the B-roll.`, `Double down on the average shot
+    // length.`, `Double the comments you address on camera.`
+    //
+    // THE FIX IS A DISCRIMINATOR, NOT A DELETION, because deleting the three
+    // nouns would have made `it more than doubled her usual numbers` storable
+    // — the claim the previous round closed. Three alternatives now, and each
+    // is the shape a CLAIM has and an INSTRUCTION does not:
+    //   1. metric noun BEFORE the multiplier ("saves doubled") — the order
+    //      only a claim uses;
+    //   2. an INFLECTED multiplier before a metric noun ("doubled the reach",
+    //      "doubling her views"). The bare imperative stem is excluded, which
+    //      is what keeps `Double the comments you address on camera.` sayable;
+    //   3. any multiplier form before a POSSESSIVE and a baseline-ish noun
+    //      ("doubled her usual numbers", "double your baseline"). The
+    //      possessive is what makes it somebody's performance rather than a
+    //      count of beats, and `the baseline shot count` has none.
+    // THE RESIDUE IS A HOLE, NOT AN OVER-REACH, and it is stated in that
+    // direction because the first version of this comment stated it in the
+    // wrong one and a test caught it: `Double the reach of the original.` is
+    // promise-shaped and ACCEPTED (measured), since the only lexical
+    // difference from `Double the comments you address on camera.` is what
+    // follows the noun, which no pattern here can read. Closing it re-refuses
+    // the craft sentence. Named in the residue block and asserted in
+    // `tests/framework-content-honesty.test.ts`.
     pattern:
-      /\b(?:follow(?:s|ers)?|view(?:s)?|like(?:s)?|comment(?:s)?|share(?:s)?|save(?:s)?|subscriber(?:s)?|impression(?:s)?|reach|number(?:s)?|baseline|average)\b(?:\s+\S+){0,4}?\s+(?:doubl|tripl|quadrupl)(?:e|ed|es|ing)\b|\b(?:doubl|tripl|quadrupl)(?:e|ed|es|ing)\b(?:\s+\S+){0,4}?\s+(?:follow(?:s|ers)?|view(?:s)?|like(?:s)?|comment(?:s)?|share(?:s)?|save(?:s)?|subscriber(?:s)?|impression(?:s)?|reach|number(?:s)?|baseline|average)\b/i,
+      /\b(?:follow(?:s|ers)?|view(?:s)?|like(?:s)?|comment(?:s)?|share(?:s)?|save(?:s)?|subscriber(?:s)?|impression(?:s)?|reach)\b(?:\s+\S+){0,4}?\s+(?:doubl|tripl|quadrupl)(?:e|ed|es|ing)\b|\b(?:doubl|tripl|quadrupl)(?:ed|es|ing)\b(?:\s+\S+){0,4}?\s+(?:follow(?:s|ers)?|view(?:s)?|like(?:s)?|comment(?:s)?|share(?:s)?|save(?:s)?|subscriber(?:s)?|impression(?:s)?|reach)\b|\b(?:doubl|tripl|quadrupl)(?:e|ed|es|ing)\b(?:\s+\S+){0,2}?\s+(?:your|my|our|their|her|his|its)\s+(?:usual\s+|own\s+)?(?:number(?:s)?|baseline|average|best|follow(?:s|ers)?|view(?:s)?|like(?:s)?|comment(?:s)?|share(?:s)?|save(?:s)?|subscriber(?:s)?|impression(?:s)?|reach)\b/i,
     detail: "states a performance multiple",
   },
   {
@@ -649,8 +948,16 @@ export const MECHANISM_CONTENT_RULES: readonly MechanismContentRule[] = [
     // pass). It carries the SAME metric-noun requirement as the stem rule and
     // for the same reason — `Run it at twice the length.` was refused as a
     // performance multiple, and a length is not a performance.
+    //
+    // AND IT CARRIED THE SAME THREE NON-PERFORMANCE NOUNS, so it is corrected
+    // as a SIBLING and not left for the next round to find (learning gate,
+    // 2026-09-02): `Run it at twice the number of cuts.` is a craft
+    // instruction and was refused as a performance multiple. `number(s)`,
+    // `baseline` and `average` now need a POSSESSIVE beside them — "twice her
+    // usual numbers" is somebody's performance, "twice the number of cuts" is
+    // a count of cuts — which is the same discriminator the stem rule takes.
     pattern:
-      /\b(?:twice|three times|four times|five times|ten times|many times|half again)\s+(?:as\s+(?:many|much)\s+)?(?:the\s+|its\s+|their\s+|her\s+|his\s+|your\s+|my\s+|our\s+)?(?:follow(?:s|ers)?|view(?:s)?|like(?:s)?|comment(?:s)?|share(?:s)?|save(?:s)?|subscriber(?:s)?|impression(?:s)?|reach|number(?:s)?|baseline|average)\b/i,
+      /\b(?:twice|three times|four times|five times|ten times|many times|half again)\s+(?:as\s+(?:many|much)\s+)?(?:the\s+|its\s+|their\s+|her\s+|his\s+|your\s+|my\s+|our\s+)?(?:follow(?:s|ers)?|view(?:s)?|like(?:s)?|comment(?:s)?|share(?:s)?|save(?:s)?|subscriber(?:s)?|impression(?:s)?|reach)\b|\b(?:twice|three times|four times|five times|ten times|many times|half again)\s+(?:as\s+(?:many|much)\s+)?(?:its|their|her|his|your|my|our)\s+(?:usual\s+|own\s+)?(?:number(?:s)?|baseline|average|best)\b/i,
     detail: "states a performance multiple",
   },
   {
@@ -675,10 +982,65 @@ export const MECHANISM_CONTENT_RULES: readonly MechanismContentRule[] = [
     // "by Sarah", "from Marcus", "credited to Aisha", "Vivian's version".
     //
     // THE ONLY CASE-SENSITIVE RULE, and the flag is what makes the whole rule
-    // work: `[A-Z][a-z]+` IS the discriminator between a proper noun and
-    // ordinary prose. Lowercasing the value would silence it entirely and an
-    // `i` flag would make "from the top" an attribution — so it opts out of
-    // the default that every other rule takes (see `caseSensitive`).
+    // work: A LEADING UPPER-CASE LETTER is the discriminator between a proper
+    // noun and ordinary prose. Lowercasing the value would silence it entirely
+    // and an `i` flag would make "from the top" an attribution — so it opts
+    // out of the default that every other rule takes (see `caseSensitive`).
+    //
+    // AND THE OPT-OUT MADE THE TRIGGER WORDS CASE-SENSITIVE TOO, which is the
+    // BLOCK this rule shipped with for one round (tenancy + compliance gates,
+    // 2026-09-02). `by|from|credited to|…` only ever matched lower case, so
+    // every sentence-initial and every shouted attribution matched NOTHING:
+    // "Credited to Sarah" was storable as the framework NAME, "According to
+    // Marcus the turn lands late." as a beat, and "Credited to Sarah, who ran
+    // it first. By Marcus it was refined." as `whyItConverts` — which rides
+    // into every generation's prompt. Each lowercase equivalent refused, so
+    // the rule read as working.
+    //
+    // TWO THINGS FIX IT, and they are different problems:
+    //   `caseFold` lowercases the VOCABULARY (the trigger words, and the
+    //   possessive nouns after `'s`) before the pattern runs, leaving the
+    //   capture to do the only job the case is for. "From Sarah" refuses;
+    //   "from the top" does not.
+    //   THE NAME TOKEN IS ONE SHAPE, NOT AN ALTERNATION OF THE SHAPES
+    //   SOMEBODY HAPPENED TO THINK OF — an upper-case letter followed by
+    //   letters, with optional apostrophe-plus-upper-case continuations. That
+    //   one shape is `Sarah`, `McDonald`, `McDONALD`, `MacLeod`, `O'Brien`,
+    //   `O'BRIEN`, `SARAH` and `TikTok` (which the exemption buys back). Two
+    //   earlier rounds each wrote this as a LIST of alternatives and each
+    //   left a live leak behind: the first matched Title case only, so
+    //   `credited to McDonald` and `credited to SARAH` were STORABLE; the
+    //   second added CamelCase, apostrophe and ALL-CAPS branches and stayed
+    //   ASCII-ONLY, so `Credited to Müller`, `From Élodie`, `Credited to
+    //   Анна`, `Müller's version`, `credited to O'BRIEN` and `credited to
+    //   McDONALD` were all MEASURED STORED (learning gate, 2026-09-02).
+    //   `\p{Lu}` / `\p{L}` UNDER THE `u` FLAG is what makes it one shape:
+    //   the same Unicode idiom `frameworkSlug` below already uses, and the
+    //   only reason this rule was ever ASCII was that `[A-Z]` was typed
+    //   before anybody asked what the class was.
+    //   AND THE ASCII VERSION'S BEHAVIOUR INSIDE THE CLASS WAS ARBITRARY,
+    //   which is the part no writer could have learned: `created by Björk`
+    //   and `from Zoë` REFUSED (the diacritic falls after two ASCII letters,
+    //   so `\b` closes the token early and the prefix matched) while
+    //   `Müller` — diacritic in position two — STORED.
+    //   THE WORD BOUNDARIES ARE LOOKAROUNDS, NOT `\b`. JavaScript's `\b` is
+    //   defined on ASCII `\w` even under `u`, so a trailing `\b` after
+    //   `Анна` asserts a boundary between two NON-word characters and fails:
+    //   Unicode capture plus `\b` would have closed nothing.
+    //   A LEADING PARTICLE OR INITIAL may sit between the trigger and the
+    //   name — `van Gogh`, `de Souza`, `Ó Briain`, `J. Smith`, all four
+    //   measured stored before this. It is a closed linguistic class
+    //   (nobiliary particles and single-letter initials) and it sits OUTSIDE
+    //   the capture, so the exemption still sees the head noun.
+    //   AN ALL-CAPS TOKEN IS A PERSON UNLESS IT IS A LISTED NON-PERSON.
+    //   `SARAH` and `ASMR` are lexically identical, so the rule refuses by
+    //   default and `NOT_A_PERSON_ACRONYM` buys the acronyms back — the same
+    //   name-the-non-people move `NOT_A_PERSON` already makes for platforms.
+    //   It fails toward REFUSAL: an unlisted acronym costs a rewording and
+    //   can never store a name. What it costs is ALL-CAPS EMPHASIS after a
+    //   trigger word (`Learn from EVERY comment you get.`), refused — so the
+    //   `detail` says that outright instead of telling the writer they named
+    //   a person, and the residue above names the class.
     //
     // EACH ALTERNATIVE CAPTURES ITS PROPER NOUN, because that capture is what
     // `exempt` is tested against. Until 2026-09-02 the exemption was tested
@@ -686,15 +1048,35 @@ export const MECHANISM_CONTENT_RULES: readonly MechanismContentRule[] = [
     // made it unreachable for this second alternative — every possessive span
     // ends in the NOUN ("Instagram's version"), never in the name.
     //
+    // THE POSSESSIVE HALF IS NOUN-GATED, AND THAT LIMIT IS REAL: the noun
+    // list is finite, so `Sarah's timing` stores where `Sarah's hook`
+    // refuses. It was SIX words and is now twenty-nine, and the alternative
+    // — dropping the noun requirement so any `Name's` refuses — was MEASURED
+    // and REJECTED rather than argued about: over the same probe set it
+    // produced five false refusals, `It's the turn that lands`, `That's the
+    // whole move`, `Here's the shape in one line`, `Today's post` and
+    // `The Reversal's second beat lands late.` — the last of which is a
+    // FRAMEWORK NAME, in a file whose own seed names frameworks that way, and
+    // all five would refuse with a `detail` saying the writer credited a
+    // person. That is the "refusal naming a cause that did not happen" class
+    // this file has now corrected five times, so the noun gate stays and the
+    // residue is stated instead. The same list appears in `caseFold` and in
+    // `pattern`; they are asserted to be the SAME SET in
+    // `tests/framework-content-honesty.test.ts`, because two copies of one
+    // vocabulary is exactly how the shouted-possessive hole opened.
+    //
     // THE DETAIL IS HEDGED, and the hedge is the fix rather than decoration:
     // this rule cannot know that a capitalised word is a person, it can only
     // know that the phrase has the SHAPE of an attribution. Saying more than
     // that is telling a creator a cause that did not happen.
     caseSensitive: true,
+    caseFold:
+      /\b(?:by|from|credited to|invented by|created by|according to)\b|['’]s\s+(?:version|reel|post|account|corpus|voice|hook|script|edit|cut|take|opener|open|format|structure|approach|method|technique|framework|beat|sequence|video|clip|caption|thumbnail|series|channel|feed|story|line|angle|rhythm|pacing|template|playbook|style)\b/gi,
     pattern:
-      /\b(?:by|from|credited to|invented by|created by|according to)\s+([A-Z][a-z]+)\b|\b([A-Z][a-z]+)(?:'s|’s)\s+(?:version|reel|post|account|corpus|voice)\b/,
-    exempt: NOT_A_PERSON,
-    detail: "reads like it credits the move to a named person",
+      /\b(?:by|from|credited to|invented by|created by|according to)\s+(?:(?:\p{Lu}\.|Ó|Ní|van|von|de|del|della|di|da|du|dos|das|le|la|bin|ibn)\s+)*(\p{Lu}[\p{L}\p{M}]+(?:['’]\p{Lu}[\p{L}\p{M}]*)*|\p{Lu}(?:['’]\p{Lu}[\p{L}\p{M}]*)+)(?![\p{L}\p{M}\p{N}_])|(?<![\p{L}\p{M}\p{N}_])(\p{Lu}[\p{L}\p{M}]+(?:['’]\p{Lu}[\p{L}\p{M}]*)*|\p{Lu}(?:['’]\p{Lu}[\p{L}\p{M}]*)+)['’]s\s+(?:version|reel|post|account|corpus|voice|hook|script|edit|cut|take|opener|open|format|structure|approach|method|technique|framework|beat|sequence|video|clip|caption|thumbnail|series|channel|feed|story|line|angle|rhythm|pacing|template|playbook|style)(?![\p{L}\p{M}\p{N}_])/u,
+    exempt: [NOT_A_PERSON, NOT_A_PERSON_ACRONYM],
+    detail:
+      "reads like it credits the move to a named person, or shouts a word this scan cannot tell from one",
   },
   ...PERFORMANCE_CLAIM_RULES,
 ];
@@ -721,9 +1103,55 @@ function contentStrings(content: FrameworkContent): [string, string][] {
 }
 
 /**
+ * The token a match's exemption is tested against: the first capture group
+ * the match produced, falling back to the whole span for a rule that captures
+ * nothing.
+ *
+ * IT HAD NO DOCBLOCK OF ITS OWN UNTIL 2026-09-02 (learning gate). The long
+ * explanation that sat here belongs to `matchesMechanismRule` and is now
+ * attached to it, so the file no longer documents one function above another.
+ */
+function exemptSubject(match: RegExpMatchArray): string {
+  return match.slice(1).find((group) => group !== undefined) ?? match[0];
+}
+
+/**
+ * THE ONE string a rule is matched against — exactly one, always.
+ *
+ * THIS DOCBLOCK DESCRIBED A CONTROL THAT IS NOT HERE, and it was written in
+ * the same pass that was correcting that class (learning gate, 2026-09-02).
+ * It said the function returns "one or two strings", "A LIST", and that "the
+ * unfolded value is matched too" — a design that existed while the shouted
+ * alternative required a SHOUTED TRIGGER, was replaced by
+ * `NOT_A_PERSON_ACRONYM`, and left its paragraph behind. `caseFold`'s own
+ * docblock already says the opposite ("THE FOLDED VALUE IS THE ONLY
+ * SUBJECT"), so the file contradicted itself about how many passes its one
+ * case-sensitive rule takes. The BEHAVIOUR was always correct: the folded
+ * view is a strict superset of the raw one, because every trigger in
+ * `pattern` is spelled in lower case and the fold only ever lowercases.
+ *
+ * WHAT IT ACTUALLY DOES. A case-INsensitive rule gets the value lowercased. A
+ * case-sensitive rule with no `caseFold` gets the value untouched. A
+ * case-sensitive rule WITH one gets the value with its VOCABULARY lowercased
+ * — the trigger words and the possessive nouns — which is what lets "From
+ * Sarah" refuse while "from the top" does not.
+ */
+function caseSubject(rule: MechanismContentRule, value: string): string {
+  if (!rule.caseSensitive) return value.toLowerCase();
+  if (!rule.caseFold) return value;
+  return value.replace(rule.caseFold, (span) => span.toLowerCase());
+}
+
+/**
  * Does one rule fire on one string, after its exemptions?
  *
- * THE VALUE IS LOWERCASED UNLESS THE RULE SAYS IT NEEDS THE CASE (2026-09-02).
+ * THE VALUE IS LOWERCASED UNLESS THE RULE SAYS IT NEEDS THE CASE, AND A RULE
+ * THAT SAYS SO MUST ALSO SAY WHICH OF ITS PARTS ARE VOCABULARY — `caseSubject`
+ * above, and `caseFold` on the rule. The second half was missing for a round
+ * and it made this whole rule's TRIGGER WORDS case-sensitive, so a
+ * sentence-initial or shouted attribution matched nothing while its lowercase
+ * twin refused; the measurement is on `caseSensitive` (2026-09-02).
+ *
  * The two other enforcement points of this vocabulary lowercase before they
  * match — `claims.ts` scans `sentence.toLowerCase()` and every `*-ui` suite
  * that runs the canon lowercases the rendered HTML first — while this one
@@ -751,20 +1179,17 @@ function contentStrings(content: FrameworkContent): [string, string][] {
  * because a `g` pattern's `.test` advances `lastIndex` and would make this
  * function's answer depend on how many strings preceded it.
  */
-function exemptSubject(match: RegExpMatchArray): string {
-  return match.slice(1).find((group) => group !== undefined) ?? match[0];
-}
-
 export function matchesMechanismRule(
   rule: MechanismContentRule,
   value: string
 ): boolean {
-  const subject = rule.caseSensitive ? value : value.toLowerCase();
+  const subject = caseSubject(rule, value);
   if (!rule.exempt) return rule.pattern.test(subject);
   for (const match of subject.matchAll(
     new RegExp(rule.pattern, `${rule.pattern.flags}g`)
   )) {
-    if (!rule.exempt.test(exemptSubject(match))) return true;
+    const claimed = exemptSubject(match);
+    if (!rule.exempt.some((list) => list.test(claimed))) return true;
   }
   return false;
 }
@@ -780,7 +1205,7 @@ export function assertMechanismLevel(content: FrameworkContent): void {
   for (const [field, value] of contentStrings(content)) {
     for (const rule of MECHANISM_CONTENT_RULES) {
       if (matchesMechanismRule(rule, value)) {
-        throw new FrameworkContentError(field, rule.detail);
+        throw new FrameworkContentError(field, rule.detail, rule.id);
       }
     }
   }
@@ -1495,11 +1920,27 @@ const UUID_RE =
  * stated; where it is not — the tutorial batch — the sentence says so instead
  * of implying one.
  *
- * THE CLASS NOW HAS A CONTROL FOR THIS ARRAY, not just a fixed instance:
- * `tests/framework-content-honesty.test.ts` scans the seed for ranking
- * markers and requires the population beside them. Its limit is the limit of
- * every vocabulary — a ranking phrased in words nobody listed still passes —
- * and that limit is stated in `MECHANISM_CONTENT_RULES`' residue rather than
+ * THE CLASS NOW HAS A CONTROL FOR THIS ARRAY, not just a fixed instance —
+ * and IT IS TWO INDEPENDENT CASES, not the conditional one this paragraph
+ * described until 2026-09-02 (learning gate). It said the scan "requires the
+ * population beside them", which is FALSE and false in the PERMISSIVE
+ * direction: a curator who reads THIS docblock — the one you are in, beside
+ * the array you are about to edit — and writes "The strongest follow
+ * mechanism of the three pieces in corpus-batch-0." has named the population
+ * and goes RED, measured. The same false sentence was corrected in
+ * `MECHANISM_CONTENT_RULES`' residue and in `decisions.md` R-83 and survived
+ * HERE, ~1,350 lines away, untouched since the commit before the fix.
+ *
+ * WHAT `tests/framework-content-honesty.test.ts` ACTUALLY ASSERTS, as two
+ * cases that never read each other: (1) the seed carries NO ranking or
+ * superlative marker at all — "strongest", "led the corpus", "heavily",
+ * "more … than the others", "above the baseline" — regardless of what sits
+ * beside it; and (2) seven named population and recording-status phrases
+ * ("Two pieces in the corpus", "Whether that is a zero or an absence was not
+ * recorded", …) are separately asserted PRESENT, so case (1) cannot be
+ * satisfied by deleting the observations. Its limit is the limit of every
+ * vocabulary — a ranking phrased in words nobody listed still passes — and
+ * that limit is stated in `MECHANISM_CONTENT_RULES`' residue rather than
  * papered over.
  *
  * `corpus-batch-0` AND `corpus-batch-1` NAME A POPULATION NOBODY CAN OPEN, and
@@ -1554,7 +1995,7 @@ export const SHARED_FRAMEWORK_SEED: readonly FrameworkContent[] = [
       },
     ],
     testedCaveats: [
-      "Resolving the confession inside the piece converts it into a comment driver rather than a follow driver.",
+      "The one same-shape piece in the corpus that resolved the confession inside the video drew discussion rather than follows. That is one case, so treat it as the direction to expect from resolving it and not as a rule.",
     ],
     saturation: "observed",
   },
@@ -1615,7 +2056,7 @@ export const SHARED_FRAMEWORK_SEED: readonly FrameworkContent[] = [
         kind: "internal_autopsy",
         ref: "corpus-batch-0",
         observation:
-          "Two pieces in the corpus run this shape and both were saved; the one without a first-person application drew no follows at all — the concept is what a viewer keeps, and the application is what attaches them to the creator.",
+          "Two pieces in the corpus run this shape and both were saved; the one without a first-person application has no follows recorded against it. Whether that is a zero or an absence was not recorded, so this is the direction to expect and not a count — the concept is what a viewer keeps, and the application is what attaches them to the creator.",
       },
       {
         kind: "internal_autopsy",
@@ -1800,7 +2241,7 @@ export const SHARED_FRAMEWORK_SEED: readonly FrameworkContent[] = [
         kind: "internal_autopsy",
         ref: "corpus-batch-1",
         observation:
-          "Two montage pieces drew saves and discussion and almost no follows, against a same-corpus mirror piece that carried receipts and did.",
+          "Two montage pieces in the corpus drew saves and discussion, with no follows recorded against either; whether that is a zero or an absence was not recorded. A same-corpus mirror piece that carried receipts did draw them, so this is the direction to expect and not a rate.",
       },
     ],
     testedCaveats: [

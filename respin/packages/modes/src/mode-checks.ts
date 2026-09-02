@@ -300,12 +300,16 @@ export const HOOK_SPREAD_MIN_CONTENT_WORDS = 3;
  * about two hooks that contradict each other. That is the class R-68 corrected
  * one slice earlier, in the same direction.
  *
- * WHAT IT COSTS, stated rather than discovered: a genuinely collapsed pair
- * that IS an exact permutation ("Film less and edit more" / "Edit more and
- * film less") is now missed. That is recorded in `KNOWN_MODE_CHECK_GAPS` as
- * `permutation-of-one-claim`, with a driver, and it is the cheaper error —
- * the miss costs a creator a hook they can delete, the false positive costs
- * them a credit and a script that was fine.
+ * WHAT IT COSTS, stated rather than discovered: any genuinely collapsed pair
+ * whose content-word SETS are equal is now missed. A permutation ("Film less
+ * and edit more" / "Edit more and film less") is one instance and was for one
+ * slice the only one recorded — THE PREDICATE IS SET EQUALITY AND NOT A
+ * PERMUTATION TEST (spin-compliance gate, 2026-09-02), so a stopword-only
+ * difference in the SAME order and a repeated content word are silenced too.
+ * Both are in `KNOWN_MODE_CHECK_GAPS` with drivers, as
+ * `permutation-of-one-claim` and `same-set-different-filler`. It is the
+ * cheaper error — the miss costs a creator a hook they can delete, the false
+ * positive costs them a credit and a script that was fine.
  *
  * WHAT IT MUST NEVER SILENCE, AND DID (round 2 of the same gate). Set equality
  * CONTAINS literal duplication, so for one slice this rescue passed a hook
@@ -676,6 +680,7 @@ export const MODE_CHECK_GAP_IDS = [
   "generic-weakest-point",
   "reversal-reads-as-duplicate",
   "permutation-of-one-claim",
+  "same-set-different-filler",
 ] as const;
 
 export type ModeCheckGapId = (typeof MODE_CHECK_GAP_IDS)[number];
@@ -750,6 +755,12 @@ export const KNOWN_MODE_CHECK_GAPS: readonly {
     id: "permutation-of-one-claim",
     direction: "false-negative",
     check: "hook_spread",
-    what: "The price of `sameContentWords`, and it is PERMUTATIONS ONLY: two hooks that ARE one claim REORDERED ('Film less and edit more' / 'Edit more and film less') share an identical content-word set, so the check stays silent. The rescue's predicate is set equality, which also contains LITERAL duplication — that half was live for one slice (three copies of one hook returned `usable`) and is now refused by `sameFlattenedText` before the rescue runs, with its own driver, so what remains recorded here is the reordering. It is the cheaper error — the creator deletes a hook, rather than paying a credit for a refusal on a draft that was fine — and it is the same trade R-68 took for the traceability shapes.",
+    what: "One instance of the rescue's predicate, which is SET EQUALITY over content words and not a permutation test: two hooks that are one claim REORDERED ('Film less and edit more today' / 'Edit more and film less today') share an identical content-word set, so the check stays silent. The predicate's other instances are recorded beside this one as `same-set-different-filler`, because a register that names only the reordering understates what it lets through. It is the cheaper error — the creator deletes a hook, rather than paying a credit for a refusal on a draft that was fine — and it is the same trade R-68 took for the traceability shapes.",
+  },
+  {
+    id: "same-set-different-filler",
+    direction: "false-negative",
+    check: "hook_spread",
+    what: "THE REST OF `sameContentWords`' PREDICATE, which is set equality and not reordering (spin-compliance gate, 2026-09-02). Two hooks whose content-word sets are equal are silenced however they differ, so the register's 'it is PERMUTATIONS ONLY' understated it in two measured ways. STOPWORD-ONLY DIFFERENCES: 'Shoot more and plan less' against 'You should shoot more, and then you plan less' both reduce to [shoot, plan, less] — the same claim in the SAME word order, differing only in filler, which is not a reordering at all. REPEATED CONTENT WORDS: 'Film less and edit more' against 'Film less, edit more, film less' — a set discards multiplicity, so saying a thing twice is invisible to it. Both measured through `scanModeChecks` at overlap 1.000 with an empty finding list. `sameFlattenedText` catches only the case where every word is identical, so it does not reach either of these.",
   },
 ];

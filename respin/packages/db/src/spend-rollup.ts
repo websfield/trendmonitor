@@ -245,20 +245,56 @@ export type SpendReconciliationResult = {
  * grain before that ships — recorded here so that slice's author finds the
  * assumption instead of re-discovering it.
  *
- * `includedBuildPurposes` (R-81) is REQUIRED and has NO DEFAULT. It is the
- * caller's answer to a question this package cannot answer — which purposes
- * price their first billable attempt at zero — the same seam the framework
- * writes' `entitlement` argument opens for the tier, and for the same reason:
- * `@respin/db` may not import `@respin/credits`. `@respin/credits` owns the
- * answer and computes it, from the ACTIVE CONFIG DOCUMENT, in its
- * `includedBuildPurposes` function (R-82 — it was a frozen constant, which was
- * a static answer to a price `/admin/config` can raise). Passing `[]` means
- * "nothing is ever included", which is a real, testable position rather than
- * an omission, and `tests/spend-rollup.test.ts` drives it.
+ * `includedBuildPurposesFor` (R-81/R-82/R-85) is REQUIRED and has NO DEFAULT.
+ * It is the caller's answer to a question this package cannot answer — which
+ * purposes price their first billable attempt at zero — the same seam the
+ * framework writes' `entitlement` argument opens for the tier, and for the same
+ * reason: `@respin/db` may not import `@respin/credits`. `@respin/credits` owns
+ * the answer and computes it from a config DOCUMENT (`includedBuildPurposes`);
+ * `/admin/model-spend` is the call site that turns versions into documents.
+ *
+ * IT IS PER CONFIG VERSION, AND THAT IS THE WHOLE POINT (R-85, billing gate
+ * 2026-09-02). R-82 made the exemption a function of the ACTIVE document and
+ * this query had no `config_version` term at all, so today's prices judged
+ * yesterday's attempts: dropping `creditCosts.onboardingBrainBuild` from 25
+ * back to 0 silently exempted — and therefore HID — every claim holder's lost
+ * debit incurred while it was 25. That is the fail-open direction
+ * `packages/credits/src/included-build.ts` names as the one that must never
+ * happen ("a wrong exemption HIDES a lost debit"). `model_usage.config_version`
+ * is NOT NULL and records the document each attempt was priced under, so the
+ * exemption is now decided per ROW from that column: this function asks the
+ * database which versions actually appear, hands exactly those to the resolver,
+ * and matches `(purpose, config_version)` pairs.
+ *
+ * `bool_and` ACROSS AN ATTEMPT'S ROWS, not `bool_or`: a bounded retry can write
+ * two rows for one attempt id and, in principle, under two different versions.
+ * An attempt is exempt only if EVERY one of its rows was priced under a
+ * document that exempts it — the same direction as `every` over a purpose's
+ * operations, and for the same reason.
+ *
+ * AND IT HAS A WITNESS NOW, WHICH IT DID NOT WHEN IT WAS CHOSEN (billing gate,
+ * 2026-09-02). Every group in both rollup suites was UNIFORM in
+ * `config_version` — all fourteen `configVersion` call sites, the two-row
+ * retry case included — and on a uniform group these two operators are the
+ * same function, so a directional choice about MONEY had no test that could
+ * tell them apart. `spend-rollup.test.ts` now drives one `attempt_id` with two
+ * rows under two documents, one exempting and one not, and asserts the attempt
+ * is REPORTED; planting `bool_or` reddens that case and only that case.
+ *
+ * A RESOLVER RATHER THAN A LIST, because the versions are a fact of the DATA
+ * and the prices are a fact of the CALLER's package. Returning an empty map
+ * means "nothing is ever included", which is a real, testable position rather
+ * than an omission; a version the resolver omits is NOT exempt, which is the
+ * safe direction (it reports an attempt that may have owed nothing rather than
+ * hiding one that did). `tests/spend-rollup.test.ts` drives all three.
  */
+export type IncludedBuildPurposesFor = (
+  configVersions: readonly number[]
+) => Promise<ReadonlyMap<number, readonly string[]>>;
+
 export async function reconcileSpend(
   db: DbLike,
-  includedBuildPurposes: readonly string[]
+  includedBuildPurposesFor: IncludedBuildPurposesFor
 ): Promise<SpendReconciliationResult> {
   const rollupRows = await db.select().from(workspaceSpendMonthly);
   const rows: SpendReconciliationRow[] = [];
@@ -349,14 +385,33 @@ export async function reconcileSpend(
   // caller mints one fresh `attemptId` per press — but the table's own schema
   // was built to anticipate the shape.
   //
-  // WHICH PURPOSES THE CLAIM CAN EXEMPT AT ALL (R-81). A literal `false` for
-  // an empty list rather than `purpose IN ()`, which is a Postgres syntax
-  // error — and `false` is the honest reading of "no purpose has an included
-  // build", so every successful attempt then owes a debit.
-  const exemptiblePurpose =
-    includedBuildPurposes.length === 0
+  // WHICH (PURPOSE, VERSION) PAIRS THE CLAIM CAN EXEMPT AT ALL (R-81/R-85).
+  //
+  // THE VERSIONS COME FROM THE DATA. Asking the resolver only about versions
+  // that actually appear in `model_usage` keeps the caller's config read
+  // bounded by what was used rather than by how many times an operator has
+  // edited the document.
+  const versionRows = await db
+    .selectDistinct({ configVersion: modelUsage.configVersion })
+    .from(modelUsage);
+  const byVersion = await includedBuildPurposesFor(
+    versionRows.map((r) => r.configVersion)
+  );
+  const pairs = [...byVersion].flatMap(([version, purposes]) =>
+    purposes.map((purpose) => ({ version, purpose }))
+  );
+  // A literal `false` for an empty list rather than `IN ()`, which is a
+  // Postgres syntax error — and `false` is the honest reading of "no purpose
+  // has an included build under any version this data was priced by", so every
+  // successful attempt then owes a debit. The casts are explicit because a
+  // row-comparison `IN` gives Postgres nothing to infer a bare parameter from.
+  const exemptRow =
+    pairs.length === 0
       ? sql`false`
-      : sql`attempts.purpose IN ${includedBuildPurposes}`;
+      : sql`(${modelUsage.purpose}, ${modelUsage.configVersion}) IN (${sql.join(
+          pairs.map((p) => sql`(${p.purpose}::text, ${p.version}::int)`),
+          sql`, `
+        )})`;
 
   // `db.execute` returns `{ rows }` on both drivers (node-postgres and
   // PGlite); the generic `PgDatabase` type erases that shape, hence the cast
@@ -369,7 +424,18 @@ export async function reconcileSpend(
         ${modelUsage.workspaceId} AS workspace_id,
         ${modelUsage.purpose} AS purpose,
         ${modelUsage.attemptId} AS attempt_id,
-        bool_or(${modelUsage.outcome} = 'succeeded') AS has_succeeded
+        bool_or(${modelUsage.outcome} = 'succeeded') AS has_succeeded,
+        -- EVERY row of this attempt, under ITS OWN version (R-85): bool_and,
+        -- so an attempt whose rows straddle a price change is judged by the
+        -- stricter half rather than by whichever row the group happened to
+        -- pick. COALESCE because a row comparison yields NULL if either side
+        -- is NULL, and NOT (NULL AND EXISTS ...) is NULL -- which DROPS the
+        -- attempt from this report rather than reporting it, the one direction
+        -- that must never happen. Unreachable today (both purpose and
+        -- config_version are NOT NULL, onboarding-schema.ts:302/320) and
+        -- closed anyway, because the day either column changes is not the day
+        -- anyone re-reads this expression.
+        COALESCE(bool_and(${exemptRow}), false) AS exempt_under_its_version
       FROM ${modelUsage}
       WHERE ${modelUsage.outcome} IN ${BILLABLE_USAGE_OUTCOMES}
         AND ${modelUsage.consumedIncludedBuild} = true
@@ -383,11 +449,13 @@ export async function reconcileSpend(
     FROM attempts
     WHERE attempts.has_succeeded = true
       -- NOT the profile's included build. TWO CONDITIONS, not one (R-81):
-      -- this purpose must actually HAVE an included build, and this attempt
-      -- must hold its claim. Dropping the first half exempts every profile's
-      -- first generation, which is never free.
+      -- this attempt's purpose must actually HAVE an included build UNDER THE
+      -- DOCUMENT IT WAS PRICED BY (R-85), and this attempt must hold its claim.
+      -- Dropping the first half exempts every profile's first generation, which
+      -- is never free; judging it by today's document instead of the row's own
+      -- hides every lost debit incurred before a price cut.
       AND NOT (
-        ${exemptiblePurpose}
+        attempts.exempt_under_its_version
         AND EXISTS (
           SELECT 1 FROM ${firstBillableAttempts}
           WHERE ${firstBillableAttempts.profileId} = attempts.profile_id

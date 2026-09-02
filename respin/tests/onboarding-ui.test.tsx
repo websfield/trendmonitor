@@ -19,11 +19,17 @@ import {
 import {
   BrainDocumentLimitError,
   BrainVersionLimitError,
+  CONFIG_V1_SEED,
   DISPLAY_NAME_MAX,
   ONBOARDING_PAGE_MAX,
   OnboardingInputLimitError,
   POST_CONTENT_MAX,
 } from "@respin/db";
+import { respinConfigV1 } from "@respin/config";
+// THE PRICE RULE ITSELF, not a number copied out of it: the same function the
+// page calls, so this suite drives what a creator reads against what `priceOf`
+// answers for a document (billing gate, 2026-09-02).
+import { onboardingBrainPrices } from "@respin/credits";
 import {
   ONBOARDING_ERROR_CODES,
   capReached,
@@ -87,7 +93,7 @@ const base: OnboardingViewProps = {
 type RunProps = RunInferencePanelProps & { sendSentence: string };
 const runFixture = (p: Partial<RunProps> = {}): RunProps => ({
   action: async () => ({ status: "idle" }),
-  costSentence: runCostSentence(50, 120),
+  costSentence: runCostSentence(0, 50, 120),
   // Through the real pure function, so the fixture's sentence is the shipped
   // one and the R12 scans below read what a creator reads.
   sendSentence: preSendSentence(50),
@@ -527,7 +533,7 @@ describe("honesty (R12) — this screen spends a credit and does nothing else it
       {
         step: "paste-posts",
         profileName: "Anna",
-        run: runFixture({ costSentence: runCostSentence(null, null) }),
+        run: runFixture({ costSentence: runCostSentence(null, null, null) }),
       },
     ],
     // The corpus-ceiling-unknown branch renders its OWN sentence, so it is its
@@ -689,7 +695,7 @@ describe("the metered run states its price (R18)", () => {
     const html = render({
       step: "paste-posts",
       profileName: "Anna",
-      run: runFixture({ costSentence: runCostSentence(50, 120) }),
+      run: runFixture({ costSentence: runCostSentence(0, 50, 120) }),
     });
     expect(html).toContain("50 credits");
     expect(html).toContain("120 credits");
@@ -706,7 +712,7 @@ describe("the metered run states its price (R18)", () => {
     const html = render({
       step: "paste-posts",
       profileName: "Anna",
-      run: runFixture({ costSentence: runCostSentence(7, 3) }),
+      run: runFixture({ costSentence: runCostSentence(0, 7, 3) }),
     });
     expect(html).toContain("7 credits");
     expect(html).toContain("3 credits");
@@ -714,7 +720,7 @@ describe("the metered run states its price (R18)", () => {
   });
 
   it("INVENTS NO PRICE when the server could not read one", () => {
-    const sentence = runCostSentence(null, null);
+    const sentence = runCostSentence(null, null, null);
     expect(sentence).toMatch(/could not be read/);
     expect(sentence).not.toMatch(/\d/);
     const html = render({
@@ -728,15 +734,38 @@ describe("the metered run states its price (R18)", () => {
   it("states the price even when the BALANCE alone is unreadable", () => {
     // Two independent reads, so one failing must not silence the other. The
     // price is the half R18 is actually about.
-    const sentence = runCostSentence(50, null);
+    const sentence = runCostSentence(0, 50, null);
     expect(sentence).toContain("50 credits");
     expect(sentence).not.toMatch(/You have/);
   });
 
   it("pluralises both numbers, so a one-credit price is not 'costs 1 credits'", () => {
-    expect(runCostSentence(1, 1)).toContain("costs 1 credit.");
-    expect(runCostSentence(1, 1)).toContain("You have 1 credit.");
-    expect(runCostSentence(2, 2)).toContain("costs 2 credits.");
+    expect(runCostSentence(0, 1, 1)).toContain("costs 1 credit.");
+    expect(runCostSentence(0, 1, 1)).toContain("You have 1 credit.");
+    expect(runCostSentence(0, 2, 2)).toContain("costs 2 credits.");
+  });
+
+  it("the rule has FOUR shapes, and the count in the code is bound to them", () => {
+    // `run-copy.ts` said "THREE BRANCHES, because the document has three
+    // shapes" directly above a four-branch conditional (learning gate,
+    // 2026-09-02) — an unbound count, written by the pass that was correcting
+    // unbound counts elsewhere. A count in a comment is bound here or it is
+    // not a claim. One representative per branch, asserted DISTINCT: merging
+    // two branches makes two of these equal, and adding a fifth shape without
+    // a representative leaves this case describing less than the code does.
+    const shapes = [
+      runCostSentence(0, 0, 3), // both free
+      runCostSentence(0, 50, 3), // first included, later priced — today's
+      runCostSentence(9, 9, 3), // both priced the same
+      runCostSentence(25, 50, 3), // both priced, differently
+    ];
+    expect(new Set(shapes).size, "two branches produce the same sentence").toBe(4);
+    // ...and each names its own shape, so "distinct" is not four spellings of
+    // one claim.
+    expect(shapes[0]).toContain("cost nothing");
+    expect(shapes[1]).toMatch(/first run for a creator is included/i);
+    expect(shapes[2]).toContain("Every run for a creator costs 9 credits");
+    expect(shapes[3]).toContain("first run for a creator costs 25 credits");
   });
 
   it("says the first run is included — the rule the server actually prices by", () => {
@@ -746,7 +775,81 @@ describe("the metered run states its price (R18)", () => {
     // will take: predicting means a second read of the same authority
     // `runInference` consults inside its debit transaction, and a stale
     // prediction is a wrong number about money.
-    expect(runCostSentence(50, 120)).toMatch(/first run for a creator is included/i);
+    expect(runCostSentence(0, 50, 120)).toMatch(/first run for a creator is included/i);
+  });
+
+  it("...and it STOPS saying that the moment the document prices the first run", async () => {
+    // THE DEFECT (billing gate, 2026-09-02). This sentence asserted the rule
+    // unconditionally while the page read ONE number, so under the exact
+    // document R-82's own test appends — `onboardingBrainBuild: 25` — a
+    // creator was told their first build was included and was then debited 25.
+    // `priceOf` was right; the sentence was a frozen assumption about a value
+    // the schema types as `min(0)` rather than `literal(0)`.
+    const priced = runCostSentence(25, 50, 120);
+    expect(priced.toLowerCase()).not.toContain("included");
+    expect(priced.toLowerCase()).not.toMatch(/\bfree\b|on us|no charge/);
+    expect(priced).toContain("first run for a creator costs 25 credits");
+    expect(priced).toContain("Every run after that costs 50 credits");
+    // One price for both branches reads as one sentence, not two.
+    const flat = runCostSentence(9, 9, 4);
+    expect(flat).toContain("Every run for a creator costs 9 credits");
+    expect(flat.toLowerCase()).not.toContain("included");
+    // Nothing priced at all is said as that, never as "included".
+    expect(runCostSentence(0, 0, 4)).toContain(
+      "cost nothing on this server's current settings"
+    );
+    // Singular, on the branch the old signature could not reach.
+    expect(runCostSentence(1, 2, 5)).toContain(
+      "first run for a creator costs 1 credit."
+    );
+    // THE PROPERTY, OVER THE BRANCH SPACE rather than over the three examples
+    // above: this sentence may promise nothing free unless the price it was
+    // handed for the first run IS zero. That is the whole class the finding
+    // named — copy that states a price RULE instead of reading one — expressed
+    // as something a grid can falsify.
+    for (const included of [0, 1, 7, 25, 50]) {
+      for (const rebuild of [0, 1, 50]) {
+        const s = runCostSentence(included, rebuild, 3).toLowerCase();
+        if (included === 0) continue;
+        expect(s, `included=${included} rebuild=${rebuild}`).not.toMatch(
+          /included|\bfree\b|on us|no charge|nothing/
+        );
+        expect(s, `included=${included} rebuild=${rebuild}`).toContain(
+          String(included)
+        );
+      }
+    }
+  });
+
+  it("THE PRICES COME FROM `priceOf`: the same document that debits 25 makes the screen say 25", async () => {
+    // NOT A RULE ABOUT THE NUMBER 25 — the page's own read, driven against the
+    // real seeded document and then against an appended one, exactly as
+    // `/admin/model-spend`'s guard is. `onboardingBrainPrices` is the two
+    // branches of `priceOf`'s onboarding case, so a screen that used it cannot
+    // state a rule the debit does not follow.
+    const seeded = respinConfigV1.parse(CONFIG_V1_SEED);
+    expect(onboardingBrainPrices(seeded)).toEqual({
+      included: 0,
+      rebuild: seeded.creditCosts.onboardingBrainRebuild,
+    });
+    expect(runCostSentence(0, seeded.creditCosts.onboardingBrainRebuild, 120)).toMatch(
+      /first run for a creator is included/i
+    );
+    const raised = {
+      ...seeded,
+      creditCosts: { ...seeded.creditCosts, onboardingBrainBuild: 25 },
+    };
+    expect(onboardingBrainPrices(raised).included).toBe(25);
+    const sentence = runCostSentence(
+      onboardingBrainPrices(raised).included,
+      onboardingBrainPrices(raised).rebuild,
+      120
+    );
+    expect(
+      sentence.toLowerCase(),
+      "the screen promises a free first build the ledger will charge for"
+    ).not.toContain("included");
+    expect(sentence).toContain("25 credits");
   });
 
   it("no control is offered when it is blocked — and the reason replaces it", () => {
@@ -1647,9 +1750,26 @@ describe("the run control is wired, not assumed", () => {
   it("the page computes the price sentence from its own two READS, not a literal", () => {
     // The digits, again: a hardcoded 50 here would render a price that stopped
     // matching config the moment an operator changed it.
-    expect(pageSrc).toContain("runCostSentence(runCost, runBalance)");
-    expect(pageSrc).toContain("creditCosts.onboardingBrainRebuild");
+    expect(pageSrc).toMatch(
+      /runCostSentence\(\s*runIncludedCost,\s*runRebuildCost,\s*runBalance\s*\)/
+    );
     expect(pageSrc).toContain("respinCredits.getBalance(scope.workspaceId)");
+  });
+
+  it("the page prices through the OPERATION'S own rule, not by indexing config", () => {
+    // THE FIX FOR THE FROZEN ASSUMPTION (billing gate, 2026-09-02). This page
+    // read `creditCosts.onboardingBrainRebuild` and let `runCostSentence`
+    // assert "your first run is included" — true only while
+    // `onboardingBrainBuild` is 0, which the schema does not require and
+    // `/admin/config` can change. `onboardingBrainPrices` is `priceOf`'s two
+    // onboarding branches, so the sentence and the debit read the same rule.
+    // The same assertion `/onboarding/first-ideas` already carries, one
+    // purpose over: the page must not index `creditCosts` itself.
+    expect(pageSrc).toContain("onboardingBrainPrices(config.content)");
+    expect(
+      pageSrc.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, ""),
+      "the page indexes creditCosts itself"
+    ).not.toMatch(/creditCosts\./);
   });
 
   it("the action is BOUND to the profile id, and the control is absent without one", () => {

@@ -98,6 +98,7 @@ export {
   periodMonthUtc,
   pseudonymiseWorkspaceSpend,
   reconcileSpend,
+  type IncludedBuildPurposesFor,
   type SpendReconciliationClass,
   type SpendReconciliationResult,
   type SpendReconciliationRow,

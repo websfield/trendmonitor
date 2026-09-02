@@ -36,7 +36,9 @@ import {
 import { MODE_IDS } from "@respin/modes";
 import {
   CLAIM_HOLDER_OPERATIONS,
+  UNPROBED_CREDIT_COST_KEYS,
   includedBuildPurposes,
+  probedCreditCostKeys,
   purposeIsIncluded,
 } from "../src/included-build";
 import {
@@ -179,6 +181,71 @@ describe("includedBuildPurposes reads the DOCUMENT (R-82)", () => {
     // check did not turn it into "always false".
     expect(purposeIsIncluded(seed, [ONBOARDING_HOLDER])).toBe(true);
     expect(purposeIsIncluded(seed, GENERATION_OPS)).toBe(false);
+  });
+
+  it("EVERY PRICED KEY IS ANSWERED: probed by an operation, or registered as unprobed with a reason", () => {
+    // THE TRAP THIS CLOSES, LAID FOR SLICE 8 (billing gate, 2026-09-02). The
+    // total `Record` makes a new PURPOSE a compile error and makes nothing at
+    // all of a new OPERATION WITHIN a purpose. MEASURED against the seed:
+    // `CLAIM_HOLDER_OPERATIONS.generation()` covers six keys, while
+    // `creditCosts` carries `autopsy` and `trendBrowse` as well — both priced,
+    // both uncovered, both slice 8's operations. So the day an autopsy is a
+    // priced operation, a document with every mode at 0 and `autopsy` at 7
+    // exempts a claim holder that owes 7 credits: the fail-open direction.
+    //
+    // THE PARTITION IS THE GUARD, and it is derived from the DOCUMENT rather
+    // than restated: probed keys plus registered-unprobed keys is exactly
+    // `Object.keys(content.creditCosts)`, with no key on both sides. Adding a
+    // `creditCosts` key reddens this until somebody says which side it is on;
+    // wiring one of the registered keys into an operation reddens it until the
+    // entry is deleted. Registering a new priced operation costs a line.
+    const probed = probedCreditCostKeys();
+    // The six, by name — the instance beside the class, so a derivation that
+    // silently returned nothing could not satisfy the partition either.
+    expect(probed).toEqual([
+      "caption",
+      "fullScript",
+      "hookSet",
+      "ideationBatch",
+      "revision",
+      "spin",
+    ]);
+    const unprobed = Object.keys(UNPROBED_CREDIT_COST_KEYS).sort();
+    expect(
+      probed.filter((k) => unprobed.includes(k)),
+      "a key is both probed and registered as unprobed"
+    ).toEqual([]);
+    expect(
+      [...probed, ...unprobed].sort(),
+      "a priced key is on neither side of the partition — probe it, or register it with the reason it cannot be"
+    ).toEqual(Object.keys(seed.creditCosts).sort());
+    // A registration with no reason is a line somebody added to go green.
+    for (const [key, why] of Object.entries(UNPROBED_CREDIT_COST_KEYS)) {
+      expect(why.length, `${key} is registered for no stated reason`).toBeGreaterThan(
+        40
+      );
+    }
+  });
+
+  it("...and the measurement behind it: `autopsy` is priced and no probe reaches it", () => {
+    // THE FACT, RUN. With every generation key at zero and `autopsy` at 7 the
+    // derivation still exempts BOTH purposes, because nothing prices an
+    // autopsy yet. Today that is correct — no attempt can carry that price —
+    // and it is exactly what makes the register above necessary rather than
+    // decorative: the same document one slice later is a hidden lost debit.
+    const trap: RespinConfigV1 = {
+      ...withGenerationCosts(seed, 0),
+      creditCosts: { ...withGenerationCosts(seed, 0).creditCosts, autopsy: 7 },
+    };
+    expect(includedBuildPurposes(trap)).toEqual([
+      GENERATION_PURPOSE,
+      ONBOARDING_BRAIN_PURPOSE,
+    ]);
+    expect(trap.creditCosts.autopsy, "the fixture did not move the price").toBe(7);
+    expect(
+      probedCreditCostKeys().includes("autopsy"),
+      "autopsy is probed now — delete its UNPROBED_CREDIT_COST_KEYS entry"
+    ).toBe(false);
   });
 
   it("the `@respin/db` suite drives reconcileSpend with the SAME list", () => {

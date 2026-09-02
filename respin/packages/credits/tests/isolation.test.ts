@@ -151,6 +151,8 @@ const NOT_DB_FACING: Record<string, string> = {
     "pure function — maps (mode, isRevision) onto a `creditCosts` key, runs no query. R8's whole pricing decision, in one place, so a revision cannot be priced at its parent mode's cost by a branch somebody forgot",
   includedBuildPurposes:
     "pure function — drives `generationOp` and `priceOf` over every priced operation of each purpose against a config document the CALLER has already read, and runs no query of its own. R-82: it replaced a frozen constant, because which purposes price their first billable attempt at zero is a fact `/admin/config` can change; `/admin/model-spend` reads the active document and hands the answer to `reconcileSpend`",
+  onboardingBrainPrices:
+    "pure function — the two branches of `priceOf`'s ONBOARDING case (unclaimed, and claimed by another attempt) over a config document the CALLER has already read, with a probe attempt id that is never stored. No query, no workspace data. It exists because `/onboarding` stated the included-build RULE in a sentence while reading only the rebuild price, which is false under any document that prices `creditCosts.onboardingBrainBuild` above zero (billing gate, 2026-09-02)",
   modeTiers:
     "pure lookup in the MODE_TIERS record — no query, no workspace data (R14)",
   modesIncludedIn:
@@ -440,15 +442,24 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   },
   "included-build.ts": {
     reason:
-      "R-82: WHICH PURPOSES PRICE THEIR FIRST BILLABLE ATTEMPT AT ZERO, under a config document the caller has already read. Pure — it drives `priceOf` over every priced operation of each purpose and touches no database, no workspace and no scope — and it is in this package rather than in `@respin/db` because `priceOf` is what decides it and `@respin/db` may not import this package. `/admin/model-spend` carries its answer to `reconcileSpend`, whose parameter has no default.",
-    viaIndex: ["includedBuildPurposes"],
+      "R-82/R-85: WHICH PURPOSES PRICE THEIR FIRST BILLABLE ATTEMPT AT ZERO, under a config document the caller has already read — one answer per stored `config_version`, because judging a historical attempt by today's document hides the lost debit a price cut made invisible. Pure — it drives `priceOf` over every priced operation of each purpose and touches no database, no workspace and no scope — and it is in this package rather than in `@respin/db` because `priceOf` is what decides it and `@respin/db` may not import this package. `/admin/model-spend` carries its answers to `reconcileSpend`, whose resolver argument has no default.",
+    viaIndex: ["includedBuildPurposes", "onboardingBrainPrices"],
     // `purposeIsIncluded` is the one-purpose half, split out so the EMPTY
     // operation list has a witness — `[].every(…)` is `true`, which would
     // exempt a purpose nobody classified. It stays package-private because
     // `app/**` must never be able to ask "is this purpose free" about a list
     // it composed itself: the only question a screen may ask is the derived
     // one, over the document it read.
-    internalOnly: ["purposeIsIncluded"],
+    //
+    // `probedCreditCostKeys` is package-private for the same reason and one
+    // more: it is the LEFT side of a partition asserted against
+    // `Object.keys(content.creditCosts)`, so that registering a new priced
+    // operation costs a line in `UNPROBED_CREDIT_COST_KEYS` rather than
+    // silently escaping the exemption's probe (billing gate, 2026-09-02 —
+    // `autopsy` and `trendBrowse` are priced, uncovered and slice 8's). It
+    // answers a question about THIS package's own operation lists, which is
+    // not a question a screen has.
+    internalOnly: ["purposeIsIncluded", "probedCreditCostKeys"],
   },
   "profiles.ts": {
     reason:

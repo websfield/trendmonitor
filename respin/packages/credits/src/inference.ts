@@ -441,9 +441,19 @@ export function priceOf(content: RespinConfigV1, op: PricedOperation): number {
 // (R-82). R-81 answered it here, with a total `Record<purpose, boolean>` whose
 // onboarding entry said `true` — a static answer to a fact `/admin/config` can
 // change, since `creditCosts.onboardingBrainBuild` is `min(0)` and not
-// `literal(0)`. The derivation drives
-// `priceOf` above on every priced operation of each purpose, so the two
-// cannot disagree.
+// `literal(0)`. The derivation drives `priceOf` above on every priced operation
+// of each purpose, SO THE TWO CANNOT DISAGREE ABOUT A DOCUMENT.
+//
+// "ABOUT A DOCUMENT" IS THE WHOLE QUALIFIER (R-85, billing gate 2026-09-02).
+// This sentence used to end at "cannot disagree", which was false for any
+// attempt priced under an EARLIER version: `priceOf` runs at debit time against
+// the document then active, while the exemption `reconcileSpend` applies used
+// to be derived from the document active at REPORT time. A price cut therefore
+// made them disagree in the fail-open direction — the report exempting attempts
+// the debit had charged. Closed by deciding the exemption per row from
+// `model_usage.config_version`, so both sides read the SAME document per
+// attempt; what remains true here is that, for one document, the two agree by
+// construction.
 
 /**
  * The uncharged-billable-attempt cap for a purpose (R16), from config.

@@ -36,15 +36,26 @@
 //
 // THE MEASUREMENT, because a guard that drowns is a guard nobody keeps
 // (`source-citations.test.ts` went from 140 raw hits to 8 real ones and says
-// so). Over the same five trees: 3,167 backticked multi-word citations, 815
-// distinct. 53 distinct resolved nowhere as code tokens; counting words inside
-// string literals as present removed 11 of those; 3 of the remaining 42 were
-// REAL stale citations found by writing this file and fixed in the same pass
-// (a schema comment pointing at a framework retirement function under a name
-// that never existed, an index comment naming the supersede-then-insert pair
-// under a name that never existed, and a mock comment naming the burn-period
-// derivation under its pre-rename name). The other 40 are below, each one a
-// name this workspace deliberately does not declare.
+// so). Over the same five trees, ON THE DAY THIS FILE WAS WRITTEN: 3,167
+// backticked multi-word citations, 815 distinct. 53 distinct resolved nowhere
+// as code tokens; counting words inside string literals as present removed 11
+// of those; 3 of the remaining 42 were REAL stale citations found by writing
+// this file and fixed in the same pass (a schema comment pointing at a
+// framework retirement function under a name that never existed, an index
+// comment naming the supersede-then-insert pair under a name that never
+// existed, and a mock comment naming the burn-period derivation under its
+// pre-rename name).
+//
+// `KNOWN_ABSENT` IS NOT THAT SUBTRACTION'S OUTPUT AND IS NO LONGER DESCRIBED AS
+// ONE (billing gate, 2026-09-02). The header said "the other 40 are below"
+// while the list held 41 — the arithmetic was a measurement of one day and the
+// list has grown since (the root-level pass of R-82 added `poolOptions`), so a
+// number derived by subtraction here rots the first time an entry is added.
+// It holds 41 entries, and that count is BOUND: the case "the header's count
+// is the list's own length" reads this sentence out of this file and compares
+// it to `KNOWN_ABSENT.length`, exactly as `packages/llm/tests/no-text.test.ts`
+// binds its own header count. Each entry is a name this workspace deliberately
+// does not declare.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -519,6 +530,24 @@ describe("THE REAL REPO: every cited symbol exists, or is registered as absent",
       stale,
       "a comment names a symbol this workspace does not have — fix the name, or add it to KNOWN_ABSENT with its owner and reason"
     ).toEqual([]);
+  });
+
+  it("the header's count is the list's own length", () => {
+    // A COUNT WRITTEN IN A HEADER IS BOUND TO NOTHING (billing gate,
+    // 2026-09-02). This one said 40 above 41 entries, because it was written
+    // as the output of a subtraction measured on one day and the list grew
+    // afterwards. The fix is the one `packages/llm/tests/no-text.test.ts` took
+    // for the same class: read the sentence out of the file and compare it to
+    // the collection, so the number cannot drift and cannot be reworded out
+    // from under the check either — a `null` match is a failure here, never a
+    // silence (CLAUDE.md, 2026-08-21).
+    const src = readFileSync(fileURLToPath(import.meta.url), "utf8");
+    const stated = /It holds (\d+) entries, and that count is BOUND/.exec(src);
+    expect(
+      stated,
+      "the header no longer states the size of KNOWN_ABSENT"
+    ).not.toBeNull();
+    expect(Number(stated?.[1])).toBe(KNOWN_ABSENT.length);
   });
 
   it("every KNOWN_ABSENT entry is still absent — the registry cannot become furniture", () => {

@@ -1030,6 +1030,27 @@ describe("billing error copy: completeness and hygiene", () => {
     const members = /ABOVE (\w+) MEMBERS/.exec(source);
     expect(members, "the refusal docblock no longer states its size").not.toBeNull();
     expect(members?.[1].toLowerCase()).toBe(NUMBER_WORDS[n]);
+    // THE THIRD RECURRENCE, IN THE DOCBLOCK ROUND 2 HALF-BOUND (billing gate,
+    // 2026-09-02). The sentence bound above and this one sit in the SAME
+    // docblock: round 2 read "…ABOVE FOUR MEMBERS…" out of the file and left
+    // "A CLOSED SET OF FOUR, and they are four because they are four different
+    // facts" — three unbound counts, one line up — free to rot exactly as its
+    // two predecessors did. All three are read here, because binding one
+    // sentence of a paragraph is what produced this finding twice already.
+    const closed =
+      /A CLOSED SET OF (\w+), and they are (\w+) because they are (\w+) different/.exec(
+        source
+      );
+    expect(
+      closed,
+      "the refusal docblock no longer opens by stating the size of the set"
+    ).not.toBeNull();
+    const closedCounts = closed?.slice(1) ?? [];
+    // Not vacuous: three groups, or the loop below proves nothing.
+    expect(closedCounts).toHaveLength(3);
+    for (const word of closedCounts) {
+      expect(word.toLowerCase()).toBe(NUMBER_WORDS[n]);
+    }
     // `REVISION_PARENT_MESSAGES`: "three of the four … and the fourth …".
     const split = /(\w+) of the (\w+) are about what the product can do/.exec(
       source
@@ -1443,13 +1464,52 @@ describe("a refusal names what happened to the money (fix round, 2026-08-28)", (
     expect(copy.detail).not.toMatch(/your included (build|run) was not used/i);
   });
 
-  it("...and a NON-billable one still says the included run survived", () => {
+  it("...and a NON-billable one still says the claim survived — WITHOUT naming its price", () => {
     // The direction that must not change: a 5xx costs the creator nothing.
     const notBillable = new LlmError("timed out", "unavailable", false);
     expect(billingErrorCode(notBillable)).toBe("llm_unavailable");
     expect(BILLING_ERROR_COPY.llm_unavailable.detail).toMatch(
-      /included run was not used/i
+      /did not use up your first run for this creator/i
     );
+    // AND IT MAY NOT SAY "included" (billing gate round 2, 2026-09-02).
+    // `onboardingBrainBuild` is `z.number().int().min(0)`, not `literal(0)`,
+    // so under the very document R-82's test appends the old wording promised
+    // a free first build the creator does not have. This map is static — the
+    // `?e=` channel carries a code, never a message — so it cannot read a
+    // price and must not state one.
+    expect(BILLING_ERROR_COPY.llm_unavailable.detail).not.toMatch(
+      /included (build|run)/i
+    );
+  });
+
+  it("NO refusal copy in the map states the entitlement's PRICE — the class, not the string", () => {
+    // EIGHT STRINGS said "your included build was not used" / "your included
+    // run was not used" / "your included build is untouched", unconditionally,
+    // from a map that by its own comment cannot read config. The first fix
+    // corrected one of them and left "it did NOT use your included build"
+    // inside the sentence it had just fixed, justified as "true whatever the
+    // document prices it at" — true of the claim row, false of what a creator
+    // reads. The population here is EVERY code, so a ninth cannot appear
+    // without reddening this.
+    const offenders = (Object.keys(BILLING_ERROR_COPY) as BillingErrorCode[]).filter(
+      (code) => {
+        const copy = BILLING_ERROR_COPY[code];
+        return /\bincluded (build|run)\b|\bfree (build|run|draft)\b|\bon us\b/i.test(
+          `${copy.title} ${copy.detail}`
+        );
+      }
+    );
+    expect(
+      offenders,
+      "a refusal tells a creator what their entitlement COSTS, from a static map with no config"
+    ).toEqual([]);
+    // NON-VACUITY: the pattern catches the wording that was actually there.
+    expect(
+      /\bincluded (build|run)\b|\bfree (build|run|draft)\b|\bon us\b/i.test(
+        "Nothing was spent and your included run was not used."
+      )
+    ).toBe(true);
+    expect(Object.keys(BILLING_ERROR_COPY).length).toBeGreaterThan(20);
   });
 
   it("the vendor-failure copy no longer blames the creator's material", () => {

@@ -74,14 +74,69 @@ export const CLAIM_HOLDER_OPERATIONS: Record<
 };
 
 /**
+ * EVERY `creditCosts` KEY A PROBED OPERATION ACTUALLY PRICES.
+ *
+ * Derived from the operations above rather than listed, so it cannot drift
+ * from what `includedBuildPurposes` really asks `priceOf`.
+ */
+export function probedCreditCostKeys(): readonly string[] {
+  const keys = new Set<string>();
+  for (const ops of Object.values(CLAIM_HOLDER_OPERATIONS)) {
+    for (const op of ops()) {
+      if ("creditCostKey" in op) keys.add(op.creditCostKey);
+    }
+  }
+  return [...keys].sort();
+}
+
+/**
+ * THE PRICED KEYS NO PROBED OPERATION REACHES, EACH WITH THE REASON.
+ *
+ * WHY THIS EXISTS — A TRAP LAID FOR SLICE 8 (billing gate, 2026-09-02). The
+ * total `Record` above makes a new PURPOSE a compile error and makes nothing
+ * at all of a new OPERATION WITHIN a purpose. Measured against the real seed,
+ * `CLAIM_HOLDER_OPERATIONS.generation()` covers six keys — `caption`,
+ * `fullScript`, `hookSet`, `ideationBatch`, `revision`, `spin` — while
+ * `creditCosts` also carries `autopsy` and `trendBrowse`, both priced, both
+ * uncovered, and both slice 8's operations. So the day an autopsy becomes a
+ * priced operation of the `generation` purpose, a document with every mode at
+ * 0 and `autopsy` at 7 exempts a claim holder that owes 7 credits — the
+ * fail-open direction `includedBuildPurposes` names as the one that must never
+ * happen (a wrong exemption HIDES a lost debit).
+ *
+ * SO REGISTERING A NEW PRICED OPERATION COSTS A LINE. The partition —
+ * `probedCreditCostKeys()` plus these keys is EXACTLY `Object.keys(
+ * content.creditCosts)`, with no overlap — is asserted against the stored
+ * document in `tests/included-build-purposes.test.ts`. Adding a `creditCosts`
+ * key reddens it until somebody says which side it is on; wiring one of these
+ * keys into an operation reddens it until the entry is deleted.
+ */
+export const UNPROBED_CREDIT_COST_KEYS: Readonly<Record<string, string>> = {
+  onboardingBrainBuild:
+    "The onboarding purpose is priced by a BRANCH of `priceOf`, not by a `creditCostKey`. It is probed — by the claim-holder operation above, which is what R-82 is about — just not through a key.",
+  onboardingBrainRebuild:
+    "The price of an onboarding attempt that does NOT hold the claim. A rebuild is by definition not an included build, so no claim holder is ever priced by it.",
+  autopsy:
+    "SLICE 8, not yet an operation of any purpose. `priceOf` has no branch that can return this key's value, so nothing can be priced by it today — and on the day one exists, this entry must move to a purpose's operation list rather than stay here.",
+  trendBrowse:
+    "SLICE 8, same as `autopsy`. Seeded at 0 today, which is exactly why it is dangerous to leave implicit: a key that is priced at 0 and uncovered reads like a key that is covered.",
+};
+
+/**
  * The exemption `reconcileSpend` needs, for THIS configuration document.
  *
  * `@respin/db` cannot import `@respin/credits` (the edge only runs one way),
- * so `reconcileSpend` takes the list as a REQUIRED argument with no default,
- * exactly like the `entitlement` seam on the framework writes. Its false
- * branch is driven in `packages/db/tests/spend-rollup.test.ts`; the call site
- * that derives it from the ACTIVE document is `/admin/model-spend`, executed
- * in `tests/model-spend-page.test.tsx`.
+ * so `reconcileSpend` takes a REQUIRED resolver with no default, exactly like
+ * the `entitlement` seam on the framework writes. Its false branch is driven in
+ * `packages/db/tests/spend-rollup.test.ts`; the call site is
+ * `/admin/model-spend`, executed in `tests/model-spend-page.test.tsx`.
+ *
+ * ONE DOCUMENT PER CONFIG VERSION, NOT THE ACTIVE ONE (R-85). This function is
+ * still per-document and unchanged; what changed is WHICH documents it is
+ * called with. `reconcileSpend` asks which `config_version`s its own rows carry
+ * and the page resolves each one, because judging a historical attempt by
+ * today's prices hides exactly the lost debit this exemption's direction is
+ * chosen to avoid.
  *
  * `every`, NOT `some`, AND THE DIRECTION IS DELIBERATE. Being in this list
  * exempts a claim holder from the report, so a purpose one of whose operations
@@ -119,4 +174,49 @@ export function purposeIsIncluded(
   ops: readonly PricedOperation[]
 ): boolean {
   return ops.length > 0 && ops.every((op) => priceOf(content, op) === 0);
+}
+
+/**
+ * BOTH PRICES OF AN ONBOARDING BRAIN RUN, FROM `priceOf` — for the screen.
+ *
+ * WHY A SCREEN NEEDS THIS (billing gate, 2026-09-02). `/onboarding` stated the
+ * rule in a sentence — "Your first run for a creator is included. Every run
+ * after that costs N credits" — and read ONE number,
+ * `creditCosts.onboardingBrainRebuild`. R-82 exists precisely because
+ * `onboardingBrainBuild` is `z.number().int().min(0)` and not `literal(0)`, so
+ * under the very document R-82's own test appends (`onboardingBrainBuild: 25`)
+ * the creator was told their first build was included and then debited 25. The
+ * debit was right — `priceOf` reads the document — and the sentence was a
+ * frozen assumption. `/admin/model-spend` was moved off that same assumption in
+ * that pass; this screen was not.
+ *
+ * THE TWO PROBES ARE THE TWO BRANCHES OF `priceOf`'s ONBOARDING CASE, so the
+ * page cannot index `creditCosts` itself and cannot re-implement the rule:
+ * UNCLAIMED (or mine) is the included price, a claim held by ANOTHER attempt is
+ * the rebuild price. It is the shape `/onboarding/first-ideas` already uses
+ * (`priceOf(content, generationOp(...))`), one purpose over.
+ *
+ * NOT A PREDICTION OF WHICH BRANCH A PRESS WILL TAKE — that would need a read
+ * of this profile's claim, and a prediction that goes stale between the render
+ * and the press is a wrong number about money on the screen. It is the two
+ * prices the rule is written in, and the operation stays the authority.
+ */
+export function onboardingBrainPrices(content: RespinConfigV1): {
+  included: number;
+  rebuild: number;
+} {
+  return {
+    included: priceOf(content, {
+      purpose: ONBOARDING_BRAIN_PURPOSE,
+      // UNCLAIMED: no attempt holds this profile's included build yet.
+      includedBuildHolder: null,
+      attemptId: CLAIM_HOLDER_PROBE_ATTEMPT_ID,
+    }),
+    rebuild: priceOf(content, {
+      purpose: ONBOARDING_BRAIN_PURPOSE,
+      // HELD BY SOMEBODY ELSE — the third branch, which is every rebuild.
+      includedBuildHolder: CLAIM_HOLDER_PROBE_ATTEMPT_ID,
+      attemptId: `${CLAIM_HOLDER_PROBE_ATTEMPT_ID}-later`,
+    }),
+  };
 }

@@ -85,9 +85,9 @@ function main() {
 
   let config;
   try {
-    config = JSON.parse(fs.readFileSync(path.join(projectRoot, ".claude", "workspaces.json"), "utf8"));
+    config = JSON.parse(fs.readFileSync(path.join(projectRoot, ".codex", "workspaces.json"), "utf8"));
   } catch (error) {
-    emitJson({ systemMessage: `Codex post-edit checks failed open because the shared check map could not be loaded: ${error.message}` });
+    emitJson({ systemMessage: `Codex post-edit checks failed open because the Codex check map could not be loaded: ${error.message}` });
     return;
   }
 
@@ -95,7 +95,7 @@ function main() {
   try {
     selected = selectChecks(config, changes);
   } catch (error) {
-    emitJson({ systemMessage: `Codex post-edit checks failed open because a shared regex is invalid: ${error.message}` });
+    emitJson({ systemMessage: `Codex post-edit checks failed open because a Codex regex is invalid: ${error.message}` });
     return;
   }
 
@@ -120,7 +120,7 @@ function main() {
 
   const context = [];
   if (successes.length) context.push(`Post-edit checks passed:\n- ${successes.join("\n- ")}`);
-  if (selected.notes.length) context.push(`Project reminders:\n- ${selected.notes.join("\n- ")}`);
+  if (selected.notes.length) context.push(`Codex project reminders:\n- ${selected.notes.join("\n- ")}`);
   if (context.length) {
     emitJson({
       hookSpecificOutput: {
@@ -132,4 +132,3 @@ function main() {
 }
 
 main();
-

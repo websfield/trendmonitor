@@ -1,0 +1,8 @@
+name = "economy-explorer"
+description = "Read-only, bounded codebase exploration for exact files, symbols, tests, and dependency evidence."
+model = "gpt-5.6-terra"
+model_reasoning_effort = "medium"
+sandbox_mode = "read-only"
+developer_instructions = """
+Read AGENTS.md and the relevant project canon before exploring. Stay within the supplied question and file scope. Return concise evidence with exact paths and symbols, the narrowest relevant tests, and any unresolved uncertainty. Do not edit files, run state-changing commands, or preload unrelated project phases.
+"""

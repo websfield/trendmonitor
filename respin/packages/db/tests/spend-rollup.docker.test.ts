@@ -29,6 +29,7 @@ import { ensureUserWorkspace } from "../src/bootstrap";
 import { createDockerTestDb, seedAuthUser } from "../src/testing";
 import { creatorProfiles } from "../src/brain-schema";
 import { modelUsage, workspaceSpendMonthly } from "../src/onboarding-schema";
+import { reconcileSpend } from "../src/spend-rollup";
 import {
   ProfileScope,
   withWorkspace,
@@ -156,5 +157,62 @@ describeIfDocker("R6: recordModelUsage's two writes share a fate, on real Postgr
     } finally {
       await pool.query(`ALTER TABLE model_usage DROP CONSTRAINT zz_usage_poison`);
     }
+  });
+
+  it("R-85: the per-version exemption is a claim about SQL, so it is proved on real Postgres", async () => {
+    // WHY THIS CASE IS IN THE DOCKER SUITE AND NOT ONLY IN THE PGlite ONE.
+    // `reconcileSpend`'s exemption is a row-comparison `IN` over
+    // `(purpose, config_version)` pairs with explicit casts, built from bound
+    // parameters. PGlite and node-postgres are the same engine but NOT the same
+    // driver, and parameter binding is exactly where a row-comparison `IN` can
+    // differ — so a query whose whole job is deciding which lost debits are
+    // reported must run once against the driver production uses. The
+    // BEHAVIOUR it proves is the finding itself: an attempt priced under a
+    // document that charged its claim holder is reported even when today's
+    // document would exempt it.
+    const scope = await scopeFor();
+    const caps = writeCapabilities(scope);
+    const holder = (attemptId: string, configVersion: number) => ({
+      ...usage(attemptId),
+      purpose: "onboarding_brain",
+      configVersion,
+      consumedIncludedBuild: true,
+    });
+    await db.transaction((tx) =>
+      caps.recordModelUsage(holder("att_docker_v1", 1), tx)
+    );
+
+    const [second] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId, displayName: "B" })
+      .returning();
+    const capsB = writeCapabilities(
+      await ProfileScope.mint(
+        db,
+        await withWorkspace(db, { authUserId: "spend_docker_user" }),
+        second.id
+      )
+    );
+    await db.transaction((tx) =>
+      capsB.recordModelUsage(holder("att_docker_v2", 2), tx)
+    );
+
+    const result = await reconcileSpend(db, async (versions) => {
+      // Version 1 charged the included build; version 2 did not.
+      const answers: Record<number, readonly string[]> = {
+        1: [],
+        2: ["onboarding_brain"],
+      };
+      return new Map(versions.map((v) => [v, answers[v] ?? []] as const));
+    });
+    const ids = result.unbilledAttempts.map((a) => a.attemptId);
+    expect(
+      ids,
+      "the attempt priced under the charging document is not reported — today's prices are judging history"
+    ).toContain("att_docker_v1");
+    expect(
+      ids,
+      "the attempt priced under the free document owes nothing"
+    ).not.toContain("att_docker_v2");
   });
 });

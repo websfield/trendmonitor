@@ -146,6 +146,19 @@ function codeOnly(src: string): string {
  *
  * Returns human-readable strings so a failure names the file, the shape and the
  * scope it was found in — `expect(...).toEqual([])` is the whole assertion.
+ *
+ * ITS WITNESS IS A PLANTED FILE, NOT A PLANTED STRING (spin-compliance gate,
+ * 2026-09-02). `shapesMatchingSpecimen` proves the six PATTERNS still match
+ * something; for one slice nothing proved the composed WALK still matched
+ * anything, and `codeOnly` was the fail-open: with its body replaced by
+ * `return ""`, this function returned `[]` over the real tree, the six labels
+ * still matched the specimen string and the file counts were unchanged — every
+ * assertion in both consuming suites green while `skeleton`, `shimmer` and the
+ * streaming vocabulary were sayable on both screens. `tests/studio-ui.test.tsx`
+ * now plants the specimen as a FILE in every listed directory against a
+ * synthetic root (the same seam `unlistedGenerationScreenFiles` already had),
+ * asserts all six labels per directory, and asserts a comment-only file is NOT
+ * reported — so both directions of a broken stripper are red.
  */
 export function streamingViolations(root: string): string[] {
   const found: string[] = [];

@@ -51,6 +51,7 @@ import {
 } from "./export";
 import {
   reconcileSpend,
+  type IncludedBuildPurposesFor,
   type SpendReconciliationResult,
 } from "./spend-rollup";
 import { pgRunSlots, type RunSlots } from "./run-slot";
@@ -349,10 +350,13 @@ export const respinDb = {
     scope: WorkspaceScope,
     periodStart: Date
   ): Promise<BurnByModeResult> => burnByMode(getServerDb(), scope, periodStart),
+  // R-85: a RESOLVER, not a list — the exemption is decided per
+  // `model_usage.config_version`, so the caller is asked about the versions
+  // this data was actually priced under rather than about today's document.
   reconcileSpend: (
-    includedBuildPurposes: readonly string[]
+    includedBuildPurposesFor: IncludedBuildPurposesFor
   ): Promise<SpendReconciliationResult> =>
-    reconcileSpend(getServerDb(), includedBuildPurposes),
+    reconcileSpend(getServerDb(), includedBuildPurposesFor),
   // Slice 3b, Stage B1: the structured-interview trio. Positional
   // `WorkspaceScope`, the same AC-13 reason as every entry above — see
   // `tests/profile-cage.test.ts`'s pinned list, which already named these

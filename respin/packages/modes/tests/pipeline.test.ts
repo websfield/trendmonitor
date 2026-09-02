@@ -478,6 +478,48 @@ describe("the traceability corpus comes from the same value the prompt did (R19)
     expect(calls).toBe(0);
   });
 
+  it("...and the ELEMENTS are checked, not only the container: a smuggled non-string is this class, not a TypeError", async () => {
+    // THE CONTAINER CHECK WAS THE WHOLE GUARD (spin-compliance gate,
+    // 2026-09-02). `Array.isArray([123])` is `true`, so a cast carrying
+    // numbers passed the one function whose promise is "a cast is refused
+    // HERE, before the vendor" and failed several modules later inside
+    // `traceability.ts`'s `normalise`, where a token has string methods called
+    // on it — an anonymous `TypeError`, which `app/**` cannot `instanceof` and
+    // therefore renders as "Something went wrong" on a screen that spends
+    // money. Guarding the type of the container and not of what it carries is
+    // the 2026-08-21 lesson one level in.
+    const smuggled = {
+      ...CONTEXT,
+      unvouchedSpecifics: [123],
+    } as unknown as GenerationContext;
+    expect(() => traceabilityCorpusFor(smuggled)).toThrow(
+      GenerationAssemblyError
+    );
+    expect(() =>
+      assembleGenerationPrompt({ mode: "hooks", context: smuggled })
+    ).toThrow(GenerationAssemblyError);
+    let calls = 0;
+    await expect(
+      runGeneration({
+        mode: "hooks",
+        context: smuggled,
+        generate: async () => {
+          calls += 1;
+          return asReply(CLEAN_HOOKS);
+        },
+      })
+    ).rejects.toThrow(GenerationAssemblyError);
+    expect(calls, "the vendor was reached with an unusable list").toBe(0);
+    // NON-VACUITY: the same shape carrying STRINGS is accepted, so the check
+    // refuses the type rather than the field.
+    expect(
+      traceabilityCorpusFor({
+        ...CONTEXT,
+        unvouchedSpecifics: ["123"],
+      }).unvouched
+    ).toEqual(["123"]);
+  });
+
   it("the creator's OWN PLATFORM does not flag (measured end to end)", async () => {
     const run = await runGeneration({
       mode: "hooks",

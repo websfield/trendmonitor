@@ -34,7 +34,14 @@ import {
   REFERENCE_COUNT_MAX,
   respinDb,
 } from "@respin/db";
-import { respinCredits } from "@respin/credits/app-server";
+// `onboardingBrainPrices` is a PURE function beside the facade, the same shape
+// `/admin/model-spend` imports `includedBuildPurposes` in: it takes the
+// document this page has already read, so the sentence and the debit cannot
+// come from two different config versions.
+import {
+  onboardingBrainPrices,
+  respinCredits,
+} from "@respin/credits/app-server";
 import { getActiveConfigServer } from "@respin/config/app-server";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { AccessRefusal } from "../access-refusal";
@@ -195,7 +202,17 @@ export default async function OnboardingPage(props: {
   // NOT THE ENFORCEMENT, and it must never become it. `runInference` re-reads
   // both inside its debit transaction; this is the courtesy that stops a
   // creator pressing a control whose price they were never told.
-  let runCost: number | null = null;
+  // BOTH PRICES OF THE RULE, not one (billing gate, 2026-09-02). This read was
+  // `creditCosts.onboardingBrainRebuild` alone, and `runCostSentence` then
+  // asserted "your first run for a creator is included" unconditionally — false
+  // under any stored document that prices `onboardingBrainBuild` above zero,
+  // which `/admin/config` can append and R-82's own test does. The screen was
+  // telling a creator their first build was free and the server was debiting
+  // them 25. `onboardingBrainPrices` is `priceOf`'s two onboarding branches, so
+  // this page no longer indexes `creditCosts` at all — the same discipline
+  // `/onboarding/first-ideas` already follows with `priceOf(generationOp(...))`.
+  let runIncludedCost: number | null = null;
+  let runRebuildCost: number | null = null;
   let runBalance: number | null = null;
   // The corpus bound the pre-press sentence states (compliance gate round 2,
   // 2026-08-29). Same authority `inferVoice` reads (the active config), same
@@ -205,7 +222,9 @@ export default async function OnboardingPage(props: {
   let corpusMax: number | null = null;
   try {
     const config = await getActiveConfigServer();
-    runCost = config.content.creditCosts.onboardingBrainRebuild;
+    const prices = onboardingBrainPrices(config.content);
+    runIncludedCost = prices.included;
+    runRebuildCost = prices.rebuild;
     corpusMax = config.content.onboarding.voiceCorpusMaxPosts;
   } catch (err) {
     rethrowNextControlFlow(err);
@@ -377,7 +396,11 @@ export default async function OnboardingPage(props: {
           selectedProfile
             ? {
                 action: runVoiceInferenceAction.bind(null, selectedProfile.id),
-                costSentence: runCostSentence(runCost, runBalance),
+                costSentence: runCostSentence(
+                  runIncludedCost,
+                  runRebuildCost,
+                  runBalance
+                ),
                 sendSentence: preSendSentence(corpusMax),
                 block: runBlock,
                 refusalCopy,

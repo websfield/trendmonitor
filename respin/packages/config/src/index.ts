@@ -1,7 +1,7 @@
 // Versioned runtime config (D-M1-2, B5): append-only rows, active = max
 // version, Zod-validated. FAIL CLOSED: no/invalid config is a typed error —
 // never a default cost, never a silent free generation.
-import { desc, sql } from "drizzle-orm";
+import { desc, inArray, sql } from "drizzle-orm";
 // (desc is used by getActiveConfig and listConfigVersions)
 import type { DbLike, TxLike } from "@respin/db";
 import { schema } from "@respin/db";
@@ -129,6 +129,64 @@ export async function getActiveConfig(
     );
   }
   return { version: row.version, content: parsed.data };
+}
+
+/**
+ * THE STORED DOCUMENT OF EACH NAMED VERSION — the historical prices.
+ *
+ * WHY A READ OF OLD VERSIONS EXISTS AT ALL (billing gate, 2026-09-02).
+ * `reconcileSpend` judges attempts that were priced under the document ACTIVE
+ * AT THE TIME, which `model_usage.config_version` records on every row. Judging
+ * them by today's active document is the fail-open direction the exemption
+ * itself names: dropping the included build's price from 25 back to 0 would
+ * silently exempt — and therefore HIDE — every claim holder's lost debit that
+ * was incurred while it was 25. So the reconciliation resolves each row's own
+ * version, and this is the read that lets it.
+ *
+ * BOUNDED BY THE CALLER'S LIST, never "every version": the versions handed in
+ * are the ones that actually appear in `model_usage`, so this grows with the
+ * versions a workspace has USED rather than with the table.
+ *
+ * A MISSING OR UNPARSEABLE VERSION IS A REFUSAL, NOT AN OMISSION. Returning a
+ * partial map would make "I could not read that document" indistinguishable
+ * from "that document exempted nothing" at the call site, and the caller's job
+ * is a report about money. It is the same fail-closed discipline
+ * `getActiveConfig` applies to the active row, one row over — and rows are
+ * written only through `appendConfigVersion`, which `.parse`s, so an
+ * unparseable one means the table was edited by hand.
+ */
+export async function configVersionContents(
+  db: DbLike | TxLike,
+  versions: readonly number[]
+): Promise<Map<number, RespinConfigV1>> {
+  const wanted = [...new Set(versions)];
+  // `inArray(col, [])` is not a query worth sending, and some drivers refuse
+  // it outright; an empty request has an empty answer.
+  if (wanted.length === 0) return new Map();
+  const rows = await db
+    .select({
+      version: schema.configVersions.version,
+      content: schema.configVersions.content,
+    })
+    .from(schema.configVersions)
+    .where(inArray(schema.configVersions.version, wanted));
+  const out = new Map<number, RespinConfigV1>();
+  for (const row of rows) {
+    const parsed = respinConfigV1.safeParse(row.content);
+    if (!parsed.success) {
+      throw new ConfigUnavailableError(
+        `Config version ${row.version} does not match RespinConfigV1: ${parsed.error.message}`
+      );
+    }
+    out.set(row.version, parsed.data);
+  }
+  const missing = wanted.filter((v) => !out.has(v));
+  if (missing.length > 0) {
+    throw new ConfigUnavailableError(
+      `No config version exists for ${missing.join(", ")}. A record priced under a version that is no longer stored cannot be judged against it.`
+    );
+  }
+  return out;
 }
 
 /**

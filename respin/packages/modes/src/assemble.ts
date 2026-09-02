@@ -481,11 +481,28 @@ function contextBlock(mode: ModeId, context: GenerationContext): string {
  * so the refusal lands BEFORE the vendor call and no money is spent, and
  * `traceabilityCorpusFor`, which is the function that would otherwise do the
  * laundering and is reachable on its own (`kill-test.ts` calls it).
+ *
+ * THE ELEMENTS ARE CHECKED, NOT ONLY THE CONTAINER (spin-compliance gate,
+ * 2026-09-02). `Array.isArray` alone accepted `[123]` through the same
+ * `as unknown as` cast this guard exists for. MEASURED with the element check
+ * removed: `traceabilityCorpusFor` returned normally, `runGeneration` CALLED
+ * THE VENDOR, and the run then died at `traceability.ts:292` with
+ * `TypeError: token.normalize is not a function` inside `normalise` — an
+ * anonymous class `app/**` cannot `instanceof`, raised after the money was
+ * spent, on the one path whose promise is that a cast is refused HERE, before
+ * the vendor. The guard's own lesson is about casts, so it checks what a cast
+ * can carry rather than only the box it arrives in.
  */
 function assertUnvouchedStated(context: GenerationContext): void {
-  if (!Array.isArray(context.unvouchedSpecifics)) {
+  const stated = context.unvouchedSpecifics;
+  if (!Array.isArray(stated)) {
     throw new GenerationAssemblyError(
       "this generation named nothing as unvouched-for, not even an empty list — an original passes [] and a revision passes what its parent's own scan reported"
+    );
+  }
+  if (stated.some((token) => typeof token !== "string")) {
+    throw new GenerationAssemblyError(
+      "this generation stated something other than text as unvouched-for — the list is the specifics a parent's own scan reported, and every one of them is a piece of text"
     );
   }
 }

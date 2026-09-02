@@ -26,6 +26,7 @@ import {
   HOOK_SPREAD_MIN_CONTENT_WORDS,
   IDEA_THESIS_MIN_WORDS,
   KNOWN_MODE_CHECK_GAPS,
+  MODE_CHECK_GAP_IDS,
   NAMES_NOTHING_SHAPES,
   SOURCE_RUN_WORDS,
   SUMMARY_REGISTER_SHAPES,
@@ -907,6 +908,28 @@ describe("KNOWN_MODE_CHECK_GAPS: what these stand-ins are MEASURED not to catch"
           },
         ],
       }),
+    // THE NON-PERMUTATION HALF OF THE SAME PREDICATE (spin-compliance gate,
+    // 2026-09-02). The register said the rescue's cost "is PERMUTATIONS ONLY";
+    // the predicate is SET EQUALITY, and these two hooks are neither a
+    // reordering nor a copy. Hook one and hook two carry the same content
+    // words in the SAME ORDER — [shoot, plan, less, today] — and differ only
+    // in filler; hook two also REPEATS a pair of them, which a set discards.
+    // Measured through `scanModeChecks`: overlap 1.000, findings `[]`.
+    "same-set-different-filler": () =>
+      checks("hooks", {
+        ...CLEAN_HOOKS,
+        hooks: [
+          { text: "Shoot more and plan less today", mechanic: "one" },
+          {
+            text: "You should shoot more, and then you plan less today — shoot more",
+            mechanic: "two",
+          },
+          {
+            text: "Nobody tells you the boring part is where the work happens",
+            mechanic: "three",
+          },
+        ],
+      }),
   };
 
   const missed = KNOWN_MODE_CHECK_GAPS.filter(
@@ -932,6 +955,31 @@ describe("KNOWN_MODE_CHECK_GAPS: what these stand-ins are MEASURED not to catch"
       expect(DRIVERS[id]().length, gap.what).toBeGreaterThan(0);
     }
   );
+
+  it("THE REGISTER AND THE ID TUPLE ARE THE SAME SET — the direction the compile check cannot see", () => {
+    // `DRIVERS` is keyed on `MODE_CHECK_GAP_IDS`, so a gap ID with no driver
+    // is a compile error — the direction the source docblock states. THE
+    // REVERSE WAS UNGUARDED (spin-compliance gate, 2026-09-02): deleting a
+    // gap ENTRY while leaving its id in the tuple keeps the `Record` total,
+    // removes that gap from the `it.each` above (which iterates the ENTRIES),
+    // and leaves the vacuity case below green. MEASURED on a copy of this
+    // tree: `79 passed` became `78 passed`, exit 0 — a register that silently
+    // narrowed, in the file whose docblock promises it cannot.
+    //
+    // SET EQUALITY IN BOTH DIRECTIONS, plus uniqueness: two entries sharing
+    // one id would run one gap twice and hide the other under a `Record` that
+    // is still total.
+    const entryIds = KNOWN_MODE_CHECK_GAPS.map((g) => g.id);
+    expect(new Set(entryIds).size, "two entries share one id").toBe(
+      entryIds.length
+    );
+    expect([...entryIds].sort()).toEqual([...MODE_CHECK_GAP_IDS].sort());
+    // ...and the drivers really are the population that runs: every id in the
+    // tuple has one, which is the compile rule asserted as a run.
+    for (const id of MODE_CHECK_GAP_IDS) {
+      expect(typeof DRIVERS[id], `${id} has no driver`).toBe("function");
+    }
+  });
 
   it("BOTH directions are represented, so neither list is vacuous", () => {
     // Without this, deleting every `false-positive` entry would leave the

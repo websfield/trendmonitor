@@ -1389,6 +1389,41 @@ describe("generate", () => {
     expect(attempt.refusalCode).toBe(GENERATION_REFUSAL_CODES.parse_failed);
   });
 
+  it("a CALLER-SIDE assembly refusal records `assembly_refused`, not `parse_failed`", async () => {
+    // THE COLUMN STOPS BLAMING THE VENDOR (billing gate, 2026-09-02).
+    // `assembleGenerationPrompt` refuses an empty input INSIDE the pipeline —
+    // after the claim and after `vendor_started`, because this file does not
+    // call it before either, whatever its comment used to say. Nothing is
+    // spent and no model is called (the provider below throws if reached), but
+    // a `generation_attempts` row IS written, and it used to say
+    // `parse_failed`: an operator filtering that column read "the model
+    // answered with something unusable" about an attempt with no vendor call
+    // behind it.
+    await activateBrain();
+    await expect(
+      generate(
+        db,
+        owner,
+        profileId,
+        never(),
+        anySlots(),
+        params({ attemptId: "gen-assembly", input: "   " }),
+        new Date()
+      )
+    ).rejects.toThrow();
+    const [attempt] = await attemptsOf();
+    expect(attempt.state).toBe("refused");
+    expect(attempt.refusalCode).toBe(GENERATION_REFUSAL_CODES.assembly_refused);
+    // ...and "costs nothing" still holds in the money sense.
+    expect(await debitsOf()).toHaveLength(0);
+    expect(await db.select().from(generations)).toHaveLength(0);
+    // The code is not the parser's — the two are told apart, which is the
+    // whole point of giving this one its own.
+    expect(GENERATION_REFUSAL_CODES.assembly_refused).not.toBe(
+      GENERATION_REFUSAL_CODES.parse_failed
+    );
+  });
+
   it("Q4 row 4b: an LlmSchemaInvalidError from the vendor is billable and NOT debited", async () => {
     await activateBrain();
     await expect(

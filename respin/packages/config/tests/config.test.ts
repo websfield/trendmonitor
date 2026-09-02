@@ -3,6 +3,7 @@
 // literal), fail-closed reads, append-only writes.
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { desc } from "drizzle-orm";
 import {
   CONFIG_V1_SEED,
   createTestDb,
@@ -12,6 +13,7 @@ import {
 } from "@respin/db";
 import {
   appendConfigVersion,
+  configVersionContents,
   ConfigUnavailableError,
   CONFIG_HISTORY_MAX,
   getActiveConfig,
@@ -43,6 +45,72 @@ describe("@respin/config", () => {
       .insert(schema.configVersions)
       .values({ content: { garbage: true }, createdBy: "test" });
     await expect(getActiveConfig(db)).rejects.toThrow(ConfigUnavailableError);
+  });
+
+  // ---- R-85: the HISTORICAL documents, for judging historical attempts ----
+
+  it("configVersionContents returns each named version's OWN stored document", async () => {
+    // WHY THIS READ EXISTS (billing gate, 2026-09-02). `reconcileSpend` judges
+    // attempts by the document they were priced under —
+    // `model_usage.config_version` — because judging them by today's active
+    // document lets a price CUT hide every lost debit incurred before it. This
+    // is the read that makes that possible, so the case that matters is two
+    // versions that DISAGREE about a price.
+    const db = await createTestDb();
+    await seedAuthUser(db, "cfg_hist_user");
+    await seedDb(db);
+    const v1 = await getActiveConfig(db);
+    const v2 = await appendConfigVersion(
+      db,
+      {
+        ...v1.content,
+        creditCosts: { ...v1.content.creditCosts, onboardingBrainBuild: 25 },
+      },
+      "history-test"
+    );
+
+    const both = await configVersionContents(db, [v1.version, v2]);
+    expect([...both.keys()].sort()).toEqual([v1.version, v2].sort());
+    expect(both.get(v1.version)?.creditCosts.onboardingBrainBuild).toBe(0);
+    expect(
+      both.get(v2)?.creditCosts.onboardingBrainBuild,
+      "the older version came back carrying the NEWER price — history is being read as today"
+    ).toBe(25);
+    // Asking twice for one version asks the table once and answers once.
+    const single = await configVersionContents(db, [v1.version, v1.version]);
+    expect(single.size).toBe(1);
+  });
+
+  it("FAIL CLOSED: a version that is not stored is a refusal, never a silent omission", async () => {
+    // A partial map would make "I could not read that document" look exactly
+    // like "that document exempted nothing" at the call site, and the caller is
+    // building a report about money.
+    const db = await createTestDb();
+    await seedAuthUser(db, "cfg_missing_user");
+    await seedDb(db);
+    await expect(configVersionContents(db, [1, 999])).rejects.toThrow(
+      ConfigUnavailableError
+    );
+    await expect(configVersionContents(db, [1, 999])).rejects.toThrow(/999/);
+    // ...and the same discipline for a row that does not parse.
+    await db
+      .insert(schema.configVersions)
+      .values({ content: { nonsense: true }, createdBy: "hand-edited" });
+    const [{ version: bad }] = await db
+      .select({ version: schema.configVersions.version })
+      .from(schema.configVersions)
+      .orderBy(desc(schema.configVersions.version))
+      .limit(1);
+    await expect(configVersionContents(db, [bad])).rejects.toThrow(
+      ConfigUnavailableError
+    );
+  });
+
+  it("an empty request is an empty answer, and sends no query", async () => {
+    // `inArray(col, [])` is not a query worth sending and some drivers refuse
+    // it; the branch is driven rather than argued.
+    const db = await createTestDb();
+    expect((await configVersionContents(db, [])).size).toBe(0);
   });
 
   it("appendConfigVersion appends (never mutates) and the new version becomes active", async () => {
@@ -161,10 +229,22 @@ describe("@respin/config", () => {
    * population lesson (CLAUDE.md 2026-08-29) landing on the guard written for
    * it: the population is the SCHEMA, so it is derived from the schema.
    *
-   * IT WALKS THE TREE, not the top level, because an object default can be
-   * nested (`llm.timeouts` is one). The check is static — every key of the
-   * inner object must appear in the default LITERAL — which is exactly the
-   * property zod's short-circuit makes load-bearing.
+   * IT WALKS THE TREE, not the top level, because an object default CAN be
+   * nested. The check is static — every key of the inner object must appear in
+   * the default LITERAL — which is exactly the property zod's short-circuit
+   * makes load-bearing.
+   *
+   * NO NESTED ONE EXISTS TODAY, AND THAT IS SAID RATHER THAN IMPLIED (billing
+   * gate, 2026-09-02). This paragraph cited "`llm.timeouts` is one"; `llm` has
+   * no `timeouts` key (`models`, `prices`, `maxOutputTokens`, `timeoutMs`,
+   * `overallDeadlineMs`, `maxRetries`), and all five object-level defaults in
+   * this schema — `profileCaps`, `concurrencyLimits`, `onboarding`,
+   * `generation`, `llm` — are top-level. So the recursive branch, the whole
+   * reason this is a walk rather than an `Object.entries` over the root, had
+   * NO witness and the planted-omission case below plants a TOP-LEVEL one. A
+   * comment claiming a property is not the property: the branch is now driven
+   * by "the walk finds an object default NESTED inside another object", which
+   * plants exactly the shape the schema does not yet have.
    *
    * THE INTERNALS ARE VERIFIED AGAINST THE INSTALLED ZOD (4.4.3), not
    * recalled (golden rule 9): a `.default(...)` node is `def.type ===
@@ -265,6 +345,46 @@ describe("@respin/config", () => {
     // which is what makes the static check worth having.
     expect(
       (planted.parse({}) as { generation: Record<string, unknown> }).generation.b
+    ).toBeUndefined();
+  });
+
+  it("the walk finds an object default NESTED inside another object", () => {
+    // THE BRANCH THIS SCHEMA HAS NO INSTANCE OF, planted so the recursion is a
+    // run rather than a sentence. Every object-level default here is top-level
+    // today, so without this the walk could stop descending and the whole
+    // suite would stay green — and the rule would then miss the FIRST nested
+    // one somebody writes, which is the day it matters.
+    const planted = z.strictObject({
+      llm: z.strictObject({
+        timeouts: z
+          .strictObject({ a: z.number().default(1), b: z.number().default(2) })
+          .default({ a: 1 } as unknown as { a: number; b: number }),
+      }),
+    });
+    const objectDefaults = collectDefaults(
+      planted as unknown as SchemaNode,
+      ""
+    ).filter((d) => d.node.def?.innerType?.def?.type === "object");
+    expect(
+      objectDefaults.map((d) => d.path),
+      "the walker never descended past the top level"
+    ).toEqual(["llm.timeouts"]);
+    // ...and the omission check reads it exactly as it reads a top-level one.
+    const raw = objectDefaults[0].node.def?.defaultValue;
+    const value = (typeof raw === "function" ? (raw as () => unknown)() : raw) as Record<
+      string,
+      unknown
+    >;
+    const inner = Object.keys(objectDefaults[0].node.def?.innerType?.shape ?? {});
+    expect(inner).toEqual(["a", "b"]);
+    expect(
+      inner.filter((k) => !Object.prototype.hasOwnProperty.call(value, k)),
+      "a key missing from a NESTED default literal was not seen"
+    ).toEqual(["b"]);
+    // The behavioural half: the short-circuit really does reach a nested key.
+    expect(
+      (planted.parse({ llm: {} }) as { llm: { timeouts: Record<string, unknown> } }).llm
+        .timeouts.b
     ).toBeUndefined();
   });
 
