@@ -15,14 +15,14 @@
 // capped, and there is no second tier authority to create. Contrast
 // `inferVoice`, which prices a run and therefore cannot live here.
 //
-// THE ROLE GATE IS NOT HERE, deliberately. `assertMayDecide` runs inside
+// THE ROLE GATE IS NOT HERE, deliberately. `assertOwner` runs inside
 // `confirmBrainDocFields` / `activateBrainDoc` (with-workspace.ts), which is
 // where it has to be: a gate in this file would be one a caller reaching the
 // capability directly could walk past, and `packages/credits` reaches those
 // capabilities too.
 import type { DbLike } from "./db-like";
 import type { BrainDoc, BrainDocStatus, BrainKind } from "./brain-schema";
-import type { InputClass, OnboardingInput } from "./onboarding-schema";
+import type { OnboardingInput, StoredInputClass } from "./onboarding-schema";
 import {
   ProfileScope,
   STALE_BRAIN_EDIT_DETAIL,
@@ -101,7 +101,12 @@ export async function withBrainEditSlot<T>(
 export type BrainClaimView = {
   /** RFC-6901 pointer, e.g. `/register` or `/signatureMoves/0`. */
   pointer: string;
-  /** The inferred or creator-declared rule as stored, or `[check]`. */
+  /**
+   * The inferred or creator-declared rule as a truthful text projection, or
+   * `[check]`. Numeric claim leaves retain their finite stored value here;
+   * history never turns a recorded measurement into an absence just because
+   * this presentation type renders text.
+   */
   value: string;
   /** True when `value` is the placeholder — i.e. we could not ground it. */
   isPlaceholder: boolean;
@@ -124,7 +129,7 @@ export type BrainClaimView = {
    * answer" for `creator_authored` rather than one sentence pretending to fit
    * both (R4/R10).
    */
-  source: { inputId: string; postedAt: Date; inputClass: InputClass } | null;
+  source: { inputId: string; postedAt: Date; inputClass: StoredInputClass } | null;
   /** Whether this exact position is already recorded confirmed on this version. */
   confirmed: boolean;
   /** History/export annotation; strict confirmation reads always return null. */
@@ -591,8 +596,21 @@ export function claimsForHistory(
   );
   const claims = positions.map((pointer): BrainClaimView => {
     const raw = readPointer(doc.content, pointer);
-    const value = typeof raw === "string" ? raw : CHECK;
-    const isPlaceholder = value === CHECK;
+    // `performance_meta` has real numeric claim leaves. History is read-only
+    // and annotate-mode, so preserve a finite scalar as the exact text a
+    // reader can display instead of silently recasting it as `[check]`.
+    // `[check]` itself remains the one and only placeholder value; malformed
+    // non-scalars stay visibly unavailable rather than being stringified into
+    // a misleading `[object Object]` or masquerading as a real placeholder.
+    const value =
+      typeof raw === "string"
+        ? raw
+        : typeof raw === "number" && Number.isFinite(raw)
+          ? String(raw)
+          : typeof raw === "boolean"
+            ? String(raw)
+            : "[stored value could not be rendered]";
+    const isPlaceholder = raw === CHECK;
     const entry = evidence.get(pointer);
     if (!entry) {
       return {
@@ -1002,9 +1020,12 @@ export async function editBrainDocument(
     // `metric.key` is a required serverOwned input position. The write funnel
     // strips it before storage, so a stored Strategy version cannot be fed
     // straight back through that funnel without reintroducing a disposable
-    // server value. No consumer reads this value; see interview-ops.ts's
-    // `slugifyForKey` docblock. Rehydrate it here because creator edits are the
-    // first write path whose base is already-stripped stored content.
+    // server value. No consumer reads this stored value — still true after
+    // slice 9a, which needed a metric identity and DERIVES it from
+    // `metric.label` instead; see `metricKeyFromLabel` (brain-content.ts) for
+    // why deriving beats reading a position the write funnel strips. Rehydrate
+    // it here because creator edits are the first write path whose base is
+    // already-stripped stored content.
     if (base.kind === "strategy") {
       const metric = (content as { metric?: unknown }).metric;
       if (typeof metric === "object" && metric !== null && !("key" in metric)) {

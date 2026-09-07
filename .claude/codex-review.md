@@ -51,19 +51,22 @@ Run on the **Bash tool with a 300000 ms timeout**. `< /dev/null` is required —
 a known Codex stdin deadlock. Capture stderr so a non-zero exit is visible, not read as a
 silent stall.
 
+Every mode pins `gpt-6-astra` with `xhigh` reasoning explicitly. Do not rely on the
+machine or repository Codex defaults for either setting.
+
 ### Mode 1 — Code diff (used by `/start-teams` 2d)
 
 Newer Codex CLIs reject a custom prompt together with `--base`, so the diff scope goes in
 the prompt text, not a flag. Substitute `<base>` with the detected base branch.
 
 ```bash
-codex review "<filesystem boundary>
+codex -m gpt-6-astra review "<filesystem boundary>
 
 Review the changes on this branch against the base branch <base>. Run
 \`git diff <base>...HEAD\` (fall back to \`git diff origin/<base>...HEAD\`) and review ONLY
 those changes. Mark each finding [P1] for a must-fix correctness/security defect or [P2]
 for advisory. End with one PASS/FAIL line: FAIL if any [P1], else PASS." \
-  -c 'model_reasoning_effort="high"' < /dev/null 2>codex-err.txt
+  -c 'model_reasoning_effort="xhigh"' < /dev/null 2>codex-err.txt
 echo "exit=$?"
 ```
 
@@ -73,7 +76,7 @@ Plan files may be new/untracked, so `codex review` (diff-scoped) doesn't fit. Us
 `codex exec` in a read-only sandbox and name the files explicitly. Substitute `<feature>`.
 
 ```bash
-codex exec -s read-only "<filesystem boundary>
+codex exec -m gpt-6-astra -s read-only "<filesystem boundary>
 
 Read these plan documents fully: docs/plans/<feature>-master-plan.md and every
 docs/plans/<feature>-phase-*.md, plus docs/progress/<feature>-codebase-review.md.
@@ -86,7 +89,7 @@ Audit ONLY for mechanical consistency — derivations, not taste:
 - handoff contracts pinned; every quantitative budget has provenance
 Mark each finding [P1] (a real inconsistency) or [P2] (advisory). End with one PASS/FAIL
 line: FAIL if any [P1], else PASS." \
-  -c 'model_reasoning_effort="high"' < /dev/null 2>codex-err.txt
+  -c 'model_reasoning_effort="xhigh"' < /dev/null 2>codex-err.txt
 echo "exit=$?"
 ```
 
@@ -96,7 +99,7 @@ An audit sweeps the codebase as it exists, not a diff, so `codex review` doesn't
 Use `codex exec` in a read-only sandbox:
 
 ```bash
-codex exec -s read-only "<filesystem boundary>
+codex exec -m gpt-6-astra -s read-only "<filesystem boundary>
 
 You are auditing this repository as an independent last-line reviewer. Assume defects
 exist. Read the highest-risk code first — entry points, auth, money/data mutation,
@@ -106,7 +109,7 @@ that the code breaks. For each finding give file:line, what is wrong, and the co
 way it fails. Mark each [P1] for a real defect/risk or [P2] for advisory. Do not
 describe or summarize the codebase; report only findings. End with one line: the count
 of P1 and P2 findings." \
-  -c 'model_reasoning_effort="high"' < /dev/null 2>codex-err.txt
+  -c 'model_reasoning_effort="xhigh"' < /dev/null 2>codex-err.txt
 echo "exit=$?"
 ```
 

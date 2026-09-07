@@ -29,6 +29,7 @@
 // below is what proves each one still matches something.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isProbeArtifactPath } from "./probe-artifacts";
 
 /**
  * Where a shape is forbidden: in the MARKUP (comments included) or in the WORDS
@@ -97,6 +98,7 @@ export const STREAM_SPECIMEN =
 export const GENERATION_SCREEN_DIRS: readonly string[] = [
   "app/(product)/studio",
   "app/(product)/onboarding/first-ideas",
+  "app/(product)/trends",
 ];
 
 function walk(dir: string, acc: string[]): string[] {
@@ -195,6 +197,10 @@ export function unlistedGenerationScreenFiles(root: string): string[] {
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       const full = join(dir, name);
+      // Probe directories are created and removed by concurrent non-vacuity
+      // tests. They are not product screens, and skipping them before stat
+      // avoids a readdir/stat race when another worker removes one.
+      if (isProbeArtifactPath(full)) continue;
       if (statSync(full).isDirectory()) {
         walk(full);
         continue;
@@ -216,6 +222,7 @@ export function generationOutcomeImporters(root: string): number {
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       const full = join(dir, name);
+      if (isProbeArtifactPath(full)) continue;
       if (statSync(full).isDirectory()) {
         walk(full);
         continue;

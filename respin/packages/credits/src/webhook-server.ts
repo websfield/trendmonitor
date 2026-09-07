@@ -23,7 +23,19 @@ import {
   DuplicateStripeEvent,
   type StripeEventOutcome,
 } from "./stripe/webhooks";
-import { StripeNotConfiguredError, getWebhookSecret } from "./stripe/adapter";
+import {
+  AutoTopupAuthorityKeyError,
+  StripeNotConfiguredError,
+  getWebhookSecret,
+} from "./stripe/adapter";
+import { AutoTopupAuthoritySignatureError } from "./stripe/auto-topup-authority";
+import { AutoTopupAttemptIntegrityError } from "./stripe/auto-topup";
+import { AutoTopupRolloutError } from "./stripe/auto-topup-rollout";
+import { PackCheckoutAuthorityError } from "./stripe/pack-checkout-authority";
+import { TierCheckoutAuthorityError } from "./stripe/tier-checkout-authority";
+import { TierCheckoutRolloutError } from "./stripe/tier-checkout-rollout";
+import { TierInvoiceAuthorityError } from "./stripe/tier-invoice-authority";
+import { StripeAccountBindingError } from "./stripe/adapter";
 import { LedgerIntegrityError } from "./fold";
 import { ClockSkewError } from "./errors";
 
@@ -37,9 +49,18 @@ import { ClockSkewError } from "./errors";
 // CHANGE 2).
 export {
   ClockSkewError,
+  AutoTopupAttemptIntegrityError,
+  AutoTopupAuthorityKeyError,
+  AutoTopupAuthoritySignatureError,
+  AutoTopupRolloutError,
   DuplicateStripeEvent,
   LedgerIntegrityError,
+  PackCheckoutAuthorityError,
+  StripeAccountBindingError,
   StripeNotConfiguredError,
+  TierCheckoutAuthorityError,
+  TierCheckoutRolloutError,
+  TierInvoiceAuthorityError,
   getWebhookSecret,
 };
 export type { StripeEventOutcome };

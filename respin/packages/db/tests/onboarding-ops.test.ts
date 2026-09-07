@@ -756,7 +756,7 @@ describe("workspaceWriteCapabilities — the capability under the decision", () 
 describe("REQ-A02 / G-13 — a viewer cannot write a creator's record", () => {
   // THESE TESTS EXIST BECAUSE THE ROUND-2 GATE FOUND THEIR ABSENCE. Round 1
   // BLOCKed on a viewer being able to append to `onboarding_inputs` through the
-  // new paste form; the fix added `assertMayWrite` to all five profile-grained
+  // new paste form; the fix added the shared role gate to all five profile-grained
   // capabilities — and nothing asserted any of it, so deleting any of the four
   // calls left 891 tests green. That is the same absence-class the fix was for,
   // one level up: a control that exists where nothing checks it.
@@ -855,17 +855,32 @@ describe("REQ-A02 / G-13 — a viewer cannot write a creator's record", () => {
     ).rejects.toBeInstanceOf(ProfileRoleError);
   });
 
-  it("NON-VACUITY: an EDITOR may do all of them", async () => {
-    // Without this, a gate that refused everyone would pass every test above.
+  it("R-118: an EDITOR is refused durable profile writes; an OWNER may do both", async () => {
     await db
       .update(memberships)
       .set({ role: "editor" })
       .where(eq(memberships.workspaceId, w.a.scope.workspaceId as string));
     const editor = await withWorkspace(db, { authUserId: "ob_a" });
-    const row = await appendOwnPost(db, editor, w.a.profileId, "an editor's paste", true);
-    expect(row.content).toBe("an editor's paste");
+    await expect(
+      appendOwnPost(db, editor, w.a.profileId, "an editor's paste", true)
+    ).rejects.toBeInstanceOf(ProfileRoleError);
+    await expect(
+      db.transaction((tx) =>
+        workspaceWriteCapabilities(editor).createProfile(
+          { displayName: "Second" },
+          tx
+        )
+      )
+    ).rejects.toBeInstanceOf(ProfileRoleError);
+    await db
+      .update(memberships)
+      .set({ role: "owner" })
+      .where(eq(memberships.workspaceId, w.a.scope.workspaceId as string));
+    const owner = await withWorkspace(db, { authUserId: "ob_a" });
+    const row = await appendOwnPost(db, owner, w.a.profileId, "an owner's paste", true);
+    expect(row.content).toBe("an owner's paste");
     const created = await db.transaction((tx) =>
-      workspaceWriteCapabilities(editor).createProfile({ displayName: "Second" }, tx)
+      workspaceWriteCapabilities(owner).createProfile({ displayName: "Second" }, tx)
     );
     expect(created.displayName).toBe("Second");
   });

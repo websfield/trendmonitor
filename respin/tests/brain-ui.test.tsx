@@ -153,6 +153,9 @@ const base: BrainViewProps = {
   voiceHistory: [],
   strategyHistory: [],
   killtestHistory: [],
+  performanceHistory: [],
+  proposalHistory: [],
+  assetCounts: { brainVersions: 0, testedRules: 0, loggedResults: 0, feedback: 0 },
   interviewTouchedButUndrafted: { strategy: false, killtest: false },
   decideBlock: null,
   confirmVoiceAction: "/brain",
@@ -1722,8 +1725,8 @@ describe("the page is wired, not assumed", () => {
     expect(actionsSrc).not.toMatch(/respinDb\.activateVoice\(/);
   });
 
-  it("a VIEWER is blocked at the page, and a PAUSE blocks too", () => {
-    expect(pageSrc).toMatch(/scope\.role === "viewer"/);
+  it("R-118 blocks every non-owner at the page, and a PAUSE blocks too", () => {
+    expect(pageSrc).toMatch(/scope\.role !== "owner"/);
     expect(pageSrc).toMatch(/const decideBlock =[\s\S]{0,600}paused/);
   });
 

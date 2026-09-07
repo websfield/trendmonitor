@@ -61,9 +61,11 @@ function stripComments(src: string): string {
 }
 
 /**
- * Two shapes of "deletes a workspace": `db.delete(workspaces)` (however the
- * import is named — the delete-verb call on the workspaces table object) and
- * raw SQL `delete from ... workspaces`. Both are checked, the way
+ * Three shapes of "deletes a workspace": `db.delete(workspaces)` (however the
+ * import is named — the delete-verb call on the workspaces table object), raw
+ * SQL `delete from ... workspaces`, and the generic registry-driven port's
+ * `DELETE FROM ${relation(...)}` (Phase 10b-1 Task 4, lifecycle-sql-port.ts),
+ * which names no table at all in source. All three are checked, the way
  * `table-writers.test.ts` checks both a query-builder call and raw SQL for
  * the same reason: a scan that knows only one shape is a scan a careless
  * change walks past.
@@ -71,6 +73,7 @@ function stripComments(src: string): string {
 const DELETES_WORKSPACES = [
   /\.delete\s*\(\s*workspaces\s*\)/,
   /delete\s+from\s+(?:"?public"?\s*\.\s*)?"?workspaces"?\b/i,
+  /delete\s+from\s+\$\{\s*relation\s*\(/i,
 ];
 
 /** Does the executor also call the pseudonymisation instrument, by name? */
@@ -78,8 +81,8 @@ const CALLS_PSEUDONYMISE = /pseudonymiseWorkspaceSpend\s*\(/;
 
 /**
  * The ALLOWED set — files that are legitimately allowed to delete a workspace
- * WITHOUT calling the instrument directly, each with why. Empty today: no
- * deletion executor exists yet (the whole point of this tripwire). Adding an
+ * WITHOUT calling the instrument directly, each with why. Empty today: the one
+ * deletion executor (lifecycle-sql-port.ts) calls the instrument itself. Adding an
  * entry is the reviewed decision the scan exists to force — e.g. a thin
  * caller that composes a function which itself calls the instrument one file
  * over would name that file and explain the indirection.
@@ -107,10 +110,16 @@ describe("R-30.5/R-54 tripwire: a workspace-deletion executor must pseudonymise 
     expect(scanned.size).toBeGreaterThan(20);
   });
 
-  it("today's real tree has no deletion executor yet, and that is expected — not a pass this scan can claim credit for", () => {
+  it("the real deletion executor is SEEN by the scan (not vacuous) and calls the instrument", () => {
     const scanned = productSources(join(ROOT, "packages"));
     productSources(join(ROOT, "app"), scanned);
     productSources(join(ROOT, "lib"), scanned);
+    // Round-1 billing NOTE: the port deletes through `relation()`, a shape the
+    // first two regexes cannot see; a green here was vacuous until the third.
+    const port = scanned.get("packages/db/src/lifecycle-sql-port.ts");
+    expect(port, "lifecycle-sql-port.ts moved — re-point this witness").toBeDefined();
+    expect(DELETES_WORKSPACES.some((re) => re.test(stripComments(port!)))).toBe(true);
+    expect(CALLS_PSEUDONYMISE.test(stripComments(port!))).toBe(true);
     expect(
       findViolations(scanned),
       "a deletion executor exists with no accompanying pseudonymisation call — see R-30.5/R-54 and packages/db/src/spend-rollup.ts's pseudonymiseWorkspaceSpend"
@@ -146,6 +155,18 @@ describe("R-30.5/R-54 tripwire: a workspace-deletion executor must pseudonymise 
     expect(findViolations(planted)).toEqual([
       "packages/db/src/zz-delete-workspace-raw.ts",
     ]);
+  });
+
+  it("FIXTURE PROOF: catches a generic registry-driven port that deletes through relation() with no pseudonymisation call", () => {
+    const planted = new Map([
+      [
+        "packages/db/src/zz-generic-port.ts",
+        "export async function cascade(tx: TxLike, table: string, where: SQL) {\n" +
+          "  await tx.execute(sql`DELETE FROM ${relation(\"public\", table)} WHERE ${where}`);\n" +
+          "}\n",
+      ],
+    ]);
+    expect(findViolations(planted)).toEqual(["packages/db/src/zz-generic-port.ts"]);
   });
 
   it("FIXTURE PROOF: a deletion executor that DOES call pseudonymiseWorkspaceSpend is not flagged (the deny is default-deny, not a blanket ban)", () => {

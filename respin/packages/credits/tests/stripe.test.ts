@@ -8,10 +8,12 @@ import { eq } from "drizzle-orm";
 import type Stripe from "stripe";
 import {
   createTestDb,
+  autoTopupProtocolRollouts,
   creditLedger,
   schema,
   stripeEvents,
   subscriptions,
+  tierCheckoutProtocolRollouts,
   trustWorkspaceId,
   seedAuthUser,
   seedDb,
@@ -20,19 +22,103 @@ import {
 } from "@respin/db";
 import { appendConfigVersion } from "@respin/config";
 import { CONFIG_V1_SEED } from "@respin/db";
-import { handleStripeEvent, DuplicateStripeEvent } from "../src/stripe/webhooks";
+import {
+  classifyStripeReceiptAttribution,
+  handleStripeEvent,
+  DuplicateStripeEvent,
+} from "../src/stripe/webhooks";
 import { deriveBalance } from "../src/balance";
 import { getWorkspaceBillingState } from "../src/state";
 import { ensurePauseEnded, ensurePauseStarted, hasOpenPause } from "../src/pause";
 import { maybeAutoTopup } from "../src/stripe/auto-topup";
 import { addMonthsUtc } from "../src/months";
+import { packCheckoutAuthorityMetadata } from "../src/stripe/pack-checkout-authority";
+import { tierCheckoutAuthorityMetadata } from "../src/stripe/tier-checkout-authority";
+import { STRIPE_MAX_CALL_WINDOW_MS } from "../src/stripe/adapter";
 import { hasLiveStripeSubscription } from "../src/state";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { createHash } from "node:crypto";
+
+const stripeProviderState = vi.hoisted(() => ({
+  subscriptions: new Map<string, Stripe.Subscription>(),
+  sessions: new Map<string, Stripe.Checkout.Session>(),
+  invoices: new Map<string, Stripe.Invoice>(),
+}));
+
+vi.mock("../src/stripe/adapter", async (importActual) => ({
+  ...(await importActual<typeof import("../src/stripe/adapter")>()),
+  getAutoTopupAuthorityKey: () => "stripe-test-pack-authority-key-at-least-32-bytes",
+  getAutoTopupAuthorityKeyMaterial: () => ({
+    id: "v1",
+    key: "stripe-test-pack-authority-key-at-least-32-bytes",
+    fingerprint:
+      "sha256:fe3b3de1339e7ec571414d65c6f3091e4c11ebbae40b7b09031308abf4a734ab",
+  }),
+  getStripe: () => ({
+    subscriptions: {
+      retrieve: async (id: string) => {
+        const subscription = stripeProviderState.subscriptions.get(id);
+        if (!subscription) throw new Error(`Missing mocked provider Subscription ${id}`);
+        return subscription;
+      },
+    },
+    invoices: {
+      retrieve: async (id: string) => {
+        const invoice = stripeProviderState.invoices.get(id);
+        if (!invoice) throw new Error(`Missing mocked provider Invoice ${id}`);
+        return invoice;
+      },
+      update: async (id: string, params: { metadata?: Record<string, string> }) => {
+        const invoice = stripeProviderState.invoices.get(id);
+        if (!invoice) throw new Error(`Missing mocked provider Invoice ${id}`);
+        const updated = {
+          ...invoice,
+          metadata: { ...(invoice.metadata ?? {}), ...(params.metadata ?? {}) },
+        } as Stripe.Invoice;
+        stripeProviderState.invoices.set(id, updated);
+        return updated;
+      },
+      listLineItems: async (
+        id: string,
+        params: { limit?: number; starting_after?: string }
+      ) => {
+        const invoice = stripeProviderState.invoices.get(id);
+        if (!invoice) throw new Error(`Missing mocked provider Invoice ${id}`);
+        const all = invoice.lines?.data ?? [];
+        const start = params.starting_after
+          ? all.findIndex((line) => line.id === params.starting_after) + 1
+          : 0;
+        const limit = params.limit ?? 10;
+        const data = all.slice(start, start + limit);
+        return {
+          object: "list" as const,
+          data,
+          has_more: start + data.length < all.length,
+          url: `/v1/invoices/${id}/lines`,
+        };
+      },
+    },
+    checkout: {
+      sessions: {
+        retrieve: async (id: string) => {
+          const session = stripeProviderState.sessions.get(id);
+          if (!session) throw new Error(`Missing mocked provider Session ${id}`);
+          return session;
+        },
+      },
+    },
+  }),
+  getAuthenticatedStripeAccountIdentity: async () => ({
+    accountId: "acct_test",
+    livemode: false,
+  }),
+}));
 
 const HOUR = 3_600_000;
 let eventSeq = 0;
+let currentWorkspaceId = "00000000-0000-4000-8000-000000000001";
 
 /**
  * Fixture type pressure (code-review CHANGE, and the ROOT CAUSE of blockers 1
@@ -72,6 +158,22 @@ const nowSec = () => Math.floor(Date.now() / 1000);
  */
 function mkEvent(type: string, object: object): Stripe.Event {
   eventSeq += 1;
+  const stripeObject = object as { object?: string; id?: string };
+  if (stripeObject.object === "subscription" && stripeObject.id) {
+    stripeProviderState.subscriptions.set(
+      stripeObject.id,
+      object as Stripe.Subscription
+    );
+  }
+  if (stripeObject.object === "checkout.session" && stripeObject.id) {
+    stripeProviderState.sessions.set(
+      stripeObject.id,
+      object as Stripe.Checkout.Session
+    );
+  }
+  if (stripeObject.object === "invoice" && stripeObject.id) {
+    stripeProviderState.invoices.set(stripeObject.id, object as Stripe.Invoice);
+  }
   return {
     id: `evt_test_${eventSeq}`,
     object: "event",
@@ -96,7 +198,13 @@ async function setup(): Promise<{
   // Map a price to the creator tier (as /admin/config would after stripe:setup)
   await appendConfigVersion(
     db,
-    { ...CONFIG_V1_SEED, stripePriceMap: { price_creator: "creator", price_pack: "pack" } },
+    {
+      ...CONFIG_V1_SEED,
+      stripePriceMap: {
+        price_creator: "creator",
+        "respin_pack_checkout_v1:price_pack": "pack",
+      },
+    },
     "test-admin"
   );
   const [w] = await db
@@ -110,7 +218,40 @@ async function setup(): Promise<{
     stripeCustomerId: "cus_test",
     status: "none",
   });
+  const rolloutAt = new Date();
+  await db.update(autoTopupProtocolRollouts).set({
+    state: "active",
+    revision: 1,
+    fleetQuiescedAt: rolloutAt,
+    drainStartedAt: rolloutAt,
+    providerReconciledAt: rolloutAt,
+    reconciledCustomers: 0,
+    reconciledPaymentIntents: 0,
+    authorityKeyId: "v1",
+    authorityKeyFingerprint:
+      "sha256:fe3b3de1339e7ec571414d65c6f3091e4c11ebbae40b7b09031308abf4a734ab",
+    stripeAccountId: "acct_test",
+    stripeLivemode: false,
+    activatedAt: rolloutAt,
+  });
+  currentWorkspaceId = ws;
   return { db, ws, customer: "cus_test" };
+}
+
+async function activateTierCheckoutProtocol(db: TestDb): Promise<void> {
+  const rolloutAt = new Date();
+  await db.update(tierCheckoutProtocolRollouts).set({
+    state: "active",
+    revision: 1,
+    fleetQuiescedAt: rolloutAt,
+    drainStartedAt: rolloutAt,
+    providerReconciledAt: rolloutAt,
+    reconciledCustomers: 0,
+    reconciledSessions: 0,
+    stripeAccountId: "acct_test",
+    stripeLivemode: false,
+    activatedAt: rolloutAt,
+  });
 }
 
 function subObject(over: DeepPartial<Stripe.Subscription> = {}) {
@@ -118,6 +259,7 @@ function subObject(over: DeepPartial<Stripe.Subscription> = {}) {
   const base = {
     id: "sub_1",
     object: "subscription",
+    livemode: false,
     customer: "cus_test",
     status: "active",
     cancel_at_period_end: false,
@@ -154,6 +296,7 @@ function invoiceObject(
   const base = {
     id: "in_1",
     object: "invoice",
+    livemode: false,
     customer: "cus_test",
     billing_reason: "subscription_cycle",
     period_start: now,
@@ -255,26 +398,96 @@ function annualSubscriptionLine(priceId: string, now: number) {
 const LINE_PERIOD_END_SEC = () => nowSec() + 30 * 86400;
 
 function sessionObject(over: DeepPartial<Stripe.Checkout.Session> = {}) {
+  const sessionId = typeof over.id === "string" ? over.id : "cs_1";
+  const attemptHex = createHash("sha256").update(sessionId).digest("hex").slice(0, 32);
+  const packAttemptId = [
+    attemptHex.slice(0, 8),
+    attemptHex.slice(8, 12),
+    `4${attemptHex.slice(13, 16)}`,
+    `8${attemptHex.slice(17, 20)}`,
+    attemptHex.slice(20),
+  ].join("-");
+  const signedPackMetadata = packCheckoutAuthorityMetadata(
+    packAttemptId,
+    currentWorkspaceId,
+    "cus_test",
+    {
+      priceId: "price_pack",
+      amountCents: Math.round(CONFIG_V1_SEED.pack.priceUsd * 100),
+      currency: "usd",
+      credits: CONFIG_V1_SEED.pack.credits,
+      validityMonths: CONFIG_V1_SEED.pack.validityMonths,
+      configVersion: 2,
+    },
+    { accountId: "acct_test", livemode: false }
+  );
   const base = {
     id: "cs_1",
     object: "checkout.session",
+    livemode: false,
+    created: nowSec(),
     customer: "cus_test",
     mode: "payment",
     amount_total: 1000,
+    currency: "usd",
     // A completed session is NOT settled money: delayed-notification methods
     // complete as `unpaid` (blocker 4). Fixtures must state this explicitly.
     payment_status: "paid",
-    metadata: { respin_kind: "pack" },
+    metadata: signedPackMetadata,
+    line_items: {
+      object: "list",
+      data: [
+        {
+          id: "li_1",
+          object: "item",
+          price: { id: "price_pack", object: "price" },
+          quantity: 1,
+        },
+      ],
+      has_more: false,
+      url: "",
+    },
   } satisfies DeepPartial<Stripe.Checkout.Session>;
-  return { ...base, ...over };
+  const preserveSubscriptionMetadata = over.mode === "subscription";
+  const subscriptionPriceId =
+    typeof over.metadata?.price_id === "string"
+      ? over.metadata.price_id
+      : "price_creator";
+  const subscriptionLineItems = {
+    object: "list",
+    data: [
+      {
+        id: "li_subscription",
+        object: "item",
+        price: { id: subscriptionPriceId, object: "price" },
+        quantity: 1,
+      },
+    ],
+    has_more: false,
+    url: "",
+  } satisfies DeepPartial<Stripe.ApiList<Stripe.LineItem>>;
+  return {
+    ...base,
+    ...over,
+    metadata: preserveSubscriptionMetadata
+      ? (over.metadata ?? base.metadata)
+      : { ...base.metadata, ...(over.metadata ?? {}) },
+    line_items: preserveSubscriptionMetadata
+      ? (over.line_items ?? subscriptionLineItems)
+      : (over.line_items ?? base.line_items),
+  };
 }
 
 function piObject(over: DeepPartial<Stripe.PaymentIntent> = {}) {
   const base = {
     id: "pi_1",
     object: "payment_intent",
+    livemode: false,
     customer: "cus_test",
     amount: 1000,
+    currency: "usd",
+    created: nowSec(),
+    status: "succeeded",
     metadata: { respin_kind: "auto_topup" },
   } satisfies DeepPartial<Stripe.PaymentIntent>;
   return { ...base, ...over };
@@ -412,6 +625,14 @@ describe("accept-when: double-delivered webhook (no double grant)", () => {
       mkEvent("invoice.payment_failed", invoiceObject({ billing_reason: "subscription_cycle" })),
       mkEvent("customer.subscription.deleted", subObject({ status: "canceled" })),
       mkEvent("payment_intent.succeeded", piObject({ id: "pi_at" })),
+      mkEvent(
+        "payment_intent.payment_failed",
+        piObject({ id: "pi_at_failed", status: "requires_payment_method" })
+      ),
+      mkEvent(
+        "payment_intent.canceled",
+        piObject({ id: "pi_at_canceled", status: "canceled" })
+      ),
       mkEvent("customer.updated", customerObject()),
     ];
     // THE DERIVED CHECK: the list above must cover every `case` label in
@@ -426,7 +647,12 @@ describe("accept-when: double-delivered webhook (no double grant)", () => {
       "a `case` in dispatch with no double-delivery test — AC-3 says EVERY handled type has one"
     ).toEqual([]);
 
-    for (const e of events) await handleStripeEvent(db, e);
+    for (const e of events) {
+      if (e.type === "checkout.session.completed") {
+        await activateTierCheckoutProtocol(db);
+      }
+      await handleStripeEvent(db, e);
+    }
     const countsBefore = (await db.select().from(creditLedger)).length;
     for (const e of events) {
       await expect(handleStripeEvent(db, e)).rejects.toThrow(DuplicateStripeEvent);
@@ -476,6 +702,7 @@ describe("accept-when: cancel → downgrade & payment-failed → grace → downg
 describe("accept-when: pack purchase", () => {
   it("checkout.session.completed (payment + pack metadata) → pack row with amountCents and 12-month expiry", async () => {
     const { db, ws } = await setup();
+    await activateTierCheckoutProtocol(db);
     const out = await handleStripeEvent(
       db,
       mkEvent(
@@ -497,54 +724,69 @@ describe("accept-when: pack purchase", () => {
     expect(months).toBeGreaterThan(11);
     expect(months).toBeLessThan(13);
   });
-  it("records what STRIPE charged, and warns loudly if it ever has to substitute", async () => {
+  it("refuses a paid Session whose provider amount is missing or differs from signed purchase authority", async () => {
     const { db, ws } = await setup();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      // The normal case: the ledger records Stripe's own figure, not config's.
-      await handleStripeEvent(
-        db,
-        mkEvent(
-          "checkout.session.completed",
-          sessionObject({
-            id: "cs_amt_real",
-            amount_total: 1234,
-            metadata: { respin_kind: "pack", workspace_id: ws },
-          })
+    await activateTierCheckoutProtocol(db);
+    for (const [id, amount_total] of [
+      ["cs_amt_wrong", 1234],
+      ["cs_amt_null", null],
+    ] as const) {
+      await expect(
+        handleStripeEvent(
+          db,
+          mkEvent(
+            "checkout.session.completed",
+            sessionObject({
+              id,
+              amount_total,
+              metadata: { respin_kind: "pack", workspace_id: ws },
+            })
+          )
         )
-      );
-      const [rec] = (await db.select().from(creditLedger)).filter(
-        (r) => r.refId === "cs_amt_real"
-      );
-      expect(rec.amountCents).toBe(1234);
-
-      // The unreachable case, made diagnosable rather than silent: a paid
-      // session with no amount_total falls back to the configured price — which
-      // audit #7's resolver guarantees is the same number — and says so.
-      await handleStripeEvent(
-        db,
-        mkEvent(
-          "checkout.session.completed",
-          sessionObject({
-            id: "cs_amt_null",
-            amount_total: null,
-            metadata: { respin_kind: "pack", workspace_id: ws },
-          })
-        )
-      );
-      const [sub] = (await db.select().from(creditLedger)).filter(
-        (r) => r.refId === "cs_amt_null"
-      );
-      expect(sub.amountCents).toBe(
-        Math.round(CONFIG_V1_SEED.pack.priceUsd * 100)
-      );
-      expect(
-        warn.mock.calls.flat().join(" "),
-        "a substituted money figure must never be silent"
-      ).toContain("NO amount_total");
-    } finally {
-      warn.mockRestore();
+      ).rejects.toThrow(/signed purchase authority/);
     }
+    expect(await db.select().from(creditLedger)).toHaveLength(0);
+  });
+
+  it("settles delayed signed pack terms from initiation even after active config changes", async () => {
+    const { db } = await setup();
+    await activateTierCheckoutProtocol(db);
+    const purchased = sessionObject({ id: "cs_pack_config_drift" });
+    await appendConfigVersion(
+      db,
+      {
+        ...CONFIG_V1_SEED,
+        pack: {
+          ...CONFIG_V1_SEED.pack,
+          credits: CONFIG_V1_SEED.pack.credits + 777,
+          validityMonths: 3,
+        },
+        stripePriceMap: {
+          price_creator: "creator",
+          "respin_pack_checkout_v1:price_pack": "pack",
+        },
+      },
+      "test-admin-drift"
+    );
+
+    expect(
+      await handleStripeEvent(
+        db,
+        mkEvent("checkout.session.async_payment_succeeded", purchased)
+      )
+    ).toBe("processed");
+    const [pack] = (await db.select().from(creditLedger)).filter(
+      (row) => row.refId === "cs_pack_config_drift"
+    );
+    expect(pack).toMatchObject({
+      delta: CONFIG_V1_SEED.pack.credits,
+      amountCents: Math.round(CONFIG_V1_SEED.pack.priceUsd * 100),
+      configVersion: 2,
+    });
+    const months =
+      (pack.expiresAt!.getTime() - Date.now()) / (30.4 * 24 * HOUR);
+    expect(months).toBeGreaterThan(11);
+    expect(months).toBeLessThan(13);
   });
 });
 
@@ -585,6 +827,7 @@ describe("R-28: a PACK settling during a pause still mints — decided, not inci
    */
   it("mints the pack, and the credits are frozen rather than lost", async () => {
     const { db, ws } = await pausedWs();
+    await activateTierCheckoutProtocol(db);
 
     const out = await handleStripeEvent(
       db,
@@ -594,7 +837,7 @@ describe("R-28: a PACK settling during a pause still mints — decided, not inci
           id: "cs_pack_paused",
           metadata: { respin_kind: "pack", workspace_id: ws },
         }),
-        nowSec() + 3600
+        nowSec()
       )
     );
 
@@ -695,6 +938,8 @@ describe("D-M1-6 identity: sole-authority mapping", () => {
     const [row] = await db.select().from(stripeEvents);
     expect(row.outcome).toBe("refused_unknown_customer");
     expect(row.workspaceId).toBeNull();
+    expect(row.stripeCustomerId).toBe("cus_stranger");
+    expect(row.receiptAttribution).toBe("customer_attributed");
   });
 
   it("metadata/mapping MISMATCH → refused_identity_mismatch, 0 ledger writes", async () => {
@@ -717,8 +962,24 @@ describe("D-M1-6 identity: sole-authority mapping", () => {
     // mapping the sole authority, so absent metadata is fine. Reconciled in
     // the code-review round — this test pins the surviving rule in the
     // direction the implementation actually takes.
-    const session = sessionObject({ id: "cs_nometa", metadata: { respin_kind: "pack" } });
+    const session = {
+      ...sessionObject({ id: "cs_nometa" }),
+      metadata: { respin_kind: "pack" },
+    };
     expect(Object.keys(session.metadata ?? {})).not.toContain("workspace_id");
+    const rolloutAt = new Date();
+    await db.update(tierCheckoutProtocolRollouts).set({
+      state: "active",
+      revision: 1,
+      fleetQuiescedAt: rolloutAt,
+      drainStartedAt: rolloutAt,
+      providerReconciledAt: rolloutAt,
+      reconciledCustomers: 0,
+      reconciledSessions: 0,
+      stripeAccountId: "acct_test",
+      stripeLivemode: false,
+      activatedAt: rolloutAt,
+    });
     const out = await handleStripeEvent(db, mkEvent("checkout.session.completed", session));
     expect(out).toBe("processed");
     const packs = (await db.select().from(creditLedger)).filter(
@@ -726,6 +987,21 @@ describe("D-M1-6 identity: sole-authority mapping", () => {
     );
     expect(packs).toHaveLength(1);
     expect(packs[0].workspaceId).toBe(ws);
+
+    const postCutoff = {
+      ...session,
+      id: "cs_unsigned_after_cutoff",
+      created:
+        Math.floor(
+          (rolloutAt.getTime() + STRIPE_MAX_CALL_WINDOW_MS) / 1000
+        ) + 1,
+    };
+    await expect(
+      handleStripeEvent(
+        db,
+        mkEvent("checkout.session.completed", postCutoff)
+      )
+    ).rejects.toThrow(/outside the provider-bound fleet-drain cutoff/);
   });
 
   it("null/absent customer field on a handled type → refusal, never a metadata fallback", async () => {
@@ -878,6 +1154,7 @@ describe("edge bullets", () => {
       db,
       mkEvent("payment_intent.succeeded", {
         id: "pi_topup", object: "payment_intent", customer: "cus_test", amount: 1000,
+        currency: "usd", created: nowSec(), status: "succeeded",
         metadata: { respin_kind: "auto_topup", workspace_id: ws },
       })
     );
@@ -921,6 +1198,26 @@ describe("edge bullets", () => {
     const [row] = await db.select().from(stripeEvents);
     expect(row.outcome).toBe("ignored");
     expect(row.workspaceId).toBe(ws); // receipt-time attribution regardless of outcome
+    expect(row.receiptAttribution).toBe("workspace_attributed");
+  });
+
+  it("persists true unattributed receipts separately from customer-attributed failures", async () => {
+    const { db } = await setup();
+    expect(await handleStripeEvent(db, mkEvent("product.created", { id: "prod_no_customer", object: "product" })))
+      .toBe("ignored");
+    const [row] = await db.select().from(stripeEvents);
+    expect(row).toMatchObject({
+      workspaceId: null,
+      stripeCustomerId: null,
+      receiptAttribution: "unattributed",
+    });
+  });
+
+  it("classifies receipt facts with a closed vocabulary and refuses an impossible workspace-only fact", () => {
+    expect(classifyStripeReceiptAttribution("workspace-a", "cus_a")).toBe("workspace_attributed");
+    expect(classifyStripeReceiptAttribution(null, "cus_a")).toBe("customer_attributed");
+    expect(classifyStripeReceiptAttribution(null, null)).toBe("unattributed");
+    expect(() => classifyStripeReceiptAttribution("workspace-a", null)).toThrow(/customer/i);
   });
 });
 
@@ -928,7 +1225,7 @@ describe("edge bullets", () => {
 // code as it stood. All four survived round 1 only because the fixtures above
 // contradicted the payload shapes Stripe actually sends.
 describe("code-review blockers (regression pins)", () => {
-  it("BLOCKER 1: customer.* events — where the object IS the customer — are attributed, keeping resolvable creator PII inside the REQ-A04 deletion cascade", async () => {
+  it("BLOCKER 1: customer.* events retain receipt attribution after workspace detachment", async () => {
     const { db, ws } = await setup();
     for (const type of ["customer.updated", "customer.deleted"]) {
       // The REAL payload: id + PII, and NO `customer` field to read.
@@ -938,13 +1235,17 @@ describe("code-review blockers (regression pins)", () => {
     }
     const rows = await db.select().from(stripeEvents);
     expect(rows).toHaveLength(2);
-    // Attributed → they cascade on workspace delete. Unattributed (the old
-    // behaviour) would leave email/name/address behind after a deletion.
+    // Receipt attribution is immutable audit metadata. Workspace deletion
+    // detaches the FK without relabelling these as genuinely unattributed.
     expect(rows.every((r) => r.workspaceId === ws)).toBe(true);
     expect(rows.every((r) => r.stripeCustomerId === "cus_test")).toBe(true);
+    expect(rows.every((r) => r.receiptAttribution === "workspace_attributed")).toBe(true);
 
     await db.delete(schema.workspaces).where(eq(schema.workspaces.id, ws));
-    expect(await db.select().from(stripeEvents)).toHaveLength(0);
+    const retained = await db.select().from(stripeEvents);
+    expect(retained).toHaveLength(2);
+    expect(retained.every((r) => r.workspaceId === null)).toBe(true);
+    expect(retained.every((r) => r.receiptAttribution === "workspace_attributed")).toBe(true);
   });
 
   it("BLOCKER 5: a grant-bearing invoice whose FIRST line is a proration grants from the SUBSCRIPTION line — right tier, right expiry", async () => {
@@ -1003,6 +1304,40 @@ describe("code-review blockers (regression pins)", () => {
     expect(
       Math.abs(grant.expiresAt!.getTime() - expected.getTime())
     ).toBeLessThan(2000);
+  });
+
+  it("retrieves every paginated invoice line before selecting the one recurring allowance line", async () => {
+    const { db } = await setup();
+    const sec = nowSec();
+    const partial = invoiceObject({
+      id: "in_paginated_lines",
+      billing_reason: "subscription_cycle",
+      lines: {
+        object: "list",
+        data: [prorationLine("price_creator", sec)],
+        has_more: true,
+      },
+    });
+    const event = mkEvent("invoice.paid", partial);
+    stripeProviderState.invoices.set(partial.id, {
+      ...partial,
+      lines: {
+        ...partial.lines,
+        data: [
+          prorationLine("price_creator", sec),
+          invoiceItemProrationLine("price_creator", sec),
+          subscriptionLine("price_creator", sec),
+        ],
+        has_more: false,
+      },
+    } as Stripe.Invoice);
+
+    expect(await handleStripeEvent(db, event)).toBe("processed");
+    const grants = (await db.select().from(creditLedger)).filter(
+      (row) => row.refType === "invoice" && row.refId === partial.id
+    );
+    expect(grants).toHaveLength(1);
+    expect(grants[0].delta).toBe(CONFIG_V1_SEED.allowances.creator);
   });
 
   it("BLOCKER 5b: a grant-bearing invoice carrying ONLY prorations fails closed (never prices the allowance off a proration or the mirror)", async () => {
@@ -1296,6 +1631,7 @@ describe("code-review blockers (regression pins)", () => {
 
   it("BLOCKER 4: a pack Checkout that completed UNPAID mints nothing; the later async_payment_succeeded settles it", async () => {
     const { db, ws } = await setup();
+    await activateTierCheckoutProtocol(db);
     // Delayed-notification methods complete as `unpaid` and settle later.
     const out = await handleStripeEvent(
       db,
@@ -1328,6 +1664,7 @@ describe("code-review blockers (regression pins)", () => {
 
   it("BLOCKER 7: ONE session mints ONE pack even when BOTH settlement events arrive under different event ids", async () => {
     const { db, ws } = await setup();
+    await activateTierCheckoutProtocol(db);
     const session = sessionObject({ id: "cs_both", payment_status: "paid" });
     // Different EVENT ids, same SESSION — credit_ledger_stripe_event_uq cannot
     // see this, so before the fix the customer was charged once and credited
@@ -1350,6 +1687,7 @@ describe("code-review blockers (regression pins)", () => {
 
   it("BLOCKER 7b: the per-session guarantee is STRUCTURAL — a second pack row for one session is refused by the database", async () => {
     const { db, ws } = await setup();
+    await activateTierCheckoutProtocol(db);
     await handleStripeEvent(
       db,
       mkEvent("checkout.session.completed", sessionObject({ id: "cs_uq" }))
@@ -1630,6 +1968,10 @@ describe("round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)", (
         refType: "auto_topup",
         refId: "pi_structural",
         amountCents: 1000,
+        configVersion: 2,
+        stripeEventId: "evt_structural_second",
+        autoTopupAttemptId: crypto.randomUUID(),
+        autoTopupPeriodMonthUtc: `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`,
         expiresAt: new Date(Date.now() + 24 * HOUR),
       })
       .then(
@@ -1971,7 +2313,12 @@ describe("round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)", () => {
     // The owner armed auto-top-up at a $50 cap while subscribed.
     await db
       .update(subscriptions)
-      .set({ autoTopupEnabled: true, autoTopupMonthlyCapCents: 5000 })
+      .set({
+        autoTopupV1Enabled: true,
+        autoTopupMonthlyCapCents: 5000,
+        autoTopupProtocolVersion: 1,
+        autoTopupAttemptCutoverAt: new Date(),
+      })
       .where(eq(subscriptions.workspaceId, ws));
     await handleStripeEvent(
       db,
@@ -1981,10 +2328,11 @@ describe("round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)", () => {
     // Before this fix the flag survived the cancellation and no later event
     // existed to clear it, so M3's debit site would have charged an
     // off-session $10 PaymentIntent to a customer who had cancelled.
-    expect(row.autoTopupEnabled).toBe(false);
+    expect(row.autoTopupV1Enabled).toBe(false);
     expect(row.autoTopupMonthlyCapCents).toBeNull();
-    // ...and the trigger itself refuses, so BOTH halves are proven together:
-    // the cleared flag AND the liveness guard behind it.
+    // The protocol is active in setup; cancellation therefore reaches the
+    // subscription-state refusal instead of being masked by a rollout fence.
+    // This proves no off-session charge can survive the canceled mirror.
     expect(await maybeAutoTopup(db, ws, 100, new Date())).toEqual({
       triggered: false,
       reason: "not_subscribed",
@@ -1997,7 +2345,12 @@ describe("round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)", () => {
     await handleStripeEvent(db, mkEventAt("customer.subscription.created", subObject(), t));
     await db
       .update(subscriptions)
-      .set({ autoTopupEnabled: true, autoTopupMonthlyCapCents: 5000 })
+      .set({
+        autoTopupV1Enabled: true,
+        autoTopupMonthlyCapCents: 5000,
+        autoTopupProtocolVersion: 1,
+        autoTopupAttemptCutoverAt: new Date(),
+      })
       .where(eq(subscriptions.workspaceId, ws));
     await handleStripeEvent(
       db,
@@ -2026,7 +2379,7 @@ describe("round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)", () => {
     const [row] = await db.select().from(subscriptions);
     expect(row.status).toBe("canceled");
     expect(row.cancelAtPeriodEnd).toBe(false);
-    expect(row.autoTopupEnabled).toBe(false);
+    expect(row.autoTopupV1Enabled).toBe(false);
     expect(row.autoTopupMonthlyCapCents).toBeNull();
     expect(hasLiveStripeSubscription(row)).toBe(false);
   });
@@ -2676,5 +3029,455 @@ describe("D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly gra
       )
     ).toBe("processed");
     expect((await deriveBalance(db, ws)).balance).toBeGreaterThan(0);
+  });
+});
+
+describe("tier Checkout durable attempt and mixed-version fence ordering", () => {
+  const ATTEMPT_ID = "00000000-0000-4000-8000-000000000010";
+  const DEAD_SUB_ID = "sub_dead_generation";
+  const NEW_SUB_ID = "sub_new_generation";
+
+  function attemptMetadata(attemptId = ATTEMPT_ID) {
+    return {
+      workspace_id: "",
+      respin_kind: "tier_checkout",
+      respin_checkout_attempt_id: attemptId,
+      tier: "creator",
+      price_id: "price_creator",
+    };
+  }
+
+  async function seedFence(
+    db: TestDb,
+    ws: VerifiedWorkspaceId,
+    over: {
+      observedSubscriptionId?: string | null;
+      attemptSubscriptionId?: string | null;
+      withAttempt?: boolean;
+    } = {}
+  ) {
+    const withAttempt = over.withAttempt ?? true;
+    const observed = over.observedSubscriptionId ?? null;
+    const authority = tierCheckoutAuthorityMetadata(
+      ATTEMPT_ID,
+      ws,
+      "cus_test",
+      { accountId: "acct_test", livemode: false }
+    );
+    const rolloutAt = new Date();
+    await db.update(tierCheckoutProtocolRollouts).set({
+      state: "active",
+      revision: 1,
+      fleetQuiescedAt: rolloutAt,
+      drainStartedAt: rolloutAt,
+      providerReconciledAt: rolloutAt,
+      reconciledCustomers: 0,
+      reconciledSessions: 0,
+      stripeAccountId: "acct_test",
+      stripeLivemode: false,
+      activatedAt: rolloutAt,
+    });
+    await db
+      .update(subscriptions)
+      .set({
+        stripeSubscriptionId: observed ?? `checkout_fence:${ws}`,
+        status: "incomplete",
+        tierCheckoutFenceAt: new Date(),
+        tierCheckoutFenceSubscriptionId: DEAD_SUB_ID,
+        tierCheckoutFenceStatus: "canceled",
+        tierCheckoutFenceObservedSubscriptionId: observed,
+        ...(withAttempt
+          ? {
+              tierCheckoutAttemptId: ATTEMPT_ID,
+              tierCheckoutAttemptTier: "creator",
+              tierCheckoutAttemptPriceId: "price_creator",
+              tierCheckoutAttemptCustomerId: "cus_test",
+              tierCheckoutAttemptSubscriptionGeneration: DEAD_SUB_ID,
+              tierCheckoutAttemptIdempotencyKey: `checkout:v1:${ws}:${ATTEMPT_ID}`,
+              tierCheckoutAttemptSessionId: null,
+              tierCheckoutAttemptSubscriptionId:
+                over.attemptSubscriptionId ?? null,
+              tierCheckoutAttemptStripeAccountId: "acct_test",
+              tierCheckoutAttemptStripeLivemode: false,
+              tierCheckoutAttemptAuthority: authority,
+              tierCheckoutAttemptReservedAt: new Date(),
+            }
+          : {}),
+      })
+      .where(eq(subscriptions.workspaceId, ws));
+  }
+
+  function metadataFor(ws: VerifiedWorkspaceId, attemptId = ATTEMPT_ID) {
+    return {
+      ...attemptMetadata(attemptId),
+      workspace_id: ws,
+      ...tierCheckoutAuthorityMetadata(attemptId, ws, "cus_test", {
+        accountId: "acct_test",
+        livemode: false,
+      }),
+    };
+  }
+
+  it("checkout.completed binds the exact attempt, Session, and subscription without releasing the fence", async () => {
+    const { db, ws } = await setup();
+    await seedFence(db, ws);
+
+    expect(
+      await handleStripeEvent(
+        db,
+        mkEvent(
+          "checkout.session.completed",
+          sessionObject({
+            id: "cs_tier_exact",
+            mode: "subscription",
+            subscription: NEW_SUB_ID,
+            metadata: metadataFor(ws),
+          })
+        )
+      )
+    ).toBe("processed");
+
+    const [row] = await db.select().from(subscriptions);
+    expect(row.tierCheckoutAttemptId).toBe(ATTEMPT_ID);
+    expect(row.tierCheckoutAttemptSessionId).toBe("cs_tier_exact");
+    expect(row.tierCheckoutAttemptSubscriptionId).toBe(NEW_SUB_ID);
+    expect(row.tierCheckoutFenceObservedSubscriptionId).toBe(NEW_SUB_ID);
+    expect(row.tierCheckoutFenceAt).not.toBeNull();
+    expect(row.status).toBe("incomplete");
+  });
+
+  it("invoice.paid can arrive first using immutable subscription metadata, grants once, and only the exact full snapshot releases the fence", async () => {
+    const { db, ws } = await setup();
+    await seedFence(db, ws);
+    const invoice = invoiceObject({
+      id: "in_tier_before_snapshot",
+      billing_reason: "subscription_create",
+      parent: {
+        subscription_details: {
+          subscription: NEW_SUB_ID,
+          metadata: metadataFor(ws),
+        },
+      },
+    });
+
+    expect(await handleStripeEvent(db, mkEvent("invoice.paid", invoice))).toBe(
+      "processed"
+    );
+    expect(await handleStripeEvent(db, mkEvent("invoice.paid", invoice))).toBe(
+      "ignored"
+    );
+    expect(
+      (await db.select().from(creditLedger)).filter(
+        (row) => row.refType === "invoice" && row.refId === "in_tier_before_snapshot"
+      )
+    ).toHaveLength(1);
+    let [row] = await db.select().from(subscriptions);
+    expect(row.tierCheckoutFenceObservedSubscriptionId).toBe(NEW_SUB_ID);
+    expect(row.tierCheckoutAttemptSubscriptionId).toBe(NEW_SUB_ID);
+    expect(row.tierCheckoutFenceAt).not.toBeNull();
+
+    expect(
+      await handleStripeEvent(
+        db,
+        mkEvent(
+          "customer.subscription.created",
+          subObject({ id: NEW_SUB_ID, metadata: metadataFor(ws) })
+        )
+      )
+    ).toBe("processed");
+    [row] = await db.select().from(subscriptions);
+    expect(row.stripeSubscriptionId).toBe(NEW_SUB_ID);
+    expect(row.status).toBe("active");
+    expect(row.tierCheckoutAttemptId).toBeNull();
+    expect(row.tierCheckoutFenceAt).toBeNull();
+  });
+
+  it("a distinct duplicate v1 invoice receipt after tombstoning converges without minting again", async () => {
+    const { db, ws } = await setup();
+    await seedFence(db, ws);
+    const invoice = invoiceObject({
+      id: "in_tier_before_tombstone",
+      billing_reason: "subscription_create",
+      parent: {
+        subscription_details: {
+          subscription: NEW_SUB_ID,
+          metadata: metadataFor(ws),
+        },
+      },
+    });
+
+    expect(await handleStripeEvent(db, mkEvent("invoice.paid", invoice))).toBe(
+      "processed"
+    );
+    await db
+      .update(schema.workspaces)
+      .set({ lifecycleState: "tombstoned" })
+      .where(eq(schema.workspaces.id, ws));
+
+    expect(await handleStripeEvent(db, mkEvent("invoice.paid", invoice))).toBe(
+      "ignored"
+    );
+    expect(
+      (await db.select().from(creditLedger)).filter(
+        (row) => row.refType === "invoice" && row.refId === invoice.id
+      )
+    ).toHaveLength(1);
+    const receipts = (await db.select().from(stripeEvents)).filter(
+      (row) => row.type === "invoice.paid"
+    );
+    expect(receipts).toHaveLength(2);
+    expect(receipts[1]).toMatchObject({
+      outcome: "ignored",
+      tierInvoiceAuthority: null,
+    });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["mismatched", metadataFor("workspace-placeholder" as VerifiedWorkspaceId, "00000000-0000-4000-8000-000000000099")],
+  ])("%s attempt metadata cannot release the fence", async (_label, metadata) => {
+    const { db, ws } = await setup();
+    await seedFence(db, ws);
+    const effectiveMetadata = metadata
+      ? { ...metadata, workspace_id: ws }
+      : undefined;
+
+    await expect(
+      handleStripeEvent(
+        db,
+        mkEvent(
+          "customer.subscription.created",
+          subObject({ id: NEW_SUB_ID, metadata: effectiveMetadata })
+        )
+      )
+    ).rejects.toThrow(/provider tier authority differs|not bound to attempt/);
+    const [row] = await db.select().from(subscriptions);
+    expect(row.tierCheckoutAttemptId).toBe(ATTEMPT_ID);
+    expect(row.tierCheckoutFenceAt).not.toBeNull();
+  });
+
+  it.each([
+    [
+      "checkout completion",
+      (ws: VerifiedWorkspaceId) =>
+        mkEvent(
+          "checkout.session.completed",
+          sessionObject({
+            id: "cs_attemptless_active",
+            mode: "subscription",
+            subscription: NEW_SUB_ID,
+            metadata: metadataFor(ws),
+          })
+        ),
+    ],
+    [
+      "full subscription snapshot",
+      (ws: VerifiedWorkspaceId) =>
+        mkEvent(
+          "customer.subscription.created",
+          subObject({ id: NEW_SUB_ID, metadata: metadataFor(ws) })
+        ),
+    ],
+    [
+      "paid invoice",
+      (ws: VerifiedWorkspaceId) =>
+        mkEvent(
+          "invoice.paid",
+          invoiceObject({
+            id: "in_attemptless_active",
+            parent: {
+              subscription_details: {
+                subscription: NEW_SUB_ID,
+                metadata: metadataFor(ws),
+              },
+            },
+          })
+        ),
+    ],
+    [
+      "subscription deletion",
+      (ws: VerifiedWorkspaceId) =>
+        mkEvent(
+          "customer.subscription.deleted",
+          subObject({
+            id: NEW_SUB_ID,
+            status: "canceled",
+            metadata: metadataFor(ws),
+          })
+        ),
+    ],
+  ])("active protocol refuses attemptless %s fence advancement", async (_label, eventOf) => {
+    const { db, ws } = await setup();
+    await seedFence(db, ws, { withAttempt: false });
+    const before = (await db.select().from(subscriptions))[0];
+
+    await expect(handleStripeEvent(db, eventOf(ws))).rejects.toThrow(
+      /active tier Checkout protocol has no durable attempt/
+    );
+
+    const after = (await db.select().from(subscriptions))[0];
+    expect(after.stripeSubscriptionId).toBe(before.stripeSubscriptionId);
+    expect(after.tierCheckoutFenceSubscriptionId).toBe(
+      before.tierCheckoutFenceSubscriptionId
+    );
+    expect(after.tierCheckoutFenceObservedSubscriptionId).toBeNull();
+    expect(await db.select().from(stripeEvents)).toHaveLength(0);
+    expect(await db.select().from(creditLedger)).toHaveLength(0);
+  });
+
+  it.each([
+    [NEW_SUB_ID, "sub_other_attempt", "Subscription differs from the durable tier attempt"],
+    ["sub_other_observed", NEW_SUB_ID, "observed subscription"],
+  ])(
+    "a full snapshot refuses when either persisted subscription identity disagrees (observed=%s, attempt=%s)",
+    async (observedSubscriptionId, attemptSubscriptionId, message) => {
+      const { db, ws } = await setup();
+      await seedFence(db, ws, { observedSubscriptionId, attemptSubscriptionId });
+
+      await expect(
+        handleStripeEvent(
+          db,
+          mkEvent(
+            "customer.subscription.created",
+            subObject({ id: NEW_SUB_ID, metadata: metadataFor(ws) })
+          )
+        )
+      ).rejects.toThrow(message);
+      const [row] = await db.select().from(subscriptions);
+      expect(row.tierCheckoutAttemptId).toBe(ATTEMPT_ID);
+      expect(row.tierCheckoutFenceAt).not.toBeNull();
+    }
+  );
+
+  it("a second subscription seen through either Checkout or invoice delivery refuses without replacing the first", async () => {
+    const { db, ws } = await setup();
+    await seedFence(db, ws);
+    await handleStripeEvent(
+      db,
+      mkEvent(
+        "checkout.session.completed",
+        sessionObject({
+          id: "cs_first_subscription",
+          mode: "subscription",
+          subscription: NEW_SUB_ID,
+          metadata: metadataFor(ws),
+        })
+      )
+    );
+
+    await expect(
+      handleStripeEvent(
+        db,
+        mkEvent(
+          "checkout.session.completed",
+          sessionObject({
+            id: "cs_second_subscription",
+            mode: "subscription",
+            subscription: "sub_ambiguous_second",
+            metadata: metadataFor(ws),
+          })
+        )
+      )
+    ).rejects.toThrow(
+      /possible duplicate subscription|Checkout Session differs from the durable tier attempt/
+    );
+    await expect(
+      handleStripeEvent(
+        db,
+        mkEvent(
+          "invoice.paid",
+          invoiceObject({
+            id: "in_ambiguous_second",
+            parent: {
+              subscription_details: {
+                subscription: "sub_ambiguous_second",
+                metadata: metadataFor(ws),
+              },
+            },
+          })
+        )
+      )
+    ).rejects.toThrow(
+      /possible duplicate subscription|Invoice differs from the durable tier attempt/
+    );
+
+    const [row] = await db.select().from(subscriptions);
+    expect(row.stripeSubscriptionId).toBe(NEW_SUB_ID);
+    expect(row.tierCheckoutFenceObservedSubscriptionId).toBe(NEW_SUB_ID);
+    expect(row.tierCheckoutAttemptSubscriptionId).toBe(NEW_SUB_ID);
+    expect(
+      (await db.select().from(creditLedger)).filter(
+        (entry) => entry.refId === "in_ambiguous_second"
+      )
+    ).toHaveLength(0);
+  });
+
+  it("invoice.paid for the retained dead generation grants by the existing policy without advancing the new-generation fence", async () => {
+    const { db, ws } = await setup();
+    await seedFence(db, ws);
+    const before = (await db.select().from(subscriptions))[0];
+    const invoice = invoiceObject({
+      id: "in_retained_dead_generation",
+      parent: {
+        subscription_details: {
+          subscription: DEAD_SUB_ID,
+          metadata: null,
+        },
+      },
+    });
+
+    expect(await handleStripeEvent(db, mkEvent("invoice.paid", invoice))).toBe(
+      "processed"
+    );
+    const [after] = await db.select().from(subscriptions);
+    expect(after.stripeSubscriptionId).toBe(`checkout_fence:${ws}`);
+    expect(after.tierCheckoutFenceSubscriptionId).toBe(DEAD_SUB_ID);
+    expect(after.tierCheckoutFenceObservedSubscriptionId).toBeNull();
+    expect(after.tierCheckoutAttemptId).toBe(ATTEMPT_ID);
+    expect(after.tierCheckoutAttemptSubscriptionId).toBeNull();
+    expect(after.tierCheckoutFenceAt?.getTime()).toBe(
+      before.tierCheckoutFenceAt?.getTime()
+    );
+    expect(
+      (await db.select().from(creditLedger)).filter(
+        (row) => row.refType === "invoice" && row.refId === invoice.id
+      )
+    ).toHaveLength(1);
+  });
+
+  it("subscription.deleted before created re-establishes a dead-generation fence, and stale created cannot resurrect it", async () => {
+    const { db, ws } = await setup();
+    await seedFence(db, ws);
+    const deleted = subObject({
+      id: NEW_SUB_ID,
+      status: "canceled",
+      metadata: metadataFor(ws),
+    });
+
+    expect(
+      await handleStripeEvent(db, mkEvent("customer.subscription.deleted", deleted))
+    ).toBe("processed");
+    let [row] = await db.select().from(subscriptions);
+    expect(row.status).toBe("incomplete");
+    expect(row.stripeSubscriptionId).toBe(`checkout_fence:${ws}`);
+    expect(row.tierCheckoutFenceSubscriptionId).toBe(NEW_SUB_ID);
+    expect(row.tierCheckoutFenceStatus).toBe("canceled");
+    expect(row.tierCheckoutFenceObservedSubscriptionId).toBeNull();
+    expect(row.tierCheckoutAttemptId).toBeNull();
+
+    expect(
+      await handleStripeEvent(
+        db,
+        mkEvent(
+          "customer.subscription.created",
+          subObject({ id: NEW_SUB_ID, metadata: metadataFor(ws) })
+        )
+      )
+    ).toBe("ignored");
+    [row] = await db.select().from(subscriptions);
+    expect(row.status).toBe("incomplete");
+    expect(row.stripeSubscriptionId).toBe(`checkout_fence:${ws}`);
+    expect(row.tierCheckoutFenceSubscriptionId).toBe(NEW_SUB_ID);
+    expect(row.tierCheckoutFenceAt).not.toBeNull();
   });
 });

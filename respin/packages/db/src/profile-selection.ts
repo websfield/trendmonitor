@@ -6,6 +6,11 @@ import {
   type CreatorProfile,
 } from "./brain-schema";
 import { memberships } from "./schema";
+import {
+  assertFreshWorkspaceAuthority,
+  assertProfileLifecycleTransactionAccess,
+  assertWorkspaceLifecycleTransactionAccess,
+} from "./membership-lifecycle";
 import { assertScoped, type WorkspaceScope } from "./with-workspace";
 import type { DbLike, TxLike } from "./db-like";
 
@@ -19,6 +24,7 @@ const profileProjection = {
   state: creatorProfiles.state,
   createdAt: creatorProfiles.createdAt,
   updatedAt: creatorProfiles.updatedAt,
+  lifecycleVersion: creatorProfiles.lifecycleVersion,
 };
 
 /**
@@ -33,28 +39,40 @@ export async function selectedProfileForMember(
   scope: WorkspaceScope
 ): Promise<CreatorProfile | null> {
   assertScoped(scope);
-  const [profile] = await db
-    .select(profileProjection)
-    .from(membershipProfileSelections)
-    .innerJoin(
-      creatorProfiles,
-      and(
-        eq(creatorProfiles.id, membershipProfileSelections.profileId),
-        eq(
-          creatorProfiles.workspaceId,
-          membershipProfileSelections.workspaceId
-        ),
-        eq(creatorProfiles.state, "active")
+  const read = async (tx: TxLike): Promise<CreatorProfile | null> => {
+    const authority = await assertWorkspaceLifecycleTransactionAccess(
+      tx,
+      scope.userId as string,
+      scope.workspaceId as string
+    );
+    assertFreshWorkspaceAuthority(authority, scope);
+    const [profile] = await tx
+      .select(profileProjection)
+      .from(membershipProfileSelections)
+      .innerJoin(
+        creatorProfiles,
+        and(
+          eq(creatorProfiles.id, membershipProfileSelections.profileId),
+          eq(
+            creatorProfiles.workspaceId,
+            membershipProfileSelections.workspaceId
+          ),
+          eq(creatorProfiles.state, "active")
+        )
       )
-    )
-    .where(
-      and(
-        eq(membershipProfileSelections.userId, scope.userId),
-        eq(membershipProfileSelections.workspaceId, scope.workspaceId)
+      .where(
+        and(
+          eq(membershipProfileSelections.userId, scope.userId),
+          eq(membershipProfileSelections.workspaceId, scope.workspaceId)
+        )
       )
-    )
-    .limit(1);
-  return profile ?? null;
+      .limit(1);
+    return profile ?? null;
+  };
+  const transaction = (db as DbLike).transaction;
+  return typeof transaction === "function"
+    ? (db as DbLike).transaction(read)
+    : read(db as TxLike);
 }
 
 /**
@@ -74,6 +92,15 @@ export async function selectActiveProfileInTx(
 ): Promise<CreatorProfile> {
   assertScoped(scope);
   if (!UUID_RE.test(profileId)) throw new ProfileAccessError();
+  const authority = await assertProfileLifecycleTransactionAccess(
+    tx,
+    scope.userId as string,
+    scope.workspaceId as string,
+    profileId
+  ).catch(() => {
+    throw new ProfileAccessError();
+  });
+  assertFreshWorkspaceAuthority(authority, scope);
 
   const [eligible] = await tx
     .select({ membershipId: memberships.id, ...profileProjection })
@@ -89,7 +116,8 @@ export async function selectActiveProfileInTx(
     .where(
       and(
         eq(memberships.userId, scope.userId),
-        eq(memberships.workspaceId, scope.workspaceId)
+        eq(memberships.workspaceId, scope.workspaceId),
+        eq(memberships.lifecycleState, "active")
       )
     )
     .limit(1)
@@ -123,6 +151,7 @@ export async function selectActiveProfileInTx(
     state: eligible.state,
     createdAt: eligible.createdAt,
     updatedAt: eligible.updatedAt,
+    lifecycleVersion: eligible.lifecycleVersion,
   };
 }
 

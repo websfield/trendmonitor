@@ -1,8 +1,9 @@
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { ESLint } from "eslint";
 import { SCAN_ROOTS, blankComments } from "./support/app-surface";
 import { PLANTED_PROBE_PATHS } from "./support/probe-artifacts";
@@ -13,6 +14,38 @@ const respinRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // One shared engine: per-test ESLint construction contended with the parallel
 // PGlite suites and flaked a timeout once (code-review finding 3).
 const eslint = new ESLint({ cwd: respinRoot });
+
+// THE ESLINT WARM-UP — a known flake carried in rather than discovered again.
+//
+// THE MEASUREMENT (2026-09-04 full-suite run, 149 files, TEST_DATABASE_URL
+// live): `rejects an app/ import from inside packages/` TIMED OUT AT 60s, and
+// the same case passed in 802ms run alone. That is the discriminator
+// vitest.config.ts writes down for contention — a file's FIRST test, in setup
+// rather than in an assertion, green in isolation — and this file's first
+// `lintText` is where ESLint's flat config and the TypeScript parser are
+// actually loaded. Slice 9a adds eight more cases to this file, which makes it
+// slower, so the flake is paid down here rather than left to be rediscovered.
+//
+// WHAT THIS IS NOT: a relaxed expectation. NOT ONE ASSERTION CHANGES. The
+// warm-up moves the one-time config load out of an `it` and into a hook with
+// its own generous budget, so each case's 60s timeout measures LINT WORK
+// instead of module initialisation. A builder who finds themself widening an
+// expectation to make this green has left the fix and entered the class
+// CLAUDE.md's 2026-07-30 lesson names.
+//
+// TWO PATHS, because the resolved config differs by file and each resolution
+// is what gets cached on the shared instance: one under packages/** (the
+// import-direction and cross-package rules) and one under app/** (the
+// sanctioned-surface allowlist). Both are throwaway sources; the results are
+// deliberately ignored.
+beforeAll(async () => {
+  await eslint.lintText("export const warm = 1;\n", {
+    filePath: resolve(respinRoot, "packages/fixture/src/warmup.ts"),
+  });
+  await eslint.lintText("export const warm = 1;\n", {
+    filePath: resolve(respinRoot, "app/fixture/warmup.ts"),
+  });
+}, 240_000);
 
 // `git grep`, ASYNC — never `execFileSync`. Measured 2026-08-27: run alone this
 // file costs 4.5s, but inside the full parallel suite a worker executing it
@@ -1150,6 +1183,239 @@ describe("slice 6 R1: @respin/modes joins the boundary DELIBERATELY", () => {
   });
 });
 
+describe("slice 8 R2: @respin/trends joins the boundary deliberately", () => {
+  const messagesAt = async (path: string, code: string) => {
+    const results = await eslint.lintText(code, { filePath: resolve(respinRoot, path) });
+    return results
+      .flatMap((result) => result.messages)
+      .filter((message) => message.ruleId === "no-restricted-imports")
+      .map((message) => message.message);
+  };
+  const imp = (specifier: string) => `import * as trends from "${specifier}"; export const x = trends;`;
+
+  it("the package exists, so this boundary fixture is non-vacuous", () => {
+    const packagePath = resolve(respinRoot, "packages/trends/package.json");
+    expect(existsSync(packagePath)).toBe(true);
+    expect(JSON.parse(readFileSync(packagePath, "utf8"))).toMatchObject({ name: "@respin/trends" });
+  });
+
+  it("denies app/lib broad and deep imports via the default catch-all", async () => {
+    for (const path of ["app/fixture/route.ts", "lib/fixture.ts"]) {
+      for (const specifier of ["@respin/trends", "@respin/trends/src/sources", "@respin/trends/app-server"]) {
+        const messages = await messagesAt(path, imp(specifier));
+        expect(messages.length, `${path} <- ${specifier}`).toBeGreaterThan(0);
+        expect(messages.join(" ")).toMatch(/denied by default/);
+      }
+    }
+  });
+
+  it("does not make trends a packages/** wall", async () => {
+    expect(await messagesAt("packages/credits/src/fixture.ts", imp("@respin/trends"))).toEqual([]);
+  });
+});
+
+describe("slice 8 dedicated worker package surface", () => {
+  const lintInWorker = async (code: string) => {
+    const results = await eslint.lintText(code, {
+      filePath: resolve(respinRoot, "worker/fixture.ts"),
+    });
+    return results.flatMap((result) => result.messages);
+  };
+
+  it("allows only the worker's trend root and named system DB composition surface", async () => {
+    const messages = await lintInWorker(
+      'import { validateAutopsyAnalysis } from "@respin/trends";\n' +
+        'import { AUTOPSY_ATTEMPT_CODE_CEILING, AUTOPSY_VENDOR_CALLS_PER_ATTEMPT, AUTOPSY_CLAIM_LEASE_MS, assertAutopsyDeadlineWithinLease, SYSTEM_AUTOPSY_DAILY_CODE_CEILING_MICRO_USD, assertAutopsyFrameworkCandidate, createSystemWorkerDb, closeSystemWorkerDb, createSystemAutopsyAttemptStore, recordSystemWorkerHealth, recoverStaleSystemAutopsyAttempts, systemAutopsyQueueCandidates, systemWorkerOperationalState, systemRefreshNiches, type DbLike } from "@respin/db";\n' +
+        'import { getActiveConfig, getActiveConfigRequiringStored, type ActiveConfig } from "@respin/config";\n' +
+        'import { createAnthropicProvider, costMicroUsd, priceFor, type LlmProvider } from "@respin/llm";\n' +
+        "export const x = { validateAutopsyAnalysis, AUTOPSY_ATTEMPT_CODE_CEILING, AUTOPSY_VENDOR_CALLS_PER_ATTEMPT, AUTOPSY_CLAIM_LEASE_MS, assertAutopsyDeadlineWithinLease, SYSTEM_AUTOPSY_DAILY_CODE_CEILING_MICRO_USD, assertAutopsyFrameworkCandidate, createSystemWorkerDb, closeSystemWorkerDb, createSystemAutopsyAttemptStore, recordSystemWorkerHealth, recoverStaleSystemAutopsyAttempts, systemAutopsyQueueCandidates, systemWorkerOperationalState, systemRefreshNiches, getActiveConfig, getActiveConfigRequiringStored, createAnthropicProvider, costMicroUsd, priceFor };\n" +
+        "export type Config = ActiveConfig;\n" +
+        "export type Provider = LlmProvider;\n" +
+        "export type X = DbLike;\n",
+    );
+    expect(messages.some((message) => message.ruleId === "no-restricted-imports")).toBe(false);
+  });
+
+  it("admits the deletion command adapter entrypoint and the executor composition names (10b-1 Task 4)", async () => {
+    const messages = await lintInWorker(
+      'import { createStripeExternalCommandPort } from "@respin/credits/deletion-server";\n' +
+        'import { advanceDeletionOperations, ERASURE_DISABLED, migrationInventory, type DeletionExecutorPorts, type DeletionJournalPort, type ErasureEnablementPort, type MigrationInventory, type DeletionScope } from "@respin/db";\n' +
+        "export const x = { createStripeExternalCommandPort, advanceDeletionOperations, ERASURE_DISABLED, migrationInventory };\n" +
+        "export type P = DeletionExecutorPorts | DeletionJournalPort | ErasureEnablementPort | MigrationInventory | DeletionScope;\n",
+    );
+    expect(messages.some((message) => message.ruleId === "no-restricted-imports")).toBe(false);
+  });
+
+  it("denies the app facade, the webhook dispatcher and the credits root from the worker; denies the deletion entrypoint from app/**", async () => {
+    for (const code of [
+      'import { getServerCredits } from "@respin/credits/app-server";\nexport const x = getServerCredits;\n',
+      'import { respinStripeWebhook } from "@respin/credits/webhook-server";\nexport const x = respinStripeWebhook;\n',
+      'import { getStripe } from "@respin/credits";\nexport const x = getStripe;\n',
+    ]) {
+      const messages = await lintInWorker(code);
+      expect(messages.some((message) => message.ruleId === "no-restricted-imports"), code).toBe(true);
+    }
+    const appResults = await eslint.lintText(
+      'import { createStripeExternalCommandPort } from "@respin/credits/deletion-server";\nexport const x = createStripeExternalCommandPort;\n',
+      { filePath: resolve(respinRoot, "app/fixture/route.ts") },
+    );
+    expect(appResults.flatMap((result) => result.messages).some((message) => message.ruleId === "no-restricted-imports")).toBe(true);
+  });
+
+  it("admits the R-124 S3 journal adapter and its composition names in the worker (10b-1 Task 5)", async () => {
+    const messages = await lintInWorker(
+      'import { createS3JournalClient, s3JournalWriter } from "@respin/db/deletion-journal-s3";\n' +
+        'import { assertJournalConfig, createDeletionJournalStore, type DeletionJournalConfig } from "@respin/db";\n' +
+        "export const x = { createS3JournalClient, s3JournalWriter, assertJournalConfig, createDeletionJournalStore };\n" +
+        "export type C = DeletionJournalConfig;\n",
+    );
+    expect(messages.some((message) => message.ruleId === "no-restricted-imports")).toBe(false);
+  });
+
+  it("denies the S3 journal adapter from app/** and lib/** — the AWS SDK never enters the app bundle (10b-1 Task 5)", async () => {
+    // The adapter is a NEW deep entrypoint into @respin/db, so the boundary rule
+    // requires it to be denied everywhere it was not deliberately admitted. A
+    // negation added to the worker list must not widen the app's door.
+    for (const filePath of ["app/fixture/route.ts", "lib/fixture.ts"]) {
+      const results = await eslint.lintText(
+        'import { s3JournalWriter } from "@respin/db/deletion-journal-s3";\nexport const x = s3JournalWriter;\n',
+        { filePath: resolve(respinRoot, filePath) },
+      );
+      expect(
+        results.flatMap((result) => result.messages).some((message) => message.ruleId === "no-restricted-imports"),
+        filePath,
+      ).toBe(true);
+    }
+  });
+
+  it("the cost forecast is STRUCTURALLY unable to touch lifecycle work (10b-1 Task 5)", async () => {
+    // `deletion-journal-cost.ts` claims in its own header that "nothing in this
+    // file imports the executor, and the executor imports nothing from here;
+    // the import-boundary test pins that". Round 1 found no such test existed —
+    // a comment promising an absence, which the repo's own 2026-07-30 lesson
+    // says must be asserted or deleted. This is the assertion.
+    const costSource = await readFile(
+      resolve(respinRoot, "packages/db/src/deletion-journal-cost.ts"),
+      "utf8",
+    );
+    // It has no imports at all, so it cannot reach a connection, a credential,
+    // a network call, or an operation — the property that lets R-124's alert
+    // thresholds be operational signals rather than a brake on a deletion.
+    expect(costSource).not.toMatch(/^\s*import\s/m);
+
+    for (const consumer of [
+      "packages/db/src/deletion-executor.ts",
+      "packages/db/src/deletion-lifecycle.ts",
+      "packages/db/src/deletion-journal.ts",
+      "packages/db/src/deletion-journal-restore.ts",
+      "worker/deletion-lifecycle.ts",
+    ]) {
+      const source = await readFile(resolve(respinRoot, consumer), "utf8");
+      expect(source, consumer).not.toMatch(/deletion-journal-cost/);
+      expect(source, consumer).not.toMatch(/forecastDeletionJournalCost|journalEnablementDecision/);
+    }
+  });
+
+  it("worker/main.ts forwards EVERY env-bearing option the worker declares (10b-1 Task 5)", async () => {
+    // Task 4 declared `erasureScopesEnv` and main.ts never passed it, so
+    // RESPIN_DELETION_ERASURE_SCOPES silently did nothing in production and no
+    // test could see it (the property is optional, so typecheck cannot either).
+    // Task 5 wired it; this is what stops it being un-wired again.
+    const main = await readFile(resolve(respinRoot, "worker/main.ts"), "utf8");
+    const envExample = await readFile(resolve(respinRoot, "env.example"), "utf8");
+
+    for (const option of ["erasureScopesEnv", "journalEnv"]) {
+      expect(main, option).toContain(option);
+    }
+    for (const envVar of [
+      "RESPIN_DELETION_ERASURE_SCOPES",
+      "RESPIN_DELETION_JOURNAL_BUCKET",
+      "RESPIN_DELETION_JOURNAL_REGION",
+      "RESPIN_DELETION_JOURNAL_ENVIRONMENT",
+      "RESPIN_DELETION_JOURNAL_ENDPOINT",
+    ]) {
+      expect(main, envVar).toContain(`env.${envVar}`);
+      // ...and documented, so an operator can discover it.
+      expect(envExample, envVar).toContain(`${envVar}=`);
+    }
+  });
+
+  it("admits the operator scripts' PURE projections and the verifier/purge principals (10b-1 Task 5)", async () => {
+    const results = await eslint.lintText(
+      'import { forecastDeletionJournalCost, journalEnablementDecision, loadJournalChain, journalPurgeCandidates } from "@respin/db";\n' +
+        'import { createS3JournalClient, s3JournalVerifier, s3JournalPurger } from "@respin/db/deletion-journal-s3";\n' +
+        "export const x = { forecastDeletionJournalCost, journalEnablementDecision, loadJournalChain, journalPurgeCandidates, createS3JournalClient, s3JournalVerifier, s3JournalPurger };\n",
+      { filePath: resolve(respinRoot, "scripts/fixture.ts") },
+    );
+    expect(
+      results.flatMap((r) => r.messages).filter((m) => m.ruleId === "no-restricted-imports"),
+    ).toEqual([]);
+  });
+
+  it("DENIES the journal WRITER to operator scripts — it is the credential that can append a version", async () => {
+    // Round-1 tenancy C4. A script holding the writer could append a forged
+    // `cancelled` version, which is exactly the input the restore verifier's
+    // cancellation-after-erasure check exists to refuse. The writer is the
+    // worker's alone.
+    const results = await eslint.lintText(
+      'import { s3JournalWriter } from "@respin/db/deletion-journal-s3";\nexport const x = s3JournalWriter;\n',
+      { filePath: resolve(respinRoot, "scripts/fixture.ts") },
+    );
+    expect(
+      results.flatMap((r) => r.messages).some((m) => m.ruleId === "no-restricted-imports"),
+    ).toBe(true);
+    // ...and the worker still holds it, or the fix would have broken production.
+    const worker = await lintInWorker(
+      'import { s3JournalWriter } from "@respin/db/deletion-journal-s3";\nexport const x = s3JournalWriter;\n',
+    );
+    expect(worker.some((m) => m.ruleId === "no-restricted-imports")).toBe(false);
+  });
+
+  it("denies operator scripts the write capabilities, raw DB construction and table objects", async () => {
+    for (const code of [
+      'import { writeCapabilities } from "@respin/db";\nexport const x = writeCapabilities;\n',
+      'import { createDb } from "@respin/db";\nexport const x = createDb;\n',
+      'import { withWorkspace } from "@respin/db";\nexport const x = withWorkspace;\n',
+      'import { schema } from "@respin/db";\nexport const x = schema;\n',
+      'import { createFakeS3 } from "@respin/db";\nexport const x = createFakeS3;\n',
+    ]) {
+      const results = await eslint.lintText(code, {
+        filePath: resolve(respinRoot, "scripts/fixture.ts"),
+      });
+      expect(
+        results.flatMap((r) => r.messages).some((m) => m.ruleId === "no-restricted-imports"),
+        code,
+      ).toBe(true);
+    }
+  });
+
+  it("denies every OTHER deep import into @respin/db from the worker — one door, not an open package", async () => {
+    // Admitting `deletion-journal-s3` must not admit the package's internals.
+    for (const specifier of [
+      "@respin/db/src/deletion-journal",
+      "@respin/db/deletion-journal",
+      "@respin/db/src/schema",
+      "@respin/db/testing",
+    ]) {
+      const messages = await lintInWorker(`import * as x from "${specifier}";\nexport const y = x;\n`);
+      expect(messages.some((message) => message.ruleId === "no-restricted-imports"), specifier).toBe(true);
+    }
+  });
+
+  it("still denies raw DB construction, tables, and package internals", async () => {
+    for (const code of [
+      'import { createDb } from "@respin/db";\nexport const x = createDb;\n',
+      'import { systemSpendDaily } from "@respin/db";\nexport const x = systemSpendDaily;\n',
+      'import { appendConfigVersion } from "@respin/config";\nexport const x = appendConfigVersion;\n',
+      'import { assembleVoicePrompt } from "@respin/llm";\nexport const x = assembleVoicePrompt;\n',
+      'import { validateAutopsyAnalysis } from "@respin/trends/src/autopsy";\nexport const x = validateAutopsyAnalysis;\n',
+    ]) {
+      const messages = await lintInWorker(code);
+      expect(messages.some((message) => message.ruleId === "no-restricted-imports")).toBe(true);
+    }
+  });
+});
+
 describe("AC-15 (the packages/** half): the specifier-shape hole, one directory over", () => {
   const lintAt = async (path: string, code: string) => {
     const results = await eslint.lintText(code, {
@@ -1443,5 +1709,276 @@ describe("the cage registries are unreachable from product code (tenancy gate BL
     } finally {
       for (const file of probes) rmSync(file, { force: true });
     }
+  });
+});
+
+describe("slice 9a R3: @respin/brain joins the boundary DELIBERATELY", () => {
+  // Phase-9 R3: the package "joins the import boundary deliberately
+  // (`eslint.config.mjs`'s negation catch-all + a deny fixture), like every
+  // package before it".
+  //
+  // FOR `@respin/brain` THE DELIBERATE DECISION IS THAT IT STAYS DENIED, and
+  // its reason is recorded beside the catch-all rather than only here: the
+  // comparison builder takes rows its own docblock calls "ALREADY
+  // profile-scoped by the caller", so the tenancy property of a comparison
+  // belongs to whatever fetched those rows through `withWorkspace`. Granting
+  // the root to app/** would put the fetch and the comparison on opposite
+  // sides of a package boundary and leave a screen responsible for scoping a
+  // cohort (REQ-A03, R-9).
+  //
+  // AND THE DENY BEING THE DEFAULT IS PRECISELY WHY THESE CASES EXIST. The
+  // catch-all refuses any `@respin/*` nobody negated, so a new package is
+  // caged whether or not anybody decided to cage it — which is a guard that
+  // passes because it found no candidates, the fail-open shape CLAUDE.md's
+  // 2026-08-21 lesson names. A fixture is what turns "denied because nobody
+  // looked" into "denied, and somebody checked which rule did it".
+  const messagesAt = async (path: string, code: string) => {
+    const results = await eslint.lintText(code, {
+      filePath: resolve(respinRoot, path),
+    });
+    return results
+      .flatMap((result) => result.messages)
+      .filter((message) => message.ruleId === "no-restricted-imports")
+      .map((message) => message.message);
+  };
+  const denied = async (path: string, code: string) =>
+    (await messagesAt(path, code)).length > 0;
+  const imp = (specifier: string) =>
+    'import * as brain from "' + specifier + '";\nexport const x = brain;\n';
+
+  it("the package this fixture is about actually EXISTS", () => {
+    // A deny fixture for a package nobody wrote is a fixture about a string —
+    // the `@respin/modes` and `@respin/trends` precedent, kept.
+    const packagePath = resolve(respinRoot, "packages/brain/package.json");
+    expect(
+      existsSync(packagePath),
+      "packages/brain is missing — this whole block would be vacuous"
+    ).toBe(true);
+    expect(JSON.parse(readFileSync(packagePath, "utf8"))).toMatchObject({
+      name: "@respin/brain",
+    });
+  });
+
+  it("is denied from app/** and lib/**", async () => {
+    expect(await denied("app/fixture/route.ts", imp("@respin/brain"))).toBe(true);
+    expect(await denied("lib/fixture.ts", imp("@respin/brain"))).toBe(true);
+  });
+
+  it("NON-VACUITY: it is the CATCH-ALL that denies it, not some older rule", async () => {
+    // Without this the block stays green if a differently-scoped rule happens
+    // to fire, and removing the catch-all would then leave the package
+    // un-caged with every case above still passing. The message discriminates.
+    const messages = await messagesAt("app/fixture/route.ts", imp("@respin/brain"));
+    expect(messages.join(" ")).toMatch(/denied by default/);
+  });
+
+  it("denies its DEEP entrypoints, including ones nobody has proposed", async () => {
+    for (const specifier of [
+      "@respin/brain/app-server",
+      "@respin/brain/src/comparison",
+      "@respin/brain/src/vocabulary",
+      "@respin/brain/a/b",
+    ]) {
+      expect(await denied("app/fixture/route.ts", imp(specifier)), specifier).toBe(true);
+    }
+  });
+
+  it("denies a PATH spelling of it from app/**", async () => {
+    // Anchoring a rule to a package NAME is bypassable by spelling the same
+    // module as a path. Proved for the new package rather than assumed to be
+    // inherited from the `patterns` group.
+    for (const specifier of [
+      "@/packages/brain/src/comparison",
+      "../../packages/brain/src/comparison",
+    ]) {
+      expect(await denied("app/fixture/route.ts", imp(specifier)), specifier).toBe(true);
+    }
+  });
+
+  it("a TYPE-ONLY import is denied too — the grant would be the same grant", async () => {
+    // `billing-errors.ts`'s recorded precedent: widening a package boundary so
+    // a screen or a test can name a class is "loosening a tenancy boundary for
+    // a convenience". A screen that needs the comparison's shape names it
+    // through the facade's own result type, as `app/(product)/studio/
+    // projection.ts` does for `@respin/modes`.
+    const code =
+      'import type { LeverComparison } from "@respin/brain";\nexport type X = LeverComparison;\n';
+    expect(await denied("app/fixture/route.ts", code)).toBe(true);
+  });
+
+  it("packages/** MAY reach its root — that is where 9b's caller lives", async () => {
+    // The direction that makes this a boundary rather than a wall. If this
+    // flips, nothing can compose the comparison at all and the package is
+    // unreachable from anywhere.
+    expect(await denied("packages/credits/src/fixture.ts", imp("@respin/brain"))).toBe(false);
+    expect(await denied("packages/db/src/fixture.ts", imp("@respin/brain"))).toBe(false);
+  });
+
+  it("...but never into its src/, by name or by relative climb", async () => {
+    for (const specifier of ["@respin/brain/src/comparison", "../../brain/src/comparison"]) {
+      expect(
+        await denied("packages/credits/src/fixture.ts", imp(specifier)),
+        specifier
+      ).toBe(true);
+    }
+  });
+});
+
+describe("slice 9a: every name on the results surface crossed after a measured denial", () => {
+  // A WIDENING IS THE THING THIS CAGE EXISTS TO MAKE DELIBERATE, so it gets
+  // both halves as fixtures: what crossed, and what did not. The first half
+  // alone is the shape that reads as green while the write surface quietly
+  // opened.
+  //
+  // THE COUNT IS RETIRED, AND ITS RETIREMENT IS THE POINT. This block was
+  // titled "widened by EIGHT names, and no more" through two review rounds
+  // while the surface carried ELEVEN, and stayed green the whole time —
+  // because a title is not an assertion, and the three later names simply had
+  // no fixture. A number written into a name has to be re-verified by whoever
+  // adds the next entry, which is the one moment nobody re-reads a title.
+  //
+  // THE DURABLE PROPERTY, which cannot go stale, is the one
+  // `eslint.config.mjs` now states on its own side: every name crossed only
+  // after an ACTUAL `eslint app lib` denial named it, never for symmetry with
+  // a sibling. What this block adds is that the ALLOW half covers the WHOLE
+  // population rather than the part somebody remembered — a fixture set
+  // narrower than the list it describes is the shape this repo has now hit
+  // five times, so the case below DERIVES the population instead of
+  // restating it.
+  const lintInApp = async (code: string) => {
+    const results = await eslint.lintText(code, {
+      filePath: resolve(respinRoot, "app/(product)/results/fixture.ts"),
+    });
+    return results
+      .flatMap((result) => result.messages)
+      .filter((message) => message.ruleId === "no-restricted-imports");
+  };
+  const named = (names: readonly string[]) =>
+    "import { " + names.join(", ") + ' } from "@respin/db";\n' +
+    "export const x = { " + names.join(", ") + " };\n";
+
+  /**
+   * THE RESULTS SURFACE, PINNED BY NAME AND NOT BY A COUNT — the
+   * `profile-cage.test.ts` idiom: if a twelfth name arrives this list fails
+   * and somebody has to look at it, which is the entire point.
+   *
+   *   THE SIX TYPED REFUSALS — inert values `billing-errors.ts` maps to copy.
+   *     Without them a refusal renders as "Something went wrong", which is
+   *     open finding 8c-R15's exact shape. `tests/billing-ui.test.tsx` holds
+   *     the other half (that each HAS copy); this holds that app/** may reach
+   *     them. `ComparisonInputError` is `@respin/brain`'s own refusal,
+   *     re-exported through `@respin/db` — which is what lets a screen hold
+   *     the class for `instanceof` WITHOUT `@respin/brain` joining the
+   *     sanctioned surface.
+   *   THE FOUR CLOSED VOCABULARIES — the log form renders each as controls.
+   *     The alternative is four app-side literal copies of four closed sets.
+   *   THE NOTE CEILING — the form states the limit instead of typing 2000
+   *     into the screen. `results.note` has no database ceiling (its only
+   *     CHECK is non-blankness), so this constant IS the limit, and a copy of
+   *     it on the screen would be a second answer to a question with one.
+   */
+  const RESULTS_SURFACE = [
+    "TreatmentKeyError",
+    "ResultInputError",
+    "ResultTargetError",
+    "ResultDuplicateError",
+    "ComparisonStratumError",
+    "ComparisonInputError",
+    "RESULT_NOTE_MAX",
+    "RESULT_EVIDENCE_STATES",
+    "RESULT_AUDIENCE_CLASSES",
+    "RESULT_CONFOUNDER_CODES",
+    "RESULT_LEVERS",
+  ] as const;
+
+  it("the pinned list IS the results surface on the allowlist — no name without a fixture", () => {
+    // DERIVED FROM THE CONFIG, so the ALLOW half cannot be narrower than the
+    // population it claims to cover. A hand-list checked by eye is what let
+    // three granted names sit with no fixture through two review rounds.
+    //
+    // A REGEXP LITERAL, never assembled from a string: one lost backslash and
+    // it matches nothing, then reports agreement with an empty set (CLAUDE.md
+    // 2026-08-21). It reads the BARE QUOTED ENTRIES of the allowlist — one per
+    // line, which is that file's format — so a name mentioned in a comment is
+    // never mistaken for a granted one.
+    const ALLOWLIST_ENTRY = /^\s*"([A-Za-z_][A-Za-z0-9_]*)",$/gm;
+    const config = readFileSync(resolve(respinRoot, "eslint.config.mjs"), "utf8");
+    const entries = [...config.matchAll(ALLOWLIST_ENTRY)].map((match) => match[1]);
+    expect(
+      entries.length,
+      "the scan read no allowlist entries — it would report agreement having scanned nothing"
+    ).toBeGreaterThan(50);
+
+    // The results surface BY SHAPE rather than by slice: every name this
+    // slice added begins one of these four ways, and nothing older does.
+    const onAllowlist = entries.filter((name) =>
+      /^(RESULT_|Result|Comparison|TreatmentKey)/.test(name)
+    );
+    expect(
+      [...onAllowlist].sort(),
+      "the results surface changed — give the new name an ALLOW fixture by adding it here, or take it back off the allowlist"
+    ).toEqual([...RESULTS_SURFACE].sort());
+  });
+
+  it("ALLOWS every name on that surface, together and one at a time", async () => {
+    // TOGETHER, because that is how `billing-errors.ts` and `page.tsx` really
+    // import them.
+    //
+    // ONE AT A TIME FOR THE FAILURE MESSAGE, NOT FOR COVERAGE, and the first
+    // draft of this comment claimed the opposite — that a lone denial could
+    // hide inside a passing multi-name import. It cannot:
+    // `no-restricted-imports` reports one message per denied name, so the
+    // combined case above already fails when any single name is refused
+    // (measured — taking `RESULT_NOTE_MAX` off the allowlist reddens both
+    // cases). What the loop adds is WHICH name, which is the difference
+    // between a red test somebody can act on and one they have to bisect.
+    expect(await lintInApp(named([...RESULTS_SURFACE]))).toEqual([]);
+    for (const name of RESULTS_SURFACE) {
+      expect(await lintInApp(named([name])), name + " was denied").toEqual([]);
+    }
+  });
+
+  it("STILL DENIES the results write surface and the treatment-key builder", async () => {
+    // Every name below is REALLY EXPORTED by @respin/db's root, so each case
+    // is a rule refusing a reachable import rather than a rule refusing a
+    // typo. `treatmentKeyFor` is the sharpest: contract C4 makes the key
+    // server-computed and never creator-typed, and a screen that could
+    // compute one could fabricate one.
+    for (const name of [
+      "results",
+      "treatmentKeyFor",
+      "declaredMetricOf",
+      "resultEvidenceState",
+      "resultAudienceClass",
+    ]) {
+      const messages = await lintInApp(named([name]));
+      expect(messages.length, name + " crossed the boundary").toBeGreaterThan(0);
+    }
+  });
+
+  it("STILL DENIES the row TYPES — the screen reaches those by indexed access", async () => {
+    // `allowImportNames` makes no type/value distinction, which this list
+    // relies on: `app/(product)/results/projection.ts` names the row shape
+    // through `Awaited<ReturnType<typeof respinDb.listResults>>[number]`, so
+    // no result type needs to cross and none does.
+    for (const name of ["ResultRow", "NewResult", "ResultLever", "ResultConfounderCode"]) {
+      const messages = await lintInApp(
+        "import type { " + name + ' } from "@respin/db";\n' +
+          "export type X = " + name + ";\n"
+      );
+      expect(messages.length, name + " crossed the boundary").toBeGreaterThan(0);
+    }
+  });
+
+  it("NON-VACUITY: they are allowed because they are LISTED, not because the rule stopped firing", async () => {
+    // The failure this case exists for: a rule accidentally scoped away denies
+    // nothing, and every ALLOW fixture above goes green for the wrong reason.
+    // So an unlisted @respin/db export must still be refused from the very
+    // same file path.
+    const messages = await lintInApp(named(["createDb"]));
+    expect(
+      messages.length,
+      "the sanctioned-surface rule is not firing here at all — every ALLOW case above is vacuous"
+    ).toBeGreaterThan(0);
   });
 });

@@ -65,6 +65,9 @@ export const HARD_RULE_IDS = [
   "idea_is_a_topic",
   "framework_not_offered",
   "empty_weakest_point",
+  // Slice 8's Spin-only pre-display release gate. This stays after the
+  // established output rules so stored refusal ordering remains stable.
+  "similarity",
 ] as const;
 
 export type HardRuleId = (typeof HARD_RULE_IDS)[number];
@@ -148,6 +151,8 @@ const REMEDIES: Record<HardRuleId, string> = {
     "This names a framework you were not given. Use one from the list you were offered, or say in the weakest point that none of them fits.",
   empty_weakest_point:
     "Every output names its weakest point, and this one names nothing. Say what would have to be true for this to work, and what you do not know yet.",
+  similarity:
+    "This stays too close to the reference. Change the subject, rewrite the hook in your own words, and alter at least one beat or turn.",
 };
 
 function finding(

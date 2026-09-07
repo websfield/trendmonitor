@@ -208,6 +208,64 @@ describe("ledger ops (PGlite)", () => {
     ).rejects.toThrow(RefundSourceNeverExpiresError);
   });
 
+  it("KNOWN LIMITATION (owner: M6's admin refund surface) — the over-refund budget is per SPELLING, not per debit: two refunds under two references BOTH pass, and the ledger mints credit out of nothing", async () => {
+    // Slice 8c round 1, billing CHANGE 1 / consolidated C4. `RefundParams.ref`
+    // used to claim the guard "counts refund rows under EITHER reference
+    // against the original debit — a caller cannot open a second refund budget
+    // for one debit by naming it differently". Naming it differently is exactly
+    // what does. `ref` is OPTIONAL and its ABSENT branch is the hole (CLAUDE.md
+    // 2026-08-26: a parameter that reads like a guard is not one until a test
+    // drives its false branch), so this case drives BOTH branches against ONE
+    // debit.
+    //
+    // IT ASSERTS TODAY'S BEHAVIOUR ON PURPOSE. The consolidating review
+    // arbitrated this to CHANGE rather than BLOCK on a caller census it ran
+    // itself — `refundCredits` has exactly ONE production caller
+    // (`settleParkedAutopsies`), always passing the same `ref`, and
+    // `credit_ledger_autopsy_refund_uq` refuses a repeat of that spelling — and
+    // DEFERRED the structural fix (a per-debit column summed over the debit id)
+    // to M6, whose admin refund surface is `refundCredits`' second reader and
+    // the trigger. WHEN M6 LANDS THAT COLUMN, THIS TEST IS WHAT TURNS GREEN:
+    // the second refund must then be refused, and the two `expect`s marked
+    // below are the ones to invert.
+    const db = await createTestDb();
+    const ws = await mkWorkspace(db);
+    await tx(db, (t) =>
+      grantCredits(t, {
+        workspaceId: ws, amount: 100, expiresAt: future(48 * HOUR),
+        refType: "invoice", refId: "in_1", configVersion: 1,
+      })
+    );
+    const debit = await tx(db, (t) =>
+      debitCredits(t, { workspaceId: ws, cost: 4, refType: "autopsy_claim", refId: "claim-1", at: new Date(), configVersion: 1 })
+    );
+    expect((await deriveBalance(db, ws)).balance).toBe(96);
+
+    // Refund #1 — the settlement's spelling.
+    await tx(db, (t) =>
+      refundCredits(t, {
+        workspaceId: ws, amount: 4, originalDebitId: debit.id,
+        ref: { refType: "autopsy_refund", refId: "claim-1" },
+      })
+    );
+    expect((await deriveBalance(db, ws)).balance).toBe(100);
+
+    // Refund #2 — the M6 admin surface's DEFAULT shape, `ref` absent. The
+    // guard cannot see refund #1's row, so a SECOND full budget opens.
+    const second = await tx(db, (t) =>
+      refundCredits(t, { workspaceId: ws, amount: 4, originalDebitId: debit.id })
+    );
+    expect(second.refType).toBe("debit"); // <- M6: this call must REJECT instead
+    expect(second.refId).toBe(debit.id);
+
+    // 8 credits returned against a 4-credit debit — the mint, measured.
+    const refunds = (await db.select().from(schema.creditLedger)).filter((r) => r.kind === "refund");
+    expect(refunds).toHaveLength(2); // <- M6: this becomes 1
+    expect(refunds.reduce((s, r) => s + r.delta, 0)).toBe(8);
+    expect(-debit.delta).toBe(4);
+    expect((await deriveBalance(db, ws)).balance).toBe(104);
+  });
+
   it("pause ops: start/end write the period + mirror; end validates the interval; double-start refused", async () => {
     const db = await createTestDb();
     const ws = await mkWorkspace(db);

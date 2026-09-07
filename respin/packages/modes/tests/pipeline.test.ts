@@ -30,6 +30,7 @@ import {
   SIXTEEN_WORD_HOOK,
   asReply,
 } from "./support/fixtures";
+import { SCRIPT_OUTPUT, SPIN_MECHANISM } from "./support/mode-fixtures";
 
 const CONTEXT: GenerationContext = {
   universalLaws: ["open on a cost the viewer already feels"],
@@ -105,6 +106,52 @@ function stubGenerate(replies: string[]): GenerateFn & { calls: number } {
 }
 
 const CLEAN = asReply(CLEAN_HOOKS);
+
+const SPIN_REFERENCE = {
+  subjectTerms: ["kitchen renovation", "cabinet paint", "weekend makeover"],
+  hook: "I painted my kitchen cabinets in one weekend and regret every shortcut",
+  structure: { beatCount: 3, turnBeat: 1 },
+} as const;
+
+/**
+ * The gated mode's context: the same creator, plus the reference's MECHANISM
+ * (R-97). `SPIN_REFERENCE` above is the GATE's object and never enters this
+ * one; `spin-reference.test.ts` proves the prompt never sees it.
+ */
+const SPIN_CONTEXT: GenerationContext = {
+  ...CONTEXT,
+  reference: { mechanism: SPIN_MECHANISM },
+};
+
+const CLEAN_SPIN = asReply({
+  ...SCRIPT_OUTPUT,
+  beats: [
+    ...SCRIPT_OUTPUT.beats,
+    { atSeconds: 20, vo: "keep the one take that proves the point", isTurn: false },
+  ],
+});
+
+const NEAR_COPY_SPIN = asReply({
+  ...SCRIPT_OUTPUT,
+  hooks: [
+    { text: SPIN_REFERENCE.hook, mechanic: "cold open" },
+    ...SCRIPT_OUTPUT.hooks.slice(1),
+  ],
+  beats: [
+    ...SCRIPT_OUTPUT.beats,
+    { atSeconds: 20, vo: "keep the one take that proves the point", isTurn: false },
+  ],
+});
+
+/** The reference hook verbatim in the CAPTION only; hooks, subject and structure all differ. */
+const CAPTION_COPY_SPIN = asReply({
+  ...SCRIPT_OUTPUT,
+  caption: { ...SCRIPT_OUTPUT.caption, text: SPIN_REFERENCE.hook },
+  beats: [
+    ...SCRIPT_OUTPUT.beats,
+    { atSeconds: 20, vo: "keep the one take that proves the point", isTurn: false },
+  ],
+});
 
 describe("the fixtures are what they claim to be", () => {
   // NON-VACUITY FIRST. A pipeline test that plants a "violation" the scanners
@@ -193,6 +240,142 @@ describe("the one-rewrite bound (R6, mutation M2)", () => {
     const generate = stubGenerate([dirty, dirty]);
     await runGeneration({ mode: "hooks", context: CONTEXT, generate });
     expect(generate.calls).toBe(2);
+  });
+});
+
+describe("the Spin pre-display similarity gate (REQ-E04 / REQ-I02)", () => {
+  it("requires its trusted reference before making a vendor call", async () => {
+    const generate = stubGenerate([CLEAN_SPIN]);
+    await expect(
+      runGeneration({ mode: "analyseAndSpin", context: SPIN_CONTEXT, generate }),
+    ).rejects.toThrow(/trusted structured reference/i);
+    expect(generate.calls).toBe(0);
+  });
+
+  it("refuses a MALFORMED reference at entry, before the vendor is called", async () => {
+    // THE 8c-G6 FIX, WITH THE WITNESS IT SHIPPED WITHOUT. Both the compliance
+    // and the consolidating reviewer planted the deletion of the entry-time
+    // `assertTrustedReference` in `pipeline.ts` and watched the ENTIRE suite
+    // stay green — 3,777 tests across every partition. CLAUDE.md 2026-08-29,
+    // verbatim: a guard is not a guard until a test drives its false branch.
+    //
+    // AND IT IS A MONEY CLAIM, WHICH IS WHY IT IS THIS FILE'S PROBLEM.
+    // `billing-errors.ts`'s `reference_unusable` copy tells the creator
+    // "Nothing was spent and no model was called", and the only thing making
+    // that sentence true is this ordering. `generate.calls` is the assertion
+    // that proves it: the stub THROWS if called, so a reference validated one
+    // line later than it should be fails loudly rather than silently costing
+    // somebody two vendor calls.
+    const generate: GenerateFn = () => {
+      throw new Error("THE VENDOR WAS CALLED before the reference was checked");
+    };
+    const malformed = [
+      ["hook over the producer's 800-char bound", { hook: "x".repeat(801) }],
+      ["a hook with no text at all", { hook: "   " }],
+      ["more subject terms than the producer may emit", {
+        subjectTerms: Array.from({ length: 21 }, (_, i) => `term number ${i}`),
+      }],
+      ["a beat count past the producer's ceiling", {
+        structure: { beatCount: 51, turnBeat: null },
+      }],
+    ] as const;
+
+    for (const [what, override] of malformed) {
+      await expect(
+        runGeneration({
+          mode: "analyseAndSpin",
+          context: SPIN_CONTEXT,
+          generate,
+          spinSimilarity: {
+            reference: { ...SPIN_REFERENCE, ...override },
+            configuredStrictness: 0,
+          },
+        }),
+        what
+      ).rejects.toThrow(/trusted structured reference/i);
+    }
+  });
+
+  it("NON-VACUITY: the same stub is reached for a WELL-FORMED reference", async () => {
+    // Without this, the case above passes against a `runGeneration` that never
+    // calls the vendor at all, which would make `generate.calls === 0` a fact
+    // about the harness rather than about the ordering.
+    const generate: GenerateFn = () => {
+      throw new Error("THE VENDOR WAS CALLED before the reference was checked");
+    };
+    await expect(
+      runGeneration({
+        mode: "analyseAndSpin",
+        context: SPIN_CONTEXT,
+        generate,
+        spinSimilarity: { reference: SPIN_REFERENCE, configuredStrictness: 0 },
+      })
+    ).rejects.toThrow(/THE VENDOR WAS CALLED/);
+  });
+
+  it("runs after parsing and the existing deterministic kill test, but before a usable result", async () => {
+    const generate = stubGenerate([NEAR_COPY_SPIN, CLEAN_SPIN]);
+    const run = await runGeneration({
+      mode: "analyseAndSpin",
+      context: SPIN_CONTEXT,
+      generate,
+      spinSimilarity: { reference: SPIN_REFERENCE, configuredStrictness: 0 },
+    });
+    expect(generate.calls).toBe(2);
+    expect(run.status).toBe("usable");
+    if (run.status !== "usable") return;
+    expect(run.killTest.outcome).toBe("passed_after_rewrite");
+    expect(run.killTest.finalAttempt.hardRules).toEqual([]);
+  });
+
+  it("permits one rewrite only, then refuses without an output", async () => {
+    const generate = stubGenerate([NEAR_COPY_SPIN, NEAR_COPY_SPIN]);
+    const run = await runGeneration({
+      mode: "analyseAndSpin",
+      context: SPIN_CONTEXT,
+      generate,
+      spinSimilarity: { reference: SPIN_REFERENCE, configuredStrictness: 0 },
+    });
+    expect(generate.calls).toBe(2);
+    expect(run.status).toBe("refused");
+    expect("output" in run).toBe(false);
+    if (run.status !== "refused") return;
+    expect(run.refusal.why.join(" ")).toContain("similarity");
+  });
+
+  it("names the unit that carried the copy — the caption here — and leaks no candidate text into the finding", async () => {
+    // Compliance gate round 2 (2026-09-03): `hookMatchField` had no pipeline
+    // witness — reverting the field to an unconditional "/hooks" left every
+    // test green. This one plants the reference hook in the CAPTION only, so
+    // the finding's `field` must say `/caption/text` and nothing else.
+    const generate = stubGenerate([CAPTION_COPY_SPIN, CAPTION_COPY_SPIN]);
+    const run = await runGeneration({
+      mode: "analyseAndSpin",
+      context: SPIN_CONTEXT,
+      generate,
+      spinSimilarity: { reference: SPIN_REFERENCE, configuredStrictness: 0 },
+    });
+    expect(run.status).toBe("refused");
+    if (run.status !== "refused") return;
+    const findings = run.killTest.finalAttempt.hardRules;
+    // ONE finding, the hook property alone: the fixture changes subject and
+    // structure, so the witness is the field naming, not a coincidental hit.
+    expect(findings).toHaveLength(1);
+    expect(findings[0].rule).toBe("similarity");
+    expect(findings[0].field).toBe("/caption/text");
+    // The excerpt is a static string: no token of the copied caption crosses
+    // into the stored finding or the refusal the creator reads.
+    expect(findings[0].excerpt).toBe("spin similarity gate: hook wording did not change");
+    for (const token of SPIN_REFERENCE.hook.split(/\s+/)) {
+      expect(findings[0].excerpt).not.toMatch(new RegExp(`\\b${token}\\b`, "i"));
+    }
+    // ...and the refusal line names the field ONCE (the `(at …)` suffix that
+    // repeated it is gone).
+    const line = run.refusal.why.find((why) => why.startsWith("similarity at "));
+    expect(line).toBe(
+      "similarity at /caption/text: spin similarity gate: hook wording did not change — Change the subject, rewrite the hook in your own words, and alter at least one beat or turn.",
+    );
+    expect(line).not.toContain("(at ");
   });
 });
 

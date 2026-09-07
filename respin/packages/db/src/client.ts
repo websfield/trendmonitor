@@ -7,7 +7,10 @@ import * as schema from "./schema";
  * (testability; the caller decides where the connection string comes from).
  * Throws a named, actionable error at CALL time when the string is absent.
  */
-export function createDb(connectionString: string | undefined) {
+function createDbWithPoolOptions(
+  connectionString: string | undefined,
+  options: { max: number; applicationName?: string; label: string },
+) {
   if (!connectionString) {
     throw new Error(
       "DATABASE_URL is not set. createDb requires a Postgres connection string — see respin/env.example for where to get one."
@@ -15,6 +18,7 @@ export function createDb(connectionString: string | undefined) {
   }
   const pool = new pg.Pool({
     connectionString,
+    ...(options.applicationName ? { application_name: options.applicationName } : {}),
     // EXPLICIT, because the run slot made the arithmetic load-bearing. `pg`
     // defaults `max` to 10 and `connectionTimeoutMillis` to 0 (queue forever).
     // With `DEFAULT_RUN_SLOT_POOL_MAX` slot connections held for the length of
@@ -22,11 +26,43 @@ export function createDb(connectionString: string | undefined) {
     // run's own `model_usage` + debit, and the Stripe webhook's five config
     // reads inside ONE transaction is a queue that can outlast Stripe's
     // delivery timeout and earn a redelivery. See the footprint note below.
-    max: DEFAULT_QUERY_POOL_MAX,
+    max: options.max,
     connectionTimeoutMillis: QUERY_POOL_CONNECT_TIMEOUT_MS,
   });
-  attachPoolErrorGuard(pool, "query");
+  attachPoolErrorGuard(pool, options.label);
   return drizzle(pool, { schema });
+}
+
+export function createDb(connectionString: string | undefined) {
+  return createDbWithPoolOptions(connectionString, {
+    max: DEFAULT_QUERY_POOL_MAX,
+    label: "query",
+  });
+}
+
+export const SYSTEM_WORKER_QUERY_POOL_CODE_CEILING = 2;
+
+/**
+ * Dedicated Slice 8 worker query pool. This is separate from pg-boss's own
+ * bounded pool and its LISTEN session; the deployment footprint is therefore
+ * `query max + pg-boss max + 1`, never the app process's 26-connection shape.
+ */
+export function createSystemWorkerDb(
+  connectionString: string | undefined,
+  configuredMax = 1,
+) {
+  if (!Number.isSafeInteger(configuredMax) || configuredMax <= 0) {
+    throw new Error("worker query pool max must be a positive safe integer");
+  }
+  return createDbWithPoolOptions(connectionString, {
+    max: Math.min(configuredMax, SYSTEM_WORKER_QUERY_POOL_CODE_CEILING),
+    applicationName: "respin-system-worker-query",
+    label: "system-worker-query",
+  });
+}
+
+export async function closeSystemWorkerDb(db: Db): Promise<void> {
+  await db.$client.end();
 }
 
 /**

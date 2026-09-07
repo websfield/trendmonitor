@@ -49,6 +49,7 @@ export const BRAIN_DOC_REASON_CODES = [
   "onboarding_inference",
   "creator_edit",
   "correction",
+  "brain_promotion",
 ] as const;
 
 export type BrainDocReasonCode = (typeof BRAIN_DOC_REASON_CODES)[number];
@@ -106,6 +107,7 @@ const REASON_SENTENCE_PATTERNS: Record<BrainDocReasonCode, RegExp> = {
     /^Version \d+: inferred from \d+ of your onboarding inputs?\.$/,
   creator_edit: /^Version \d+: you edited this document\.$/,
   correction: /^Version \d+: corrects an earlier version\.$/,
+  brain_promotion: /^Version \d+: adds a creator-approved performance record from past observations\.$/,
 };
 
 /**
@@ -159,5 +161,7 @@ export function renderBrainReason(
       return `Version ${facts.version}: you edited this document.`;
     case "correction":
       return `Version ${facts.version}: corrects an earlier version.`;
+    case "brain_promotion":
+      return `Version ${facts.version}: adds a creator-approved performance record from past observations.`;
   }
 }

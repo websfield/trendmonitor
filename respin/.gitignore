@@ -11,6 +11,14 @@ next-env.d.ts
 
 .vercel/
 
+# ---- Tool scratch directory ----
+# `tsx` and node's compile cache write here (`node-compile-cache/`,
+# `tsx-*/`) whenever a script is run from `respin/`. It was untracked AND
+# un-ignored, so `git status` listed `?? respin/.tmp/` beside the real source
+# files of an entirely-untracked slice — one `git add -A` from being committed
+# (code review round 1, C14; verified with `git check-ignore --no-index`).
+.tmp/
+
 # ---- Test PROBE ARTIFACTS (planted violations — never committable) ----
 # A non-vacuity test proves its source scan is not silently broken by WRITING a
 # real violation into the tree it is about to scan and asserting the scan finds
@@ -20,11 +28,28 @@ next-env.d.ts
 # interrupted run, untracked and committable by `git add -A`.
 #
 # The list is tests/support/probe-artifacts.ts (PROBE_GITIGNORE_PATTERNS pins
-# these three lines; tests/probe-artifacts.test.ts asserts the INSTALLED git
+# these lines; tests/probe-artifacts.test.ts asserts the INSTALLED git
 # really ignores each planted path). Ignoring them also hides them from
 # `git grep --untracked`, so the scans no longer see a probe planted by a
 # concurrently-running test file — and the tests that plant one name it back
 # through `scanFor`'s `includeIgnored`.
+# THE CONVENTION IS THE `__` PREFIX, not the `_probe` suffix (widened in the
+# slice-8c fix round, C14). The three original patterns covered probes a SUITE
+# plants and nothing else, so when a reviewer wrote `__rev_mut1.ts` (a mutated
+# copy of the money module) into `packages/credits/src/` and
+# `__rev_probe.test.ts` into its `tests/`, both were untracked, un-ignored and
+# committable while they existed, and `isolation.test.ts` was red for reasons
+# no one could see in the tree. Any file whose NAME starts with `__` is scratch
+# — a planted probe, a mutant, a reviewer's aliased copy — and is never product
+# code; nothing in this repo starts a real filename that way.
 __scan_probe__/
 __stripe_scan_probe__/
-__*_probe.ts
+__*.ts
+__*.tsx
+
+# ---- Playwright e2e journey evidence (respin-engineer, 2026-09-05) ----
+# Screenshots/console logs are per-run evidence, not source; test-results/ and
+# playwright-report/ are the runner's own scratch output.
+e2e/journeys/artifacts/
+test-results/
+playwright-report/

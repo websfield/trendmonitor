@@ -16,11 +16,48 @@ For non-trivial work, maintain a short execution plan before editing. Work in sm
 
 Run the checks attached to every touched critical path in `CLAUDE.md`, plus the narrowest relevant tests. A green unrelated command is not evidence that the changed path works. Never claim a check passed unless you ran it and observed the result.
 
-Keep long-running orchestration bounded and visible. Delegate only when the user or an applicable workflow explicitly asks for sub-agents. Dispatch sub-agents with only the task contract they need (`fork_turns: "none"` by default); do not inherit the full conversation merely for convenience. A complete pinned contract replaces broad session-history inheritance and repeated full-plan reads. Wait for at most 50 seconds at a time, and give the user a concise progress update at least once per minute while work is active. A status request is a request for an update, not permission to abandon or restart sound worker state.
+Keep long-running orchestration bounded and visible. Delegate only when the user, an applicable workflow, or the Spark routing policy below explicitly calls for sub-agents. Dispatch sub-agents with only the task contract they need (`fork_turns: "none"` by default); do not inherit the full conversation merely for convenience. A complete pinned contract replaces broad session-history inheritance and repeated full-plan reads. Wait for at most 50 seconds at a time, and give the user a concise progress update at least once per minute while work is active. A status request is a request for an update, not permission to abandon or restart sound worker state.
 
 On Windows, before accepting a browser skill's `NEEDS_SETUP` result, resolve both the extensionless binary and `browse.exe` under the project and user skill roots. An existing `.exe` means the runner is already built; do not stop for installation permission.
 
 Do not read or expose `.env`, `.env.*`, `secrets/`, PEM files, credentials, or tokens. Do not perform destructive commands, force pushes, deploys, purchases, or other external side effects without explicit user authorization.
+
+## Spark subagent routing
+
+Automatically delegate an independent implementation subtask to `spark_worker` only when the current runtime exposes that custom role and all of the following are true:
+
+- The requirement, assigned files, acceptance criteria, and expected result are clear.
+- The change is small, locally contained, and independent of other active work.
+- It requires no architecture, product, public API, or data-model decision.
+- It does not touch authentication, authorization, security, privacy, billing, credits, money, tenancy, migrations, destructive operations, or another path reserved below for Sol or a specialized agent.
+- It does not require image input, screenshot interpretation, or visual-design judgment.
+- The affected code paths are already known or can be identified with narrow inspection.
+- The result can be checked with focused tests, type-checking, linting, formatting, or browser verification.
+
+Good Spark tasks include:
+
+- Small React or CSS changes that preserve the existing design system
+- Targeted component implementation with specified states and behavior
+- Routine CRUD code within an established pattern
+- Adding focused tests, fixtures, or schema/type generation
+- Mechanical renaming or conversion in a bounded file set
+- Fixing a diagnosed lint, type, build, formatting, or local logic error
+- Implementing a clearly specified helper function
+
+Do not delegate to Spark for:
+
+- Architecture or system design
+- Authentication, authorization, security-sensitive, privacy, or trust-boundary changes
+- Billing, credits, money, tenancy, database migrations, or destructive operations
+- Ambiguous or cross-system debugging
+- Repository-wide refactoring
+- Public API or data-model decisions
+- Changes requiring specialized Critical-Path judgment
+- Final security, correctness, measurement, release, or production-readiness review
+
+The parent must provide a pinned task contract containing the owned files, required behavior, constraints, acceptance criteria, and exact focused checks. The parent must tell Spark that other work may be present and that unrelated changes must be preserved. After Spark finishes, the parent must inspect the diff and perform the appropriate validation; Spark's report is not final evidence by itself.
+
+Do not run multiple write-capable agents against overlapping files. Do not delegate a trivial change when coordination would take longer than completing it directly. If `spark_worker` is unavailable or Spark reports that the task exceeds its boundary, handle the work in the parent or route it to the appropriate supported stronger or specialized agent; never claim Spark was used when it was not, and do not ask Spark to push through the boundary.
 
 ## Token-efficient orchestration
 
@@ -29,6 +66,7 @@ Keep the strongest reasoning where a miss could ship silently, and use cheaper m
 - Main orchestration and ambiguous cross-module decisions: `gpt-5.6-sol` at `xhigh`.
 - Critical-Path reviewers, security reviewers, and final plan/release gates: `gpt-5.6-sol` at `max`.
 - Money, tenancy, migration, or external-write implementation: explicitly dispatch `gpt-5.6-sol` at `high`.
+- Small, independent implementation matching the Spark routing policy: `gpt-5.3-codex-spark` at `medium`, with parent diff inspection and validation.
 - Ordinary implementation: `gpt-5.6-terra` at `high`.
 - Read-heavy exploration, inventory, and summarization: `gpt-5.6-terra` at `medium`.
 - Deterministic verification and narrow repeatable checks: `gpt-5.6-luna` at `low`.

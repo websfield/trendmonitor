@@ -117,9 +117,9 @@ export const UNPROBED_CREDIT_COST_KEYS: Readonly<Record<string, string>> = {
   onboardingBrainRebuild:
     "The price of an onboarding attempt that does NOT hold the claim. A rebuild is by definition not an included build, so no claim holder is ever priced by it.",
   autopsy:
-    "SLICE 8, not yet an operation of any purpose. `priceOf` has no branch that can return this key's value, so nothing can be priced by it today — and on the day one exists, this entry must move to a purpose's operation list rather than stay here.",
+    "THE KEY HAS A READER NOW (slice 8c, R-98): a creator's PASTED REFERENCE debits `creditCosts.autopsy` with its private claim (`packages/credits/src/pasted-reference.ts`, `refType: autopsy_claim`). It is still NOT a probed operation, and deliberately: that debit is not a `PricedOperation` of any purpose — it carries no `first_billable_attempts` claim, no model attempt of its own, and no included build (R-90 keeps `autopsy` out of the included-build purposes), so no claim holder is ever priced by it and there is nothing for `reconcileSpend` to exempt. Scheduled SHARED autopsies remain system overhead under R-89 with their own separately-accounted system spend, outside creator included-build claims. Wiring this key into a PricedOperation is the day this entry must be deleted.",
   trendBrowse:
-    "SLICE 8, same as `autopsy`. Seeded at 0 today, which is exactly why it is dangerous to leave implicit: a key that is priced at 0 and uncovered reads like a key that is covered.",
+    "Trend browse is a read entitlement seeded at zero, not a build or debit. It stays outside creator included-build claims even while its price is zero.",
 };
 
 /**

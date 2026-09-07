@@ -10,10 +10,44 @@ import {
 } from "@respin/credits/webhook-server";
 import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
 
+const STRIPE_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
+
+async function readBoundedBody(req: Request): Promise<string | null> {
+  const declaredLength = req.headers.get("content-length");
+  if (
+    declaredLength !== null &&
+    /^\d+$/.test(declaredLength) &&
+    Number(declaredLength) > STRIPE_WEBHOOK_MAX_BODY_BYTES
+  ) {
+    return null;
+  }
+  if (!req.body) return "";
+
+  const reader = req.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let body = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return body + decoder.decode();
+      bytesRead += value.byteLength;
+      if (bytesRead > STRIPE_WEBHOOK_MAX_BODY_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      body += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function POST(req: Request): Promise<Response> {
   const signature = req.headers.get("stripe-signature");
   if (!signature) return new Response("missing signature", { status: 400 });
-  const body = await req.text();
+  const body = await readBoundedBody(req);
+  if (body === null) return new Response("payload too large", { status: 413 });
 
   let event: Stripe.Event;
   try {

@@ -55,6 +55,93 @@ describe("ensureUserWorkspace bootstrap", () => {
     });
   });
 
+  it("never treats a deletion-suspended membership as the active bootstrap workspace", async () => {
+    const first = await ensureUserWorkspace(db, PARAMS);
+    await db
+      .update(memberships)
+      .set({
+        lifecycleState: "deletion_suspended",
+        suspendedRole: first.membership.role,
+        suspendedVersion: first.membership.version,
+        suspensionOperationId: "00000000-0000-4000-8000-000000000001",
+        version: first.membership.version + 1,
+      })
+      .where(eq(memberships.id, first.membership.id));
+
+    const repaired = await ensureUserWorkspace(db, PARAMS);
+    expect(repaired.created).toBe(true);
+    expect(repaired.workspace.id).not.toBe(first.workspace.id);
+    expect(repaired.membership).toMatchObject({
+      lifecycleState: "active",
+      role: "owner",
+    });
+    expect(await tableCounts()).toEqual({
+      users: 1,
+      workspaces: 2,
+      memberships: 2,
+    });
+  });
+
+  it("skips a tombstoned oldest workspace and returns the next active membership", async () => {
+    const first = await ensureUserWorkspace(db, PARAMS);
+    const [secondWorkspace] = await db
+      .insert(workspaces)
+      .values({ name: "Still active" })
+      .returning();
+    const [secondMembership] = await db
+      .insert(memberships)
+      .values({
+        userId: first.user.id,
+        workspaceId: secondWorkspace.id,
+        role: "owner",
+      })
+      .returning();
+    await db
+      .update(workspaces)
+      .set({
+        lifecycleState: "tombstoned",
+        lifecycleVersion: first.workspace.lifecycleVersion + 1,
+      })
+      .where(eq(workspaces.id, first.workspace.id));
+
+    const result = await ensureUserWorkspace(db, PARAMS);
+    expect(result).toMatchObject({
+      created: false,
+      workspace: { id: secondWorkspace.id, lifecycleState: "active" },
+      membership: { id: secondMembership.id, lifecycleState: "active" },
+    });
+    expect(await tableCounts()).toEqual({
+      users: 1,
+      workspaces: 2,
+      memberships: 2,
+    });
+  });
+
+  it("repairs a tombstoned-only bootstrap graph with a fresh active workspace", async () => {
+    const first = await ensureUserWorkspace(db, PARAMS);
+    await db
+      .update(workspaces)
+      .set({
+        lifecycleState: "tombstoned",
+        lifecycleVersion: first.workspace.lifecycleVersion + 1,
+      })
+      .where(eq(workspaces.id, first.workspace.id));
+
+    const result = await ensureUserWorkspace(db, PARAMS);
+    expect(result.created).toBe(true);
+    expect(result.workspace).toMatchObject({ lifecycleState: "active" });
+    expect(result.workspace.id).not.toBe(first.workspace.id);
+    expect(result.membership).toMatchObject({
+      lifecycleState: "active",
+      role: "owner",
+    });
+    expect(await tableCounts()).toEqual({
+      users: 1,
+      workspaces: 2,
+      memberships: 2,
+    });
+  });
+
   it("serialized-conflict: a pre-seeded existing user resolves, creates nothing (AC-2)", async () => {
     // Simulate the losing side of a concurrent first login: the "winner"
     // already committed user + workspace + membership.
@@ -110,7 +197,7 @@ describe("ensureUserWorkspace bootstrap", () => {
       .where(eq(users.authUserId, PARAMS.authUserId));
     expect(u.authUserId).toBe(PARAMS.authUserId);
     expect(Object.keys(u).sort()).toEqual(
-      ["id", "authUserId", "createdAt", "updatedAt"].sort()
+      ["id", "authUserId", "lifecycleState", "createdAt", "updatedAt"].sort()
     );
   });
 });

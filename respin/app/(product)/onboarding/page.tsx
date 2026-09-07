@@ -316,10 +316,10 @@ export default async function OnboardingPage(props: {
   // paused creator "nothing new can be added" — denying them a write the design
   // grants and stating a rule the server does not enforce.
   const roleBlock =
-    scope.role === "viewer"
+    scope.role !== "owner"
       ? {
           reason:
-            "You have viewer access to this workspace, so you cannot add creator profiles or posts. Ask a workspace owner for editor access.",
+            `You have ${scope.role} access to this workspace, so you cannot change onboarding or creator profiles. Ask a workspace owner to make this change.`,
         }
       : null;
   const createBlock =

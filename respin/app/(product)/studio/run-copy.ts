@@ -48,7 +48,7 @@ export const PLATFORM_OPTIONS: readonly string[] = [
 export type ModeChoiceView = {
   id: string;
   label: string;
-  status: "available" | "not_in_plan" | "not_built_yet";
+  status: "available" | "not_in_plan";
   /**
    * What a press of this mode costs, from the active config, or `null` when the
    * price could not be read. NEVER a guess — non-negotiable 6.
@@ -59,12 +59,8 @@ export type ModeChoiceView = {
 /**
  * What the picker says about the modes it is NOT offering.
  *
- * TWO REASONS, NEVER ONE, and that is the whole content of this sentence: "your
- * plan does not include it" and "we have not built it" are opposite statements
- * about whose fault it is, and they are the two branches of `assertModeAllowed`
- * said before the press instead of after it. Telling a paying creator their
- * plan excludes a mode we simply have not shipped would be a false statement
- * about what they bought.
+ * Slice 8 made every registry mode reachable, so the only unavailable reason
+ * this view receives is the server-owned plan decision.
  *
  * IT NAMES THE MODES BY LABEL, which is a server-derived value, never a list in
  * this file. An empty tail (everything offered) returns the short sentence
@@ -75,7 +71,6 @@ export function modeAvailabilityNote(
 ): string {
   const label = (m: ModeChoiceView) => m.label;
   const notInPlan = modes.filter((m) => m.status === "not_in_plan").map(label);
-  const notBuilt = modes.filter((m) => m.status === "not_built_yet").map(label);
   const offered = modes.filter((m) => m.status === "available").length;
   const head =
     offered === 1
@@ -85,11 +80,6 @@ export function modeAvailabilityNote(
   if (notInPlan.length > 0) {
     parts.push(
       `${listOf(notInPlan)} ${notInPlan.length === 1 ? "is" : "are"} not part of this workspace's plan`
-    );
-  }
-  if (notBuilt.length > 0) {
-    parts.push(
-      `${listOf(notBuilt)} ${notBuilt.length === 1 ? "is" : "are"} in your plan and not built yet — that is about what we have shipped, not about what you bought`
     );
   }
   if (parts.length === 0) return `${head} Every mode this product has is one of them.`;

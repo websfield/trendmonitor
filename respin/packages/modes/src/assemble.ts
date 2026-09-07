@@ -49,6 +49,39 @@ export type Framework = {
 };
 
 /**
+ * ANOTHER CREATOR'S MECHANISM, and nothing else of theirs (R-97; REQ-E04,
+ * REQ-I03).
+ *
+ * The four fields are the autopsy's mechanism projection — the part that has
+ * already passed `@respin/db`'s `assertMechanismLevel` (no personal details,
+ * no numbers, no performance data; `packages/db/src/frameworks.ts`, exported
+ * through `packages/db/src/index.ts`) before it was persisted. THE PACKAGE
+ * NAME WAS WRONG HERE and the property was not: `packages/trends` has no such
+ * symbol — `packages/trends/tests/trends.test.ts`'s `SECOND_AUTHORITY` guard
+ * exists precisely to keep it that way, one authority in `@respin/db`. This
+ * type DEPENDS on that check running, so the citation has to point at the
+ * function a reader can open. They are the ONLY
+ * fields this type carries, and that is a witness rather than a convention:
+ * the autopsy's `hook`, `subjectTerms` and `structure` are the similarity
+ * GATE's material (`SpinReference` in `similarity.ts`, handed to
+ * `runGeneration` as a separate object), and the transcript is nobody's. None
+ * of them has a slot here, and `assertReferenceMechanism` refuses a value that
+ * smuggles one in through a cast — before the vendor is called
+ * (`spin-reference.test.ts`, mutation M5).
+ *
+ * Bounded at the values the autopsy itself is bounded at: each string at most
+ * `REFERENCE_MECHANISM_TEXT_MAX_CODE_POINTS`, at most
+ * `REFERENCE_MECHANISM_BEATS_MAX` beats (the PRODUCER's `AUTOPSY_MAX_BEATS`,
+ * not this package's own opinion — see that constant's docblock).
+ */
+export type SpinReferenceMechanism = {
+  hookMechanic: string;
+  beats: readonly string[];
+  ending: string;
+  followTrigger: string;
+};
+
+/**
  * Everything one generation runs on (tech-spec §3 step 1).
  *
  * The three IP layers arrive as plain values: universal laws, the frameworks
@@ -98,6 +131,23 @@ export type GenerationContext = {
    * casts around it (CLAUDE.md, 2026-08-21 and 2026-08-29).
    */
   unvouchedSpecifics: readonly string[];
+  /**
+   * The reference a Spin adapts (R-97).
+   *
+   * PRESENT FOR `analyseAndSpin` AND FOR NO OTHER MODE, and both directions
+   * are refused at assembly, before any vendor call: a spin without it would
+   * ask the model to "adapt the mechanism behind the reference" while showing
+   * it only the creator's angle, and a mechanism handed to any other mode is
+   * another creator's material reaching a prompt that has no business with
+   * it. `generate.ts` fills it from `spinReferenceForProfile`'s `mechanism`
+   * for the gated mode only.
+   *
+   * NOT IN THE TRACEABILITY CORPUS. `traceabilityCorpusFor` reads `brain` and
+   * `input` and never this field, so a specific that appears only here is
+   * refused as untraced (`spin-reference.test.ts`, mutation M4). It is another
+   * creator's post, and nothing in it is a fact about this creator.
+   */
+  reference?: { mechanism: SpinReferenceMechanism };
 };
 
 /**
@@ -231,6 +281,70 @@ export const FRAMEWORK_EVIDENCE_LABEL = "Evidence recorded: ";
 export const FRAMEWORK_BLOCK_EMPTY =
   "Frameworks available: none this time. Where the contract below asks for a framework, name the shape you are actually using, in plain words.";
 
+/**
+ * The reference block's own words — STATIC, for the reason the framework
+ * block's are (R-97; REQ-E04).
+ *
+ * The header is what makes the model read what follows as SOMEBODY ELSE'S
+ * mechanism to adapt rather than as material to quote; the note says what the
+ * block is not. The mechanism itself is per generation and stays out of any
+ * hash.
+ *
+ * HASHED: `bundle.ts` carries a `referenceBlock` part built from these
+ * constants (the `frameworkBlock` precedent), so a rewrite here moves
+ * `prompt_bundle_version` (REQ-J02) — pinned by `bundle.test.ts`.
+ */
+export const REFERENCE_BLOCK_HEADER =
+  "Another creator's mechanism — adapt it, never quote it:";
+
+export const REFERENCE_BLOCK_NOTE =
+  "This is why somebody else's post worked, reduced to its mechanics. It is not this creator's material: nothing in it is a fact, a number or a name the output may use, and none of its wording may appear in the output.";
+
+/** The per-field labels the mechanism is written under. */
+export const REFERENCE_MECHANISM_LABELS: Readonly<
+  Record<keyof SpinReferenceMechanism, string>
+> = {
+  hookMechanic: "- Hook mechanic: ",
+  beats: "- Beats, in order:",
+  ending: "- Ending: ",
+  followTrigger: "- Follow trigger: ",
+};
+
+/**
+ * The fields a reference mechanism carries, AS A LIST, so the runtime check
+ * that refuses a smuggled `hook` has one population to read and the type
+ * above cannot drift from it (`spin-reference.test.ts` pins the two equal).
+ */
+export const REFERENCE_MECHANISM_FIELDS = [
+  "hookMechanic",
+  "beats",
+  "ending",
+  "followTrigger",
+] as const satisfies readonly (keyof SpinReferenceMechanism)[];
+
+/**
+ * The bounds, in CODE POINTS, matching the autopsy's own per-stage text bound
+ * (`@respin/trends`' `MAX_STAGE_TEXT_CHARS` = 4,000) and its beat count
+ * (`AUTOPSY_MAX_BEATS` = 50).
+ *
+ * `REFERENCE_MECHANISM_BEATS_MAX` WAS 20, AND THAT WAS THE SAME DEFECT R-101
+ * CLOSED, ONE FILE OVER (compliance gate, 2026-09-04, proven by execution).
+ * The comment above it used to say "the gate's own `MAX_BEATS`", which the code
+ * contradicted the moment the gate's bound became the producer's 50 — and
+ * `spin-reference.test.ts` pinned the stale 20, so a green test locked it in.
+ *
+ * The consequence was not cosmetic: `validateAutopsyAnalysis` accepts a 25-beat
+ * autopsy, `evaluateSpinSimilarity` accepts its structure, and then
+ * `assembleGenerationPrompt` threw `GenerationAssemblyError` BEFORE the vendor
+ * call — so a spin of any 21-to-50-beat autopsy was structurally impossible,
+ * exactly the failure R-101 exists to close.
+ *
+ * Both numbers are the PRODUCER's, and `respin/tests/spin-reference-bounds.test.ts`
+ * compares them to it field by field so this cannot drift again.
+ */
+export const REFERENCE_MECHANISM_TEXT_MAX_CODE_POINTS = 4_000;
+export const REFERENCE_MECHANISM_BEATS_MAX = 50;
+
 /** What each section looks like in the reply, one line per section. */
 const SECTION_CONTRACTS: Record<SectionKey, string> = {
   thesis: '"thesis": {"statement": string, "why": string}',
@@ -310,11 +424,16 @@ export const MODE_BRIEFS: Record<ModeId, ModeBrief> = {
   },
   analyseAndSpin: {
     task: "Adapt the mechanism behind the reference into the creator's own material.",
-    inputLabel: "The reference they want to learn from:",
+    // THE CREATOR'S OWN ANGLE, not the reference (R-97). The reference reaches
+    // the prompt as its own block, headed as another creator's mechanism; the
+    // input box is what `spin-panel.tsx` asks for — "the angle you want to
+    // make your own".
+    inputLabel: "The angle they want to make their own:",
     instructions: [
-      "Name the mechanism — WHY the reference works — and then leave the reference behind.",
+      "The mechanism is stated in the reference block — WHY that post worked. Adapt that mechanism to this creator's angle, and then leave the reference behind.",
+      "Never reproduce the reference's hook wording, subject or structure; the similarity gate will refuse the draft and the creator pays for it.",
       "Never reuse its wording, its structure, its examples or its specifics. The output has to stand up with the reference deleted.",
-      "The material is this creator's own: their stakes, their footage, their audience.",
+      "The material is this creator's own: their stakes, their footage, their audience. Nothing in the reference block is a fact about this creator.",
     ],
   },
   hooks: {
@@ -447,6 +566,15 @@ function contextBlock(mode: ModeId, context: GenerationContext): string {
           ...context.frameworks.map((f) => `- ${f.name}: ${f.summary}`),
         ]
       : [FRAMEWORK_BLOCK_EMPTY];
+  // ANOTHER CREATOR'S MECHANISM, BEFORE THE CREATOR'S OWN MATERIAL (R-97).
+  // Only the gated mode has one — `assertReferenceMechanism` has already
+  // refused every other combination — and it is rendered as its own headed
+  // block so the model reads it as something to adapt, never as this
+  // creator's input. It is NOT in `traceabilityCorpusFor`'s union.
+  const reference =
+    context.reference === undefined
+      ? []
+      : [...referenceBlock(context.reference.mechanism), ""];
   return [
     "Universal laws:",
     ...context.universalLaws.map((s) => "- " + s),
@@ -458,9 +586,31 @@ function contextBlock(mode: ModeId, context: GenerationContext): string {
     "",
     "Platform: " + context.platform,
     "",
+    ...reference,
     MODE_BRIEFS[mode].inputLabel,
     context.input,
   ].join("\n");
+}
+
+/**
+ * One line per field, the beats as an indented list under theirs.
+ *
+ * EVERY STRING IS FLATTENED TO ONE LINE. The mechanism is vendor-written text
+ * that passed a mechanism-level check, not a prompt the product wrote; a line
+ * break inside it would let a beat end the block and open a heading of its
+ * own. Whitespace runs collapse to one space and nothing else is rewritten.
+ */
+function referenceBlock(mechanism: SpinReferenceMechanism): string[] {
+  const line = (s: string) => s.replace(/\s+/g, " ").trim();
+  return [
+    REFERENCE_BLOCK_HEADER,
+    REFERENCE_BLOCK_NOTE,
+    REFERENCE_MECHANISM_LABELS.hookMechanic + line(mechanism.hookMechanic),
+    REFERENCE_MECHANISM_LABELS.beats,
+    ...mechanism.beats.map((b) => "  - " + line(b)),
+    REFERENCE_MECHANISM_LABELS.ending + line(mechanism.ending),
+    REFERENCE_MECHANISM_LABELS.followTrigger + line(mechanism.followTrigger),
+  ];
 }
 
 /**
@@ -507,8 +657,107 @@ function assertUnvouchedStated(context: GenerationContext): void {
   }
 }
 
-function assertUsable(context: GenerationContext): void {
+/** A plain object — not null, not an array, not a primitive a cast smuggled. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Length in CODE POINTS, which is what the autopsy's bound counts. */
+function codePoints(text: string): number {
+  return [...text].length;
+}
+
+function assertBoundedMechanismText(name: string, value: unknown): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new GenerationAssemblyError(
+      `the reference mechanism's ${name} is not text — the four fields the prompt renders are each a sentence or two the autopsy wrote`
+    );
+  }
+  if (codePoints(value) > REFERENCE_MECHANISM_TEXT_MAX_CODE_POINTS) {
+    throw new GenerationAssemblyError(
+      `the reference mechanism's ${name} is longer than the autopsy's own bound of ${REFERENCE_MECHANISM_TEXT_MAX_CODE_POINTS} characters`
+    );
+  }
+}
+
+/**
+ * THE REFERENCE IS THE GATED MODE'S, IS EXACTLY FOUR FIELDS, AND IS BOUNDED
+ * (R-97; REQ-E04, REQ-I03).
+ *
+ * TYPED SHUT IS NOT SHUT (CLAUDE.md, 2026-08-21): `SpinReferenceMechanism`
+ * has no slot for the autopsy's `hook`, its `subjectTerms`, its `structure` or
+ * a transcript, and this check is what makes that true of a VALUE rather than
+ * of a type — a caller that spreads the whole autopsy row into `reference`
+ * through `as unknown as` is refused here by the field's NAME, before the
+ * vendor is called and before the prompt exists. Mutation M5 (the prompt
+ * renders `hook`) reddens on `spin-reference.test.ts`.
+ *
+ * BOTH DIRECTIONS OF PRESENCE ARE REFUSED: the gated mode without a mechanism
+ * (the prompt would say "adapt the mechanism" over nothing), and any other mode
+ * with one (another creator's material in a prompt that has no gate).
+ */
+function assertReferenceMechanism(
+  mode: ModeId,
+  context: GenerationContext
+): void {
+  const gated = modeSpec(mode).similarityGated;
+  const reference: unknown = context.reference;
+  if (reference === undefined) {
+    if (gated) {
+      throw new GenerationAssemblyError(
+        "a spin was asked for without the reference's mechanism — this mode adapts a mechanism, and it was given none to adapt"
+      );
+    }
+    return;
+  }
+  if (!gated) {
+    throw new GenerationAssemblyError(
+      `a reference mechanism was given to '${mode}', which does not spin — only the similarity-gated mode may carry another creator's mechanism`
+    );
+  }
+  if (
+    !isPlainObject(reference) ||
+    Object.keys(reference).length !== 1 ||
+    !isPlainObject(reference.mechanism)
+  ) {
+    throw new GenerationAssemblyError(
+      "the reference carries something other than one mechanism — the prompt renders the autopsy's mechanism projection and nothing else of the reference"
+    );
+  }
+  const mechanism = reference.mechanism;
+  const allowed: readonly string[] = REFERENCE_MECHANISM_FIELDS;
+  const extra = Object.keys(mechanism).filter((k) => !allowed.includes(k));
+  if (extra.length > 0) {
+    // THE NAME, NEVER THE VALUE: the refusal must not become the leak.
+    throw new GenerationAssemblyError(
+      `the reference mechanism carries a field the prompt must never see (${extra.join(", ")}) — only ${allowed.join(", ")} reach the model`
+    );
+  }
+  const missing = allowed.filter((k) => !(k in mechanism));
+  if (missing.length > 0) {
+    throw new GenerationAssemblyError(
+      `the reference mechanism is missing ${missing.join(", ")}`
+    );
+  }
+  assertBoundedMechanismText("hookMechanic", mechanism.hookMechanic);
+  assertBoundedMechanismText("ending", mechanism.ending);
+  assertBoundedMechanismText("followTrigger", mechanism.followTrigger);
+  const beats = mechanism.beats;
+  if (
+    !Array.isArray(beats) ||
+    beats.length === 0 ||
+    beats.length > REFERENCE_MECHANISM_BEATS_MAX
+  ) {
+    throw new GenerationAssemblyError(
+      `the reference mechanism's beats are not a list of one to ${REFERENCE_MECHANISM_BEATS_MAX}`
+    );
+  }
+  beats.forEach((beat, i) => assertBoundedMechanismText(`beat ${i + 1}`, beat));
+}
+
+function assertUsable(mode: ModeId, context: GenerationContext): void {
   assertUnvouchedStated(context);
+  assertReferenceMechanism(mode, context);
   if (context.input.trim().length === 0) {
     throw new GenerationAssemblyError(
       "there is nothing to generate from — this generation was given no input"
@@ -539,7 +788,7 @@ export function assembleGenerationPrompt(params: {
   context: GenerationContext;
 }): AssembledPrompt {
   const { mode, context } = params;
-  assertUsable(context);
+  assertUsable(mode, context);
   return {
     system: GENERATION_SYSTEM,
     prompt: [
@@ -573,7 +822,7 @@ export function assembleRewritePrompt(params: {
   findings: readonly HardRuleFinding[];
 }): AssembledPrompt {
   const { mode, context, draft, findings } = params;
-  assertUsable(context);
+  assertUsable(mode, context);
   if (findings.length === 0) {
     // A rewrite with nothing to fix is a second vendor call the creator pays
     // for and gains nothing from.

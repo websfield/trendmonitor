@@ -26,6 +26,62 @@ import type { DbLike } from "@respin/db";
 import { getActiveConfig } from "@respin/config";
 import { getStripe } from "./adapter";
 
+// The key, rather than the value, carries the cutover marker deliberately.
+// A pre-v1 binary still finds the `"pack"` value but hands the prefixed key to
+// Stripe as though it were a Price id; Stripe refuses it before a Checkout
+// Session can exist. New binaries strip the prefix. Together with migration
+// 0049's config trigger, this is a durable old-writer fence across rollback.
+export const PACK_CHECKOUT_V1_PRICE_KEY_PREFIX =
+  "respin_pack_checkout_v1:";
+
+export function packCheckoutV1PriceKey(priceId: string): string {
+  return `${PACK_CHECKOUT_V1_PRICE_KEY_PREFIX}${priceId}`;
+}
+
+export type PackPriceProtocol = "compatible" | "v1";
+
+export function assertPackCheckoutV1WriterFence(
+  stripePriceMap: Readonly<Record<string, string>>
+): void {
+  const mappings = Object.entries(stripePriceMap).filter(([, tier]) => tier === "pack");
+  const v1 = mappings.filter(([key]) =>
+    key.startsWith(PACK_CHECKOUT_V1_PRICE_KEY_PREFIX)
+  );
+  const legacy = mappings.filter(
+    ([key]) => !key.startsWith(PACK_CHECKOUT_V1_PRICE_KEY_PREFIX)
+  );
+  // Zero disables pack sales and is fail-closed for both generations. One v1
+  // mapping enables the new writer. More than one is ambiguous.
+  if (legacy.length !== 0 || v1.length > 1) {
+    throw new PackPriceNotMappedError("v1");
+  }
+}
+
+export function mappedPackPriceId(
+  stripePriceMap: Readonly<Record<string, string>>,
+  protocol: PackPriceProtocol = "compatible"
+): string {
+  const mappings = Object.entries(stripePriceMap).filter(([, tier]) => tier === "pack");
+  const v1 = mappings.filter(([key]) =>
+    key.startsWith(PACK_CHECKOUT_V1_PRICE_KEY_PREFIX)
+  );
+  if (protocol === "v1") assertPackCheckoutV1WriterFence(stripePriceMap);
+  if (
+    mappings.length !== 1 ||
+    (protocol === "v1" && v1.length !== 1)
+  ) {
+    throw new PackPriceNotMappedError(protocol);
+  }
+  const key = mappings[0]![0];
+  const priceId = key.startsWith(PACK_CHECKOUT_V1_PRICE_KEY_PREFIX)
+    ? key.slice(PACK_CHECKOUT_V1_PRICE_KEY_PREFIX.length)
+    : key;
+  if (!/^price_[A-Za-z0-9_]+$/.test(priceId)) {
+    throw new PackPriceNotMappedError(protocol);
+  }
+  return priceId;
+}
+
 /**
  * The pack price is mapped in config but Stripe cannot serve it, or serves
  * something a charge must not be built on (inactive, wrong currency, no
@@ -64,9 +120,11 @@ export class PackPriceMismatchError extends Error {
 }
 
 export class PackPriceNotMappedError extends Error {
-  constructor() {
+  constructor(protocol: PackPriceProtocol = "compatible") {
     super(
-      'No Stripe price is mapped to "pack" in the active config. An operator needs to run `pnpm stripe:setup` and paste the printed price ids into /admin/config as `stripePriceMap`.'
+      protocol === "v1"
+        ? `The active config must contain exactly one rollback-safe pack mapping keyed as ${PACK_CHECKOUT_V1_PRICE_KEY_PREFIX}<price_id>, with no legacy pack mapping. Nothing was charged.`
+        : 'Exactly one Stripe price must be mapped to "pack" in the active config. An operator needs to run `pnpm stripe:setup` and paste the printed price mapping into /admin/config as `stripePriceMap`.'
     );
     this.name = "PackPriceNotMappedError";
   }
@@ -104,12 +162,12 @@ export type PackPrice = {
  *    PaymentIntent, so a pack Price in another currency would charge the right
  *    NUMBER in the wrong MONEY.
  */
-export async function resolvePackPrice(db: DbLike): Promise<PackPrice> {
+export async function resolvePackPrice(
+  db: DbLike,
+  protocol: PackPriceProtocol = "compatible"
+): Promise<PackPrice> {
   const { version, content } = await getActiveConfig(db);
-  const priceId = Object.entries(content.stripePriceMap).find(
-    ([, t]) => t === "pack"
-  )?.[0];
-  if (!priceId) throw new PackPriceNotMappedError();
+  const priceId = mappedPackPriceId(content.stripePriceMap, protocol);
 
   const price = await getStripe().prices.retrieve(priceId);
   if (!price.active) {

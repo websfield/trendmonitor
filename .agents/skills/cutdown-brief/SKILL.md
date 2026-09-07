@@ -10,6 +10,10 @@ description: >-
 
 Read `.claude/skills/cutdown-brief/SKILL.md` completely before acting. Treat its instructions and frontmatter constraints as the authoritative workflow; this file only exposes it to Codex discovery.
 
+The canonical `CLAUDE.md` and `.claude/**` sources are read-only to Codex. Never edit them; mirror only upstream changes that were already made outside Codex.
+
+Then read `.codex/codex-overlay.md` completely and apply its Codex-only routing, context, and verification guidance without weakening the canonical workflow.
+
 Honor any `allowed-tools` metadata as a behavioral allowlist even when Codex cannot enforce that metadata declaratively.
 
 Apply the Claude-to-Codex compatibility mappings in the repository root `AGENTS.md`. Resolve every relative resource or script from the canonical source directory.

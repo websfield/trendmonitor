@@ -22,6 +22,7 @@ import {
   CONFIG_V1_SEED,
 } from "@respin/db";
 import { appendConfigVersion, getActiveConfig } from "../src/index";
+import { respinConfigV1 } from "../src/schema";
 import { migrateConfigDefaults } from "../src/migrate-config";
 
 const MAINTENANCE_URL = process.env.TEST_DATABASE_URL;
@@ -43,8 +44,14 @@ const PRE_CHANGE = (() => {
     ...(CONFIG_V1_SEED as Record<string, unknown>),
   };
   delete rest.profileCaps;
+  delete rest.performanceLearning;
+  delete rest.daysToEmpty;
   return rest;
 })();
+
+const PRE_9B_SCHEMA = respinConfigV1
+  .omit({ performanceLearning: true, daysToEmpty: true })
+  .strict();
 
 describe.skipIf(!MAINTENANCE_URL)("migrate-config CAS on real Postgres", () => {
   let harness: Awaited<ReturnType<typeof createDockerTestDb>>;
@@ -243,4 +250,44 @@ describe.skipIf(!MAINTENANCE_URL)("migrate-config CAS on real Postgres", () => {
       expect(typeof outcome.ok).toBe("boolean");
     }
   );
+
+  it("proves both 9b config rollback windows on real Postgres", async () => {
+    const { db } = harness;
+    await db.insert(schema.configVersions).values({
+      content: PRE_CHANGE,
+      createdBy: "pre-9b-fixture",
+    });
+
+    // Before materialisation, old strict code still parses and new code reads
+    // the two defaults. This is the safe old-code rollback window.
+    expect(PRE_9B_SCHEMA.safeParse(PRE_CHANGE).success).toBe(true);
+    const beforeMaterialisation = await getActiveConfig(db);
+    expect(beforeMaterialisation.content.performanceLearning.free).toBe(
+      "view_only"
+    );
+    expect(beforeMaterialisation.content.daysToEmpty).toEqual({
+      trailingWindowDays: 30,
+      minimumDebitDays: 3,
+    });
+
+    expect((await migrateConfigDefaults(db)).status).toBe("migrated");
+    const [stored] = await db
+      .select()
+      .from(schema.configVersions)
+      .orderBy(desc(schema.configVersions.version))
+      .limit(1);
+    const materialised = stored.content as Record<string, unknown>;
+    expect(materialised.performanceLearning).toBeDefined();
+    expect(materialised.daysToEmpty).toBeDefined();
+
+    // After materialisation, an old strict parser is intentionally unsafe;
+    // the forward-compatible release remains able to read the stored row.
+    expect(PRE_9B_SCHEMA.safeParse(materialised).success).toBe(false);
+    await expect(getActiveConfig(db)).resolves.toMatchObject({
+      content: {
+        performanceLearning: { free: "view_only" },
+        daysToEmpty: { trailingWindowDays: 30, minimumDebitDays: 3 },
+      },
+    });
+  });
 });

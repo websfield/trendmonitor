@@ -685,6 +685,14 @@ export const generationFeedback = pgTable(
     })
       .onDelete("cascade")
       .onUpdate("restrict"),
+    // Additive FK target for slice 9b's same-tenant evidence join. `id` is
+    // already globally unique; the wider table constraint exists solely so a
+    // child carrying both scope columns can reference all three together.
+    unique("generation_feedback_id_profile_workspace_uq").on(
+      t.id,
+      t.profileId,
+      t.workspaceId
+    ),
     // ONE ROW PER (OUTPUT, REACTION). Pressing the same button twice is one
     // fact, not two, and slice 9's "n >= 3 comparable results" must not be
     // reachable by one creator clicking seven times. A creator may still

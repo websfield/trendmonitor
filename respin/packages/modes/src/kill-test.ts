@@ -408,6 +408,8 @@ const SHARPER_ANGLES: Record<HardRuleId, string> = {
     "Try the framework on your list that comes closest, and say where it does not fit rather than reaching for one you were not given.",
   empty_weakest_point:
     "Try naming the person this would not work for. That is usually the weakest point, and it is worth saying out loud.",
+  similarity:
+    "Try leaving the reference behind: start from a different subject, then build the turn around what you can show from your own work.",
 };
 
 export function honestRefusal(findings: AttemptFindings): HonestRefusal {
@@ -483,4 +485,3 @@ export type KillTestResult = {
   /** Present exactly when `outcome === "failed"`. */
   refusal: HonestRefusal | null;
 };
-

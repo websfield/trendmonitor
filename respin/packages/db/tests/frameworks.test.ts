@@ -23,6 +23,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 import { creatorProfiles, frameworks } from "../src/brain-schema";
+import { autopsies, trendItems, trendSources } from "../src/trends-schema";
 import { onboardingInputs } from "../src/onboarding-schema";
 import { pausePeriods } from "../src/billing-schema";
 import {
@@ -36,6 +37,8 @@ import {
 } from "../src/errors";
 import {
   approvePrivateFramework,
+  assertAutopsyFrameworkCandidate,
+  assertAutopsyMechanismContent,
   assertMechanismLevel,
   createPrivateFramework,
   deriveFrameworkConfidence,
@@ -43,6 +46,8 @@ import {
   eligibleFrameworks,
   frameworkSlug,
   listPrivateFrameworks,
+  proposeSharedFramework,
+  resolveAutopsyFramework,
   retirePrivateFramework,
   seedSharedFrameworks,
   sharedFrameworkLibrary,
@@ -52,9 +57,10 @@ import {
   SHARED_FRAMEWORK_SEED,
   type FrameworkContent,
 } from "../src/frameworks";
-import { FRAMEWORK_TEXT_MAX, PRIVATE_FRAMEWORK_COUNT_MAX } from "../src/storage-limits";
+import { FRAMEWORK_LIST_MAX, FRAMEWORK_NAME_MAX, FRAMEWORK_TEXT_MAX, PRIVATE_FRAMEWORK_COUNT_MAX } from "../src/storage-limits";
 import { ProfileScope, withWorkspace, WRITE_PAUSE_POLICY } from "../src/with-workspace";
 import { schema } from "../src/index";
+import { users } from "../src/schema";
 
 /** A clean, mechanism-level framework: the baseline every plant deviates from. */
 const clean = (over: Partial<FrameworkContent> = {}): FrameworkContent => ({
@@ -76,6 +82,11 @@ const clean = (over: Partial<FrameworkContent> = {}): FrameworkContent => ({
   saturation: "observed",
   ...over,
 });
+
+const LICENSED_RIGHTS = {
+  basis: "independently_licensed",
+  evidenceId: "test-license:frameworks",
+} as const;
 
 /**
  * The message a rejected drizzle query ACTUALLY carries, causes included.
@@ -114,6 +125,8 @@ describe("slice 7 stage A: frameworks", () => {
   let pA1: string;
   let pA2: string;
   let pB: string;
+  let uA: string;
+  let uB: string;
 
   const scopeFor = (authUserId: string) => withWorkspace(db, { authUserId });
 
@@ -121,10 +134,12 @@ describe("slice 7 stage A: frameworks", () => {
     db = await createTestDb();
     await seedAuthUser(db, "fw_a");
     await seedAuthUser(db, "fw_b");
-    wsA = (await ensureUserWorkspace(db, { authUserId: "fw_a", name: "A" }))
-      .workspace.id;
-    wsB = (await ensureUserWorkspace(db, { authUserId: "fw_b", name: "B" }))
-      .workspace.id;
+    const bootA = await ensureUserWorkspace(db, { authUserId: "fw_a", name: "A" });
+    const bootB = await ensureUserWorkspace(db, { authUserId: "fw_b", name: "B" });
+    wsA = bootA.workspace.id;
+    wsB = bootB.workspace.id;
+    uA = bootA.user.id;
+    uB = bootB.user.id;
     const profiles = await db
       .insert(creatorProfiles)
       .values([
@@ -158,10 +173,363 @@ describe("slice 7 stage A: frameworks", () => {
       expect(row.version, row.slug).toBe(1);
       expect(row.retiredAt, row.slug).toBeNull();
       expect(row.supersededAt, row.slug).toBeNull();
+      expect(row.rightsBasis, row.slug).toBe("product_seed");
+      expect(row.rightsSubjectUserId, row.slug).toBeNull();
+      expect(row.rightsEvidenceId, row.slug).toBeNull();
     }
     // Nine DISTINCT slugs, so a copy-paste in the seed array is a red test
     // rather than eight frameworks and a silent conflict-do-nothing.
     expect(new Set(rows.map((r) => r.slug)).size).toBe(9);
+    await db.delete(users).where(eq(users.authUserId, "fw_a"));
+    expect(await db.select().from(frameworks)).toHaveLength(9);
+  });
+
+  it("R9: a trend proposal is forced shared/proposed and is never readable before curation", async () => {
+    const proposed = await proposeSharedFramework(db, clean({ name: "Trend proposal" }), LICENSED_RIGHTS);
+    expect(proposed).toMatchObject({ visibility: "shared", curatorStatus: "proposed", ownerProfileId: null, workspaceId: null });
+    expect(await sharedFrameworkLibrary(db)).toEqual([]);
+    await expect(proposeSharedFramework(db, clean({ name: "Number proposal", whyItConverts: "It reached 40,000 views." }), LICENSED_RIGHTS)).rejects.toBeInstanceOf(FrameworkContentError);
+    await expect(proposeSharedFramework(db, clean({ name: "Performance proposal", whyItConverts: "It converts at a higher rate." }), LICENSED_RIGHTS)).rejects.toBeInstanceOf(FrameworkContentError);
+  });
+
+  it("R-94: every safe unmatched canonical mechanism creates or reuses one proposed-only row", async () => {
+    const analysis = {
+      hookMechanic: "Open on a visible tradeoff",
+      beats: ["Show the setup", "Turn on the constraint"],
+      ending: "Return to the opening tradeoff",
+      followTrigger: "Name the next mechanism to test",
+    } as const;
+    const firstItem = "00000000-0000-7000-8000-000000000001";
+    const secondItem = "00000000-0000-7000-8000-000000000002";
+
+    expect(() =>
+      assertAutopsyFrameworkCandidate({ trendItemId: firstItem, analysis })
+    ).not.toThrow();
+    const first = await db.transaction((tx) =>
+      resolveAutopsyFramework(tx, { trendItemId: firstItem, analysis, rights: LICENSED_RIGHTS })
+    );
+    const replay = await db.transaction((tx) =>
+      resolveAutopsyFramework(tx, { trendItemId: secondItem, analysis, rights: LICENSED_RIGHTS })
+    );
+
+    expect(first).toMatchObject({ kind: "proposed", created: true });
+    expect(replay).toMatchObject({
+      kind: "proposed",
+      created: false,
+      framework: { id: first.framework.id },
+    });
+    const rows = await db
+      .select()
+      .from(frameworks)
+      .where(eq(frameworks.slug, first.framework.slug));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      curatorStatus: "proposed",
+      visibility: "shared",
+      version: 1,
+      confidence: "single_case",
+    });
+    expect(await sharedFrameworkLibrary(db)).toEqual([]);
+    const serialized = JSON.stringify(rows[0]);
+    expect(serialized).not.toContain(firstItem);
+    expect(serialized).not.toContain(secondItem);
+    expect(serialized).toContain("trend-item-alpha-");
+  });
+
+  it("R-94: approved live identity matches; rejected and retired identities are re-proposed as history-preserving versions", async () => {
+    const analysis = {
+      hookMechanic: "Delay the label until the turn",
+      beats: ["Show the symptom", "Reveal the label"],
+      ending: "Return to the symptom with its new label",
+      followTrigger: "Invite the next symptom to inspect",
+    } as const;
+    const item = "00000000-0000-7000-8000-000000000003";
+    const first = await db.transaction((tx) =>
+      resolveAutopsyFramework(tx, { trendItemId: item, analysis, rights: LICENSED_RIGHTS })
+    );
+    await db
+      .update(frameworks)
+      .set({ curatorStatus: "approved", curatedBy: "operator:fixture" })
+      .where(eq(frameworks.id, first.framework.id));
+
+    const matched = await db.transaction((tx) =>
+      resolveAutopsyFramework(tx, { trendItemId: item, analysis, rights: LICENSED_RIGHTS })
+    );
+    expect(matched).toMatchObject({
+      kind: "matched",
+      created: false,
+      framework: { id: first.framework.id },
+    });
+
+    await db
+      .update(frameworks)
+      .set({
+        saturation: "retired",
+        retiredAt: new Date("2026-09-02T00:00:00.000Z"),
+      })
+      .where(eq(frameworks.id, first.framework.id));
+    const afterRetirement = await db.transaction((tx) =>
+      resolveAutopsyFramework(tx, { trendItemId: item, analysis, rights: LICENSED_RIGHTS })
+    );
+    expect(afterRetirement).toMatchObject({
+      kind: "proposed",
+      created: true,
+      framework: { version: 2, curatorStatus: "proposed" },
+    });
+
+    await db
+      .update(frameworks)
+      .set({ curatorStatus: "rejected" })
+      .where(eq(frameworks.id, afterRetirement.framework.id));
+    const afterRejection = await db.transaction((tx) =>
+      resolveAutopsyFramework(tx, { trendItemId: item, analysis, rights: LICENSED_RIGHTS })
+    );
+    expect(afterRejection).toMatchObject({
+      kind: "proposed",
+      created: true,
+      framework: { version: 3, curatorStatus: "proposed" },
+    });
+
+    const history = await db
+      .select()
+      .from(frameworks)
+      .where(eq(frameworks.slug, first.framework.slug))
+      .orderBy(frameworks.version);
+    expect(history.map((row) => [row.version, row.curatorStatus, Boolean(row.supersededAt)])).toEqual([
+      [1, "approved", true],
+      [2, "rejected", true],
+      [3, "proposed", false],
+    ]);
+    expect(await sharedFrameworkLibrary(db)).toEqual([]);
+  });
+
+  it("R-94: identical mechanisms reuse only an exact rights identity", async () => {
+    const analysis = {
+      hookMechanic: "Open on the boundary before naming the choice",
+      beats: ["Show the boundary", "Name the choice"],
+      ending: "Return to the boundary with the choice visible",
+      followTrigger: "Ask which boundary should be inspected next",
+    } as const;
+    const rightsA = {
+      basis: "creator_consent" as const,
+      subjectUserId: uA,
+      evidenceId: "consent:framework-a",
+    };
+    const first = await db.transaction((tx) => resolveAutopsyFramework(tx, {
+      trendItemId: "00000000-0000-7000-8000-000000000091",
+      analysis,
+      rights: rightsA,
+    }));
+    await db.update(frameworks)
+      .set({ curatorStatus: "approved", curatedBy: "operator:rights-test" })
+      .where(eq(frameworks.id, first.framework.id));
+    const same = await db.transaction((tx) => resolveAutopsyFramework(tx, {
+      trendItemId: "00000000-0000-7000-8000-000000000092",
+      analysis,
+      rights: rightsA,
+    }));
+    expect(same).toMatchObject({ kind: "matched", framework: { id: first.framework.id } });
+
+    const otherEvidence = await db.transaction((tx) => resolveAutopsyFramework(tx, {
+      trendItemId: "00000000-0000-7000-8000-000000000096",
+      analysis,
+      rights: {
+        ...rightsA,
+        evidenceId: "consent:framework-a-renewed",
+      },
+    }));
+    expect(otherEvidence).toMatchObject({ kind: "proposed", created: true });
+    expect(otherEvidence.framework.id).not.toBe(first.framework.id);
+
+    const otherSubject = await db.transaction((tx) => resolveAutopsyFramework(tx, {
+      trendItemId: "00000000-0000-7000-8000-000000000093",
+      analysis,
+      rights: {
+        basis: "creator_consent",
+        subjectUserId: uB,
+        evidenceId: "consent:framework-b",
+      },
+    }));
+    expect(otherSubject).toMatchObject({ kind: "proposed", created: true });
+    expect(otherSubject.framework.id).not.toBe(first.framework.id);
+
+    await db.insert(frameworks).values({
+      slug: "seed-same-rights-mechanism",
+      name: first.framework.name,
+      beats: first.framework.beats,
+      whyItConverts: first.framework.whyItConverts,
+      applicability: first.framework.applicability,
+      sourceReferences: first.framework.sourceReferences,
+      evidenceEntries: first.framework.evidenceEntries,
+      testedCaveats: first.framework.testedCaveats,
+      confidence: first.framework.confidence,
+      saturation: first.framework.saturation,
+      visibility: "shared",
+      rightsBasis: "product_seed",
+      curatorStatus: "approved",
+      curatedBy: "seed:respin-library-v1",
+    });
+    const licensed = await db.transaction((tx) => resolveAutopsyFramework(tx, {
+      trendItemId: "00000000-0000-7000-8000-000000000094",
+      analysis,
+      rights: {
+        basis: "independently_licensed",
+        evidenceId: "licence:framework-c",
+      },
+    }));
+    expect(licensed).toMatchObject({ kind: "proposed", created: true });
+    expect(licensed.framework.id).not.toBe(first.framework.id);
+
+    await db.delete(users).where(eq(users.id, uA));
+    const survivors = await db.select().from(frameworks);
+    expect(survivors.some((row) => row.id === first.framework.id)).toBe(false);
+    expect(survivors.some((row) => row.id === otherEvidence.framework.id)).toBe(false);
+    expect(survivors.some((row) => row.id === otherSubject.framework.id)).toBe(true);
+    expect(survivors.some((row) => row.id === licensed.framework.id)).toBe(true);
+    expect(survivors.some((row) => row.rightsBasis === "product_seed")).toBe(true);
+  });
+
+  it("a foreign-rights autopsy link cannot block consent-subject deletion", async () => {
+    const framework = await db.transaction((tx) => resolveAutopsyFramework(tx, {
+      trendItemId: "00000000-0000-7000-8000-000000000095",
+      analysis: {
+        hookMechanic: "Open on a visible constraint",
+        beats: ["Show the constraint", "Resolve the tradeoff"],
+        ending: "Return to the constraint",
+        followTrigger: "Ask for the next constraint",
+      },
+      rights: {
+        basis: "creator_consent",
+        subjectUserId: uA,
+        evidenceId: "consent:deletion-link",
+      },
+    }));
+    const [source] = await db.insert(trendSources).values({
+      kind: "youtube",
+      externalId: "framework-link-source",
+      sourceUrl: "https://example.test/framework-link-source",
+    }).returning();
+    const [item] = await db.insert(trendItems).values({
+      sourceId: source.id,
+      externalVideoId: "framework-link-video",
+      niche: "rights",
+      title: "Framework link",
+      channelId: "rights-channel",
+      videoViews: 200n,
+      channelMedianRecentViews: "100",
+      baselineSampleSize: 1,
+      baselineObservationIds: ["framework-link-baseline"],
+      baselineWindowStartsAt: new Date("2026-01-01T00:00:00.000Z"),
+      baselineWindowEndsAt: new Date("2026-01-31T00:00:00.000Z"),
+      sourcePublishedAt: new Date("2026-01-15T00:00:00.000Z"),
+      outlierRatio: "2",
+      rightsScope: "shared_analysis",
+      transcriptState: "transcript_unavailable",
+      saturation: "unmeasured",
+      saturationUnmeasuredReason: "incomplete_provenance",
+    }).returning();
+    const [licensedAutopsy] = await db.insert(autopsies).values({
+      trendItemId: item.id,
+      contentDigest: "licensed-framework-link",
+      analysisVersion: "rights-v1",
+      rightsScope: "shared_analysis",
+      rightsBasis: "independently_licensed",
+      rightsEvidenceId: "licence:foreign-link",
+      status: "completed",
+      analysis: {},
+      matchedFrameworkId: framework.framework.id,
+    }).returning();
+
+    await expect(db.delete(users).where(eq(users.id, uA))).resolves.toBeDefined();
+    expect(await db.select().from(frameworks).where(eq(frameworks.id, framework.framework.id))).toEqual([]);
+    const [survivor] = await db.select().from(autopsies).where(eq(autopsies.id, licensedAutopsy.id));
+    expect(survivor).toMatchObject({
+      rightsBasis: "independently_licensed",
+      rightsEvidenceId: "licence:foreign-link",
+      matchedFrameworkId: null,
+    });
+  });
+
+  it("R10: a canonical mechanism that fails the DB content authority never reaches proposed curation", () => {
+    expect(() =>
+      assertAutopsyFrameworkCandidate({
+        trendItemId: "00000000-0000-7000-8000-000000000004",
+        analysis: {
+          hookMechanic: "It reached 40,000 views for @alice",
+          beats: ["Open with Alice's result"],
+          ending: "Credit the result to Alice",
+          followTrigger: "Promise another result",
+        },
+      })
+    ).toThrow(FrameworkContentError);
+  });
+
+  // ------------------------------------------------------------------ R-99
+  // CHANGE B: the CONTENT question and the CANDIDACY question, separated.
+  //
+  // THE FIXTURE IS THE POPULATION. It is annotated with the parameter type, so
+  // a field added to the analysis is a COMPILE error here until it is added
+  // below — and `Object.keys` then plants a violation in it automatically. A
+  // hand-written field list is the shape CLAUDE.md's 2026-08-29 lesson is
+  // about: it narrows silently the day the analysis grows.
+  const CLEAN_ANALYSIS: Parameters<typeof assertAutopsyMechanismContent>[0] = {
+    hookMechanic: "Open on a visible tradeoff",
+    beats: ["Show the setup", "Turn on the constraint"],
+    ending: "Return to the opening tradeoff",
+    followTrigger: "Name the next mechanism to test",
+  };
+  const ITEM = "00000000-0000-7000-8000-00000000000a";
+  const plant = (field: string, value: string) => ({
+    ...CLEAN_ANALYSIS,
+    [field]: field === "beats" ? [value] : value,
+  });
+
+  it.each(Object.keys(CLEAN_ANALYSIS))(
+    "CHANGE B: the content scan refuses a planted violation in %s, and refuses it with the SAME rule the candidacy check does",
+    (field) => {
+      const analysis = plant(field, "It reached 40,000 views for @alice");
+      let fromContent: FrameworkContentError | null = null;
+      let fromCandidate: FrameworkContentError | null = null;
+      try { assertAutopsyMechanismContent(analysis); } catch (error) { fromContent = error as FrameworkContentError; }
+      try { assertAutopsyFrameworkCandidate({ trendItemId: ITEM, analysis }); } catch (error) { fromCandidate = error as FrameworkContentError; }
+
+      expect(fromContent, field).toBeInstanceOf(FrameworkContentError);
+      expect(fromCandidate, field).toBeInstanceOf(FrameworkContentError);
+      // The same RULE and the same FIELD: the private path is not a lookalike
+      // scan with its own vocabulary, it is `assertMechanismLevel` over the
+      // same mapping. A second, weaker copy would show up right here.
+      expect(fromContent!.ruleId, field).toBe(fromCandidate!.ruleId);
+      expect(fromContent!.ruleId, field).not.toBeNull();
+      expect(fromContent!.field, field).toBe(fromCandidate!.field);
+    },
+  );
+
+  it("CHANGE B: NON-VACUITY — the clean analysis passes both, so the refusals above are the planted text and not the fixture", () => {
+    expect(() => assertAutopsyMechanismContent(CLEAN_ANALYSIS)).not.toThrow();
+    expect(() => assertAutopsyFrameworkCandidate({ trendItemId: ITEM, analysis: CLEAN_ANALYSIS })).not.toThrow();
+    // ...which also says the constant ref the content scan stands its citations
+    // on is itself mechanism-level: it is scanned like every other string, so a
+    // ref that tripped a rule would make EVERY private analysis fail here.
+  });
+
+  it("CHANGE B: the shared library's own BOUNDS are candidacy, not content — a long mechanic and a long beat list pass the content scan and are still refused as a library row", () => {
+    const longName = { ...CLEAN_ANALYSIS, hookMechanic: `Open on a visible tradeoff ${"and hold it ".repeat(20)}` };
+    expect([...longName.hookMechanic].length).toBeGreaterThan(FRAMEWORK_NAME_MAX);
+    expect(() => assertAutopsyMechanismContent(longName)).not.toThrow();
+    expect(() => assertAutopsyFrameworkCandidate({ trendItemId: ITEM, analysis: longName })).toThrow(FrameworkLimitError);
+
+    const manyBeats = {
+      ...CLEAN_ANALYSIS,
+      beats: Array.from({ length: FRAMEWORK_LIST_MAX + 1 }, (_, i) => `Show the setup once more, take ${"x".repeat(i + 1)}`),
+    };
+    expect(() => assertAutopsyMechanismContent(manyBeats)).not.toThrow();
+    expect(() => assertAutopsyFrameworkCandidate({ trendItemId: ITEM, analysis: manyBeats })).toThrow(FrameworkLimitError);
+
+    // And the trend item ref is not even a PARAMETER of the content question:
+    // an id no library citation could be built from refuses the candidate and
+    // has nothing to say about the creator's text.
+    expect(() => assertAutopsyFrameworkCandidate({ trendItemId: "not-a-uuid", analysis: CLEAN_ANALYSIS }))
+      .toThrow(FrameworkContentError);
   });
 
   it("R5a: seeding is IDEMPOTENT and never overwrites a curator's decision", async () => {
@@ -461,6 +829,8 @@ describe("slice 7 stage A: frameworks", () => {
       testedCaveats: [],
       confidence: "unsupported",
       visibility: "shared" as const,
+      rightsBasis: "independently_licensed" as const,
+      rightsEvidenceId: "test-license:dispositions",
     };
     await db.insert(frameworks).values([
       { ...base, slug: "approved-one", name: "Approved", saturation: "observed", curatorStatus: "approved" },
@@ -509,7 +879,7 @@ describe("slice 7 stage A: frameworks", () => {
     const saturated = library.find((f) => f.slug === "saturated-one");
     const ordinary = library.find((f) => f.slug === "approved-one");
     expect(saturated?.saturationNotice).toBe(SATURATION_NOTICE);
-    expect(ordinary?.saturationNotice).toBeNull();
+    expect(ordinary?.saturationNotice).toBe(SATURATION_NOTICE);
     // The notice DEMANDS A FRESH INTERPRETATION (REQ-D02) rather than merely
     // flagging a status, and it makes no promise: the words this repo's own
     // canon bans on a creator-facing surface are absent.
@@ -531,6 +901,8 @@ describe("slice 7 stage A: frameworks", () => {
       testedCaveats: [],
       confidence: "unsupported",
       visibility: "shared" as const,
+      rightsBasis: "independently_licensed" as const,
+      rightsEvidenceId: "test-license:retirement",
     };
     // A stamp with an un-retired saturation...
     await expect(
@@ -571,6 +943,8 @@ describe("slice 7 stage A: frameworks", () => {
         testedCaveats: [],
         saturation: "observed" as const,
         visibility: "shared" as const,
+        rightsBasis: "independently_licensed" as const,
+        rightsEvidenceId: "test-license:confidence-ladder",
       };
       // The derived rung is storable...
       await expect(
@@ -609,6 +983,8 @@ describe("slice 7 stage A: frameworks", () => {
         confidence: "unsupported",
         saturation: "observed",
         visibility: "shared",
+        rightsBasis: "independently_licensed",
+        rightsEvidenceId: "test-license:json-shape",
       })
     ).rejects.toThrow();
   });
@@ -1059,6 +1435,7 @@ describe("slice 7 stage A: frameworks", () => {
       confidence: "unsupported",
       saturation: "observed" as const,
       visibility: "private" as const,
+      rightsBasis: "profile_private" as const,
       ownerProfileId: pA1,
       workspaceId: wsA,
     };
@@ -1109,6 +1486,7 @@ describe("slice 7 stage A: frameworks", () => {
         confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
+        rightsBasis: "profile_private",
         ownerProfileId: pA1,
         workspaceId: wsA,
         version: 7,
@@ -1391,7 +1769,7 @@ describe("slice 7 stage A: frameworks", () => {
 
   // -------------------------------------- the ownership trigger's OWN residue
 
-  it("R5c: the trigger is BEFORE UPDATE, so a COPY is not covered — measured, not assumed", async () => {
+  it("R5c: a private-to-shared COPY is refused by persisted rights shape", async () => {
     // A RECORDED NON-COVERAGE (tenancy gate NOTE, 2026-09-02), asserted for the
     // reason the personal-name limit above is asserted: a reader who checks
     // whether the admitted weakness is real must find a case, not a paragraph.
@@ -1429,24 +1807,17 @@ describe("slice 7 stage A: frameworks", () => {
       ),
       "the UPDATE half is not refused either — this case is measuring nothing"
     ).toMatch(/visibility, owner_profile_id and workspace_id are immutable/i);
-    // ...and the COPY, which no BEFORE UPDATE trigger can see.
-    await db.execute(
+    // The INSERT path cannot silently relabel private content as permanent
+    // shared analysis either: copying its private rights basis is structurally
+    // incompatible with shared visibility.
+    expect(await refusalMessage(db.execute(
       sql.raw(
-        `INSERT INTO frameworks (id, slug, name, beats, why_it_converts, applicability, source_references, evidence_entries, tested_caveats, confidence, saturation, visibility, curator_status)
-         SELECT '11111111-1111-7111-8111-111111111111', slug || '-copy', name, beats, why_it_converts, applicability, source_references, evidence_entries, tested_caveats, confidence, saturation, 'shared', 'proposed'
+        `INSERT INTO frameworks (id, slug, name, beats, why_it_converts, applicability, source_references, evidence_entries, tested_caveats, confidence, saturation, visibility, rights_basis, curator_status)
+         SELECT '11111111-1111-7111-8111-111111111111', slug || '-copy', name, beats, why_it_converts, applicability, source_references, evidence_entries, tested_caveats, confidence, saturation, 'shared', rights_basis, 'proposed'
          FROM frameworks WHERE id = '${mine.id}'`
       )
-    );
-    const copies = await db
-      .select()
-      .from(frameworks)
-      .where(eq(frameworks.slug, `${mine.slug}-copy`));
-    expect(
-      copies,
-      "the copy did not land — this case is describing a hole that is not there"
-    ).toHaveLength(1);
-    expect(copies[0].visibility).toBe("shared");
-    expect(copies[0].ownerProfileId).toBeNull();
+    ))).toMatch(/frameworks_rights_shape/i);
+    expect(await db.select().from(frameworks).where(eq(frameworks.slug, `${mine.slug}-copy`))).toEqual([]);
   });
 
   it("R5c: WHICH tables carry ownership immutability, measured from pg_trigger", async () => {
@@ -1475,13 +1846,19 @@ describe("slice 7 stage A: frameworks", () => {
         "SELECT c.relname AS table_name, t.tgname AS trigger_name FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE NOT t.tgisinternal ORDER BY 1, 2"
       )
     );
-    const rows = found.rows as { table_name: string; trigger_name: string }[];
+    const rows = (found.rows as { table_name: string; trigger_name: string }[])
+      .filter((row) => row.trigger_name.endsWith("_immutable"));
     expect(
       rows.map((r) => `${r.table_name}.${r.trigger_name}`),
       "the set of immutability triggers changed — if a table gained one, record the decision in the registry and here; if one was LOST, that is a tenancy control removed"
     ).toEqual([
+      "autopsies.autopsies_rights_immutable",
+      "autopsy_cache_claims.autopsy_cache_claims_rights_immutable",
       "frameworks.frameworks_ownership_immutable",
+      "frameworks.frameworks_rights_immutable",
       "generations.generations_parent_id_immutable",
+      "stripe_events.stripe_events_receipt_attribution_immutable",
+      "trend_transcripts.trend_transcripts_rights_immutable",
     ]);
     // ...and the table the NOTE names carries none, said explicitly rather than
     // left to be inferred from the absence of a line above.

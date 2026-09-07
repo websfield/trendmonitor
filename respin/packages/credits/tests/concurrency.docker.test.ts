@@ -488,7 +488,7 @@ describe.skipIf(!MAINTENANCE_URL)("credit ledger under REAL concurrency", () => 
           pending_webhooks: 0, request: null,
           data: { object: {
             id: "pi_race_one", object: "payment_intent",
-            customer: "cus_pi_race", amount: 1000,
+            customer: "cus_pi_race", amount: 1000, created: now,
             metadata: { respin_kind: "auto_topup", workspace_id: ws },
           } },
         }) as never;

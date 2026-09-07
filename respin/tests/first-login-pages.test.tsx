@@ -12,8 +12,12 @@ const mocks = vi.hoisted(() => ({
   ensureUserWorkspace: vi.fn(),
   withWorkspace: vi.fn(),
   monthlySpend: vi.fn(),
+  burnByMode: vi.fn(),
   getBalance: vi.fn(),
   getBillingState: vi.fn(),
+  usageRunwayFor: vi.fn(),
+  selectedProfileForMember: vi.fn(),
+  brainAssetSummary: vi.fn(),
   getActiveConfigServer: vi.fn(),
 }));
 
@@ -25,6 +29,9 @@ vi.mock("@respin/db", async (importOriginal) => ({
     ensureUserWorkspace: mocks.ensureUserWorkspace,
     withWorkspace: mocks.withWorkspace,
     monthlySpend: mocks.monthlySpend,
+    burnByMode: mocks.burnByMode,
+    selectedProfileForMember: mocks.selectedProfileForMember,
+    brainAssetSummary: mocks.brainAssetSummary,
   },
 }));
 
@@ -34,6 +41,7 @@ vi.mock("@respin/credits/app-server", async (importOriginal) => ({
   respinCredits: {
     getBalance: mocks.getBalance,
     getBillingState: mocks.getBillingState,
+    usageRunwayFor: mocks.usageRunwayFor,
   },
 }));
 
@@ -146,6 +154,28 @@ beforeEach(() => {
   });
   mocks.getBalance.mockResolvedValue({ balance: 0, asOf: NOW });
   mocks.getBillingState.mockResolvedValue({ tier: "free", state: "free" });
+  mocks.usageRunwayFor.mockResolvedValue({
+    state: "no_spend",
+    asOf: NOW,
+    windowStart: new Date("2026-07-31T00:00:00Z"),
+    trailingWindowDays: 30,
+    minimumDebitDays: 3,
+    debitDayCount: 0,
+    balance: 0,
+    totalDebit: 0,
+  });
+  mocks.burnByMode.mockResolvedValue({
+    byMode: [],
+    notAGeneration: { credits: 0, debits: 0 },
+    nonTerminalClaim: { credits: 0, debits: 0 },
+  });
+  mocks.selectedProfileForMember.mockResolvedValue({ id: "profile_first_login" });
+  mocks.brainAssetSummary.mockResolvedValue({
+    brainVersions: 0,
+    testedRules: 0,
+    loggedResults: 0,
+    feedback: 0,
+  });
   mocks.getActiveConfigServer.mockResolvedValue({
     version: 1,
     content: {
@@ -166,6 +196,10 @@ describe("brand-new direct page loads while the product layout bootstraps", () =
 
     expect(html).toContain('data-testid="balance-value"');
     expect(html).not.toContain('data-testid="workspace-access-error"');
+    const [mintedScope] = mocks.usageRunwayFor.mock.calls[0];
+    expect(mintedScope.workspaceId).toBe("ws_first_login");
+    expect(mocks.selectedProfileForMember).toHaveBeenCalledWith(mintedScope);
+    expect(mocks.brainAssetSummary).toHaveBeenCalledWith(mintedScope, "profile_first_login");
   });
 
   it("renders /settings/billing from the new workspace instead of a transient access refusal", async () => {

@@ -36,7 +36,7 @@ export const SHARED_LIBRARY_NOTE =
  * tells a reader what the badge beside a row means, and it deliberately does
  * not repeat the notice's words.
  */
-export const SATURATION_HEADING = "Worn out";
+export const SATURATION_HEADING = "Curator/library tag";
 
 /** What a creator's own framework is FOR, and what it is not. */
 export const PRIVATE_LIBRARY_NOTE =
@@ -115,13 +115,9 @@ export function confidenceNote(rung: string): string {
 }
 
 /** What a saturation value means on a row a creator is reading. */
-export function saturationNote(value: string): string {
-  if (value === "observed") return "seen to work";
-  if (value === "emerging") return "showing up more often";
-  if (value === "established") return "widely used";
-  if (value === "saturated") return "heavily used — see the note beside it";
-  if (value === "retired") return "retired, and not used to build anything";
-  return value;
+export function saturationNote(_value: string): string {
+  void _value;
+  return "Unmeasured";
 }
 
 /**

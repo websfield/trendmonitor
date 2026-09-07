@@ -111,6 +111,7 @@ describe("the reason a brain version carries is a CODE, not a sentence", () => {
       "onboarding_inference",
       "creator_edit",
       "correction",
+      "brain_promotion",
     ]);
   });
 });

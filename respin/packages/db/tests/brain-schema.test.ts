@@ -35,7 +35,21 @@ import {
   generationFeedback,
   generations,
 } from "../src/generation-schema";
-import { CREATOR_DATA_REGISTRY } from "../src/creator-data-registry";
+import {
+  promotionProposals,
+  proposalEvidenceFeedback,
+  proposalEvidenceResults,
+} from "../src/promotion-schema";
+import { results } from "../src/results-schema";
+import { LIFECYCLE_REGISTRY } from "../src/creator-data-registry";
+import {
+  autopsies,
+  autopsyCacheClaims,
+  trackedNiches,
+  trendItems,
+  trendSources,
+  trendTranscripts,
+} from "../src/trends-schema";
 
 const NIL = "00000000-0000-0000-0000-000000000000";
 
@@ -181,6 +195,8 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
         ...base,
         slug: "f1",
         visibility: "shared",
+        rightsBasis: "independently_licensed",
+        rightsEvidenceId: "test-license:brain-schema",
         ownerProfileId: profileA,
         workspaceId: wsA,
       })
@@ -191,6 +207,7 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
         ...base,
         slug: "f2",
         visibility: "private",
+        rightsBasis: "profile_private",
         ownerProfileId: null,
         workspaceId: null,
       })
@@ -203,6 +220,7 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
         ...base,
         slug: "f3",
         visibility: "private",
+        rightsBasis: "profile_private",
         ownerProfileId: profileA,
         workspaceId: null,
       })
@@ -211,17 +229,106 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
     await expect(
       db
         .insert(frameworks)
-        .values({ ...base, slug: "ok-shared", visibility: "shared" })
+        .values({
+          ...base,
+          slug: "ok-shared",
+          visibility: "shared",
+          rightsBasis: "independently_licensed",
+          rightsEvidenceId: "test-license:brain-schema",
+        })
     ).resolves.toBeDefined();
     await expect(
       db.insert(frameworks).values({
         ...base,
         slug: "ok-private",
         visibility: "private",
+        rightsBasis: "profile_private",
         ownerProfileId: profileA,
         workspaceId: wsA,
       })
     ).resolves.toBeDefined();
+  });
+
+  it("shared rights evidence NULL is refused for consent and licences on every rights-bearing table", async () => {
+    const [source] = await db.insert(trendSources).values({
+      kind: "youtube",
+      externalId: "rights-null-source",
+      sourceUrl: "https://example.test/rights-null-source",
+    }).returning();
+    const [item] = await db.insert(trendItems).values({
+      sourceId: source.id,
+      externalVideoId: "rights-null-video",
+      niche: "rights",
+      title: "Rights evidence NULL",
+      channelId: "rights-channel",
+      videoViews: 200n,
+      channelMedianRecentViews: "100",
+      baselineSampleSize: 1,
+      baselineObservationIds: ["rights-null-baseline"],
+      baselineWindowStartsAt: new Date("2026-01-01T00:00:00.000Z"),
+      baselineWindowEndsAt: new Date("2026-01-31T00:00:00.000Z"),
+      sourcePublishedAt: new Date("2026-01-15T00:00:00.000Z"),
+      outlierRatio: "2",
+      rightsScope: "shared_analysis",
+      transcriptState: "transcript_available",
+      saturation: "unmeasured",
+      saturationUnmeasuredReason: "incomplete_provenance",
+    }).returning();
+
+    for (const rights of [
+      { basis: "creator_consent" as const, subjectUserId: userA },
+      { basis: "independently_licensed" as const, subjectUserId: null },
+    ]) {
+      const suffix = rights.basis;
+      await expect(db.insert(trendTranscripts).values({
+        trendItemId: item.id,
+        rightsScope: "shared_analysis",
+        rightsBasis: rights.basis,
+        rightsSubjectUserId: rights.subjectUserId,
+        rightsEvidenceId: null,
+        content: `Transcript ${suffix}`,
+        contentDigest: `transcript-${suffix}`,
+        provenance: {},
+      }), `trend_transcripts ${suffix}`).rejects.toThrow();
+      await expect(db.insert(autopsyCacheClaims).values({
+        trendItemId: item.id,
+        contentDigest: `claim-${suffix}`,
+        analysisVersion: "rights-null-v1",
+        rightsScope: "shared_analysis",
+        rightsBasis: rights.basis,
+        rightsSubjectUserId: rights.subjectUserId,
+        rightsEvidenceId: null,
+        cacheScopeKey: "shared",
+        status: "pending",
+      }), `autopsy_cache_claims ${suffix}`).rejects.toThrow();
+      await expect(db.insert(autopsies).values({
+        trendItemId: item.id,
+        contentDigest: `autopsy-${suffix}`,
+        analysisVersion: "rights-null-v1",
+        rightsScope: "shared_analysis",
+        rightsBasis: rights.basis,
+        rightsSubjectUserId: rights.subjectUserId,
+        rightsEvidenceId: null,
+        status: "completed",
+        analysis: {},
+      }), `autopsies ${suffix}`).rejects.toThrow();
+      await expect(db.insert(frameworks).values({
+        slug: `rights-null-${suffix}`,
+        name: `Rights NULL ${suffix}`,
+        beats: [],
+        whyItConverts: "Fixture",
+        applicability: [],
+        sourceReferences: [],
+        evidenceEntries: [],
+        testedCaveats: [],
+        confidence: "unsupported",
+        saturation: "observed",
+        visibility: "shared",
+        rightsBasis: rights.basis,
+        rightsSubjectUserId: rights.subjectUserId,
+        rightsEvidenceId: null,
+      }), `frameworks ${suffix}`).rejects.toThrow();
+    }
   });
 
   it("model_usage: a cost is present exactly when cost_state is not unknown", async () => {
@@ -273,6 +380,22 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
     // can name it in the same declarative map rather than being built by a
     // second pass that reads back what the first inserted.
     const GENERATION_ID = "01a00000-0000-7000-8000-00000000cade";
+    const TREND_SOURCE_ID = "01a00000-0000-7000-8000-00000000ce01";
+    const TREND_ITEM_ID = "01a00000-0000-7000-8000-00000000ce02";
+    const AUTOPSY_ID = "01a00000-0000-7000-8000-00000000ce03";
+    // Slice 9a: a FIXED id for the brain document, for the same reason
+    // `GENERATION_ID` is fixed — `results.metric_declared_by_doc_id` carries a
+    // three-column FK to it, so the results row has to be able to NAME it in
+    // this declarative map rather than read back what an earlier insert made.
+    // The id is added HERE and not to `children()`'s shared row, because that
+    // row is inserted by several other cases in this file and a fixed primary
+    // key shared between them would collide.
+    const BRAIN_DOC_ID = "01a00000-0000-7000-8000-00000000ce04";
+    const FEEDBACK_ID = "01a00000-0000-7000-8000-00000000ce05";
+    const RESULT_ID = "01a00000-0000-7000-8000-00000000ce06";
+    const RESULT_PROPOSAL_ID = "01a00000-0000-7000-8000-00000000ce07";
+    const FEEDBACK_PROPOSAL_ID = "01a00000-0000-7000-8000-00000000ce08";
+    const CONTENT_DIGEST = "b".repeat(64);
     return [
       {
         table: "creator_profiles",
@@ -287,7 +410,7 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
       {
         table: "brain_docs",
         drizzle: shared.brain_docs.table,
-        row: shared.brain_docs.row,
+        row: { ...(shared.brain_docs.row as object), id: BRAIN_DOC_ID },
       },
       {
         table: "onboarding_inputs",
@@ -361,10 +484,94 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
         table: "generation_feedback",
         drizzle: generationFeedback,
         row: {
+          id: FEEDBACK_ID,
           profileId: profileA,
           workspaceId: wsA,
           generationId: GENERATION_ID,
           reaction: "used_as_is",
+        },
+      },
+      // Slice 9a (R5). ORDERED AFTER `generations` AND `brain_docs`, because
+      // its THREE composite FKs name both — the third entry in this set with a
+      // parent inside it, and the first with two. The cascade it witnesses is
+      // the registry's: a logged result leaves with the profile, and REQ-A04
+      // deletion is only POSSIBLE if it does.
+      {
+        table: "results",
+        drizzle: results,
+        row: {
+          id: RESULT_ID,
+          profileId: profileA,
+          workspaceId: wsA,
+          generationId: GENERATION_ID,
+          platform: "shorts",
+          audienceClass: "organic",
+          metricKey: "followers",
+          metricDeclaredByDocId: BRAIN_DOC_ID,
+          observedFrom: new Date("2026-08-01T00:00:00Z"),
+          observedTo: new Date("2026-08-08T00:00:00Z"),
+          treatmentKey: "|hook_set|cascade|followers",
+          evidenceState: "quantified_self_reported",
+          reachValue: "4000",
+          reachDenominator: "1000",
+        },
+      },
+      // Slice 9b. Two parents share this registry entry because proposal
+      // source is exclusive: the result proposal has no basis document while
+      // the feedback proposal must name the exact historical basis document.
+      // Keeping them in this one fixture makes the fixture population remain
+      // one-to-one with CREATOR_DATA_REGISTRY while exercising both evidence
+      // joins below with semantically coherent parents.
+      {
+        table: "promotion_proposals",
+        drizzle: promotionProposals,
+        row: [
+          {
+            id: RESULT_PROPOSAL_ID,
+            profileId: profileA,
+            workspaceId: wsA,
+            source: "results",
+            targetKind: "performance_meta",
+            targetPointer: "/rules/-",
+            payload: { fixture: "result promotion" },
+            familyKey: "cascade-result-family",
+            evidenceDigest: "c".repeat(64),
+            strength: "early",
+          },
+          {
+            id: FEEDBACK_PROPOSAL_ID,
+            profileId: profileA,
+            workspaceId: wsA,
+            source: "feedback",
+            targetKind: "voice",
+            targetPointer: "/avoid/-",
+            payload: { fixture: "feedback promotion" },
+            familyKey: "cascade-feedback-family",
+            evidenceDigest: "d".repeat(64),
+            strength: "repeated",
+            basisBrainDocId: BRAIN_DOC_ID,
+          },
+        ],
+      },
+      {
+        table: "proposal_evidence_results",
+        drizzle: proposalEvidenceResults,
+        row: {
+          proposalId: RESULT_PROPOSAL_ID,
+          profileId: profileA,
+          workspaceId: wsA,
+          resultId: RESULT_ID,
+          role: "treatment",
+        },
+      },
+      {
+        table: "proposal_evidence_feedback",
+        drizzle: proposalEvidenceFeedback,
+        row: {
+          proposalId: FEEDBACK_PROPOSAL_ID,
+          profileId: profileA,
+          workspaceId: wsA,
+          feedbackId: FEEDBACK_ID,
         },
       },
       {
@@ -382,30 +589,149 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
           confidence: "unsupported",
           saturation: "observed",
           visibility: "private",
+          rightsBasis: "profile_private",
           ownerProfileId: profileA,
           workspaceId: wsA,
+        },
+      },
+      {
+        table: "tracked_niches",
+        drizzle: trackedNiches,
+        row: { profileId: profileA, workspaceId: wsA, niche: "cascade niche" },
+      },
+      // Slice 8 fix pass (tenancy CHANGE 5, 2026-09-03). A SUBMITTED source,
+      // owned by profile A, ORDERED BEFORE `trend_items` because that row's
+      // `source_id` names it (RESTRICT) — the same parent-inside-the-set shape
+      // `generations` -> `generation_feedback` has. Until this entry existed
+      // the test pre-inserted an ownerless YOUTUBE source outside the fixture
+      // set, which is exactly the row a creator deletion must NOT remove, and
+      // the registry filed the whole table as not-creator-data on its
+      // strength. The cascade crosses the RESTRICT edge cleanly because the
+      // private item and its source both cascade from the same profile row.
+      {
+        table: "trend_sources",
+        drizzle: trendSources,
+        row: {
+          id: TREND_SOURCE_ID,
+          kind: "submitted",
+          externalId: "cascade-source",
+          sourceUrl: "https://example.test/cascade-source",
+          profileId: profileA,
+          workspaceId: wsA,
+        },
+      },
+      {
+        table: "trend_items",
+        drizzle: trendItems,
+        row: {
+          id: TREND_ITEM_ID,
+          sourceId: TREND_SOURCE_ID,
+          externalVideoId: "cascade-video",
+          niche: "cascade niche",
+          title: "Cascade trend fixture",
+          channelId: "cascade-channel",
+          videoViews: 2_000n,
+          channelMedianRecentViews: "1000",
+          baselineSampleSize: 1,
+          baselineObservationIds: ["cascade-baseline"],
+          baselineWindowStartsAt: new Date("2026-01-01T00:00:00.000Z"),
+          baselineWindowEndsAt: new Date("2026-01-31T00:00:00.000Z"),
+          sourcePublishedAt: new Date("2026-01-15T00:00:00.000Z"),
+          outlierRatio: "2",
+          rightsScope: "profile_private",
+          profileId: profileA,
+          workspaceId: wsA,
+          transcriptState: "transcript_available",
+          saturation: "unmeasured",
+          saturationUnmeasuredReason: "incomplete_provenance",
+        },
+      },
+      {
+        table: "trend_transcripts",
+        drizzle: trendTranscripts,
+        row: {
+          trendItemId: TREND_ITEM_ID,
+          rightsScope: "profile_private",
+          rightsBasis: "profile_private",
+          profileId: profileA,
+          workspaceId: wsA,
+          content: "Cascade transcript fixture.",
+          contentDigest: CONTENT_DIGEST,
+          provenance: { provider: "creator_paste" },
+        },
+      },
+      {
+        table: "autopsies",
+        drizzle: autopsies,
+        row: {
+          id: AUTOPSY_ID,
+          trendItemId: TREND_ITEM_ID,
+          contentDigest: CONTENT_DIGEST,
+          analysisVersion: "cascade-v1",
+          rightsScope: "profile_private",
+          rightsBasis: "profile_private",
+          profileId: profileA,
+          workspaceId: wsA,
+          status: "completed",
+          analysis: {},
+        },
+      },
+      {
+        table: "autopsy_cache_claims",
+        drizzle: autopsyCacheClaims,
+        row: {
+          trendItemId: TREND_ITEM_ID,
+          contentDigest: `${CONTENT_DIGEST}-claim`,
+          analysisVersion: "cascade-v1",
+          rightsScope: "profile_private",
+          rightsBasis: "profile_private",
+          profileId: profileA,
+          workspaceId: wsA,
+          cacheScopeKey: profileA,
+          status: "pending",
         },
       },
     ];
   };
 
   it("the delete test's population IS the registry's cascade set, not a hand-written list", () => {
-    // THE GUARD ON THE GUARD. Adding a table to `CREATOR_DATA_REGISTRY` with
-    // `deletion.behaviour: "cascade"` and no fixture here fails RIGHT HERE,
+    // THE GUARD ON THE GUARD. Adding a profile-owned table to the authoritative
+    // lifecycle registry and no fixture here fails RIGHT HERE,
     // naming the table — rather than silently leaving its cascade unwitnessed,
     // which is what happened to four tables between M2a and slice 6.
-    const registry = CREATOR_DATA_REGISTRY.filter(
-      (e) => e.deletion.behaviour === "cascade"
-    ).map((e) => e.table);
+    // Lifecycle receipt tables are produced by the deletion authority itself;
+    // they cannot be pre-request content fixtures and deliberately outlive the
+    // target long enough to prove recovery/erasure. Derive that exclusion from
+    // the registered writer authority instead of naming the three tables.
+    // The external-command outbox (Task 4) is the same kind of receipt: the
+    // executor writes it ABOUT an operation, never as profile content.
+    const DELETION_AUTHORITY_OWNERS = [
+      "packages/db/src/deletion-lifecycle.ts",
+      "packages/db/src/deletion-external-commands.ts",
+    ];
+    const registry = [...new Set(LIFECYCLE_REGISTRY.filter(
+      (entry) =>
+        entry.scope === "profile" &&
+        !DELETION_AUTHORITY_OWNERS.includes(entry.writerOwner)
+    ).map((entry) => entry.table))];
     expect([...cascadeFixtures().map((f) => f.table)].sort()).toEqual(
       [...registry].sort()
     );
     // NON-VACUITY: the registry really does hold non-cascade entries, so the
     // filter is doing work rather than returning everything.
-    expect(registry.length).toBeLessThan(CREATOR_DATA_REGISTRY.length);
+    expect(registry.length).toBeLessThan(new Set(LIFECYCLE_REGISTRY.map((entry) => entry.table)).size);
   });
 
   it("deleting the workspace cascades EVERY registry-cascade table away — REQ-A04 is POSSIBLE", async () => {
+    // An ownerless YOUTUBE source beside the fixture set: it is shared library
+    // identity, must SURVIVE the workspace delete, and is asserted to below —
+    // the other half of the `trend_sources` registry decision.
+    await db.insert(trendSources).values({
+      id: "01a00000-0000-7000-8000-00000000ce02",
+      kind: "youtube",
+      externalId: "cascade-shared-source",
+      sourceUrl: "https://example.test/cascade-shared-source",
+    });
     for (const f of cascadeFixtures()) {
       await expect(insert(f.drizzle, f.row), f.table).resolves.toBeDefined();
     }
@@ -430,10 +756,15 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
       db.delete(workspaces).where(eq(workspaces.id, wsA))
     ).resolves.toBeDefined();
     for (const f of cascadeFixtures()) {
-      expect(
-        await db.select().from(f.drizzle as never),
-        f.table + " survived the workspace delete"
-      ).toHaveLength(0);
+      // `trend_sources` is the one table in this set with a SHARED half: the
+      // creator's submitted source must be gone, the youtube one must remain.
+      const remaining = await db.select().from(f.drizzle as never);
+      if (f.table === "trend_sources") {
+        expect(remaining, "the ownerless youtube source was cascaded away").toHaveLength(1);
+        expect(remaining[0]).toMatchObject({ kind: "youtube", externalId: "cascade-shared-source", profileId: null });
+        continue;
+      }
+      expect(remaining, f.table + " survived the workspace delete").toHaveLength(0);
     }
   });
 
@@ -451,5 +782,46 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
     // the workspace. Its retention decision is in creator-data-registry.ts.
     expect(await db.select().from(workspaceSpendMonthly)).toHaveLength(1);
     expect(wsB).not.toBe(wsA);
+  });
+
+  it("0026 (R2/R7): deleting the REFERENCE ONBOARDING INPUT cascades its transcript away; the item and its claim STAY", async () => {
+    // The second cascade the registry's `trend_transcripts` entry names. A
+    // creator-pasted transcript IS a reference-class onboarding input; when
+    // that row goes, the third-party text goes with it. The `trend_items` row
+    // is deliberately NOT touched (no trigger — the 2026-07-30 rule), so its
+    // `transcript_state` column now overstates, which is why
+    // `pastedReferencesForProfile` derives the display state from the
+    // transcript row's presence (witnessed in pasted-reference.test.ts).
+    const [input] = await db.insert(onboardingInputs).values({
+      profileId: profileA, workspaceId: wsA, inputClass: "reference", content: "pasted", contentSha256: "p",
+      sourceUrl: "https://example.test/pasted",
+    }).returning();
+    const [source] = await db.insert(trendSources).values({
+      kind: "submitted", externalId: "https://example.test/pasted", sourceUrl: "https://example.test/pasted",
+      profileId: profileA, workspaceId: wsA,
+    }).returning();
+    const [item] = await db.insert(trendItems).values({
+      sourceId: source.id, externalVideoId: "p", niche: "", title: "", rightsScope: "profile_private",
+      profileId: profileA, workspaceId: wsA, transcriptState: "transcript_available", baselineState: "unavailable",
+      sourcePublishedAt: new Date(), saturation: "unmeasured", saturationUnmeasuredReason: "no_population",
+    }).returning();
+    await db.insert(trendTranscripts).values({
+      trendItemId: item.id, rightsScope: "profile_private", profileId: profileA, workspaceId: wsA,
+      rightsBasis: "profile_private",
+      content: "pasted", contentDigest: "p", referenceInputId: input.id,
+      provenance: { kind: "creator_paste", sourceUrl: "https://example.test/pasted", referenceInputId: input.id },
+    });
+    await db.insert(autopsyCacheClaims).values({
+      trendItemId: item.id, contentDigest: "p", analysisVersion: "v1", rightsScope: "profile_private",
+      rightsBasis: "profile_private",
+      profileId: profileA, workspaceId: wsA, cacheScopeKey: profileA, status: "pending",
+    });
+    // NON-VACUITY: the transcript is there before the delete.
+    expect(await db.select().from(trendTranscripts)).toHaveLength(1);
+    await db.delete(onboardingInputs).where(eq(onboardingInputs.id, input.id));
+    expect(await db.select().from(trendTranscripts), "the transcript survived its input").toHaveLength(0);
+    expect(await db.select().from(trendItems), "the item was cascaded away — nothing should cascade from the input to the item").toHaveLength(1);
+    expect(await db.select().from(autopsyCacheClaims)).toHaveLength(1);
+    expect(await db.select().from(trendSources)).toHaveLength(1);
   });
 });

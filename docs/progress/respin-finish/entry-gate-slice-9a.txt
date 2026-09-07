@@ -1,0 +1,23 @@
+=== TYPECHECK ===
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== WORKER ===
+> tsc -p worker/tsconfig.json --pretty false
+
+=== LINT ===
+> eslint .
+
+=== DBCHECK ===
+Everything's fine 🐶🔥
+=== TESTS ===
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe direction that must NOT change: an UNPAUSED workspace still gets its allowance [33m 657[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma RESUMED workspace grants again — the refusal is tied to the OPEN pause, not to having ever paused [33m 747[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m159 passed[39m[22m[90m (159)[39m
+[2m      Tests [22m [1m[32m4168 passed[39m[22m[90m (4168)[39m
+[2m   Start at [22m 16:07:13
+[2m   Duration [22m 246.65s[2m (transform 63.03s, setup 0ms, collect 521.35s, tests 3993.19s, environment 142ms, prepare 104.47s)[22m
+
+=== BUILD ===
+ ✓ Compiled successfully in 5.2s
+ ✓ Generating static pages (11/11)

@@ -202,6 +202,7 @@ export const ONBOARDING_ERROR_CODES = [
   "run_slot_busy",
   "server_at_capacity",
   "ledger_integrity",
+  "topup_reconciliation_required",
   // SLICE 4. `inferVoice` composes `writeBrainDoc`, which has always run
   // `echo.ts`'s bar over the inferred voice content against this profile's
   // reference-post corpus on EVERY write — the inference path's own write

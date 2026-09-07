@@ -5,15 +5,9 @@
 // for, and the operative control on that span is `REFERENCE_QUOTE_MAX_CHARS`
 // in echo.ts, not this provenance bar.
 //
-// COVERAGE LIMIT, STATED RATHER THAN IMPLIED (golden rule 6): `performance_meta`
-// is not in `WRITABLE_BRAIN_KINDS` (brain-content.ts), so `parseBrainContent`
-// refuses it with `KindNotYetWritableError` BEFORE `writeBrainDoc` ever reaches
-// the barred-kind check — there is no public path through which a `reference`
-// input could be cited as `performance_meta`'s provenance today. The set
-// widening is a documented pre-emptive close (the phase card's "cheap moment"
-// framing: barring it now costs nothing and closes the hole before slice 9
-// makes the kind writable), and this file's job is to prove that reachability
-// limit honestly rather than fabricate a call that cannot happen.
+// Slice 9b made `performance_meta` writable. Its witness below therefore drives
+// the live write path and must reach this provenance bar; an earlier
+// not-yet-writable refusal would no longer prove the reference boundary.
 import { beforeEach, describe, expect, it } from "vitest";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
@@ -27,7 +21,7 @@ import {
 import { ProvenanceError, ReferenceEchoError } from "../src/errors";
 import { assertNoReferenceEcho } from "../src/echo";
 import type { BrainDocReason } from "../src/brain-reason";
-import { CHECK, KindNotYetWritableError } from "../src/brain-content";
+import { CHECK } from "../src/brain-content";
 import { brainDocs } from "../src/brain-schema";
 import { eq } from "drizzle-orm";
 
@@ -149,25 +143,44 @@ describe("R-30.10 / task 42 — REFERENCE_BARRED_KINDS widened", () => {
     ).rejects.toThrow(/cannot be provenance for a 'killtest'/);
   });
 
-  it("performance_meta: UNREACHABLE via writeBrainDoc today — refused earlier, by KindNotYetWritableError", async () => {
-    // Proves the reachability limit this file's header states, rather than
-    // asserting nothing: `performance_meta` refuses BEFORE the barred-kind
-    // check runs at all, for a DIFFERENT reason (it is not writable), so the
-    // barred-set entry for it cannot be exercised end-to-end until slice 9.
+  it("performance_meta: the live 9b writer refuses reference provenance and stores no version", async () => {
     const ref = await seedReferenceInput();
+    const before = await db.select().from(brainDocs).where(eq(brainDocs.profileId, profileId));
     const err = await db
       .transaction((tx) =>
         caps.writeBrainDoc(
           {
             kind: "performance_meta",
-            content: {},
+            content: {
+              rules: [{
+                metricLabel: "Followers",
+                metricKey: "followers",
+                metricUnit: "followers per 1k views",
+                metricDirection: "higher_is_better",
+                lever: "reach",
+                platform: "shorts",
+                audienceClass: "organic",
+                observedFrom: "2026-08-01T00:00:00.000Z",
+                observedTo: "2026-08-31T00:00:00.000Z",
+                treatmentN: 3,
+                baselineN: 3,
+                treatmentMedianPer1k: 2,
+                baselineMedianPer1k: 1,
+                effectPer1k: 1,
+                pastOutcome: "better",
+                evidenceStrength: "early",
+                selfReportedN: 6,
+                connectorVerifiedN: 0,
+                confounders: [],
+              }],
+            },
             sourceEvidence: [
               {
-                field: "/anything",
-                quote: "x",
+                field: "/rules/0/metricLabel",
+                quote: QUOTE,
                 inputId: ref.id,
-                startUtf16: 0,
-                endUtf16: 1,
+                startUtf16: QUOTE_START,
+                endUtf16: QUOTE_END,
               },
             ],
             reason: REASON,
@@ -176,7 +189,12 @@ describe("R-30.10 / task 42 — REFERENCE_BARRED_KINDS widened", () => {
         )
       )
       .catch((e: Error) => e);
-    expect(err).toBeInstanceOf(KindNotYetWritableError);
+    expect(err).toBeInstanceOf(ProvenanceError);
+    if (!(err instanceof ProvenanceError)) throw err;
+    expect(err.message).toContain(
+      "a 'reference' input cannot be provenance for a 'performance_meta' brain document"
+    );
+    expect(await db.select().from(brainDocs).where(eq(brainDocs.profileId, profileId))).toEqual(before);
   });
 
   it("strategy stays EXEMPT: a reference input MAY be cited as strategy provenance (REQ-D04, R-9)", async () => {

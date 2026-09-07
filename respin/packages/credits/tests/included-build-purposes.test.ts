@@ -48,6 +48,7 @@ import {
   type PricedOperation,
 } from "../src/inference";
 import { generationOp } from "../src/generate";
+import { PASTED_REFERENCE_CREDIT_COST_KEY } from "../src/pasted-reference";
 
 const seed: RespinConfigV1 = respinConfigV1.parse(CONFIG_V1_SEED);
 
@@ -246,6 +247,31 @@ describe("includedBuildPurposes reads the DOCUMENT (R-82)", () => {
       probedCreditCostKeys().includes("autopsy"),
       "autopsy is probed now — delete its UNPROBED_CREDIT_COST_KEYS entry"
     ).toBe(false);
+  });
+
+  it("R10 (slice 8c): `autopsy` now HAS a reader and is STILL unprobed — the reason names the reader, the decision, and the partition it does not widen", () => {
+    // R-98 made `creditCosts.autopsy` the price of a creator's pasted
+    // reference. The key is priced by `submitPastedReference`, which is not a
+    // `PricedOperation` of any purpose — so the partition above is unchanged
+    // (no new probed key, no new purpose) and the register entry must say
+    // WHY rather than keep calling the key system overhead alone.
+    expect(PASTED_REFERENCE_CREDIT_COST_KEY).toBe("autopsy");
+    expect(UNPROBED_CREDIT_COST_KEYS[PASTED_REFERENCE_CREDIT_COST_KEY]).toContain("pasted-reference.ts");
+    expect(UNPROBED_CREDIT_COST_KEYS[PASTED_REFERENCE_CREDIT_COST_KEY]).toContain("R-98");
+    expect(UNPROBED_CREDIT_COST_KEYS[PASTED_REFERENCE_CREDIT_COST_KEY]).toContain("R-90");
+    expect(includedBuildPurposes(seed)).not.toContain("autopsy");
+    // The register's reason cites a file — which must exist and must really
+    // read the key, or the reason is prose about a reader that is not there.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const reader = readFileSync(resolve(join(here, "..", "src", "pasted-reference.ts")), "utf8");
+    expect(reader).toContain('PASTED_REFERENCE_CREDIT_COST_KEY = "autopsy"');
+    expect(reader).toMatch(/content\.creditCosts\[PASTED_REFERENCE_CREDIT_COST_KEY\]/);
+  });
+
+  it("keeps system autopsy overhead and zero-cost trend browsing outside creator included-build claims", () => {
+    expect(UNPROBED_CREDIT_COST_KEYS.autopsy).toContain("system overhead");
+    expect(UNPROBED_CREDIT_COST_KEYS.trendBrowse).toContain("read entitlement");
+    expect(UNPROBED_CREDIT_COST_KEYS.trendBrowse).toContain("not a build or debit");
   });
 
   it("the `@respin/db` suite drives reconcileSpend with the SAME list", () => {

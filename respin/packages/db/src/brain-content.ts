@@ -306,6 +306,66 @@ const voiceContent = z.strictObject({
  */
 export const METRIC_DIRECTIONS = ["higher_is_better", "lower_is_better"] as const;
 
+/**
+ * THE DECLARED METRIC'S STABLE IDENTITY, derived from its label (R15: one
+ * definition, and every reader takes THIS one).
+ *
+ * IT LIVES HERE, beside the `metric.key` position it serves, because that
+ * schema comment is what promises the value is "slugified from `label`", and a
+ * promise made in one file and kept in another is how two copies begin. It was
+ * a private slug helper in `interview-ops.ts` whose docblock said the value
+ * "is never read back" — true until slice 9a needed a metric identity, false
+ * the moment it did. Two readers now: the interview's pre-strip payload, and
+ * `declaredMetricOf`'s read-time derivation.
+ *
+ * DERIVED, NEVER STORED ON A BRAIN DOCUMENT — which is the correction slice
+ * 9a's BLOCK bought. `metric.key` is `serverOwned`, so `parseBrainContent`
+ * strips it before `writeBrainDoc` ever sees it: a stored key does not exist
+ * for any document any product path has written. Deriving from the label makes
+ * the identity a pure function of content that IS stored, so it cannot go
+ * missing and cannot disagree with itself.
+ *
+ * BUT THIS FUNCTION'S OUTPUT *IS* PERSISTED, AND THAT MAKES THE SLUG RULE A
+ * STORED-DATA FORMAT. Read this before changing a line of it. Every result row
+ * keeps the derived value twice: in `results.metric_key` and inside
+ * `results.treatment_key` (migration 0029, and C4 composes the treatment key
+ * from the metric key). So a change here — unicode handling, the separator,
+ * the `[^a-z0-9]` class, dropping the `"metric"` fallback — does not just
+ * change future keys. It makes EVERY EXISTING ROW disagree with its own
+ * re-derivation: `comparison.ts` then refuses the group ("names metric X but
+ * brain_docs Y declares Z"), and because `results` is APPEND-ONLY WITH NO
+ * DELETE PATH those creators' comparisons are refused permanently, with
+ * nothing they can do about it.
+ *
+ * CHANGING THIS FUNCTION IS THEREFORE A DATA MIGRATION, not an edit. The two
+ * places its outputs are pinned, so a change is at least loud:
+ * `packages/db/tests/results-schema.test.ts` ("New followers" -> `new-followers`,
+ * in `declaredMetricOf`'s cases) and
+ * `packages/db/tests/results-schema-write.test.ts` ("Weekly saves" ->
+ * `weekly-saves`, asserted on the stored row, the treatment key and the
+ * comparison group in the end-to-end case). Both go red on any change; neither
+ * migrates the rows already written.
+ *
+ * (This paragraph exists because its absence is the shape that produced the
+ * round-1 BLOCK: a property true of the code, unstated at the one place a
+ * reader decides whether an edit is safe.)
+ *
+ * WHAT IT COSTS, stated rather than discovered: editing the label changes the
+ * key, so results logged before and after read as different metrics. That is
+ * ALREADY true for a stricter reason — any edit to a Strategy document appends
+ * a NEW version, and `results.metric_declared_by_doc_id` is a comparability
+ * predicate — so the derived key adds no split the version predicate did not
+ * already make.
+ */
+export function metricKeyFromLabel(label: string): string {
+  const slug = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "metric";
+}
+
 const strategyContent = z.strictObject({
   audience: claim(z.string()),
   positioning: claim(z.string()),
@@ -334,6 +394,17 @@ const strategyContent = z.strictObject({
       // (slugified from `label`) rather than one a creator confirms per
       // field. It needs no evidence and no confirmation — see `serverOwned`'s
       // own docblock for why the exemption is itself the marker.
+      //
+      // IT IS NEVER STORED, AND SINCE SLICE 9A THAT IS LOAD-BEARING RATHER
+      // THAN INCIDENTAL. `serverOwned` means `stripServerOwned` removes this
+      // position inside `parseBrainContent`, so no `brain_docs.content` this
+      // product has ever written contains a `metric.key` —
+      // `interview-ops.test.ts` asserts exactly that against a real
+      // `submitInterview` document. Slice 9a needed a metric identity and read
+      // this position back, which returned `undefined` for every creator and
+      // made `/results` unusable for all of them. The identity is DERIVED at
+      // read time instead, by `metricKeyFromLabel` below — the same slug this
+      // comment already promised, now with one definition.
       key: serverOwned(z.string()),
       label: claim(z.string()),
       unit: claim(z.string()),
@@ -362,17 +433,40 @@ const killtestContent = z.strictObject({
 });
 
 const performanceMetaContent = z.strictObject({
-  // DELIBERATELY EMPTY, and the emptiness is the decision. This is the one
-  // kind the learning loop writes from VERIFIED results (R-10/REQ-F03), and a
-  // free-text leaf here is exactly where an n-less performance sentence would
-  // live. Declaring a shape now would pre-commit the honest version — which
-  // needs slots for the declared metric, n, effect, period, population and
-  // the paid/organic separation — to a schema revision. Its real shape is
-  // M5's to declare.
-  //
-  // The rationale that used to sit on `baselineNote` survives and still
-  // holds: inferring this at onboarding would be a performance claim at
-  // n = 0 from unverified data. `WRITABLE_BRAIN_KINDS` is what enforces it.
+  rules: z.array(
+    z.strictObject({
+      metricLabel: claim(z.string()),
+      metricKey: claim(z.string()),
+      metricUnit: claim(z.string()),
+      metricDirection: claim(z.enum(METRIC_DIRECTIONS)),
+      lever: claim(z.enum(["reach", "conversion"])),
+      platform: claim(z.string()),
+      audienceClass: claim(z.enum(["organic", "paid"])),
+      observedFrom: claim(z.string()),
+      observedTo: claim(z.string()),
+      treatmentN: claim(z.number()),
+      baselineN: claim(z.number()),
+      treatmentMedianPer1k: claim(z.number()),
+      baselineMedianPer1k: claim(z.number()),
+      effectPer1k: claim(z.number()),
+      pastOutcome: claim(z.enum(["better", "worse"])),
+      evidenceStrength: claim(z.enum(["early", "repeated", "corroborated"])),
+      selfReportedN: claim(z.number()),
+      connectorVerifiedN: claim(z.number()),
+      confounders: z.array(
+        claim(
+          z.enum([
+            "topic_overlap",
+            "posting_time_unknown",
+            "account_growth",
+            "spillover_from_other_post",
+            "external_promotion",
+            "platform_change",
+          ])
+        )
+      ),
+    })
+  ),
 });
 
 export const BRAIN_CONTENT_SCHEMAS = {
@@ -468,16 +562,15 @@ assertRegistryClosed(BRAIN_CONTENT_SCHEMAS);
 
 
 /**
- * The kinds a caller may write in M2b.
- *
- * `performance_meta` is absent, and its absence is the enforcement: a set to
- * check against beats a refusal spelled out at one call site, because the next
- * writer reads the set.
+ * The kinds the single brain-doc writer may persist. Performance Meta joined
+ * this closed set in slice 9b; its product path remains the promotion approval
+ * ceremony, while this registry keeps the shared writer exhaustive.
  */
 export const WRITABLE_BRAIN_KINDS: ReadonlySet<BrainKind> = new Set([
   "voice",
   "strategy",
   "killtest",
+  "performance_meta",
 ]);
 
 export class KindNotYetWritableError extends Error {

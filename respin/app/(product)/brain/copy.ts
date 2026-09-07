@@ -198,7 +198,7 @@ export function confirmProgress(total: number, confirmed: number): string {
  * list omits degrades to neutral copy rather than to silence.
  *
  * `confirmVoiceFields` reaches `ProfileScope.mint` (ScopeForgeryError,
- * ProfileAccessError), `assertMayDecide` (BrainRoleError), `hasOpenPause`
+ * ProfileAccessError), `assertOwner` (ProfileRoleError), `hasOpenPause`
  * (WorkspacePausedError) and `confirmBrainDocFields`'s validation
  * (ProvenanceError). `activateVoice` adds the echo bar
  * (ContentWalkError, SegmenterUnavailableError). `readBrainHistory` annotates

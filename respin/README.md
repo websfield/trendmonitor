@@ -26,6 +26,13 @@ packages/credits @respin/credits — the credit ledger and its ONE balance autho
                  metered spend path (profile intake, runInference, inferVoice)
 packages/llm     @respin/llm — the Anthropic provider adapter (pinned origin, typed errors,
                  ceiling pricing); consumed only by @respin/credits — app/ may not import it
+packages/trends  @respin/trends — compliant metadata/transcript intake, canonical autopsy,
+                 trend measurements and the pre-display similarity release gate (the gate
+                 itself lives in packages/modes/src/similarity.ts and is a deterministic
+                 lexical/structural proxy against the autopsy's bounded reference — not
+                 semantic similarity and not plagiarism detection; R-87)
+worker/          pg-boss system worker — scheduled refresh/autopsy dispatch, non-tenant
+                 system-spend authority, bounded provider work, health and dead letters
 ```
 
 Rule: `app/` imports only the sanctioned surfaces — `respinDb` /
@@ -195,6 +202,20 @@ public).
    customer.updated                           # attribution for the deletion
    customer.deleted                           # cascade (REQ-A04)
    ```
+
+6. **System worker — pg-boss (M4)**: `pnpm worker:start` runs the dedicated
+   process; production uses `ops/systemd/respin-worker.service`. Its
+   `DATABASE_URL` and `ANTHROPIC_API_KEY` are provisioned outside the repo.
+   Pool/concurrency bounds are documented in `env.example`. Live YouTube
+   discovery remains deferred and is not implied by a healthy worker; the
+   closed Resend auth-delivery authority (Phase 10b-1 Task 4) ships behind
+   `RESEND_API_KEY`/`RESEND_FROM` with real delivery evidence (T-16) still
+   deferred. The worker also runs the deletion-lifecycle tick, whose
+   irreversible erasure needs `RESPIN_DELETION_ERASURE_SCOPES` and the Task 5
+   journal store before anything can advance. Installation, health, recovery and rollback are documented
+   in [`../docs/runbooks/respin-worker-operations.md`](../docs/runbooks/respin-worker-operations.md).
+   The deferred real-vendor, target-host, YouTube and Resend acceptance walks
+   are specified in [`../docs/runbooks/respin-vendor-acceptance-walks.md`](../docs/runbooks/respin-vendor-acceptance-walks.md).
 
 ## Recording M1 evidence (owner, test mode)
 

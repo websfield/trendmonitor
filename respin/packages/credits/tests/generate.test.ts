@@ -19,6 +19,8 @@ import { and, eq } from "drizzle-orm";
 import {
   brainActivationSnapshots,
   brainDocs,
+  autopsies,
+  createTrendSource,
   CONFIG_V1_SEED,
   createTestDb,
   creditLedger,
@@ -29,13 +31,16 @@ import {
   seedAuthUser,
   subscriptions,
   seedDb,
+  recordSharedTrendItem,
+  recordSharedTrendTranscript,
   withWorkspace,
+  mintProfileScope,
   type TestDb,
   type VerifiedWorkspaceId,
   type WorkspaceScope,
 } from "@respin/db";
 import { appendConfigVersion, getActiveConfig } from "@respin/config";
-import { IMPLEMENTED_MODES, MODE_IDS } from "@respin/modes";
+import { REFERENCE_BLOCK_HEADER } from "@respin/modes";
 import {
   LlmRateLimitedError,
   LlmSchemaInvalidError,
@@ -55,15 +60,12 @@ import {
   GenerationPayloadMismatchError,
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
+  GenerationUnchargedCostCapError,
   InsufficientCreditsError,
   PostCallDebitError,
   WorkspacePausedError,
 } from "../src/errors";
-import {
-  ModeNotBuiltYetError,
-  ModeNotInPlanError,
-  planIncludesMode,
-} from "../src/mode-access";
+import { ModeNotInPlanError } from "../src/mode-access";
 import {
   setFrameworkOfferDroppedMetricSink,
   setUnchargedAttemptCapMetricSink,
@@ -87,6 +89,7 @@ import {
 // itself. `free-mint.test.ts` already reads its allowance this way; this is the
 // same rule on the same kind of number.
 const HOOK_SET_COST = CONFIG_V1_SEED.creditCosts.hookSet;
+const SPIN_COST = CONFIG_V1_SEED.creditCosts.spin;
 
 const params = (over: Partial<{ attemptId: string; input: string }> = {}) => ({
   mode: "hooks" as const,
@@ -94,6 +97,62 @@ const params = (over: Partial<{ attemptId: string; input: string }> = {}) => ({
   input: over.input ?? "i want to talk about what my first year actually looked like",
   platform: PLATFORM,
 });
+
+const SPIN_REFERENCE = {
+  hookMechanic: "open on a visible renovation regret",
+  beats: [
+    "show the cabinet-paint shortcut",
+    "turn on the hidden preparation cost",
+    "return to the weekend constraint",
+  ],
+  ending: "name the preparation step that would have prevented the regret",
+  followTrigger: "compare one slower preparation choice",
+  subjectTerms: ["kitchen renovation", "cabinet paint", "weekend makeover"],
+  hook: "I painted my kitchen cabinets in one weekend and regret every shortcut",
+  structure: { beatCount: 3, turnBeat: 1 },
+} as const;
+
+const spinParams = (spinAutopsyId?: string, attemptId = "spin-1") => ({
+  mode: "analyseAndSpin" as const,
+  attemptId,
+  input: "Turn this autopsy into an original filming lesson.",
+  platform: PLATFORM,
+  spinAutopsyId,
+});
+
+const nearCopySpinOutput = () =>
+  JSON.stringify({
+    thesis: {
+      statement: "You lose more takes to a setting you never checked than to nerves",
+      why: "the footage from today shows the same lens change failing twice",
+    },
+    framework: { name: "cost reveal", why: "the cost is the reshoot nobody sees" },
+    hooks: [
+      { text: SPIN_REFERENCE.hook, mechanic: "cold open" },
+      { text: "The setting you skipped is the one your viewer notices first", mechanic: "cost reveal" },
+      { text: "Nobody tells you the boring part is where the work happens", mechanic: "withheld detail" },
+    ],
+    beats: [
+      { atSeconds: 0, vo: "open on the take that failed and say why you kept it", isTurn: false },
+      { atSeconds: 6, vo: "here is the dial nobody checks before a lens change", isTurn: true },
+      { atSeconds: 14, vo: "show the same shot again with the dial set correctly", isTurn: false },
+      { atSeconds: 20, vo: "keep the one take that proves the point", isTurn: false },
+    ],
+    shotMap: [
+      { beatIndex: 0, shot: "wide handheld of the take that failed", note: "keep the room audio" },
+      { beatIndex: 1, shot: "close on the dial", note: "hold it long enough to read" },
+    ],
+    onScreenText: [
+      { atSeconds: 1, text: "the take that failed" },
+      { atSeconds: 7, text: "the dial nobody checks" },
+    ],
+    caption: { text: "The reshoot nobody sees is the one that costs you the whole day.", hashtags: ["filmmaking", "solocreator"] },
+    whyThisPerforms: {
+      reasoning: "It opens on a cost the viewer already recognises and then hands them one thing to copy today.",
+      weakestPoint: "None of this has been checked against how your own audience actually behaves.",
+    },
+    disclosure: { platform: "youtube", guidance: "Say in the description that a tool helped draft this, in your own words." },
+  });
 
 /** The instrument: a provider that fails the test if it is ever reached. */
 const never = (): LlmProvider => ({
@@ -149,12 +208,13 @@ describe("generate", () => {
   let ws: VerifiedWorkspaceId;
   let owner: WorkspaceScope;
   let profileId: string;
+  let rightsSubjectUserId: string;
 
   beforeEach(async () => {
     db = await createTestDb();
     await seedAuthUser(db, "user_a");
     await seedDb(db);
-    await ensureUserWorkspace(db, { authUserId: "user_a", name: "W" });
+    rightsSubjectUserId = (await ensureUserWorkspace(db, { authUserId: "user_a", name: "W" })).user.id;
     owner = await withWorkspace(db, { authUserId: "user_a" });
     ws = owner.workspaceId;
     const profile = await createProfile(db, owner, "Anna", new Date());
@@ -288,6 +348,57 @@ describe("generate", () => {
     });
   }
 
+  async function sharedSpinAutopsy(): Promise<string> {
+    const source = await createTrendSource(db, {
+      kind: "youtube",
+      externalId: "spin-shared-source",
+      sourceUrl: "https://example.test/spin-shared-source",
+    });
+    const item = await recordSharedTrendItem(db, {
+      sourceId: source.id,
+      externalVideoId: "spin-shared-video",
+      niche: "filmmaking",
+      title: "A permitted shared reference",
+      channelId: "spin-shared-channel",
+      videoViews: 2_000n,
+      channelMedianRecentViews: "1000",
+      baselineSampleSize: 1,
+      baselineObservationIds: ["spin-shared-baseline"],
+      baselineWindowStartsAt: new Date("2026-01-01T00:00:00.000Z"),
+      baselineWindowEndsAt: new Date("2026-01-31T00:00:00.000Z"),
+      sourcePublishedAt: new Date("2026-01-15T00:00:00.000Z"),
+      transcriptState: "transcript_required",
+      saturation: "unmeasured",
+      saturationUnmeasuredReason: "incomplete_provenance",
+    });
+    const transcript = await recordSharedTrendTranscript(db, {
+      trendItemId: item.id,
+      content: "Reference transcript is available through the scoped reader.",
+      rightsSubjectUserId,
+      provenance: {
+        provider: "youtube_creator_owned_oauth",
+        sourceReference: "https://www.youtube.com/watch?v=spin-shared-video",
+        sharedAnalysisRightsBasis: "creator_owned_caption_consent",
+        consentEvidenceId: "spin-shared-consent",
+      },
+    });
+    const [autopsy] = await db
+      .insert(autopsies)
+      .values({
+        trendItemId: item.id,
+        contentDigest: transcript.contentDigest,
+        analysisVersion: "spin-v1",
+        rightsScope: "shared_analysis",
+        rightsBasis: transcript.rightsBasis,
+        rightsSubjectUserId: transcript.rightsSubjectUserId,
+        rightsEvidenceId: transcript.rightsEvidenceId,
+        status: "completed",
+        analysis: SPIN_REFERENCE,
+      })
+      .returning();
+    return autopsy.id;
+  }
+
   const attemptsOf = () =>
     db.select().from(generationAttempts).where(eq(generationAttempts.workspaceId, ws));
   const attemptRow = async (attemptId = "gen-1") =>
@@ -354,7 +465,7 @@ describe("generate", () => {
     expect(await attemptsOf()).toHaveLength(0);
   });
 
-  it("5. R18: the mode gate refuses three DIFFERENT things with three different sentences", async () => {
+  it("5. R18: the mode gate distinguishes an unknown mode from plan exclusion", async () => {
     await activateBrain();
     // A string that is not one of the seven is not a plan question at all —
     // telling someone their plan excludes `fullScript` would be a false
@@ -383,45 +494,6 @@ describe("generate", () => {
       )
     ).rejects.toBeInstanceOf(ModeNotInPlanError);
 
-    // ...and a mode that IS in the plan but is not built is a DIFFERENT
-    // refusal, because "your plan excludes it" and "we have not shipped it"
-    // are opposite statements about whose fault it is.
-    //
-    // THIS CASE USED `caption` ON FREE AND WENT RED WHEN STAGE B BUILT IT.
-    // Both halves of the fix are derived rather than written down, because the
-    // reason it broke is that a literal stopped being an example of what it was
-    // chosen for (CLAUDE.md 2026-08-29): the mode is whatever is still unbuilt,
-    // and the tier is whatever tier's plan includes that mode. When slice 8
-    // ships `analyseAndSpin`, the non-vacuity assertions below go RED rather
-    // than the case quietly testing nothing.
-    const unbuilt = MODE_IDS.filter((m) => !IMPLEMENTED_MODES.includes(m));
-    expect(
-      unbuilt,
-      "every mode is built, so ModeNotBuiltYetError has no witness on the generate path — delete the built gate or add the mode that needs it"
-    ).not.toHaveLength(0);
-    const unbuiltMode = unbuilt[0];
-    const tierThatIncludesIt = (
-      ["free", "creator", "pro", "studio"] as const
-    ).find((t) => planIncludesMode(t, unbuiltMode));
-    expect(
-      tierThatIncludesIt,
-      `no tier's plan includes ${unbuiltMode}, so the plan gate always answers first and the built gate is unreachable`
-    ).toBeDefined();
-    // The tier gate reads `subscriptions` through `getWorkspaceBillingState`,
-    // which is the ONE authority — so the fixture moves the workspace onto that
-    // plan rather than the test asserting about a tier nobody resolved.
-    if (tierThatIncludesIt !== "free") await setTier(tierThatIncludesIt!);
-    await expect(
-      generate(
-        db,
-        owner,
-        profileId,
-        never(),
-        anySlots(),
-        { ...params(), mode: unbuiltMode },
-        new Date()
-      )
-    ).rejects.toBeInstanceOf(ModeNotBuiltYetError);
     expect(await attemptsOf()).toHaveLength(0);
   });
 
@@ -471,6 +543,94 @@ describe("generate", () => {
       new Date()
     );
     expect(run.generation.outcome).toBe("usable");
+  });
+
+
+  it("6g. The uncharged bound in MONEY refuses before the vendor, on FEW but EXPENSIVE attempts", async () => {
+    // THE GAP THIS CAP EXISTS FOR (billing gate, 2026-09-04). The attempt cap
+    // above bounds a COUNT; what it protects is SPEND. `llm.maxOutputTokens`
+    // moved 4,000 -> 12,000 on 2026-09-04, the worst case per uncharged attempt
+    // went 0.14 -> 0.42 USD, and not one control noticed — because no control
+    // here was denominated in money.
+    //
+    // TWO ROWS, WELL UNDER THE ATTEMPT CAP OF 10, and the money cap still bites.
+    // That is the whole point: without it these two are invisible.
+    await activateBrain();
+    const { content } = await getActiveConfig(db);
+    const costCap = content.generation.maxUnchargedBillableCostMicroUsd;
+    const attemptCap = content.generation.maxUnchargedBillableAttempts;
+    const half = BigInt(Math.ceil(costCap / 2));
+    for (let i = 0; i < 2; i++) {
+      await db.insert(modelUsage).values({
+        profileId,
+        workspaceId: ws,
+        attemptId: `expensive-${i}`,
+        purpose: GENERATION_PURPOSE,
+        model: "claude-sonnet-5",
+        tokensIn: 1,
+        tokensOut: 12_000,
+        usageRaw: {},
+        costMicroUsd: half,
+        costState: "estimated",
+        resolvedTier: "free",
+        promptBundleVersion: "b",
+        configVersion: 1,
+        outcome: "schema_invalid",
+        consumedIncludedBuild: false,
+      });
+    }
+    // NON-VACUITY, FIRST: the attempt cap CANNOT be what refuses this.
+    expect(2).toBeLessThan(attemptCap);
+
+    await expect(
+      generate(db, owner, profileId, never(), anySlots(), params(), new Date())
+    ).rejects.toBeInstanceOf(GenerationUnchargedCostCapError);
+  });
+
+  it("6h. The money bound is silent on CHEAP attempts, and an UNKNOWN cost is never invented", async () => {
+    // THE DIRECTION THAT MUST NOT CHANGE, and the stated imprecision driven
+    // rather than argued. A row whose `cost_state` is `unknown` carries a NULL
+    // cost and contributes ZERO to the sum. That understates in the dangerous
+    // direction, which is exactly why this cap REPLACES NOTHING: the attempt
+    // cap is what bounds the rows whose cost we could not compute.
+    await activateBrain();
+    const { content } = await getActiveConfig(db);
+    expect(content.generation.maxUnchargedBillableCostMicroUsd).toBeGreaterThan(0);
+    for (let i = 0; i < 3; i++) {
+      await db.insert(modelUsage).values({
+        profileId,
+        workspaceId: ws,
+        attemptId: `unknown-cost-${i}`,
+        purpose: GENERATION_PURPOSE,
+        model: "claude-sonnet-5",
+        tokensIn: 1,
+        tokensOut: 1,
+        usageRaw: {},
+        // NULL cost — the table CHECK requires this exactly when state is
+        // `unknown`, so this is the real shape, not a contrived one.
+        costMicroUsd: null,
+        costState: "unknown",
+        resolvedTier: "free",
+        promptBundleVersion: "b",
+        configVersion: 1,
+        outcome: "schema_invalid",
+        consumedIncludedBuild: false,
+      });
+    }
+    const profileScope = await mintProfileScope(db, owner, profileId);
+    await expect(
+      profileScope.accessors.sumUnchargedBillableCostMicroUsd({
+        purpose: GENERATION_PURPOSE,
+        since: new Date(0),
+      })
+    ).resolves.toBe(0);
+    // ...while the COUNT bound sees all three: the control that owns this case.
+    await expect(
+      profileScope.accessors.countUnchargedBillableAttempts({
+        purpose: GENERATION_PURPOSE,
+        since: new Date(0),
+      })
+    ).resolves.toBe(3);
   });
 
   it("6b. R16's bound is a WINDOW, not a life sentence — attempts older than it do not refuse", async () => {
@@ -602,6 +762,56 @@ describe("generate", () => {
       // stuck profile only an operator can free. A generation must never
       // report the second.
       expect(seen[0]!.windowMinutes).not.toBeNull();
+    } finally {
+      setUnchargedAttemptCapMetricSink(null);
+    }
+  });
+
+
+  it("6i. the COST refusal is distinguishable from the ATTEMPT refusal in telemetry", async () => {
+    // WHAT THIS FIXES (billing + code review, round 2, independently). R-102
+    // reused this metric verbatim for the money cap, so a cost refusal printed
+    // `attempts=2 cap=10` — numbers saying the cap was NOT crossed — on the
+    // only operator surface either control has. R-102's own warrant is "two
+    // different diagnoses for an operator", and the telemetry made them one.
+    await activateBrain();
+    const { content } = await getActiveConfig(db);
+    const costCap = content.generation.maxUnchargedBillableCostMicroUsd;
+    const attemptCap = content.generation.maxUnchargedBillableAttempts;
+    const seen: UnchargedAttemptCapMetric[] = [];
+    setUnchargedAttemptCapMetricSink((m) => seen.push(m));
+    try {
+      for (let i = 0; i < 2; i++) {
+        await db.insert(modelUsage).values({
+          profileId,
+          workspaceId: ws,
+          attemptId: `costly-${i}`,
+          purpose: GENERATION_PURPOSE,
+          model: "claude-sonnet-5",
+          tokensIn: 1,
+          tokensOut: 12_000,
+          usageRaw: {},
+          costMicroUsd: BigInt(Math.ceil(costCap / 2)),
+          costState: "estimated",
+          resolvedTier: "free",
+          promptBundleVersion: "b",
+          configVersion: 1,
+          outcome: "schema_invalid",
+          consumedIncludedBuild: false,
+        });
+      }
+      await expect(
+        generate(db, owner, profileId, never(), anySlots(), params(), new Date())
+      ).rejects.toBeInstanceOf(GenerationUnchargedCostCapError);
+
+      expect(seen).toHaveLength(1);
+      // THE DISCRIMINATOR, and the money numbers that make the line readable.
+      expect(seen[0].bound).toBe("cost");
+      expect(seen[0].costMicroUsd).toBeGreaterThanOrEqual(costCap);
+      expect(seen[0].capMicroUsd).toBe(costCap);
+      // ...and the attempt numbers it carries are NOT a cap crossing, which is
+      // exactly why the discriminator had to exist.
+      expect(seen[0].attempts).toBeLessThan(attemptCap);
     } finally {
       setUnchargedAttemptCapMetricSink(null);
     }
@@ -1371,6 +1581,142 @@ describe("generate", () => {
     expect(await debitsOf()).toHaveLength(1);
     const [attempt] = await attemptsOf();
     expect(attempt.state).toBe("settled");
+  });
+
+  it("a caller-supplied reference cannot replace an opaque autopsy id, so the vendor remains untouched", async () => {
+    await activateBrain();
+    await setTier("creator");
+    await grant(SPIN_COST);
+    const s = scripted([nearCopySpinOutput(), nearCopySpinOutput()]);
+    const forged = {
+      ...spinParams(),
+      spinReference: SPIN_REFERENCE,
+    } as unknown as ReturnType<typeof spinParams>;
+    await expect(
+      generate(db, owner, profileId, s.provider, anySlots(), forged, new Date()),
+    ).rejects.toThrow(/opaque identifier/i);
+    expect(s.calls).toHaveLength(0);
+    expect(await debitsOf()).toHaveLength(0);
+  });
+
+  it("Spin near-copy is gated before candidate output, settlement, and the returned projection", async () => {
+    await activateBrain();
+    await setTier("creator");
+    await grant(SPIN_COST);
+    const autopsyId = await sharedSpinAutopsy();
+    const s = scripted([nearCopySpinOutput(), nearCopySpinOutput()]);
+    const result = await generate(
+      db,
+      owner,
+      profileId,
+      s.provider,
+      anySlots(),
+      spinParams(autopsyId),
+      new Date(),
+    );
+
+    expect(s.calls).toHaveLength(2);
+    expect(result.run?.status).toBe("refused");
+    expect(result.generation.outcome).toBe("honest_refusal");
+    expect(result.generation.output).toBeNull();
+    expect(result.creditsChargedNow).toBe(SPIN_COST);
+    expect(await debitsOf()).toHaveLength(1);
+    const attempt = await attemptRow("spin-1");
+    expect(attempt.state).toBe("settled");
+    expect(attempt.candidate).toBeNull();
+    expect(JSON.stringify(result.generation)).not.toContain(SPIN_REFERENCE.hook);
+  });
+
+  it("Spin near-copy in a NON-HOOK field (the caption) is gated on the same persisted path", async () => {
+    // THE POPULATION BLOCK ON THE DURABLE PATH (compliance gate round 1,
+    // 2026-09-03). The sibling above plants the reference hook in `hooks[0]`;
+    // this one keeps every hook clean and puts the verbatim reference hook in
+    // the caption, which `displayableSpin` renders. Before the fix this run
+    // settled as `usable` and the stored generation carried the reference hook.
+    await activateBrain();
+    await setTier("creator");
+    await grant(SPIN_COST);
+    const autopsyId = await sharedSpinAutopsy();
+    const captionCopy = () => {
+      const doc = JSON.parse(nearCopySpinOutput());
+      doc.hooks[0] = { text: "You are shooting three takes when one honest take would do", mechanic: "contradiction" };
+      doc.caption = { text: SPIN_REFERENCE.hook, hashtags: ["filmmaking"] };
+      return JSON.stringify(doc);
+    };
+    const s = scripted([captionCopy(), captionCopy()]);
+    const result = await generate(
+      db,
+      owner,
+      profileId,
+      s.provider,
+      anySlots(),
+      spinParams(autopsyId, "spin-caption-1"),
+      new Date(),
+    );
+
+    expect(s.calls).toHaveLength(2);
+    expect(result.run?.status).toBe("refused");
+    if (result.run?.status !== "refused") return;
+    expect(result.run.killTest.finalAttempt.hardRules.map((f) => f.rule)).toContain("similarity");
+    expect(result.generation.outcome).toBe("honest_refusal");
+    expect(result.generation.output).toBeNull();
+    expect(result.creditsChargedNow).toBe(SPIN_COST);
+    expect(await debitsOf()).toHaveLength(1);
+    const attempt = await attemptRow("spin-caption-1");
+    expect(attempt.state).toBe("settled");
+    expect(attempt.candidate).toBeNull();
+    expect(JSON.stringify(result.generation)).not.toContain(SPIN_REFERENCE.hook);
+  });
+
+  it("R11: the Spin PROMPT carries the reference's MECHANISM and never its hook or subject terms (R-97)", async () => {
+    // Slice 8c. The durable path builds ONE `GenerationContext` for a Spin;
+    // this asserts what that context put in front of the model, on the
+    // prompt the scripted provider actually received. Same fixture as the
+    // siblings: `SPIN_REFERENCE` carries BOTH the mechanism fields and the
+    // gate fields, and the gate fires on draft 1's copied hook in this very
+    // run — so the two objects are proven live and separate in one call.
+    await activateBrain();
+    await setTier("creator");
+    await grant(SPIN_COST);
+    const autopsyId = await sharedSpinAutopsy();
+    const s = scripted([nearCopySpinOutput(), nearCopySpinOutput()]);
+    const result = await generate(
+      db,
+      owner,
+      profileId,
+      s.provider,
+      anySlots(),
+      spinParams(autopsyId, "spin-prompt-1"),
+      new Date(),
+    );
+    expect(result.run?.status).toBe("refused");
+    if (result.run?.status !== "refused") return;
+    expect(result.run.killTest.firstAttempt.hardRules.map((f) => f.rule)).toContain("similarity");
+    expect(s.calls).toHaveLength(2);
+
+    // THE POPULATION: draft 1's whole prompt, and draft 2's prompt above
+    // "Your previous draft:" — the rewrite legitimately quotes the model its
+    // own near copy back as the thing to fix, so the hook is in that quoted
+    // draft by construction; the assembled context must never carry it.
+    const draftAt = s.calls[1].prompt.indexOf("Your previous draft:");
+    expect(draftAt).toBeGreaterThan(0);
+    for (const prompt of [s.calls[0].prompt, s.calls[1].prompt.slice(0, draftAt)]) {
+      expect(prompt).toContain(REFERENCE_BLOCK_HEADER);
+      expect(prompt).toContain(SPIN_REFERENCE.hookMechanic);
+      for (const beat of SPIN_REFERENCE.beats) expect(prompt).toContain(beat);
+      expect(prompt).toContain(SPIN_REFERENCE.ending);
+      expect(prompt).toContain(SPIN_REFERENCE.followTrigger);
+      // The GATE's object, field by field.
+      expect(prompt).not.toContain(SPIN_REFERENCE.hook);
+      for (const term of SPIN_REFERENCE.subjectTerms) expect(prompt).not.toContain(term);
+      expect(prompt).not.toContain("beatCount");
+      expect(prompt).not.toContain("turnBeat");
+      // ...and it is the creator's OWN angle under the input label.
+      expect(prompt).toContain("The angle they want to make their own:");
+    }
+    // The stored generation carries nothing of the reference either way.
+    expect(JSON.stringify(result.generation)).not.toContain(SPIN_REFERENCE.hook);
+    expect(JSON.stringify(result.generation)).not.toContain(SPIN_REFERENCE.hookMechanic);
   });
 
   it("Q4 row 4: a reply we could not PARSE is billable and NOT debited", async () => {

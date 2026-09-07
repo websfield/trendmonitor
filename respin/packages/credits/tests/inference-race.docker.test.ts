@@ -321,14 +321,10 @@ describe.skipIf(!MAINTENANCE_URL)("runInference under REAL concurrency", () => {
    * INSERT and its rollup upsert — i.e. the row exists, with its
    * `clock_timestamp()` already assigned, and has NOT committed.
    *
-   * WHY THE HOLD IS AT THE ROLLUP AND NOT AFTER THE WHOLE TRANSACTION:
-   * `recordModelUsage` composes `upsertSpendRollup` into the SAME transaction,
-   * and that upsert contends on one row per (workspace, month, tier). Holding
-   * the whole transaction open would park the racer on THAT row lock instead,
-   * and the interleaving under test — inserted first, committed second — could
-   * never be reached. Holding between the two statements is the real
-   * production window: two statements on one connection, which is small and is
-   * not zero.
+   * The transactional lifecycle fence is acquired before that INSERT and stays
+   * held until commit. Holding between these two statements therefore gives the
+   * test an exact, observable boundary: a second writer must wait at the fence
+   * before it can write its own usage row. No timing sleep is involved.
    */
   function dbHoldingTheUsageCommit(gate: Promise<void>): {
     db: typeof harness.db;
@@ -400,18 +396,18 @@ describe.skipIf(!MAINTENANCE_URL)("runInference under REAL concurrency", () => {
     return { db: held, reached };
   }
 
-  it("INSERTED FIRST, COMMITTED SECOND: still exactly one included build", async () => {
-    // THE INTERLEAVING THE `(created_at, attempt_id)` ORDER CANNOT SEE.
+  it("an uncommitted usage writer serializes the next run: exactly one included build", async () => {
+    // THE INTERLEAVING THE OLD `(created_at, attempt_id)` ORDER COULD NOT SEE.
     //
     // The values are a total order. The READER'S SNAPSHOT is not: `created_at`
     // is `clock_timestamp()` assigned at INSERT, but a row becomes visible at
     // COMMIT, and under READ COMMITTED the two can disagree.
     //
     //   A inserts (earlier clock_timestamp) and does NOT commit
-    //   B inserts, commits, takes the lock, counts priors -> sees nothing
-    //     earlier -> B IS FREE
-    //   A commits, takes the lock, sees B's row -> B is LATER by the ordering
-    //     key -> A IS FREE TOO
+    // The transactional lifecycle fence now makes that exact interleaving
+    // unreachable: while A is uncommitted, B waits before its usage write. Once
+    // A commits, B proceeds and the durable unique claim leaves exactly one
+    // included build.
     //
     // Two included builds on one profile, one debit never written. Revenue
     // lost, never an overcharge — which is why it is not an emergency and is
@@ -442,13 +438,26 @@ describe.skipIf(!MAINTENANCE_URL)("runInference under REAL concurrency", () => {
     // A's usage row now EXISTS and is UNCOMMITTED.
     await holder.reached;
 
-    // B runs start to finish inside A's open window.
-    const b = await run(`att-b-${n}`, fastProvider());
+    // B waits behind A's lifecycle fence before its usage write. Awaiting B
+    // before releasing A is an impossible ordering and used to make this test
+    // time out; Postgres's own lock table establishes the serialization without
+    // a timing sleep.
+    const b = run(`att-b-${n}`, fastProvider());
+    let blocked = false;
+    try {
+      blocked = await waitForBlockedAdvisoryLock(5_000);
+    } finally {
+      // Always release A: if the premise assertion fails, leaving its transaction
+      // open would turn the useful failure into an afterAll timeout.
+      releaseA();
+    }
+    const [aResult, bResult] = await Promise.all([a, b]);
+    expect(
+      blocked,
+      "B waited behind A's lifecycle fence before writing its own usage row"
+    ).toBe(true);
 
-    releaseA();
-    const aResult = await a;
-
-    const charges = [aResult.creditsCharged, b.creditsCharged].sort(
+    const charges = [aResult.creditsCharged, bResult.creditsCharged].sort(
       (x, y) => x - y
     );
     expect(

@@ -440,12 +440,12 @@ describe("the uncharged-billable bound, per purpose (R16)", () => {
         2 * doc.llm.maxOutputTokens * sonnet!.outputNanoUsdPerToken +
         doc.llm.maxOutputTokens * haiku!.outputNanoUsdPerToken;
       expect(perAttempt, `${where}: per-attempt output ceiling moved`).toBe(
-        140_000_000
+        420_000_000
       );
       expect(
         doc.generation.maxUnchargedBillableAttempts * perAttempt,
         `${where}: the per-window figure schema.ts cites is stale`
-      ).toBe(1_400_000_000);
+      ).toBe(4_200_000_000);
     }
     // NON-VACUITY: the two documents really are two, so the loop is not
     // asserting the same object twice.
@@ -478,33 +478,38 @@ describe("the uncharged-billable bound, per purpose (R16)", () => {
     const perAttemptNanoUsd =
       2 * ceiling * sonnet!.outputNanoUsdPerToken +
       ceiling * haiku!.outputNanoUsdPerToken;
-    expect(perAttemptNanoUsd).toBe(140_000_000);
+    expect(perAttemptNanoUsd).toBe(420_000_000);
 
     const perWindowNanoUsd =
       unchargedAttemptCap(content, GENERATION_PURPOSE) * perAttemptNanoUsd;
-    expect(perWindowNanoUsd).toBe(1_400_000_000);
-    expect(perWindowNanoUsd / 1_000_000_000).toBeCloseTo(1.4, 6);
+    expect(perWindowNanoUsd).toBe(4_200_000_000);
+    expect(perWindowNanoUsd / 1_000_000_000).toBeCloseTo(4.2, 6);
 
-    // THE SUPERSEDED FIGURE, ASSERTED AS SUPERSEDED. 0.60 USD was one output
-    // ceiling per attempt; naming it here means a future edit that quietly
-    // restores the per-call grain reddens instead of reading plausibly.
+    // THE SUPERSEDED GRAIN, ASSERTED AS SUPERSEDED. The old comment counted
+    // ONE output ceiling per attempt where the cap counts three calls; at the
+    // 2026-09-01 ceiling that read 0.60 USD against a true 1.40, and at
+    // today's it would read 1.80 against a true 4.20. The NUMBERS move with
+    // `maxOutputTokens`; the DEFECT was the grain, so what is pinned here is
+    // that the per-call figure and the per-attempt figure stay different — a
+    // future edit that quietly restores the per-call grain reddens instead of
+    // reading plausibly.
     const perCallOnly =
       unchargedAttemptCap(content, GENERATION_PURPOSE) *
       ceiling *
       sonnet!.outputNanoUsdPerToken;
-    expect(perCallOnly).toBe(600_000_000);
+    expect(perCallOnly).toBe(1_800_000_000);
     expect(perWindowNanoUsd).toBeGreaterThan(perCallOnly);
 
     // AND IT IS A FLOOR, NOT THE CEILING: no key here bounds INPUT tokens, and
     // all three calls pay for them (the rewrite's prompt carries draft 1's
     // whole reply). Asserting the input prices are non-zero is what makes
-    // "1.40 is a floor" a checked statement rather than a hedge — if they were
+    // "4.20 is a floor" a checked statement rather than a hedge — if they were
     // zero, output really would be the whole story.
     expect(sonnet!.inputNanoUsdPerToken).toBeGreaterThan(0);
     expect(haiku!.inputNanoUsdPerToken).toBeGreaterThan(0);
     expect(
       Object.keys(content.llm).includes("maxInputTokens"),
-      "an input ceiling exists now — the exposure comment must stop calling 1.40 a floor"
+      "an input ceiling exists now — the exposure comment must stop calling 4.20 a floor"
     ).toBe(false);
   });
 });

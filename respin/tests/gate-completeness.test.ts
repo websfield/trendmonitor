@@ -365,6 +365,16 @@ const NAMED_PROTECTED_PAGES: {
     url: "/brain",
     gate: "requireUser",
   },
+  {
+    file: "(product)/trends/page.tsx",
+    url: "/trends",
+    gate: "requireUser",
+  },
+  {
+    file: "(product)/trends/actions.ts",
+    url: "/trends",
+    gate: "requireUser",
+  },
   // Slice 3b, Stage B1's structured-interview surface. Same reason as the two
   // pairs above: `interview/actions.ts` is a stable POST endpoint reachable
   // without `interview/page.tsx` ever rendering, and this fixture is what
@@ -417,6 +427,19 @@ const NAMED_PROTECTED_PAGES: {
   {
     file: "(product)/onboarding/first-ideas/actions.ts",
     url: "/onboarding/first-ideas",
+    gate: "requireUser",
+  },
+  // Slice 9a. The results surface. Both entrypoints are named for the reason
+  // every other pair on this list is, sharpened by what these rows ARE: a
+  // creator's own outcome data, which REQ-A03/R-9 says never crosses a profile
+  // or a workspace. `results/actions.ts` is a POST endpoint invocable by its
+  // stable action id without `results/page.tsx` ever rendering, and it writes
+  // permanently into that record — `results` is append-only with no update and
+  // no delete path — so an ungated one is not a leak of data alone.
+  { file: "(product)/results/page.tsx", url: "/results", gate: "requireUser" },
+  {
+    file: "(product)/results/actions.ts",
+    url: "/results",
     gate: "requireUser",
   },
   { file: "(product)/usage/page.tsx", url: "/usage", gate: "requireUser" },

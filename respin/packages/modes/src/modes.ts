@@ -303,6 +303,7 @@ export const IMPLEMENTED_MODES: readonly ModeId[] = [
   "footageToThesis",
   "ideaToScript",
   "sourceToReel",
+  "analyseAndSpin",
   "hooks",
   "caption",
   "ideation",

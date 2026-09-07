@@ -25,6 +25,7 @@ import {
   ensureUserWorkspace,
   seedAuthUser,
   creatorProfiles,
+  type ReauthenticatedSessionRef,
 } from "@respin/db";
 // The scopes are exported as TYPES ONLY from the package root (A-2b), so the
 // value form is reachable only from the module itself — which is what makes
@@ -290,8 +291,12 @@ describe("AC-13 — assertScoped blocks the viewer→owner escalation", () => {
     const { createPortalUrl } = await import(
       "../packages/credits/src/stripe/actions"
     );
+    // The cage/role gates run before reauthentication. A deliberately inert
+    // value keeps this test focused on that ordering; the owner direction may
+    // then fail at the next (reauthentication) gate, but never at the cage.
+    const inertAuthority = {} as ReauthenticatedSessionRef;
     await expect(
-      createPortalUrl(db, escalated, "https://x")
+      createPortalUrl(db, escalated, "https://x", inertAuthority)
     ).rejects.toBeInstanceOf(ScopeForgeryError);
 
     // NON-VACUITY, both directions: the real VIEWER is refused for being a
@@ -302,15 +307,15 @@ describe("AC-13 — assertScoped blocks the viewer→owner escalation", () => {
       "../packages/credits/src/stripe/actions"
     );
     await expect(
-      createPortalUrl(db, viewer, "https://x")
+      createPortalUrl(db, viewer, "https://x", inertAuthority)
     ).rejects.toBeInstanceOf(BillingRoleError);
     const owner = await withWorkspace(db, {
       authUserId: "esc_owner",
       workspaceId: w.id,
     });
-    await expect(createPortalUrl(db, owner, "https://x")).rejects.not.toThrow(
-      ScopeForgeryError
-    );
+    await expect(
+      createPortalUrl(db, owner, "https://x", inertAuthority)
+    ).rejects.not.toThrow(ScopeForgeryError);
   });
 });
 
@@ -345,7 +350,8 @@ type Entry = {
   params: string;
   /**
    * Parameter NAMES of this entry whose declared type names a scope OR is a
-   * named type that carries one (COVERED_PARAM_SHAPES).
+   * named type that carries one (COVERED_PARAM_SHAPES), OR whose assertion
+   * return type narrows an unknown input to a scope.
    *
    * The NAME, so a struct parameter contributes `ctx` rather than the `scope`
    * field inside it. That is deliberate and it makes the argument-identity
@@ -586,6 +592,12 @@ function collectEntries(files: Map<string, string>): Entry[] {
       ) {
         const name = nameOf(node, sf);
         if (name) {
+          const assertedScopeParam =
+            name !== "assertScoped" &&
+            node.type && ts.isTypePredicateNode(node.type) && node.type.assertsModifier &&
+            node.type.type && SCOPE_TYPE_RE.test(node.type.type.getText(sf))
+              ? node.type.parameterName.getText(sf)
+              : undefined;
           const scopeParams = node.parameters
             .filter(
               (prm) =>
@@ -600,6 +612,9 @@ function collectEntries(files: Map<string, string>): Entry[] {
                 typeRefNames(prm.type, sf).some((n) => carrying.has(n))
             )
             .map((prm) => prm.name.getText(sf));
+          if (assertedScopeParam && !scopeParams.includes(assertedScopeParam)) {
+            scopeParams.push(assertedScopeParam);
+          }
           const calls: Call[] = [];
           const collectCalls = (n: ts.Node): void => {
             if (ts.isCallExpression(n)) {
@@ -919,17 +934,14 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
     // fails and someone has to look at it — which is the entire point, because
     // an uncovered new entry is invisible to every behavioural test here.
     //
-    // SEVENTEEN, not the plan's fourteen, and the difference is not a defect in
+    // SIXTEEN, not the plan's fourteen, and the difference is not a defect in
     // either: the plan counted the PUBLIC surface (7 exported actions + 7
-    // facade methods), while this scan also sees the three package-internal
+    // facade methods), while this scan also sees the two package-internal
     // helpers those actions call. Checking them too is strictly better — a
     // helper is exactly where a future refactor would move a scope read to —
     // so the number is corrected here rather than the scan narrowed to match.
-    expect(
-      scoped.map((e) => e.file + ":" + e.name).sort(),
-      "the WorkspaceScope-taking surface changed — check the new entry reaches assertScoped, then update this list"
-    ).toEqual(
-      [
+    const actualScopeSurface = scoped.map((e) => e.file + ":" + e.name).sort();
+    const expectedScopeSurface = [
         // ---- @respin/credits: the billing surface (unchanged by slice 1).
         // The 7 wired facade methods (app-server.ts)...
         "packages/credits/src/app-server.ts:createInvoiceRecoveryUrl",
@@ -947,10 +959,12 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/credits/src/stripe/actions.ts:pauseSubscription",
         "packages/credits/src/stripe/actions.ts:resumeSubscription",
         "packages/credits/src/stripe/actions.ts:setAutoTopup",
-        // ...and the 3 package-internal helpers they funnel through.
+        // ...and the 2 package-internal helpers they funnel through.
         "packages/credits/src/stripe/actions.ts:assertOwner",
-        "packages/credits/src/stripe/actions.ts:liveSubscription",
-        "packages/credits/src/stripe/actions.ts:subscriptionRow",
+        // R-118 mutation-local authority gate. It validates the exact session,
+        // owner membership and lifecycle epochs inside the same locked billing
+        // transaction used by pause, resume and auto-top-up configuration.
+        "packages/credits/src/stripe/actions.ts:requireReauthenticatedOwnerInTx",
 
         // ---- Slice 1: the creator-profile entitlement decision, and its
         // facade method. `createProfile` is the SECOND asserter in the repo —
@@ -993,8 +1007,21 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // them; every one was already covered, which is the good outcome and
         // not a reason the widening was unnecessary.
         "packages/db/src/with-workspace.ts:mint",
+        "packages/db/src/with-workspace.ts:withFreshWorkspaceRead",
+        "packages/db/src/with-workspace.ts:assertFreshProfileScopeInTx",
+        "packages/db/src/with-workspace.ts:assertFreshWorkspaceScopeInTx",
+        "packages/db/src/auth-lifecycle.ts:assertReauthenticatedWorkspaceScopeInTx",
         "packages/db/src/with-workspace.ts:writeCapabilities",
         "packages/db/src/with-workspace.ts:workspaceWriteCapabilities",
+        // Phase 10b-1 deletion requests bind the original scope epochs, then
+        // re-check them under the lifecycle locks before any tombstone write.
+        "packages/db/src/deletion-lifecycle.ts:assertScopedRequestEpochs",
+        "packages/db/src/deletion-lifecycle.ts:requestProfileDeletion",
+        "packages/db/src/deletion-lifecycle.ts:requestScopedDeletion",
+        "packages/db/src/deletion-lifecycle.ts:requestWorkspaceDeletion",
+        "packages/db/src/deletion-lifecycle.ts:resumeProfileDeletionRequest",
+        "packages/db/src/deletion-lifecycle.ts:resumeScopedDeletionRequest",
+        "packages/db/src/deletion-lifecycle.ts:resumeWorkspaceDeletionRequest",
         // The three profile-grained helpers reached from inside a write
         // capability's closure. Covered by the ENCLOSURE and BACKWARD rules,
         // not by asserting themselves.
@@ -1120,6 +1147,22 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // operations assert the acting workspace scope before reading or
         // writing, and the facade methods forward that same scope unchanged.
         "packages/db/src/profile-selection.ts:selectedProfileForMember",
+        // ---- SLICE 9A. Ten entries: five sources and their five facade
+        // binds. EACH WAS CHECKED TO REACH `assertScoped` BEFORE BEING
+        // LISTED, which is what this pin asks for and is the half that is
+        // easy to skip: all five sources mint a `ProfileScope`, and
+        // `ProfileScope.mint` calls `assertScoped(scope)` as its first act.
+        // Pasting names in to make a red list green would satisfy the
+        // assertion and defeat the test.
+        //
+        // `results-comparison-ops.ts` is a SEPARATE FILE from `results-ops.ts`
+        // deliberately (R-105): the latter's header forbids it to grow a
+        // comparison, and the composition would have made that sentence false.
+        "packages/db/src/results-comparison-ops.ts:resultComparisons",
+        "packages/db/src/results-ops.ts:declaredMetricForProfile",
+        "packages/db/src/results-ops.ts:generationsForResultLog",
+        "packages/db/src/results-ops.ts:listResults",
+        "packages/db/src/results-ops.ts:recordResult",
         "packages/db/src/profile-selection.ts:selectActiveProfileInTx",
         "packages/db/src/profile-selection.ts:selectActiveProfile",
         "packages/db/src/app-server.ts:selectedProfileForMember",
@@ -1235,15 +1278,115 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/db/src/feedback-ops.ts:recordFeedback",
         "packages/db/src/feedback-ops.ts:listFeedback",
         "packages/db/src/app-server.ts:listPrivateFrameworks",
+        "packages/db/src/app-server.ts:listResults",
         "packages/db/src/app-server.ts:eligibleFrameworks",
+        "packages/db/src/app-server.ts:generationsForResultLog",
         "packages/db/src/app-server.ts:createPrivateFramework",
+        "packages/db/src/app-server.ts:declaredMetricForProfile",
         "packages/db/src/app-server.ts:editPrivateFramework",
         "packages/db/src/app-server.ts:approvePrivateFramework",
         "packages/db/src/app-server.ts:retirePrivateFramework",
         "packages/db/src/app-server.ts:recordFeedback",
+        "packages/db/src/app-server.ts:recordResult",
+        "packages/db/src/app-server.ts:resultComparisons",
         "packages/db/src/app-server.ts:listFeedback",
-      ].sort()
-    );
+        // Slice 9b. The DB facade exposes scoped refresh/review/history and
+        // decision only; proposal payloads remain inside the DB/brain seam.
+        "packages/db/src/promotion-ops.ts:refreshPromotionProposalsInScope",
+        "packages/db/src/promotion-ops.ts:promotionProposalReviewInScope",
+        "packages/db/src/promotion-ops.ts:promotionProposalHistoryInScope",
+        "packages/db/src/promotion-ops.ts:appendPromotionSummaryForProposalInScope",
+        "packages/db/src/promotion-ops.ts:decidePromotionProposalInScope",
+        "packages/db/src/promotion-ops.ts:reconstructCurrentDrafts",
+        "packages/db/src/promotion-ops.ts:reconstructStoredDraft",
+        "packages/db/src/promotion-ops.ts:resultMetricIsCurrent",
+        "packages/db/src/promotion-ops.ts:buildReview",
+        "packages/db/src/promotion-ops.ts:proposalValues",
+        "packages/db/src/app-server.ts:refreshPromotionProposals",
+        "packages/db/src/app-server.ts:promotionProposalReview",
+        "packages/db/src/app-server.ts:promotionProposalHistory",
+        "packages/db/src/app-server.ts:decidePromotionProposal",
+        "packages/db/src/with-workspace.ts:brainAssetSummary",
+        "packages/db/src/app-server.ts:brainAssetSummary",
+        "packages/db/src/with-workspace.ts:usageRunwayDebits",
+        // The ledger-only runway obtains its single authoritative snapshot
+        // through a mint/cage-checked scope; readers are intentionally
+        // separate so config/pause/balance/ledger failures stay distinguishable.
+        "packages/credits/src/days-to-empty.ts:usageRunwayInTx",
+        "packages/credits/src/days-to-empty.ts:assertUsageRunwayScope",
+        "packages/credits/src/days-to-empty.ts:usageRunwayFor",
+        "packages/credits/src/days-to-empty.ts:usageRunwayForWithReaders",
+        "packages/credits/src/app-server.ts:usageRunwayFor",
+        // Slice 8: every profile-grained trend write/read mints or receives a
+        // ProfileScope, and the two app facade binds forward the same scope.
+        "packages/db/src/trends-storage.ts:createPrivateSubmittedTrendSource",
+        "packages/db/src/trends-storage.ts:recordPrivateTrendItem",
+        "packages/db/src/trends-storage.ts:recordPrivateTrendTranscript",
+        "packages/db/src/trends-storage.ts:claimPrivateAutopsyForSystem",
+        "packages/db/src/trends-storage.ts:trackNicheForProfile",
+        "packages/db/src/trends-storage.ts:trackedNichesForProfile",
+        "packages/db/src/trends-storage.ts:untrackNicheForProfile",
+        "packages/db/src/trends-storage.ts:feedItemsForProfile",
+        "packages/db/src/trends-storage.ts:trendFeedProjection",
+        "packages/db/src/trends-storage.ts:reusableAutopsyForProfile",
+        "packages/db/src/trends-storage.ts:spinReferenceForProfile",
+        "packages/db/src/app-server.ts:trendFeed",
+        "packages/db/src/app-server.ts:trackNiche",
+        "packages/db/src/app-server.ts:trackedNiches",
+        "packages/db/src/app-server.ts:untrackNiche",
+        // Slice 8c (R-96): the paste intake and its two owner-only readers
+        // each mint (`ProfileScope.mint(db, scope, profileId)`) as their first
+        // scope-touching act — the intake mints on the outer `db` to check
+        // the role BEFORE opening its transaction, then forwards the SAME
+        // `scope` into the slice-4/slice-8 writers it composes, each of which
+        // mints again on the transaction. The two `app-server.ts` binds are
+        // thin forwards of the same `scope` argument. Helpers
+        // (`trackedNicheOrRefuse`, `existingPastedReference`,
+        // `projectPastedReference`) take the minted PAIR of ids, not a scope,
+        // so they are deliberately not entries here.
+        "packages/db/src/trends-storage.ts:intakePastedReference",
+        "packages/db/src/trends-storage.ts:pastedReferencesForProfile",
+        "packages/db/src/trends-storage.ts:pastedReferenceForProfile",
+        // ADDED BY THE ROUND-1 FIX PASS (code review C1 / R-98). The refund
+        // settlement used to iterate `pastedReferencesForProfile`, whose
+        // projection reads ONE claim per item — so its real population was
+        // "parked AND newest-per-item", and a parked, DEBITED claim that a
+        // later claim superseded became permanently unrefundable. Two Full-gate
+        // reviewers reached that independently by running it. The settlement
+        // now reads THIS claim-level reader instead, which returns every
+        // parked private claim under the minted pair. It is an entry here
+        // rather than a helper because it takes a `WorkspaceScope` and mints;
+        // that is exactly the property this list exists to pin.
+        "packages/db/src/trends-storage.ts:parkedAutopsyClaimsForProfile",
+        "packages/db/src/app-server.ts:pastedReferences",
+        // (`app-server.ts:intakePastedReference` was here for one stage: the
+        // unmetered bind was deleted by slice 8c stage B once R-98's metered
+        // door existed — `respinCredits.submitPastedReference` below.)
+
+        // ---- Slice 8c stage B (R-98): the pasted reference's money, and its
+        // two bound facade methods. Covered the way `inferVoice` is: the FIRST
+        // statement of each is `mintProfileScope(db, scope, profileId)`, and
+        // the mint runs `assertScoped` before handing back a profile grain;
+        // the intake it composes then mints AGAIN on the transaction handle
+        // with the SAME forwarded `scope`. `pastedReferenceIntakePort` is the
+        // `submitted` adapter's production port and forwards its OWN `scope`
+        // binding into `submitPastedReference` (argument identity).
+        // `pastedReferenceQuote` takes a `VerifiedWorkspaceId`, not a scope,
+        // like `getBalance`, so it is not an entry.
+        "packages/credits/src/pasted-reference.ts:submitPastedReference",
+        "packages/credits/src/pasted-reference.ts:settleParkedAutopsies",
+        "packages/credits/src/pasted-reference.ts:pastedReferenceIntakePort",
+        "packages/credits/src/app-server.ts:submitPastedReference",
+        "packages/credits/src/app-server.ts:settleParkedAutopsies",
+      ].sort();
+    expect(
+      actualScopeSurface.filter((entry) => !expectedScopeSurface.includes(entry)),
+      "new WorkspaceScope-taking entries must be reviewed and added to the pinned surface"
+    ).toEqual([]);
+    expect(
+      expectedScopeSurface.filter((entry) => !actualScopeSurface.includes(entry)),
+      "stale WorkspaceScope-taking entries must be removed from the pinned surface"
+    ).toEqual([]);
 
     const covered = coveredEntries(entries);
     const uncovered = scoped
@@ -1508,6 +1651,28 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
     const scoped = entries.filter(takesScope);
     expect(scoped.length).toBeGreaterThanOrEqual(2);
     for (const e of scoped) expect(covered.has(e.key), e.name).toBe(true);
+  });
+
+  it("sees an exported assertion guard whose input starts as unknown", () => {
+    const coveredSource =
+      "export function assertRunwayScope(scope: unknown): asserts scope is WorkspaceScope {\n" +
+      "  assertScoped(scope);\n" +
+      "}\n";
+    const uncoveredSource =
+      "export function assertRunwayScope(scope: unknown): asserts scope is WorkspaceScope {\n" +
+      "  void scope;\n" +
+      "}\n";
+    const coveredEntriesForGuard = collectEntries(
+      new Map([["packages/credits/src/assert-runway.ts", coveredSource]])
+    );
+    const uncoveredEntriesForGuard = collectEntries(
+      new Map([["packages/credits/src/assert-runway.ts", uncoveredSource]])
+    );
+    const coveredGuard = coveredEntriesForGuard.find((e) => e.name === "assertRunwayScope")!;
+    const uncoveredGuard = uncoveredEntriesForGuard.find((e) => e.name === "assertRunwayScope")!;
+    expect(takesScope(coveredGuard), "an assertion predicate must register its input as scope-bearing").toBe(true);
+    expect(coveredEntries(coveredEntriesForGuard).has(coveredGuard.key), "the real guard must assert its asserted input").toBe(true);
+    expect(coveredEntries(uncoveredEntriesForGuard).has(uncoveredGuard.key), "a predicate without assertScoped is not covered").toBe(false);
   });
 });
 

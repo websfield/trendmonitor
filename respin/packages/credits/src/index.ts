@@ -3,6 +3,7 @@
 // TxLike-composable; balance has ONE authority (deriveBalance/deriveBalanceInTx).
 export {
   BrainPointerDivergenceError,
+  AutoTopupReconciliationRequiredError,
   UnchargedAttemptCapError,
   InsufficientCreditsError,
   PostCallDebitError,
@@ -15,6 +16,7 @@ export {
   GenerationPayloadMismatchError,
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
+  GenerationUnchargedCostCapError,
   UnpricedOperationError,
   // Slice 7, R6/R8 — the revision's parent could not be built from. Raised
   // BEFORE the vendor is contacted, which is why it is a class here rather than
@@ -28,10 +30,26 @@ export {
   // package message and the creator-facing copy cannot say different things
   // about whether the refusal clears itself.
   UNCHARGED_CAP_WINDOW_CLAUSE,
+  // Slice 8c (R-98) — the pasted reference's two refusals of its own. On the
+  // public surface for the reason every sibling is: `billing-errors.ts`
+  // matches on `instanceof`, and a class reachable from a facade method but
+  // absent here renders as "Something went wrong" on the panel that spends.
+  PASTED_REFERENCE_INPUT_FIELDS,
+  PastedReferenceInputError,
+  PastedReferenceTierError,
+  PerformanceLearningConfigUnavailableError,
+  type PastedReferenceInputField,
 } from "./errors";
 export { LedgerIntegrityError, foldLedger, effectiveExpiry } from "./fold";
 export type { FoldResult, LotView } from "./fold";
 export { deriveBalance, deriveBalanceInTx, type BalanceView } from "./balance";
+export {
+  projectUsageRunway,
+  usageRunwayFor,
+  type DaysToEmptyConfig,
+  type UsageRunwayProjectionInput,
+  type UsageRunwayResult,
+} from "./days-to-empty";
 export {
   grantCredits,
   purchasePackCredits,
@@ -115,7 +133,6 @@ export {
   ONBOARDING_FIRST_IDEAS_MODE,
   TIER_MODES,
   TIER_PRIVATE_FRAMEWORKS,
-  ModeNotBuiltYetError,
   ModeNotInPlanError,
   UnknownEntitlementTierError,
   assertModeAllowed,
@@ -124,10 +141,32 @@ export {
   modesIncludedIn,
   planIncludesMode,
   privateFrameworkEntitlement,
+  performanceLearningEntitlementFor,
+  resolvePerformanceLearningEntitlement,
+  trackedNicheEntitlement,
   type EntitlementTier,
   type ModeOffer,
+  type PerformanceLearningEntitlement,
+  type PerformanceLearningEntitlements,
 } from "./mode-access";
 // Slice 6: the composed generation.
+// Slice 8c (R-98): the creator-submitted autopsy's money — priced from the
+// active document, debited with the claim, refunded on park. Here rather than
+// in `@respin/db` for the reason `createProfile` is: the tier, the price and
+// the ledger are this package's, and `@respin/db` can see none of them.
+export {
+  PASTED_REFERENCE_CREDIT_COST_KEY,
+  PASTED_REFERENCE_DEBIT_REF_TYPE,
+  PASTED_REFERENCE_REFUND_REF_TYPE,
+  PASTED_REFERENCE_TIERS,
+  pastedReferenceIntakePort,
+  pastedReferenceQuote,
+  settleParkedAutopsies,
+  submitPastedReference,
+  type PastedReferenceQuote,
+  type SettleParkedAutopsiesResult,
+  type SubmitPastedReferenceResult,
+} from "./pasted-reference";
 export {
   generate,
   generationOp,

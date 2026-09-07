@@ -60,10 +60,17 @@
 // ---------------------------------------------------------------------------
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { and, asc, count, countDistinct, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, count, countDistinct, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql, sum } from "drizzle-orm";
 import type { DbLike, TxLike } from "./db-like";
 import { memberships, workspaces } from "./schema";
 import type { Membership, MembershipRole, Workspace } from "./schema";
+import {
+  assertProfileLifecycleAccess,
+  assertProfileLifecycleTransactionAccess,
+  assertFreshProfileAuthority,
+  assertFreshWorkspaceAuthority,
+  assertWorkspaceLifecycleTransactionAccess,
+} from "./membership-lifecycle";
 import { creditLedger, subscriptions } from "./billing-schema";
 import type { CreditLedgerRow, Subscription } from "./billing-schema";
 import { brainDocs, creatorProfiles, frameworks } from "./brain-schema";
@@ -81,6 +88,7 @@ import {
   modelUsage,
   onboardingInterviewDrafts,
   onboardingInputs,
+  PUBLIC_INPUT_CLASSES,
 } from "./onboarding-schema";
 import type {
   BrainActivationSnapshot,
@@ -103,8 +111,37 @@ import {
   type GenerationFeedbackRow,
   type GenerationOutcome,
 } from "./generation-schema";
+import {
+  RESULT_AUDIENCE_CLASSES,
+  RESULT_CONFOUNDER_CODES,
+  // `RESULT_EVIDENCE_STATES` is deliberately NOT imported here, and the
+  // absence is the property: `evidence_state` has no caller parameter to
+  // validate against it — `recordResult` DERIVES the state from whether
+  // numbers were supplied (R6). A runtime check against the vocabulary would
+  // imply a value arrives from outside, which is the thing that must not be
+  // true. The TYPE is imported below, for the derived local.
+  comparableResultProjection,
+  declaredMetricOf,
+  results,
+  treatmentKeyFor,
+  type ComparableResults,
+  type ComparableResultRow,
+  type ComparableResultsStratum,
+  type ResultAudienceClass,
+  type ResultConfounderCode,
+  type ResultEvidenceState,
+  type ResultRow,
+} from "./results-schema";
+import { autopsies, autopsyCacheClaims, trackedNiches, trendItems, trendSources, trendTranscripts } from "./trends-schema";
 import { upsertSpendRollup } from "./spend-rollup";
 import { hasOpenPause } from "./pause";
+import {
+  promotionProposals,
+  proposalEvidenceFeedback,
+  proposalEvidenceResults,
+  type PromotionProposal,
+  type ProposalEvidenceResultRole,
+} from "./promotion-schema";
 import {
   CHECK,
   enumerateClaimFields,
@@ -126,8 +163,14 @@ import {
   type BrainReasonFacts,
 } from "./brain-reason";
 import {
+  appendPromotionSummaryForProposalInScope,
+  decidePromotionProposalInScope,
+  refreshPromotionProposalsInScope,
+  type DecidePromotionProposalParams,
+  type PromotionDecisionResult,
+} from "./promotion-ops";
+import {
   BrainDocumentLimitError,
-  BrainRoleError,
   BrainVersionLimitError,
   FeedbackDuplicateError,
   FeedbackNoteError,
@@ -136,10 +179,15 @@ import {
   GenerationLineageError,
   OnboardingInputLimitError,
   OnboardingInputFieldKeyError,
+  PerformanceLearningEntitlementError,
   ProfileAccessError,
   ProfileNameError,
   ProfileRoleError,
+  ComparisonStratumError,
   ProvenanceError,
+  ResultDuplicateError,
+  ResultInputError,
+  ResultTargetError,
   ScopeForgeryError,
   UsageRawError,
   WorkspacePausedError,
@@ -154,10 +202,16 @@ import {
   ONBOARDING_SOURCE_URL_MAX,
   POST_CONTENT_MAX,
   POST_COUNT_MAX,
+  RESULT_NOTE_MAX,
+  RESULT_PLATFORM_MAX,
 } from "./storage-limits";
 
 export {
   BrainRoleError,
+  // Slice 9a: raised by the `comparableResults` accessor, so it is re-exported
+  // beside the write-path refusals for the same reason they are - this module
+  // is the door every consumer of the cage already imports from.
+  ComparisonStratumError,
   FeedbackDuplicateError,
   FeedbackNoteError,
   FeedbackReactionError,
@@ -262,6 +316,70 @@ export const LEDGER_PAGE_MAX = 200;
  */
 export const ONBOARDING_PAGE_MAX = 50;
 
+/**
+ * THE COMPARISON POPULATION'S BOUND (slice 9a).
+ *
+ * ITS OWN CONSTANT rather than a reuse of `LEDGER_PAGE_MAX`, the
+ * `ONBOARDING_PAGE_MAX` reason verbatim: a shared number ties two limits that
+ * move for different reasons. This one bounds how many of a creator's OWN
+ * results one comparison may be computed over; that one bounds a ledger page.
+ *
+ * IT WAS 200 UNTIL 2026-09-04, AND 200 WAS THE WRONG KIND OF NUMBER — not
+ * merely too small. It was `LEDGER_PAGE_MAX`'s value, inherited by proximity:
+ * a DISPLAY PAGE SIZE, sized for how many rows fit on a usage screen. A
+ * comparison population is not a page. It is a creator's eligible HISTORY, and
+ * the right question for it is "more than any real creator will have", which
+ * has a different answer. Builder B's grouper then showed what the mismatch
+ * costs: `truncated` is decided before the emptiness check, so one creator past
+ * the bound gets EVERY population of EVERY group marked truncated and no
+ * comparison anywhere on the screen. That is the honest answer to a bound that
+ * has genuinely been exceeded — and the first person to meet it would have
+ * read it as a total regression and been under pressure to move the line down,
+ * which is how a control with a short life dies.
+ *
+ * SO THE NUMBER IS DERIVED, AND THE ARITHMETIC IS HERE TO BE CHECKED rather
+ * than taken on taste:
+ *
+ *   5 posts/day        the top of what a sustained short-form creator does;
+ *                      this product's modes are per-post, so posts bound rows
+ *   x 365 x 5 years  = 9,125 posts
+ *   x 4 observations   day 1, day 7, day 30, day 90. `results_generation_
+ *                      metric_window_uq` DELIBERATELY permits several windows
+ *                      per (output, metric, class), so this factor is a
+ *                      property of the schema, not a guess about behaviour
+ *                    = 36,500 rows
+ *   + the paid split   a post logged organic AND paid is two rows; on a
+ *                      generous quarter of posts that is +9,125
+ *                    = 45,625
+ *
+ * 50,000 is the round number above that. A creator who exceeds it is a genuine
+ * outlier, and for them truncation still fires and is still reported — the
+ * control is not weakened, it stops firing on ordinary creators. Every other
+ * property is unchanged: the `limit + 1` probe, the measured `truncated`, and
+ * the newest-observations-first clip.
+ *
+ * IT GOVERNS BYTES AS WELL AS ROWS, AND THAT HALF IS NOW CLOSED. A row bound
+ * bounds nothing if a row can be arbitrarily large, and this read used to
+ * `SELECT *`: a typical row is ~300 bytes (50,000 of them ~15 MB), but a row
+ * carrying the `RESULT_NOTE_MAX` cap is ~2.4 KB, so a population of 50,000 of
+ * THOSE was ~120 MB in one server render. `comparableResults` now selects
+ * `comparableResultProjection` instead, which drops `note` — the only column
+ * on the table that can hold unbounded creator text, and one no comparison
+ * reads. Every remaining column is bounded by a writer limit, a closed set or
+ * its own construction, so the worst case is now ~500 bytes a row and ~25 MB a
+ * page, and that ceiling is structural rather than a number somebody watches.
+ * `tests/results-comparison-contract.test.ts` fails if `note` is selected
+ * again.
+ *
+ * IT IS NOT A SILENT CEILING, which is the whole point of it having a name and
+ * a companion flag. `comparableResults` reports whether it clipped, because a
+ * clipped population is not a smaller claim but a different one — see
+ * `ComparableResults`. Refusing above it was rejected for CLAUDE.md's
+ * 2026-07-30 reason — a creator over the bound could do nothing about it, so
+ * the control would be the outage.
+ */
+export const COMPARISON_POPULATION_MAX = 50_000;
+
 /** Fixed-size pages used only by the complete creator-data export stream. */
 export const EXPORT_PAGE_SIZE = 25;
 // One bounded brain document can cite 250 distinct 20k-character inputs. Page
@@ -315,6 +433,27 @@ export const PROFILE_EXPORT_TABLES = [
   // generationFeedback)` in the repo, and two branches sharing one helper is
   // how this table gets an export without spending that permit.
   "generation_feedback",
+  // Slice 8 fix pass (tenancy gate CHANGE 5, 2026-09-03). The SUBMITTED
+  // sources a creator handed the product; `both()` excludes the ownerless
+  // youtube rows exactly as `ownPrivateFramework()` excludes library rows.
+  "trend_sources",
+  "tracked_niches",
+  "trend_items",
+  "trend_transcripts",
+  "autopsies",
+  "autopsy_cache_claims",
+  // Slice 9a (R5). The results a creator logged about their own posts: the
+  // numbers they typed, the window they typed them for, the confounders they
+  // named and the treatment key we derived. Exported as RAW ROWS, the
+  // `generation_feedback` rule — nothing is aggregated, scored or summarised on
+  // the way out, so what the file returns is what was stored, and a creator can
+  // check our comparison arithmetic against it rather than take it on trust.
+  "results",
+  // Slice 9b. Raw proposal history plus immutable relational membership.
+  // Export never derives a comparison or a stronger claim from these rows.
+  "promotion_proposals",
+  "proposal_evidence_results",
+  "proposal_evidence_feedback",
 ] as const;
 export type ProfileExportTable = (typeof PROFILE_EXPORT_TABLES)[number];
 
@@ -490,6 +629,72 @@ export type WorkspaceAccessors = {
   creatorProfiles: () => Promise<CreatorProfile[]>;
 };
 
+function lifecycleGuardedMethods<T extends object>(
+  db: DbLike | TxLike,
+  methods: T,
+  transactionArgumentByMethod: Readonly<Record<keyof T, number>>,
+  guard: (tx: TxLike) => Promise<void>
+): T {
+  return new Proxy(methods, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver) as unknown;
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        if (typeof property !== "string" || !(property in transactionArgumentByMethod)) {
+          throw new ScopeForgeryError("A lifecycle-guarded accessor");
+        }
+        const index = transactionArgumentByMethod[property as keyof T];
+        const supplied = args[index];
+        if (supplied !== undefined) {
+          if (
+            !supplied ||
+            typeof supplied !== "object" ||
+            typeof (supplied as TxLike).select !== "function" ||
+            typeof (supplied as TxLike).execute !== "function"
+          ) {
+            throw new ScopeForgeryError("A lifecycle-guarded transaction");
+          }
+          await guard(supplied as TxLike);
+          return Reflect.apply(value, target, args);
+        }
+        const invokeIn = async (tx: TxLike) => {
+          await guard(tx);
+          const transactionArgs = [...args];
+          while (transactionArgs.length <= index) transactionArgs.push(undefined);
+          transactionArgs[index] = tx;
+          return Reflect.apply(value, target, transactionArgs);
+        };
+        const transaction = (db as DbLike).transaction;
+        return typeof transaction === "function"
+          ? transaction.call(db, invokeIn)
+          : invokeIn(db as TxLike);
+      };
+    },
+  });
+}
+
+function transactionallyLifecycleGuardedMethods<T extends object>(
+  methods: T,
+  transactionFor: (property: PropertyKey, args: readonly unknown[]) => TxLike | undefined,
+  guard: (
+    tx: TxLike,
+    property: PropertyKey,
+    args: readonly unknown[]
+  ) => Promise<void>
+): T {
+  return new Proxy(methods, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver) as unknown;
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        const tx = transactionFor(property, args);
+        if (tx) await guard(tx, property, args);
+        return Reflect.apply(value, target, args);
+      };
+    },
+  });
+}
+
 export class WorkspaceScope {
   // NOT `readonly #cage: true;` — that form is TS2564 (no initialiser under
   // strictPropertyInitialization). The field exists purely so that a spread of
@@ -498,6 +703,9 @@ export class WorkspaceScope {
   readonly workspaceId: VerifiedWorkspaceId;
   /** The REQ-A02 authority. `readonly`, so `scope.role = "owner"` is TS2540. */
   readonly role: MembershipRole;
+  /** Scope epoch: any membership or workspace lifecycle transition retires it. */
+  readonly membershipVersion: number;
+  readonly workspaceLifecycleVersion: number;
   /** Whose session this is (C-13) — the only source `confirmed_by` may use. */
   readonly userId: VerifiedUserId;
   readonly accessors: WorkspaceAccessors;
@@ -507,7 +715,9 @@ export class WorkspaceScope {
     db: DbLike,
     workspaceId: VerifiedWorkspaceId,
     role: MembershipRole,
-    userId: VerifiedUserId
+    userId: VerifiedUserId,
+    membershipVersion: number,
+    workspaceLifecycleVersion: number
   ) {
     // THE check (see the header): a token nothing outside this module holds.
     if (token !== MINT) throw new ScopeForgeryError("A WorkspaceScope");
@@ -519,16 +729,18 @@ export class WorkspaceScope {
     this.workspaceId = workspaceId;
     this.role = role;
     this.userId = userId;
-    this.accessors = {
-      workspace: () =>
-        db.select().from(workspaces).where(eq(workspaces.id, workspaceId)),
-      members: () =>
-        db
+    this.membershipVersion = membershipVersion;
+    this.workspaceLifecycleVersion = workspaceLifecycleVersion;
+    const accessors: WorkspaceAccessors = {
+      workspace: (tx?: TxLike) =>
+        (tx ?? db).select().from(workspaces).where(eq(workspaces.id, workspaceId)),
+      members: (tx?: TxLike) =>
+        (tx ?? db)
           .select()
           .from(memberships)
           .where(eq(memberships.workspaceId, workspaceId)),
-      subscription: () =>
-        db
+      subscription: (tx?: TxLike) =>
+        (tx ?? db)
           .select()
           .from(subscriptions)
           .where(eq(subscriptions.workspaceId, workspaceId))
@@ -536,8 +748,8 @@ export class WorkspaceScope {
       // Newest first, `id` as the tie-break so a page boundary is stable when
       // two rows share a microsecond (the same shape foldLedger sorts by,
       // reversed — this is DISPLAY order, never allocation order).
-      ledger: (page: LedgerPage) =>
-        db
+      ledger: (page: LedgerPage, tx?: TxLike) =>
+        (tx ?? db)
           .select()
           .from(creditLedger)
           .where(eq(creditLedger.workspaceId, workspaceId))
@@ -549,8 +761,8 @@ export class WorkspaceScope {
       // agrees with `created_at` rather than fighting it. Unordered would let
       // Postgres return a different order per call for the same rows, which is
       // a list that reshuffles under the reader for no reason.
-      creatorProfiles: () =>
-        db
+      creatorProfiles: (tx?: TxLike) =>
+        (tx ?? db)
           .select()
           .from(creatorProfiles)
           .where(
@@ -561,6 +773,29 @@ export class WorkspaceScope {
           )
           .orderBy(desc(creatorProfiles.createdAt), desc(creatorProfiles.id)),
     };
+    this.accessors = lifecycleGuardedMethods(
+      db,
+      accessors,
+      {
+        workspace: 0,
+        members: 0,
+        subscription: 0,
+        ledger: 1,
+        creatorProfiles: 0,
+      },
+      async (tx) => {
+        const authority = await assertWorkspaceLifecycleTransactionAccess(
+          tx,
+          userId as string,
+          workspaceId
+        );
+        assertFreshWorkspaceAuthority(authority, {
+          membershipVersion,
+          workspaceLifecycleVersion,
+        });
+      }
+    );
+    scopeDb.set(this, db);
     workspaceCage.add(this);
   }
 
@@ -569,9 +804,19 @@ export class WorkspaceScope {
     db: DbLike,
     workspaceId: VerifiedWorkspaceId,
     role: MembershipRole,
-    userId: VerifiedUserId
+    userId: VerifiedUserId,
+    membershipVersion: number,
+    workspaceLifecycleVersion: number
   ): WorkspaceScope {
-    return new WorkspaceScope(MINT, db, workspaceId, role, userId);
+    return new WorkspaceScope(
+      MINT,
+      db,
+      workspaceId,
+      role,
+      userId,
+      membershipVersion,
+      workspaceLifecycleVersion
+    );
   }
 
   /** Silences "declared but never read" for the cage field without exposing it. */
@@ -587,6 +832,24 @@ export type MonthlySpendResult = {
   hasAnyDebit: boolean;
   periodStart: Date;
 };
+
+async function withFreshWorkspaceRead<T>(
+  dbOrTx: DbLike | TxLike,
+  scope: WorkspaceScope,
+  read: (tx: TxLike) => Promise<T>
+): Promise<T> {
+  assertScoped(scope);
+  if (!workspaceCage.has(scope)) throw new ScopeForgeryError("A WorkspaceScope");
+  const invoke = async (tx: TxLike) => {
+    await assertFreshWorkspaceScopeInTx(tx, scope);
+    return read(tx);
+  };
+  const transaction = (dbOrTx as DbLike).transaction;
+  if (typeof transaction === "function") {
+    return (await transaction.call(dbOrTx, invoke)) as T;
+  }
+  return invoke(dbOrTx as TxLike);
+}
 
 /**
  * The creator's credit burn this billing period (R7, slice 2b).
@@ -613,7 +876,7 @@ export async function monthlySpend(
   scope: WorkspaceScope,
   periodStart: Date
 ): Promise<MonthlySpendResult> {
-  assertScoped(scope);
+  return withFreshWorkspaceRead(db, scope, async (tx) => {
   // `kind = 'debit'` EXPLICITLY, not merely `delta < 0` (billing gate finding
   // 1, 2026-08-29). `delta < 0` also matches `expiry` rows and a negative
   // `adjust` — and `deriveBalanceInTx` (`balance.ts`) can materialize an
@@ -621,7 +884,7 @@ export async function monthlySpend(
   // one statement earlier (`usage/page.tsx`), so a page load that crosses a
   // lot's expiry boundary would have counted a lapsed credit as "spent" in
   // the same render. Credits lapsing is not the creator having spent them.
-  const [row] = await db
+  const [row] = await tx
     .select({ total: sql<string | null>`sum(-${creditLedger.delta})` })
     .from(creditLedger)
     .where(
@@ -633,6 +896,7 @@ export async function monthlySpend(
     );
   const totalDebit = row?.total ? Number(row.total) : 0;
   return { totalDebit, hasAnyDebit: totalDebit > 0, periodStart };
+  });
 }
 
 /** Credits and the number of debit rows that produced them. */
@@ -730,11 +994,11 @@ export async function burnByMode(
   scope: WorkspaceScope,
   periodStart: Date
 ): Promise<BurnByModeResult> {
-  assertScoped(scope);
+  return withFreshWorkspaceRead(db, scope, async (tx) => {
   // The claim's presence, as a grouping key. `attempt_id` rather than `id`
   // because it is the column the join matched on.
   const claimed = sql<boolean>`(${generationAttempts.attemptId} IS NOT NULL)`;
-  const rows = await db
+  const rows = await tx
     .select({
       mode: generations.mode,
       claimed,
@@ -799,11 +1063,113 @@ export async function burnByMode(
   // same data — the same rule the `ledger` accessor's tie-break exists for.
   byMode.sort((a, b) => b.credits - a.credits || a.mode.localeCompare(b.mode));
   return { periodStart, byMode, notAGeneration, nonTerminalClaim };
+  });
 }
+
+export type UsageRunwayDebits = {
+  totalDebit: number;
+  distinctDebitDays: number;
+  windowStart: Date;
+  asOf: Date;
+};
+
+/** Ledger-only runway population in the exact `(windowStart, asOf]` interval. */
+export async function usageRunwayDebits(
+  dbOrTx: DbLike | TxLike,
+  scope: WorkspaceScope,
+  asOf: Date,
+  trailingWindowDays: number
+): Promise<UsageRunwayDebits> {
+  assertScoped(scope);
+  if (!workspaceCage.has(scope)) throw new ScopeForgeryError("A WorkspaceScope");
+  if (!(asOf instanceof Date) || Number.isNaN(asOf.getTime())) {
+    throw new RangeError("usageRunwayDebits: asOf must be a valid Date");
+  }
+  if (!Number.isInteger(trailingWindowDays) || trailingWindowDays <= 0) {
+    throw new RangeError(
+      "usageRunwayDebits: trailingWindowDays must be a positive integer"
+    );
+  }
+  const windowStart = new Date(
+    asOf.getTime() - trailingWindowDays * 24 * 60 * 60 * 1000
+  );
+  return withFreshWorkspaceRead(dbOrTx, scope, async (tx) => {
+  const [row] = await tx
+    .select({
+      totalDebit: sql<string | null>`sum(-${creditLedger.delta})`,
+      distinctDebitDays: sql<number>`count(distinct date(${creditLedger.createdAt} at time zone 'UTC'))`,
+    })
+    .from(creditLedger)
+    .where(
+      and(
+        eq(creditLedger.workspaceId, scope.workspaceId),
+        eq(creditLedger.kind, "debit"),
+        sql`${creditLedger.createdAt} > ${windowStart}`,
+        lte(creditLedger.createdAt, asOf)
+      )
+    );
+  return {
+    totalDebit: row?.totalDebit == null ? 0 : Number(row.totalDebit),
+    distinctDebitDays: Number(row?.distinctDebitDays ?? 0),
+    windowStart,
+    asOf,
+  };
+  });
+}
+
+export type PromotionStrategyMetricVersion = {
+  id: string;
+  profileId: string;
+  workspaceId: string;
+  status: BrainDoc["status"];
+  metric: { label: unknown; unit: unknown; direction: unknown };
+};
+
+export type PromotionResultInputs = {
+  strategyMetricVersions: PromotionStrategyMetricVersion[];
+  population: ComparableResults;
+};
+
+export type PromotionFeedbackInputRow = {
+  feedbackId: string;
+  generationId: string;
+  profileId: string;
+  workspaceId: string;
+  reaction: GenerationFeedbackReaction;
+  basisBrainDocId: string | null;
+};
+
+export type PromotionResultEvidenceRow = ComparableResultRow & {
+  role: ProposalEvidenceResultRole;
+};
+
+export type PromotionProposalStoredReview = {
+  proposal: PromotionProposal;
+  resultEvidence: PromotionResultEvidenceRow[];
+  feedbackEvidence: PromotionFeedbackInputRow[];
+};
+
+export type BrainAssetSummary = {
+  brainVersions: number;
+  testedRules: number;
+  loggedResults: number;
+  feedback: number;
+};
 
 export type ProfileAccessors = {
   profile: () => Promise<CreatorProfile[]>;
   brainDocs: () => Promise<BrainDoc[]>;
+  /**
+   * Exact database counts for the read-only brain-as-an-asset summary.
+   *
+   * `testedRules` is the largest persisted Performance Meta `rules`
+   * membership across current and historical versions. Promotion carries the
+   * complete prior membership into every new version, so summing version
+   * lengths would count the same tested rule repeatedly; the maximum is the
+   * accumulated membership while preserving history if a later version is no
+   * longer active. Every subquery predicates both profile and workspace.
+   */
+  brainAssetSummary: (tx?: TxLike) => Promise<BrainAssetSummary>;
   /** Every version of one kind, newest version first, with every status retained. */
   brainDocsByKind: (kind: BrainKind, tx?: TxLike) => Promise<BrainDoc[]>;
   /**
@@ -849,6 +1215,48 @@ export type ProfileAccessors = {
    * would silently re-introduce the second authority R9a deleted.
    */
   brainDocsByIds: (ids: readonly string[], tx?: TxLike) => Promise<BrainDoc[]>;
+  /**
+   * EVERY STRATEGY VERSION'S DECLARED METRIC, AND NOTHING ELSE (slice 9a fix
+   * pass, billing CHANGE 1).
+   *
+   * WHY IT EXISTS RATHER THAN A CALL TO `brainDocsByKind`. That accessor is a
+   * bare `.select()` with no `.limit()`: every column of up to
+   * `BRAIN_VERSION_MAX` (200) rows, including the `content` jsonb bounded only
+   * by `BRAIN_DOCUMENT_TEXT_MAX` (500,000) and the `source_evidence` beside it.
+   * Worst case ~100 MB — in the SAME server render whose sibling read
+   * (`comparableResults`) was just cut from ~120 MB to ~25 MB by projecting
+   * `note` away. The sentence written for that read is true of this one:
+   * A ROW BOUND BOUNDS NOTHING IF A ROW CAN BE ARBITRARILY LARGE. This
+   * codebase already treats brain-doc size as a memory hazard —
+   * `EXPORT_BRAIN_DOC_PAGE_SIZE` is 1, pages of a single document.
+   *
+   * `brainDocsByKind` IS NOT NARROWED, deliberately: its other callers
+   * (`brain-ops.ts`'s read, edit and version paths) render and hash the whole
+   * document and would break. The fix is that the RESULTS paths stop using the
+   * wide read, not that the wide read stops being wide.
+   *
+   * FOUR SCALARS PER VERSION, extracted in SQL. The metric's three fields are
+   * what `declaredMetricOf` reads; `id` is what a result stores as
+   * `metric_declared_by_doc_id` and what the comparison keys its map on;
+   * `status` is what picks the active one. `content` never crosses.
+   *
+   * EVERY VERSION, not just the active one, because the two readers differ:
+   * the WRITE path needs the active declaration (R8) and the COMPARISON needs
+   * every version a stored result may cite, since `metric_declared_by_doc_id`
+   * is a comparability predicate and old results legitimately name superseded
+   * versions. One accessor, two readers, one query shape.
+   */
+  strategyMetricVersions: (
+    tx?: TxLike
+  ) => Promise<
+    {
+      id: string;
+      profileId: string;
+      workspaceId: string;
+      status: BrainDoc["status"];
+      metric: { label: unknown; unit: unknown; direction: unknown };
+    }[]
+  >;
   /*
    * FOUR ACCESSORS WERE DELETED HERE (tenancy gate CHANGE, slice 5 round 2):
    * `onboardingInputsForExport`, `interviewDrafts`, `activationSnapshots` and
@@ -967,6 +1375,15 @@ export type ProfileAccessors = {
    * with no operator surface listing who is at it).
    */
   countUnchargedBillableAttempts: (params: {
+    purpose: string;
+    since: Date;
+  }) => Promise<number>;
+  /**
+   * The same population, in MONEY (billing gate, 2026-09-04). See the
+   * implementation for why a count and a sum are two bounds rather than one,
+   * and for what an `unknown` cost row does to this number.
+   */
+  sumUnchargedBillableCostMicroUsd: (params: {
     purpose: string;
     since: Date;
   }) => Promise<number>;
@@ -1111,6 +1528,133 @@ export type ProfileAccessors = {
     tx?: TxLike
   ) => Promise<GenerationFeedbackRow[]>;
   /**
+   * THE RESULTS THIS CREATOR LOGGED (slice 9a, R5), newest first.
+   *
+   * RAW ROWS, and that is the requirement rather than laziness. The comparison
+   * — cohort, baseline, median, per-1k, absence states — is
+   * `@respin/brain`'s `buildLeverComparisons` (contract C5), which takes an
+   * ALREADY PROFILE-SCOPED array. So this accessor is where the tenancy
+   * happens and the arithmetic does not: no count, no grouping, no median, no
+   * "your best post". A second place that decided which results are comparable
+   * would be a second answer to the question the whole slice rests on.
+   *
+   * CLAMPED, like `ledger`, `onboardingInputs` and `generationFeedback`, for
+   * the reason recorded there: an append-only table that only grows, read by a
+   * server component whose caller may pass a URL-derived page size.
+   *
+   * THE CLAMP COSTS THE COMPARISON NOTHING, AND THAT IS A CHANGE. This
+   * docblock used to say a cohort was drawn from this page, so a creator past
+   * `LEDGER_PAGE_MAX` got a comparison over their most recent page — true
+   * when written and false since `comparableResults` landed beside it. NO
+   * COMPARISON READS THIS ACCESSOR. This one pages a LIST for a screen, which
+   * is what `LEDGER_PAGE_MAX` is for; the comparison reads
+   * `comparableResults`, which has its own domain-derived bound and reports
+   * whether it clipped. The two jobs are separated so that neither number
+   * moves for the other's reason.
+   */
+  results: (page?: LedgerPage, tx?: TxLike) => Promise<ResultRow[]>;
+  /**
+   * THE COMPARISON POPULATION (slice 9a, C5) — the creator's own results, read
+   * under an explicit bound that REPORTS whether it clipped, optionally
+   * narrowed to one stratum in SQL.
+   *
+   * WHY IT IS NOT `results()` WITH A FILTER ON TOP, and this is the defect it
+   * closes rather than a preference. `results()` returns the newest
+   * `LEDGER_PAGE_MAX` rows and says nothing about what it left behind, so a
+   * comparison built from it silently inherits that clamp: a creator past the
+   * bound got a median over their most recent page while the screen called it
+   * their history. A comparison over a silently truncated population is not a
+   * weaker claim, it is a false one, on the screen R20 governs. This accessor
+   * exists so that "there are more results than this comparison saw" is a fact
+   * the caller HOLDS rather than one nobody measured.
+   *
+   * TWO BRANCHES, AND 9A WALKS THE SECOND ONE.
+   *
+   *   `stratum` GIVEN — the five comparability predicates are applied IN SQL,
+   *     so only eligible rows cross the boundary and truncation becomes rare.
+   *     This is 9b's tool: fetching ONE treatment cohort to build a proposal
+   *     from. It has no caller on 9a's screen, deliberately (see below).
+   *
+   *   `stratum` OMITTED — the profile's whole result population, same bound,
+   *     same measured `truncated`, same clip. This is what `resultComparisons`
+   *     calls, because PARTITIONING RESULTS INTO COMPARABLE STRATA IS
+   *     COMPARABILITY LOGIC AND BELONGS TO `@respin/brain`, beside `inStratum`
+   *     and `buildLeverComparisons`. A caller cannot know the strata before it
+   *     has the rows — the strata are DERIVED from them — so an accessor that
+   *     demanded one would force the app to invent a partition, which is the
+   *     second comparability site contract C5 exists to prevent.
+   *
+   * WHAT THE UNUSED-ON-9A BRANCH IS FOR, stated rather than left as inventory
+   * (the master plan's "nothing ships without a caller in the same slice"):
+   * its six planted-predicate cases are the CONTROL that keeps this SQL and
+   * `@respin/brain`'s `inStratum` reading the stratum the same way. That
+   * agreement is what slice 8c's most expensive defect was the absence of, and
+   * it is cheaper to keep one optional parameter tested than to re-derive the
+   * agreement when 9b adds the first per-cohort fetch. The honest limit: on
+   * 9a's live path those predicates are not exercised at all — `inStratum`
+   * does the whole job — so the control protects 9b's path, not this one.
+   *
+   * AND WHEN IT TRUNCATES, IT SAYS SO. `truncated` is measured by asking for
+   * `limit + 1` rows and seeing whether the extra one exists — exact, one
+   * query, no count. `@respin/brain` turns that into a named population state,
+   * so an incomplete population is never rendered as a complete one.
+   *
+   * WHICH ROWS SURVIVE THE CLIP, stated because it biases any median computed
+   * from them: the NEWEST OBSERVATIONS, ordered by `observed_to` (then `id`).
+   * That is a deliberate departure from this file's one display order
+   * (`created_at`), and the reason is that the population is about when a post
+   * was OBSERVED, not when the creator got round to logging it — a creator
+   * back-filling last year's results must not evict this month's. The bias
+   * toward recent observations is real and is why the flag exists.
+   *
+   * IT DOES NOT FILTER `unquantified` ROWS OUT, deliberately, and the
+   * consequence is stated rather than discovered: they are ELIGIBLE for the
+   * population (they are results) and merely not NUMERICAL, and R16 —
+   * "unquantified never enters a numerical cohort" — is the comparison's rule,
+   * applied by `@respin/brain` after this returns. Filtering here would measure
+   * `truncated` over a DIFFERENT population from the one the builder sees,
+   * which is two answers to "how big is this population". What it costs is real
+   * and is the reason the flag exists: unquantified rows consume the bound like
+   * any other, so a creator with a bound's worth of them gets `truncated: true`
+   * and an empty numerical cohort — an honest pair of facts, and both are
+   * reported.
+   *
+   * THE STRATUM BRANCH RE-APPLIES NOTHING BY ACCIDENT: its window predicate is
+   * CONTAINMENT (`observed_from >= from AND observed_to <= to`), byte-for-byte
+   * the rule `@respin/brain`'s `inStratum` uses, and
+   * `ComparableResultsStratum`'s docblock is where that pinning is recorded.
+   */
+  comparableResults: (
+    stratum?: ComparableResultsStratum,
+    tx?: TxLike
+  ) => Promise<ComparableResults>;
+  /**
+   * This creator's own generations, newest first (slice 9a, R5).
+   *
+   * ADDED FOR THE RESULTS LOG'S OUTPUT PICKER, and it is the first scoped
+   * reader of `generations` that is not `exportPage`. It is a separate
+   * accessor rather than a reuse of that branch for two reasons worth stating:
+   * the export's page size is a property of the export stream (25, fixed, and
+   * it advances until empty), and `exportPage` returns `unknown[]` because it
+   * spans every included table — a picker needs typed rows.
+   *
+   * IT RETURNS WHOLE ROWS and the CALLER decides what to show. What a result
+   * log needs is the id, the mode and the date; what it must NOT show is the
+   * output text, because a picker is a list of a creator's own drafts and not
+   * a place to re-render one. That is a projection decision and it belongs to
+   * the screen, not here — this accessor's job is the tenancy.
+   *
+   * CLAMPED like every other growing list, and for the same reason.
+   */
+  generationsNewest: (page?: LedgerPage, tx?: TxLike) => Promise<Generation[]>;
+  promotionResultInputs: (tx?: TxLike) => Promise<PromotionResultInputs>;
+  promotionFeedbackInputs: (tx?: TxLike) => Promise<PromotionFeedbackInputRow[]>;
+  promotionProposalReview: (
+    proposalId: string,
+    tx?: TxLike
+  ) => Promise<PromotionProposalStoredReview | null>;
+  promotionProposalHistory: (tx?: TxLike) => Promise<PromotionProposal[]>;
+  /**
    * This profile's LIVE private frameworks (slice 7, R5c).
    *
    * `visibility = 'private'` PLUS both scope columns — the same three-part
@@ -1166,6 +1710,9 @@ export class ProfileScope {
    */
   readonly role: MembershipRole;
   readonly userId: VerifiedUserId;
+  readonly membershipVersion: number;
+  readonly workspaceLifecycleVersion: number;
+  readonly profileLifecycleVersion: number;
   readonly accessors: ProfileAccessors;
 
   private constructor(
@@ -1174,7 +1721,10 @@ export class ProfileScope {
     workspaceId: VerifiedWorkspaceId,
     profileId: VerifiedProfileId,
     role: MembershipRole,
-    userId: VerifiedUserId
+    userId: VerifiedUserId,
+    membershipVersion: number,
+    workspaceLifecycleVersion: number,
+    profileLifecycleVersion: number
   ) {
     if (token !== MINT) throw new ScopeForgeryError("A ProfileScope");
     if (new.target !== ProfileScope) {
@@ -1184,6 +1734,9 @@ export class ProfileScope {
     this.profileId = profileId;
     this.role = role;
     this.userId = userId;
+    this.membershipVersion = membershipVersion;
+    this.workspaceLifecycleVersion = workspaceLifecycleVersion;
+    this.profileLifecycleVersion = profileLifecycleVersion;
     scopeDb.set(this, db);
     // EVERY accessor filters on BOTH columns. The profile predicate alone is
     // wrong for a re-parented row; the workspace predicate alone is wrong for
@@ -1220,6 +1773,29 @@ export class ProfileScope {
         .limit(limit)
         .offset(offset);
     /**
+     * THE ONE `results` QUERY (slice 9a, R5), shared by the accessor and
+     * `exportPage`'s branch exactly as `feedbackPage` is — same rows, same
+     * order, different page size. Two copies would let the export and the
+     * screen drift into different orderings of the same table, which for a
+     * table whose whole purpose is "these three results are the cohort" is a
+     * difference a creator could see and nobody could explain.
+     *
+     * NO AGGREGATION HERE EITHER. See the accessor's docblock: the comparison
+     * belongs to `@respin/brain`, which receives rows.
+     */
+    const resultsPage = (
+      conn: DbLike | TxLike,
+      limit: number,
+      offset: number
+    ) =>
+      conn
+        .select()
+        .from(results)
+        .where(both(results))
+        .orderBy(desc(results.createdAt), desc(results.id))
+        .limit(limit)
+        .offset(offset);
+    /**
      * WHAT MAKES A FRAMEWORK RECOMMENDABLE (R5b), as ONE expression.
      *
      * Duplicated from `frameworks.ts`'s `recommendable()` is exactly what this
@@ -1240,9 +1816,9 @@ export class ProfileScope {
         eq(frameworks.workspaceId, workspaceId),
         eq(frameworks.visibility, "private")
       );
-    this.accessors = {
-      profile: () =>
-        db
+    const accessors: ProfileAccessors = {
+      profile: (tx?: TxLike) =>
+        (tx ?? db)
           .select()
           .from(creatorProfiles)
           .where(
@@ -1251,18 +1827,98 @@ export class ProfileScope {
               eq(creatorProfiles.workspaceId, workspaceId)
             )
           ),
-      brainDocs: () =>
-        db
+      brainDocs: (tx?: TxLike) =>
+        (tx ?? db)
           .select()
           .from(brainDocs)
           .where(both(brainDocs))
           .orderBy(desc(brainDocs.createdAt), desc(brainDocs.id)),
+      brainAssetSummary: async (tx?: TxLike) => {
+        const conn = tx ?? db;
+        // ONE statement gives the page one coherent database snapshot. The
+        // four populations deliberately do not reuse any bounded list reader.
+        const [row] = await conn.select({
+          brainVersions: sql<number>`(
+            select count(*)::integer from ${brainDocs}
+            where ${brainDocs.profileId} = ${profileId}
+              and ${brainDocs.workspaceId} = ${workspaceId}
+          )`,
+          testedRules: sql<number>`coalesce((
+            select max(jsonb_array_length(${brainDocs.content} -> 'rules'))::integer
+            from ${brainDocs}
+            where ${brainDocs.profileId} = ${profileId}
+              and ${brainDocs.workspaceId} = ${workspaceId}
+              and ${brainDocs.kind} = 'performance_meta'
+          ), 0)`,
+          loggedResults: sql<number>`(
+            select count(*)::integer from ${results}
+            where ${results.profileId} = ${profileId}
+              and ${results.workspaceId} = ${workspaceId}
+          )`,
+          feedback: sql<number>`(
+            select count(*)::integer from ${generationFeedback}
+            where ${generationFeedback.profileId} = ${profileId}
+              and ${generationFeedback.workspaceId} = ${workspaceId}
+          )`,
+        }).from(sql`(select 1) as brain_asset_summary_anchor`);
+        return {
+          brainVersions: row?.brainVersions ?? 0,
+          testedRules: row?.testedRules ?? 0,
+          loggedResults: row?.loggedResults ?? 0,
+          feedback: row?.feedback ?? 0,
+        };
+      },
       brainDocsByKind: (kind: BrainKind, tx?: TxLike) =>
         (tx ?? db)
           .select()
           .from(brainDocs)
           .where(and(both(brainDocs), eq(brainDocs.kind, kind)))
           .orderBy(desc(brainDocs.version), desc(brainDocs.id)),
+      // Slice 9a fix pass. FOUR SCALARS, never `content` — see the type.
+      strategyMetricVersions: async (tx?: TxLike) => {
+        const rows = await (tx ?? db)
+          .select({
+            id: brainDocs.id,
+            // BOTH SCOPE COLUMNS, even though the caller filters by scope
+            // already: the cage's own completeness machinery asserts them on
+            // every row a scoped accessor returns, and a projection that
+            // dropped them would make this the one read whose tenancy nobody
+            // checks. Two uuids on at most 200 rows is not a saving worth that.
+            profileId: brainDocs.profileId,
+            workspaceId: brainDocs.workspaceId,
+            status: brainDocs.status,
+            label: sql<
+              string | null
+            >`${brainDocs.content} -> 'metric' ->> 'label'`,
+            unit: sql<string | null>`${brainDocs.content} -> 'metric' ->> 'unit'`,
+            direction: sql<
+              string | null
+            >`${brainDocs.content} -> 'metric' ->> 'direction'`,
+            hasMetric: sql<
+              boolean
+            >`jsonb_typeof(${brainDocs.content} -> 'metric') = 'object'`,
+          })
+          .from(brainDocs)
+          .where(and(both(brainDocs), eq(brainDocs.kind, "strategy")))
+          .orderBy(desc(brainDocs.version), desc(brainDocs.id))
+          // SELF-BOUNDING, even though `BRAIN_VERSION_MAX` already caps the
+          // write side: a read whose size depends on a limit enforced
+          // somewhere else is a read nobody can reason about locally.
+          .limit(BRAIN_VERSION_MAX);
+        return rows.map((row) => ({
+          id: row.id,
+          profileId: row.profileId,
+          workspaceId: row.workspaceId,
+          status: row.status,
+          // `->>` yields NULL both for "no metric object" and for "metric with
+          // no label", and `declaredMetricOf` treats a non-string as absent —
+          // so the two collapse safely. `hasMetric` keeps the distinction
+          // available rather than inferring it from three NULLs.
+          metric: row.hasMetric
+            ? { label: row.label, unit: row.unit, direction: row.direction }
+            : { label: null, unit: null, direction: null },
+        }));
+      },
       brainDocsByIds: (ids: readonly string[], tx?: TxLike) =>
         ids.length === 0
           ? Promise.resolve([])
@@ -1374,6 +2030,60 @@ export class ProfileScope {
           // still exporting it.
           case "generation_feedback":
             return feedbackPage(conn, EXPORT_PAGE_SIZE, offset);
+          // Slice 8 private/shared-content rows. All three branches use the
+          // composite scope predicate: a profile-private row must never reach
+          // a sibling profile merely because the item id or digest matches.
+          // Shared rows have NULL ownership and consequently do not match.
+          case "trend_sources":
+            return conn.select().from(trendSources).where(both(trendSources))
+              .orderBy(desc(trendSources.createdAt), desc(trendSources.id))
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
+          case "trend_items":
+            return conn.select().from(trendItems).where(both(trendItems))
+              .orderBy(desc(trendItems.createdAt), desc(trendItems.id))
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
+          case "tracked_niches":
+            return conn.select().from(trackedNiches).where(both(trackedNiches))
+              .orderBy(desc(trackedNiches.createdAt), desc(trackedNiches.id))
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
+          case "trend_transcripts":
+            return conn.select().from(trendTranscripts).where(both(trendTranscripts))
+              .orderBy(desc(trendTranscripts.createdAt), desc(trendTranscripts.id))
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
+          case "autopsies":
+            return conn.select().from(autopsies).where(both(autopsies))
+              .orderBy(desc(autopsies.createdAt), desc(autopsies.id))
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
+          case "autopsy_cache_claims":
+            return conn.select().from(autopsyCacheClaims).where(both(autopsyCacheClaims))
+              .orderBy(desc(autopsyCacheClaims.createdAt), desc(autopsyCacheClaims.id))
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
+          // Slice 9a (R5). THE SAME QUERY the accessor uses — see
+          // `resultsPage` above — at the export page size, the
+          // `generation_feedback` arrangement one branch up.
+          case "results":
+            return resultsPage(conn, EXPORT_PAGE_SIZE, offset);
+          case "promotion_proposals":
+            return conn.select().from(promotionProposals)
+              .where(both(promotionProposals))
+              .orderBy(desc(promotionProposals.createdAt), desc(promotionProposals.id))
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
+          case "proposal_evidence_results":
+            return conn.select().from(proposalEvidenceResults)
+              .where(both(proposalEvidenceResults))
+              .orderBy(
+                asc(proposalEvidenceResults.proposalId),
+                asc(proposalEvidenceResults.resultId)
+              )
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
+          case "proposal_evidence_feedback":
+            return conn.select().from(proposalEvidenceFeedback)
+              .where(both(proposalEvidenceFeedback))
+              .orderBy(
+                asc(proposalEvidenceFeedback.proposalId),
+                asc(proposalEvidenceFeedback.feedbackId)
+              )
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
         }
       },
       // NEWEST FIRST, with `id` as the tie-break — the ONE display order for a
@@ -1390,9 +2100,10 @@ export class ProfileScope {
       // (production gate, 2026-08-27).
       onboardingInputs: (
         page: LedgerPage = { limit: ONBOARDING_PAGE_MAX },
-        inputClass?: InputClass
+        inputClass?: InputClass,
+        tx?: TxLike
       ) =>
-        db
+        (tx ?? db)
           .select()
           .from(onboardingInputs)
           .where(
@@ -1419,8 +2130,8 @@ export class ProfileScope {
             and(both(onboardingInputs), inArray(onboardingInputs.id, [...ids]))
           );
       },
-      ownPostsNewest: (limit: number) =>
-        db
+      ownPostsNewest: (limit: number, tx?: TxLike) =>
+        (tx ?? db)
           .select()
           .from(onboardingInputs)
           .where(
@@ -1439,7 +2150,7 @@ export class ProfileScope {
           // caller-side guard (`toBeLessThanOrEqual`) would stay true through
           // it.
           .limit(assertCorpusLimit(limit)),
-      countUnchargedBillableAttempts: async ({ purpose, since }) => {
+      countUnchargedBillableAttempts: async ({ purpose, since }, tx?: TxLike) => {
         // DISTINCT ATTEMPTS, never rows: a bounded retry inside one attempt
         // is one attempt. (The accessor that used to state this rule one
         // position up, `countBillableAttempts`, is gone — R-80 replaced the
@@ -1452,7 +2163,7 @@ export class ProfileScope {
         // operator raising a GLOBAL config key with no surface telling them who
         // is stuck. `created_at` is server-stamped on this table, so the window
         // is measured against the database's own clock.
-        const [row] = await db
+        const [row] = await (tx ?? db)
           .select({ n: countDistinct(modelUsage.attemptId) })
           .from(modelUsage)
           .where(
@@ -1466,8 +2177,48 @@ export class ProfileScope {
           );
         return row?.n ?? 0;
       },
-      countOwnPosts: async () => {
-        const [row] = await db
+      /**
+       * The MONEY the uncharged-billable attempts in this window cost us.
+       *
+       * WHY A SECOND ACCESSOR RATHER THAN A WIDER FIRST ONE (billing gate,
+       * 2026-09-04). `countUnchargedBillableAttempts` bounds a COUNT while what
+       * it protects is SPEND, and the 2026-09-04 ceiling change proved the gap:
+       * `llm.maxOutputTokens` moved 4,000 -> 12,000, the worst-case cost of one
+       * uncharged attempt went 0.14 -> 0.42 USD, and not one control noticed
+       * because no control was denominated in money. On Free — which requires
+       * no card — that is a floor of 100.80 USD per profile per day.
+       *
+       * EXACTLY THE SAME PREDICATE as the count above, deliberately: same
+       * purpose, same billable outcomes, same `consumedIncludedBuild = false`,
+       * same window. Two bounds over one population, so a reader comparing them
+       * is comparing two numbers about the same rows.
+       *
+       * `cost_micro_usd` IS NULL WHEN `cost_state` IS 'unknown', and those rows
+       * contribute ZERO here. That understates, which is the dangerous
+       * direction, and it is why this cap REPLACES NOTHING: the attempt cap
+       * still bounds the count of rows whose cost we could not compute. Stated
+       * rather than papered over with an invented price — see
+       * `AUTOPSY_VENDOR_CALLS_PER_ATTEMPT`'s sibling problem, which the autopsy
+       * worker solves by reserving against a ceiling BEFORE the call.
+       */
+      sumUnchargedBillableCostMicroUsd: async ({ purpose, since }, tx?: TxLike) => {
+        const [row] = await (tx ?? db)
+          .select({ total: sum(modelUsage.costMicroUsd) })
+          .from(modelUsage)
+          .where(
+            and(
+              both(modelUsage),
+              eq(modelUsage.purpose, purpose),
+              inArray(modelUsage.outcome, [...BILLABLE_USAGE_OUTCOMES]),
+              eq(modelUsage.consumedIncludedBuild, false),
+              gte(modelUsage.createdAt, since)
+            )
+          );
+        // `sum` returns a string (bigint) or null on an empty set.
+        return row?.total == null ? 0 : Number(row.total);
+      },
+      countOwnPosts: async (tx?: TxLike) => {
+        const [row] = await (tx ?? db)
           .select({ n: count() })
           .from(onboardingInputs)
           .where(
@@ -1478,8 +2229,8 @@ export class ProfileScope {
           );
         return row?.n ?? 0;
       },
-      countReferencePosts: async () => {
-        const [row] = await db
+      countReferencePosts: async (tx?: TxLike) => {
+        const [row] = await (tx ?? db)
           .select({ n: count() })
           .from(onboardingInputs)
           .where(
@@ -1503,14 +2254,15 @@ export class ProfileScope {
             desc(brainActivationSnapshots.id)
           )
           .limit(1),
-      countOnboardingInputs: async () => {
-        const [row] = await db
+      countOnboardingInputs: async (tx?: TxLike) => {
+        const [row] = await (tx ?? db)
           .select({ n: count() })
           .from(onboardingInputs)
           .where(both(onboardingInputs));
         return row?.n ?? 0;
       },
-      modelUsage: () => db.select().from(modelUsage).where(both(modelUsage)),
+      modelUsage: (tx?: TxLike) =>
+        (tx ?? db).select().from(modelUsage).where(both(modelUsage)),
       // ONE QUERY, ONE POPULATION (R-80). The claim row is written by
       // `recordModelUsage`; nothing here re-derives it, which is the point —
       // three readers of one "which attempt is first" rule is how the rule
@@ -1591,8 +2343,275 @@ export class ProfileScope {
           clampPageNumber(page.limit, 1, LEDGER_PAGE_MAX, 1),
           clampPageNumber(page.offset, 0, Number.MAX_SAFE_INTEGER, 0)
         ),
-      privateFrameworks: () =>
-        db
+      // Slice 9a (R5). Clamped like every other growing list, and reading
+      // through the ONE helper — see `resultsPage`.
+      results: (
+        page: LedgerPage = { limit: LEDGER_PAGE_MAX },
+        tx?: TxLike
+      ) =>
+        resultsPage(
+          tx ?? db,
+          clampPageNumber(page.limit, 1, LEDGER_PAGE_MAX, 1),
+          clampPageNumber(page.offset, 0, Number.MAX_SAFE_INTEGER, 0)
+        ),
+      // Slice 9a (C5). THE COMPARISON POPULATION — see the type's docblock for
+      // why this is a query and not a filter over `results()`'s page, and for
+      // why the stratum is optional.
+      comparableResults: async (
+        stratum?: ComparableResultsStratum,
+        tx?: TxLike
+      ): Promise<ComparableResults> => {
+        // BOTH SCOPE COLUMNS ALWAYS, whichever branch this is. The stratum is
+        // optional; the cage is not.
+        const predicates = [both(results)];
+        if (stratum !== undefined) {
+          // THE ARGUMENTS ARE CHECKED, like `exportPage`'s offset one branch up
+          // and for the same reason: an `Invalid Date` reaches the driver as
+          // `NaN` and an unknown audience class reaches the pgEnum as a 22P02,
+          // and neither is a refusal a caller can act on.
+          //
+          // `ComparisonStratumError`, NOT `WorkspaceAccessError`, and the
+          // difference was measured rather than assumed (2026-09-04, builder
+          // C's check). `WorkspaceAccessError` IS covered in
+          // `billing-errors.ts` — so this would not have rendered as "Something
+          // went wrong". It would have rendered as its copy, which tells the
+          // reader to "sign in with the account that owns it": a confident,
+          // WRONG instruction for what is our own malformed argument. See the
+          // class for why one class serving two causes is how that copy came to
+          // be wrong. It is also not `ResultInputError`: nothing here is a
+          // creator's form input — 9a passes no stratum at all and 9b composes
+          // one from stored rows — so the remedy is ours, and the message says
+          // so instead of asking a creator to fix something they did not do.
+          const metricDeclaredByDocIds = stratum.metricDeclaredByDocIds;
+          if (
+            !Array.isArray(metricDeclaredByDocIds) ||
+            metricDeclaredByDocIds.length === 0
+          ) {
+            throw new ComparisonStratumError(
+              "it did not name any metric-declaring Strategy version"
+            );
+          }
+          if (
+            metricDeclaredByDocIds.some(
+              (id) => typeof id !== "string" || !UUID_RE.test(id)
+            ) ||
+            new Set(metricDeclaredByDocIds).size !== metricDeclaredByDocIds.length
+          ) {
+            throw new ComparisonStratumError(
+              "its metric-declaring Strategy version set is malformed"
+            );
+          }
+          for (const [what, when] of [
+            ["observedFrom", stratum.observedFrom],
+            ["observedTo", stratum.observedTo],
+          ] as const) {
+            if (!(when instanceof Date) || Number.isNaN(when.getTime())) {
+              throw new ComparisonStratumError(
+                `its observation window's ${what === "observedFrom" ? "start" : "end"} is not a usable date`
+              );
+            }
+          }
+          if (stratum.observedTo.getTime() <= stratum.observedFrom.getTime()) {
+            throw new ComparisonStratumError(
+              "its observation window ends before it starts, so there is no period to compare over"
+            );
+          }
+          if (
+            typeof stratum.audienceClass !== "string" ||
+            !(RESULT_AUDIENCE_CLASSES as readonly string[]).includes(
+              stratum.audienceClass
+            )
+          ) {
+            throw new ComparisonStratumError(
+              "it named an audience class this product does not have. Paid and organic are never pooled, so there is no third population to compare over"
+            );
+          }
+          predicates.push(
+            eq(results.platform, stratum.platform),
+            eq(results.audienceClass, stratum.audienceClass),
+            eq(results.metricKey, stratum.metricKey),
+            inArray(results.metricDeclaredByDocId, metricDeclaredByDocIds),
+            // CONTAINMENT, pinned to `@respin/brain`'s `inStratum`.
+            gte(results.observedFrom, stratum.observedFrom),
+            lte(results.observedTo, stratum.observedTo)
+          );
+        }
+        // ONE MORE ROW THAN THE BOUND, so "there are more" is MEASURED rather
+        // than inferred from a full page (which is indistinguishable from a
+        // population that happens to be exactly the bound). The extra row is
+        // dropped below and never reaches a caller. IDENTICAL ON BOTH BRANCHES,
+        // which is the property the no-stratum path needs most: the whole
+        // population is exactly where truncation is likeliest, so the branch
+        // 9a actually walks must not be the one with the weaker accounting.
+        const page = await (tx ?? db)
+          // THE PROJECTION, NOT `select()` — see `comparableResultProjection`.
+          // This is the one read in the package whose row count is bounded by a
+          // DOMAIN figure rather than by a page size, so it is the one read
+          // where an unbounded text column turns a row bound into no bound at
+          // all. `note` is the only large column and no comparison reads it.
+          .select(comparableResultProjection)
+          .from(results)
+          .where(and(...predicates))
+          .orderBy(desc(results.observedTo), desc(results.id))
+          .limit(COMPARISON_POPULATION_MAX + 1);
+        const truncated = page.length > COMPARISON_POPULATION_MAX;
+        return {
+          rows: truncated ? page.slice(0, COMPARISON_POPULATION_MAX) : page,
+          truncated,
+          limit: COMPARISON_POPULATION_MAX,
+        };
+      },
+      // Slice 9a. The creator's own outputs, newest first with `id` as the
+      // tie-break — the ONE display order this file uses everywhere.
+      generationsNewest: (
+        page: LedgerPage = { limit: LEDGER_PAGE_MAX },
+        tx?: TxLike
+      ) =>
+        (tx ?? db)
+          .select()
+          .from(generations)
+          .where(both(generations))
+          .orderBy(desc(generations.createdAt), desc(generations.id))
+          .limit(clampPageNumber(page.limit, 1, LEDGER_PAGE_MAX, 1))
+          .offset(clampPageNumber(page.offset, 0, Number.MAX_SAFE_INTEGER, 0)),
+      promotionResultInputs: async (tx?: TxLike) => ({
+        strategyMetricVersions: await this.accessors.strategyMetricVersions(tx),
+        population: await this.accessors.comparableResults(undefined, tx),
+      }),
+      promotionFeedbackInputs: async (tx?: TxLike) => {
+        const rows = await (tx ?? db)
+          .select({
+            feedbackId: generationFeedback.id,
+            generationId: generationFeedback.generationId,
+            profileId: generationFeedback.profileId,
+            workspaceId: generationFeedback.workspaceId,
+            reaction: generationFeedback.reaction,
+            voiceDocId: brainActivationSnapshots.voiceDocId,
+            killtestDocId: brainActivationSnapshots.killtestDocId,
+          })
+          .from(generationFeedback)
+          .innerJoin(
+            generations,
+            and(
+              eq(generations.id, generationFeedback.generationId),
+              both(generations)
+            )
+          )
+          .innerJoin(
+            brainActivationSnapshots,
+            and(
+              eq(brainActivationSnapshots.id, generations.brainActivationId),
+              both(brainActivationSnapshots)
+            )
+          )
+          .where(both(generationFeedback));
+        return rows.map((row) => ({
+          feedbackId: row.feedbackId,
+          generationId: row.generationId,
+          profileId: row.profileId,
+          workspaceId: row.workspaceId,
+          reaction: row.reaction,
+          basisBrainDocId:
+            row.reaction === "off_voice"
+              ? row.voiceDocId
+              : row.reaction === "too_generic" ||
+                  row.reaction === "wrong_angle" ||
+                  row.reaction === "not_filmable"
+                ? row.killtestDocId
+                : null,
+        }));
+      },
+      promotionProposalReview: async (proposalId: string, tx?: TxLike) => {
+        if (typeof proposalId !== "string" || !UUID_RE.test(proposalId)) return null;
+        const conn = tx ?? db;
+        const [proposal] = await conn
+          .select()
+          .from(promotionProposals)
+          .where(and(both(promotionProposals), eq(promotionProposals.id, proposalId)))
+          .limit(1);
+        if (!proposal) return null;
+        // Read BOTH join tables. Source exclusivity is an operation invariant,
+        // and hiding the opposite table here would make a mixed row set look
+        // valid to the only review/Accept revalidator.
+        const resultEvidence = await conn
+              .select({ ...comparableResultProjection, role: proposalEvidenceResults.role })
+              .from(proposalEvidenceResults)
+              .innerJoin(
+                results,
+                and(
+                  eq(results.id, proposalEvidenceResults.resultId),
+                  both(results)
+                )
+              )
+              .where(
+                and(
+                  both(proposalEvidenceResults),
+                  eq(proposalEvidenceResults.proposalId, proposal.id)
+                )
+              );
+        const feedbackRows = await conn
+              .select({
+                feedbackId: generationFeedback.id,
+                generationId: generationFeedback.generationId,
+                profileId: generationFeedback.profileId,
+                workspaceId: generationFeedback.workspaceId,
+                reaction: generationFeedback.reaction,
+                voiceDocId: brainActivationSnapshots.voiceDocId,
+                killtestDocId: brainActivationSnapshots.killtestDocId,
+              })
+              .from(proposalEvidenceFeedback)
+              .innerJoin(
+                generationFeedback,
+                and(
+                  eq(generationFeedback.id, proposalEvidenceFeedback.feedbackId),
+                  both(generationFeedback)
+                )
+              )
+              .innerJoin(
+                generations,
+                and(
+                  eq(generations.id, generationFeedback.generationId),
+                  both(generations)
+                )
+              )
+              .innerJoin(
+                brainActivationSnapshots,
+                and(
+                  eq(brainActivationSnapshots.id, generations.brainActivationId),
+                  both(brainActivationSnapshots)
+                )
+              )
+              .where(
+                and(
+                  both(proposalEvidenceFeedback),
+                  eq(proposalEvidenceFeedback.proposalId, proposal.id)
+                )
+              );
+        const feedbackEvidence = feedbackRows.map((row) => ({
+          feedbackId: row.feedbackId,
+          generationId: row.generationId,
+          profileId: row.profileId,
+          workspaceId: row.workspaceId,
+          reaction: row.reaction,
+          basisBrainDocId:
+            row.reaction === "off_voice"
+              ? row.voiceDocId
+              : row.reaction === "too_generic" ||
+                  row.reaction === "wrong_angle" ||
+                  row.reaction === "not_filmable"
+                ? row.killtestDocId
+                : null,
+        }));
+        return { proposal, resultEvidence, feedbackEvidence };
+      },
+      promotionProposalHistory: (tx?: TxLike) =>
+        (tx ?? db)
+          .select()
+          .from(promotionProposals)
+          .where(both(promotionProposals))
+          .orderBy(desc(promotionProposals.createdAt), desc(promotionProposals.id)),
+      privateFrameworks: (tx?: TxLike) =>
+        (tx ?? db)
           .select()
           .from(frameworks)
           .where(
@@ -1603,8 +2622,8 @@ export class ProfileScope {
             )
           )
           .orderBy(desc(frameworks.createdAt), desc(frameworks.id)),
-      eligibleFrameworks: () =>
-        db
+      eligibleFrameworks: (tx?: TxLike) =>
+        (tx ?? db)
           .select()
           .from(frameworks)
           .where(
@@ -1645,6 +2664,54 @@ export class ProfileScope {
             desc(frameworks.version)
           ),
     };
+    this.accessors = lifecycleGuardedMethods(
+      db,
+      accessors,
+      {
+        profile: 0,
+        brainDocs: 0,
+        brainAssetSummary: 0,
+        brainDocsByKind: 1,
+        brainDocsByIds: 1,
+        strategyMetricVersions: 0,
+        exportPage: 2,
+        onboardingInputs: 2,
+        onboardingInputsByIds: 1,
+        ownPostsNewest: 1,
+        countOwnPosts: 0,
+        countReferencePosts: 0,
+        countUnchargedBillableAttempts: 1,
+        sumUnchargedBillableCostMicroUsd: 1,
+        latestBrainActivation: 0,
+        countOnboardingInputs: 0,
+        modelUsage: 0,
+        firstBillableAttempt: 1,
+        referenceCorpusAsOf: 1,
+        generationFeedback: 1,
+        results: 1,
+        comparableResults: 1,
+        generationsNewest: 1,
+        promotionResultInputs: 0,
+        promotionFeedbackInputs: 0,
+        promotionProposalReview: 1,
+        promotionProposalHistory: 0,
+        privateFrameworks: 0,
+        eligibleFrameworks: 0,
+      },
+      async (tx) => {
+        const authority = await assertProfileLifecycleTransactionAccess(
+          tx,
+          userId as string,
+          workspaceId,
+          profileId
+        );
+        assertFreshProfileAuthority(authority, {
+          membershipVersion,
+          workspaceLifecycleVersion,
+          profileLifecycleVersion,
+        });
+      }
+    );
     profileCage.add(this);
   }
 
@@ -1666,34 +2733,57 @@ export class ProfileScope {
   ): Promise<ProfileScope> {
     assertScoped(scope);
     if (!UUID_RE.test(profileId)) throw new ProfileAccessError();
-    const [row] = await db
-      .select({ id: creatorProfiles.id })
-      .from(creatorProfiles)
-      .where(
-        and(
-          eq(creatorProfiles.id, profileId),
-          // THE WORKSPACE PREDICATE. Drop it and P1 goes red: a profile id
-          // from any other workspace mints cleanly and every accessor below
-          // then serves that workspace's rows.
-          eq(creatorProfiles.workspaceId, scope.workspaceId)
-        )
-      )
-      .limit(1);
-    if (!row) throw new ProfileAccessError();
+    const authority = await assertProfileLifecycleAccess(
+      db,
+      scope.userId as string,
+      scope.workspaceId as string,
+      profileId
+    ).catch(() => {
+      throw new ProfileAccessError();
+    });
+    assertFreshWorkspaceAuthority(authority, scope);
     return new ProfileScope(
       MINT,
       db,
       scope.workspaceId,
       profileId as VerifiedProfileId,
-      // Off the WorkspaceScope, which got them off the verified membership row.
-      scope.role,
-      scope.userId
+      // Use the LIVE authority, not the cached workspace role. A demotion that
+      // races minting must never create an owner-capable profile scope.
+      authority.role,
+      scope.userId,
+      authority.version,
+      authority.workspaceLifecycleVersion,
+      authority.profileLifecycleVersion
     );
   }
 
   toString(): string {
     return `ProfileScope(${this.profileId})${this.#cage ? "" : ""}`;
   }
+}
+
+/** Duplication-safe scope grain; class identity is not a security boundary. */
+export function scopeGrain(s: unknown): "profile" | "workspace" {
+  assertScoped(s);
+  return profileCage.has(s) ? "profile" : "workspace";
+}
+
+export function isProfileScope(s: unknown): s is ProfileScope {
+  return scopeGrain(s) === "profile";
+}
+
+export function isWorkspaceScope(s: unknown): s is WorkspaceScope {
+  return scopeGrain(s) === "workspace";
+}
+
+/** App/test seam for the exact scoped brain-as-an-asset aggregate. */
+export async function brainAssetSummary(
+  db: DbLike,
+  scope: WorkspaceScope,
+  profileId: string
+): Promise<BrainAssetSummary> {
+  const profileScope = await ProfileScope.mint(db, scope, profileId);
+  return profileScope.accessors.brainAssetSummary();
 }
 
 // ------------------------------------------------------ write capabilities
@@ -1750,6 +2840,9 @@ export const GUARDED_WRITE_FIELDS = [
   // column is server-derived at creation and moved only by an operation that
   // re-checks the cap — of which slice 1 ships none.
   "state",
+  // Phase 10b-1 advances this epoch only inside lifecycle authorities. A caller
+  // must never choose the value used to invalidate already-minted scopes.
+  "lifecycleVersion",
 ] as const;
 
 /**
@@ -2127,7 +3220,140 @@ export type ProfileWriteCapabilities = {
     params: RecordGenerationFeedbackParams,
     tx: TxLike
   ) => Promise<GenerationFeedbackRow>;
+  /**
+   * LOG ONE RESULT against this creator's own record (slice 9a, R5-R9).
+   *
+   * FIVE OF THE ROW'S COLUMNS ARE SERVER-DERIVED AND HAVE NO PARAMETER AT ALL,
+   * which is a stronger property than validating them and is where most of
+   * this capability's value is:
+   *
+   *   `evidence_state`  — DERIVED from whether numbers were supplied. Manual
+   *       numbers are `quantified_self_reported`; no numbers is
+   *       `unquantified`. R6 says numbers a creator typed are not verified,
+   *       and there is no parameter through which a caller could say otherwise.
+   *   `connector_*`     — the three columns that gate `connector_verified`
+   *       (R6). v1 has no connector, so this capability writes NULL into all
+   *       three and offers no parameter for them; the database's equality
+   *       CHECK then makes `connector_verified` UNREACHABLE rather than merely
+   *       unwritten. Nothing needs lifting by migration when a connector lands
+   *       — a writer that can produce the provenance can assign the state.
+   *   `metric_key` / `metric_declared_by_doc_id` — READ from the profile's own
+   *       ACTIVE strategy document (R8/REQ-B03). A caller-supplied metric key
+   *       would be a second metric path beside slice 3b's declaration, which
+   *       R8 forbids in as many words; a caller-supplied doc id would let a
+   *       result cite a version that never declared the metric it names.
+   *   `treatment_key`   — COMPUTED by `treatmentKeyFor` from the generation
+   *       this capability re-read through the profile's own scope (C4). Never
+   *       creator-typed and never free text: it is the predicate that decides
+   *       whether three results are three runs of ONE thing.
+   *
+   * `profile_id` and `workspace_id` come off the scope and `generation_id` is
+   * proved to belong to it by BOTH a scoped re-read (so the refusal is
+   * sayable) and the composite FK (so a cross-tenant row is unrepresentable) —
+   * the `recordGenerationFeedback` arrangement, and the reason that FK carries
+   * all three columns rather than one.
+   *
+   * IT DERIVES NO COMPARISON. It writes a row and returns it. The cohort, the
+   * baseline, the median and the effect are `@respin/brain`'s (contract C5);
+   * this capability has no count, no grouping and no minimum-n in it.
+   *
+   * `tx` IS REQUIRED, not optional, for the reason `recordModelUsage`'s
+   * docblock gives: an optional `tx` made a shared-fate claim false with no
+   * compiler signal. The caller decides what this shares fate with.
+   */
+  recordResult: (
+    params: RecordResultParams,
+    entitlement: PerformanceLearningEntitlement,
+    tx: TxLike
+  ) => Promise<ResultRow>;
+  refreshPromotionProposals: (
+    entitlement: PerformanceLearningEntitlement,
+    tx: TxLike
+  ) => Promise<PromotionProposal[]>;
+  appendPromotionSummaryForProposal: (
+    proposalId: string,
+    tx: TxLike
+  ) => Promise<OnboardingInput>;
+  decidePromotionProposal: (
+    params: DecidePromotionProposalParams,
+    entitlement: PerformanceLearningEntitlement,
+    tx: TxLike
+  ) => Promise<PromotionDecisionResult>;
 };
+
+export type PerformanceLearningEntitlement = "view_only" | "full";
+
+export function assertFullPerformanceLearning(
+  entitlement: PerformanceLearningEntitlement
+): void {
+  if (entitlement !== "full") throw new PerformanceLearningEntitlementError();
+}
+
+/**
+ * The caller-suppliable half of one logged result (slice 9a, R5-R9).
+ *
+ * WHAT IS NOT HERE IS THE POINT — see `recordResult`'s docblock for the five
+ * server-derived columns that have no parameter. Every column this capability
+ * writes is built FIELD BY FIELD from a validated local or from the scope;
+ * this object is never spread into `.values()`, which is the
+ * `ClaimGenerationAttemptParams` property: "a value smuggled in through
+ * `as unknown as` cannot be stripped incorrectly because it is never copied at
+ * all", and `results-schema-write.test.ts` drives that with casts rather than
+ * only with `@ts-expect-error`.
+ *
+ * THE TWO LEVERS ARE TWO OPTIONAL PAIRS, not four optional scalars, so "a
+ * value without its denominator" is not expressible in the type either —
+ * `results_lever_pairs_complete` refuses it at the database, this shape
+ * refuses it at the compiler, and neither is trusted alone.
+ */
+export type RecordResultParams = {
+  /**
+   * The output this result is about — OPTIONAL (R5, C4).
+   *
+   * Absent means "a post this product did not write". Such a result is stored,
+   * carries NO treatment key (there is nothing to derive one from), and is
+   * therefore eligible for the BASELINE and never for a treatment cohort.
+   * That consequence is a database property here
+   * (`results_treatment_key_iff_generation`), not a convention.
+   */
+  generationId?: string;
+  platform: string;
+  /**
+   * `string`, NOT `ResultAudienceClass` — WIDENED DELIBERATELY (2026-09-04).
+   *
+   * It arrives from a form post, where anything can be typed, and builder C
+   * REFUSED to cast it at the call site. That refusal is the correct one and
+   * this widening is its other half: a cast would have made the closed set a
+   * claim the TYPE makes about a value the WIRE controls — the 2026-08-26
+   * trusted-`input_class` finding exactly — leaving the database's enum as the
+   * only thing between a form post and a 22P02 rendered as "Something went
+   * wrong". Narrowing happens HERE, once, with a refusal that names what
+   * arrived, which is the only place that can both see the closed set and
+   * produce a creator-readable sentence.
+   */
+  audienceClass: string;
+  observedFrom: Date;
+  observedTo: Date;
+  /**
+   * The two levers, each all-or-nothing. Supplying NEITHER is the
+   * `unquantified` result R6 keeps: stored, visible, and structurally excluded
+   * from every numerical cohort because the row then carries no number at all.
+   *
+   * Decimal STRINGS, not numbers: the column is `numeric` and drizzle reads it
+   * back as a string, so taking a JS `number` here would put a binary float in
+   * the one place a creator's typed figure has to survive exactly.
+   */
+  reach?: { value: string; denominator: string };
+  conversion?: { value: string; denominator: string };
+  /**
+   * Codes from `RESULT_CONFOUNDER_CODES`, deduplicated and ordered by the
+   * server. `readonly string[]` for the same reason `audienceClass` is
+   * `string`: checkbox names off a form are wire input, not a vocabulary.
+   */
+  confounders?: readonly string[];
+  /** Optional creator words. `undefined` and a blank string are not the same. */
+  note?: string;
+} & NoServerFields;
 
 /**
  * The caller-suppliable half of one feedback event (slice 7, R10).
@@ -2274,13 +3500,13 @@ export class GenerationAttemptStateError extends Error {
  * to do both. The check is here rather than in each capability so that adding a
  * third such act cannot forget it.
  */
-function assertMayDecide(role: MembershipRole, act: string): void {
-  if (role === "viewer") throw new BrainRoleError(act, role);
+function assertOwner(role: MembershipRole, act: string): void {
+  if (role !== "owner") throw new ProfileRoleError(act, role, "owner");
 }
 
 /**
  * The role gate on the profile-grained WRITES, as opposed to the two acts that
- * decide what the product believes (`assertMayDecide` above).
+ * decide what the product believes (`assertOwner` above).
  *
  * ADDED BY THE TENANCY GATE'S BLOCK, 2026-08-27 — register item G-13, whose
  * deferral that same Critical Path withdrew in writing on 2026-08-26. Slice 1
@@ -2297,8 +3523,50 @@ function assertMayDecide(role: MembershipRole, act: string): void {
  * 2026-07-30 lesson and a guard added only where today's caller happens to be
  * is the shape that produced this finding.
  */
-function assertMayWrite(role: MembershipRole, act: string): void {
+function assertOwnerOrEditor(role: MembershipRole, act: string): void {
   if (role === "viewer") throw new ProfileRoleError(act, role);
+}
+
+/**
+ * Transaction-local authority for profile operations implemented outside the
+ * main capability object. It binds the write/read to the minted scope epoch,
+ * so demotion or tombstone/cancel cannot revive an older capability.
+ */
+export async function assertFreshProfileScopeInTx(
+  tx: TxLike,
+  scope: ProfileScope,
+  allowedRoles?: readonly MembershipRole[],
+  act = "use this creator profile"
+): Promise<MembershipRole> {
+  assertScoped(scope);
+  if (!profileCage.has(scope)) throw new ScopeForgeryError("A profile scope");
+  const authority = await assertProfileLifecycleTransactionAccess(
+    tx,
+    scope.userId as string,
+    scope.workspaceId as string,
+    scope.profileId as string
+  );
+  assertFreshProfileAuthority(authority, scope);
+  if (allowedRoles && !allowedRoles.includes(authority.role)) {
+    throw new ProfileRoleError(act, authority.role);
+  }
+  return authority.role;
+}
+
+/** Transaction-local freshness check for workspace-level operations. */
+export async function assertFreshWorkspaceScopeInTx(
+  tx: TxLike,
+  scope: WorkspaceScope
+): Promise<MembershipRole> {
+  assertScoped(scope);
+  if (!workspaceCage.has(scope)) throw new ScopeForgeryError("A workspace scope");
+  const authority = await assertWorkspaceLifecycleTransactionAccess(
+    tx,
+    scope.userId as string,
+    scope.workspaceId as string
+  );
+  assertFreshWorkspaceAuthority(authority, scope);
+  return authority.role;
 }
 
 /** Strip every server-derived field, whatever a cast smuggled in. */
@@ -2315,8 +3583,14 @@ function stripGuarded<T extends object>(input: T): Record<string, unknown> {
  * THIS value. Without a fixed unit and a fixed normalisation the offsets differ
  * on every emoji and shift on every textarea submission — green under ASCII
  * fixtures, wrong in production.
+ *
+ * EXPORTED (slice 8c, R4) for ONE reader: `intakePastedReference` computes the
+ * transcript digest it looks up for idempotency BEFORE `appendOnboardingInput`
+ * stores the text, and a second normaliser there would be a second definition
+ * of the stored bytes. It is pure and idempotent; the value that lands in the
+ * column still comes from here.
  */
-function normaliseContent(raw: string): string {
+export function normaliseContent(raw: string): string {
   return raw.normalize("NFC").replace(/\r\n/g, "\n");
 }
 
@@ -2415,6 +3689,13 @@ export function workspaceWriteCapabilities(
 
   return {
     countActiveProfiles: async (tx) => {
+      const authority = await assertWorkspaceLifecycleTransactionAccess(
+        tx,
+        scope.userId as string,
+        workspaceId
+      );
+      assertFreshWorkspaceAuthority(authority, scope);
+      assertOwner(authority.role, "count profiles for profile creation");
       const [row] = await tx
         .select({ n: count() })
         .from(creatorProfiles)
@@ -2434,7 +3715,14 @@ export function workspaceWriteCapabilities(
       // there. This function is exported from `@respin/db`'s root, so every
       // package can import it, and a caller-side-only guard on a documented
       // direct entrypoint is a documented bypass (CLAUDE.md 2026-07-30).
-      assertMayWrite(scope.role, "create a creator profile");
+      assertOwner(scope.role, "create a creator profile");
+      const authority = await assertWorkspaceLifecycleTransactionAccess(
+        tx,
+        scope.userId as string,
+        workspaceId
+      );
+      assertFreshWorkspaceAuthority(authority, scope);
+      assertOwner(authority.role, "create a creator profile");
       // Read ONCE into a local, for the TOCTOU reason `writeBrainDoc`'s C-40
       // comment gives: `params` is a plain object type, so `displayName` may be
       // a getter that returns one value to the validator and another to the
@@ -2525,6 +3813,13 @@ export const WRITE_PAUSE_POLICY: Readonly<
   },
   readGenerationForAttempt: "read",
   readGenerationAttempt: "read",
+  recordResult: {
+    exempt:
+      "A-7 exemption 1, and the difference from `recordGenerationFeedback` is stated rather than inherited: a comparison IS derived from these rows (contract C5), which feedback's warrant could lean on and this one cannot. It is still input the creator submitted — numbers they observed about their own post, in a window that has already passed and cannot be re-observed later — so refusing it under a pause would silently destroy an observation rather than defer it, which is A-7's exemption exactly. What a paused workspace gains by logging one is nothing an entitlement can price: the comparison is a read of the creator's own rows, it spends no credits, calls no vendor and writes no brain. REVISIT TRIGGER: the first path on which logging a result causes a priced action (9b's proposal construction, if it is ever made automatic rather than requested).",
+  },
+  refreshPromotionProposals: "gated",
+  appendPromotionSummaryForProposal: "gated",
+  decidePromotionProposal: "gated",
 };
 
 /**
@@ -2569,9 +3864,9 @@ export function writeCapabilities(
   // literal is being constructed.
   const caps: ProfileWriteCapabilities = {
     appendOnboardingInput: async (input, tx) => {
-      // REQ-A02 / G-13. See `assertMayWrite` — this is the write slice 1 made
+      // REQ-A02 / G-13. See `assertOwner` — this is the write slice 1 made
       // browser-reachable, into an immutable table with no delete path.
-      assertMayWrite(scope.role, "add a post to this creator's record");
+      assertOwner(scope.role, "add a post to this creator's record");
       // MIRRORS `onboarding_inputs_field_key_iff_creator_authored` IN
       // APPLICATION CODE, before the insert reaches it — the same reason
       // `writeBrainDoc` names its own non-empty-`sourceEvidence` refusal
@@ -2580,6 +3875,14 @@ export function writeCapabilities(
       // gives: `input` is a plain object type, so a getter could disagree
       // between this check and the `.values()` spread below.
       const inputClass = input.inputClass;
+      if (
+        typeof inputClass !== "string" ||
+        !(PUBLIC_INPUT_CLASSES as readonly string[]).includes(inputClass)
+      ) {
+        throw new OnboardingInputLimitError(
+          "input_class is not a public onboarding input class"
+        );
+      }
       const rawFieldKey = input.fieldKey;
       const rawSourceUrl = input.sourceUrl;
       const fieldKey =
@@ -2617,6 +3920,14 @@ export function writeCapabilities(
         );
       }
       const insert = async (conn: TxLike): Promise<OnboardingInput> => {
+        const authority = await assertProfileLifecycleTransactionAccess(
+          conn,
+          scope.userId as string,
+          ids.workspaceId,
+          ids.profileId
+        );
+        assertFreshProfileAuthority(authority, scope);
+        assertOwner(authority.role, "add a post to this creator's record");
         await conn.execute(
           sql`SELECT pg_advisory_xact_lock(hashtextextended(${`brain:${scope.workspaceId}:${scope.profileId}`}, 0))`
         );
@@ -2656,7 +3967,7 @@ export function writeCapabilities(
     recordModelUsage: async (usage, tx) => {
       // NO ROLE GATE, DELIBERATELY — and the round-2 billing gate is why this
       // comment exists rather than the gate. The G-13 fix added
-      // `assertMayWrite` to every previously ungated capability, which was the
+      // the shared role gate to every previously ungated capability, which was the
       // right instinct applied to the one capability that is exempt: this is
       // the A-7 SETTLEMENT TAIL. `model_usage` records a fact the provider has
       // already billed us for, and it takes `tx: TxLike` so it composes into
@@ -2760,7 +4071,7 @@ export function writeCapabilities(
       // population is now derived from this object's own members in
       // `packages/db/tests/with-workspace.test.ts`, so a new ungated write
       // cannot escape the list by nobody remembering this paragraph.
-      assertMayWrite(scope.role, "write a brain document for this creator");
+      assertOwner(scope.role, "write a brain document for this creator");
       if (await hasOpenPause(tx, scope.workspaceId)) {
         throw new WorkspacePausedError();
       }
@@ -3061,7 +4372,7 @@ export function writeCapabilities(
     },
 
     confirmBrainDocFields: async (params, tx) => {
-      assertMayDecide(scope.role, "confirm");
+      assertOwner(scope.role, "confirm");
       // THE SAME LOCK `writeBrainDoc` TAKES, and for a sharper reason (tenancy
       // gate BLOCK, 2026-08-29). Confirmation and activation are both
       // read-then-write: `readOwnBrainDoc` is a plain SELECT, so under READ
@@ -3193,7 +4504,7 @@ export function writeCapabilities(
     },
 
     activateBrainDoc: async (params, tx) => {
-      assertMayDecide(scope.role, "activate");
+      assertOwner(scope.role, "activate");
       // THE SAME LOCK `writeBrainDoc` TAKES, and for a sharper reason (tenancy
       // gate BLOCK, 2026-08-29). Confirmation and activation are both
       // read-then-write: `readOwnBrainDoc` is a plain SELECT, so under READ
@@ -3402,7 +4713,7 @@ export function writeCapabilities(
     // which is the same property one step earlier.
     claimGenerationAttempt: async (params, tx) => {
       // A generation spends the workspace's credits, so it is not a read.
-      assertMayWrite(scope.role, "start a generation for this creator");
+      assertOwnerOrEditor(scope.role, "start a generation for this creator");
       // READ ONCE INTO LOCALS (C-40): `params` is a plain object type, so a
       // getter could return one value to the insert and another to the
       // caller's later hash comparison — which is the whole identity check.
@@ -3437,7 +4748,7 @@ export function writeCapabilities(
     },
 
     advanceGenerationAttempt: async (params, tx) => {
-      assertMayWrite(scope.role, "advance a generation for this creator");
+      assertOwnerOrEditor(scope.role, "advance a generation for this creator");
       const attemptId = params.attemptId;
       const to = params.to;
       // THE LEGAL PREDECESSORS, as a MAP rather than a chain of `if`s, for the
@@ -3493,7 +4804,7 @@ export function writeCapabilities(
     },
 
     settleGeneration: async (params, tx) => {
-      assertMayWrite(scope.role, "settle a generation for this creator");
+      assertOwnerOrEditor(scope.role, "settle a generation for this creator");
       const attemptId = params.attemptId;
       const outcome = params.outcome;
       // READ ONCE INTO A LOCAL (C-40) and then RESOLVE IT AGAINST THE SCOPE.
@@ -3611,12 +4922,12 @@ export function writeCapabilities(
     recordGenerationFeedback: async (params, tx) => {
       // A VIEWER MAY NOT. Feedback is an assertion about a creator's output
       // that slice 9 may build a promotion proposal from — the same class of
-      // act as confirming a brain document, which `assertMayDecide` already
-      // refuses a viewer. `assertMayWrite` rather than `assertMayDecide`
+      // act as confirming a brain document, whose role gate already
+      // refuses a viewer. The owner-or-editor gate rather than `assertOwner`
       // because nothing here decides what the product BELIEVES yet; it lands
       // permanently in an append-only record, which is what that gate's own
       // docblock names.
-      assertMayWrite(scope.role, "record feedback on this creator's output");
+      assertOwnerOrEditor(scope.role, "record feedback on this creator's output");
       // READ ONCE INTO LOCALS (C-40): a getter could pass validation with one
       // value and store another — on `reaction` that would defeat the closed
       // set entirely.
@@ -3699,8 +5010,439 @@ export function writeCapabilities(
       if (!row) throw new FeedbackDuplicateError();
       return row;
     },
+
+    // ------------------------------------------------------ slice 9a, R5-R9
+    recordResult: async (params, entitlement, tx) => {
+      // A VIEWER MAY NOT. The owner-or-editor gate rather than `assertOwner`, the
+      // `recordGenerationFeedback` line: nothing here decides what the product
+      // BELIEVES — 9b's proposal does, and that is where the stronger gate
+      // belongs — but it lands permanently in an append-only record that a
+      // promotion proposal will later be built from.
+      assertOwnerOrEditor(scope.role, "log a result on this creator's record");
+      assertFullPerformanceLearning(entitlement);
+      // READ ONCE INTO LOCALS (C-40): every field below is validated and then
+      // used, and a getter could disagree between the two.
+      const rawGenerationId = params.generationId;
+      const rawPlatform = params.platform;
+      const audienceClass = params.audienceClass;
+      const observedFrom = params.observedFrom;
+      const observedTo = params.observedTo;
+      const rawReach = params.reach;
+      const rawConversion = params.conversion;
+      const rawConfounders = params.confounders;
+      const rawNote = params.note;
+
+      // THE CLOSED SET, CHECKED AT RUNTIME AND NOT ONLY IN THE TYPE (CLAUDE.md
+      // 2026-08-21). Without this a cast reaches the pgEnum and the creator
+      // sees a raw 22P02 rendered as "Something went wrong".
+      if (typeof audienceClass !== "string") {
+        throw new ResultInputError("the audience class was not text");
+      }
+      if (!(RESULT_AUDIENCE_CLASSES as readonly string[]).includes(audienceClass)) {
+        throw new ResultInputError(
+          `it named an audience class this product does not have (${echoReceived(audienceClass)}). It is organic or paid, and the two are never pooled`
+        );
+      }
+      const platform = requireBoundedText(
+        rawPlatform,
+        "platform",
+        RESULT_PLATFORM_MAX
+      );
+      // A WINDOW, not two loose timestamps. `results_window_forward` refuses a
+      // zero-width or reversed window at the database; this refuses it by name
+      // — and it also refuses an INVALID Date, which the database cannot see
+      // because drizzle would send it as `Invalid Date` and fail at the driver.
+      // AN `Invalid Date` IS THE CASE WORTH SPELLING OUT (2026-09-04, builder
+      // C's report). `new Date("last tuesday")` is a real Date object whose
+      // time is NaN, and `observed_to > observed_from` DOES NOT CATCH IT: every
+      // comparison against NaN is false, so Postgres refuses the row with a
+      // constraint violation — a 23514 with no case in `billing-errors.ts`,
+      // rendered as "Something went wrong" — instead of this sentence. The two
+      // halves are separated so the refusal names which one happened.
+      for (const [what, when] of [
+        ["start", observedFrom],
+        ["end", observedTo],
+      ] as const) {
+        if (!(when instanceof Date)) {
+          throw new ResultInputError(
+            `the ${what} of the observation window is not a date`
+          );
+        }
+        if (Number.isNaN(when.getTime())) {
+          throw new ResultInputError(
+            `the ${what} of the observation window is not a date this product can read`
+          );
+        }
+      }
+      if (observedTo.getTime() <= observedFrom.getTime()) {
+        throw new ResultInputError(
+          "its observation window ends before it starts. A ratio with no period is an undefined denominator"
+        );
+      }
+      const reach = parseLever(rawReach, "reach");
+      const conversion = parseLever(rawConversion, "conversion");
+      const confounders = parseConfounders(rawConfounders);
+      let note: string | null = null;
+      if (rawNote !== undefined) {
+        if (typeof rawNote !== "string") {
+          throw new ResultInputError("the note was not text");
+        }
+        // NFC + CRLF->LF, the one normalisation this package stores text under
+        // (`normaliseContent`, A-8).
+        const normalised = normaliseContent(rawNote);
+        if (normalised.trim().length === 0) {
+          // A BLANK NOTE IS NOT A NOTE — `recordGenerationFeedback`'s rule, and
+          // `results_note_says_something` would refuse the row anyway.
+          throw new ResultInputError(
+            "the note was blank. It is optional — leave it empty, or write something in it"
+          );
+        }
+        const points = [...normalised].length;
+        if (points > RESULT_NOTE_MAX) {
+          throw new ResultInputError(
+            `the note is ${points} characters and the limit is ${RESULT_NOTE_MAX}`
+          );
+        }
+        note = normalised;
+      }
+
+      // THE DECLARED METRIC (R8/REQ-B03), READ RATHER THAN TAKEN. Through the
+      // profile's OWN accessor inside the caller's transaction, so there is no
+      // second query and no second answer to "which strategy version is live".
+      // `brain_docs_one_active_uq` is a partial unique index, so at most one
+      // row can match — the `find` is a projection of a database property, not
+      // an arbitrary pick.
+      // THE NARROW READ (billing CHANGE 1): four scalars per version, never
+      // the `content` jsonb. See `strategyMetricVersions`.
+      const strategyVersions = await scope.accessors.strategyMetricVersions(tx);
+      const activeStrategy = strategyVersions.find(
+        (doc) => doc.status === "active"
+      );
+      if (!activeStrategy) {
+        throw new ResultInputError(
+          "you have not activated a Strategy document yet, so there is no declared north-star metric to measure this against. Nothing here guesses one for you"
+        );
+      }
+      const metric = declaredMetricOf({ metric: activeStrategy.metric });
+      if (!metric) {
+        throw new ResultInputError(
+          "your active Strategy does not declare a north-star metric with a unit and a direction yet. Declare those first — a number with no unit has no meaning, and 'better' cannot be inferred without a direction"
+        );
+      }
+
+      // THE OUTPUT THIS IS ABOUT, and the treatment key derived from it (C4).
+      // TWO MECHANISMS, the `recordGenerationFeedback` division: the scoped
+      // re-read is what makes the refusal SAYABLE (a foreign id would
+      // otherwise reach the composite FK and come back as a raw 23503, which
+      // `billing-errors.ts` has no case for), and the FK is what makes the
+      // cross-tenant row UNREPRESENTABLE. Foreign, nonexistent and malformed
+      // all raise the one byte-identical `ResultTargetError`.
+      let generationId: string | null = null;
+      let treatmentKey: string | null = null;
+      if (rawGenerationId !== undefined) {
+        if (typeof rawGenerationId !== "string" || !UUID_RE.test(rawGenerationId)) {
+          throw new ResultTargetError();
+        }
+        const [generation] = await tx
+          .select()
+          .from(generations)
+          .where(and(both(generations), eq(generations.id, rawGenerationId)))
+          .limit(1);
+        if (!generation) throw new ResultTargetError();
+        generationId = generation.id;
+        treatmentKey = treatmentKeyFor({ generation, metricKey: metric.key });
+      }
+
+      // R6, AS A DERIVATION RATHER THAN A PARAMETER. Numbers a creator typed
+      // are `quantified_self_reported`; no numbers is `unquantified`. There is
+      // no branch here that can reach `connector_verified`, and no parameter a
+      // caller could cast to get one — the three connector columns are written
+      // NULL below and the database's equality does the rest.
+      const evidenceState: ResultEvidenceState =
+        reach || conversion ? "quantified_self_reported" : "unquantified";
+
+      const [row] = await tx
+        .insert(results)
+        .values({
+          // FIELD BY FIELD, NEVER A SPREAD OF `params` — see the params type.
+          generationId,
+          platform,
+          // NARROWED ABOVE, and stored as the narrowed value — the parameter's
+          // type is `string`, the column's is the closed enum, and this line is
+          // where the two meet after the check rather than before it.
+          audienceClass: audienceClass as ResultAudienceClass,
+          metricKey: metric.key,
+          metricDeclaredByDocId: activeStrategy.id,
+          observedFrom,
+          observedTo,
+          treatmentKey,
+          evidenceState,
+          reachValue: reach?.value ?? null,
+          reachDenominator: reach?.denominator ?? null,
+          conversionValue: conversion?.value ?? null,
+          conversionDenominator: conversion?.denominator ?? null,
+          confounders,
+          note,
+          // v1 HAS NO CONNECTOR, written explicitly rather than omitted: an
+          // omitted column is a default somebody could change, and these three
+          // are what the `connector_verified` equality keys on.
+          connectorSource: null,
+          connectorEventId: null,
+          connectorObservedAt: null,
+          // LAST, from the scope — never from the caller's object.
+          ...ids,
+        })
+        // INSERT-OR-REFUSE, not insert-or-swallow — `recordGenerationFeedback`'s
+        // rule, and it matters more here: `results_generation_metric_window_uq`
+        // is what stops a cohort minimum being reached by pressing submit three
+        // times, and a swallowed duplicate would report success on numbers that
+        // were not kept.
+        .onConflictDoNothing()
+        .returning();
+      if (!row) throw new ResultDuplicateError();
+      return row;
+    },
+    refreshPromotionProposals: async (entitlement, tx) => {
+      assertOwner(scope.role, "refresh promotion proposals");
+      assertFullPerformanceLearning(entitlement);
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`brain:${scope.workspaceId}:${scope.profileId}`}, 0))`
+      );
+      if (await hasOpenPause(tx, scope.workspaceId)) throw new WorkspacePausedError();
+      return refreshPromotionProposalsInScope(scope, entitlement, tx);
+    },
+    appendPromotionSummaryForProposal: async (proposalId, tx) => {
+      assertOwner(scope.role, "write promotion evidence");
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`brain:${scope.workspaceId}:${scope.profileId}`}, 0))`
+      );
+      if (await hasOpenPause(tx, scope.workspaceId)) throw new WorkspacePausedError();
+      return appendPromotionSummaryForProposalInScope(scope, proposalId, tx);
+    },
+    decidePromotionProposal: async (params, entitlement, tx) => {
+      assertOwner(scope.role, "decide a promotion proposal");
+      assertFullPerformanceLearning(entitlement);
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`brain:${scope.workspaceId}:${scope.profileId}`}, 0))`
+      );
+      if (await hasOpenPause(tx, scope.workspaceId)) throw new WorkspacePausedError();
+      return decidePromotionProposalInScope(scope, caps, params, entitlement, tx);
+    },
   };
-  return caps;
+  const txArgumentByCapability = {
+    appendOnboardingInput: 1,
+    recordModelUsage: 1,
+    writeBrainDoc: 1,
+    confirmBrainDocFields: 1,
+    activateBrainDoc: 1,
+    activateBrainDocCoherent: 1,
+    claimGenerationAttempt: 1,
+    advanceGenerationAttempt: 1,
+    settleGeneration: 1,
+    readGenerationForAttempt: 1,
+    readGenerationAttempt: 1,
+    recordGenerationFeedback: 1,
+    recordResult: 2,
+    refreshPromotionProposals: 1,
+    appendPromotionSummaryForProposal: 1,
+    decidePromotionProposal: 2,
+  } as const satisfies Record<keyof ProfileWriteCapabilities, number>;
+  const rolesByCapability = {
+    appendOnboardingInput: ["owner"],
+    recordModelUsage: ["owner", "editor", "viewer"],
+    writeBrainDoc: ["owner"],
+    confirmBrainDocFields: ["owner"],
+    activateBrainDoc: ["owner"],
+    activateBrainDocCoherent: ["owner"],
+    claimGenerationAttempt: ["owner", "editor"],
+    advanceGenerationAttempt: ["owner", "editor"],
+    settleGeneration: ["owner", "editor"],
+    readGenerationForAttempt: ["owner", "editor", "viewer"],
+    readGenerationAttempt: ["owner", "editor", "viewer"],
+    recordGenerationFeedback: ["owner", "editor"],
+    recordResult: ["owner", "editor"],
+    refreshPromotionProposals: ["owner"],
+    appendPromotionSummaryForProposal: ["owner"],
+    decidePromotionProposal: ["owner"],
+  } as const satisfies Record<
+    keyof ProfileWriteCapabilities,
+    readonly MembershipRole[]
+  >;
+
+  return transactionallyLifecycleGuardedMethods(
+    caps,
+    (property, args) => {
+      // This capability opens its own transaction when one is not supplied and
+      // performs the lifecycle fence inside that transaction above.
+      if (property === "appendOnboardingInput") return undefined;
+      if (typeof property !== "string" || !(property in txArgumentByCapability)) {
+        throw new ScopeForgeryError("A profile write capability");
+      }
+      const tx = args[
+        txArgumentByCapability[property as keyof ProfileWriteCapabilities]
+      ];
+      if (!tx || typeof tx !== "object") {
+        throw new ScopeForgeryError("A profile write transaction");
+      }
+      return tx as TxLike;
+    },
+    async (tx, property) => {
+      if (typeof property !== "string" || !(property in rolesByCapability)) {
+        throw new ScopeForgeryError("A profile write capability");
+      }
+      const authority = await assertProfileLifecycleTransactionAccess(
+        tx,
+        scope.userId as string,
+        ids.workspaceId,
+        ids.profileId
+      );
+      assertFreshProfileAuthority(authority, scope);
+      const allowed = rolesByCapability[property as keyof ProfileWriteCapabilities];
+      if (!(allowed as readonly MembershipRole[]).includes(authority.role)) {
+        throw new ProfileRoleError(
+          property,
+          authority.role,
+          allowed.length === 1 && allowed[0] === "owner" ? "owner" : "editor"
+        );
+      }
+    }
+  );
+}
+
+/**
+ * ONE LEVER'S value/denominator pair, validated as a pair (slice 9a, R9).
+ *
+ * DECIMAL STRINGS, BOUNDED TO THE COLUMN'S OWN `numeric(24, 8)`: an
+ * out-of-range figure would otherwise surface as a raw 22003 from the driver,
+ * which is the "Something went wrong" every typed refusal here exists to
+ * prevent. The value MAY be negative (a declared metric can legitimately be a
+ * net change) and the denominator may NOT be zero or negative — that is
+ * `results_denominators_positive`'s rule, refused here by name: "a per-1k over
+ * a zero denominator is not a small number, it is undefined".
+ *
+ * `DECIMAL_RE` IS ALSO WHAT REFUSES `NaN`, and until 2026-09-04 it was the ONLY
+ * thing that did — on a table whose contract says the database enforces this.
+ * `numeric` has a NaN, `'NaN'::numeric > 0` is TRUE and `NaN IS NULL` is FALSE,
+ * so a NaN denominator satisfied every constraint on the row and reached the
+ * column. Migration 0031's `results_lever_figures_are_numbers` is the missing
+ * layer; this regex is now the one that makes the refusal SAYABLE rather than
+ * the one that makes the row unstorable — the same division
+ * `FeedbackTargetError` records for a foreign id. Both halves are driven:
+ * `results-schema-write.test.ts` for the named refusal here,
+ * `results-schema.test.ts` for the database's.
+ */
+function parseLever(
+  lever: { value: string; denominator: string } | undefined,
+  which: string
+): { value: string; denominator: string } | null {
+  if (lever === undefined) return null;
+  if (typeof lever !== "object" || lever === null) {
+    throw new ResultInputError(`the ${which} figures were not a value and a denominator`);
+  }
+  const value = decimalOrThrow(lever.value, `${which} value`, true);
+  const denominator = decimalOrThrow(lever.denominator, `${which} denominator`, false);
+  if (!(Number(denominator) > 0)) {
+    throw new ResultInputError(
+      `the ${which} denominator is not greater than zero. A per-1k over a zero denominator is not a small number, it is undefined`
+    );
+  }
+  return { value, denominator };
+}
+
+/** `numeric(24, 8)`: up to 16 integer digits and 8 decimal places. */
+const DECIMAL_RE = /^-?\d{1,16}(\.\d{1,8})?$/;
+
+function decimalOrThrow(value: unknown, what: string, signed: boolean): string {
+  if (typeof value !== "string") {
+    throw new ResultInputError(`the ${what} was not a number`);
+  }
+  const trimmed = value.trim();
+  if (!DECIMAL_RE.test(trimmed)) {
+    throw new ResultInputError(
+      `the ${what} is not a plain figure this product can store (up to 16 digits and 8 decimal places${signed ? "" : ", and not negative"})`
+    );
+  }
+  if (!signed && trimmed.startsWith("-")) {
+    throw new ResultInputError(`the ${what} cannot be negative`);
+  }
+  return trimmed;
+}
+
+/**
+ * The confounder flags (R7) — CLOSED, DEDUPLICATED and in the vocabulary's own
+ * order.
+ *
+ * DEDUPLICATED because the same confounder named twice is one fact and the
+ * screen counts what is stored; ORDERED by `RESULT_CONFOUNDER_CODES` rather
+ * than by the caller's array so that two identical sets of flags are the same
+ * stored bytes, which is what lets a reader compare two results' confounders
+ * without sorting first. The database refuses an unknown code
+ * (`results_confounders_closed_set`); this refuses it by NAME.
+ */
+function parseConfounders(
+  codes: readonly string[] | undefined
+): ResultConfounderCode[] {
+  if (codes === undefined) return [];
+  if (!Array.isArray(codes)) {
+    throw new ResultInputError("the confounders were not a list");
+  }
+  for (const code of codes) {
+    if (typeof code !== "string") {
+      throw new ResultInputError("it named a confounder that is not text");
+    }
+    if (!(RESULT_CONFOUNDER_CODES as readonly string[]).includes(code)) {
+      throw new ResultInputError(
+        `it named a confounder this product does not have (${echoReceived(code)}). They are a fixed list the page renders — reload the page and choose from it`
+      );
+    }
+  }
+  const chosen = new Set<string>(codes);
+  return RESULT_CONFOUNDER_CODES.filter((code) => chosen.has(code));
+}
+
+/**
+ * A caller-supplied value, made safe to put in a refusal a creator will read.
+ *
+ * NAMING WHAT ARRIVED IS THE POINT: "that is not a confounder we have" is
+ * unactionable when a form posted six checkboxes and one of them is stale.
+ *
+ * BOUNDED AND FLATTENED, because the value came off the wire: an unbounded
+ * echo turns a paste-bomb into a paste-bomb in an error message (and into a
+ * log line), and newlines in a refusal break the one-sentence shape every
+ * other error in this file keeps. Whitespace is collapsed, the text is
+ * NFC-normalised like everything else this package stores or shows, and it is
+ * clipped to `REFUSAL_ECHO_MAX` code points.
+ *
+ * IT IS NOT AN ESCAPE HATCH FOR PROSE. It is only ever reached on a value that
+ * FAILED a closed-set check, so nothing it echoes is ever stored, counted or
+ * derived from — the C-42 channel stays shut.
+ */
+const REFUSAL_ECHO_MAX = 40;
+
+function echoReceived(value: string): string {
+  const flat = normaliseContent(value).replace(/\s+/g, " ").trim();
+  const points = [...flat];
+  return points.length > REFUSAL_ECHO_MAX
+    ? `"${points.slice(0, REFUSAL_ECHO_MAX).join("")}…"`
+    : `"${flat}"`;
+}
+
+/** NFC-normalised, non-blank, bounded — the shape every short label here takes. */
+function requireBoundedText(value: unknown, what: string, max: number): string {
+  if (typeof value !== "string") {
+    throw new ResultInputError(`the ${what} was not text`);
+  }
+  const normalised = normaliseContent(value).trim();
+  if (normalised.length === 0) {
+    throw new ResultInputError(`the ${what} is blank`);
+  }
+  const points = [...normalised].length;
+  if (points > max) {
+    throw new ResultInputError(
+      `the ${what} is ${points} characters and the limit is ${max}`
+    );
+  }
+  return normalised;
 }
 
 /**
@@ -4167,11 +5909,30 @@ export async function withWorkspace(
       "withWorkspace: unknown user — bootstrap has not run for this identity"
     );
   }
+  if (user.lifecycleState !== "active") {
+    throw new WorkspaceAccessError("withWorkspace: identity is tombstoned");
+  }
 
-  const userMemberships = await db
-    .select()
+  const userMembershipRows = await db
+    .select({
+      membership: memberships,
+      workspaceLifecycleVersion: workspaces.lifecycleVersion,
+    })
     .from(memberships)
-    .where(eq(memberships.userId, user.id));
+    .innerJoin(
+      workspaces,
+      and(
+        eq(workspaces.id, memberships.workspaceId),
+        eq(workspaces.lifecycleState, "active")
+      )
+    )
+    .where(
+      and(
+        eq(memberships.userId, user.id),
+        eq(memberships.lifecycleState, "active")
+      )
+    );
+  const userMemberships = userMembershipRows.map((row) => row.membership);
 
   let membership: Membership | undefined;
   if (ctx.workspaceId !== undefined) {
@@ -4201,6 +5962,9 @@ export async function withWorkspace(
     membership.role,
     // `user.id` is the DOMAIN user resolved from the auth identity above, not
     // the auth id itself — `confirmed_by` is a FK into `users`.
-    user.id as VerifiedUserId
+    user.id as VerifiedUserId,
+    membership.version,
+    userMembershipRows.find((row) => row.membership.id === membership.id)!
+      .workspaceLifecycleVersion
   );
 }

@@ -4,7 +4,7 @@ Decisions that engineering cannot make for itself: owner inputs, product definit
 
 Convention: a decision that is settled here graduates to `docs/video-editing/decisions.md` as a numbered D-row. This file holds only what is *open*.
 
-Last updated: 2026-08-10.
+Last updated: 2026-09-08.
 
 ---
 
@@ -112,3 +112,40 @@ The branch was **3 commits ahead of `origin/main`** (5 by the time it was pushed
 | — | Phase 4–6 committed as three coherent commits, not four invented per-phase ones (the worktree was a cumulative snapshot; splitting it would produce commits that never existed and don't build) | commits `c21c7aa`, `7404a65`, `501f212` |
 | — | The program is expressed in the PRD's roadmap vocabulary; stage numbers are filenames, PRD phases are authority | master plan §0 |
 | — | Planning detail decays with distance; Stages 2–7 carry re-planning triggers rather than invented task tables | master plan §7 |
+
+---
+
+## 7. Respin deferred external evidence
+
+### T-15 · Provision YouTube Data API credentials and run the live metadata/quota walk
+**Blocks:** Slice 8 live YouTube discovery, metadata and quota acceptance evidence only. It does not block creator-pasted third-party transcripts, the metadata adapter's deterministic tests, or unrelated Slice 8 construction.
+**Decider / owner:** owner. **Deferred by owner:** 2026-09-02.
+**Needs:** a YouTube Data API v3 key restricted to the API and deployment origin where practical, plus the actual project quota shown in Google Cloud. Keep the credential outside the repository and do not paste it into a work log. The key does not authorize arbitrary public caption download; third-party transcripts remain creator-paste in v1, while creator-owned captions require separately consented OAuth permission to edit the video.
+**Walk:** [`respin-vendor-acceptance-walks.md`](docs/runbooks/respin-vendor-acceptance-walks.md), §8.
+
+### T-16 · Provision Resend and run one controlled digest-delivery walk
+**Blocks:** REQ-E05's live email-delivery evidence only. Sender-independent digest composition and worker scheduling remain buildable; delivery stays cut to slice 10a until this row closes.
+**Decider / owner:** owner. **Deferred by owner:** 2026-09-02.
+**Needs:** a verified sending domain/subdomain, a sending-only Resend API key held outside the repository, a non-secret sender address, and explicit authorization for one controlled acceptance message to an owner-selected recipient.
+**Walk:** [`respin-vendor-acceptance-walks.md`](docs/runbooks/respin-vendor-acceptance-walks.md), §10.
+
+### T-17 · Provision the R-124 S3 deletion journal and run the production restore walk
+**Blocks:** deletion request creation and public launch — both stay disabled until this closes. It does **not** block any further Phase 10b-1 construction: the worker composes a *refusing* journal when unconfigured, so every append returns a conflict and no operation can advance, which is the shipped and safe default.
+**Decider / owner:** owner (this is vendor provisioning and a charge). **Raised:** 2026-09-08, after Phase 10b-1 Task 5 shipped the adapter, verifier, forecast, policies and operator CLIs against an enforcing in-memory S3.
+**Needs, in this order** — each step blocks the next:
+1. A dedicated S3 Standard bucket in the target Lightsail region, outside the database host and outside the database-backup replacement workflow.
+2. **Versioning and Object Lock enabled BEFORE the first object.** Object Lock cannot be turned on afterwards, and the writer refuses a bucket that returns no version id.
+3. The rendered bucket policy applied, with the **sha256 of the rendered policy** recorded.
+4. Three principals from the templates: create-only writer, read-only verifier, delete-exact-version purger.
+5. `price-snapshot.<region>.json` recorded from the current AWS S3 price list. **No price is compiled into the code** — until this exists the forecast is withheld and `pnpm -C respin journal:forecast` exits 2.
+6. `RESPIN_DELETION_JOURNAL_BUCKET`, `_REGION`, `_ENVIRONMENT` set on the worker (all three or none — a partial set refuses startup).
+7. One real restore walk, transcript recorded.
+**Also closable only here:** whether `s3:ObjectCreationOperation` with a `Bool` operator actually denies a non-conditional PUT. Two reviewers flagged it as unverifiable offline; close it by applying the policy, attempting a PUT without `If-None-Match`, and recording the AccessDenied.
+**Templates and the ordered checklist:** [`respin/infra/s3-deletion-journal/README.md`](respin/infra/s3-deletion-journal/README.md). **Evidence owed:** bucket ARN, region, policy digest, Versioning/Object-Lock/encryption status, SDK lockfile version, price snapshot, restore transcript — none obtainable from this repository.
+
+### T-18 · Decide whether a public-launch flag exists to gate
+**Blocks:** nothing today; it decides where the R-124 cost ceiling is *enforced*.
+**Decider / owner:** owner (product definition). **Raised:** 2026-09-08.
+Task 5 built the enablement decision and it is reachable through `pnpm -C respin journal:forecast`, whose **exit 2** a release checklist can gate on. It is deliberately **not** wired into `app/(auth)/sign-up`: the product has no public-launch or new-account flag to gate, nothing is deployed, and gating sign-up would have invented a product decision. Three reviewers checked that reasoning and accepted it; the deferral is recorded in the plan's Deferral ledger. If a real enablement flag is introduced later, it must consult `journalEnablementDecision` in the same change — otherwise the ceiling is enforced by a checklist a person can skip.
+
+> **Not in this file:** Task 5 also left seven *engineering* residuals — the journal-PUT/Postgres-COMMIT orphan window, the absent `schemaVersion → reader` registry, four unwitnessed refusal codes, the dynamic-`import()` bypass of the `scripts/**` writer deny, and the fake not enforcing the IAM prefix grant. Those are code, not decisions, and live in [`10b1-task5-review-manifest.md`](docs/progress/respin-finish/10b1-task5-review-manifest.md) and `docs/progress/respin-finish-open-items.md`. This file holds only what engineering cannot settle for itself.

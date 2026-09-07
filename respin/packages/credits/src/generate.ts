@@ -87,6 +87,7 @@ import {
   type GenerationAttempt,
   type ProfileScope,
   type RunSlots,
+  spinReferenceForProfile,
   type WorkspaceScope,
 } from "@respin/db";
 import {
@@ -127,11 +128,13 @@ import { debitCredits } from "./ledger";
 import { getDbNow, takeWorkspaceLock } from "./clock";
 import {
   BrainNotActivatedError,
+  AutoTopupReconciliationRequiredError,
   GenerationAlreadyRefusedError,
   GenerationInFlightError,
   GenerationPayloadMismatchError,
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
+  GenerationUnchargedCostCapError,
   InsufficientCreditsError,
   PostCallDebitError,
   RevisionParentError,
@@ -182,6 +185,8 @@ export const UNIVERSAL_LAWS: readonly string[] = [
 /** What a creator asks for. Every field is theirs; nothing here is derived. */
 export type GenerateParams = {
   mode: ModeId;
+  /** Opaque, server-resolved autopsy identity for `analyseAndSpin`. */
+  spinAutopsyId?: string;
   /**
    * MINTED BY THE CALLER, so the durable claim, every `model_usage` row and
    * the one `credit_ledger` debit all name the same attempt — REQ-G05 joins
@@ -324,6 +329,23 @@ export const GENERATION_REFUSAL_CODES = {
    * 2026-09-02).
    */
   assembly_refused: "assembly_refused",
+  /**
+   * THE TRUSTED REFERENCE COULD NOT BE COMPARED AGAINST.
+   *
+   * `SpinSimilarityError` — the autopsy projection this spin was given is not
+   * a shape the R-3 gate can use, or the output carried no hook-marked unit to
+   * compare. OURS, never the creator's, and never the vendor's.
+   *
+   * ITS OWN CODE FOR THE REASON `assembly_refused` HAS ONE, and it is the same
+   * defect recurring one class over (billing + compliance gates, 2026-09-04,
+   * reached independently). It fell through to `parse_failed`, so the
+   * operator-facing column said the model had answered with something unusable
+   * — when in fact the vendor answered fine and our own bounds refused our own
+   * data. The comment below this table claimed only `parseScriptOutput` and
+   * `parseKillTestReply` could reach the default; that stopped being true when
+   * the gate gained bounds that throw.
+   */
+  reference_unusable: "reference_unusable",
 } as const;
 
 export type GenerationRefusalCode =
@@ -392,6 +414,17 @@ export async function generate(
   // BEFORE a slot is burned. `writeCapabilities` is a pure factory over an
   // already-asserted `ProfileScope` — it runs no query.
   const caps = writeCapabilities(scope);
+  // Resolve the opaque id after caller/profile gates and before price, slot,
+  // claim, or vendor. The reader owns rights, completed-status, transcript
+  // availability, and bounded-reference validation; caller text is never a
+  // similarity reference.
+  const spinReference = spec.similarityGated
+    ? await spinReferenceForProfile(
+        db,
+        scope,
+        requireSpinAutopsyId(params.spinAutopsyId),
+      )
+    : null;
   // 5b. THE REVISION'S PARENT (R6/R8), RESOLVED BEFORE THE PRICE AND BEFORE
   //     THE VENDOR. Three things come out of this one read and they cannot
   //     disagree with each other: whether this is a revision at all, which
@@ -479,6 +512,7 @@ export async function generate(
       attempts: uncharged,
       cap: unchargedCap,
       windowMinutes: content.generation.unchargedAttemptWindowMinutes,
+          bound: "attempts",
     });
     throw new GenerationUnchargedAttemptCapError(
       uncharged,
@@ -486,6 +520,46 @@ export async function generate(
       // THE SAME NUMBER THE COUNT WAS TAKEN OVER, from the same already-read
       // document — never a second config read, which could disagree with the
       // window the refusal is actually about.
+      content.generation.unchargedAttemptWindowMinutes
+    );
+  }
+  // ...AND THE SAME BOUND IN MONEY (billing gate, 2026-09-04).
+  //
+  // The cap above counts ATTEMPTS while what it protects is SPEND, and the
+  // 2026-09-04 ceiling change is the proof: `llm.maxOutputTokens` tripled, the
+  // worst case per uncharged attempt went 0.14 -> 0.42 USD, and nothing
+  // noticed, because no control here was denominated in money. Ten an hour on
+  // a tier that requires no card is a floor of 100.80 USD per profile per day.
+  //
+  // SECOND, NOT INSTEAD. It is a different question over the same rows, and
+  // either may bind first: frequency is what the count catches, cost per call
+  // is what this catches. A row whose cost we could not compute contributes
+  // zero here, so the count remains the bound on those.
+  //
+  // The window is the SAME already-read one, for the reason above.
+  const unchargedCostCap = content.generation.maxUnchargedBillableCostMicroUsd;
+  const unchargedCost = await scope.accessors.sumUnchargedBillableCostMicroUsd({
+    purpose: GENERATION_PURPOSE,
+    since: unchargedAttemptWindowStart(content, GENERATION_PURPOSE, at),
+  });
+  if (unchargedCost >= unchargedCostCap) {
+    emitUnchargedAttemptCapMetric({
+      workspaceId: scope.workspaceId,
+      profileId: scope.profileId,
+      purpose: GENERATION_PURPOSE,
+      attempts: uncharged,
+      cap: unchargedCap,
+      windowMinutes: content.generation.unchargedAttemptWindowMinutes,
+      // THE DISCRIMINATOR, and it is why this branch is not a copy of the one
+      // above: without it the line reads `attempts=2 cap=10` on a refusal the
+      // attempt check had just PASSED (billing + code review, round 2).
+      bound: "cost",
+      costMicroUsd: unchargedCost,
+      capMicroUsd: unchargedCostCap,
+    });
+    throw new GenerationUnchargedCostCapError(
+      unchargedCost,
+      unchargedCostCap,
       content.generation.unchargedAttemptWindowMinutes
     );
   }
@@ -517,18 +591,28 @@ export async function generate(
     const view = await deriveBalance(db, scope.workspaceId);
     if (view.balance < preCallCost) {
       const shortfall = preCallCost - view.balance;
-      // EVERY TOP-UP OUTCOME IS CAUGHT, RETURNED OR THROWN (R10): this call
-      // reaches Stripe, and an exception escaping here would surface as an
-      // opaque 500 on the one path whose entire job is to explain a refusal.
-      let triggered = false;
-      try {
-        const result = await maybeAutoTopup(db, scope.workspaceId, shortfall, at);
-        triggered = result.triggered;
-      } catch {
-        triggered = false;
+      // maybeAutoTopup converts every post-dispatch uncertainty into a durable
+      // reconciliation result carrying its attempt id. Pre-dispatch rollout,
+      // config, integrity, and clock refusals must keep their real type: calling
+      // them "in flight" would ask an operator to reconcile no provider call.
+      const outcome = await maybeAutoTopup(
+        db,
+        scope.workspaceId,
+        shortfall,
+        at
+      );
+      if (
+        outcome?.triggered === false &&
+        outcome.reason === "reconciliation_required"
+      ) {
+        throw new AutoTopupReconciliationRequiredError(
+          outcome.attemptId,
+          view.balance,
+          preCallCost
+        );
       }
       // REFUSED REGARDLESS. A triggered top-up does not license proceeding.
-      throw triggered
+      throw outcome?.triggered
         ? new TopupInFlightError(view.balance, preCallCost)
         : new InsufficientCreditsError(view.balance, preCallCost);
     }
@@ -699,6 +783,28 @@ export async function generate(
                 input: [params.input, params.platform] },
               parent.reportedSpecifics
             ),
+      // THE REFERENCE'S MECHANISM, FOR THE GATED MODE ONLY (slice 8c R11,
+      // R-97; REQ-E04/I03). The four fields the trends screen already shows
+      // — hook mechanic, beats, ending, follow trigger — reach the prompt as
+      // another creator's mechanism to adapt. The GATE's fields (`hook`,
+      // `subjectTerms`, `structure`) stay on `spinSimilarity` below and
+      // never enter the context: `assertReferenceMechanism` refuses any
+      // extra field by name, so spreading `spinReference` here would be a
+      // refusal before the vendor, not a leak. NOT in the traceability
+      // corpus — `traceabilityCorpusFor` reads `brain` and `input` only, so
+      // a specific that appears only in the mechanism is refused as untraced.
+      ...(spec.similarityGated && spinReference !== null
+        ? {
+            reference: {
+              mechanism: {
+                hookMechanic: spinReference.mechanism.hookMechanic,
+                beats: spinReference.mechanism.beats,
+                ending: spinReference.mechanism.ending,
+                followTrigger: spinReference.mechanism.followTrigger,
+              },
+            },
+          }
+        : {}),
     };
     // THE CREATOR'S OWN CRITERIA, and only those, go to the scoring model (R5).
     // The four hard rules are deterministic code inside `@respin/modes` and are
@@ -734,6 +840,8 @@ export async function generate(
       // X and an original with the same note are different requests, and
       // colliding them would serve one creator the other's stored answer.
       parentGenerationId: parent?.id ?? null,
+      spinAutopsyId: spinReference?.autopsyId ?? null,
+      spinAnalysisVersion: spinReference?.analysisVersion ?? null,
     };
     const payloadSha256 = hashRequest(request);
 
@@ -777,6 +885,18 @@ export async function generate(
         mode: params.mode,
         context,
         creatorRules,
+        spinSimilarity: spec.similarityGated
+          ? {
+              reference: {
+                subjectTerms: spinReference!.subjectTerms,
+                hook: spinReference!.hook,
+                structure: spinReference!.structure,
+              },
+              // This is the same stored document that priced this attempt;
+              // the pure pipeline does no second config read.
+              configuredStrictness: content.similarity.strictness,
+            }
+          : undefined,
         generate: (prompt) =>
           meteredCall({
             db,
@@ -912,6 +1032,15 @@ export async function generate(
 // ------------------------------------------------------------------ helpers
 
 type Caps = ReturnType<typeof writeCapabilities>;
+
+function requireSpinAutopsyId(autopsyId: string | undefined): string {
+  if (!autopsyId || !/\S/.test(autopsyId)) {
+    throw new GenerationAssemblyError(
+      "analyse-and-spin requires an autopsy selected by its opaque identifier",
+    );
+  }
+  return autopsyId;
+}
 
 /**
  * Everything the settlement needs that is NOT the vendor's answer.
@@ -1492,6 +1621,14 @@ function refusalCodeFor(e: unknown): GenerationRefusalCode {
   if (e instanceof GenerationAssemblyError) {
     return GENERATION_REFUSAL_CODES.assembly_refused;
   }
+  // THE SAME REASON, ONE CLASS OVER. `SpinSimilarityError` is thrown by
+  // `assertTrustedReference`'s four bounds and by the two missing-reference
+  // guards in `pipeline.ts`. Named by `name` rather than by `instanceof` for
+  // the reason the `KillTestError` branch above is: `@respin/modes` is not a
+  // dependency this module may narrow against at the type level here.
+  if (e instanceof Error && e.name === "SpinSimilarityError") {
+    return GENERATION_REFUSAL_CODES.reference_unusable;
+  }
   // EVERYTHING ELSE IS A PARSE FAILURE, and that is the honest default rather
   // than a lazy one: what remains that can throw between the claim and the
   // settlement is `parseScriptOutput` (R3's fail-closed contract) or
@@ -1539,6 +1676,9 @@ export type GenerationRequest = {
    * where the settlement reads the lineage AND the price from.
    */
   parentGenerationId: string | null;
+  /** Server-derived identity/version of the reference used by a Spin. */
+  spinAutopsyId: string | null;
+  spinAnalysisVersion: string | null;
 };
 
 /**
@@ -1597,7 +1737,7 @@ export type StoredCandidate = {
  * the failure is "an operator must look at this" and never "settled from a
  * shape we half-understood".
  */
-const CANDIDATE_VERSION = 2;
+const CANDIDATE_VERSION = 3;
 
 /**
  * WHY 2 AND NOT 1 (slice 7). Version 1's envelope had no `frameworkVersions`
@@ -1770,6 +1910,14 @@ function readCandidate(
       req.parentGenerationId === null
         ? null
         : nonBlank(req.parentGenerationId, "request.parentGenerationId"),
+    spinAutopsyId:
+      req.spinAutopsyId === null
+        ? null
+        : nonBlank(req.spinAutopsyId, "request.spinAutopsyId"),
+    spinAnalysisVersion:
+      req.spinAnalysisVersion === null
+        ? null
+        : nonBlank(req.spinAnalysisVersion, "request.spinAnalysisVersion"),
   };
   const killTest = object(env.killTest, "killTest");
   const shared = {
@@ -1850,6 +1998,8 @@ export function hashRequest(request: GenerationRequest): string {
     // rather than an omission, because omitting a field shortens the canonical
     // string and is itself a collision surface.
     "parentGenerationId" + FIELD_SEP + (request.parentGenerationId ?? ""),
+    "spinAutopsyId" + FIELD_SEP + (request.spinAutopsyId ?? ""),
+    "spinAnalysisVersion" + FIELD_SEP + (request.spinAnalysisVersion ?? ""),
   ].join(RECORD_SEP);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
@@ -2186,7 +2336,10 @@ export function promptFramework(row: FrameworkRow): Framework {
     summary: [
       beats.length > 0 ? "Beats: " + beats.join(" -> ") : "",
       row.whyItConverts,
-      row.saturation === "saturated" ? SATURATION_NOTICE : "",
+      // Every legacy saturation tag lacks a measured market population/window.
+      // The trend monitor has not produced a framework-level measurement yet,
+      // so no row may enter a prompt without the limitation.
+      SATURATION_NOTICE,
       // LAST, so it reads as a label on the row rather than as part of the
       // claim, and unconditional: "no rung stated" would be indistinguishable
       // from a rung nobody wrote down, which is exactly what `unsupported`

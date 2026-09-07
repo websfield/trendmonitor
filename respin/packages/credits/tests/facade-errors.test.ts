@@ -331,7 +331,12 @@ describe("facade error surface (billing/tenancy round-7 CHANGE 2)", () => {
     // assertion was true of the old surface and is false of the new one.
     expect(reachable).toContain("InsufficientCreditsError");
     expect(reachable).not.toContain("WorkspacePausedError");
-    expect(reachable).not.toContain("RefundSourceNeverExpiresError");
+    // `RefundSourceNeverExpiresError` USED TO BE HERE TOO, and slice 8c moved
+    // it, for the identical reason: `refundCredits` had no app-reachable
+    // caller until `settleParkedAutopsies` (R-98, the ledger's first
+    // compensating credit) composed it behind `respinCredits`. So it is now
+    // demanded above — and a page load can reach it, so it has copy.
+    expect(reachable).toContain("RefundSourceNeverExpiresError");
     // ...and those classes really do exist, so the assertion is about
     // reachability rather than about a typo.
     const declared = new Set(

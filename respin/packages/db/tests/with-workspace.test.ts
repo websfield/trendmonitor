@@ -507,8 +507,11 @@ describe("REQ-G08: the pause policy covers every capability, derived from source
     // The mutation this exists for: a new capability that writes, takes no
     // pause gate, and is in nobody's list. Planted into a doctored copy of the
     // REAL source, so the negative case is this repo minus the property.
-    const doctored = source().replace(
-      "    recordGenerationFeedback: async (params, tx) => {",
+    const original = source();
+    const newCapabilityAnchor = "    recordGenerationFeedback: async (params, tx) => {";
+    expect(original.split(newCapabilityAnchor)).toHaveLength(2);
+    const doctored = original.replace(
+      newCapabilityAnchor,
       [
         "    recordSomethingNew: async (params, tx) => {",
         "      return tx.insert(generations).values(params).returning();",
@@ -519,7 +522,7 @@ describe("REQ-G08: the pause policy covers every capability, derived from source
     expect(
       doctored,
       "the doctoring anchor is gone — this probe is measuring nothing"
-    ).not.toBe(source());
+    ).not.toBe(original);
     const planted = classifyCapabilities(doctored).find(
       (m) => m.name === "recordSomethingNew"
     );
@@ -529,11 +532,13 @@ describe("REQ-G08: the pause policy covers every capability, derived from source
     // ...and the GATE half of the classifier is planted too: removing
     // `hasOpenPause` from `writeBrainDoc` must make it read as ungated, or
     // "declared gated and takes no pause gate" is an assertion about nothing.
-    const ungated = source().replace(
-      "      if (await hasOpenPause(tx, scope.workspaceId)) {\n        throw new WorkspacePausedError();\n      }\n      // EVERY FIELD OF `doc` IS READ EXACTLY ONCE",
-      "      // EVERY FIELD OF `doc` IS READ EXACTLY ONCE"
-    );
-    expect(ungated, "the pause-gate anchor is gone").not.toBe(source());
+    const brainPauseGate = / {6}if \(await hasOpenPause\(tx, scope\.workspaceId\)\) \{\r?\n {8}throw new WorkspacePausedError\(\);\r?\n {6}\}\r?\n(?= {6}\/\/ EVERY FIELD OF `doc` IS READ EXACTLY ONCE)/g;
+    expect(
+      [...original.matchAll(brainPauseGate)],
+      "writeBrainDoc must have exactly one structurally anchored pause gate"
+    ).toHaveLength(1);
+    const ungated = original.replace(brainPauseGate, "");
+    expect(ungated, "the pause-gate plant did not change the source").not.toBe(original);
     const members = classifyCapabilities(ungated);
     const brain = members.find((m) => m.name === "writeBrainDoc");
     expect(isGated(brain!, members), "the classifier still calls it gated").toBe(false);

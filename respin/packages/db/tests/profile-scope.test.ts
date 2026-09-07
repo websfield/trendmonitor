@@ -19,12 +19,11 @@
 // FK inside a transaction, since the constraint makes it unrepresentable) and a
 // same-workspace sibling profile.
 import { createHash } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
-import { eq, getTableColumns, sql } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { desc, eq, getTableColumns, sql } from "drizzle-orm";
 import type { BrainDocReason } from "../src/brain-reason";
 import {
   ContentSchemaError,
-  KindNotYetWritableError,
 } from "../src/brain-content";
 import { CHECK } from "../src/brain-content";
 import { ensureUserWorkspace } from "../src/bootstrap";
@@ -54,8 +53,25 @@ import {
   generations,
 } from "../src/generation-schema";
 import {
+  autopsies,
+  autopsyCacheClaims,
+  trackedNiches,
+  trendItems,
+  trendSources,
+  trendTranscripts,
+} from "../src/trends-schema";
+import { results } from "../src/results-schema";
+import {
+  promotionProposals,
+  proposalEvidenceFeedback,
+  proposalEvidenceResults,
+} from "../src/promotion-schema";
+import {
+  COMPARISON_POPULATION_MAX,
+  brainAssetSummary,
   PROFILE_EXPORT_TABLES,
   ProfileAccessError,
+  ComparisonStratumError,
   ProfileScope,
   ProvenanceError,
   UsageRawError,
@@ -135,6 +151,33 @@ const ALL_INPUT_IDS: string[] = [];
  */
 const ALL_BRAIN_DOC_IDS: string[] = [];
 
+/** One real proposal per profile, so the id-scoped review accessor is non-vacuous. */
+const PROPOSAL_ID_BY_PROFILE = new Map<string, string>();
+
+/**
+ * The comparison stratum each profile's fixture result lives in (slice 9a).
+ *
+ * A PER-PROFILE MAP, and that is exactly why `comparableResults` cannot ride
+ * the shared P4 loops: `accessorArgs` is ONE TUPLE PER ACCESSOR, built at
+ * collection time, and this accessor's `metricDeclaredByDocIds` predicate names
+ * `brain_docs` rows that are DIFFERENT for every profile - a static tuple
+ * would return p1's rows on p1's run and NOTHING on the sibling's, which the
+ * loop reads as "its validator would be vacuous". So it is skipped there, with
+ * its own both-axes cases below, which is the arrangement `exportPage` already
+ * uses and documents.
+ *
+ * MUTATED IN PLACE, the `ALL_BRAIN_DOC_IDS` rule: reassignment would leave any
+ * closure built at collection time holding an empty map.
+ */
+const RESULT_STRATUM: Map<string, {
+  platform: string;
+  audienceClass: "organic" | "paid";
+  metricKey: string;
+  metricDeclaredByDocIds: readonly string[];
+  observedFrom: Date;
+  observedTo: Date;
+}> = new Map();
+
 /**
  * The stamps an `active` row must carry, per `brain_docs_active_is_confirmed`.
  *
@@ -212,6 +255,8 @@ describe("ProfileScope — the profile tenancy cage", () => {
     db = await createTestDb();
     ALL_INPUT_IDS.length = 0;
     ALL_BRAIN_DOC_IDS.length = 0;
+    PROPOSAL_ID_BY_PROFILE.clear();
+    RESULT_STRATUM.clear();
     await seedAuthUser(db, "user_a");
     await seedAuthUser(db, "user_b");
     aWorkspaceId = (
@@ -273,6 +318,41 @@ describe("ProfileScope — the profile tenancy cage", () => {
         content: `somebody else wrote this for ${profileId}`,
         contentSha256: sha256(`somebody else wrote this for ${profileId}`),
       });
+      const [trendSource] = await db.insert(trendSources).values({
+        kind: "submitted", externalId: `source_${profileId}`, sourceUrl: "https://example.test/source", profileId, workspaceId,
+      }).returning();
+      await db.insert(trackedNiches).values({
+        profileId,
+        workspaceId,
+        niche: `tracked niche ${profileId}`,
+      });
+      const [trendItem] = await db.insert(trendItems).values({
+        sourceId: trendSource.id, externalVideoId: `video_${profileId}`, niche: "business", title: "fixture",
+        channelId: `channel_${profileId}`, videoViews: 200n, channelMedianRecentViews: "100.00000000",
+        baselineSampleSize: 2, baselineObservationIds: ["a", "b"], baselineWindowStartsAt: new Date("2026-08-01"), baselineWindowEndsAt: new Date("2026-09-01"), sourcePublishedAt: new Date("2026-08-31"), outlierRatio: "2.00000000", rightsScope: "profile_private",
+        profileId, workspaceId, transcriptState: "transcript_available", saturation: "unmeasured", saturationUnmeasuredReason: "incomplete_provenance",
+      }).returning();
+      await db.insert(trendTranscripts).values({
+        trendItemId: trendItem.id, rightsScope: "profile_private", profileId, workspaceId,
+        rightsBasis: "profile_private",
+        content: `transcript ${profileId}`, contentDigest: `digest_${profileId}`, provenance: {},
+      });
+      await db.insert(autopsies).values({
+        trendItemId: trendItem.id, contentDigest: `digest_${profileId}`, analysisVersion: "v1",
+        rightsScope: "profile_private", profileId, workspaceId, status: "completed", analysis: {},
+        rightsBasis: "profile_private",
+      });
+      await db.insert(autopsyCacheClaims).values({
+        trendItemId: trendItem.id,
+        contentDigest: `claim_digest_${profileId}`,
+        analysisVersion: "v1",
+        rightsScope: "profile_private",
+        rightsBasis: "profile_private",
+        profileId,
+        workspaceId,
+        cacheScopeKey: profileId,
+        status: "pending",
+      });
       const [voiceDoc] = await db
         .insert(brainDocs)
         .values({
@@ -288,6 +368,26 @@ describe("ProfileScope — the profile tenancy cage", () => {
         })
         .returning();
       ALL_BRAIN_DOC_IDS.push(voiceDoc.id);
+      // Slice 9a fix pass: a STRATEGY version per profile, so
+      // `strategyMetricVersions` has rows on both axes. Its metric carries no
+      // `key` — `metric.key` is `serverOwned` and stripped before storage, so a
+      // fixture with one would be data the producer cannot produce (the
+      // slice-9a BLOCK).
+      const [strategyDoc] = await db.insert(brainDocs).values({
+        profileId,
+        workspaceId,
+        kind: "strategy",
+        version: 1,
+        content: {
+          metric: {
+            label: "Followers",
+            unit: "per 1k views",
+            direction: "higher_is_better",
+          },
+        },
+        reason: RENDERED_REASON,
+        sourceEvidence: RAW_EVIDENCE,
+      }).returning();
       await db.insert(modelUsage).values({
         profileId,
         workspaceId,
@@ -390,6 +490,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
         confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
+        rightsBasis: "profile_private",
         ownerProfileId: profileId,
         workspaceId,
       });
@@ -409,20 +510,122 @@ describe("ProfileScope — the profile tenancy cage", () => {
         confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
+        rightsBasis: "profile_private",
         curatorStatus: "approved",
         ownerProfileId: profileId,
         workspaceId,
       });
       // Slice 7 (R10): one feedback event per profile, so every
       // `generation_feedback` branch has something foreign to leak.
-      await db.insert(generationFeedback).values({
+      const [feedbackRow] = await db.insert(generationFeedback).values({
         profileId,
         workspaceId,
         generationId: generation.id,
         reaction: "used_as_is",
         note: `feedback for ${profileId}`,
+      }).returning();
+      // Slice 9a (R5): one logged result per profile, so the `results`
+      // accessor and the `results` export branch each have something foreign
+      // to leak.
+      //
+      // INSERTED DIRECTLY, not through `recordResult` — this fixture builds
+      // rows for all three profiles INCLUDING THE FOREIGN ONE, which the write
+      // capability cannot do (it only ever writes inside its own cage), and the
+      // P4 loops refuse an accessor that returns nothing. The same reason the
+      // `model_usage` and `first_billable_attempts` rows above are direct.
+      //
+      // `metricDeclaredByDocIds` names this profile's Strategy document. The
+      // composite FK proves the stored result and declaration share both
+      // tenant axes; the scoped reader below must preserve those axes when it
+      // accepts more than one tuple-equivalent declaration id.
+      RESULT_STRATUM.set(profileId, {
+        platform: "shorts",
+        audienceClass: "organic",
+        metricKey: "followers",
+        metricDeclaredByDocIds: [strategyDoc.id],
+        // A window that CONTAINS the row's, not one equal to it, so the
+        // containment predicate is exercised rather than an equality that
+        // would pass under either reading.
+        observedFrom: new Date("2026-07-01"),
+        observedTo: new Date("2026-09-01"),
+      });
+      const [resultRow] = await db.insert(results).values({
+        profileId,
+        workspaceId,
+        generationId: generation.id,
+        platform: "shorts",
+        audienceClass: "organic",
+        metricKey: "followers",
+        metricDeclaredByDocId: strategyDoc.id,
+        observedFrom: new Date("2026-08-01"),
+        observedTo: new Date("2026-08-08"),
+        treatmentKey: `|hookSet|${snapshot.id}|followers`,
+        evidenceState: "quantified_self_reported",
+        reachValue: "4000",
+        reachDenominator: "1000",
+      }).returning();
+      const [proposal] = await db
+        .insert(promotionProposals)
+        .values({
+          profileId,
+          workspaceId,
+          source: "results",
+          targetKind: "performance_meta",
+          targetPointer: "/rules/-",
+          payload: { fixture: true },
+          familyKey: `fixture:${profileId}`,
+          evidenceDigest: sha256(`fixture:${profileId}`),
+          strength: "early",
+        })
+        .returning();
+      PROPOSAL_ID_BY_PROFILE.set(profileId, proposal.id);
+      await db.insert(proposalEvidenceResults).values({
+        proposalId: proposal.id,
+        profileId,
+        workspaceId,
+        resultId: resultRow.id,
+        role: "treatment",
+      });
+      const [feedbackProposal] = await db.insert(promotionProposals).values({
+        profileId,
+        workspaceId,
+        source: "feedback",
+        targetKind: "voice",
+        targetPointer: "/avoid/-",
+        payload: { value: "fixture" },
+        familyKey: `feedback-fixture:${profileId}`,
+        evidenceDigest: sha256(`feedback-fixture:${profileId}`),
+        strength: "repeated",
+        basisBrainDocId: voiceDoc.id,
+      }).returning();
+      await db.insert(proposalEvidenceFeedback).values({
+        proposalId: feedbackProposal.id,
+        profileId,
+        workspaceId,
+        feedbackId: feedbackRow.id,
       });
     }
+  });
+
+  /**
+   * CLOSE THE IN-PROCESS DATABASE (9a-G1, 2026-09-04).
+   *
+   * `createTestDb()` constructs a `new PGlite()` per call and this file's
+   * `beforeEach` calls it for EVERY test, so before this hook the suite held 45
+   * live WASM heaps at once and released none — `grep -c 'close()'` on this
+   * file returned 0. That is the recorded residue behind `9a-G1`, the birpc
+   * 60 s worker timeout whose discriminator is "zero failing tests and exactly
+   * one Errors line naming an RPC method": a worker starved by in-process WASM
+   * cannot pump the message answering its own in-flight `onTaskUpdate`.
+   *
+   * `db.$client` is drizzle's handle on the driver it was constructed with, and
+   * `profile-selection.test.ts` already closes its own PGlite — the API was
+   * there, this file simply never reached for it because `createTestDb` does
+   * not hand the client back.
+   */
+  afterEach(async () => {
+    await (db as unknown as { $client?: { close?: () => Promise<void> } })
+      .$client?.close?.();
   });
 
   const mintP1 = async () =>
@@ -480,7 +683,21 @@ describe("ProfileScope — the profile tenancy cage", () => {
  * A SET rather than a name check inside each loop, so a second scalar accessor
  * has to be added here deliberately instead of silently skipping the loops.
  */
+/*
+ * `PER_PROFILE_ARG_ACCESSORS` STOOD HERE AND IS GONE (2026-09-04), which is
+ * worth a note rather than a silent deletion. It held `comparableResults`,
+ * whose stratum names a different `brain_docs` row per profile — so a static
+ * `accessorArgs` tuple would have matched NOTHING and the cross-parented case
+ * would have passed `toHaveLength(0)` VACUOUSLY, for the wrong reason, on the
+ * one axis this file exists to prove. Making the stratum OPTIONAL removed the
+ * problem instead of routing around it: called with no argument the accessor
+ * returns this profile's whole result population, which is a real, non-vacuous
+ * invocation for every profile, so it rides the shared loops like everything
+ * else. Its stratum branch keeps its own cases below.
+ */
+
 const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
+  "brainAssetSummary",
   "countOnboardingInputs",
   // Slice 2a's `countBillableAttempts` WAS HERE and is gone (R-80). Its
   // replacement, `firstBillableAttempt`, returns ROWS — so it is not a scalar,
@@ -491,9 +708,14 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
   // asserted BY VALUE in "countOwnPosts counts THIS profile's own posts only".
   "countOwnPosts",
   // Slice 3, billing round 2: the bound on attempts we paid for and did not
-  // charge for. Its both-axes isolation is asserted BY VALUE in
-  // "countUnchargedBillableAttempts and countOwnPosts count THIS profile only".
+  // charge for. Both-axes isolation asserted BY VALUE in "the two UNCHARGED
+  // bounds count and sum THIS profile only, on both axes" — a title that, until
+  // round 2 of the 8c close-out, these comments cited without it existing.
   "countUnchargedBillableAttempts",
+  // Slice 8c close-out, billing 2026-09-04: the same population in MONEY, and
+  // asserted by the same case, which is the only one whose fixture makes either
+  // accessor return a non-zero number.
+  "sumUnchargedBillableCostMicroUsd",
   // Slice 4. Same shape as `countOwnPosts`: a number, so the row loops have
   // nothing to walk. Its both-axes isolation is asserted BY VALUE in
   // "countReferencePosts counts THIS profile's reference posts only".
@@ -563,6 +785,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // Slice 3. The corpus the priced inference actually sends to a vendor —
     // both axes, and additionally that it never returns a `reference` row.
     countUnchargedBillableAttempts: () => {
+      // Scalar — asserted by value below.
+    },
+    sumUnchargedBillableCostMicroUsd: () => {
       // Scalar — asserted by value below.
     },
     countOwnPosts: () => {
@@ -647,6 +872,70 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         expect(row.workspaceId).toBe(ownWorkspace);
       }
     },
+    // Slice 9a (R5). The creator's own outputs, for the result log's picker.
+    // Both scope columns, like every profile-grained accessor here.
+    generationsNewest: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // Slice 9a fix pass (billing CHANGE 1). The projected strategy-metric read
+    // — both scope columns are IN the projection precisely so this validator
+    // is not the one thing a narrowing quietly removed.
+    strategyMetricVersions: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // Slice 9a (C5). The comparison population - the same both-columns check
+    // as `results`, and it is CALLED from this accessor's own dedicated cases
+    // below rather than from the shared loops (see `RESULT_STRATUM`), so it is
+    // not inert.
+    comparableResults: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    brainAssetSummary: () => {},
+    promotionResultInputs: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    promotionFeedbackInputs: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    promotionProposalReview: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    promotionProposalHistory: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // Slice 9a (R5). The logged results — both scope columns, like every
+    // profile-grained accessor above it. The row also carries a
+    // `metric_declared_by_doc_id` and a `generation_id`, and neither is checked
+    // here on purpose: this validator's job is "no row of another profile", and
+    // what stops those two POINTERS naming another profile's rows is the two
+    // composite FKs, which `results-schema.test.ts` drives directly.
+    results: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
     // Slice 7 (R5c). `frameworks` names its owner differently and library rows
     // have NO owner, which is why these two get their own validators rather
     // than the shared profileId/workspaceId one — and why the `visibility`
@@ -711,6 +1000,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // `brain_activation_snapshots` doc-id column has no foreign key, so asking
     // it for somebody else's document is the whole question.
     brainDocsByIds: [ALL_BRAIN_DOC_IDS],
+    brainAssetSummary: [],
     exportPage: ["onboarding_inputs", 0],
     onboardingInputs: [],
     // The SIBLING PROFILE'S input ids, deliberately: the P4 loops run this
@@ -731,6 +1021,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     countUnchargedBillableAttempts: [
       { purpose: "onboarding_brain", since: new Date(0) },
     ],
+    sumUnchargedBillableCostMicroUsd: [
+      { purpose: "onboarding_brain", since: new Date(0) },
+    ],
     latestBrainActivation: [],
     countOnboardingInputs: [],
     modelUsage: [],
@@ -748,21 +1041,68 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     generationFeedback: [],
     privateFrameworks: [],
     eligibleFrameworks: [],
+    // Slice 9a. Default page, like `generationFeedback` — the clamp itself is
+    // the accessor's, and its own case drives it.
+    results: [],
+    generationsNewest: [],
+    strategyMetricVersions: [],
+    // NO STRATUM — the branch 9a actually walks, and the reason this accessor
+    // can ride the shared loops at all: `[]` means "this profile's whole result
+    // population", which is non-vacuous for every profile. A stratum here would
+    // name one profile's `brain_docs` row and return nothing for the sibling.
+    // The stratum branch has its own cases further down.
+    comparableResults: [],
+    promotionResultInputs: [],
+    promotionFeedbackInputs: [],
+    promotionProposalReview: [NIL_UUID],
+    promotionProposalHistory: [],
   };
 
   const invoke = async (
     scope: ProfileScope,
     name: keyof ProfileScope["accessors"]
   ): Promise<unknown[]> => {
+    const args = name === "promotionProposalReview"
+      ? [PROPOSAL_ID_BY_PROFILE.get(scope.profileId) ?? NIL_UUID]
+      : accessorArgs[name] as unknown[];
     const result = await (
       scope.accessors[name] as (...a: unknown[]) => Promise<unknown>
-    )(...(accessorArgs[name] as unknown[]));
+    )(...args);
     // Every accessor but one returns rows. `referenceCorpusAsOf` returns
     // `{ids, inputs}` because its caller has to RECORD the id set, so the
     // rows this machinery checks are its `inputs`. Normalised here, once, with
     // an explicit shape test rather than a name test — a second accessor
     // adopting the shape gets the same treatment without editing this.
     if (Array.isArray(result)) return result;
+    const promotionInputs = result as {
+      strategyMetricVersions?: unknown[];
+      population?: { rows?: unknown[] };
+    };
+    if (
+      Array.isArray(promotionInputs.strategyMetricVersions) &&
+      Array.isArray(promotionInputs.population?.rows)
+    ) {
+      return [
+        ...promotionInputs.strategyMetricVersions,
+        ...promotionInputs.population.rows,
+      ];
+    }
+    const proposalReview = result as {
+      proposal?: unknown;
+      resultEvidence?: unknown[];
+      feedbackEvidence?: unknown[];
+    };
+    if (
+      proposalReview.proposal &&
+      Array.isArray(proposalReview.resultEvidence) &&
+      Array.isArray(proposalReview.feedbackEvidence)
+    ) {
+      return [
+        proposalReview.proposal,
+        ...proposalReview.resultEvidence,
+        ...proposalReview.feedbackEvidence,
+      ];
+    }
     // A SCALAR accessor — `countOnboardingInputs`, added with the write-side
     // row ceiling (production gate, 2026-08-27). It is a scoped read like any
     // other and belongs in this enumeration; it simply has no rows to inspect,
@@ -777,10 +1117,16 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // vacuously. The breach validators never inspect these elements (the
     // scalar's validator is a no-op) and the non-vacuity loops skip it.
     if (typeof result === "number") return Array.from({ length: result });
+    // Slice 9a: `comparableResults` returns `{rows, truncated, limit}` because
+    // a clipped population is a different claim from a complete one, and the
+    // caller must be able to tell them apart. Unwrapped by SHAPE like
+    // `{inputs}` above, for the reason that comment gives.
+    const rowsShape = (result as { rows?: unknown }).rows;
+    if (Array.isArray(rowsShape)) return rowsShape;
     const wrapped = (result as { inputs?: unknown }).inputs;
     expect(
       Array.isArray(wrapped),
-      `accessor ${name} returned neither rows nor {inputs}`
+      `accessor ${name} returned neither rows nor {inputs} nor {rows}`
     ).toBe(true);
     return wrapped as unknown[];
   };
@@ -796,6 +1142,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         "brainDocs",
         "brainDocsByIds",
         "brainDocsByKind",
+        "brainAssetSummary",
         "countOnboardingInputs",
         // Slice 3, added deliberately: the id-keyed evidence read the confirm
         // screen resolves quotes through, the class-filtered corpus the priced
@@ -805,6 +1152,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // window `ownPostsNewest`'s docblock names.
         "countReferencePosts",
         "countUnchargedBillableAttempts",
+        "sumUnchargedBillableCostMicroUsd",
         // R-80: the durable per-(profile, purpose) included-build claim, which
         // replaced the derived `countBillableAttempts` ranking.
         "firstBillableAttempt",
@@ -831,6 +1179,27 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         "generationFeedback",
         "privateFrameworks",
         "eligibleFrameworks",
+        // Slice 9a: the creator's own outputs, for the result log's picker —
+        // the FIRST scoped reader of `generations` that is not `exportPage`.
+        "generationsNewest",
+        // Slice 9a fix pass: four scalars per strategy version, never the
+        // `content` jsonb — the read that shares a render with the comparison.
+        "strategyMetricVersions",
+        // Slice 9a: the comparison population, filtered IN SQL by the five
+        // stratum predicates and reporting whether it clipped - the accessor
+        // that exists so a comparison is never computed over a silently
+        // truncated population.
+        "comparableResults",
+        // Slice 9a: the creator's own logged results, RAW — the rows
+        // `@respin/brain`'s comparison builder receives already scoped.
+        // Named here rather than left to the loop for the reason the list
+        // exists: a new accessor is a decision somebody made, not a diff
+        // nobody read.
+        "results",
+        "promotionResultInputs",
+        "promotionFeedbackInputs",
+        "promotionProposalReview",
+        "promotionProposalHistory",
       ].sort()
     );
     expect(Object.keys(breachValidators).sort()).toEqual(accessorNames);
@@ -861,6 +1230,14 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // cage-asserted, every scope column built from the scope, and the
         // closed reaction set checked at RUNTIME rather than only in the type.
         "recordGenerationFeedback",
+        // Slice 9a (R5-R9): the append-only logged result. Role-gated,
+        // cage-asserted, every scope column built from the scope, the closed
+        // vocabularies checked at RUNTIME rather than only in the type, and
+        // five columns with no caller parameter at all.
+        "recordResult",
+        "refreshPromotionProposals",
+        "appendPromotionSummaryForProposal",
+        "decidePromotionProposal",
       ].sort()
     );
   });
@@ -893,6 +1270,41 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       expect(rows.length).toBeGreaterThan(0);
       await breachValidators[name](rows, p2, aWorkspaceId);
     }
+  });
+
+  it("promotion reads exclude both the same-workspace sibling and the foreign workspace", async () => {
+    const scope = await mintP1();
+    const resultInputs = await scope.accessors.promotionResultInputs();
+    expect(resultInputs.strategyMetricVersions.length).toBeGreaterThan(0);
+    expect(resultInputs.population.rows.length).toBeGreaterThan(0);
+    for (const row of [
+      ...resultInputs.strategyMetricVersions,
+      ...resultInputs.population.rows,
+    ]) {
+      expect(row.profileId).toBe(p1);
+      expect(row.workspaceId).toBe(aWorkspaceId);
+    }
+    const feedback = await scope.accessors.promotionFeedbackInputs();
+    expect(feedback.length).toBeGreaterThan(0);
+    expect(feedback.every((row) =>
+      row.profileId === p1 && row.workspaceId === aWorkspaceId
+    )).toBe(true);
+    const history = await scope.accessors.promotionProposalHistory();
+    expect(history).toHaveLength(2);
+    expect(history.every((row) =>
+      row.profileId === p1 && row.workspaceId === aWorkspaceId
+    )).toBe(true);
+    await expect(
+      scope.accessors.promotionProposalReview(PROPOSAL_ID_BY_PROFILE.get(p1)!)
+    ).resolves.toMatchObject({
+      proposal: { profileId: p1, workspaceId: aWorkspaceId },
+    });
+    await expect(
+      scope.accessors.promotionProposalReview(PROPOSAL_ID_BY_PROFILE.get(p2)!)
+    ).resolves.toBeNull();
+    await expect(
+      scope.accessors.promotionProposalReview(PROPOSAL_ID_BY_PROFILE.get(p3)!)
+    ).resolves.toBeNull();
   });
 
   // ------------------------------------------------ exportPage, ALL SIX BRANCHES
@@ -930,6 +1342,19 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       profile: row.profileId,
       workspace: row.workspaceId,
     }),
+    // Slice 8 fix pass (tenancy CHANGE 5, 2026-09-03): the SUBMITTED sources.
+    // Ownerless youtube rows have a NULL pair and never match `both()`.
+    trend_sources: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    tracked_niches: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    trend_items: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    trend_transcripts: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    autopsies: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    autopsy_cache_claims: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    // Slice 9a (R5). The ordinary shape — both scope columns on the row.
+    results: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    promotion_proposals: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    proposal_evidence_results: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    proposal_evidence_feedback: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
   };
 
   it("exportPage: EVERY classified table returns this profile's rows only, non-vacuously", async () => {
@@ -977,6 +1402,8 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       confidence: "unsupported",
       saturation: "observed",
       visibility: "shared",
+      rightsBasis: "independently_licensed",
+      rightsEvidenceId: "test-license:profile-scope",
     });
     const scope = await mintP1();
     const rows = (await scope.accessors.exportPage("frameworks", 0)) as {
@@ -1021,7 +1448,18 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     const CHILD_BRANCHES = [
       {
         table: "brain_docs",
-        fks: [["brain_docs", "brain_docs_profile_workspace_fk"]],
+        // SLICE 9A ADDED THE SECOND PAIR, and it is the shape this list's own
+        // `generations` comment predicted: `results_metric_doc_fk` lives on the
+        // CHILD table and references `brain_docs(id, profile_id, workspace_id)`
+        // with ON UPDATE RESTRICT, so it refuses a change to the parent's
+        // `workspace_id` from the other side. Found by RUNNING the suite —
+        // the failure was "expected to throw rollback" and named neither the
+        // table nor the constraint, exactly as recorded there.
+        fks: [
+          ["brain_docs", "brain_docs_profile_workspace_fk"],
+          ["results", "results_metric_doc_fk"],
+          ["promotion_proposals", "promotion_proposals_basis_doc_fk"],
+        ],
         triggers: [],
         column: "profile_id",
       },
@@ -1077,6 +1515,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
           ["generations", "generations_attempt_fk"],
           ["generations", "generations_parent_fk"],
           ["generation_feedback", "generation_feedback_generation_fk"],
+          // Slice 9a, the same shape once more: `results_generation_fk` is on
+          // the child and carries ON UPDATE RESTRICT.
+          ["results", "results_generation_fk"],
         ],
         // `generations_parent_id_immutable` (migration 0022) is NOT here, and
         // that is the narrowness working rather than an omission: it compares
@@ -1101,6 +1542,58 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         fks: [
           ["generation_feedback", "generation_feedback_profile_workspace_fk"],
           ["generation_feedback", "generation_feedback_generation_fk"],
+          ["proposal_evidence_feedback", "proposal_evidence_feedback_feedback_fk"],
+        ],
+        triggers: [],
+        column: "profile_id",
+      },
+      { table: "trend_sources", fks: [["trend_sources", "trend_sources_profile_workspace_fk"]], triggers: [], column: "profile_id" },
+      { table: "tracked_niches", fks: [["tracked_niches", "tracked_niches_profile_workspace_fk"]], triggers: [], column: "profile_id" },
+      { table: "trend_items", fks: [["trend_items", "trend_items_profile_workspace_fk"]], triggers: [], column: "profile_id" },
+      { table: "trend_transcripts", fks: [["trend_transcripts", "trend_transcripts_profile_workspace_fk"]], triggers: [], column: "profile_id" },
+      { table: "autopsies", fks: [["autopsies", "autopsies_profile_workspace_fk"]], triggers: [], column: "profile_id" },
+      { table: "autopsy_cache_claims", fks: [["autopsy_cache_claims", "autopsy_cache_claims_profile_workspace_fk"]], triggers: [], column: "profile_id" },
+      // Slice 9a (R5). THREE pairs, the most of any entry here: this table is
+      // held by its `creator_profiles` FK and by the two same-tenant FKs that
+      // make its `generation_id` and `metric_declared_by_doc_id` pointers
+      // tenancy-proving rather than decorative. All three carry `workspace_id`,
+      // so the re-parenting UPDATE is refused until all three are dropped.
+      {
+        table: "results",
+        fks: [
+          ["results", "results_profile_workspace_fk"],
+          ["results", "results_generation_fk"],
+          ["results", "results_metric_doc_fk"],
+          ["proposal_evidence_results", "proposal_evidence_results_result_fk"],
+        ],
+        triggers: [],
+        column: "profile_id",
+      },
+      {
+        table: "promotion_proposals",
+        fks: [
+          ["promotion_proposals", "promotion_proposals_profile_workspace_fk"],
+          ["promotion_proposals", "promotion_proposals_basis_doc_fk"],
+          ["proposal_evidence_results", "proposal_evidence_results_proposal_fk"],
+          ["proposal_evidence_feedback", "proposal_evidence_feedback_proposal_fk"],
+        ],
+        triggers: [],
+        column: "profile_id",
+      },
+      {
+        table: "proposal_evidence_results",
+        fks: [
+          ["proposal_evidence_results", "proposal_evidence_results_proposal_fk"],
+          ["proposal_evidence_results", "proposal_evidence_results_result_fk"],
+        ],
+        triggers: [],
+        column: "profile_id",
+      },
+      {
+        table: "proposal_evidence_feedback",
+        fks: [
+          ["proposal_evidence_feedback", "proposal_evidence_feedback_proposal_fk"],
+          ["proposal_evidence_feedback", "proposal_evidence_feedback_feedback_fk"],
         ],
         triggers: [],
         column: "profile_id",
@@ -1141,7 +1634,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
             `exportPage(${table}) leaked a cross-parented row`
           ).toHaveLength(0);
           const profileOnly = await tx.execute(
-            sql.raw(`SELECT id FROM ${table} WHERE ${column} = '${p1}'`)
+            sql.raw(`SELECT 1 FROM ${table} WHERE ${column} = '${p1}'`)
           );
           expect(
             profileOnly.rows.length,
@@ -1203,7 +1696,17 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
   const CROSS_PARENTED = [
     {
       table: "brain_docs",
-      fks: ["brain_docs_profile_workspace_fk"],
+      // PAIRS, NOT NAMES (slice 9a) — the correction `CHILD_BRANCHES` above
+      // took in slice 6 and again in slice 7, arriving here for the identical
+      // reason: `results_metric_doc_fk` lives on ANOTHER table and refuses a
+      // change to THIS one's `workspace_id` from the other side (ON UPDATE
+      // RESTRICT), so a name alone cannot say which table to drop it from.
+      // Found by running the suite, not by reading the list.
+      fks: [
+        ["brain_docs", "brain_docs_profile_workspace_fk"],
+        ["results", "results_metric_doc_fk"],
+        ["promotion_proposals", "promotion_proposals_basis_doc_fk"],
+      ],
       triggers: [],
       profileColumn: "profile_id",
       // ALL THREE accessors over this table, not just one. The tenancy gate
@@ -1218,11 +1721,19 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       // caller-supplied ids that reach it from an FK-free snapshot column, so
       // `both()` is the only thing between a named id and another profile's
       // document.
-      accessors: ["brainDocs", "brainDocsByKind", "brainDocsByIds"],
+      accessors: [
+        "brainDocs",
+        "brainDocsByKind",
+        "brainDocsByIds",
+        // Slice 9a fix pass: the projected read. It is the sharpest of the
+        // four here, because a projection is exactly where a scope column gets
+        // dropped by accident.
+        "strategyMetricVersions",
+      ],
     },
     {
       table: "onboarding_inputs",
-      fks: ["onboarding_inputs_profile_workspace_fk"],
+      fks: [["onboarding_inputs", "onboarding_inputs_profile_workspace_fk"]],
       triggers: [],
       profileColumn: "profile_id",
       // BOTH accessors over this table. `referenceCorpusAsOf` was omitted when
@@ -1260,7 +1771,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // workspace's coherent brain.
     {
       table: "brain_activation_snapshots",
-      fks: ["brain_activation_snapshots_profile_workspace_fk"],
+      fks: [
+        ["brain_activation_snapshots", "brain_activation_snapshots_profile_workspace_fk"],
+      ],
       triggers: [],
       profileColumn: "profile_id",
       accessors: ["latestBrainActivation"],
@@ -1288,8 +1801,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       // `creator_profiles` FK AND by the three-column
       // `generation_feedback_generation_fk`, which also carries `workspace_id`.
       fks: [
-        "generation_feedback_profile_workspace_fk",
-        "generation_feedback_generation_fk",
+        ["generation_feedback", "generation_feedback_profile_workspace_fk"],
+        ["generation_feedback", "generation_feedback_generation_fk"],
+        ["proposal_evidence_feedback", "proposal_evidence_feedback_feedback_fk"],
       ],
       triggers: [],
       profileColumn: "profile_id",
@@ -1303,7 +1817,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // would put another creator's framework into this creator's prompt.
     {
       table: "frameworks",
-      fks: ["frameworks_owner_profile_workspace_fk"],
+      fks: [["frameworks", "frameworks_owner_profile_workspace_fk"]],
       // A TRIGGER REFUSES THIS FIXTURE'S UPDATE TOO (migration 0023).
       // `frameworks_ownership_immutable` is what stops a private framework
       // becoming shared library content in one statement, and it therefore
@@ -1315,9 +1829,66 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       profileColumn: "owner_profile_id",
       accessors: ["privateFrameworks", "eligibleFrameworks"],
     },
+    // Slice 9a (R5). `generations` HAS AN ACCESSOR NOW — `generationsNewest`,
+    // the result log's output picker — so the table joins this axis for the
+    // first time. Until 9a its only scoped reader was `exportPage`, whose own
+    // parameterised cases above cover both axes; a dropped workspace predicate
+    // on the new accessor would put another creator's outputs into the list a
+    // creator picks the SUBJECT OF A RESULT from, which is a cross-profile row
+    // one click from being cited as this creator's own evidence.
+    //
+    // FIVE PAIRS, the same set `CHILD_BRANCHES` carries for this table: the
+    // profile FK, the attempt FK, the SELF-referencing parent FK, and the two
+    // child-side FKs (`generation_feedback` and, since 9a, `results`) that
+    // reference `generations(id, profile_id, workspace_id)` ON UPDATE RESTRICT
+    // and therefore refuse a change to this table's `workspace_id` from the
+    // other side.
+    {
+      table: "generations",
+      fks: [
+        ["generations", "generations_profile_workspace_fk"],
+        ["generations", "generations_attempt_fk"],
+        ["generations", "generations_parent_fk"],
+        ["generation_feedback", "generation_feedback_generation_fk"],
+        ["results", "results_generation_fk"],
+      ],
+      triggers: [],
+      profileColumn: "profile_id",
+      accessors: ["generationsNewest"],
+    },
+    // Slice 9a (R5). `results` has an accessor, and it is a sharp case for the
+    // same reason `generation_feedback` is: that accessor is the single door
+    // between these rows and every consumer, including the comparison
+    // `@respin/brain` builds from them. A dropped workspace predicate here
+    // would put another workspace's numbers into a creator's own cohort or
+    // baseline — which is not a weaker claim, it is a claim about somebody
+    // else, and the leak R-9 and R-10 are both about.
+    {
+      table: "results",
+      // THREE, the most of any entry in this list: this table is held by its
+      // `creator_profiles` FK, by `results_generation_fk` and by
+      // `results_metric_doc_fk`, and the last two also carry `workspace_id` —
+      // so the re-parenting UPDATE this case performs is illegal until all
+      // three are dropped. That is the `fks`-is-a-LIST correction slices 6 and
+      // 7 each took, arriving a third time.
+      fks: [
+        ["results", "results_profile_workspace_fk"],
+        ["results", "results_generation_fk"],
+        ["results", "results_metric_doc_fk"],
+        ["proposal_evidence_results", "proposal_evidence_results_result_fk"],
+      ],
+      triggers: [],
+      profileColumn: "profile_id",
+      // BOTH readers of this table. `comparableResults` is driven with NO
+      // stratum here (see `accessorArgs`), which is the call 9a makes and the
+      // only one that is non-vacuous for an arbitrary profile — a re-parented
+      // row it returned would be a cross-workspace result inside a creator's
+      // own comparison.
+      accessors: ["results", "comparableResults"],
+    },
     {
       table: "model_usage",
-      fks: ["model_usage_profile_workspace_fk"],
+      fks: [["model_usage", "model_usage_profile_workspace_fk"]],
       triggers: [],
       profileColumn: "profile_id",
       // BOTH accessors over this table (slice 2a). `countBillableAttempts` was
@@ -1329,6 +1900,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // not charge for. A dropped workspace predicate here would let another
         // workspace's failures exhaust this creator's cap.
         "countUnchargedBillableAttempts",
+        // Same table, same reason, in money: a dropped workspace predicate
+        // here would let another workspace's spend exhaust this creator's cap.
+        "sumUnchargedBillableCostMicroUsd",
       ],
     },
     // R-80. The durable included-build claim, and the sharpest money case on
@@ -1337,7 +1911,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // would price one creator's run off another workspace's history.
     {
       table: "first_billable_attempts",
-      fks: ["first_billable_attempts_profile_workspace_fk"],
+      fks: [["first_billable_attempts", "first_billable_attempts_profile_workspace_fk"]],
       triggers: [],
       profileColumn: "profile_id",
       accessors: ["firstBillableAttempt"],
@@ -1550,6 +2124,132 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     ).toBe(1);
   });
 
+  it("brainAssetSummary uses exact database counts beyond list pages and isolates both tenant axes", async () => {
+    const scope = await mintP1();
+    const workspaceScope = await withWorkspace(db, { authUserId: "user_a" });
+    const sibling = await ProfileScope.mint(db, workspaceScope, p2);
+    const foreign = await ProfileScope.mint(
+      db,
+      await withWorkspace(db, { authUserId: "user_b" }),
+      p3
+    );
+    const before = {
+      mine: await scope.accessors.brainAssetSummary(),
+      sibling: await sibling.accessors.brainAssetSummary(),
+      foreign: await foreign.accessors.brainAssetSummary(),
+    };
+
+    const rule = (suffix: string) => ({
+      metricLabel: `Followers ${suffix}`,
+      metricKey: `followers-${suffix}`,
+      metricUnit: "followers per 1k views",
+      metricDirection: "higher_is_better" as const,
+      lever: "reach" as const,
+      platform: "shorts",
+      audienceClass: "organic" as const,
+      observedFrom: "2026-08-01T00:00:00.000Z",
+      observedTo: "2026-08-31T00:00:00.000Z",
+      treatmentN: 3,
+      baselineN: 3,
+      treatmentMedianPer1k: 2,
+      baselineMedianPer1k: 1,
+      effectPer1k: 1,
+      pastOutcome: "better" as const,
+      evidenceStrength: "early" as const,
+      selfReportedN: 6,
+      connectorVerifiedN: 0,
+      confounders: [],
+    });
+    const rules = [rule("one"), rule("two"), rule("three")];
+    await db.insert(brainDocs).values([
+      {
+        profileId: p1,
+        workspaceId: aWorkspaceId,
+        kind: "performance_meta",
+        version: 199,
+        content: { rules: rules.slice(0, 1) },
+        reason: RENDERED_REASON,
+        sourceEvidence: RAW_EVIDENCE,
+        status: "superseded",
+      },
+      {
+        profileId: p1,
+        workspaceId: aWorkspaceId,
+        kind: "performance_meta",
+        version: 200,
+        content: { rules },
+        reason: RENDERED_REASON,
+        sourceEvidence: RAW_EVIDENCE,
+        status: "superseded",
+      },
+    ]);
+
+    const metricDeclaredByDocId = RESULT_STRATUM.get(p1)!.metricDeclaredByDocIds[0]!;
+    const extraCount = 201;
+    await db.insert(results).values(Array.from({ length: extraCount }, (_, index) => ({
+      profileId: p1,
+      workspaceId: aWorkspaceId,
+      platform: `summary-${index}`,
+      audienceClass: "organic" as const,
+      metricKey: "summary-metric",
+      metricDeclaredByDocId,
+      observedFrom: new Date("2026-08-01T00:00:00.000Z"),
+      observedTo: new Date("2026-08-31T00:00:00.000Z"),
+      evidenceState: "unquantified" as const,
+      confounders: [],
+    })));
+
+    const [activation] = await db.insert(brainActivationSnapshots).values({
+      profileId: p1,
+      workspaceId: aWorkspaceId,
+    }).returning();
+    const attempts = Array.from({ length: extraCount }, (_, index) => ({
+      profileId: p1,
+      workspaceId: aWorkspaceId,
+      attemptId: `brain-asset-summary-${index}`,
+      purpose: "generation",
+      mode: "hookSet",
+      payloadSha256: index.toString(16).padStart(64, "0"),
+    }));
+    await db.insert(generationAttempts).values(attempts);
+    const generated = await db.insert(generations).values(attempts.map((attempt, index) => ({
+      profileId: p1,
+      workspaceId: aWorkspaceId,
+      attemptId: attempt.attemptId,
+      mode: attempt.mode,
+      brainActivationId: activation.id,
+      request: { idea: `summary ${index}` },
+      model: "fixture-model",
+      promptBundleVersion: "fixture-bundle",
+      configVersion: 1,
+      outcome: "usable" as const,
+      output: { hooks: [`hook ${index}`] },
+      weakestPoint: "fixture",
+      killTest: { rulesFired: [], rewritten: false },
+    }))).returning();
+    await db.insert(generationFeedback).values(generated.map((generation) => ({
+      profileId: p1,
+      workspaceId: aWorkspaceId,
+      generationId: generation.id,
+      reaction: "used_as_is" as const,
+    })));
+
+    const after = await brainAssetSummary(db, workspaceScope, p1);
+    expect(after).toEqual({
+      brainVersions: before.mine.brainVersions + 2,
+      testedRules: Math.max(before.mine.testedRules, rules.length),
+      loggedResults: before.mine.loggedResults + extraCount,
+      feedback: before.mine.feedback + extraCount,
+    });
+    expect(await scope.accessors.results({ limit: 200 })).toHaveLength(200);
+    expect(await scope.accessors.generationFeedback({ limit: 200 })).toHaveLength(200);
+    expect(await sibling.accessors.brainAssetSummary()).toEqual(before.sibling);
+    expect(await foreign.accessors.brainAssetSummary()).toEqual(before.foreign);
+    await expect(brainAssetSummary(db, workspaceScope, p3)).rejects.toBeInstanceOf(
+      ProfileAccessError
+    );
+  });
+
   it("P4 cross-workspace axis: a cross-parented row is invisible to the accessor", async () => {
     const scopeA = await withWorkspace(db, { authUserId: "user_a" });
     // THE HAND-LIST IS CHECKED AGAINST THE ACCESSOR MAP. Every accessor whose
@@ -1564,6 +2264,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         brainDocs: "brain_docs",
         brainDocsByKind: "brain_docs",
         brainDocsByIds: "brain_docs",
+        // One aggregate spans four scoped tables and has a dedicated
+        // same-profile/sibling/cross-workspace count witness above.
+        brainAssetSummary: undefined,
         onboardingInputs: "onboarding_inputs",
         referenceCorpusAsOf: "onboarding_inputs",
         modelUsage: "model_usage",
@@ -1574,6 +2277,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         countOwnPosts: "onboarding_inputs",
         countReferencePosts: "onboarding_inputs",
         countUnchargedBillableAttempts: "model_usage",
+        sumUnchargedBillableCostMicroUsd: "model_usage",
         latestBrainActivation: "brain_activation_snapshots",
         profile: "creator_profiles",
         // One accessor spans every included table, so it cannot be assigned
@@ -1586,6 +2290,19 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         generationFeedback: "generation_feedback",
         privateFrameworks: "frameworks",
         eligibleFrameworks: "frameworks",
+        // Slice 9a.
+        strategyMetricVersions: "brain_docs",
+        results: "results",
+        generationsNewest: "generations",
+        comparableResults: "results",
+        // Composition accessors span more than one scoped table (and review
+        // includes relational evidence joins), so each gets its explicit
+        // cross-axis witnesses in the focused promotion suite rather than a
+        // misleading single-table classification here.
+        promotionResultInputs: undefined,
+        promotionFeedbackInputs: undefined,
+        promotionProposalReview: undefined,
+        promotionProposalHistory: undefined,
       };
       const namedTables = new Set<string>(CROSS_PARENTED.map((c) => c.table));
       const missing = Object.keys(scope.accessors).filter((a) => {
@@ -1611,9 +2328,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
           // constraints are dropped, and a table can be held by more than one
           // composite FK carrying `workspace_id`. `generation_feedback` is the
           // first entry here that is.
-          for (const fk of fks) {
+          for (const [fkTable, fk] of fks) {
             await tx.execute(
-              sql.raw(`ALTER TABLE ${table} DROP CONSTRAINT ${fk}`)
+              sql.raw(`ALTER TABLE ${fkTable} DROP CONSTRAINT ${fk}`)
             );
           }
           // A CONSTRAINT IS NOT THE ONLY THING THAT REFUSES THE UPDATE.
@@ -1663,15 +2380,328 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // The constraints survive the rollback — the next test is not poisoned.
     // EVERY FK this test drops is checked, so the population is the one the
     // test actually touches rather than a second hand-written list.
-    for (const { table, fks } of CROSS_PARENTED) {
-      for (const fk of fks) {
+    for (const { fks } of CROSS_PARENTED) {
+      for (const [fkTable, fk] of fks) {
         const found = await db.execute(
           sql.raw(
-            `SELECT 1 FROM pg_constraint WHERE conname = '${fk}' AND conrelid = '${table}'::regclass`
+            `SELECT 1 FROM pg_constraint WHERE conname = '${fk}' AND conrelid = '${fkTable}'::regclass`
           )
         );
         expect(found.rows.length, `${fk} was not restored`).toBe(1);
       }
+    }
+  });
+
+  // ------------------------------------------------------- comparableResults
+  //
+  // TWO BRANCHES, TESTED IN TWO PLACES, and the division is deliberate:
+  //
+  //   NO STRATUM — the call 9a makes. `accessorArgs.comparableResults` is `[]`,
+  //     so the SHARED P4 loops and the CROSS_PARENTED loop drive it on both
+  //     axes like every other accessor, and its bound gets its own case below.
+  //
+  //   WITH A STRATUM — 9b's per-cohort fetch, which the shared loops cannot
+  //     drive (one tuple per accessor, and the stratum names a different
+  //     `brain_docs` row per profile). Its cases are here, and they are the
+  //     control that keeps this SQL and `@respin/brain`'s `inStratum` reading
+  //     the stratum the same way — the agreement slice 8c's most expensive
+  //     defect was the absence of.
+
+  it("comparableResults WITH A STRATUM returns THIS profile's rows only, from BOTH sides", async () => {
+    const scopeA = await withWorkspace(db, { authUserId: "user_a" });
+    for (const self of [p1, p2] as const) {
+      const scope = await ProfileScope.mint(db, scopeA, self);
+      const population = await scope.accessors.comparableResults(
+        RESULT_STRATUM.get(self)!
+      );
+      expect(
+        population.rows.length,
+        `comparableResults returned nothing for ${self} - its validator would be vacuous`
+      ).toBeGreaterThan(0);
+      // The shared breach validator, called explicitly so it is not inert.
+      await breachValidators.comparableResults(population.rows, self, aWorkspaceId);
+      expect(population.truncated).toBe(false);
+      expect(population.limit).toBe(COMPARISON_POPULATION_MAX);
+    }
+    // THE SHARPEST CASE, and the reason `metricDeclaredByDocIds` is a predicate
+    // rather than a display field: p1 NAMES THE SIBLING'S declared-metric
+    // document set explicitly. The composite FK cannot help here - the ids are
+    // query ARGUMENT, not a stored column - so the profile predicate in the
+    // WHERE is the only thing between a named sibling id and the sibling's
+    // rows. Drop it and this returns p2's result.
+    const scope = await ProfileScope.mint(db, scopeA, p1);
+    const foreign = await scope.accessors.comparableResults(
+      RESULT_STRATUM.get(p2)!
+    );
+    expect(
+      foreign.rows,
+      "naming the SIBLING's declared-metric document reached the sibling's results"
+    ).toEqual([]);
+  });
+
+  it("comparableResults WITH A STRATUM: cross-workspace axis, a cross-parented row is invisible", async () => {
+    const scopeA = await withWorkspace(db, { authUserId: "user_a" });
+    const RESULT_FKS = [
+      "results_profile_workspace_fk",
+      "results_generation_fk",
+      "results_metric_doc_fk",
+    ];
+    await expect(
+      db.transaction(async (tx) => {
+        for (const fk of RESULT_FKS) {
+          await tx.execute(sql.raw(`ALTER TABLE results DROP CONSTRAINT ${fk}`));
+        }
+        await tx.execute(sql.raw(
+          "ALTER TABLE proposal_evidence_results DROP CONSTRAINT proposal_evidence_results_result_fk"
+        ));
+        await tx.execute(
+          sql.raw(
+            `UPDATE results SET workspace_id = '${bWorkspaceId}' WHERE profile_id = '${p1}'`
+          )
+        );
+        const scope = await ProfileScope.mint(tx, scopeA, p1);
+        const population = await scope.accessors.comparableResults(
+          RESULT_STRATUM.get(p1)!
+        );
+        // The two-predicate query sees NOTHING; a profile-only query would
+        // still see the re-parented row. That difference is the assertion -
+        // drop the workspace_id predicate and this goes red.
+        expect(
+          population.rows,
+          "comparableResults leaked a cross-parented row"
+        ).toHaveLength(0);
+        const profileOnly = await tx.execute(
+          sql.raw(`SELECT id FROM results WHERE profile_id = '${p1}'`)
+        );
+        expect(
+          profileOnly.rows.length,
+          "the results fixture is vacuous - the re-parented row does not exist"
+        ).toBeGreaterThan(0);
+        throw new Error("rollback");
+      })
+    ).rejects.toThrow("rollback");
+    // The constraints survive the rollback - the next test is not poisoned.
+    for (const fk of RESULT_FKS) {
+      const found = await db.execute(
+        sql.raw(
+          `SELECT 1 FROM pg_constraint WHERE conname = '${fk}' AND conrelid = 'results'::regclass`
+        )
+      );
+      expect(found.rows.length, `${fk} was not restored`).toBe(1);
+    }
+  });
+
+  it("comparableResults filters IN SQL: each stratum predicate excludes on its own", async () => {
+    // THE DERIVED-GUARD DISCIPLINE (CLAUDE.md 2026-08-21): six planted rows,
+    // each differing on exactly ONE predicate. A predicate dropped from the
+    // WHERE reddens exactly one case and names it, rather than being invisible
+    // because some other predicate happened to exclude the row too.
+    const scopeA = await withWorkspace(db, { authUserId: "user_a" });
+    const scope = await ProfileScope.mint(db, scopeA, p1);
+    const stratum = RESULT_STRATUM.get(p1)!;
+    // A SECOND Strategy version for p1 with the exact same semantic metric
+    // tuple. The default one-id stratum excludes it; the widened two-id
+    // stratum below proves SQL IN pools it without weakening either scope axis.
+    const [otherDoc] = await db
+      .insert(brainDocs)
+      .values({
+        profileId: p1,
+        workspaceId: aWorkspaceId,
+        kind: "strategy",
+        version: 2,
+        content: {
+          metric: {
+            label: "Followers",
+            unit: "per 1k views",
+            direction: "higher_is_better",
+          },
+        },
+        reason: RENDERED_REASON,
+        sourceEvidence: RAW_EVIDENCE,
+      })
+      .returning();
+    const base = {
+      profileId: p1,
+      workspaceId: aWorkspaceId,
+      platform: stratum.platform,
+      audienceClass: stratum.audienceClass,
+      metricKey: stratum.metricKey,
+      metricDeclaredByDocId: stratum.metricDeclaredByDocIds[0]!,
+      observedFrom: new Date("2026-08-02"),
+      observedTo: new Date("2026-08-09"),
+      evidenceState: "quantified_self_reported" as const,
+      reachValue: "1",
+      reachDenominator: "1000",
+    };
+    const before = (await scope.accessors.comparableResults(stratum)).rows.length;
+    const planted: [string, Record<string, unknown>][] = [
+      ["another platform", { platform: "reels" }],
+      ["the other audience class", { audienceClass: "paid" }],
+      ["another metric key", { metricKey: "watch_time" }],
+      // Same KEY, different declared VERSION - the predicate `ComparisonStratum`
+      // could not express until Amendment 1, and the one a metric edit produces.
+      ["another declared metric VERSION", { metricDeclaredByDocId: otherDoc.id }],
+      ["a window starting before the stratum", { observedFrom: new Date("2026-06-01") }],
+      ["a window ending after the stratum", { observedTo: new Date("2026-10-01") }],
+    ];
+    for (const [label, over] of planted) {
+      const [planted_row] = await db
+        .insert(results)
+        .values({ ...base, ...over } as never)
+        .returning();
+      const after = await scope.accessors.comparableResults(stratum);
+      expect(
+        after.rows.length,
+        `a result with ${label} entered the population - that predicate is not in the query`
+      ).toBe(before);
+      await db.delete(results).where(eq(results.id, planted_row.id));
+    }
+    // NON-VACUITY: a row that matches every predicate DOES enter, so the six
+    // exclusions above are the predicates working rather than an empty query.
+    await db.insert(results).values(base as never);
+    expect((await scope.accessors.comparableResults(stratum)).rows.length).toBe(
+      before + 1
+    );
+    const [equivalentVersionResult] = await db.insert(results).values({
+      ...base,
+      metricDeclaredByDocId: otherDoc.id,
+      observedFrom: new Date("2026-08-03"),
+      observedTo: new Date("2026-08-10"),
+    } as never).returning();
+    expect((await scope.accessors.comparableResults(stratum)).rows)
+      .not.toContainEqual(expect.objectContaining({ id: equivalentVersionResult.id }));
+    const pooled = await scope.accessors.comparableResults({
+      ...stratum,
+      metricDeclaredByDocIds: [stratum.metricDeclaredByDocIds[0]!, otherDoc.id],
+    });
+    expect(pooled.rows).toContainEqual(
+      expect.objectContaining({ id: equivalentVersionResult.id })
+    );
+  });
+
+  // =========================================================================
+  // WHAT A GREEN RUN OF THE NEXT CASE DOES AND DOES NOT PROVE.
+  //
+  // Written out in the shape `tests/results-honesty.test.tsx` uses for R20, and
+  // for the same reason: this case ends in a NEGATIVE pattern over copy, and a
+  // reader who sees it green beside the words "unconditional promise" will
+  // believe more than is true unless the limit is on the page.
+  //
+  // IT PROVES THREE THINGS:
+  //
+  //   1. Every false branch of the stratum check is DRIVEN and raises
+  //      `ComparisonStratumError` — not `WorkspaceAccessError`, whose copy
+  //      would tell the reader to sign in as somebody else, and not a raw
+  //      driver error.
+  //   2. The three refusals are DISTINGUISHABLE from each other and name no
+  //      uuid, so a reader (or a log) learns which part of the stratum was
+  //      unusable without learning a `brain_docs` id's creation time.
+  //   3. The usable remedy is present, and the specific WRONG instruction
+  //      ("sign in", "the account that owns it", "ask its owner") cannot
+  //      reappear — that one is an enumerated ban over a THREE-STRING space
+  //      taken verbatim from the copy this class was split out of, so the
+  //      enumeration really is the class there.
+  //
+  // IT DOES NOT PROVE THAT THIS REFUSAL MAKES NO PROMISE ABOUT WHAT WAS
+  // PRESERVED. The last assertion is a pattern over words, and the promise can
+  // be written without any of them: "your results are intact", "we kept
+  // everything", "your log is exactly as you left it" would all pass. That gap
+  // is real, it is the author's own least-confident line carried in rather than
+  // discovered later, and the two ways to close it are both worse:
+  //
+  //   - A BIGGER ALTERNATION is counterexamples wearing the word "class".
+  //     CLAUDE.md's 2026-08-18 lesson is precisely this failure — a guard
+  //     hardened twice against named counterexamples and failing a third gate
+  //     round with nine more over-accepts in unlisted classes — and every entry
+  //     added makes the pattern LOOK more complete while covering no more of
+  //     the space.
+  //   - AN ALLOWLIST OF PERMITTED SENTENCES would make every copy edit a test
+  //     edit, which is how a control becomes a formality people route around.
+  //
+  // SO WHAT THIS ASSERTION IS FOR is the regression it can actually catch: the
+  // exact sentence that WAS here (`— nothing was changed`) being typed back in
+  // by somebody being kind, which is the likely edit and is what the mutation
+  // run on 2026-09-04 confirmed it reddens on. Whether some NEW wording quietly
+  // promises the same thing is a judgement, and the person who makes it is the
+  // reviewer at the learning-honesty gate — with this paragraph telling them
+  // the suite did not make it for them.
+  // =========================================================================
+  it("comparableResults REFUSES an unusable stratum, with a remedy the reader can act on", async () => {
+    const scope = await mintP1();
+    const stratum = RESULT_STRATUM.get(p1)!;
+    // Each false branch driven: an Invalid Date reaches the driver as NaN, a
+    // reversed window is a population nobody can state, and an audience class
+    // outside the closed set reaches the pgEnum as a 22P02.
+    const attempt = (over: Record<string, unknown>) =>
+      scope.accessors
+        .comparableResults({ ...stratum, ...over } as never)
+        .catch((e: unknown) => e);
+    const cases: [string, Record<string, unknown>][] = [
+      ["an Invalid Date", { observedTo: new Date("nonsense") }],
+      [
+        "a reversed window",
+        { observedFrom: stratum.observedTo, observedTo: stratum.observedFrom },
+      ],
+      ["an audience class outside the closed set", { audienceClass: "boosted" }],
+    ];
+    const messages: string[] = [];
+    for (const [label, over] of cases) {
+      const error = await attempt(over);
+      // A DISTINCT CLASS, not `WorkspaceAccessError` (2026-09-04). That class
+      // IS covered in `billing-errors.ts`, so this would not have been
+      // "Something went wrong" - it would have been that code's copy, which
+      // tells the reader to sign in with a different account. A usable and
+      // WRONG remedy is the failure this split closes.
+      expect(error, label).toBeInstanceOf(ComparisonStratumError);
+      const message = (error as Error).message;
+      messages.push(message);
+      // THE REMEDY IS ASSERTED, not just the class: the requirement on this
+      // message is that the printed fix is something the reader can actually
+      // do, and the specific WRONG instruction is pinned OUT.
+      expect(message, label).not.toMatch(/sign in|account that owns|ask its owner/i);
+      expect(message, label).toContain("Reload the page");
+      // ...AND THE UNCONDITIONAL REASSURANCE IS PINNED OUT. The message used to
+      // end "nothing was changed", which was true while the only raiser was a
+      // scoped READ and becomes a confident, WRONG promise the moment 9b
+      // raises this class from inside a transaction that has already written.
+      // A caller that can honestly make that promise makes it itself, where
+      // the knowledge is (`ComparisonStratumError`'s docblock; the four
+      // refusals in `errors.ts` that DO keep the sentence carry their basis
+      // beside it). READ THE DISCLOSURE ABOVE THIS CASE before trusting this
+      // line: it bans the spellings it enumerates, NOT the class of claim.
+      expect(
+        message,
+        `${label}: the refusal makes an unconditional promise about what was preserved - see ComparisonStratumError's docblock`
+      ).not.toMatch(
+        /nothing was (changed|saved|stored|written|lost)|(is|are|remain[s]?) (safe|untouched|unaffected)|no( thing)? .{0,20}(was|were) (changed|written)/i
+      );
+      // ...and it names WHICH part was unusable in words, never a uuid - the
+      // `ProfileAccessError` rule, because a stratum carries a `brain_docs` id
+      // and echoing one leaks creation time.
+      for (const docId of stratum.metricDeclaredByDocIds) {
+        expect(message, label).not.toContain(docId);
+      }
+    }
+    // The three refusals are DISTINGUISHABLE from each other, so whoever reads
+    // one knows which part of the stratum was wrong.
+    expect(new Set(messages).size).toBe(3);
+  });
+
+  it("comparableResults refuses empty or cast-forged metric declaration sets before querying", async () => {
+    const scope = await mintP1();
+    const stratum = RESULT_STRATUM.get(p1)!;
+    for (const metricDeclaredByDocIds of [
+      [],
+      "not-an-array",
+      ["not-a-uuid"],
+      [stratum.metricDeclaredByDocIds[0]!, stratum.metricDeclaredByDocIds[0]!],
+    ]) {
+      await expect(
+        scope.accessors.comparableResults({
+          ...stratum,
+          metricDeclaredByDocIds,
+        } as never)
+      ).rejects.toBeInstanceOf(ComparisonStratumError);
     }
   });
 
@@ -1815,8 +2845,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       )
     ).rejects.toThrow(ContentSchemaError);
 
-    // (c) R-10 where writes actually happen: `performance_meta` is written
-    // from verified results, never inferred at onboarding.
+    // (c) Slice 9b makes `performance_meta` writable. An invalid payload now
+    // reaches its exact closed schema rather than the old not-yet-writable
+    // refusal; only the promotion ceremony supplies a valid version.
     await expect(
       db.transaction((tx) =>
         caps.writeBrainDoc(
@@ -1829,7 +2860,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
           tx
         )
       )
-    ).rejects.toThrow(KindNotYetWritableError);
+    ).rejects.toThrow(ContentSchemaError);
   });
 
   it("P4 write side: every field of the params is read ONCE — a getter cannot swap the content after it is checked", async () => {
@@ -2149,6 +3180,89 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
 
   // ------------------------------------------------------------------ AC-17
 
+
+  it("the two UNCHARGED bounds count and sum THIS profile only, on both axes", async () => {
+    // THE WITNESS THESE TWO ACCESSORS SHIPPED WITHOUT (billing gate, round 2).
+    // A reviewer planted the removal of `both(modelUsage)` — the workspace AND
+    // profile predicate — from both accessors and watched 1,199 tests stay
+    // green. The reason is in this file's own fixture: its `model_usage` row is
+    // `consumedIncludedBuild: true`, and both accessors filter for `false`, so
+    // in the ordinary state they BOTH RETURN 0 and the cross-workspace loop's
+    // `toHaveLength(0)` cannot discriminate. Three comments above also cited a
+    // test by a title that did not exist in this file. This is that test.
+    //
+    // It is the same defect this file records against itself at the
+    // `countBillableAttempts` note — "0 with the cage intact, 0 with the
+    // profile predicate dropped, and 0 with no cage at all" — reintroduced by
+    // copying the fixture forward.
+    const uncharged = (profileId: string, workspaceId: string, cost: bigint) => ({
+      profileId,
+      workspaceId,
+      ...usageInput(`uncharged_${profileId}`),
+      // THE TWO FIELDS THAT MAKE THE ROW VISIBLE to these accessors. Without
+      // both, this test is the vacuous one it replaces.
+      consumedIncludedBuild: false,
+      outcome: "schema_invalid" as const,
+      costMicroUsd: cost,
+    });
+    await db.insert(modelUsage).values([
+      uncharged(p1, aWorkspaceId, 11n),
+      // The SAME-workspace sibling: a dropped PROFILE predicate reads this.
+      uncharged(p2, aWorkspaceId, 2200n),
+      // The CROSS-workspace foreigner: a dropped WORKSPACE predicate reads it.
+      uncharged(p3, bWorkspaceId, 330000n),
+    ]);
+
+    const scope = await ProfileScope.mint(
+      db,
+      await withWorkspace(db, { authUserId: "user_a" }),
+      p1
+    );
+    const args = { purpose: usageInput("x").purpose, since: new Date(0) };
+
+    // ONE attempt and ELEVEN micro-USD — p1's row and nothing else. The three
+    // costs are deliberately different orders of magnitude so a leak in either
+    // direction changes the NUMBER rather than merely the row count.
+    await expect(
+      scope.accessors.countUnchargedBillableAttempts(args)
+    ).resolves.toBe(1);
+    await expect(
+      scope.accessors.sumUnchargedBillableCostMicroUsd(args)
+    ).resolves.toBe(11);
+  });
+
+  it("NON-VACUITY: the foreign rows this test plants are real and visible to their OWN scopes", async () => {
+    // Without this, the case above passes against an accessor that returns
+    // 1 and 11 for reasons unrelated to scoping — or against rows that were
+    // never inserted. Each foreign profile sees its own row and only its own.
+    const uncharged = (profileId: string, workspaceId: string, cost: bigint) => ({
+      profileId,
+      workspaceId,
+      ...usageInput(`uncharged_${profileId}`),
+      consumedIncludedBuild: false,
+      outcome: "schema_invalid" as const,
+      costMicroUsd: cost,
+    });
+    await db.insert(modelUsage).values([
+      uncharged(p1, aWorkspaceId, 11n),
+      uncharged(p2, aWorkspaceId, 2200n),
+      uncharged(p3, bWorkspaceId, 330000n),
+    ]);
+    const args = { purpose: usageInput("x").purpose, since: new Date(0) };
+    for (const [profileId, authUserId, cost] of [
+      [p2, "user_a", 2200],
+      [p3, "user_b", 330000],
+    ] as const) {
+      const scope = await ProfileScope.mint(
+        db,
+        await withWorkspace(db, { authUserId }),
+        profileId
+      );
+      await expect(
+        scope.accessors.sumUnchargedBillableCostMicroUsd(args)
+      ).resolves.toBe(cost);
+    }
+  });
   it("cost_micro_usd round-trips as a bigint (PGlite half of AC-17)", async () => {
     const scope = await mintP1();
     const caps = writeCapabilities(scope);
@@ -2461,4 +3575,173 @@ describe("creator_profiles is CLASSIFIED too — the same instrument, one table 
     expect(CALLER_SUPPLIABLE_PROFILE_FIELDS).not.toContain("state");
     expect(CALLER_SUPPLIABLE_PROFILE_FIELDS).toEqual(["displayName"]);
   });
+});
+
+/**
+ * THE BOUND, PAID FOR ONCE (9a-G1, 2026-09-04).
+ *
+ * ITS OWN TOP-LEVEL DESCRIBE WITH A `beforeAll`, because these two cases are
+ * the most expensive in the file by an order of magnitude: measured at 4,887 ms
+ * and 4,820 ms against a ~760 ms median across the 45 cases next door, each
+ * inserting 50,001 rows into a FRESH in-process PGlite. Synchronous CPU on the
+ * worker thread is exactly the class `9a-G1` names, and paying it on top of the
+ * sibling describe's per-test database was what made this file the trigger.
+ *
+ * WHAT IS NOT NEGOTIABLE, and is unchanged: both cases still drive the REAL
+ * `COMPARISON_POPULATION_MAX`. A bound only the test uses is not the bound
+ * production runs under, so the fixture is still 50,000 real rows — it is
+ * built ONCE for both cases instead of twice, and once instead of on top of 45
+ * live WASM heaps.
+ *
+ * HOW BOTH SIDES OF THE BOUNDARY ARE STILL ASSERTED FROM ONE FIXTURE: the
+ * shared state sits EXACTLY AT the bound, and each case adds the row that
+ * crosses it inside a TRANSACTION IT ROLLS BACK, passing that `tx` to the
+ * accessor. So neither case leaves the fixture changed for the other and there
+ * is no order dependence between them — which a shared `beforeAll` would
+ * otherwise quietly introduce.
+ */
+describe("comparableResults at the REAL bound (fixture paid once)", () => {
+  let db: TestDb;
+  let workspaceId: string;
+  let profileId: string;
+  let docId: string;
+  let stratum: {
+    platform: string;
+    audienceClass: "organic" | "paid";
+    metricKey: string;
+    metricDeclaredByDocIds: readonly string[];
+    observedFrom: Date;
+    observedTo: Date;
+  };
+
+  const scopeFor = async () =>
+    ProfileScope.mint(db, await withWorkspace(db, { authUserId: "bound_a" }), profileId);
+
+  beforeAll(async () => {
+    db = await createTestDb();
+    await seedAuthUser(db, "bound_a");
+    workspaceId = (
+      await ensureUserWorkspace(db, { authUserId: "bound_a", name: "Bound" })
+    ).workspace.id;
+    const [profile] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId, displayName: "bound" })
+      .returning();
+    profileId = profile.id;
+    const [doc] = await db
+      .insert(brainDocs)
+      .values({
+        profileId,
+        workspaceId,
+        kind: "strategy",
+        version: 1,
+        content: {
+          metric: {
+            label: "bound metric",
+            unit: "per 1k views",
+            direction: "higher_is_better",
+          },
+        },
+        reason: RENDERED_REASON,
+        sourceEvidence: RAW_EVIDENCE,
+      })
+      .returning();
+    docId = doc.id;
+    stratum = {
+      platform: "shorts",
+      audienceClass: "organic",
+      metricKey: "followers",
+      metricDeclaredByDocIds: [docId],
+      observedFrom: new Date("2026-07-01"),
+      observedTo: new Date("2026-09-01"),
+    };
+    // EXACTLY AT THE BOUND. One statement, not 50,000 parameter binds: the
+    // naive fixture is what makes the real bound untestable in practice, and a
+    // suite that slow is a suite somebody lowers the bound to speed up.
+    await fill(db, 1, COMPARISON_POPULATION_MAX);
+  }, 120_000);
+
+  afterAll(async () => {
+    await (db as unknown as { $client?: { close?: () => Promise<void> } })
+      .$client?.close?.();
+  });
+
+  /** `count` rows for this profile, all inside `stratum`, one statement. */
+  const fill = async (conn: TestDb, from: number, count: number) => {
+    await conn.execute(
+      sql.raw(`INSERT INTO results (
+          id, profile_id, workspace_id, platform, audience_class, metric_key,
+          metric_declared_by_doc_id, observed_from, observed_to, evidence_state,
+          reach_value, reach_denominator
+        )
+        SELECT gen_random_uuid(), '${profileId}', '${workspaceId}', 'shorts',
+               'organic'::result_audience_class, 'followers', '${docId}',
+               timestamptz '2026-08-02',
+               timestamptz '2026-08-03' + (i * interval '1 second'),
+               'quantified_self_reported'::result_evidence_state, i, 1000
+          FROM generate_series(${from}, ${from + count - 1}) AS i`)
+    );
+  };
+
+  for (const [label, withStratum] of [
+    ["WITH A STRATUM", true],
+    ["WITH NO STRATUM (the branch 9a walks)", false],
+  ] as const) {
+    it(`comparableResults ${label} reports truncation at the real bound`, async () => {
+      // CLAUDE.md 2026-08-29: a flag no test ever sets true reads exactly like
+      // a guard and is not one. Both branches set it true, at the real bound.
+      const scope = await scopeFor();
+      const read = (conn?: TestDb) =>
+        withStratum
+          ? scope.accessors.comparableResults(stratum, conn as never)
+          : scope.accessors.comparableResults(undefined, conn as never);
+
+      // A population EQUAL to the bound is NOT clipped — a full page is
+      // indistinguishable from a clipped one unless the probe asks for one
+      // more row, so the boundary is asserted from BOTH sides.
+      const atBound = await read();
+      expect(atBound.rows.length).toBe(COMPARISON_POPULATION_MAX);
+      expect(
+        atBound.truncated,
+        "a population EQUAL to the bound was reported as clipped"
+      ).toBe(false);
+      expect(atBound.limit).toBe(COMPARISON_POPULATION_MAX);
+
+      // ...and one more row flips it. Inside a transaction that ROLLS BACK, so
+      // the shared fixture is unchanged for the sibling case.
+      await expect(
+        db.transaction(async (tx) => {
+          await fill(tx as unknown as TestDb, COMPARISON_POPULATION_MAX + 1, 1);
+          const over = await read(tx as unknown as TestDb);
+          expect(
+            over.truncated,
+            "a population LARGER than the bound was reported as complete - a comparison over it would be a false claim, not a weaker one"
+          ).toBe(true);
+          expect(over.rows.length).toBe(COMPARISON_POPULATION_MAX);
+          // WHICH ROWS SURVIVED THE CLIP: the newest OBSERVATIONS. The row with
+          // the earliest `observed_to` is the one dropped, which is the
+          // documented bias - asserted, because a bias nobody checks is a bias
+          // nobody knows about.
+          const kept = new Set(over.rows.map((row) => row.id));
+          const all = await tx
+            .select({ id: results.id })
+            .from(results)
+            .where(eq(results.profileId, profileId))
+            .orderBy(desc(results.observedTo), desc(results.id));
+          expect(all.length).toBe(COMPARISON_POPULATION_MAX + 1);
+          expect(kept.has(all[0].id), "the newest observation was clipped").toBe(
+            true
+          );
+          expect(
+            kept.has(all[all.length - 1].id),
+            "the oldest observation survived a clip documented as newest-first"
+          ).toBe(false);
+          throw new Error("rollback");
+        })
+      ).rejects.toThrow("rollback");
+
+      // ...and the fixture really is back at the bound for the next case.
+      expect((await read()).truncated).toBe(false);
+    }, 120_000);
+  }
 });

@@ -17,6 +17,7 @@ import { sql } from "drizzle-orm";
 import {
   check,
   foreignKey,
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -29,6 +30,8 @@ import {
 } from "drizzle-orm/pg-core";
 import { uuidv7 } from "uuidv7";
 import { memberships, users, workspaces } from "./schema";
+import { contentRightsBasis } from "./content-rights-schema";
+export { contentRightsBasis } from "./content-rights-schema";
 
 const id = () =>
   uuid("id")
@@ -99,6 +102,7 @@ export const curatorStatus = pgEnum("curator_status", [
 export const creatorProfileState = pgEnum("creator_profile_state", [
   "active",
   "archived",
+  "deletion_tombstoned",
 ]);
 
 // The tenancy anchor. `(id, workspace_id)` is unique so children can carry a
@@ -119,6 +123,7 @@ export const creatorProfiles = pgTable(
     // caller-chosen enum value, which is the exact shape of the M2b-1 round-2
     // silent-brain-activation finding one table over.
     state: creatorProfileState("state").notNull().default("active"),
+    lifecycleVersion: integer("lifecycle_version").default(1).notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -133,6 +138,7 @@ export const creatorProfiles = pgTable(
     // migration, not by reading the emitted SQL: the constraint was present,
     // it was just present too late.
     unique("creator_profiles_id_workspace_uq").on(t.id, t.workspaceId),
+    check("creator_profiles_lifecycle_version_positive", sql`${t.lifecycleVersion} >= 1`),
   ]
 );
 
@@ -285,6 +291,31 @@ export const brainDocs = pgTable(
       t.kind,
       t.version
     ),
+    // ADDED IN MIGRATION 0029 (slice 9a, contract C3) so that a child can carry
+    // a SAME-TENANT composite FK to a brain document. `results.metric_declared_
+    // by_doc_id` is the first: it names the STRATEGY VERSION that declared the
+    // north-star metric a logged result was measured against, and the only FK
+    // available without this unique would have been a bare one to `id` alone —
+    // which `generations.brain_activation_id`'s docblock rejects in terms this
+    // constraint exists to answer: it "would let this row name a snapshot
+    // belonging to another profile: worse than none, because it would look like
+    // tenancy". `brain_docs_profile_kind_version_uq` above cannot serve, because
+    // a child holds an id, not a (kind, version) pair.
+    //
+    // ADDITIVE: `id` is already the primary key, so this constraint refuses
+    // nothing that was previously storable — it exists purely to be a foreign
+    // key TARGET, and it costs one index. A table `unique()` and not a
+    // `uniqueIndex()` for the migration-0011 reason `creator_profiles` records:
+    // drizzle-kit emits every CREATE TABLE, then every FK ALTER, then every
+    // CREATE INDEX, so a unique INDEX would not yet exist when the referencing
+    // FK is added. (`brain_docs` already exists, so 0029 emits this as an ALTER
+    // TABLE ADD CONSTRAINT — which is exactly why the migration's statement
+    // ORDER is checked rather than assumed; see 0029's header.)
+    unique("brain_docs_id_profile_workspace_uq").on(
+      t.id,
+      t.profileId,
+      t.workspaceId
+    ),
     // At most one active version per (profile, kind). A partial unique index
     // rather than application code, for the same reason `credit_ledger`'s
     // money invariants are constraints: application-code uniqueness is a race.
@@ -360,6 +391,11 @@ export const frameworks = pgTable(
     confidence: text("confidence").notNull(),
     saturation: frameworkSaturation("saturation").notNull(),
     visibility: frameworkVisibility("visibility").notNull(),
+    rightsBasis: contentRightsBasis("rights_basis").notNull(),
+    rightsSubjectUserId: uuid("rights_subject_user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    rightsEvidenceId: text("rights_evidence_id"),
     // Deliberately carved out of the both-columns-NOT-NULL rule (plan A-5): a
     // SHARED framework belongs to no profile and no workspace, so both are NULL
     // and MATCH SIMPLE skips the FK — which is correct here, and is why the
@@ -414,6 +450,7 @@ export const frameworks = pgTable(
       foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
       name: "frameworks_owner_profile_workspace_fk",
     }).onDelete("cascade"),
+    index("frameworks_rights_subject_user_idx").on(t.rightsSubjectUserId),
     // FOUR PARTIAL UNIQUES REPLACING ONE GLOBAL `frameworks_slug_uq` (slice 7).
     //
     // The old index was `UNIQUE (slug)` over the whole table, which had two
@@ -454,6 +491,28 @@ export const frameworks = pgTable(
     check(
       "frameworks_private_has_owner",
       sql`${t.visibility} <> 'private' OR (${t.ownerProfileId} IS NOT NULL AND ${t.workspaceId} IS NOT NULL)`
+    ),
+    check(
+      "frameworks_rights_shape",
+      sql`(${t.visibility} = 'private'
+            AND ${t.rightsBasis} = 'profile_private'
+            AND ${t.rightsSubjectUserId} IS NULL
+            AND ${t.rightsEvidenceId} IS NULL)
+          OR (${t.visibility} = 'shared'
+            AND ${t.rightsBasis} = 'creator_consent'
+            AND ${t.rightsSubjectUserId} IS NOT NULL
+            AND ${t.rightsEvidenceId} IS NOT NULL
+            AND ${t.rightsEvidenceId} ~ '[^[:space:]]')
+          OR (${t.visibility} = 'shared'
+            AND ${t.rightsBasis} = 'independently_licensed'
+            AND ${t.rightsSubjectUserId} IS NULL
+            AND ${t.rightsEvidenceId} IS NOT NULL
+            AND ${t.rightsEvidenceId} ~ '[^[:space:]]')
+          OR (${t.visibility} = 'shared'
+            AND ${t.rightsBasis} = 'product_seed'
+            AND ${t.rightsSubjectUserId} IS NULL
+            AND ${t.rightsEvidenceId} IS NULL
+            AND ${t.curatedBy} = 'seed:respin-library-v1')`
     ),
     // THE TWO SPELLINGS OF "RETIRED", AS AN EQUALITY — see `retiredAt` above.
     // Not an implication: a row stamped `retired_at` while still claiming an

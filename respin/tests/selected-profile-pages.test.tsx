@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   listOnboardingInputs: vi.fn(),
   getInterviewDraft: vi.fn(),
   readBrainHistory: vi.fn(),
+  promotionProposalHistory: vi.fn(),
+  promotionProposalReview: vi.fn(),
+  brainAssetSummary: vi.fn(),
   getBillingState: vi.fn(),
   getBalance: vi.fn(),
   getActiveConfigServer: vi.fn(),
@@ -27,6 +30,9 @@ vi.mock("@respin/db", async (importOriginal) => {
       listOnboardingInputs: mocks.listOnboardingInputs,
       getInterviewDraft: mocks.getInterviewDraft,
       readBrainHistory: mocks.readBrainHistory,
+      promotionProposalHistory: mocks.promotionProposalHistory,
+      promotionProposalReview: mocks.promotionProposalReview,
+      brainAssetSummary: mocks.brainAssetSummary,
     },
   };
 });
@@ -64,7 +70,7 @@ const PROFILE_B = {
   displayName: "Creator B",
 };
 
-let role: "owner" | "viewer" = "owner";
+let role: "owner" | "editor" | "viewer" = "owner";
 const scope = {
   userId: "user-1",
   workspaceId: "workspace-1",
@@ -93,6 +99,7 @@ type NamedPageProps = {
   profileName: string;
   exportJsonHref: string | null;
   exportMarkdownHref: string | null;
+  writeBlock?: { reason: string } | null;
 };
 
 function pageProps<Props>(element: unknown): Props {
@@ -116,6 +123,12 @@ beforeEach(() => {
   mocks.listOnboardingInputs.mockResolvedValue([]);
   mocks.getInterviewDraft.mockResolvedValue(null);
   mocks.readBrainHistory.mockResolvedValue([]);
+  mocks.promotionProposalHistory.mockResolvedValue([{ id: "proposal-b" }]);
+  mocks.promotionProposalReview.mockResolvedValue({
+    resultEvidence: [],
+    feedbackEvidence: [],
+  });
+  mocks.brainAssetSummary.mockResolvedValue({});
   mocks.getBillingState.mockResolvedValue({
     tier: "creator",
     state: "active",
@@ -184,7 +197,7 @@ describe("persisted selected profile page wiring", () => {
     expect(props.profilePanel.profiles).toContainEqual(PROFILE_B);
   });
 
-  it("binds interview and brain reads, history, actions and export links to B", async () => {
+  it("binds interview and every brain asset read, history, actions and export links to B", async () => {
     const interview = await InterviewPage({
       searchParams: Promise.resolve({}),
     });
@@ -197,7 +210,15 @@ describe("persisted selected profile page wiring", () => {
       [scope, PROFILE_B.id, "voice"],
       [scope, PROFILE_B.id, "strategy"],
       [scope, PROFILE_B.id, "killtest"],
+      [scope, PROFILE_B.id, "performance_meta"],
     ]);
+    expect(mocks.promotionProposalHistory).toHaveBeenCalledWith(scope, PROFILE_B.id);
+    expect(mocks.promotionProposalReview).toHaveBeenCalledWith(
+      scope,
+      PROFILE_B.id,
+      "proposal-b",
+    );
+    expect(mocks.brainAssetSummary).toHaveBeenCalledWith(scope, PROFILE_B.id);
     expect(mocks.getInterviewDraft).toHaveBeenCalledWith(scope, PROFILE_B.id);
     const brainProps = pageProps<NamedPageProps>(brain);
     expect(brainProps.profileName).toBe("Creator B");
@@ -207,6 +228,18 @@ describe("persisted selected profile page wiring", () => {
     expect(brainProps.exportMarkdownHref).toContain(
       encodeURIComponent(PROFILE_B.id),
     );
+  });
+
+  it("R-118 blocks an editor from durable interview work while the owner remains enabled", async () => {
+    role = "editor";
+    const editorPage = await InterviewPage({ searchParams: Promise.resolve({}) });
+    expect(pageProps<NamedPageProps>(editorPage).writeBlock?.reason).toMatch(
+      /R-118.*owner-only/
+    );
+
+    role = "owner";
+    const ownerPage = await InterviewPage({ searchParams: Promise.resolve({}) });
+    expect(pageProps<NamedPageProps>(ownerPage).writeBlock).toBeNull();
   });
 
   it("a viewer can select the reading context while mutation gates remain visible", async () => {

@@ -1,0 +1,3 @@
+ALTER TABLE "deletion_operations" DROP CONSTRAINT "deletion_operations_request_session_digest_shape";--> statement-breakpoint
+ALTER TABLE "deletion_operations" ADD CONSTRAINT "deletion_operations_request_session_digest_shape" CHECK (("deletion_operations"."scope" = 'identity' AND length("deletion_operations"."request_session_digest") = 64)
+          OR ("deletion_operations"."scope" <> 'identity' AND ("deletion_operations"."request_session_digest" IS NULL OR length("deletion_operations"."request_session_digest") = 64)));

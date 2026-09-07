@@ -15,6 +15,12 @@ export const user = pgTable("user", {
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").default(false).notNull(),
   image: text("image"),
+  // Server-owned lifecycle fence. Better Auth adapters may read/write the
+  // surrounding row, but deletion code is the sole writer of this marker.
+  // A client timestamp never participates in the decision.
+  ordinaryLoginDisabledAt: timestamp("ordinary_login_disabled_at", {
+    withTimezone: true,
+  }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -34,6 +40,9 @@ export const session = pgTable(
       .notNull(),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
+    // R-118 recent-reauth proof: written only after a fresh local credential,
+    // passkey, or configured MFA challenge for THIS persisted session.
+    reauthenticatedAt: timestamp("reauthenticated_at", { withTimezone: true }),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),

@@ -11,6 +11,10 @@ import {
   type VerifiedWorkspaceId,
 } from "@respin/db";
 import { getStripe } from "./adapter";
+import {
+  getTierCheckoutProtocolState,
+  TierCheckoutRolloutError,
+} from "./tier-checkout-rollout";
 
 /**
  * Lost the mapping insert race AND the winning row is already gone — a
@@ -61,7 +65,7 @@ export async function workspaceForCustomer(
  * conflict keeps concurrent first-checkouts single-rowed (workspace unique).
  */
 export async function getOrCreateCustomer(
-  db: DbLike,
+  db: DbLike | TxLike,
   workspaceId: VerifiedWorkspaceId,
   email: string
 ): Promise<string> {
@@ -72,13 +76,47 @@ export async function getOrCreateCustomer(
     .limit(1);
   if (existing) return existing.stripeCustomerId;
 
+  // A new mapping is also the point at which an old tier-Checkout binary can
+  // escape the durable-attempt protocol: the legacy build creates the Stripe
+  // Customer, inserts {subscription_id: null, status: none}, and immediately
+  // creates a subscription Session without rereading the row. During the drain
+  // we therefore refuse before the first provider write. Once active, this
+  // build emits an explicit fenced insert shape that the 0049 trigger accepts;
+  // an old build cannot manufacture that shape and is rejected by the trigger
+  // before it can create Checkout.
+  const tierCheckoutProtocolState = await getTierCheckoutProtocolState(db);
+  if (tierCheckoutProtocolState === "draining") {
+    throw new TierCheckoutRolloutError(
+      "new Stripe customer mappings remain closed while legacy Checkout calls drain"
+    );
+  }
+
   const customer = await getStripe().customers.create({
     email,
     metadata: { workspace_id: workspaceId },
   });
   const [row] = await db
     .insert(subscriptions)
-    .values({ workspaceId, stripeCustomerId: customer.id, status: "none" })
+    .values(
+      tierCheckoutProtocolState === "active"
+        ? {
+            workspaceId,
+            stripeCustomerId: customer.id,
+            stripeSubscriptionId: `checkout_fence:${workspaceId}`,
+            status: "incomplete",
+            tierCheckoutFenceAt: new Date(),
+            tierCheckoutFenceSubscriptionId: null,
+            tierCheckoutFenceStatus: "none",
+            tierCheckoutFenceObservedSubscriptionId: null,
+          }
+        : {
+            workspaceId,
+            stripeCustomerId: customer.id,
+            // Expansion remains readable and writable by the legacy binary.
+            stripeSubscriptionId: null,
+            status: "none",
+          }
+    )
     .onConflictDoNothing({ target: subscriptions.workspaceId })
     .returning();
   if (row) return row.stripeCustomerId;

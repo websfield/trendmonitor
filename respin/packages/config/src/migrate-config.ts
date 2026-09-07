@@ -159,6 +159,34 @@ const CORRECTIONS: {
     to: 4000,
     why: "1024 was sized for slice 2a's one-sentence ping; a voice document needs ~1,200 output tokens, so every voice inference truncated, was billed, and refused (browser walk + billing gate, 2026-08-29)",
   },
+  // THE SAME DEFECT, ONE MODE OVER, AND IT CHAINS WITH THE ENTRY ABOVE.
+  // Corrections apply in order to the same document, so a database still
+  // holding 1024 lands on 4000 and then on 12,000 in one pass, and a database
+  // holding 4000 lands on 12,000 directly.
+  //
+  // 4000 was sized against the voice document — the largest reply the product
+  // had ever produced when it was written. `analyseAndSpin` needs 5,060, so
+  // every spin truncated, was billed, and refused. Same shape, same cause: a
+  // ceiling set from the biggest reply we had seen so far, on a path no real
+  // vendor call had ever completed.
+  {
+    path: ["llm", "maxOutputTokens"],
+    from: 4000,
+    to: 12_000,
+    why: "4000 was sized against a voice document; the first analyseAndSpin generation to complete against the real vendor produced 5,060 output tokens, so every spin truncated, was billed, and refused (real-vendor probe, 2026-09-04)",
+  },
+  {
+    path: ["llm", "overallDeadlineMs"],
+    from: 40_000,
+    to: 120_000,
+    why: "a real analyseAndSpin generation takes 53.2 s, so the 40 s deadline aborted every spin at 40,130 ms with 0 tokens and outcome `unavailable`; 120 s stays under the 135,000 ms autopsy per-stage lease ceiling (real-vendor probe, 2026-09-04)",
+  },
+  {
+    path: ["llm", "timeoutMs"],
+    from: 60_000,
+    to: 120_000,
+    why: "a 60 s per-request timeout under a 40 s outer deadline could never expire — dead config that read like a control; it now matches the deadline it lives inside (2026-09-04)",
+  },
 ];
 
 /**
@@ -167,15 +195,41 @@ const CORRECTIONS: {
  */
 const PRODUCT_AUTHORS = new Set(["seed", "migrate-config"]);
 
+/** A correction's identity: the same path with new endpoints is a new one. */
+function correctionId(c: { path: readonly string[]; from: unknown; to: unknown }): string {
+  return `${c.path.join(".")}:${String(c.from)}→${String(c.to)}`;
+}
+
+/**
+ * Apply the corrections this database has not consumed, and CONSUME WITHOUT
+ * APPLYING on an operator-authored document.
+ *
+ * THE SECOND HALF IS THE FIX (billing gate BLOCK, 2026-09-04). Returning early
+ * on an operator's document only deferred the overwrite by one run: this pass
+ * appends its result as `migrate-config`, so the NEXT run saw a product-authored
+ * document holding the operator's numbers and corrected them. Driven against a
+ * real database, it rewrote three spend dials upward.
+ *
+ * Recording the id without changing the value makes the operator's choice
+ * permanent — the correction can never match on this database again, whoever
+ * authors the next version. See `appliedCorrections` in `schema.ts`.
+ */
 function applyCorrections(
   doc: Record<string, unknown>,
   changed: string[],
   createdBy: string
 ): Record<string, unknown> {
-  // PROVENANCE FIRST. An operator-authored document is never corrected, whatever
-  // it holds — see `CORRECTIONS`.
-  if (!PRODUCT_AUTHORS.has(createdBy)) return doc;
+  const isProduct = PRODUCT_AUTHORS.has(createdBy);
+  const consumed = new Set(
+    Array.isArray(doc.appliedCorrections)
+      ? doc.appliedCorrections.filter((v): v is string => typeof v === "string")
+      : []
+  );
   let out = doc;
+  const record = (id: string): void => {
+    consumed.add(id);
+    out = { ...out, appliedCorrections: [...consumed].sort() };
+  };
   for (const c of CORRECTIONS) {
     const parent = c.path.slice(0, -1);
     const key = c.path[c.path.length - 1];
@@ -187,6 +241,17 @@ function applyCorrections(
     // EXACTLY the wrong value, or nothing happens. `Object.is` rather than
     // `===` so a stored `-0` or `NaN` cannot masquerade as a match.
     if (!Object.is(node[key], c.from)) continue;
+    // ALREADY CONSUMED ON THIS DATABASE — by an earlier apply, or by an
+    // operator holding this value deliberately. Either way it never fires again.
+    if (consumed.has(correctionId(c))) continue;
+    // AN OPERATOR HOLDS THIS VALUE. Consume the correction and leave the number
+    // alone: this is the branch whose absence let two migrate runs launder an
+    // operator's document into a product-authored one and overwrite it.
+    if (!isProduct) {
+      record(correctionId(c));
+      changed.push(`${c.path.join(".")} (operator value preserved; correction consumed)`);
+      continue;
+    }
     // Rebuilt rather than mutated: `raw` is the operator's stored document and
     // every other key must come through it byte-identically.
     const rebuild = (
@@ -202,6 +267,7 @@ function applyCorrections(
       };
     };
     out = rebuild(out, parent);
+    record(correctionId(c));
     changed.push(`${c.path.join(".")} (corrected ${String(c.from)} → ${String(c.to)})`);
   }
   return out;

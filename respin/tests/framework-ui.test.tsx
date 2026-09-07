@@ -114,7 +114,7 @@ const framework = (over: Partial<FrameworkView> = {}): FrameworkView => ({
   curatorStatus: "approved",
   confidence: "repeated",
   saturation: "observed",
-  saturationNotice: null,
+  saturationNotice: SATURATION_NOTICE,
   beats: ["Admit the thing", "Show the cost", "Name the correction"],
   whyItConverts: "It earns the correction by paying for it first.",
   applicability: [{ goal: "saves", niche: "any", note: "Where the stakes are personal." }],
@@ -592,8 +592,9 @@ describe("R5b: the library shows approved, non-retired rows — and warns on sat
     expect(src).toContain("respinDb.sharedFrameworkLibrary()");
   });
 
-  it("a SATURATED framework carries the notice the ROW brought with it", () => {
-    // REQ-D02: saturated frameworks "warn and demand a fresh interpretation".
+  it("every unmeasured framework carries the limitation the ROW brought with it", () => {
+    // No framework-level population/window exists yet, regardless of the
+    // legacy curator tag stored on the row.
     // The sentence is `SATURATION_NOTICE`, attached by `@respin/db`'s readers —
     // "a warning that every consumer has to reimplement is a warning one of
     // them will omit" — so this screen renders the value it was handed.
@@ -606,32 +607,39 @@ describe("R5b: the library shows approved, non-retired rows — and warns on sat
     );
     expect(html).toContain('data-testid="framework-saturation-notice"');
     expect(html).toContain(SATURATION_NOTICE);
-    // ...and a row with nothing to warn about carries no banner.
-    expect(decoded(render())).not.toContain('data-testid="framework-saturation-notice"');
+    expect(html).toContain("Curator/library tag: Unmeasured");
+    expect(html).toContain("Framework limitation");
+    expect(html).not.toContain("Audiences have seen a lot of this shape lately");
+    expect(html).not.toMatch(/seen to work|showing up more often|widely used|heavily used|worn out/i);
+    // ...and an ordinary legacy tag cannot silently drop the same limitation.
+    expect(decoded(render())).toContain('data-testid="framework-saturation-notice"');
   });
 
   it("the screen holds NO copy of the saturation notice", () => {
     // A second copy in `app/**` would be a description of a control maintained
     // apart from the control — the rule `TRACEABILITY_LIMIT_NOTE` already
     // taught this repo one screen over.
-    const distinctive = "Audiences have seen a lot of this shape lately";
-    expect(SATURATION_NOTICE).toContain(distinctive);
+    const staleAudienceClaim = "Audiences have seen a lot of this shape lately";
+    const newLimitation =
+      "Unmeasured curator/library tag: no market population, window, or prevalence has been recorded";
+    expect(SATURATION_NOTICE).not.toContain(staleAudienceClaim);
+    expect(SATURATION_NOTICE).toContain(newLimitation);
     for (const rel of [
       "app/(product)/studio/frameworks/form-copy.ts",
       "app/(product)/studio/frameworks/frameworks-view.tsx",
       "app/(product)/studio/frameworks/copy.ts",
       "app/(product)/studio/frameworks/framework-panel.tsx",
     ]) {
-      expect(read(rel), rel).not.toContain(distinctive);
+      expect(read(rel), rel).not.toContain(staleAudienceClaim);
+      expect(read(rel), rel).not.toContain(newLimitation);
     }
   });
 
-  it("saturationNote translates every value the schema allows, plus `retired`", () => {
+  it("renders every stored saturation value as the same unmeasured curator/library tag", () => {
     for (const value of ["observed", "emerging", "established", "saturated", "retired"]) {
-      expect(saturationNote(value), value).not.toBe(value);
+      expect(saturationNote(value)).toBe("Unmeasured");
     }
-    // An unknown value shows as itself rather than vanishing.
-    expect(saturationNote("brand-new")).toBe("brand-new");
+    expect(saturationNote("brand-new")).toBe("Unmeasured");
   });
 
   it("an empty shared library is a NAMED state, not a blank panel", () => {
@@ -906,8 +914,35 @@ describe("the screen's code set is DERIVED from what the framework writes throw"
    */
   const FRAMEWORK_WRITE_PATH_SOURCES = [
     "packages/db/src/frameworks.ts",
-    "packages/credits/src/mode-access.ts",
   ];
+
+  // The shared module also has Results-only Performance Learning resolution.
+  // Framework writes receive only `privateFrameworkEntitlement`, so derive
+  // refusals from that exported body rather than every unrelated export.
+  const modeAccess = read("packages/credits/src/mode-access.ts");
+  const privateEntitlementStart = modeAccess.indexOf(
+    "export function privateFrameworkEntitlement("
+  );
+  if (privateEntitlementStart < 0) {
+    throw new Error("mode-access no longer exports privateFrameworkEntitlement");
+  }
+  const privateEntitlementOpen = modeAccess.indexOf("{", privateEntitlementStart);
+  let privateEntitlementDepth = 0;
+  let privateEntitlementEnd = -1;
+  for (let index = privateEntitlementOpen; index < modeAccess.length; index += 1) {
+    if (modeAccess[index] === "{") privateEntitlementDepth += 1;
+    if (modeAccess[index] === "}" && --privateEntitlementDepth === 0) {
+      privateEntitlementEnd = index + 1;
+      break;
+    }
+  }
+  if (privateEntitlementEnd < 0) {
+    throw new Error("privateFrameworkEntitlement has no closing body");
+  }
+  const privateEntitlementBody = modeAccess.slice(
+    privateEntitlementStart,
+    privateEntitlementEnd
+  );
 
   /**
    * Classes reachable from this screen that no scanned file constructs, each
@@ -925,7 +960,7 @@ describe("the screen's code set is DERIVED from what the framework writes throw"
     ProfileArchivedError: "the archived-profile gate",
   };
 
-  const src = FRAMEWORK_WRITE_PATH_SOURCES.map(read).join("\n");
+  const src = [...FRAMEWORK_WRITE_PATH_SOURCES.map(read), privateEntitlementBody].join("\n");
 
   /** Every `new XError(` CONSTRUCTED — from a RegExp LITERAL, never assembled. */
   const thrownClassNames = (text: string): string[] => [
@@ -954,6 +989,13 @@ describe("the screen's code set is DERIVED from what the framework writes throw"
     expect(
       thrownClassNames("throw t ? new FrameworkStaleError() : new OtherError();")
     ).toEqual(["FrameworkStaleError", "OtherError"]);
+  });
+
+  it("takes only the private-framework entitlement resolver from shared mode access", () => {
+    const actions = read("app/(product)/studio/frameworks/actions.ts");
+    expect(actions).toContain("privateFrameworkEntitlement(state.tier)");
+    expect(privateEntitlementBody).toContain("UnknownEntitlementTierError");
+    expect(src).not.toContain("PerformanceLearningConfigUnavailableError");
   });
 
   const codeForClassName = (name: string): string | undefined =>

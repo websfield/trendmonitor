@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "TEMPLATE ONLY. This file is NOT a price list and is NOT loaded: the loader",
+    "reads price-snapshot.<region>.json, and EXAMPLE is not an AWS region, so a",
+    "deployment that copies this file without editing it still gets a withheld",
+    "forecast rather than a made-up one.",
+    "",
+    "To record a real snapshot: open the sourceUrl, read the S3 Standard prices",
+    "for YOUR region, copy them here as plain decimal USD strings, set",
+    "effectiveAt to the date the price list says they took effect and reviewedAt",
+    "to the date YOU read it, and save as price-snapshot.<region>.json.",
+    "",
+    "A snapshot older than 90 days is stale and withholds the forecast, which",
+    "blocks new-account and public enablement — never an in-flight deletion."
+  ],
+  "region": "EXAMPLE",
+  "currency": "USD",
+  "sourceUrl": "https://aws.amazon.com/s3/pricing/",
+  "effectiveAt": "0000-00-00",
+  "reviewedAt": "0000-00-00",
+  "storagePerGibMonth": "0.000000",
+  "putPer1000Requests": "0.000000",
+  "getPer1000Requests": "0.000000"
+}

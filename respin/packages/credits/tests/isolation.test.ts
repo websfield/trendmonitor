@@ -9,7 +9,7 @@
 // the stripe module (identity resolution, event dispatch, the six actions,
 // auto-top-up) and the two wired facades. Enumerating only src/index made this
 // guard pass vacuously while none of Phase 3 was covered.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createTestDb,
   creatorProfiles,
@@ -28,11 +28,13 @@ import {
   type VerifiedWorkspaceId,
   type WorkspaceScope,
 } from "@respin/db";
-import { appendConfigVersion } from "@respin/config";
+import { appendConfigVersion, getActiveConfig } from "@respin/config";
+import { eq, sql } from "drizzle-orm";
 import type { LlmProvider } from "@respin/llm";
 import * as credits from "../src/index";
 import * as appServer from "../src/app-server";
 import * as webhookServer from "../src/webhook-server";
+import * as deletionServer from "../src/deletion-server";
 import * as stripeActions from "../src/stripe/actions";
 import * as stripeCustomers from "../src/stripe/customers";
 import * as stripeWebhooks from "../src/stripe/webhooks";
@@ -40,6 +42,7 @@ import * as stripeAutoTopup from "../src/stripe/auto-topup";
 // INTERNAL modules, imported so their INTERNAL_MODULES claims can be checked
 // against their real exports rather than trusted as prose.
 import * as balanceMod from "../src/balance";
+import * as deletionCommandsMod from "../src/stripe/deletion-commands";
 import * as foldMod from "../src/fold";
 import * as ledgerMod from "../src/ledger";
 import * as stateMod from "../src/state";
@@ -53,17 +56,42 @@ import * as errorsMod from "../src/errors";
 import * as inferVoiceMod from "../src/infer-voice";
 import * as generateMod from "../src/generate";
 import * as modeAccessMod from "../src/mode-access";
+import * as daysToEmptyMod from "../src/days-to-empty";
 import * as adapterMod from "../src/stripe/adapter";
+import * as autoTopupAuthorityMod from "../src/stripe/auto-topup-authority";
+import * as autoTopupRolloutReconcileMod from "../src/stripe/auto-topup-rollout-reconcile";
+import * as autoTopupRolloutMod from "../src/stripe/auto-topup-rollout";
+import * as autoTopupV1ReconcileMod from "../src/stripe/auto-topup-v1-reconcile";
 import * as setupMod from "../src/stripe/setup";
 import * as packPriceMod from "../src/stripe/pack-price";
+import * as packCheckoutAuthorityMod from "../src/stripe/pack-checkout-authority";
+import * as tierCheckoutAuthorityMod from "../src/stripe/tier-checkout-authority";
+import * as tierCheckoutRolloutMod from "../src/stripe/tier-checkout-rollout";
+import * as tierCheckoutV1ReconcileMod from "../src/stripe/tier-checkout-v1-reconcile";
+import * as tierInvoiceAuthorityMod from "../src/stripe/tier-invoice-authority";
 import * as burnPeriodMod from "../src/burn-period";
 import * as modeLabelMod from "../src/mode-label";
 import * as includedBuildMod from "../src/included-build";
+import * as pastedReferenceMod from "../src/pasted-reference";
 import { handleStripeEvent } from "../src/stripe/webhooks";
 import { workspaceForCustomer, getOrCreateCustomer } from "../src/stripe/customers";
 import { createPortalUrl } from "../src/stripe/actions";
 import { maybeAutoTopup } from "../src/stripe/auto-topup";
 import { anySlots } from "./support/run-slots";
+
+vi.mock("../src/stripe/adapter", async (importActual) => ({
+  ...(await importActual<typeof import("../src/stripe/adapter")>()),
+  getAutoTopupAuthorityKeyMaterial: () => ({
+    id: "v1" as const,
+    key: "isolation-authority-key-32-bytes",
+    fingerprint: `sha256:${"a".repeat(64)}`,
+  }),
+  getAutoTopupAuthorityKey: () => "isolation-authority-key-32-bytes",
+  getAuthenticatedStripeAccountIdentity: async () => ({
+    accountId: "acct_isolation",
+    livemode: false,
+  }),
+}));
 
 /**
  * The Free tier's monthly allowance, FROM THE SEED rather than as a literal
@@ -119,6 +147,8 @@ const req = (attemptId: string) => ({
 const NOT_DB_FACING: Record<string, string> = {
   foldLedger: "pure function — takes rows as arguments, no query",
   effectiveExpiry: "pure function — no query",
+  trackedNicheEntitlement:
+    "pure total lookup over the already-resolved tier — returns the server-owned DB writer cap but reads no workspace row",
   InsufficientCreditsError: "error class",
   PostCallDebitError: "error class",
   WorkspacePausedError: "error class",
@@ -127,9 +157,14 @@ const NOT_DB_FACING: Record<string, string> = {
   RefundSourceNeverExpiresError: "error class",
   AlreadySubscribedError: "error class",
   CheckoutInFlightError: "error class",
+  CheckoutReconciliationRequiredError: "error class",
   NoStripeCustomerError: "error class",
   NoLiveSubscriptionError: "error class",
   NotPausedError: "error class",
+  TierCheckoutRolloutError: "error class",
+  TierCheckoutAuthorityError: "error class",
+  PackCheckoutAuthorityError: "error class",
+  TierInvoiceAuthorityError: "error class",
   // Slice 6 — the composed generation's public surface. Nine error classes,
   // four pure functions and one composition, and every one of them is here for
   // a stated reason rather than as a batch:
@@ -141,12 +176,22 @@ const NOT_DB_FACING: Record<string, string> = {
   GenerationPayloadMismatchError: "error class",
   GenerationRecoveryRequiredError: "error class",
   GenerationUnchargedAttemptCapError: "error class",
-  ModeNotBuiltYetError: "error class",
+  GenerationUnchargedCostCapError: "error class",
   ModeNotInPlanError: "error class",
   UnpricedOperationError: "error class",
   // Slice 7.
   RevisionParentError: "error class",
   UnknownEntitlementTierError: "error class",
+  // Slice 8c (R-98) — the pasted reference's two refusals of its own.
+  PastedReferenceTierError: "error class",
+  PastedReferenceInputError: "error class",
+  PerformanceLearningConfigUnavailableError: "error class",
+  projectUsageRunway:
+    "pure projection over config, pause, balance and aggregate values already read by its caller — no query, scope or workspace access",
+  resolvePerformanceLearningEntitlement:
+    "pure exhaustive matrix over a BillingState and performance-learning config already read by its caller — no query, scope or workspace access",
+  pastedReferenceIntakePort:
+    "COMPOSITION ONLY — the `submitted` adapter's production port. It binds a scope and a clock and forwards every call to `submitPastedReference` (this package, covered below); it owns no query and reads no row of its own (slice 8c, R4/R-98)",
   generationOp:
     "pure function — maps (mode, isRevision) onto a `creditCosts` key, runs no query. R8's whole pricing decision, in one place, so a revision cannot be priced at its parent mode's cost by a branch somebody forgot",
   includedBuildPurposes:
@@ -164,6 +209,7 @@ const NOT_DB_FACING: Record<string, string> = {
   GenerationAssemblyError: "error class (re-exported from @respin/modes)",
   KillTestError: "error class (re-exported from @respin/modes)",
   NoCreatorRulesError: "error class (re-exported from @respin/modes)",
+  SpinSimilarityError: "error class (re-exported from @respin/modes)",
   ScriptOutputError: "error class (re-exported from @respin/modes)",
   UnknownModeError: "error class (re-exported from @respin/modes)",
   priceOf:
@@ -208,12 +254,25 @@ const NOT_DB_FACING: Record<string, string> = {
   ConfigNotMigratedError: "error class (from @respin/config)",
   AutoTopupShortfallError: "error class",
   AutoTopupUnnamedRefusalError: "error class",
+  AutoTopupReconciliationRequiredError: "error class",
+  AutoTopupAuthorityKeyError: "error class",
+  AutoTopupAuthoritySignatureError: "error class",
+  AutoTopupRolloutError: "error class",
+  StripeAccountBindingError: "error class",
+  AutoTopupAttemptIntegrityError: "error class",
+  pendingAutoTopupAttempt:
+    "pure projection over one subscription row already locked and read by its caller — no query or scope mint",
+  mayChargeOffSession:
+    "pure predicate over one subscription row already read by its caller — no query; app/** receives it only through the credits facade so the UI and charge site use one definition",
+  getAutoTopupProtocolState:
+    "global singleton rollout-state read with authenticated provider-binding verification; it reads no workspace row, so there is no A-vs-B isolation dimension",
   LlmError: "error class (from @respin/llm — the base of every provider failure)",
   PauseLengthError: "error class",
   AutoTopupCapError: "error class",
   StripeSessionUrlMissingError: "error class",
   CustomerMappingLostError: "error class",
   BillingRoleError: "error class",
+  BillingReauthenticationError: "error class",
   UnknownTierPriceError: "error class",
   DuplicateStripeEvent: "error class",
   StripeNotConfiguredError: "error class",
@@ -238,6 +297,8 @@ const NOT_DB_FACING: Record<string, string> = {
     "pure predicate over a mirror row already read by its caller — no query of its own; re-exported from the app facade so the billing page's subscribe-vs-portal branch is the FOURTH reader of the one liveness definition, not a fifth definition (phase 4)",
   burnPeriod:
     "pure function over a subscription row already read by its caller, the RESOLVED tier its caller already derived, and a clock — no query of its own; re-exported from the app facade so /usage's period anchor for R7's credit burn is not re-derived a second time (slice 2b), and tier-keyed rather than row-keyed since the 2026-09-01 billing gate (a dead subscription keeps its `current_period_start` forever). It travels with `BURN_PERIOD_COPY`, a two-entry string map naming which period the creator is reading (R17a) — a CONST rather than a function, so these registries (which enumerate exported functions) do not list it separately",
+  classifyStripeReceiptAttribution:
+    "pure receipt-time classification over workspace/customer ids already resolved by the webhook — no query, scope mint, or workspace access",
   modeLabel:
     "pure lookup in `MODE_SPECS` — a mode id in, a creator-facing name out; no query, no config read, no workspace data. Re-exported from the app facade because `@respin/modes` is denied to app/** (R-64) and a label map living in a view would be a second mode vocabulary (slice 6, R17a)",
   // `getStripe` and `setupStripeProducts` used to be listed here. Neither is
@@ -254,6 +315,8 @@ const NOT_DB_FACING: Record<string, string> = {
  * that "needs a key" never silently becomes "untested".
  */
 const STRIPE_BOUND: Record<string, string> = {
+  createStripeExternalCommandPort:
+    "adapter factory for the deletion executor (Phase 10b-1 Task 4). Its execute/reconcile read and, for the auto-top-up fence, write the subscriptions mirror by the WORKSPACE ID CARRIED ON THE COMMAND ROW — an id the deletion authority derived under the membership lock, never a caller claim — and every Stripe call is driven with a fake client in deletion-commands.test.ts, including the cross-workspace no-op when the row has no subscription",
   createTierCheckoutUrl:
     "keyless up to the liveSubscription read — covered by the A-vs-B live-subscription case",
   createPackCheckoutUrl:
@@ -262,6 +325,8 @@ const STRIPE_BOUND: Record<string, string> = {
     "keyless up to the liveSubscription read — covered by the A-vs-B live-subscription case",
   resumeSubscription:
     "keyless up to the subscriptions read — covered by the A-vs-B live-subscription case",
+  findPaymentIntentForAttempt:
+    "provider lookup over a signed opaque attempt identity; it reads no application database row and its authority matching is driven in auto-topup-rollout.test.ts",
 };
 
 const COVERED = new Set([
@@ -292,7 +357,15 @@ const COVERED = new Set([
   "workspaceForCustomer",
   "getOrCreateCustomer",
   "handleStripeEvent",
+  "handleStripeEventInTransaction",
   "maybeAutoTopup",
+  // Package-internal durable-attempt writers. Each is reached only after the
+  // public maybeAutoTopup/webhook authority has selected and locked one
+  // workspace; the A-vs-B auto-top-up case below and the webhook attribution
+  // cases exercise those owners rather than exposing a second app entrypoint.
+  "ensureAutoTopupAttemptProtocol",
+  "clearPendingAutoTopupAttempt",
+  "bindPendingAutoTopupPaymentIntent",
   "createPortalUrl",
   "setAutoTopup",
   // Audit 2026-08-17 remediation (R2, #8). Genuinely COVERED rather than
@@ -301,6 +374,19 @@ const COVERED = new Set([
   // drives every decision this function makes about which workspace it is
   // acting for.
   "createInvoiceRecoveryUrl",
+  // Slice 8c (R-98): the pasted reference's three facade methods, each with a
+  // named two-workspace case below — "submitPastedReference: A's paste …",
+  // "settleParkedAutopsies: B's parked claim …", "pastedReferenceQuote …".
+  // Added WITH their cases, in the same change, for the reason the
+  // `createProfile` entry above records.
+  "submitPastedReference",
+  "settleParkedAutopsies",
+  "pastedReferenceQuote",
+  // Slice 9b: each has a named A-vs-B authority case below. The entitlement
+  // resolver reads the workspace's billing state; runway reads pause, balance
+  // and debit history through one workspace-scoped repeatable-read snapshot.
+  "performanceLearningEntitlementFor",
+  "usageRunwayFor",
 ]);
 
 // EVERY public entrypoint, not just src/index (code-review CHANGE). The two
@@ -314,6 +400,11 @@ const FACADE_METHODS = [
 const FACADE_METHOD_SOURCE: Record<string, string> = {
   getBalance: "deriveBalance",
   getBillingState: "getWorkspaceBillingState",
+  // R-95 (slice 8 fix pass): the tracked-niche allowance facade composes the
+  // covered tier authority (`getWorkspaceBillingState`, its ONLY workspace
+  // read) with `getActiveConfig` (a global document, no workspace row) and the
+  // pure `trackedNicheEntitlement`. Its isolation surface IS the tier read's.
+  trackedNicheEntitlementFor: "getWorkspaceBillingState",
   handleEvent: "handleStripeEvent",
 };
 
@@ -328,6 +419,8 @@ const ENUMERATED: Record<string, object> = {
   "index.ts": credits,
   "app-server.ts": appServer,
   "webhook-server.ts": webhookServer,
+  // Phase 10b-1 Task 4: the dedicated worker's one door into this package.
+  "deletion-server.ts": deletionServer,
   "stripe/actions.ts": stripeActions,
   "stripe/customers.ts": stripeCustomers,
   "stripe/webhooks.ts": stripeWebhooks,
@@ -461,6 +554,16 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
     // not a question a screen has.
     internalOnly: ["purposeIsIncluded", "probedCreditCostKeys"],
   },
+  "pasted-reference.ts": {
+    reason:
+      "the creator-submitted autopsy's MONEY (slice 8c, R-98). Here rather than in @respin/db for the reason profiles.ts and generate.ts are: the tier gate, the active document's price and the ledger are this package's. Its three db-facing entrypoints are covered by named two-workspace cases below; its four constants carry no query; `pastedReferenceIntakePort` is composition over `submitPastedReference`. The two private ledger reads (`autopsyClaimDebit`, `autopsyRefund`) are keyed on the workspace id the minted profile carries and are exercised on both workspaces by those cases.",
+    viaIndex: [
+      "submitPastedReference",
+      "settleParkedAutopsies",
+      "pastedReferenceQuote",
+      "pastedReferenceIntakePort",
+    ],
+  },
   "profiles.ts": {
     reason:
       "the creator-profile ENTITLEMENT decision (slice 1, R-30 constraint 2). It is in this package rather than @respin/db because the cap is priced off the resolved tier, whose sole authority is state.ts here, and @respin/db cannot import it without creating a second tier authority. It owns no db-facing surface of its own: the INSERT and the COUNT are scope-caged write capabilities in @respin/db, and this module composes them behind the lock, the pause gate, the role gate and the cap.",
@@ -553,22 +656,89 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "GenerationPayloadMismatchError",
       "GenerationRecoveryRequiredError",
       "GenerationUnchargedAttemptCapError",
+      // Its money-denominated twin (billing gate, 2026-09-04). Same reason:
+      // `respinCredits.generate` raises it, so `app/**` must be able to
+      // `instanceof` it or the refusal renders as "Something went wrong".
+      "GenerationUnchargedCostCapError",
       "UnpricedOperationError",
       // Slice 7 (R6/R8). The pre-call revision refusal — same reason again:
       // `respinCredits.generate` can raise it, so `app/**` must be able to
       // `instanceof` it or a named refusal about somebody else's output
       // renders as "Something went wrong".
       "RevisionParentError",
+      // Slice 8c (R-98). Same reason again: both are raised by
+      // `respinCredits.submitPastedReference` and rendered on `instanceof`.
+      "PastedReferenceTierError",
+      "PastedReferenceInputError",
+      // Slice 9b. Raised by the app-facing performance-learning resolver and
+      // therefore public for the same typed-copy reason as the errors above.
+      "PerformanceLearningConfigUnavailableError",
+      "AutoTopupReconciliationRequiredError",
     ],
+  },
+  "stripe/deletion-commands.ts": {
+    reason:
+      "the Stripe/local adapter behind the deletion executor's ExternalCommandPort (Phase 10b-1 Task 4) — reached only through the enumerated deletion-server entrypoint, never through index.ts",
+    internalOnly: ["createStripeExternalCommandPort"],
   },
   "stripe/adapter.ts": {
     reason:
       "Stripe client factory + env reads — no query; the facades re-export what app/** needs",
     internalOnly: [
       "StripeNotConfiguredError",
+      "AutoTopupAuthorityKeyError",
+      "StripeAccountBindingError",
       "getStripe",
+      "getAutoTopupAuthorityKeyMaterial",
+      "getAutoTopupAuthorityKey",
+      "getAuthenticatedStripeAccountIdentity",
       "getWebhookSecret",
       "isStripeConfigured",
+    ],
+  },
+  "stripe/auto-topup-authority.ts": {
+    reason:
+      "pure HMAC authority construction and verification over PaymentIntent fields already supplied by the caller; no database query or workspace capability",
+    internalOnly: [
+      "AutoTopupAuthoritySignatureError",
+      "autoTopupAuthorityMetadata",
+      "verifyAutoTopupAuthority",
+    ],
+  },
+  "stripe/auto-topup-rollout-cli.ts": {
+    reason: "operator CLI entrypoint for the rollout authority — importing it would run it",
+    noImport: true,
+  },
+  "stripe/auto-topup-rollout-reconcile.ts": {
+    reason:
+      "operator-only legacy reconciliation behind the global rollout drain; it is never exposed to app/** and resolves workspace attribution through the package's existing customer authority",
+    internalOnly: ["reconcileMissingLegacyAutoTopups"],
+  },
+  "stripe/auto-topup-rollout.ts": {
+    reason:
+      "global protocol rollout and audit authority. The app facade exposes only the read projection; all transition and recovery functions remain operator/package-internal",
+    internalOnly: [
+      "AutoTopupRolloutError",
+      "getAutoTopupProtocolRollout",
+      "getAutoTopupProtocolState",
+      "isAutoTopupProtocolActive",
+      "assertAutoTopupProtocolRecoveryReady",
+      "beginAutoTopupProtocolDrain",
+      "restartAutoTopupProtocolDrain",
+      "auditAutoTopupLegacyDrain",
+      "activateAutoTopupAttemptProtocol",
+    ],
+  },
+  "stripe/auto-topup-v1-reconcile-cli.ts": {
+    reason: "operator CLI entrypoint for durable-attempt recovery — importing it would run it",
+    noImport: true,
+  },
+  "stripe/auto-topup-v1-reconcile.ts": {
+    reason:
+      "operator-only recovery of signed durable attempts under the global rollout authority; never exposed to app/**",
+    internalOnly: [
+      "AutoTopupV1ReconcileError",
+      "reconcileBoundAutoTopupAttempts",
     ],
   },
   "stripe/setup.ts": {
@@ -607,9 +777,21 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "modesIncludedIn",
       "modeOffers",
       "privateFrameworkEntitlement",
+      "trackedNicheEntitlement",
+      "performanceLearningEntitlementFor",
+      "resolvePerformanceLearningEntitlement",
       "ModeNotInPlanError",
-      "ModeNotBuiltYetError",
       "UnknownEntitlementTierError",
+    ],
+  },
+  "days-to-empty.ts": {
+    reason:
+      "Slice 9b's one-snapshot usage runway. The public authority `usageRunwayFor` is covered by a named two-workspace case below; `projectUsageRunway` is pure over already-read values. The internal transaction/read seams exist for focused snapshot and failure-state tests, while `assertUsageRunwayScope` rejects forged and wrong-grain scopes before any reader runs.",
+    viaIndex: ["projectUsageRunway", "usageRunwayFor"],
+    internalOnly: [
+      "assertUsageRunwayScope",
+      "usageRunwayInTx",
+      "usageRunwayForWithReaders",
     ],
   },
   "burn-period.ts": {
@@ -633,7 +815,67 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "PackPriceUnavailableError",
       "PackPriceMismatchError",
       "PackPriceNotMappedError",
+      "packCheckoutV1PriceKey",
+      "assertPackCheckoutV1WriterFence",
+      "mappedPackPriceId",
       "resolvePackPrice",
+    ],
+  },
+  "stripe/pack-checkout-authority.ts": {
+    reason:
+      "pure HMAC authority construction and verification over one provider Checkout Session; no database query or workspace capability",
+    internalOnly: [
+      "PackCheckoutAuthorityError",
+      "packCheckoutAuthorityMetadata",
+      "verifyPackCheckoutAuthority",
+    ],
+  },
+  "stripe/tier-checkout-authority.ts": {
+    reason:
+      "pure HMAC generation-authority construction and verification over provider metadata; no database query or workspace capability",
+    internalOnly: [
+      "TierCheckoutAuthorityError",
+      "tierCheckoutAuthorityMetadata",
+      "tierCheckoutAuthorityMetadataFromProvider",
+      "verifyTierCheckoutAuthority",
+    ],
+  },
+  "stripe/tier-checkout-rollout-cli.ts": {
+    reason: "operator CLI entrypoint for the tier Checkout rollout — importing it would run it",
+    noImport: true,
+  },
+  "stripe/tier-checkout-rollout.ts": {
+    reason:
+      "operator-only tier Checkout rollout, provider audit, and recovery fence; never exposed to app/** except its typed refusal through the facade",
+    internalOnly: [
+      "TierCheckoutRolloutError",
+      "getTierCheckoutProtocolRollout",
+      "getTierCheckoutProtocolState",
+      "assertTierCheckoutProtocolActive",
+      "assertTierCheckoutProtocolRecoveryReady",
+      "beginTierCheckoutProtocolDrain",
+      "restartTierCheckoutProtocolDrain",
+      "auditTierCheckoutLegacyDrain",
+      "activateTierCheckoutAttemptProtocol",
+    ],
+  },
+  "stripe/tier-checkout-v1-reconcile.ts": {
+    reason:
+      "operator-only recovery of a signed provider tier Checkout under lifecycle and rollout locks; never exposed to app/**",
+    internalOnly: [
+      "TierCheckoutV1ReconcileError",
+      "reconcileTierCheckoutV1Session",
+    ],
+  },
+  "stripe/tier-invoice-authority.ts": {
+    reason:
+      "pure HMAC invoice-time economic authority construction and verification; no database query or workspace capability",
+    internalOnly: [
+      "TierInvoiceAuthorityError",
+      "tierInvoiceAuthorityMetadata",
+      "hasTierInvoiceAuthorityMetadata",
+      "tierInvoiceAuthorityMetadataFromProvider",
+      "verifyTierInvoiceAuthority",
     ],
   },
 };
@@ -641,6 +883,7 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
 /** Namespaces for the internal modules, so their claims can be checked. */
 const INTERNAL_NAMESPACES: Record<string, object> = {
   "balance.ts": balanceMod,
+  "stripe/deletion-commands.ts": deletionCommandsMod,
   "fold.ts": foldMod,
   "ledger.ts": ledgerMod,
   "state.ts": stateMod,
@@ -654,12 +897,23 @@ const INTERNAL_NAMESPACES: Record<string, object> = {
   "infer-voice.ts": inferVoiceMod,
   "generate.ts": generateMod,
   "mode-access.ts": modeAccessMod,
+  "days-to-empty.ts": daysToEmptyMod,
   "stripe/adapter.ts": adapterMod,
+  "stripe/auto-topup-authority.ts": autoTopupAuthorityMod,
+  "stripe/auto-topup-rollout-reconcile.ts": autoTopupRolloutReconcileMod,
+  "stripe/auto-topup-rollout.ts": autoTopupRolloutMod,
+  "stripe/auto-topup-v1-reconcile.ts": autoTopupV1ReconcileMod,
   "stripe/setup.ts": setupMod,
   "stripe/pack-price.ts": packPriceMod,
+  "stripe/pack-checkout-authority.ts": packCheckoutAuthorityMod,
+  "stripe/tier-checkout-authority.ts": tierCheckoutAuthorityMod,
+  "stripe/tier-checkout-rollout.ts": tierCheckoutRolloutMod,
+  "stripe/tier-checkout-v1-reconcile.ts": tierCheckoutV1ReconcileMod,
+  "stripe/tier-invoice-authority.ts": tierInvoiceAuthorityMod,
   "burn-period.ts": burnPeriodMod,
   "mode-label.ts": modeLabelMod,
   "included-build.ts": includedBuildMod,
+  "pasted-reference.ts": pastedReferenceMod,
 };
 
 /**
@@ -678,7 +932,9 @@ const FACADE_REEXPORTED: Record<string, string> = {
   modeLabel:
     "R17a (slice 6): the ONE route from app/** to `MODE_SPECS[…].label`. `@respin/modes` is denied to app/** (R-64), so without this re-export the by-mode panel would either print raw mode ids or grow a hand-written label map — a second mode vocabulary that goes stale the day slice 7 adds six modes. Pure: a string in, a string out, no query and no workspace data.",
   getWebhookSecret:
-    "the SIGNATURE-VERIFICATION secret, reached only through the WEBHOOK facade — which is allowlisted to app/api/stripe/webhook/** alone, not to app/** at large (see app-server.ts's header for why that distinction exists). The route needs it to call the SDK's static constructEvent BEFORE any handler runs; it performs no query and touches no workspace data.",
+      "the SIGNATURE-VERIFICATION secret, reached only through the WEBHOOK facade — which is allowlisted to app/api/stripe/webhook/** alone, not to app/** at large (see app-server.ts's header for why that distinction exists). The route needs it to call the SDK's static constructEvent BEFORE any handler runs; it performs no query and touches no workspace data.",
+  mayChargeOffSession:
+    "the one pure off-session-chargeability predicate. The billing page needs the same answer as maybeAutoTopup so it does not present a dead control; it receives a row already scoped by the server and performs no query or mutation.",
 };
 
 it("INTERNAL_MODULES claims are CHECKED, not prose (tenancy round-7 NOTE)", () => {
@@ -994,6 +1250,10 @@ async function twoWorkspaces(db: TestDb): Promise<{
  * auth user, one domain user and one membership per role.
  */
 let mintSeq = 0;
+const reauthenticationByScope = new WeakMap<
+  WorkspaceScope,
+  { authUserId: string; sessionId: string; reauthenticatedAt: Date }
+>();
 async function mintScope(
   db: TestDb,
   workspaceId: VerifiedWorkspaceId,
@@ -1008,7 +1268,25 @@ async function mintScope(
   await db
     .insert(schema.memberships)
     .values({ userId: u.id, workspaceId, role });
-  return withWorkspace(db, { authUserId, workspaceId });
+  const reauthenticatedAt = new Date();
+  const sessionId = `session-${authUserId}`;
+  await db.insert(schema.session).values({
+    id: sessionId,
+    token: `token-${authUserId}`,
+    userId: authUserId,
+    expiresAt: new Date(reauthenticatedAt.getTime() + HOUR),
+    updatedAt: reauthenticatedAt,
+    reauthenticatedAt,
+  });
+  const scope = await withWorkspace(db, { authUserId, workspaceId });
+  reauthenticationByScope.set(scope, { authUserId, sessionId, reauthenticatedAt });
+  return scope;
+}
+
+function reauthenticationFor(scope: WorkspaceScope) {
+  const authority = reauthenticationByScope.get(scope);
+  if (!authority) throw new Error("test fixture is missing exact-session reauthentication");
+  return authority;
 }
 
 describe("cross-workspace isolation (A must never see or be moved by B)", () => {
@@ -1276,6 +1554,34 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
       "isolation-test"
     );
+    // This is deliberately a pre-cutover legacy settlement: it proves the cap
+    // query includes retained protocol-0 history after v1 activation without
+    // attempting to create a new unbound ledger row after the fence is live.
+    await db.insert(creditLedger).values([
+      {
+        workspaceId: B, delta: 1000, kind: "pack", refType: "auto_topup",
+        refId: "pi_b1", stripeEventId: "evt_b1", amountCents: 2000,
+        configVersion: 1, expiresAt: future(24 * HOUR),
+      },
+    ]);
+    const rolloutAt = new Date();
+    await db
+      .update(schema.autoTopupProtocolRollouts)
+      .set({
+        state: "active",
+        revision: 1,
+        fleetQuiescedAt: rolloutAt,
+        drainStartedAt: rolloutAt,
+        providerReconciledAt: rolloutAt,
+        reconciledCustomers: 0,
+        reconciledPaymentIntents: 0,
+        authorityKeyId: "v1",
+        authorityKeyFingerprint: `sha256:${"a".repeat(64)}`,
+        stripeAccountId: "acct_isolation",
+        stripeLivemode: false,
+        activatedAt: rolloutAt,
+      })
+      .where(eq(schema.autoTopupProtocolRollouts.protocol, "v1"));
     await db.insert(subscriptions).values([
       {
         workspaceId: A, stripeCustomerId: "cus_A",
@@ -1283,21 +1589,19 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
         // subscription (billing round-7 CHANGE 1), and this case is about the
         // CAP being per-workspace, not about the liveness guard.
         stripeSubscriptionId: "sub_A", status: "active",
-        autoTopupEnabled: true, autoTopupMonthlyCapCents: 2000,
+        autoTopupV1Enabled: true, autoTopupMonthlyCapCents: 2000,
       },
       {
         workspaceId: B, stripeCustomerId: "cus_B",
         stripeSubscriptionId: "sub_B", status: "active",
-        autoTopupEnabled: true, autoTopupMonthlyCapCents: 2000,
+        autoTopupV1Enabled: true, autoTopupMonthlyCapCents: 2000,
       },
     ]);
-    // B has already spent its whole cap this month.
-    await db.insert(creditLedger).values([
-      {
-        workspaceId: B, delta: 1000, kind: "pack", refType: "auto_topup",
-        refId: "pi_b1", amountCents: 2000, expiresAt: future(24 * HOUR),
-      },
-    ]);
+    await db
+      .update(subscriptions)
+      .set({ autoTopupV1Enabled: true })
+      .where(sql`${subscriptions.workspaceId} IN (${A}, ${B})`);
+    // B has already spent its whole cap this month via the retained settlement.
     // B is capped...
     expect(await maybeAutoTopup(db, B, 100, new Date())).toEqual({
       triggered: false,
@@ -1316,8 +1620,9 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     await db.insert(subscriptions).values({
       workspaceId: B, stripeCustomerId: "cus_B", status: "active",
     });
+    const scopeA = await mintScope(db, A, "owner");
     await expect(
-      createPortalUrl(db, await mintScope(db, A, "owner"), "https://x")
+      createPortalUrl(db, scopeA, "https://x", reauthenticationFor(scopeA))
     ).rejects.toThrow(stripeActions.NoStripeCustomerError);
   });
 
@@ -1332,8 +1637,13 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     });
     // A has NOTHING: refused on the missing customer, never reaching Stripe and
     // never seeing B's recoverable subscription.
+    const missingScopeA = await mintScope(db, A, "owner");
     await expect(
-      stripeActions.createInvoiceRecoveryUrl(db, await mintScope(db, A, "owner"))
+      stripeActions.createInvoiceRecoveryUrl(
+        db,
+        missingScopeA,
+        reauthenticationFor(missingScopeA)
+      )
     ).rejects.toThrow(stripeActions.NoStripeCustomerError);
 
     // A with a HEALTHY subscription of its own: refused on STATUS, and this is
@@ -1345,13 +1655,23 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       stripeSubscriptionId: "sub_A_active", stripePriceId: "price_creator",
       status: "active",
     });
+    const activeScopeA = await mintScope(db, A, "owner");
     await expect(
-      stripeActions.createInvoiceRecoveryUrl(db, await mintScope(db, A, "owner"))
+      stripeActions.createInvoiceRecoveryUrl(
+        db,
+        activeScopeA,
+        reauthenticationFor(activeScopeA)
+      )
     ).rejects.toThrow(stripeActions.NotRecoverableError);
 
     // …and a non-owner of the incomplete workspace is refused ahead of both.
+    const editorScopeB = await mintScope(db, B, "editor");
     await expect(
-      stripeActions.createInvoiceRecoveryUrl(db, await mintScope(db, B, "editor"))
+      stripeActions.createInvoiceRecoveryUrl(
+        db,
+        editorScopeB,
+        reauthenticationFor(editorScopeB)
+      )
     ).rejects.toThrow(stripeActions.BillingRoleError);
   });
 
@@ -1373,13 +1693,15 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       status: "active",
     });
     const ctxA = await mintScope(db, A, "owner");
+    const authorityA = reauthenticationByScope.get(ctxA);
+    if (!authorityA) throw new Error("test fixture is missing exact-session reauthentication");
 
     // pause/resume read the SUBSCRIPTION: B's must be invisible, so A refuses
     // for want of its own — never acts on sub_B.
     await expect(
-      stripeActions.pauseSubscription(db, ctxA, 1, new Date())
+      stripeActions.pauseSubscription(db, ctxA, 1, new Date(), authorityA)
     ).rejects.toThrow(/subscription/i);
-    await expect(stripeActions.resumeSubscription(db, ctxA)).rejects.toThrow(
+    await expect(stripeActions.resumeSubscription(db, ctxA, authorityA)).rejects.toThrow(
       /subscription/i
     );
 
@@ -1390,13 +1712,13 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       stripeActions.createTierCheckoutUrl(db, ctxA, "creator", "a@example.com", {
         successUrl: "https://x/ok",
         cancelUrl: "https://x/no",
-      })
-    ).rejects.toThrow(/(Stripe|STRIPE_SECRET_KEY|price)/i);
+      }, authorityA)
+    ).rejects.toThrow(/(Stripe|STRIPE_SECRET_KEY|price|rollout)/i);
     await expect(
       stripeActions.createTierCheckoutUrl(db, ctxA, "creator", "a@example.com", {
         successUrl: "https://x/ok",
         cancelUrl: "https://x/no",
-      })
+      }, authorityA)
     ).rejects.not.toThrow(/[Aa]lready subscribed/);
 
     // ...and none of it wrote to B.
@@ -1454,13 +1776,15 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       {
         workspaceId: B, stripeCustomerId: "cus_B",
         stripeSubscriptionId: "sub_B_at", status: "active",
-        autoTopupEnabled: true, autoTopupMonthlyCapCents: 5000,
+        autoTopupV1Enabled: true, autoTopupMonthlyCapCents: 5000,
       },
     ]);
+    const ownerScope = await mintScope(db, A, "owner");
     await stripeActions.setAutoTopup(
       db,
-      await mintScope(db, A, "owner"),
-      { enabled: true, monthlyCapCents: 1000 }
+      ownerScope,
+      { enabled: true, monthlyCapCents: 1000 },
+      reauthenticationByScope.get(ownerScope)!
     );
     const rows = await db.select().from(subscriptions);
     expect(rows.find((r) => r.workspaceId === A)?.autoTopupMonthlyCapCents).toBe(1000);
@@ -1520,6 +1844,212 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     expect(rows).toHaveLength(2);
     expect(rows.filter((r) => r.workspaceId === (A as string))).toHaveLength(1);
     expect(rows.filter((r) => r.workspaceId === (B as string))).toHaveLength(1);
+  });
+
+  /**
+   * Two PAID workspaces, one profile each, `credits` each — the fixture the
+   * three slice-8c cases share. Paid through the ONE authority (a live
+   * subscription plus a price the ACTIVE document maps), never a mirror flag.
+   */
+  async function twoPaidWorkspaces(db: TestDb, creditsEach: number) {
+    await seedDb(db);
+    const { A, B } = await twoWorkspaces(db);
+    const ownerA = await mintScope(db, A, "owner");
+    const ownerB = await mintScope(db, B, "owner");
+    const { content } = await getActiveConfig(db);
+    await appendConfigVersion(db, { ...content, stripePriceMap: { price_creator: "creator" } }, "iso-admin");
+    for (const [ws, n] of [[A, "a"], [B, "b"]] as const) {
+      await db.insert(schema.subscriptions).values({
+        workspaceId: ws, stripeCustomerId: `cus_${n}`, stripeSubscriptionId: `sub_${n}`,
+        stripePriceId: "price_creator", status: "active",
+      });
+      if (creditsEach > 0) {
+        await tx(db, (t) =>
+          credits.grantCredits(t, {
+            workspaceId: ws, amount: creditsEach, expiresAt: future(365 * 24 * HOUR),
+            refType: "test", refId: `${n}-grant`, configVersion: 1,
+          })
+        );
+      }
+    }
+    const profA = await credits.createProfile(db, ownerA, "A's creator", new Date());
+    const profB = await credits.createProfile(db, ownerB, "B's creator", new Date());
+    return { A, B, ownerA, ownerB, profA, profB };
+  }
+  const PASTE = { sourceUrl: "https://www.youtube.com/watch?v=iso123", transcript: "Open on the tradeoff.\nShow the pan." };
+  const ledgerOf = async (db: TestDb, ws: VerifiedWorkspaceId) =>
+    (await db.select().from(creditLedger)).filter((r) => r.workspaceId === (ws as string));
+
+  it("submitPastedReference: A's paste lands only in A — B's ledger, rows and replay are untouched by it", async () => {
+    const db = await createTestDb();
+    const { A, B, ownerA, ownerB, profA, profB } = await twoPaidWorkspaces(db, 100);
+    const price = (await getActiveConfig(db)).content.creditCosts.autopsy;
+
+    const inA = await credits.submitPastedReference(db, ownerA, profA.id, PASTE, new Date());
+    expect(inA.creditsChargedNow).toBe(price);
+    // B's balance is untouched, and B's ledger holds no autopsy debit.
+    expect((await credits.deriveBalance(db, B)).balance).toBe(100);
+    expect((await ledgerOf(db, B)).filter((r) => r.refType === "autopsy_claim")).toHaveLength(0);
+    expect((await ledgerOf(db, A)).filter((r) => r.refType === "autopsy_claim")).toHaveLength(1);
+
+    // NON-VACUITY: the SAME URL and text pasted in B is NOT a replay of A's
+    // claim — B gets its own claim and pays its own price. If the idempotency
+    // lookup or the debit lookup leaked across workspaces, B would be charged
+    // 0 here (or A's claim id would come back).
+    const inB = await credits.submitPastedReference(db, ownerB, profB.id, PASTE, new Date());
+    expect(inB.claimId).not.toBe(inA.claimId);
+    expect(inB.creditsChargedNow).toBe(price);
+    expect((await credits.deriveBalance(db, A)).balance).toBe(100 - price);
+    expect((await credits.deriveBalance(db, B)).balance).toBe(100 - price);
+    // ...and every private row carries its own workspace.
+    for (const table of [schema.trendItems, schema.autopsyCacheClaims, schema.onboardingInputs] as const) {
+      const rows = await db.select().from(table);
+      expect(rows.filter((r) => r.workspaceId === (A as string))).toHaveLength(1);
+      expect(rows.filter((r) => r.workspaceId === (B as string))).toHaveLength(1);
+    }
+  });
+
+  it("settleParkedAutopsies: B's parked claim never refunds A, and A's settlement never touches B's ledger", async () => {
+    const db = await createTestDb();
+    const { A, B, ownerA, ownerB, profA, profB } = await twoPaidWorkspaces(db, 100);
+    const inB = await credits.submitPastedReference(db, ownerB, profB.id, PASTE, new Date());
+    await db.update(schema.autopsyCacheClaims).set({ status: "parked", attemptCount: 5 })
+      .where(eq(schema.autopsyCacheClaims.id, inB.claimId));
+
+    // A settles: nothing of A's is parked, and B's parked claim is not A's.
+    expect(await credits.settleParkedAutopsies(db, ownerA, profA.id)).toEqual({ refundedClaimIds: [], creditsReturned: 0, deferred: false, neverChargedClaimIds: [], alreadyRefundedClaimIds: [] });
+    expect((await credits.deriveBalance(db, A)).balance).toBe(100);
+    expect((await ledgerOf(db, B)).filter((r) => r.refType === "autopsy_refund")).toHaveLength(0);
+
+    // NON-VACUITY: B's own settlement DOES refund it, exactly once, in B.
+    expect(await credits.settleParkedAutopsies(db, ownerB, profB.id)).toEqual({ refundedClaimIds: [inB.claimId], creditsReturned: inB.creditsChargedNow, deferred: false, neverChargedClaimIds: [], alreadyRefundedClaimIds: [] });
+    expect((await credits.deriveBalance(db, B)).balance).toBe(100);
+    const refunds = (await db.select().from(creditLedger)).filter((r) => r.refType === "autopsy_refund");
+    expect(refunds).toHaveLength(1);
+    expect(refunds[0].workspaceId).toBe(B as string);
+    // ...and a cross-workspace scope cannot even name B's profile.
+    await expect(credits.settleParkedAutopsies(db, ownerA, profB.id)).rejects.toThrow();
+  });
+
+  it("pastedReferenceQuote reads only the given workspace's tier, balance and pause", async () => {
+    const db = await createTestDb();
+    const { A, B } = await twoPaidWorkspaces(db, 100);
+    await tx(db, (t) => credits.recordPauseStart(t, B, new Date(), future(30 * 24 * HOUR), new Date()));
+    await tx(db, (t) => credits.grantCredits(t, {
+      workspaceId: B, amount: 500, expiresAt: future(365 * 24 * HOUR), refType: "test", refId: "b-extra", configVersion: 1,
+    }));
+    const price = (await getActiveConfig(db)).content.creditCosts.autopsy;
+    expect(await credits.pastedReferenceQuote(db, A, new Date())).toEqual({
+      creditCost: price, balance: 100, tier: "creator", allowed: { ok: true },
+    });
+    expect((await credits.pastedReferenceQuote(db, B, new Date())).allowed).toEqual({ ok: false, reason: "paused" });
+  });
+
+  it("performanceLearningEntitlementFor resolves each workspace's own billing tier against the active config", async () => {
+    const db = await createTestDb();
+    await seedDb(db);
+    const { A, B } = await twoWorkspaces(db);
+    const { content } = await getActiveConfig(db);
+    await appendConfigVersion(
+      db,
+      {
+        ...content,
+        stripePriceMap: { price_creator: "creator" },
+        // Deliberately inverted: this proves the result came from the exact
+        // configured tier rather than a guessed paid/full or free/view map.
+        performanceLearning: {
+          free: "full",
+          creator: "view_only",
+          pro: "full",
+          studio: "full",
+        },
+      },
+      "isolation-test"
+    );
+    await db.insert(subscriptions).values({
+      workspaceId: B,
+      stripeCustomerId: "cus_perf_b",
+      stripeSubscriptionId: "sub_perf_b",
+      stripePriceId: "price_creator",
+      status: "active",
+    });
+
+    // B's paid row must not move A off its own absent/dead -> Free state.
+    expect(
+      await credits.performanceLearningEntitlementFor(db, A, new Date())
+    ).toBe("full");
+    // NON-VACUITY: B's own mapped paid state resolves differently.
+    expect(
+      await credits.performanceLearningEntitlementFor(db, B, new Date())
+    ).toBe("view_only");
+  });
+
+  it("usageRunwayFor reads only the scoped workspace's pause, balance and debit history", async () => {
+    const db = await createTestDb();
+    await seedDb(db);
+    const { A, B } = await twoWorkspaces(db);
+    const ownerA = await mintScope(db, A, "owner");
+    const ownerB = await mintScope(db, B, "owner");
+    const { content } = await getActiveConfig(db);
+    await appendConfigVersion(
+      db,
+      { ...content, stripePriceMap: { price_creator: "creator" } },
+      "isolation-test"
+    );
+    await db.insert(subscriptions).values([
+      {
+        workspaceId: A,
+        stripeCustomerId: "cus_runway_a",
+        stripeSubscriptionId: "sub_runway_a",
+        stripePriceId: "price_creator",
+        status: "active",
+      },
+      {
+        workspaceId: B,
+        stripeCustomerId: "cus_runway_b",
+        stripeSubscriptionId: "sub_runway_b",
+        stripePriceId: "price_creator",
+        status: "active",
+      },
+    ]);
+
+    const base = new Date();
+    const ago = (days: number) =>
+      new Date(base.getTime() - days * 24 * HOUR);
+    const expiresAt = new Date(base.getTime() + 365 * 24 * HOUR);
+    await db.insert(creditLedger).values([
+      { workspaceId: A, delta: 100, kind: "grant", refType: "test", refId: "runway-a-grant", expiresAt, configVersion: 1, createdAt: ago(4) },
+      { workspaceId: A, delta: -10, kind: "debit", refType: "runway", refId: "runway-a-1", expiresAt: null, configVersion: 1, createdAt: ago(3) },
+      { workspaceId: A, delta: -10, kind: "debit", refType: "runway", refId: "runway-a-2", expiresAt: null, configVersion: 1, createdAt: ago(2) },
+      { workspaceId: A, delta: -10, kind: "debit", refType: "runway", refId: "runway-a-3", expiresAt: null, configVersion: 1, createdAt: ago(1) },
+      { workspaceId: B, delta: 500, kind: "grant", refType: "test", refId: "runway-b-grant", expiresAt, configVersion: 1, createdAt: ago(4) },
+      { workspaceId: B, delta: -100, kind: "debit", refType: "runway", refId: "runway-b-1", expiresAt: null, configVersion: 1, createdAt: ago(3) },
+      { workspaceId: B, delta: -100, kind: "debit", refType: "runway", refId: "runway-b-2", expiresAt: null, configVersion: 1, createdAt: ago(2) },
+      { workspaceId: B, delta: -100, kind: "debit", refType: "runway", refId: "runway-b-3", expiresAt: null, configVersion: 1, createdAt: ago(1) },
+    ]);
+    // The pause begins after all B debits: the fixture respects the writer's
+    // no-debit-during-pause invariant while proving B's pause is invisible to A.
+    await db.insert(pausePeriods).values({
+      workspaceId: B,
+      startedAt: new Date(base.getTime() - 12 * HOUR),
+    });
+
+    expect(await credits.usageRunwayFor(db, ownerA)).toMatchObject({
+      state: "estimate",
+      balance: 70,
+      totalDebit: 30,
+      debitDayCount: 3,
+      dailyRate: 1,
+      daysToEmpty: 70,
+    });
+    // NON-VACUITY: the same authority can see B's distinct rows and pause,
+    // while those values did not contaminate A's estimate above.
+    expect(await credits.usageRunwayFor(db, ownerB)).toMatchObject({
+      state: "paused",
+      balance: 200,
+      totalDebit: 300,
+      debitDayCount: 3,
+    });
   });
 
   it("runInference: A's attempt is priced off A's OWN history, and never reaches B", async () => {

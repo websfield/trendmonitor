@@ -74,6 +74,10 @@ const TABLE_EXPORT = "generationFeedback";
  */
 const RAW_FEEDBACK_READER_FILES: readonly string[] = [
   "packages/db/src/with-workspace.ts",
+  // Phase 10b-1 Task 4: the deletion executor's SQL port renders every
+  // registry table by identifier under the operation's subject predicate —
+  // it erases and counts residue, it never reads content for a product path.
+  "packages/db/src/lifecycle-sql-port.ts",
 ];
 
 /**
@@ -86,6 +90,108 @@ const RAW_FEEDBACK_READER_FILES: readonly string[] = [
  * the planted case below proves the prefix admits a file inside it.
  */
 const PROPOSAL_CONSTRUCTOR_PACKAGE = "packages/brain/";
+
+/**
+ * FILES THAT MAY DECLARE A *CURATION* PROPOSAL — an explicit, reasoned
+ * allowance, added 2026-09-03 (learning gate CHANGE 2).
+ *
+ * THE RECONCILIATION THIS RECORDS: the ledger's 2026-09-02 restore entry has
+ * this test RED for "a proposal constructor outside `packages/brain`, in
+ * `packages/trends`". The test file did not change; the declarations did —
+ * the family became `proposeFramework` plus a handoff type (both in
+ * `packages/trends/src/framework-proposal.ts`, since deleted) and `proposeSharedFramework`
+ * / `insertProposedSharedFramework` / `resolveAutopsyFramework`
+ * (`packages/db/src/frameworks.ts`), none of which contains "proposal" or
+ * "promot", so the name rule stopped seeing them. That is passing by
+ * SPELLING, and spelling is not a reason. (The trends-side port,
+ * `framework-proposal.ts`, was dead code with no production caller and is no
+ * longer in the tree as of this fix pass; the existence check below is what
+ * noticed, and the list shrank to the one real authority.)
+ *
+ * THE REASON: R-94 distinguishes two acts that happen to share a word. A
+ * PROMOTION proposal (R-10/R-44) derives a per-creator brain rule from
+ * verified results — `packages/brain` only, slice 9. A CURATION proposal
+ * (REQ-D03/D04, R-94) is a mechanism-level SHARED-LIBRARY candidate: it writes
+ * exactly one table (`frameworks`), exactly one status (`curator_status =
+ * 'proposed'`), never a brain document, and cannot enter generation until a
+ * human curator approves it. The file below is the only one allowed to
+ * declare the second kind, and ONLY under the `proposal` rule — a
+ * `promotion`/`promote`-named declaration in it is still a finding.
+ *
+ * EXACT PATHS, compared with `===`, for the reason `RAW_FEEDBACK_READER_FILES`
+ * gives. What keeps this allowance honest is not the list but the positive
+ * test below it: the curation writers' sole write target is `frameworks`
+ * with `curatorStatus: "proposed"`, checked structurally against the real
+ * source and against doctored copies that violate it.
+ */
+const CURATION_PROPOSAL_FILES: readonly string[] = [
+  "packages/db/src/frameworks.ts",
+];
+
+/**
+ * THE CURATION PATH'S WRITERS, as a list. `resolveAutopsyFramework` is what
+ * `system-spend.ts`'s finalize transaction calls (R-94's durable decision);
+ * `insertProposedSharedFramework` is the one INSERT it reaches;
+ * `proposeSharedFramework` is the direct trend-derived entry. A function
+ * renamed away from this list fails LOUDLY (`<fn not found>`) rather than
+ * silently leaving the scan with nothing to check.
+ */
+const CURATION_WRITERS: readonly string[] = [
+  "insertProposedSharedFramework",
+  "resolveAutopsyFramework",
+  "proposeSharedFramework",
+];
+
+type CurationWriteFinding =
+  | { fn: string; kind: "write"; verb: string; target: string }
+  | { fn: string; kind: "curatorStatus"; via: "values" | "set"; value: string }
+  | { fn: string; kind: "missing" };
+
+/**
+ * Every `.insert(X)` / `.update(X)` / `.delete(X)` inside the named functions,
+ * plus every `curatorStatus:` property inside a `.values({...})` or
+ * `.set({...})` there. Structural (parsed), not a text window.
+ */
+export function scanCurationWrites(
+  source: string,
+  fns: readonly string[]
+): CurationWriteFinding[] {
+  const sf = ts.createSourceFile("x.ts", source, ts.ScriptTarget.Latest, true);
+  const out: CurationWriteFinding[] = [];
+  const bodies = new Map<string, ts.Node>();
+  const findFns = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name && fns.includes(node.name.getText(sf))) {
+      bodies.set(node.name.getText(sf), node);
+    }
+    ts.forEachChild(node, findFns);
+  };
+  findFns(sf);
+  for (const fn of fns) {
+    const body = bodies.get(fn);
+    if (!body) {
+      out.push({ fn, kind: "missing" });
+      continue;
+    }
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+        const verb = node.expression.name.getText(sf);
+        if ((verb === "insert" || verb === "update" || verb === "delete") && node.arguments[0]) {
+          out.push({ fn, kind: "write", verb, target: node.arguments[0].getText(sf) });
+        }
+        if ((verb === "values" || verb === "set") && node.arguments[0] && ts.isObjectLiteralExpression(node.arguments[0])) {
+          for (const prop of node.arguments[0].properties) {
+            if (ts.isPropertyAssignment(prop) && prop.name.getText(sf) === "curatorStatus") {
+              out.push({ fn, kind: "curatorStatus", via: verb, value: prop.initializer.getText(sf) });
+            }
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(body);
+  }
+  return out;
+}
 
 /**
  * How the table was NAMED at the read site.
@@ -528,15 +634,19 @@ const PROPOSAL_NAME_RULES: readonly { rule: string; pattern: RegExp }[] = [
   { rule: "promote", pattern: /^promote[A-Z_]?/ },
 ];
 
-export function scanProposalConstructors(
+function scanNamedProposalConstructors(
   files: Map<string, string>
 ): DerivationFinding[] {
   const out: DerivationFinding[] = [];
   for (const [file, raw] of files) {
     if (file.startsWith(PROPOSAL_CONSTRUCTOR_PACKAGE)) continue;
     const sf = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest, true);
+    const curationFile = CURATION_PROPOSAL_FILES.includes(file);
     const record = (name: string) => {
       for (const { rule, pattern } of PROPOSAL_NAME_RULES) {
+        // The R-94 allowance: a curation file may declare a *proposal*;
+        // the promotion vocabulary stays a finding everywhere but brain.
+        if (curationFile && rule === "proposal") continue;
         if (pattern.test(name)) out.push({ file, symbol: name, rule });
       }
     };
@@ -552,6 +662,99 @@ export function scanProposalConstructors(
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
         record(node.name.getText(sf));
       }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/**
+ * The promotion boundary is structural, not an identifier convention.
+ *
+ * `promotion-ops.ts` is allowed to PROJECT a minted draft into its database
+ * columns, but it must not mint a draft-shaped value itself.  A real draft has
+ * a target/evidence pair in addition to its source identity; the DB projection
+ * has `targetKind`/`payload` instead.  That distinction lets this guard catch
+ * an inline object even when its function is called `deriveCandidate`, without
+ * mistaking persistence for a second constructor.
+ */
+type PromotionBoundaryFinding = {
+  file: string;
+  shape: "inline-draft" | "draft-cast" | "public-payload";
+};
+
+const DRAFT_TYPE = /(?:Promotion|Result|Feedback)ProposalDraft\b/;
+const DRAFT_KEYS = new Set([
+  "source", "familyKey", "evidenceDigest", "target", "evidence", "rule", "value", "basisBrainDocId",
+]);
+
+function objectKeys(node: ts.ObjectLiteralExpression, sf: ts.SourceFile): Set<string> {
+  const keys = new Set<string>();
+  for (const property of node.properties) {
+    if (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) {
+      keys.add(property.name.getText(sf).replace(/["']/g, ""));
+    }
+  }
+  return keys;
+}
+
+function isDraftLiteral(node: ts.ObjectLiteralExpression, sf: ts.SourceFile): boolean {
+  const keys = objectKeys(node, sf);
+  const matched = [...keys].filter((key) => DRAFT_KEYS.has(key));
+  return keys.has("source") && keys.has("familyKey") && keys.has("evidenceDigest") &&
+    keys.has("target") && keys.has("evidence") && matched.length >= 6;
+}
+
+/**
+ * Finds a second promotion mint or a client-shaped promotion API outside the
+ * sole constructor package.  It intentionally does not use "proposal" in a
+ * candidate identifier: callers can rename a bypass, but they cannot remove
+ * the fields needed to make a usable draft.
+ */
+export function scanPromotionConstructorBoundary(
+  files: Map<string, string>
+): PromotionBoundaryFinding[] {
+  const out: PromotionBoundaryFinding[] = [];
+  for (const [file, raw] of files) {
+    if (file.startsWith(PROPOSAL_CONSTRUCTOR_PACKAGE)) continue;
+    const sf = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest, true);
+    const record = (shape: PromotionBoundaryFinding["shape"]) => out.push({ file, shape });
+    const payloadText = (text: string) =>
+      DRAFT_TYPE.test(text) ||
+      (text.includes("familyKey") && text.includes("evidenceDigest")) ||
+      (text.includes("source") && text.includes("evidence") && text.includes("target"));
+    const exportedPayload = (node: ts.Node): boolean => {
+      const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
+      if (!modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) return false;
+      if (ts.isTypeAliasDeclaration(node)) return payloadText(node.type.getText(sf));
+      if (ts.isInterfaceDeclaration(node)) return payloadText(node.members.map((member) => member.getText(sf)).join("\n"));
+      if (ts.isFunctionDeclaration(node)) {
+        return node.parameters.some((parameter) => payloadText(parameter.type?.getText(sf) ?? ""));
+      }
+      if (ts.isVariableStatement(node)) {
+        return node.declarationList.declarations.some((declaration) => {
+          const init = declaration.initializer;
+          if (init === undefined) return false;
+          if (!ts.isArrowFunction(init) && !ts.isFunctionExpression(init)) return false;
+          return init.parameters.some((parameter) => payloadText(parameter.type?.getText(sf) ?? ""));
+        });
+      }
+      return false;
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isObjectLiteralExpression(node) && isDraftLiteral(node, sf)) record("inline-draft");
+      if (
+        (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) &&
+        DRAFT_TYPE.test(node.type.getText(sf)) &&
+        !(ts.isCallExpression(node.expression) && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === "validateDraft")
+      ) {
+        record("draft-cast");
+      }
+      if (
+        (ts.isFunctionDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isVariableStatement(node)) &&
+        exportedPayload(node)
+      ) record("public-payload");
       ts.forEachChild(node, visit);
     };
     visit(sf);
@@ -899,23 +1102,18 @@ describe("R11 (verification 7): a SECOND raw reader anywhere else fails", () => 
   });
 });
 
-describe("R11: proposal construction is pre-registered to packages/brain", () => {
-  it("a proposal constructor OUTSIDE packages/brain is a finding", () => {
-    const planted = new Map([
-      [
-        "packages/credits/src/learn.ts",
-        "export function buildVoiceRuleProposal(rows) { return rows; }\n",
-      ],
-      [
-        "app/(product)/studio/promote.ts",
-        "export const promoteRuleFromFeedback = (x) => x;\n",
-      ],
-      ["packages/db/src/x.ts", "type PromotionCandidate = { id: string };\n"],
+describe("R10: promotion proposal construction is structurally restricted to packages/brain", () => {
+  it("an inline draft, a cast, and a differently named public payload outside packages/brain are findings", () => {
+    const findings = scanPromotionConstructorBoundary(new Map([
+      ["packages/db/src/derive.ts", "export function deriveCandidate() { return { source: 'results', familyKey: 'f', evidenceDigest: 'd', target: {}, evidence: [], rule: {} }; }\n"],
+      ["app/(product)/x.ts", "const x = {} as unknown as PromotionProposalDraft;\n"],
+      ["packages/db/src/api.ts", "export type Input = { source: string; familyKey: string; evidenceDigest: string; target: object; evidence: unknown[] };\n"],
+    ]));
+    expect(findings.map((f) => `${f.file}:${f.shape}`).sort()).toEqual([
+      "app/(product)/x.ts:draft-cast",
+      "packages/db/src/api.ts:public-payload",
+      "packages/db/src/derive.ts:inline-draft",
     ]);
-    const findings = scanProposalConstructors(planted);
-    expect(findings.map((f) => f.symbol).sort()).toEqual(
-      ["PromotionCandidate", "buildVoiceRuleProposal", "promoteRuleFromFeedback"].sort()
-    );
   });
 
   it("...and the SAME declarations inside packages/brain are permitted", () => {
@@ -924,11 +1122,11 @@ describe("R11: proposal construction is pre-registered to packages/brain", () =>
     // `tests/import-boundary.test.ts:862`. Without this the allowance is a
     // string nobody has run.
     expect(
-      scanProposalConstructors(
+      scanPromotionConstructorBoundary(
         new Map([
           [
             "packages/brain/src/promote.ts",
-            "export function buildVoiceRuleProposal(rows) { return rows; }\ntype PromotionCandidate = { id: string };\n",
+            "export function deriveCandidate() { return { source: 'results', familyKey: 'f', evidenceDigest: 'd', target: {}, evidence: [], rule: {} }; }\n",
           ],
         ])
       )
@@ -937,7 +1135,7 @@ describe("R11: proposal construction is pre-registered to packages/brain", () =>
 
   it("a MENTION in prose or a string is not a declaration", () => {
     expect(
-      scanProposalConstructors(
+      scanPromotionConstructorBoundary(
         new Map([
           ["a.ts", "// slice 9 builds the promotion proposal constructor\n"],
           ["b.ts", 'export const copy = "we may propose a rule, never apply one";\n'],
@@ -951,9 +1149,99 @@ describe("R11: proposal construction is pre-registered to packages/brain", () =>
     productSources(join(ROOT, "app"), files);
     expect(files.size).toBeGreaterThan(20);
     expect(
-      scanProposalConstructors(files).map((f) => `${f.file}::${f.symbol}`),
-      "a promotion-proposal constructor outside packages/brain — R-10/R-44 make that package the sole construction site, and it does not exist until slice 9"
+      scanPromotionConstructorBoundary(files),
+      "a caller-built promotion draft, cast, or public payload escaped the sole @respin/brain constructor"
     ).toEqual([]);
+  });
+});
+
+describe("R-94: the CURATION-proposal allowance is explicit, exact, and narrower than the promotion rule", () => {
+  it("a `proposal`-named declaration in a curation file is permitted; `promotion`/`promote` there is still a finding", () => {
+    const planted = new Map([
+      [
+        "packages/db/src/frameworks.ts",
+        "export function buildSharedFrameworkProposal(x) { return x; }\nexport function promoteFrameworkToApproved(x) { return x; }\ntype PromotionCandidate = { id: string };\n",
+      ],
+    ]);
+    expect(scanNamedProposalConstructors(planted).map((f) => `${f.symbol}:${f.rule}`).sort()).toEqual(
+      ["PromotionCandidate:promotion", "promoteFrameworkToApproved:promote"].sort()
+    );
+  });
+
+  it("the allowance is EXACT FILES: the same declaration in a sibling of a curation file is a finding", () => {
+    // `packages/trends/src/framework-proposal.ts` is here on purpose: it was
+    // the deleted port, and a re-created file of that name gets no allowance.
+    for (const sibling of ["packages/db/src/feedback-ops.ts", "packages/trends/src/access.ts", "packages/trends/src/framework-proposal.ts", "packages/db/src/frameworks.test.ts"]) {
+      expect(
+        scanNamedProposalConstructors(new Map([[sibling, "export function buildSharedFrameworkProposal(x) { return x; }\n"]])).map((f) => f.symbol),
+        sibling
+      ).toEqual(["buildSharedFrameworkProposal"]);
+    }
+    // ...and every allowed path really exists, so the list cannot rot.
+    for (const file of CURATION_PROPOSAL_FILES) expect(statSync(join(ROOT, file)).isFile(), file).toBe(true);
+  });
+
+  const frameworksSource = () => readFileSync(join(ROOT, "packages/db/src/frameworks.ts"), "utf8");
+  const systemSpendSource = () => readFileSync(join(ROOT, "packages/db/src/system-spend.ts"), "utf8");
+
+  it("POSITIVE, THE REAL REPO: the curation path's sole write target is `frameworks`, always `curatorStatus: \"proposed\"`, never via `.set`", () => {
+    // AST-level over `packages/db/src/frameworks.ts` (the three named writers)
+    // and `packages/db/src/system-spend.ts` (the finalize transaction that
+    // calls them) — not a DB-level assertion, because what R-94 forbids is a
+    // second write TARGET, which is a property of the source.
+    const findings = scanCurationWrites(frameworksSource(), CURATION_WRITERS);
+    expect(findings.filter((f) => f.kind === "missing"), "a curation writer was renamed away — update CURATION_WRITERS").toEqual([]);
+    const writes = findings.filter((f): f is Extract<CurationWriteFinding, { kind: "write" }> => f.kind === "write");
+    expect(writes.length, "the scan saw no writes at all — it is measuring nothing").toBeGreaterThan(0);
+    expect([...new Set(writes.map((w) => w.target))]).toEqual(["frameworks"]);
+    expect(writes.some((w) => w.verb === "insert")).toBe(true);
+    const statuses = findings.filter((f): f is Extract<CurationWriteFinding, { kind: "curatorStatus" }> => f.kind === "curatorStatus");
+    expect(statuses.length, "no curatorStatus literal seen on the insert").toBeGreaterThan(0);
+    for (const s of statuses) {
+      expect(s.via, `${s.fn} writes curatorStatus through .set — an UPDATE of a curation status is approval, which is 10b-1's human act`).toBe("values");
+      expect(s.value, s.fn).toBe('"proposed"');
+    }
+    // The finalize transaction reaches the curation path only by CALL; it
+    // never writes `frameworks` itself.
+    const spend = systemSpendSource();
+    expect(spend).toContain("resolveAutopsyFramework(");
+    expect(spend).not.toMatch(/\.(insert|update|delete)\(\s*frameworks\s*\)/);
+    // ...and the negation is non-vacuous: the same regex sees a planted write.
+    expect("await tx.insert(frameworks).values({})").toMatch(/\.(insert|update|delete)\(\s*frameworks\s*\)/);
+  });
+
+  it("...and the positive check SEES each violation it forbids (doctored copies of the real source)", () => {
+    const real = frameworksSource();
+    const approved = real.replace(
+      /(async function insertProposedSharedFramework[\s\S]*?curatorStatus: )"proposed"/,
+      '$1"approved"'
+    );
+    expect(approved, "the doctoring anchor no longer exists").not.toBe(real);
+    expect(
+      scanCurationWrites(approved, CURATION_WRITERS).filter((f) => f.kind === "curatorStatus").map((f) => (f as { value: string }).value)
+    ).toContain('"approved"');
+
+    const secondTarget = real.replace(
+      "async function insertProposedSharedFramework(",
+      "async function insertProposedSharedFramework(\n  _p = db.insert(brainDocs).values({}),"
+    );
+    expect(secondTarget).not.toBe(real);
+    expect(
+      scanCurationWrites(secondTarget, CURATION_WRITERS).filter((f) => f.kind === "write").map((f) => (f as { target: string }).target)
+    ).toContain("brainDocs");
+
+    const viaSet = real.replace(
+      /(async function resolveAutopsyFramework[\s\S]*?\.set\(\{ )supersededAt/,
+      '$1curatorStatus: "approved", supersededAt'
+    );
+    expect(viaSet).not.toBe(real);
+    expect(
+      scanCurationWrites(viaSet, CURATION_WRITERS).filter((f) => f.kind === "curatorStatus" && (f as { via: string }).via === "set")
+    ).toHaveLength(1);
+
+    expect(scanCurationWrites("const other = 1;", CURATION_WRITERS)).toEqual(
+      CURATION_WRITERS.map((fn) => ({ fn, kind: "missing" }))
+    );
   });
 });
 

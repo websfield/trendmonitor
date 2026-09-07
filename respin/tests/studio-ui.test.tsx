@@ -353,9 +353,8 @@ const HONEST_REFUSAL: StudioRunState = {
 /**
  * THE MODE PICKER'S DATA, as the SERVER produces it.
  *
- * Six available, one refused for the plan and one unbuilt — a shape a real
- * `modeOffers(tier)` produces (Free on a build where `analyseAndSpin` is not
- * implemented is exactly this, minus the paid ones). It is written out here
+ * All seven available — the paid-tier shape `modeOffers(tier)` produces after
+ * Slice 8 made Spin reachable. It is written out here
  * rather than imported from `@respin/credits` because these are VIEW fixtures:
  * the agreement between `modeOffers` and `assertModeAllowed` is asserted in
  * `packages/credits/tests/mode-access.test.ts`, against the real map.
@@ -364,13 +363,13 @@ const MODES: ModeChoiceView[] = [
   { id: "m-a", label: "Footage to thesis", status: "available", cost: 12 },
   { id: "m-b", label: "Idea to script", status: "available", cost: 12 },
   { id: "m-c", label: "Source to reel", status: "available", cost: 12 },
-  { id: "m-d", label: "Analyse and spin", status: "not_built_yet", cost: null },
+  { id: "m-d", label: "Analyse and spin", status: "available", cost: 12 },
   { id: "m-e", label: "Hooks", status: "available", cost: 5 },
   { id: "m-f", label: "Caption", status: "available", cost: 2 },
   { id: "m-g", label: "Ideation", status: "available", cost: 4 },
 ];
 
-/** Free's shape: three modes, four outside the plan, one of them also unbuilt. */
+/** Free's shape: three modes and four outside the plan. */
 const FREE_MODES: ModeChoiceView[] = [
   { id: "m-a", label: "Footage to thesis", status: "not_in_plan", cost: null },
   { id: "m-b", label: "Idea to script", status: "not_in_plan", cost: null },
@@ -477,14 +476,10 @@ describe("the pure decisions", () => {
     expect(revisionCostSentence(null)).not.toMatch(/\d+ credit/);
   });
 
-  it("modeAvailabilityNote tells the two refusals APART, and names neither as a sale", () => {
-    // `ModeNotInPlanError` and `ModeNotBuiltYetError` say opposite things about
-    // whose fault it is, and the picker must say the same thing BEFORE the
-    // press that the refusal says after it.
+  it("modeAvailabilityNote reports all paid modes and Free's plan exclusions without a sale", () => {
     const note = modeAvailabilityNote(MODES);
-    expect(note).toContain("Analyse and spin");
-    expect(note).toMatch(/not built yet/i);
-    expect(note).toMatch(/what we have shipped, not about what you bought/i);
+    expect(note).toMatch(/Every mode this product has is one of them/);
+    expect(note).not.toMatch(/not built|not part of/i);
 
     const free = modeAvailabilityNote(FREE_MODES);
     expect(free).toMatch(/not part of this workspace's plan/i);
@@ -1370,14 +1365,6 @@ describe("R18: the tier→mode gate's creator-facing copy", () => {
     }
   });
 
-  it("'not in your plan' and 'not built yet' say OPPOSITE things about whose fault it is", () => {
-    const plan = studioErrorFor("mode_not_in_plan")!;
-    const built = studioErrorFor("mode_not_built_yet")!;
-    expect(plan.title).not.toBe(built.title);
-    expect(built.detail).toMatch(/what we have shipped, not about your plan/i);
-    expect(plan.detail).toMatch(/plan/i);
-  });
-
   it("the screen builds NO second tier→mode derivation, and names NO mode at all (source scan)", () => {
     // R18: "the tier authority stays `getWorkspaceBillingState` — no second
     // derivation". `MODE_TIERS` and `IMPLEMENTED_MODES` live in
@@ -1469,7 +1456,6 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
    */
   const STUDIO_SPEND_PATH_SOURCES = [
     "packages/credits/src/generate.ts",
-    "packages/credits/src/mode-access.ts",
     "packages/credits/src/inference.ts",
     "packages/credits/src/fold.ts",
     "packages/credits/src/clock.ts",
@@ -1480,6 +1466,32 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
     "packages/modes/src/output.ts",
     "packages/modes/src/modes.ts",
   ];
+
+  // `mode-access.ts` now also owns Performance Learning's configuration
+  // resolver. That resolver is not called by `generate`, so scanning its
+  // whole file would turn a Results-only operational refusal into Studio copy.
+  // Keep the exact exported call chain `generate` reaches instead.
+  const modeAccess = read("packages/credits/src/mode-access.ts");
+  const functionBody = (name: string): string => {
+    const declaration = `export function ${name}(`;
+    const start = modeAccess.indexOf(declaration);
+    if (start < 0) throw new Error(`mode-access no longer exports ${name}`);
+    const open = modeAccess.indexOf("{", start);
+    let depth = 0;
+    for (let index = open; index < modeAccess.length; index += 1) {
+      if (modeAccess[index] === "{") depth += 1;
+      if (modeAccess[index] === "}" && --depth === 0) {
+        return modeAccess.slice(start, index + 1);
+      }
+    }
+    throw new Error(`mode-access ${name} has no closing body`);
+  };
+  const MODE_GATE_CALL_CHAIN = [
+    "assertModeAllowed",
+    "planIncludesMode",
+    "modeTiers",
+    "modesIncludedIn",
+  ] as const;
 
   /**
    * Classes reachable from this screen that no scanned file constructs, each
@@ -1500,7 +1512,10 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
     WorkspaceAccessError: "the page's own scope read",
   };
 
-  const spendPathSrc = STUDIO_SPEND_PATH_SOURCES.map(read).join("\n");
+  const spendPathSrc = [
+    ...STUDIO_SPEND_PATH_SOURCES.map(read),
+    ...MODE_GATE_CALL_CHAIN.map(functionBody),
+  ].join("\n");
 
   /** Every `new XError(` CONSTRUCTED — from a RegExp LITERAL, never assembled. */
   const thrownClassNames = (text: string): string[] => [
@@ -1518,7 +1533,6 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
       "GenerationUnchargedAttemptCapError",
       // the tier gate (R18)
       "ModeNotInPlanError",
-      "ModeNotBuiltYetError",
       // the pipeline's, from a package app/** may not import
       "GenerationAssemblyError",
       "ScriptOutputError",
@@ -1539,6 +1553,16 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
     expect(
       thrownClassNames("throw t ? new TopupInFlightError(1, 2) : new OtherError();")
     ).toEqual(["TopupInFlightError", "OtherError"]);
+  });
+
+  it("takes only generate's actual mode-gate call chain from the shared access module", () => {
+    const generate = read("packages/credits/src/generate.ts");
+    expect(generate).toContain('import { assertModeAllowed, type EntitlementTier } from "./mode-access"');
+    expect(generate).toContain("assertModeAllowed(billing.tier, params.mode)");
+    expect(functionBody("assertModeAllowed")).toContain("planIncludesMode(tier, mode)");
+    expect(functionBody("planIncludesMode")).toContain("modeTiers(mode)");
+    expect(functionBody("assertModeAllowed")).toContain("modesIncludedIn(tier)");
+    expect(spendPathSrc).not.toContain("PerformanceLearningConfigUnavailableError");
   });
 
   const codeForClassName = (name: string): string | undefined =>
@@ -2570,6 +2594,7 @@ describe("R16: the output is 'being prepared', and nothing implies a stream", ()
     expect(GENERATION_SCREEN_DIRS).toContain(
       "app/(product)/onboarding/first-ideas"
     );
+    expect(GENERATION_SCREEN_DIRS).toContain("app/(product)/trends");
     // Every file the old studio-only walker read is still read by the new one.
     const covered = new Set(generationScreenFiles(ROOT));
     for (const file of studioSourceFiles()) expect(covered.has(file)).toBe(true);
@@ -2596,7 +2621,7 @@ describe("R16: the output is 'being prepared', and nothing implies a stream", ()
     // precisely so this can be driven against a tree that is not the product's.
     const fake = mkdtempSync(join(tmpdir(), "respin-screen-scan-"));
     try {
-      const dir = join(fake, "app", "(product)", "trends", "spin");
+      const dir = join(fake, "app", "(product)", "results", "spin");
       mkdirSync(dir, { recursive: true });
       writeFileSync(
         join(dir, "spin-result.tsx"),
@@ -2613,6 +2638,28 @@ describe("R16: the output is 'being prepared', and nothing implies a stream", ()
         'export const A = "generation-outcome";',
         "utf8"
       );
+      const unlisted = unlistedGenerationScreenFiles(fake);
+      expect(unlisted).toHaveLength(1);
+      expect(unlisted[0]).toContain("spin-result.tsx");
+      expect(generationOutcomeImporters(fake)).toBe(1);
+    } finally {
+      rmSync(fake, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores disposable probe directories without narrowing the real screen scan", () => {
+    const fake = mkdtempSync(join(tmpdir(), "respin-screen-probe-scan-"));
+    try {
+      const realDir = join(fake, "app", "(product)", "results", "spin");
+      const probeDir = join(fake, "app", "__scan_probe__");
+      mkdirSync(realDir, { recursive: true });
+      mkdirSync(probeDir, { recursive: true });
+      const importer =
+        'import { GenerationOutcome } from "../studio/generation-outcome";\n' +
+        "export const X = GenerationOutcome;\n";
+      writeFileSync(join(realDir, "spin-result.tsx"), importer, "utf8");
+      writeFileSync(join(probeDir, "probe.tsx"), importer, "utf8");
+
       const unlisted = unlistedGenerationScreenFiles(fake);
       expect(unlisted).toHaveLength(1);
       expect(unlisted[0]).toContain("spin-result.tsx");

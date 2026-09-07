@@ -76,6 +76,25 @@ export const CONFIG_V1_SEED = {
   // fresh install writes it explicitly, so only databases seeded before M2a
   // need `migrate-config` at all.
   profileCaps: { free: 1, creator: 1, pro: 1, studio: 5 },
+  // PRD §4G pricing table, "Trend monitor" row (REQ-E05): tracked niches per
+  // tier, Free = digest only. Moved from code to config as R-95 (slice 8 fix
+  // pass). Explicit in the SEED as well as defaulted in the schema, for the
+  // reason `profileCaps` carries: a fresh install writes it, so only databases
+  // seeded before this key need `migrate-config` at all.
+  trackedNiches: { free: 0, creator: 1, pro: 3, studio: 10 },
+  // PRD §4G / R-112. Exact per-tier access; readers must not infer this
+  // mapping from whether a subscription exists. Explicit in the seed so a
+  // fresh install stores it, while the schema default keeps pre-9b stored
+  // documents readable until `config:migrate` runs last.
+  performanceLearning: {
+    free: "view_only",
+    creator: "full",
+    pro: "full",
+    studio: "full",
+  },
+  // REQ-G07's monthly-burn context. Three distinct non-zero debit days is a
+  // repeated-use product minimum, not a statistical-confidence threshold.
+  daysToEmpty: { trailingWindowDays: 30, minimumDebitDays: 3 },
   // tech-spec §6's per-tier generation concurrency, made real by slice 2a's
   // run slot (`packages/db/src/run-slot.ts`). Workspace-grained, not per-user —
   // the divergence from the spec's wording and the reason for it are recorded
@@ -103,6 +122,10 @@ export const CONFIG_V1_SEED = {
     // one a single legal burst exhausts), and the window exists because an
     // unwindowed count over an append-only table refuses a profile forever.
     maxUnchargedBillableAttempts: 10,
+    // The money-denominated twin of the line above (billing gate 2026-09-04).
+    // 1.00 USD per profile per window; see `schema.ts` for why the attempt cap
+    // stays 10 and what an `unknown`-cost row does to the sum.
+    maxUnchargedBillableCostMicroUsd: 1_000_000,
     unchargedAttemptWindowMinutes: 60,
     // How much of one generation's prompt the framework library may occupy
     // (slice 7, R17). A SPEND DIAL — it sets the input-token floor of every
@@ -114,6 +137,13 @@ export const CONFIG_V1_SEED = {
     // `config:migrate` at all.
     frameworkContextCharBudget: 20_000,
   },
+  // The Spin hard gate owns its code refusal floor; this stored value can only
+  // make it stricter. Seed it explicitly so fresh installs do not rely on a
+  // parser default.
+  similarity: { strictness: 0.7 },
+  // Product-owned daily autopsy ceiling, in micro-USD. The worker preserves
+  // its independent code ceiling; this seed matches that ceiling exactly.
+  systemAutopsy: { dailyCapMicroUsd: 100_000_000 },
   // The model layer (slice 2a). Explicit in the seed for the same reason as
   // `profileCaps` and `onboardingBrainRebuild` above: a fresh install writes
   // it, and a merely-defaulted `llm.prices` cannot price a debit (R19).
@@ -132,17 +162,29 @@ export const CONFIG_V1_SEED = {
         outputNanoUsdPerToken: 5000,
       },
     },
-    maxOutputTokens: 4000,
-    timeoutMs: 60_000,
+    // See `packages/config/src/schema.ts` for why these are 12,000 / 120 s:
+    // both are MEASURED off the first generation that ever completed against
+    // the real vendor (2026-09-04), and the deadline sits under the autopsy
+    // claim lease's per-stage ceiling. The parity test holds this equal to the
+    // schema default.
+    maxOutputTokens: 12_000,
+    timeoutMs: 120_000,
     // The whole operation's deadline, retries included (production CHANGE 6).
     // Explicit here as well as defaulted in the schema, for the reason
     // `profileCaps` and `onboardingBrainRebuild` carry: a fresh install writes
     // it, and an already-seeded database gets it from `config:migrate`, whose
     // merge recurses (`migrate-config.ts:151-172`). Both routes land on the
     // same number, which is the property the parity test exists to hold.
-    overallDeadlineMs: 40_000,
+    overallDeadlineMs: 120_000,
     maxRetries: 2,
   },
+  // EMPTY ON A FRESH INSTALL, and that is the correct value rather than a
+  // placeholder: a freshly seeded document already holds every corrected
+  // number, so no correction in `migrate-config.ts` matches it and none is
+  // consumed. It is present rather than defaulted so `config:migrate` on a
+  // just-seeded database stays the no-op the A-9 deploy-order test requires.
+  // See `appliedCorrections` in `packages/config/src/schema.ts`.
+  appliedCorrections: [] as string[],
 } as const;
 
 /** Idempotent: running twice changes nothing (unique constraints + lookups). */

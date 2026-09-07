@@ -39,10 +39,10 @@ export type FrameworkView = {
    *
    * `SATURATION_NOTICE` is attached by `@respin/db`'s readers — "a warning that
    * every consumer has to reimplement is a warning one of them will omit" — so
-   * this screen renders the value it was handed and holds no copy of it. `null`
-   * means there is nothing to warn about.
+   * this screen renders the value it was handed and holds no copy of it. It is
+   * non-null until framework-level population/window measurement exists.
    */
-  saturationNotice: string | null;
+  saturationNotice: string;
   beats: string[];
   whyItConverts: string;
   applicability: { goal: string; niche: string; note: string }[];

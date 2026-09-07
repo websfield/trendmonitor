@@ -1,356 +1,1280 @@
-// THE CREATOR-DATA REGISTRY (P9).
-//
-// One entry per table that holds, or is keyed to, creator data — each carrying
-// an EXPORT decision, a DELETION decision, and the reason for both. REQ-A04
-// gives a creator the right to take their data and the right to have it
-// deleted, and neither right can be implemented against a set of tables nobody
-// has enumerated.
-//
-// It is a SOURCE module rather than a list inside a test, deliberately: M2b's
-// export and deletion paths must be able to READ it, so that adding a table
-// and forgetting to export it is a compile-visible omission rather than a gap
-// discovered by a creator.
-//
-// The completeness predicate is "every table created in migration 0011" — all
-// six — and NOT "every table with an FK to creator_profiles". Those two differ
-// by exactly one row: `workspace_spend_monthly`, which deliberately carries no
-// FK so that it OUTLIVES the workspace it records. An FK-based predicate would
-// have yielded five, and the one table it excluded is the one whose retention
-// most needed a decision.
-//
-// WHAT THIS REGISTRY DOES NOT RECORD, NAMED BECAUSE THE ROUND-1 FINDING TURNED
-// ON IT (tenancy gate NOTE, 2026-09-02): OWNERSHIP IMMUTABILITY. Two tables
-// have it — `generations.parent_id` (migration 0022) and `frameworks`'
-// ownership triple (0023) — and no other. `UPDATE onboarding_inputs SET
-// profile_id = …, workspace_id = …` and `UPDATE creator_profiles SET
-// workspace_id = …` are both ACCEPTED by the database today; what keeps them
-// still is that no application path issues either, which is a scan over our
-// own source rather than a property of the database — the exact sentence 0023
-// exists because of.
-//
-// IT IS A STATED RESIDUAL RATHER THAN A MISSING MIGRATION, and the reason is a
-// counterexample rather than a preference: `pseudonymiseWorkspaceSpend`
-// (`spend-rollup.ts`) RE-PARENTS `workspace_spend_monthly.workspace_id` on
-// purpose — it is R-54's deletion obligation — so a trigger swept across every
-// table here would make the deletion executor an outage, which is the
-// 2026-07-30 lesson and the reason 0022 and 0023 are both narrow. The two
-// tables that DO carry one are measured from `pg_trigger` in
-// `packages/db/tests/frameworks.test.ts`, so this paragraph cannot quietly
-// stop being true. **Owner: whoever writes the R-54 deletion/pseudonymisation
-// executor, because that is the code which decides, per table, whether an
-// identifier may ever be rewritten. Revisit trigger: the first table here that
-// needs its owner columns frozen, or the executor landing — whichever comes
-// first (R-79).**
+import type { JsonColumnInventoryEntry, JsonPathInventoryEntry, LifecycleWriterInventoryEntry, MigrationForeignKey, MigrationInventory, RowClassInventoryEntry } from "./lifecycle-inventory";
+import type { LifecycleExecutorImplementations } from "./lifecycle-executors";
+import type { ResidueProbeImplementations } from "./lifecycle-probes";
 
-export type ExportDecision = {
-  /** Does a REQ-A04 export include this table's rows? */
-  included: boolean;
-  reason: string;
-};
-
-export type DeletionDecision = {
-  /**
-   * cascade      — the rows go when the parent goes, by FK.
-   * retained     — the rows deliberately survive; `reason` must say on what basis.
-   * pseudonymised — retained, with identifiers replaced.
-   */
-  behaviour: "cascade" | "retained" | "pseudonymised";
-  reason: string;
-};
-
-export type CreatorDataEntry = {
-  table: string;
-  /**
-   * Does this table hold CREATOR CONTENT — their own words, or the finished
-   * work this product produced FOR them — as opposed to metering, navigation
-   * or in-flight working state?
-   *
-   * NOT "authored by the creator", and the distinction is load-bearing rather
-   * than pedantic (tenancy gate round 2, 2026-09-01). `brain_docs` is inferred
-   * by the product and `generations` is written by it; both are `true`, because
-   * what makes a row the creator's is that it is THEIRS TO TAKE, not whose
-   * fingers typed it. An authorship test applied honestly would exclude both,
-   * and this field is what forces them into the REQ-A04 export.
-   *
-   * IT IS A FORCING CONDITION ON THE EXPORT, NEVER A SYNONYM FOR IT.
-   * `tests/creator-data-registry.test.ts` makes `true` here mandate
-   * `export.included: true`; `false` decides nothing on its own, which is why
-   * `brain_activation_snapshots` is `false` and exported anyway (ids only, kept
-   * for structural history) while `workspace_spend_monthly` is `false` and not.
-   *
-   * The discriminator that puts a row on the FALSE side is therefore what the
-   * row IS, not who wrote it: metering (`model_usage`), a financial aggregate
-   * (`workspace_spend_monthly`), a navigation preference
-   * (`membership_profile_selections`), pure structure
-   * (`brain_activation_snapshots`), or unshown working state superseded by an
-   * exported record (`generation_attempts` — see its entry).
-   */
-  holdsCreatorContent: boolean;
-  export: ExportDecision;
-  deletion: DeletionDecision;
-};
-
-export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = [
-  {
-    table: "creator_profiles",
-    holdsCreatorContent: true,
-    export: {
-      included: true,
-      reason:
-        "the profile is the root of everything a creator would ask for; an export without it has no keys to hang the rest on",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "FK to workspaces ON DELETE CASCADE, and every profile-grained child cascades from here — so one workspace delete removes the whole tree",
-    },
-  },
-  {
-    table: "membership_profile_selections",
-    holdsCreatorContent: false,
-    export: {
-      included: false,
-      reason:
-        "a mutable per-member navigation preference, not creator-authored content or brain history. Exporting its user_id through a profile export would disclose workspace membership identity without adding creator IP",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "the composite membership FK and composite creator-profile FK both use ON DELETE CASCADE, so deleting either the membership or the selected profile removes the preference without a retained identifier",
-    },
-  },
-  {
-    table: "brain_docs",
-    holdsCreatorContent: true,
-    export: {
-      included: true,
-      reason:
-        "the brain IS the creator's IP in this product (R-8: context, never weights). Withholding it would make the export worthless",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason: "composite FK to creator_profiles ON DELETE CASCADE",
-    },
-  },
-  {
-    table: "onboarding_inputs",
-    holdsCreatorContent: true,
-    export: {
-      included: true,
-      reason:
-        "the creator's own submitted text, stored verbatim (normalised). It is also the corpus every source-evidence quote indexes, so an export without it makes the provenance in brain_docs unreadable",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason: "composite FK to creator_profiles ON DELETE CASCADE",
-    },
-  },
-  {
-    table: "model_usage",
-    holdsCreatorContent: false,
-    export: {
-      included: false,
-      reason:
-        "metering only, and that is structural rather than a promise: usage_raw stores the vendor's usage object and NEVER prompt or completion text (schema comment + the P8 writer set, which is the one capability that fills it). What a creator can see of their own spend is the credit ledger, which the usage page already renders",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "composite FK ON DELETE CASCADE — chosen over `restrict`, which combined with the both-columns-NOT-NULL rule made deletion structurally IMPOSSIBLE (a profile with one usage row could never be deleted, and since profiles cascade from workspaces, workspace deletion would have failed too). The margin history that must survive is carried by workspace_spend_monthly instead",
-    },
-  },
-  {
-    table: "first_billable_attempts",
-    holdsCreatorContent: false,
-    export: {
-      included: false,
-      reason:
-        "one row per (profile, purpose) naming which ATTEMPT ID took the included build (R-80). It is a pricing marker, not creator content: no text, no vendor payload, and every field is either a scope id or the same attempt id `model_usage` already carries. What a creator can see of the consequence is the credit ledger — the charge, or the absence of one — which the usage page already renders, and the ledger is the authority on money anyway",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "composite FK to creator_profiles ON DELETE CASCADE, the same shape model_usage uses — and it must be the same shape, because a claim outliving the usage rows it ranks would price a rebuilt profile off a build nobody can see any more",
-    },
-  },
-  {
-    table: "workspace_spend_monthly",
-    holdsCreatorContent: false,
-    export: {
-      included: false,
-      reason:
-        "an operator-grained financial aggregate (workspace x month x tier). It contains no creator content and is not about a profile at all",
-    },
-    deletion: {
-      behaviour: "retained",
-      reason:
-        "DELIBERATELY OUTLIVES the workspace — `workspace_id` is a plain column with NO foreign key, because a conventional FK would cascade away the very margin history this table exists to preserve. BASIS: business financial records, which are retained independently of a service-data deletion request. " +
-        "PSEUDONYMISATION DECIDED (R-30.5 / R-54, 2026-08-29, slice 2b): at deletion time, `workspace_id` is replaced by ONE fresh random identifier per deleted workspace (every row that workspace accumulated moves to the SAME new id, so its own spend history stays internally groupable without being re-linkable to the real workspace), and the old-id-to-new-id mapping is discarded — no re-linkage path, by construction, since no column exists to write it to. `spend-rollup.ts`'s `pseudonymiseWorkspaceSpend` is the instrument; the deletion EXECUTOR that must call it is still six slices away (slice 10b), so `tests/retention.test.ts`'s sibling scan is the tripwire that keeps this from being a decision that only lives in this comment.",
-    },
-  },
-  {
-    table: "onboarding_interview_drafts",
-    holdsCreatorContent: true,
-    export: {
-      included: true,
-      reason:
-        "the creator's own IN-PROGRESS interview answers, in their own words, before submission turns the decided ones into immutable creator_authored onboarding_inputs rows and brain-document claims (slice 3b). A draft holds real typed content the creator has not submitted yet, not a system artefact, so withholding it from the export would lose words they actually wrote",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "composite FK to creator_profiles ON DELETE CASCADE, the same shape onboarding_inputs and brain_docs already use for a profile-grained child",
-    },
-  },
-  {
-    table: "brain_activation_snapshots",
-    holdsCreatorContent: false,
-    export: {
-      included: true,
-      reason:
-        "no text of its own — every column is a foreign id into brain_docs, which is already exported whole — but it is the only record of WHICH versions were coherently active together at each activation (slice 3b, R8/R9), and a creator asking what their brain looked like at a point in time is asking exactly this table. Cheap to include since it is ids only, and withholding structural history nobody asked to keep secret is the wrong default",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "composite FK to creator_profiles ON DELETE CASCADE, the same shape every other profile-grained child in this registry uses",
-    },
-  },
-  {
-    table: "generations",
-    holdsCreatorContent: true,
-    export: {
-      included: true,
-      reason:
-        "the script, hooks and caption the product wrote FOR this creator, plus the kill-test verdict and the weakest point stated about it. This is the artefact they came here to make — an export that returns their brain but not what it produced returns the recipe and withholds the meal. It also carries the only record of WHICH coherent brain version each output ran under (brain_activation_id), so it is what makes their own history legible to them",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "composite FK to creator_profiles ON DELETE CASCADE, the same shape every other profile-grained child in this registry uses. The generation cascades with the profile even though the SPEND it caused does not: model_usage's own row cascades too and workspace_spend_monthly keeps the money history, so deleting a creator's outputs never costs us the financial record and never keeps their words",
-    },
-  },
-  {
-    table: "generation_attempts",
-    // FALSE, and since R14c added `candidate` (2026-08-31) that is a judgement
-    // rather than an observation, so it is written down. The warrant is UNSHOWN,
-    // SUPERSEDABLE WORKING STATE: the candidate is an in-flight draft of a
-    // document the creator has never been shown, which the kill test or the
-    // balance may still refuse, and which the settled `generations` row
-    // supersedes the moment it exists. The creator's record of this generation
-    // is that `generations` row plus the creator-authored `request` that
-    // produced it, and BOTH are exported.
-    //
-    // NOT "IT IS NOT AUTHORED BY THE CREATOR", which is how R-67 recorded this
-    // warrant and is narrowed here in the same gate's second round. Authorship
-    // proves too much: `generations` is likewise written by the product — its
-    // own reason says so, "the script, hooks and caption the product wrote FOR
-    // this creator" — and it is `holdsCreatorContent: true` and exported. A
-    // warrant that, applied consistently, would strip the creator of the
-    // artefact they came here to make is the wrong warrant, whatever answer it
-    // happens to reach here. `holdsCreatorContent`'s own docblock now states
-    // the meaning this entry relies on. (`docs/initial/decisions.md` is
-    // append-only, so R-67's sentence stands as written; this is the code it
-    // describes, corrected.)
-    //
-    // WHAT NEITHER VERSION CLAIMS (billing + tenancy gates, 2026-09-01): that
-    // the candidate is "provably transient". The equality bounds it to the
-    // `vendor_complete` STATE, which is not the same as bounding it in TIME —
-    // an attempt stranded at `vendor_complete` by a crash between the response
-    // checkpoint and settlement keeps its candidate until something moves it,
-    // and today nothing sweeps that state. The warrant above does not depend on
-    // how long the row sits there. See R-67 for the stranded-row residual and
-    // its revisit trigger.
-    holdsCreatorContent: false,
-    export: {
-      included: false,
-      reason:
-        "the durable CLAIM: a payload sha256, a purpose, a mode, a state, four timestamps — and, while the attempt sits at `vendor_complete`, the `candidate` R14c added (2026-08-31). Excluded because it is OURS, not theirs: an in-flight draft the creator has never been shown, which the kill test or the balance may still refuse, is the product's working state and not the creator's record. The creator's record is the settled `generations` row that supersedes it, and that IS exported, along with the creator-authored `request` that produced both. `generation_attempts_candidate_iff_vendor_complete` is an equality, so no TERMINAL row can retain it — that bounds the candidate by STATE, and deliberately no longer claims to bound it in TIME, because a crash between the response checkpoint and settlement strands an attempt at `vendor_complete` and nothing sweeps that state yet (R-67). Everything else here is an operational record of whether a vendor call happened, which is our reliability story rather than their data",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "composite FK to creator_profiles ON DELETE CASCADE. Chosen over `retained` deliberately, and the asymmetry with workspace_spend_monthly is the reason worth stating: the margin rollup must outlive the workspace because it is a financial record, whereas an attempt claim is an idempotency token whose whole job ends at settlement — keeping it after the profile is gone would retain a per-creator activity timeline for no purpose anyone could name",
-    },
-  },
-  {
-    table: "generation_feedback",
-    // TRUE, and the discriminator this field's own docblock states is what
-    // decides it rather than authorship: these rows are THEIRS TO TAKE. The
-    // reaction is the creator's judgement of their own output and the note is
-    // literally their words — the only column in the slice-7 schema that holds
-    // free creator prose at all.
-    holdsCreatorContent: true,
-    export: {
-      included: true,
-      reason:
-        "what the creator said about each of their own outputs — a closed reaction code plus, where they wrote one, their own words. It is the only record of their judgement of the work this product made for them, and slice 9 may build promotion proposals from exactly these rows, so a creator asking what we hold about their opinions is asking for this table. Exported as RAW EVENTS, deliberately: nothing here is aggregated, scored or summarised on the way out (R11), so what the export returns is what was stored",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "TWO composite FKs, both ON DELETE CASCADE — one to creator_profiles like every other profile-grained child, and one to generations. The second is not redundant: deleting a single generation must take its feedback with it, because a reaction with no output to be about is an orphaned opinion nobody could interpret, and the row would still name the profile that gave it",
-    },
-  },
-  {
-    table: "frameworks",
-    holdsCreatorContent: true,
-    export: {
-      included: true,
-      reason:
-        "PRIVATE rows (visibility='private') are creator-owned and belong in their export. SHARED rows (visibility='shared', both owner columns NULL by CHECK) are library content that belongs to nobody and is excluded — the same distinction R-9 draws, enforced by the two CHECK constraints rather than by the exporter remembering it",
-    },
-    deletion: {
-      behaviour: "cascade",
-      reason:
-        "private rows cascade from creator_profiles. Shared rows have no owner to cascade from and are library content, so they are untouched. What stops a private row BECOMING library content is the `frameworks_ownership_immutable` TRIGGER (migration 0023), not the two CHECKs: each CHECK refuses one HALF of the move (nulling the owner alone, or flipping visibility alone) and the combined `SET visibility='shared', owner_profile_id=NULL, workspace_id=NULL` was measured ACCEPTED before the trigger landed. The trigger covers the whole ownership triple, so re-parenting a private row to another profile is refused too",
-    },
-  },
-];
-
-/** Lookup by SQL table name; undefined means "not registered", which is a bug. */
-export function creatorDataEntry(
-  table: string
-): CreatorDataEntry | undefined {
-  return CREATOR_DATA_REGISTRY.find((e) => e.table === table);
-}
+export const APP_TABLES = [
+  "account", "auth_mail_outbox", "auto_topup_protocol_rollouts", "autopsies", "autopsy_cache_claims", "brain_activation_snapshots", "brain_docs",
+  "config_versions", "creator_profiles", "credit_ledger", "deletion_cancellation_proofs", "deletion_external_commands", "deletion_membership_snapshots", "deletion_operation_transitions", "deletion_operations", "deletion_recovery_sessions", "first_billable_attempts", "frameworks",
+  "generation_attempts", "generation_feedback", "generations", "membership_profile_selections", "memberships",
+  "model_usage", "onboarding_inputs", "onboarding_interview_drafts", "pause_periods", "promotion_proposals",
+  "proposal_evidence_feedback", "proposal_evidence_results", "rate_limit", "results", "session", "stripe_events",
+  "subscriptions", "system_model_usage", "system_model_usage_reconciliations", "system_spend_claims",
+  "system_spend_daily", "system_worker_health", "tracked_niches", "trend_items", "trend_sources",
+  "tier_checkout_protocol_rollouts", "trend_transcripts", "user", "users", "verification", "workspaces", "workspace_spend_monthly",
+] as const;
+export type AppTable = (typeof APP_TABLES)[number];
+export type DataScope = "identity" | "profile" | "workspace" | "system";
+export type DataRowClass =
+  | "identity_row"
+  | "profile_row"
+  | "workspace_row"
+  | "system_row"
+  | "financial_row"
+  | "stripe_workspace_attributed"
+  | "stripe_customer_attributed"
+  | "stripe_unattributed"
+  | "profile_private"
+  | "creator_consent"
+  | "independently_licensed"
+  | "product_seed"
+  | "shared_library";
 
 /**
- * Tables that hold no creator data of their own, each with the reason.
- *
- * THE PREDICATE THIS SERVES IS "every table any migration creates", not "every
- * table migration 0011 creates". The first version of the completeness test
- * read one migration prefix, so a creator-data table added in `0012_*` would
- * never have entered the check and the suite would have passed with no export
- * and no deletion decision — migrations are append-only NEW files, so the
- * prefix version only guarded a file nobody will edit again (tenancy gate
- * 2026-08-23).
- *
- * Widening the predicate means the pre-M2a tables need an answer too. They get
- * one here rather than an exemption: each is either infrastructure, or
- * workspace-grained data whose export and deletion M1 already settled through
- * the cascade enumeration in `packages/db/tests/db.test.ts`. Anything genuinely
- * creator-owned belongs in CREATOR_DATA_REGISTRY above, not here.
+ * Every application table names its permitted row classes explicitly. There
+ * is deliberately no default: adding an `AppTable` cannot silently acquire a
+ * whole-row lifecycle.
  */
-export const NOT_CREATOR_DATA: Readonly<Record<string, string>> = {
-  // Better Auth's own tables. Identity, not content — and `users.auth_user_id`
-  // is the FK that keeps a domain row from outliving its identity.
-  user: "Better Auth identity table; no product content",
-  account: "Better Auth credential/provider links; no product content",
-  session: "Better Auth sessions; transient, no product content",
-  verification: "Better Auth verification tokens; transient",
-  rate_limit: "sign-in limiter counters, keyed by client not by creator",
-  // Domain infrastructure.
-  users: "the domain identity row — deliberately carries NO email copy (D-M1-5)",
-  workspaces: "the tenancy root itself; deletion of it is what triggers everything else",
-  memberships: "who may reach a workspace; cascades from both sides (M1 AC-7)",
-  config_versions: "install-wide runtime config; contains no workspace or creator data",
-  // Billing. Workspace-grained, and M1 settled both rights: the cascade
-  // enumeration in db.test.ts proves a workspace delete removes ledger,
-  // subscription, pauses and attributed events.
-  credit_ledger: "workspace billing history; export and deletion settled at M1 (REQ-G04)",
-  subscriptions: "the Stripe mirror; cascades with the workspace (M1)",
-  pause_periods: "pause record-keeping; cascades with the workspace (M1)",
-  stripe_events:
-    "raw Stripe payloads, retention governed by R-25/D-AUDIT-2 with its own no-new-reader tripwire in tests/retention.test.ts",
+export const ROW_CLASSES_BY_TABLE = {
+  account: ["identity_row"],
+  auth_mail_outbox: ["identity_row"],
+  auto_topup_protocol_rollouts: ["system_row"],
+  autopsies: ["profile_private", "creator_consent", "independently_licensed"],
+  autopsy_cache_claims: ["profile_private", "creator_consent", "independently_licensed"],
+  brain_activation_snapshots: ["profile_row"],
+  brain_docs: ["profile_row"],
+  config_versions: ["system_row"],
+  creator_profiles: ["profile_row"],
+  credit_ledger: ["workspace_row"],
+  deletion_cancellation_proofs: ["identity_row"],
+  deletion_external_commands: ["identity_row", "profile_row", "workspace_row"],
+  deletion_membership_snapshots: ["identity_row"],
+  deletion_operation_transitions: ["identity_row", "profile_row", "workspace_row"],
+  deletion_operations: ["identity_row", "profile_row", "workspace_row"],
+  deletion_recovery_sessions: ["identity_row"],
+  first_billable_attempts: ["profile_row"],
+  frameworks: ["profile_private", "creator_consent", "independently_licensed", "product_seed"],
+  generation_attempts: ["profile_row"],
+  generation_feedback: ["profile_row"],
+  generations: ["profile_row"],
+  membership_profile_selections: ["profile_row"],
+  memberships: ["identity_row"],
+  model_usage: ["profile_row"],
+  onboarding_inputs: ["profile_row"],
+  onboarding_interview_drafts: ["profile_row"],
+  pause_periods: ["workspace_row"],
+  promotion_proposals: ["profile_row"],
+  proposal_evidence_feedback: ["profile_row"],
+  proposal_evidence_results: ["profile_row"],
+  rate_limit: ["system_row"],
+  results: ["profile_row"],
+  session: ["identity_row"],
+  stripe_events: ["stripe_workspace_attributed", "stripe_customer_attributed", "stripe_unattributed"],
+  subscriptions: ["workspace_row"],
+  system_model_usage: ["system_row"],
+  system_model_usage_reconciliations: ["system_row"],
+  system_spend_claims: ["system_row"],
+  system_spend_daily: ["system_row"],
+  system_worker_health: ["system_row"],
+  tier_checkout_protocol_rollouts: ["system_row"],
+  tracked_niches: ["profile_row"],
+  trend_items: ["profile_private", "shared_library"],
+  trend_sources: ["profile_private", "shared_library"],
+  trend_transcripts: ["profile_private", "creator_consent", "independently_licensed"],
+  user: ["identity_row"],
+  users: ["identity_row"],
+  verification: ["identity_row"],
+  workspaces: ["workspace_row"],
+  workspace_spend_monthly: ["financial_row"],
+} as const satisfies Readonly<Record<AppTable, readonly DataRowClass[]>>;
+
+export type RowClassFor<T extends AppTable> =
+  (typeof ROW_CLASSES_BY_TABLE)[T][number];
+export type LifecycleAction = "cascade" | "delete_explicit" | "pseudonymise" | "retain_financial" | "external_delete" | "not_applicable";
+export type ExportDisposition = "included" | "excluded_secret" | "excluded_system";
+export type ExportProjector = "identity_self" | "profile_creator" | "workspace_owner" | "none";
+export type RetentionRule = "identity_lifetime" | "profile_lifetime" | "workspace_lifetime" | "session_expiry" | "verification_expiry" | "rate_limit_window" | "identity_recovery_7_days" | "generation_recovery_24_hours" | "stripe_payload_90_days" | "operational_90_days" | "security_audit_one_year" | "deletion_receipt_one_year" | "financial_chain_seven_years" | "library_lifetime" | "installation_lifetime";
+export type ExecutorId = "identity_cascade" | "profile_cascade" | "workspace_cascade" | "explicit_row_delete" | "workspace_pseudonymiser" | "identifier_scrubber" | "financial_retention_receiver" | "stripe_payload_receiver" | "expiry_receiver" | "external_deletion_receiver" | "library_retention" | "system_retention";
+export type ProbeId = "identity_residue" | "profile_residue" | "workspace_residue" | "retained_financial_residue" | "stripe_payload_residue" | "expiry_residue" | "shared_library_residue" | "system_residue";
+export type ExternalWriterAuthority = Readonly<{
+  table: AppTable;
+  owner: string;
+  sourceFile: string;
+  sourceToken: string;
+}>;
+export type SupportingLifecycleStoreEntry = Readonly<{
+  store: string;
+  physicalKind: "fixed_table" | "job_table" | "dynamic_job_partition" | "dynamic_queue_stats_partition";
+  fields: readonly string[];
+  scope: DataScope;
+  writerOwner: string;
+  sourceToken: string;
+  action: LifecycleAction;
+  retention: RetentionRule;
+  executor: ExecutorId;
+  residueProbe: ProbeId;
+  governedJsonPaths: readonly string[];
+  subjectBinding: "installation" | "source_ids";
+}>;
+/**
+ * The only tables that may split one row class across lifecycle actions.
+ *
+ * These are deliberately table-specific rather than `string[]`: an entry for
+ * `stripe_events` cannot name a `system_model_usage` field (or a field that
+ * does not exist) and still type-check. Migration closure below remains the
+ * runtime backstop for physical schema drift and for the remaining columns.
+ */
+export const SPLIT_TABLE_FIELD_SETS = {
+  auth_mail_outbox: [
+    // The operation link is an opaque random receipt id (R-122) and stays with
+    // the outcome; only the recipient identity scrubs at identity erasure.
+    { name: "recipient_link", kind: "columns", columns: ["auth_user_id", "recipient_digest"] },
+    { name: "delivery_outcome_facts", kind: "remaining_columns", excluding: ["auth_user_id", "recipient_digest"] },
+  ],
+  deletion_operations: [
+    { name: "recovery_secret", kind: "columns", columns: ["request_session_digest", "recovery_secret_digest", "recovery_secret_prefix"] },
+    { name: "linkable_identifiers", kind: "columns", columns: ["id", "target_key", "user_id", "workspace_id", "profile_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash"] },
+    { name: "requester_identity", kind: "columns", columns: ["requester_user_id"] },
+    { name: "receipt_facts", kind: "remaining_columns", excluding: ["request_session_digest", "recovery_secret_digest", "recovery_secret_prefix", "id", "target_key", "user_id", "workspace_id", "profile_id", "requester_user_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash"] },
+  ],
+  deletion_operation_transitions: [
+    { name: "linkable_identifiers", kind: "columns", columns: ["id", "operation_id", "target_key", "user_id", "workspace_id", "profile_id", "payload_hash"] },
+    { name: "requester_identity", kind: "columns", columns: ["requester_user_id"] },
+    { name: "receipt_facts", kind: "remaining_columns", excluding: ["id", "operation_id", "target_key", "user_id", "workspace_id", "profile_id", "requester_user_id", "payload_hash"] },
+  ],
+  deletion_membership_snapshots: [
+    { name: "linkable_identifiers", kind: "columns", columns: ["id", "operation_id", "user_id", "membership_id"] },
+    { name: "receipt_facts", kind: "remaining_columns", excluding: ["id", "operation_id", "user_id", "membership_id", "workspace_id"] },
+    { name: "workspace_link", kind: "columns", columns: ["workspace_id"] },
+  ],
+  deletion_external_commands: [
+    { name: "linkable_identifiers", kind: "columns", columns: ["id", "operation_id", "target_key", "user_id", "workspace_id", "profile_id", "payload_hash", "provider_ref_digest"] },
+    { name: "receipt_facts", kind: "remaining_columns", excluding: ["id", "operation_id", "target_key", "user_id", "workspace_id", "profile_id", "payload_hash", "provider_ref_digest"] },
+  ],
+  stripe_events: [
+    { name: "provider_payload", kind: "columns", columns: ["payload"] },
+    { name: "linkable_source_ids", kind: "columns", columns: ["workspace_id", "stripe_customer_id"] },
+    { name: "provider_financial_authority", kind: "columns", columns: ["tier_invoice_authority"] },
+    { name: "content_free_metadata", kind: "remaining_columns", excluding: ["payload", "workspace_id", "stripe_customer_id", "tier_invoice_authority"] },
+  ],
+  workspace_spend_monthly: [
+    { name: "workspace_link", kind: "columns", columns: ["workspace_id"] },
+    { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id"] },
+  ],
+  system_model_usage: [
+    { name: "linkable_source_ids", kind: "columns", columns: ["job_attempt_id", "job_id", "trend_item_id"] },
+    { name: "cost_and_outcome_facts", kind: "remaining_columns", excluding: ["job_attempt_id", "job_id", "trend_item_id"] },
+  ],
+  system_model_usage_reconciliations: [
+    { name: "linkable_attempt_id", kind: "columns", columns: ["job_attempt_id"] },
+    { name: "cost_facts", kind: "remaining_columns", excluding: ["job_attempt_id"] },
+  ],
+  system_spend_claims: [
+    { name: "linkable_source_ids", kind: "columns", columns: ["job_attempt_id", "job_id", "trend_item_id", "autopsy_cache_claim_id"] },
+    { name: "reservation_facts", kind: "remaining_columns", excluding: ["job_attempt_id", "job_id", "trend_item_id", "autopsy_cache_claim_id"] },
+  ],
+} as const;
+export type SplitTable = keyof typeof SPLIT_TABLE_FIELD_SETS;
+type SplitFieldSetFor<T extends SplitTable> = (typeof SPLIT_TABLE_FIELD_SETS)[T][number];
+export type SplitFieldFor<T extends SplitTable> = SplitFieldSetFor<T> extends infer S
+  ? S extends Readonly<{ columns: readonly (infer C)[] }> ? C
+    : S extends Readonly<{ excluding: readonly (infer C)[] }> ? C : never
+  : never;
+export type LifecycleFieldSetName = "complete_row" | SplitFieldSetFor<SplitTable>["name"];
+export type LifecycleFieldSetFor<T extends AppTable> =
+  T extends SplitTable
+    ? SplitFieldSetFor<T>
+    : Readonly<{ name: "complete_row"; kind: "all_columns" }>;
+export type LifecycleFieldSet = LifecycleFieldSetFor<AppTable>;
+type LifecycleClassEntryFor<T extends AppTable> = Readonly<{
+  table: T; rowClass: RowClassFor<T>; fieldSet: LifecycleFieldSetFor<T>; scope: DataScope;
+  writerOwner: string; export: ExportDisposition; exportProjector: ExportProjector;
+  action: LifecycleAction; retention: RetentionRule; executor: ExecutorId; residueProbe: ProbeId;
+  governedJsonPaths: readonly string[];
+}>;
+export type LifecycleClassEntry = {
+  [T in AppTable]: LifecycleClassEntryFor<T>;
+}[AppTable];
+
+const all = <T extends AppTable>(): LifecycleFieldSetFor<T> => ({ name: "complete_row", kind: "all_columns" }) as LifecycleFieldSetFor<T>;
+type Defaults = Omit<LifecycleClassEntry, "table" | "rowClass" | "fieldSet" | "governedJsonPaths">;
+type TableWithRowClass<R extends DataRowClass> = {
+  [T in AppTable]: R extends RowClassFor<T> ? T : never;
+}[AppTable];
+const row = <T extends AppTable>(table: T, rowClass: RowClassFor<T>, defaults: Defaults, fieldSet: LifecycleFieldSetFor<T> = all<T>(), governedJsonPaths: readonly string[] = []): LifecycleClassEntryFor<T> => ({ table, rowClass, fieldSet, governedJsonPaths, ...defaults });
+const identity = <T extends TableWithRowClass<"identity_row">>(table: T, owner: string) => row(table, "identity_row" as RowClassFor<T>, {
+  scope: "identity", writerOwner: owner, export: table === "account" || table === "session" || table === "verification" ? "excluded_secret" : "included",
+  exportProjector: table === "account" || table === "session" || table === "verification" ? "none" : "identity_self",
+  action: table === "session" || table === "verification" ? "delete_explicit" : "cascade",
+  retention: table === "session" ? "session_expiry" : table === "verification" ? "verification_expiry" : "identity_lifetime",
+  executor: table === "session" || table === "verification" ? "expiry_receiver" : "identity_cascade",
+  residueProbe: table === "session" || table === "verification" ? "expiry_residue" : "identity_residue",
+} satisfies Defaults);
+const profile = <T extends TableWithRowClass<"profile_row">>(table: T, owner: string, included: boolean, governedJsonPaths: readonly string[] = []) => row(table, "profile_row" as RowClassFor<T>, {
+  scope: "profile", writerOwner: owner, export: included ? "included" : "excluded_system", exportProjector: included ? "profile_creator" : "none",
+  action: table === "generation_attempts" ? "delete_explicit" : "cascade",
+  retention: table === "generation_attempts" ? "generation_recovery_24_hours" : "profile_lifetime",
+  executor: table === "generation_attempts" ? "expiry_receiver" : "profile_cascade",
+  residueProbe: table === "generation_attempts" ? "expiry_residue" : "profile_residue",
+} satisfies Defaults, all<T>(), governedJsonPaths);
+const workspace = <T extends TableWithRowClass<"workspace_row">>(table: T, owner: string, disposition: ExportDisposition = "excluded_system", governedJsonPaths: readonly string[] = []) => row(table, "workspace_row" as RowClassFor<T>, {
+  scope: "workspace", writerOwner: owner, export: disposition, exportProjector: disposition === "included" ? "workspace_owner" : "none",
+  action: "cascade", retention: "workspace_lifetime", executor: "workspace_cascade", residueProbe: "workspace_residue",
+} satisfies Defaults, all<T>(), governedJsonPaths);
+const system = <T extends TableWithRowClass<"system_row">>(table: T, owner: string, retention: RetentionRule = "installation_lifetime") => row(table, "system_row" as RowClassFor<T>, {
+  scope: "system", writerOwner: owner, export: "excluded_system", exportProjector: "none", action: "not_applicable", retention,
+  executor: "system_retention", residueProbe: "system_residue",
+} satisfies Defaults);
+const mixed = <R extends "profile_private" | "shared_library", T extends TableWithRowClass<R>>(table: T, rowClass: R, owner: string, included: boolean, governedJsonPaths: readonly string[] = []) => row(table, rowClass as RowClassFor<T>, {
+  scope: rowClass === "profile_private" ? "profile" : "system", writerOwner: owner, export: included ? "included" : "excluded_system",
+  exportProjector: included ? "profile_creator" : "none", action: rowClass === "profile_private" ? "cascade" : "not_applicable",
+  retention: rowClass === "profile_private" ? "profile_lifetime" : "library_lifetime", executor: rowClass === "profile_private" ? "profile_cascade" : "library_retention",
+  residueProbe: rowClass === "profile_private" ? "profile_residue" : "shared_library_residue",
+} satisfies Defaults, all<T>(), governedJsonPaths);
+type RightsRowClass = "profile_private" | "creator_consent" | "independently_licensed" | "product_seed";
+const rights = <R extends RightsRowClass, T extends TableWithRowClass<R>>(
+  table: T,
+  rowClass: R,
+  owner: string,
+  included: boolean,
+  governedJsonPaths: readonly string[] = []
+) => row(table, rowClass as RowClassFor<T>, {
+  scope: rowClass === "profile_private" ? "profile" : rowClass === "creator_consent" ? "identity" : "system",
+  writerOwner: owner,
+  export: included ? "included" : "excluded_system",
+  exportProjector: included ? "profile_creator" : "none",
+  action: rowClass === "profile_private" || rowClass === "creator_consent" ? "cascade" : "not_applicable",
+  retention: rowClass === "profile_private" ? "profile_lifetime" : rowClass === "creator_consent" ? "identity_lifetime" : "library_lifetime",
+  executor: rowClass === "profile_private" ? "profile_cascade" : rowClass === "creator_consent" ? "identity_cascade" : "library_retention",
+  residueProbe: rowClass === "profile_private" ? "profile_residue" : rowClass === "creator_consent" ? "identity_residue" : "shared_library_residue",
+} satisfies Defaults, all<T>(), governedJsonPaths);
+
+export const LIFECYCLE_REGISTRY = [
+  identity("account", "packages/auth"), identity("session", "packages/auth"), identity("user", "packages/auth"),
+  // Task 4 auth-delivery outbox: the recipient link scrubs at identity erasure;
+  // the content-free delivery outcome expires 90 days after admission (R-122).
+  row("auth_mail_outbox", "identity_row", { scope: "identity", writerOwner: "packages/db/src/auth-mail.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.auth_mail_outbox[0]),
+  row("auth_mail_outbox", "identity_row", { scope: "identity", writerOwner: "packages/db/src/auth-mail.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "operational_90_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.auth_mail_outbox[1]),
+  identity("users", "packages/db/src/bootstrap.ts"), identity("verification", "packages/auth"), identity("memberships", "packages/db/src/bootstrap.ts"),
+  row("deletion_cancellation_proofs", "identity_row", { scope: "identity", writerOwner: "packages/db/src/auth-lifecycle.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "verification_expiry", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
+  row("deletion_recovery_sessions", "identity_row", { scope: "identity", writerOwner: "packages/db/src/auth-lifecycle.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "verification_expiry", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
+  row("deletion_operations", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "identity_recovery_7_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[0]),
+  row("deletion_operations", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[1]),
+  row("deletion_operations", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[2]),
+  row("deletion_operations", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[3]),
+  row("deletion_operations", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "identity_recovery_7_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[0]),
+  row("deletion_operations", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "profile_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[1]),
+  row("deletion_operations", "profile_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[2]),
+  row("deletion_operations", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[3]),
+  row("deletion_operations", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "identity_recovery_7_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[0]),
+  row("deletion_operations", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "workspace_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[1]),
+  row("deletion_operations", "workspace_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[2]),
+  row("deletion_operations", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[3]),
+  row("deletion_operation_transitions", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[0]),
+  row("deletion_operation_transitions", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[1]),
+  row("deletion_operation_transitions", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[2]),
+  row("deletion_operation_transitions", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "profile_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[0]),
+  row("deletion_operation_transitions", "profile_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[1]),
+  row("deletion_operation_transitions", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[2]),
+  row("deletion_operation_transitions", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "workspace_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[0]),
+  row("deletion_operation_transitions", "workspace_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[1]),
+  row("deletion_operation_transitions", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[2]),
+  row("deletion_membership_snapshots", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "security_audit_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_membership_snapshots[0]),
+  row("deletion_membership_snapshots", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "security_audit_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_membership_snapshots[1]),
+  // Round-1 tenancy BLOCK: `workspace_id` is NOT NULL with a RESTRICT foreign
+  // key, so a workspace whose member ever requested identity deletion could
+  // never be erased. Under a WORKSPACE operation the link repoints at the stub;
+  // under an identity operation it stays (the audit names the surviving
+  // workspace). The closure below now refuses this class for every table.
+  row("deletion_membership_snapshots", "identity_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "security_audit_one_year", executor: "identifier_scrubber", residueProbe: "workspace_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_membership_snapshots[2]),
+  // Task 4 external-command outbox: target/payload/provider links pseudonymise
+  // with the operation; the content-free command receipt follows the same
+  // one-year deletion-receipt clock (R-122).
+  row("deletion_external_commands", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-external-commands.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_external_commands[0]),
+  row("deletion_external_commands", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-external-commands.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_external_commands[1]),
+  row("deletion_external_commands", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-external-commands.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "profile_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_external_commands[0]),
+  row("deletion_external_commands", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-external-commands.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_external_commands[1]),
+  row("deletion_external_commands", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-external-commands.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "workspace_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_external_commands[0]),
+  row("deletion_external_commands", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-external-commands.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_external_commands[1]),
+  workspace("workspaces", "packages/db/src/bootstrap.ts", "included"),
+  // Current physical truth: both tables still cascade with the workspace. Task
+  // 6 must add the immutable finance extract/receiver and replace THESE rows in
+  // the same enabling change. Until then deletion remains disabled; claiming a
+  // seven-year receiver here would promise persistence that the schema cannot do.
+  // While these rows stay, the executor refuses workspace erasure and the
+  // worker refuses the scope at startup (`unretainedFinancialChainTables`,
+  // FINANCIAL_CHAIN_TABLES in deletion-executor.ts — round-1 billing CHANGE).
+  workspace("credit_ledger", "packages/credits", "included"),
+  workspace("pause_periods", "packages/credits/src/pause.ts"),
+  workspace("subscriptions", "packages/credits/src/stripe", "excluded_system"),
+  profile("membership_profile_selections", "packages/db/src/profile-selection.ts", false),
+  profile("creator_profiles", "packages/db/src/with-workspace.ts", true), profile("brain_docs", "packages/db/src/with-workspace.ts", true, ["source_evidence$[*].inputId", "reference_corpus_ids$[*]"]),
+  profile("onboarding_inputs", "packages/db/src/with-workspace.ts", true), profile("onboarding_interview_drafts", "packages/db/src/interview-ops.ts", true),
+  profile("brain_activation_snapshots", "packages/db/src/with-workspace.ts", true), profile("model_usage", "packages/db/src/with-workspace.ts", false),
+  profile("first_billable_attempts", "packages/db/src/with-workspace.ts", false), profile("generation_attempts", "packages/db/src/with-workspace.ts", false, ["candidate$.request.brainActivationId", "candidate$.request.parentGenerationId", "candidate$.request.spinAutopsyId", "candidate$.frameworkVersions[*].id"]),
+  profile("generations", "packages/db/src/with-workspace.ts", true, ["framework_versions$[*].frameworkId", "context_input_ids$[*]", "request$.brainActivationId", "request$.parentGenerationId", "request$.spinAutopsyId"]), profile("generation_feedback", "packages/db/src/with-workspace.ts", true),
+  profile("tracked_niches", "packages/db/src/trends-storage.ts", true), profile("results", "packages/db/src/with-workspace.ts", true),
+  profile("promotion_proposals", "packages/db/src/promotion-ops.ts", true, ["payload$.rule.evidenceStates[*].resultId"]), profile("proposal_evidence_results", "packages/db/src/promotion-ops.ts", true),
+  profile("proposal_evidence_feedback", "packages/db/src/promotion-ops.ts", true),
+  rights("frameworks", "profile_private", "packages/db/src/frameworks.ts", true, ["source_references$[*].ref", "evidence_entries$[*].ref"]),
+  rights("frameworks", "creator_consent", "packages/db/src/frameworks.ts", false, ["source_references$[*].ref", "evidence_entries$[*].ref"]),
+  rights("frameworks", "independently_licensed", "packages/db/src/frameworks.ts", false, ["source_references$[*].ref", "evidence_entries$[*].ref"]),
+  rights("frameworks", "product_seed", "packages/db/src/frameworks.ts", false, ["source_references$[*].ref", "evidence_entries$[*].ref"]),
+  mixed("trend_sources", "profile_private", "packages/db/src/trends-storage.ts", true), mixed("trend_sources", "shared_library", "packages/db/src/trends-storage.ts", false),
+  mixed("trend_items", "profile_private", "packages/db/src/trends-storage.ts", true, ["baseline_observation_ids$[*]"]), mixed("trend_items", "shared_library", "packages/db/src/trends-storage.ts", false, ["baseline_observation_ids$[*]"]),
+  rights("trend_transcripts", "profile_private", "packages/db/src/trends-storage.ts", true, ["provenance$.referenceInputId", "provenance$.sourceUrl"]),
+  rights("trend_transcripts", "creator_consent", "packages/db/src/trends-storage.ts", false, ["provenance$.consentEvidenceId", "provenance$.sourceReference"]),
+  rights("trend_transcripts", "independently_licensed", "packages/db/src/trends-storage.ts", false, ["provenance$.sourceReference"]),
+  rights("autopsies", "profile_private", "packages/db/src/system-spend.ts", true),
+  rights("autopsies", "creator_consent", "packages/db/src/system-spend.ts", false),
+  rights("autopsies", "independently_licensed", "packages/db/src/system-spend.ts", false),
+  rights("autopsy_cache_claims", "profile_private", "packages/db/src/trends-storage.ts", true),
+  rights("autopsy_cache_claims", "creator_consent", "packages/db/src/trends-storage.ts", false),
+  rights("autopsy_cache_claims", "independently_licensed", "packages/db/src/trends-storage.ts", false),
+  system("config_versions", "packages/config/src"),
+  system("auto_topup_protocol_rollouts", "packages/credits/src/stripe/auto-topup-rollout.ts"),
+  system("tier_checkout_protocol_rollouts", "packages/credits/src/stripe/tier-checkout-rollout.ts"),
+  row("rate_limit", "system_row", { scope: "system", writerOwner: "packages/auth", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "rate_limit_window", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
+  row("stripe_events", "stripe_workspace_attributed", { scope: "workspace", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, { name: "provider_payload", kind: "columns", columns: ["payload"] }),
+  row("stripe_events", "stripe_workspace_attributed", { scope: "workspace", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "identifier_scrubber", residueProbe: "retained_financial_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["workspace_id", "stripe_customer_id"] }),
+  // `tier_invoice_authority` is nulled WHOLE by the SQL port rather than
+  // path-scrubbed, so its non-identifying keys (`respin_tier_invoice_id`,
+  // `respin_tier_price_id`) go with the identifying ones. Acceptable only
+  // because Task 6's finance extract — not this column — is the finance
+  // authority (round-1 billing NOTE); the probe checks every governed path.
+  row("stripe_events", "stripe_workspace_attributed", { scope: "workspace", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "identifier_scrubber", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[2], ["tier_invoice_authority$.respin_tier_invoice_id", "tier_invoice_authority$.respin_tier_subscription_id", "tier_invoice_authority$.respin_tier_workspace_id", "tier_invoice_authority$.respin_tier_customer_id", "tier_invoice_authority$.respin_tier_checkout_attempt_id", "tier_invoice_authority$.respin_tier_price_id", "tier_invoice_authority$.respin_tier_stripe_account_id"]),
+  row("stripe_events", "stripe_workspace_attributed", { scope: "workspace", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[3]),
+  row("stripe_events", "stripe_customer_attributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, { name: "provider_payload", kind: "columns", columns: ["payload"] }),
+  row("stripe_events", "stripe_customer_attributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["workspace_id", "stripe_customer_id"] }),
+  row("stripe_events", "stripe_customer_attributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[2], ["tier_invoice_authority$.respin_tier_invoice_id", "tier_invoice_authority$.respin_tier_subscription_id", "tier_invoice_authority$.respin_tier_workspace_id", "tier_invoice_authority$.respin_tier_customer_id", "tier_invoice_authority$.respin_tier_checkout_attempt_id", "tier_invoice_authority$.respin_tier_price_id", "tier_invoice_authority$.respin_tier_stripe_account_id"]),
+  row("stripe_events", "stripe_customer_attributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[3]),
+  row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, { name: "provider_payload", kind: "columns", columns: ["payload"] }),
+  row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "stripe_payload_90_days", executor: "identifier_scrubber", residueProbe: "stripe_payload_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["workspace_id", "stripe_customer_id"] }),
+  row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[2], ["tier_invoice_authority$.respin_tier_invoice_id", "tier_invoice_authority$.respin_tier_subscription_id", "tier_invoice_authority$.respin_tier_workspace_id", "tier_invoice_authority$.respin_tier_customer_id", "tier_invoice_authority$.respin_tier_checkout_attempt_id", "tier_invoice_authority$.respin_tier_price_id", "tier_invoice_authority$.respin_tier_stripe_account_id"]),
+  row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[3]),
+  row("workspace_spend_monthly", "financial_row", { scope: "workspace", writerOwner: "packages/db/src/spend-rollup.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "workspace_pseudonymiser", residueProbe: "retained_financial_residue" }, { name: "workspace_link", kind: "columns", columns: ["workspace_id"] }),
+  row("workspace_spend_monthly", "financial_row", { scope: "workspace", writerOwner: "packages/db/src/spend-rollup.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id"] }),
+  row("system_model_usage", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "system_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["job_attempt_id", "job_id", "trend_item_id"] }),
+  row("system_model_usage", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "cost_and_outcome_facts", kind: "remaining_columns", excluding: ["job_attempt_id", "job_id", "trend_item_id"] }),
+  row("system_model_usage_reconciliations", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "system_residue" }, { name: "linkable_attempt_id", kind: "columns", columns: ["job_attempt_id"] }),
+  row("system_model_usage_reconciliations", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "cost_facts", kind: "remaining_columns", excluding: ["job_attempt_id"] }),
+  row("system_spend_claims", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "system_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["job_attempt_id", "job_id", "trend_item_id", "autopsy_cache_claim_id"] }),
+  row("system_spend_claims", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "reservation_facts", kind: "remaining_columns", excluding: ["job_attempt_id", "job_id", "trend_item_id", "autopsy_cache_claim_id"] }),
+  row("system_spend_daily", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }),
+  row("system_worker_health", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "operational_90_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
+] as const satisfies readonly LifecycleClassEntry[];
+
+type RowClassDiscriminator = Readonly<{
+  kind: "enum_value" | "nullness";
+  column: string;
+  enumName: string | null;
+  sourceFile: string;
+  sourceToken: string;
+  values: Readonly<Partial<Record<DataRowClass, string>>>;
+  excludedEnumValues?: readonly string[];
+  exclusionSourceFile?: string;
+  exclusionSourceToken?: string;
+}>;
+
+const ROW_CLASS_DISCRIMINATORS: Readonly<
+  Partial<Record<AppTable, RowClassDiscriminator>>
+> = {
+  deletion_operations: {
+    kind: "enum_value",
+    column: "scope",
+    enumName: "deletion_scope",
+    sourceFile: "packages/db/src/deletion-lifecycle.ts",
+    sourceToken: "scope",
+    values: {
+      identity_row: "identity",
+      profile_row: "profile",
+      workspace_row: "workspace",
+    },
+  },
+  deletion_operation_transitions: {
+    kind: "enum_value",
+    column: "scope",
+    enumName: "deletion_scope",
+    sourceFile: "packages/db/src/deletion-lifecycle.ts",
+    sourceToken: "scope",
+    values: {
+      identity_row: "identity",
+      profile_row: "profile",
+      workspace_row: "workspace",
+    },
+  },
+  deletion_external_commands: {
+    kind: "enum_value",
+    column: "scope",
+    enumName: "deletion_scope",
+    sourceFile: "packages/db/src/deletion-external-commands.ts",
+    sourceToken: "scope",
+    values: {
+      identity_row: "identity",
+      profile_row: "profile",
+      workspace_row: "workspace",
+    },
+  },
+  frameworks: {
+    kind: "enum_value",
+    column: "rights_basis",
+    enumName: "content_rights_basis",
+    sourceFile: "packages/db/src/frameworks.ts",
+    sourceToken: "rightsBasis",
+    values: {
+      profile_private: "profile_private",
+      creator_consent: "creator_consent",
+      independently_licensed: "independently_licensed",
+      product_seed: "product_seed",
+    },
+  },
+  trend_sources: {
+    kind: "enum_value",
+    column: "kind",
+    enumName: "trend_source_kind",
+    sourceFile: "packages/db/src/trends-storage.ts",
+    sourceToken: "kind",
+    values: { profile_private: "submitted", shared_library: "youtube" },
+  },
+  trend_items: {
+    kind: "enum_value",
+    column: "rights_scope",
+    enumName: "trend_rights_scope",
+    sourceFile: "packages/db/src/trends-storage.ts",
+    sourceToken: "rightsScope",
+    values: { profile_private: "profile_private", shared_library: "shared_analysis" },
+  },
+  trend_transcripts: {
+    kind: "enum_value",
+    column: "rights_basis",
+    enumName: "content_rights_basis",
+    sourceFile: "packages/db/src/trends-schema.ts",
+    sourceToken: "rightsBasis",
+    values: { profile_private: "profile_private", creator_consent: "creator_consent", independently_licensed: "independently_licensed" },
+    excludedEnumValues: ["product_seed"],
+    exclusionSourceFile: "packages/db/src/trends-schema.ts",
+    exclusionSourceToken: "trend_transcripts_rights_shape",
+  },
+  autopsies: {
+    kind: "enum_value",
+    column: "rights_basis",
+    enumName: "content_rights_basis",
+    sourceFile: "packages/db/src/trends-schema.ts",
+    sourceToken: "rightsBasis",
+    values: { profile_private: "profile_private", creator_consent: "creator_consent", independently_licensed: "independently_licensed" },
+    excludedEnumValues: ["product_seed"],
+    exclusionSourceFile: "packages/db/src/trends-schema.ts",
+    exclusionSourceToken: "autopsies_rights_shape",
+  },
+  autopsy_cache_claims: {
+    kind: "enum_value",
+    column: "rights_basis",
+    enumName: "content_rights_basis",
+    sourceFile: "packages/db/src/trends-schema.ts",
+    sourceToken: "rightsBasis",
+    values: { profile_private: "profile_private", creator_consent: "creator_consent", independently_licensed: "independently_licensed" },
+    excludedEnumValues: ["product_seed"],
+    exclusionSourceFile: "packages/db/src/trends-schema.ts",
+    exclusionSourceToken: "autopsy_cache_claims_rights_shape",
+  },
+  stripe_events: {
+    kind: "enum_value",
+    column: "receipt_attribution",
+    enumName: "stripe_receipt_attribution",
+    sourceFile: "packages/credits/src/stripe/webhooks.ts",
+    sourceToken: "receiptAttribution",
+    values: {
+      stripe_workspace_attributed: "workspace_attributed",
+      stripe_customer_attributed: "customer_attributed",
+      stripe_unattributed: "unattributed",
+    },
+  },
 };
+
+export const ROW_CLASS_INVENTORY: readonly RowClassInventoryEntry[] = APP_TABLES.flatMap<RowClassInventoryEntry>((table) => {
+  const rowClasses = ROW_CLASSES_BY_TABLE[table] as readonly DataRowClass[];
+  const discriminator = ROW_CLASS_DISCRIMINATORS[table];
+  if (rowClasses.length > 1 && !discriminator) {
+    throw new Error(`mixed table '${table}' has no discriminator inventory`);
+  }
+  if (rowClasses.length === 1 && discriminator) {
+    throw new Error(`single-class table '${table}' has an unexpected discriminator`);
+  }
+  return rowClasses.map((rowClass) => {
+    if (!discriminator) {
+      return { table, rowClass, discriminator: null, permitsWholeRowFieldSet: true };
+    }
+    const value = discriminator.values[rowClass];
+    if (!value) throw new Error(`discriminator '${table}' has no value for '${rowClass}'`);
+    return {
+      table,
+      rowClass,
+      discriminator: {
+        kind: discriminator.kind,
+        column: discriminator.column,
+        value,
+        enumName: discriminator.enumName,
+          sourceFile: discriminator.sourceFile,
+          sourceToken: discriminator.kind === "enum_value" ? value : discriminator.sourceToken,
+          excludedEnumValues: discriminator.excludedEnumValues ?? [],
+          exclusionSourceFile: discriminator.exclusionSourceFile ?? null,
+          exclusionSourceToken: discriminator.exclusionSourceToken ?? null,
+      },
+      permitsWholeRowFieldSet: true,
+    };
+  });
+});
+export const JSON_PATH_INVENTORY: readonly JsonPathInventoryEntry[] = [
+  { table: "stripe_events", column: "tier_invoice_authority", path: "$.respin_tier_invoice_id", sourceFile: "packages/credits/src/stripe/tier-invoice-authority.ts", sourceToken: "respin_tier_invoice_id" },
+  { table: "stripe_events", column: "tier_invoice_authority", path: "$.respin_tier_subscription_id", sourceFile: "packages/credits/src/stripe/tier-invoice-authority.ts", sourceToken: "respin_tier_subscription_id" },
+  { table: "stripe_events", column: "tier_invoice_authority", path: "$.respin_tier_workspace_id", sourceFile: "packages/credits/src/stripe/tier-invoice-authority.ts", sourceToken: "respin_tier_workspace_id" },
+  { table: "stripe_events", column: "tier_invoice_authority", path: "$.respin_tier_customer_id", sourceFile: "packages/credits/src/stripe/tier-invoice-authority.ts", sourceToken: "respin_tier_customer_id" },
+  { table: "stripe_events", column: "tier_invoice_authority", path: "$.respin_tier_checkout_attempt_id", sourceFile: "packages/credits/src/stripe/tier-invoice-authority.ts", sourceToken: "respin_tier_checkout_attempt_id" },
+  { table: "stripe_events", column: "tier_invoice_authority", path: "$.respin_tier_price_id", sourceFile: "packages/credits/src/stripe/tier-invoice-authority.ts", sourceToken: "respin_tier_price_id" },
+  { table: "stripe_events", column: "tier_invoice_authority", path: "$.respin_tier_stripe_account_id", sourceFile: "packages/credits/src/stripe/tier-invoice-authority.ts", sourceToken: "respin_tier_stripe_account_id" },
+  { table: "brain_docs", column: "source_evidence", path: "$[*].inputId", sourceFile: "packages/db/src/with-workspace.ts", sourceToken: "inputId" },
+  { table: "brain_docs", column: "reference_corpus_ids", path: "$[*]", sourceFile: "packages/db/src/with-workspace.ts", sourceToken: "referenceCorpusIds" },
+  { table: "generations", column: "framework_versions", path: "$[*].frameworkId", sourceFile: "packages/db/src/with-workspace.ts", sourceToken: "frameworkVersions" },
+  { table: "generations", column: "context_input_ids", path: "$[*]", sourceFile: "packages/db/src/with-workspace.ts", sourceToken: "contextInputIds" },
+  { table: "generations", column: "request", path: "$.brainActivationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "brainActivationId" },
+  { table: "generations", column: "request", path: "$.parentGenerationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "parentGenerationId" },
+  { table: "generations", column: "request", path: "$.spinAutopsyId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "spinAutopsyId" },
+  { table: "generation_attempts", column: "candidate", path: "$.request.brainActivationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "brainActivationId" },
+  { table: "generation_attempts", column: "candidate", path: "$.request.parentGenerationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "parentGenerationId" },
+  { table: "generation_attempts", column: "candidate", path: "$.request.spinAutopsyId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "spinAutopsyId" },
+  { table: "generation_attempts", column: "candidate", path: "$.frameworkVersions[*].id", sourceFile: "packages/credits/src/generate.ts", sourceToken: "frameworkVersions" },
+  { table: "frameworks", column: "source_references", path: "$[*].ref", sourceFile: "packages/db/src/frameworks.ts", sourceToken: "sourceReferences" },
+  { table: "frameworks", column: "evidence_entries", path: "$[*].ref", sourceFile: "packages/db/src/frameworks.ts", sourceToken: "evidenceEntries" },
+  { table: "promotion_proposals", column: "payload", path: "$.rule.evidenceStates[*].resultId", sourceFile: "packages/db/src/promotion-ops.ts", sourceToken: "resultId" },
+  { table: "trend_items", column: "baseline_observation_ids", path: "$[*]", sourceFile: "packages/db/src/trends-storage.ts", sourceToken: "baselineObservationIds" },
+  { table: "trend_transcripts", column: "provenance", path: "$.referenceInputId", sourceFile: "packages/db/src/trends-storage.ts", sourceToken: "referenceInputId" },
+  { table: "trend_transcripts", column: "provenance", path: "$.sourceUrl", sourceFile: "packages/db/src/trends-storage.ts", sourceToken: "sourceUrl" },
+  { table: "trend_transcripts", column: "provenance", path: "$.consentEvidenceId", sourceFile: "packages/db/src/trends-storage.ts", sourceToken: "consentEvidenceId" },
+  { table: "trend_transcripts", column: "provenance", path: "$.sourceReference", sourceFile: "packages/db/src/trends-storage.ts", sourceToken: "sourceReference" },
+] as const;
+
+/**
+ * Migration-derived JSON-column closure. Identifier-bearing columns must also
+ * enumerate their independently probed paths above; the remaining classes make
+ * the absence of an internal identifier an explicit reviewed assertion.
+ */
+export const JSON_COLUMN_INVENTORY: readonly JsonColumnInventoryEntry[] = [
+  { table: "autopsies", column: "analysis", classification: "creator_content_no_internal_link" },
+  { table: "brain_docs", column: "confirmed_fields", classification: "content_free_no_internal_link" },
+  { table: "brain_docs", column: "content", classification: "creator_content_no_internal_link" },
+  { table: "brain_docs", column: "evidence_counts", classification: "content_free_no_internal_link" },
+  { table: "brain_docs", column: "reference_corpus_ids", classification: "identifier_paths" },
+  { table: "brain_docs", column: "source_evidence", classification: "identifier_paths" },
+  { table: "config_versions", column: "content", classification: "content_free_no_internal_link" },
+  { table: "frameworks", column: "applicability", classification: "creator_content_no_internal_link" },
+  { table: "frameworks", column: "beats", classification: "creator_content_no_internal_link" },
+  { table: "frameworks", column: "evidence_entries", classification: "identifier_paths" },
+  { table: "frameworks", column: "source_references", classification: "identifier_paths" },
+  { table: "frameworks", column: "tested_caveats", classification: "creator_content_no_internal_link" },
+  { table: "generation_attempts", column: "candidate", classification: "identifier_paths" },
+  { table: "generations", column: "context_input_ids", classification: "identifier_paths" },
+  { table: "generations", column: "framework_versions", classification: "identifier_paths" },
+  { table: "generations", column: "kill_test", classification: "creator_content_no_internal_link" },
+  { table: "generations", column: "output", classification: "creator_content_no_internal_link" },
+  { table: "generations", column: "request", classification: "identifier_paths" },
+  { table: "model_usage", column: "usage_raw", classification: "content_free_no_internal_link" },
+  { table: "onboarding_interview_drafts", column: "answers", classification: "creator_content_no_internal_link" },
+  { table: "promotion_proposals", column: "payload", classification: "identifier_paths" },
+  { table: "results", column: "confounders", classification: "content_free_no_internal_link" },
+  { table: "stripe_events", column: "payload", classification: "provider_payload" },
+  { table: "stripe_events", column: "tier_invoice_authority", classification: "identifier_paths" },
+  { table: "subscriptions", column: "tier_checkout_attempt_authority", classification: "content_free_no_internal_link" },
+  { table: "trend_items", column: "baseline_observation_ids", classification: "identifier_paths" },
+  { table: "trend_transcripts", column: "provenance", classification: "identifier_paths" },
+] as const;
+
+export type LifecycleClosureInput = Readonly<{
+  migrations: MigrationInventory;
+  registry: readonly LifecycleClassEntry[];
+  writers: readonly LifecycleWriterInventoryEntry[];
+  rowClasses: readonly RowClassInventoryEntry[];
+  jsonPaths: readonly JsonPathInventoryEntry[];
+  jsonColumns: readonly JsonColumnInventoryEntry[];
+  externalWriters: readonly ExternalWriterAuthority[];
+  supportingStores: readonly SupportingLifecycleStoreEntry[];
+  executors: Partial<LifecycleExecutorImplementations>;
+  probes: Partial<ResidueProbeImplementations>;
+}>;
+const registryKey = (entry: LifecycleClassEntry) => `${entry.table}::${entry.rowClass}::${entry.fieldSet.name}`;
+
+type ForeignKeyLifecycleRole = "scope_owner" | "secondary_scope" | "identity_subject" | "related_cascade" | "reference_set_null" | "retention_restrict";
+type FinalSchemaForeignKeySpec = readonly [
+  constraintName: string,
+  columns: readonly string[],
+  referencedTable: AppTable,
+  referencedColumns: readonly string[],
+  onDelete: MigrationForeignKey["onDelete"],
+  role: ForeignKeyLifecycleRole,
+];
+const FOREIGN_KEY_ROLE_DELETE_ACTION = {
+  scope_owner: "cascade",
+  secondary_scope: "cascade",
+  identity_subject: "cascade",
+  related_cascade: "cascade",
+  reference_set_null: "set_null",
+  retention_restrict: "restrict",
+} as const satisfies Readonly<Record<ForeignKeyLifecycleRole, MigrationForeignKey["onDelete"]>>;
+
+/**
+ * Hand-classified final-schema FK graph. The table record is compile-closed and
+ * the closure check below is bidirectional, so a new physical edge cannot hide
+ * behind an already-valid primary owner edge.
+ */
+const FINAL_SCHEMA_FOREIGN_KEYS = {
+  account: [["account_user_id_user_id_fk", ["user_id"], "user", ["id"], "cascade", "scope_owner"]],
+  auth_mail_outbox: [
+    ["auth_mail_outbox_auth_user_id_user_id_fk", ["auth_user_id"], "user", ["id"], "restrict", "retention_restrict"],
+    ["auth_mail_outbox_operation_id_deletion_operations_id_fk", ["operation_id"], "deletion_operations", ["id"], "restrict", "retention_restrict"],
+  ],
+  auto_topup_protocol_rollouts: [],
+  tier_checkout_protocol_rollouts: [],
+  autopsies: [
+    ["autopsies_matched_framework_id_frameworks_id_fk", ["matched_framework_id"], "frameworks", ["id"], "set_null", "reference_set_null"],
+    ["autopsies_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+    ["autopsies_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
+    ["autopsies_trend_item_id_trend_items_id_fk", ["trend_item_id"], "trend_items", ["id"], "cascade", "related_cascade"],
+  ],
+  autopsy_cache_claims: [
+    ["autopsy_cache_claims_autopsy_id_autopsies_id_fk", ["autopsy_id"], "autopsies", ["id"], "restrict", "retention_restrict"],
+    ["autopsy_cache_claims_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+    ["autopsy_cache_claims_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
+    ["autopsy_cache_claims_trend_item_id_trend_items_id_fk", ["trend_item_id"], "trend_items", ["id"], "cascade", "related_cascade"],
+  ],
+  brain_activation_snapshots: [["brain_activation_snapshots_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
+  brain_docs: [
+    ["brain_docs_confirmed_by_users_id_fk", ["confirmed_by"], "users", ["id"], "set_null", "reference_set_null"],
+    ["brain_docs_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+  ],
+  config_versions: [],
+  creator_profiles: [["creator_profiles_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "secondary_scope"]],
+  credit_ledger: [["credit_ledger_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "scope_owner"]],
+  deletion_cancellation_proofs: [
+    ["deletion_cancellation_proofs_auth_user_id_user_id_fk", ["auth_user_id"], "user", ["id"], "restrict", "retention_restrict"],
+    ["deletion_cancellation_proofs_operation_id_deletion_operations_id_fk", ["operation_id"], "deletion_operations", ["id"], "restrict", "retention_restrict"],
+    ["deletion_cancellation_proofs_recovery_identity_fk", ["recovery_session_id", "operation_id", "auth_user_id"], "deletion_recovery_sessions", ["id", "operation_id", "auth_user_id"], "restrict", "retention_restrict"],
+    ["deletion_cancellation_proofs_recovery_session_id_deletion_recovery_sessions_id_fk", ["recovery_session_id"], "deletion_recovery_sessions", ["id"], "restrict", "retention_restrict"],
+  ],
+  deletion_external_commands: [
+    ["deletion_external_commands_operation_id_deletion_operations_id_fk", ["operation_id"], "deletion_operations", ["id"], "restrict", "retention_restrict"],
+    ["deletion_external_commands_profile_id_creator_profiles_id_fk", ["profile_id"], "creator_profiles", ["id"], "restrict", "retention_restrict"],
+    ["deletion_external_commands_user_id_users_id_fk", ["user_id"], "users", ["id"], "restrict", "retention_restrict"],
+    ["deletion_external_commands_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"],
+  ],
+  deletion_membership_snapshots: [
+    ["deletion_membership_snapshots_operation_id_deletion_operations_id_fk", ["operation_id"], "deletion_operations", ["id"], "restrict", "retention_restrict"],
+    ["deletion_membership_snapshots_user_id_users_id_fk", ["user_id"], "users", ["id"], "restrict", "retention_restrict"],
+    ["deletion_membership_snapshots_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"],
+  ],
+  deletion_operation_transitions: [
+    ["deletion_operation_transitions_operation_identity_fk", ["operation_id", "scope", "target_key", "requester_digest", "payload_hash"], "deletion_operations", ["id", "scope", "target_key", "requester_digest", "payload_hash"], "restrict", "retention_restrict"],
+    ["deletion_operation_transitions_operation_id_deletion_operations_id_fk", ["operation_id"], "deletion_operations", ["id"], "restrict", "retention_restrict"],
+    ["deletion_operation_transitions_profile_id_creator_profiles_id_fk", ["profile_id"], "creator_profiles", ["id"], "restrict", "retention_restrict"],
+    ["deletion_operation_transitions_requester_user_id_users_id_fk", ["requester_user_id"], "users", ["id"], "set_null", "reference_set_null"],
+    ["deletion_operation_transitions_user_id_users_id_fk", ["user_id"], "users", ["id"], "restrict", "retention_restrict"],
+    ["deletion_operation_transitions_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"],
+  ],
+  deletion_operations: [
+    ["deletion_operations_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "restrict", "retention_restrict"],
+    ["deletion_operations_profile_id_creator_profiles_id_fk", ["profile_id"], "creator_profiles", ["id"], "restrict", "retention_restrict"],
+    ["deletion_operations_requester_user_id_users_id_fk", ["requester_user_id"], "users", ["id"], "set_null", "reference_set_null"],
+    ["deletion_operations_user_id_users_id_fk", ["user_id"], "users", ["id"], "restrict", "retention_restrict"],
+    ["deletion_operations_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"],
+  ],
+  deletion_recovery_sessions: [
+    ["deletion_recovery_sessions_auth_user_id_user_id_fk", ["auth_user_id"], "user", ["id"], "restrict", "retention_restrict"],
+    ["deletion_recovery_sessions_operation_id_deletion_operations_id_fk", ["operation_id"], "deletion_operations", ["id"], "restrict", "retention_restrict"],
+  ],
+  first_billable_attempts: [["first_billable_attempts_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
+  frameworks: [
+    ["frameworks_owner_profile_workspace_fk", ["owner_profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+    ["frameworks_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
+  ],
+  generation_attempts: [["generation_attempts_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
+  generation_feedback: [
+    ["generation_feedback_generation_fk", ["generation_id", "profile_id", "workspace_id"], "generations", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["generation_feedback_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+  ],
+  generations: [
+    ["generations_attempt_fk", ["attempt_id", "mode", "profile_id", "workspace_id"], "generation_attempts", ["attempt_id", "mode", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["generations_parent_fk", ["parent_id", "profile_id", "workspace_id"], "generations", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["generations_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+  ],
+  membership_profile_selections: [
+    ["membership_profile_selections_membership_workspace_fk", ["user_id", "workspace_id"], "memberships", ["user_id", "workspace_id"], "cascade", "secondary_scope"],
+    ["membership_profile_selections_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+  ],
+  memberships: [
+    ["memberships_user_id_users_id_fk", ["user_id"], "users", ["id"], "cascade", "scope_owner"],
+    ["memberships_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "secondary_scope"],
+  ],
+  model_usage: [["model_usage_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
+  onboarding_inputs: [["onboarding_inputs_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
+  onboarding_interview_drafts: [["onboarding_interview_drafts_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
+  pause_periods: [["pause_periods_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "scope_owner"]],
+  promotion_proposals: [
+    ["promotion_proposals_accepted_activation_fk", ["accepted_activation_id", "profile_id", "workspace_id"], "brain_activation_snapshots", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["promotion_proposals_accepted_doc_fk", ["accepted_brain_doc_id", "profile_id", "workspace_id"], "brain_docs", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["promotion_proposals_basis_doc_fk", ["basis_brain_doc_id", "profile_id", "workspace_id"], "brain_docs", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["promotion_proposals_decision_user_id_users_id_fk", ["decision_user_id"], "users", ["id"], "set_null", "reference_set_null"],
+    ["promotion_proposals_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+  ],
+  proposal_evidence_feedback: [
+    ["proposal_evidence_feedback_feedback_fk", ["feedback_id", "profile_id", "workspace_id"], "generation_feedback", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["proposal_evidence_feedback_proposal_fk", ["proposal_id", "profile_id", "workspace_id"], "promotion_proposals", ["id", "profile_id", "workspace_id"], "cascade", "scope_owner"],
+  ],
+  proposal_evidence_results: [
+    ["proposal_evidence_results_proposal_fk", ["proposal_id", "profile_id", "workspace_id"], "promotion_proposals", ["id", "profile_id", "workspace_id"], "cascade", "scope_owner"],
+    ["proposal_evidence_results_result_fk", ["result_id", "profile_id", "workspace_id"], "results", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+  ],
+  rate_limit: [],
+  results: [
+    ["results_generation_fk", ["generation_id", "profile_id", "workspace_id"], "generations", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["results_metric_doc_fk", ["metric_declared_by_doc_id", "profile_id", "workspace_id"], "brain_docs", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["results_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+  ],
+  session: [["session_user_id_user_id_fk", ["user_id"], "user", ["id"], "cascade", "scope_owner"]],
+  stripe_events: [["stripe_events_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "set_null", "reference_set_null"]],
+  subscriptions: [["subscriptions_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "scope_owner"]],
+  system_model_usage: [["system_model_usage_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
+  system_model_usage_reconciliations: [["system_model_usage_reconciliations_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
+  system_spend_claims: [["system_spend_claims_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
+  system_spend_daily: [],
+  system_worker_health: [],
+  tracked_niches: [["tracked_niches_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
+  trend_items: [
+    ["trend_items_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+    ["trend_items_source_id_trend_sources_id_fk", ["source_id"], "trend_sources", ["id"], "restrict", "retention_restrict"],
+  ],
+  trend_sources: [["trend_sources_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
+  trend_transcripts: [
+    ["trend_transcripts_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+    ["trend_transcripts_reference_input_id_onboarding_inputs_id_fk", ["reference_input_id"], "onboarding_inputs", ["id"], "cascade", "related_cascade"],
+    ["trend_transcripts_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
+    ["trend_transcripts_trend_item_id_trend_items_id_fk", ["trend_item_id"], "trend_items", ["id"], "cascade", "related_cascade"],
+  ],
+  user: [],
+  users: [["users_auth_user_id_user_id_fk", ["auth_user_id"], "user", ["id"], "restrict", "retention_restrict"]],
+  verification: [],
+  workspaces: [],
+  workspace_spend_monthly: [],
+} as const satisfies Readonly<Record<AppTable, readonly FinalSchemaForeignKeySpec[]>>;
+
+type ExpectedOwnershipEdge = Readonly<{
+  constraintName: string;
+  columns: readonly string[];
+  referencedTable: AppTable;
+  referencedColumns: readonly string[];
+  onDelete: "cascade";
+}>;
+
+/** Domain identity precedes auth identity because users.auth_user_id is RESTRICT. */
+const CASCADE_ROOT_ORDER = {
+  identity: ["users", "user"],
+  profile: ["creator_profiles"],
+  workspace: ["workspaces"],
+} as const satisfies Readonly<Record<Exclude<DataScope, "system">, readonly AppTable[]>>;
+
+function expectedOwnershipEdge(entry: LifecycleClassEntry): ExpectedOwnershipEdge | null {
+  if (entry.scope === "system" || entry.action !== "cascade") return null;
+  if (CASCADE_ROOT_ORDER[entry.scope].includes(entry.table as never)) return null;
+  if (entry.rowClass === "creator_consent") return {
+    constraintName: `${entry.table}_rights_subject_user_id_users_id_fk`,
+    columns: ["rights_subject_user_id"],
+    referencedTable: "users",
+    referencedColumns: ["id"],
+    onDelete: "cascade",
+  };
+  if (entry.scope === "identity") {
+    if (entry.table === "account") return {
+      constraintName: "account_user_id_user_id_fk",
+      columns: ["user_id"],
+      referencedTable: "user",
+      referencedColumns: ["id"],
+      onDelete: "cascade",
+    };
+    if (entry.table === "memberships") return {
+      constraintName: "memberships_user_id_users_id_fk",
+      columns: ["user_id"],
+      referencedTable: "users",
+      referencedColumns: ["id"],
+      onDelete: "cascade",
+    };
+    return null;
+  }
+  if (entry.scope === "workspace") return {
+    constraintName: `${entry.table}_workspace_id_workspaces_id_fk`,
+    columns: ["workspace_id"],
+    referencedTable: "workspaces",
+    referencedColumns: ["id"],
+    onDelete: "cascade",
+  };
+  if (entry.table === "proposal_evidence_feedback" || entry.table === "proposal_evidence_results") return {
+    constraintName: `${entry.table}_proposal_fk`,
+    columns: ["proposal_id", "profile_id", "workspace_id"],
+    referencedTable: "promotion_proposals",
+    referencedColumns: ["id", "profile_id", "workspace_id"],
+    onDelete: "cascade",
+  };
+  return {
+    constraintName: entry.table === "frameworks"
+      ? "frameworks_owner_profile_workspace_fk"
+      : `${entry.table}_profile_workspace_fk`,
+    columns: [entry.table === "frameworks" ? "owner_profile_id" : "profile_id", "workspace_id"],
+    referencedTable: "creator_profiles",
+    referencedColumns: ["id", "workspace_id"],
+    onDelete: "cascade",
+  };
+}
+
+function sameForeignKey(left: MigrationForeignKey, right: MigrationForeignKey): boolean {
+  return left.constraintName === right.constraintName
+    && JSON.stringify(left.columns) === JSON.stringify(right.columns)
+    && left.referencedTable === right.referencedTable
+    && JSON.stringify(left.referencedColumns) === JSON.stringify(right.referencedColumns)
+    && left.onDelete === right.onDelete;
+}
+
+/** Roots a RESTRICT foreign key can point at, and the scope that erases each. */
+const RESTRICT_ROOT_SCOPES: Readonly<Record<string, DataScope>> = {
+  user: "identity",
+  users: "identity",
+  workspaces: "workspace",
+  creator_profiles: "profile",
+};
+
+/**
+ * Link columns that are NULL for a row class by the table's target-shape
+ * CHECK, so a foreign key on them is inert for that class (MATCH SIMPLE): an
+ * identity receipt names no workspace or profile, a profile receipt no user,
+ * a workspace receipt no user or profile. A list (CLAUDE.md Respin rule 7),
+ * consulted by the closure rule below per row class — the round-2 tenancy
+ * CHANGE found the table-level rule accepting profile-class coverage for a
+ * workspace-class link.
+ */
+const STRUCTURALLY_NULL_LINKS: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
+  deletion_operations: { identity_row: ["workspace_id", "profile_id"], profile_row: ["user_id"], workspace_row: ["user_id", "profile_id"] },
+  deletion_operation_transitions: { identity_row: ["workspace_id", "profile_id"], profile_row: ["user_id"], workspace_row: ["user_id", "profile_id"] },
+  deletion_external_commands: { identity_row: ["workspace_id", "profile_id"], profile_row: ["user_id"], workspace_row: ["user_id", "profile_id"] },
+};
+
+/** The physical columns a registry entry's field set names, given the table's columns. */
+export function fieldSetColumns(entry: LifecycleClassEntry, tableColumns: readonly string[]): readonly string[] {
+  const set: LifecycleFieldSet = entry.fieldSet;
+  if (set.kind === "all_columns") return tableColumns;
+  if (set.kind === "columns") return set.columns;
+  const excluded: readonly string[] = set.excluding;
+  return tableColumns.filter((column) => !excluded.includes(column));
+}
+
+export function validateLifecycleClosure(input: LifecycleClosureInput): void {
+  const failures: string[] = [];
+  const migrationTables = new Map(input.migrations.tables.map((table) => [table.name, table]));
+  const registryTables = new Set(input.registry.map((entry) => entry.table));
+  for (const table of migrationTables.keys()) if (!registryTables.has(table as AppTable)) failures.push(`unregistered migration table: ${table}`);
+  for (const table of registryTables) if (!migrationTables.has(table)) failures.push(`registry table is absent from migrations: ${table}`);
+  const keys = new Set<string>();
+  for (const entry of input.registry) {
+    const key = registryKey(entry);
+    if (keys.has(key)) failures.push(`duplicate registry key: ${key}`); keys.add(key);
+    if (entry.retention.length === 0) failures.push(`empty retention: ${key}`);
+    if (typeof input.executors[entry.executor]?.execute !== "function") failures.push(`missing executor: ${entry.executor}`);
+    if (!input.executors[entry.executor]?.supportedActions.includes(entry.action)) failures.push(`executor/action mismatch: ${entry.executor} cannot ${entry.action}`);
+    if (typeof input.probes[entry.residueProbe]?.execute !== "function") failures.push(`missing probe: ${entry.residueProbe}`);
+    if (!input.writers.some((writer) => writer.table === entry.table && writer.owner === entry.writerOwner)) failures.push(`missing writer: ${entry.table} / ${entry.writerOwner}`);
+  }
+  for (const writer of input.writers) {
+    if (!input.registry.some((entry) => entry.table === writer.table && entry.writerOwner === writer.owner)) failures.push(`unregistered writer: ${writer.table} / ${writer.owner}`);
+    if (new Set(writer.physicalWriters).size !== writer.physicalWriters.length) failures.push(`duplicate physical writer mapping: ${writer.table} / ${writer.owner}`);
+  }
+  const classifiedEdges = new Map<string, MigrationForeignKey>();
+  for (const table of APP_TABLES) {
+    for (const [constraintName, columns, referencedTable, referencedColumns, onDelete, role] of FINAL_SCHEMA_FOREIGN_KEYS[table]) {
+      if (onDelete !== FOREIGN_KEY_ROLE_DELETE_ACTION[role]) {
+        failures.push(`final-schema foreign key classification/action mismatch: ${table}.${constraintName}`);
+      }
+      classifiedEdges.set(`${table}.${constraintName}`, {
+        constraintName,
+        columns,
+        referencedTable,
+        referencedColumns,
+        onDelete,
+      });
+    }
+  }
+  const physicalEdges = new Map<string, MigrationForeignKey>();
+  for (const table of input.migrations.tables) {
+    for (const foreignKey of table.foreignKeys) {
+      physicalEdges.set(`${table.name}.${foreignKey.constraintName}`, foreignKey);
+    }
+  }
+  for (const [key, expected] of classifiedEdges) {
+    const actual = physicalEdges.get(key);
+    if (actual === undefined) failures.push(`classified final-schema foreign key is missing: ${key}`);
+    else if (!sameForeignKey(actual, expected)) failures.push(`classified final-schema foreign key mismatch: ${key}`);
+  }
+  for (const key of physicalEdges.keys()) {
+    if (!classifiedEdges.has(key)) failures.push(`unclassified final-schema foreign key: ${key}`);
+  }
+  // Round-1 tenancy BLOCK (the class), row-class aware since round 2: a
+  // RESTRICT foreign key into a scope root survives that root's DELETE only if,
+  // for EVERY row class that can carry the link, an entry OF THAT ROW CLASS
+  // under the root's scope repoints, nulls or deletes the referencing
+  // column(s); otherwise the root DELETE fails at the database and the
+  // operation can never complete. A profile-scope entry counts for the
+  // workspace root because a workspace operation runs the profile-scope
+  // targets too (`targetAppliesToOperation`); a link that is structurally NULL
+  // for a row class is inert for it (STRUCTURALLY_NULL_LINKS).
+  for (const item of input.rowClasses) {
+    const migrationTable = migrationTables.get(item.table);
+    if (!migrationTable || !(APP_TABLES as readonly string[]).includes(item.table)) continue;
+    for (const [constraintName, columns, referencedTable, , , role] of FINAL_SCHEMA_FOREIGN_KEYS[item.table as AppTable]) {
+      if (role !== "retention_restrict") continue;
+      const rootScope = RESTRICT_ROOT_SCOPES[referencedTable];
+      if (!rootScope) continue;
+      const structurallyNull = STRUCTURALLY_NULL_LINKS[item.table]?.[item.rowClass] ?? [];
+      if (columns.some((column) => structurallyNull.includes(column))) continue;
+      const admittedScopes: readonly DataScope[] = rootScope === "workspace" ? ["workspace", "profile"] : [rootScope];
+      const covered = input.registry.some((entry) => {
+        if (entry.table !== item.table || entry.rowClass !== item.rowClass || !admittedScopes.includes(entry.scope)) return false;
+        const erases = entry.action === "cascade" || entry.action === "pseudonymise"
+          || (entry.action === "delete_explicit" && entry.fieldSet.kind === "all_columns");
+        if (!erases) return false;
+        const fieldColumns = fieldSetColumns(entry, migrationTable.columns);
+        return columns.every((column) => fieldColumns.includes(column));
+      });
+      if (!covered) failures.push(`restrict foreign key into scope root has no erasure coverage under that scope: ${item.table}.${item.rowClass}.${constraintName}`);
+    }
+  }
+  for (const entry of input.registry.filter((candidate) => candidate.action === "cascade")) {
+    const expected = expectedOwnershipEdge(entry);
+    const scopeRoots = entry.scope === "system" ? [] : CASCADE_ROOT_ORDER[entry.scope];
+    const isNamedRoot = scopeRoots.includes(entry.table as never);
+    if (expected === null) {
+      if (!isNamedRoot) failures.push(`cascade row has no compile-closed ownership edge: ${registryKey(entry)}`);
+      continue;
+    }
+    const actual = migrationTables.get(entry.table)?.foreignKeys.find(
+      (foreignKey) => foreignKey.constraintName === expected.constraintName
+    );
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      failures.push(`cascade ownership edge mismatch: ${registryKey(entry)} / ${expected.constraintName}`);
+      continue;
+    }
+    const reachesRoot = scopeRoots.includes(expected.referencedTable as never)
+      || input.registry.some((candidate) =>
+        candidate.table === expected.referencedTable
+        && candidate.scope === entry.scope
+        && candidate.action === "cascade"
+        && expectedOwnershipEdge(candidate) !== null
+      );
+    if (!reachesRoot) failures.push(`cascade ownership edge does not reach scope root: ${registryKey(entry)}`);
+  }
+  const externalKeys = new Set<string>();
+  for (const writer of input.externalWriters) {
+    const key = `${writer.table}::${writer.owner}`;
+    if (externalKeys.has(key)) failures.push(`duplicate external writer: ${key}`);
+    externalKeys.add(key);
+    if (!migrationTables.has(writer.table)) failures.push(`external writer table is absent from migrations: ${writer.table}`);
+    if (!input.registry.some((entry) => entry.table === writer.table)) failures.push(`external writer table is absent from registry: ${writer.table}`);
+    if (!writer.sourceFile || !writer.sourceToken) failures.push(`external writer has no source authority: ${key}`);
+  }
+  const supportingKeys = new Set<string>();
+  for (const store of input.supportingStores) {
+    if (supportingKeys.has(store.store)) failures.push(`duplicate supporting lifecycle store: ${store.store}`);
+    supportingKeys.add(store.store);
+    if (store.fields.length === 0) failures.push(`supporting lifecycle store has no governed fields: ${store.store}`);
+    if (new Set(store.fields).size !== store.fields.length) failures.push(`supporting lifecycle store has duplicate governed fields: ${store.store}`);
+    for (const path of store.governedJsonPaths) {
+      const separator = path.indexOf("$");
+      const column = path.slice(0, separator);
+      if (separator < 1 || !path.slice(separator).startsWith("$.") || !store.fields.includes(column)) failures.push(`invalid supporting-store JSON path: ${store.store}.${path}`);
+    }
+    if (store.physicalKind === "job_table" || store.physicalKind === "dynamic_job_partition") {
+      const governed = new Set(store.governedJsonPaths);
+      if (governed.size !== PG_BOSS_JOB_JSON_PATHS.length
+        || PG_BOSS_JOB_JSON_PATHS.some((path) => !governed.has(path))) {
+        failures.push(`incomplete pg-boss job JSON path inventory: ${store.store}`);
+      }
+    }
+    if (store.subjectBinding === "source_ids" && store.governedJsonPaths.length === 0 && !store.fields.some((field) => field === "job_id" || field === "job_attempt_id" || field === "trend_item_id" || field === "autopsy_cache_claim_id" || field === "id" || field === "child_id" || field === "parent_id" || field === "singleton_key")) failures.push(`source-bound supporting store has no identifier field/path: ${store.store}`);
+    if (store.retention.length === 0) failures.push(`supporting lifecycle store has no retention: ${store.store}`);
+    if (typeof input.executors[store.executor]?.execute !== "function") failures.push(`missing supporting-store executor: ${store.executor}`);
+    if (!input.executors[store.executor]?.supportedActions.includes(store.action)) failures.push(`supporting-store executor/action mismatch: ${store.executor} cannot ${store.action}`);
+    if (typeof input.probes[store.residueProbe]?.execute !== "function") failures.push(`missing supporting-store probe: ${store.residueProbe}`);
+  }
+  const classesByTable = new Map<string, Set<string>>();
+  for (const item of input.rowClasses) {
+    const set = classesByTable.get(item.table) ?? new Set<string>();
+    if (set.has(item.rowClass)) failures.push(`duplicate row class inventory: ${item.table}.${item.rowClass}`);
+    set.add(item.rowClass);
+    classesByTable.set(item.table, set);
+    if (item.discriminator) {
+      const table = migrationTables.get(item.table);
+      if (!table?.columns.includes(item.discriminator.column)) failures.push(`missing discriminator column: ${item.table}.${item.discriminator.column}`);
+      if (item.discriminator.kind === "enum_value" && table?.columnTypes[item.discriminator.column] !== item.discriminator.enumName) failures.push(`wrong discriminator enum: ${item.table}.${item.discriminator.column}`);
+      if (item.discriminator.kind === "nullness" && item.discriminator.enumName !== null) failures.push(`nullness discriminator names an enum: ${item.table}.${item.discriminator.column}`);
+    }
+  }
+  for (const table of migrationTables.keys()) {
+    const expected = classesByTable.get(table) ?? new Set<string>();
+    const actual = new Set<string>(input.registry.filter((entry) => entry.table === table).map((entry) => entry.rowClass));
+    for (const rowClass of expected) if (!actual.has(rowClass)) failures.push(`missing row class: ${table}.${rowClass}`);
+    for (const rowClass of actual) if (!expected.has(rowClass)) failures.push(`unregistered row class: ${table}.${rowClass}`);
+    if ((APP_TABLES as readonly string[]).includes(table)) {
+      const compileClosed = new Set<string>(ROW_CLASSES_BY_TABLE[table as AppTable]);
+      for (const rowClass of expected) if (!compileClosed.has(rowClass)) failures.push(`row class absent from compile-closed map: ${table}.${rowClass}`);
+      for (const rowClass of compileClosed) if (!expected.has(rowClass)) failures.push(`compile-closed row class absent from inventory: ${table}.${rowClass}`);
+    }
+    const discriminated = input.rowClasses.filter((item) => item.table === table && item.discriminator !== null);
+    if (discriminated.length > 0) {
+      const kinds = new Set(discriminated.map((item) => item.discriminator!.kind));
+      const columns = new Set(discriminated.map((item) => item.discriminator!.column));
+      if (kinds.size !== 1 || columns.size !== 1 || discriminated.length !== expected.size) {
+        failures.push(`incomplete discriminator inventory: ${table}`);
+      } else if (discriminated[0].discriminator!.kind === "enum_value") {
+        const enumName = discriminated[0].discriminator!.enumName;
+        const migrationValues = new Set(input.migrations.enums[enumName ?? ""] ?? []);
+        const registeredValues = new Set(discriminated.map((item) => item.discriminator!.value));
+        const exclusionShapes = new Set(discriminated.map((item) => JSON.stringify({
+          values: [...item.discriminator!.excludedEnumValues].sort(),
+          sourceFile: item.discriminator!.exclusionSourceFile,
+          sourceToken: item.discriminator!.exclusionSourceToken,
+        })));
+        if (exclusionShapes.size !== 1) failures.push(`inconsistent discriminator exclusions: ${table}`);
+        const excludedValues = new Set(discriminated[0].discriminator!.excludedEnumValues);
+        for (const value of registeredValues) if (excludedValues.has(value)) failures.push(`registered discriminator value is also excluded: ${table}.${value}`);
+        for (const value of excludedValues) if (!migrationValues.has(value)) failures.push(`unknown excluded discriminator value: ${table}.${value}`);
+        for (const value of migrationValues) if (!registeredValues.has(value) && !excludedValues.has(value)) failures.push(`unregistered discriminator value: ${table}.${value}`);
+        for (const value of registeredValues) if (!migrationValues.has(value)) failures.push(`unknown discriminator value: ${table}.${value}`);
+      } else {
+        const nullnessValues = [...new Set(discriminated.map((item) => item.discriminator!.value))].sort();
+        if (nullnessValues.join("\u0000") !== ["is_not_null", "is_null"].sort().join("\u0000")) failures.push(`incomplete nullness discriminator: ${table}`);
+      }
+    } else if (expected.size > 1) {
+      failures.push(`mixed row classes have no discriminator: ${table}`);
+    }
+  }
+  for (const item of input.rowClasses) {
+    const table = migrationTables.get(item.table); if (!table) continue;
+    const entries = input.registry.filter((entry) => entry.table === item.table && entry.rowClass === item.rowClass);
+    const covered = new Set<string>();
+    for (const entry of entries) {
+      const fieldSet = entry.fieldSet;
+      let columns: readonly string[];
+      if (fieldSet.kind === "all_columns") { if (!item.permitsWholeRowFieldSet || entries.length !== 1) failures.push(`all_columns is not proven exclusive: ${registryKey(entry)}`); columns = table.columns; }
+      else if (fieldSet.kind === "columns") columns = fieldSet.columns;
+      else {
+        const excluded: readonly string[] = fieldSet.excluding;
+        columns = table.columns.filter((column) => !excluded.includes(column));
+      }
+      for (const column of columns) { if (!table.columns.includes(column)) failures.push(`unknown field: ${item.table}.${column}`); if (covered.has(column)) failures.push(`overlapping field set: ${item.table}.${item.rowClass}.${column}`); covered.add(column); }
+    }
+    for (const column of table.columns) if (!covered.has(column)) failures.push(`missing field: ${item.table}.${item.rowClass}.${column}`);
+  }
+  for (const jsonPath of input.jsonPaths) {
+    const table = migrationTables.get(jsonPath.table);
+    if (!table?.columns.includes(jsonPath.column)) failures.push(`missing JSON column/path: ${jsonPath.table}.${jsonPath.column}${jsonPath.path}`);
+    if (!jsonPath.path.startsWith("$")) failures.push(`invalid JSON path: ${jsonPath.table}.${jsonPath.column}${jsonPath.path}`);
+    if (!classesByTable.has(jsonPath.table)) failures.push(`JSON path has no row-class inventory: ${jsonPath.table}.${jsonPath.column}${jsonPath.path}`);
+    if (!input.registry.some((entry) => entry.table === jsonPath.table && entry.governedJsonPaths.includes(`${jsonPath.column}${jsonPath.path}`))) failures.push(`unregistered JSON path: ${jsonPath.table}.${jsonPath.column}${jsonPath.path}`);
+  }
+  for (const entry of input.registry) for (const path of entry.governedJsonPaths) if (!input.jsonPaths.some((candidate) => candidate.table === entry.table && `${candidate.column}${candidate.path}` === path)) failures.push(`missing JSON path inventory: ${entry.table}.${path}`);
+  const migrationJsonColumns = new Set(
+    input.migrations.tables.flatMap((table) => Object.entries(table.columnTypes)
+      .filter(([, type]) => type === "json" || type === "jsonb")
+      .map(([column]) => `${table.name}.${column}`))
+  );
+  const registeredJsonColumns = new Set<string>();
+  for (const item of input.jsonColumns) {
+    const key = `${item.table}.${item.column}`;
+    if (registeredJsonColumns.has(key)) failures.push(`duplicate JSON column classification: ${key}`);
+    registeredJsonColumns.add(key);
+    if (!migrationJsonColumns.has(key)) failures.push(`classified JSON column is absent from migrations: ${key}`);
+    const paths = input.jsonPaths.filter((path) => path.table === item.table && path.column === item.column);
+    if (item.classification === "identifier_paths" && paths.length === 0) failures.push(`identifier JSON column has no paths: ${key}`);
+    if (item.classification !== "identifier_paths" && paths.length > 0) failures.push(`non-identifier JSON column has identifier paths: ${key}`);
+  }
+  for (const key of migrationJsonColumns) if (!registeredJsonColumns.has(key)) failures.push(`unclassified migration JSON column: ${key}`);
+  if (failures.length) throw new Error(failures.sort().join("\n"));
+}
+/**
+ * The ONE dynamic writer the AST writer scanner cannot see: the registry-driven
+ * SQL port renders DELETE/UPDATE for every executable target through
+ * `sql.identifier`, naming no table in source. It is listed as a physical
+ * writer only for the roots it INSERTs stubs into (scannable literals). Its
+ * coverage is registry closure (`validateLifecycleClosure`) plus the
+ * independent residue probes, exercised on a populated fixture in
+ * `deletion-executor.test.ts` — stated here so no reader takes the scanner's
+ * silence for absence (round-1 tenancy CHANGE).
+ */
+export const DYNAMIC_LIFECYCLE_WRITER = {
+  file: "packages/db/src/lifecycle-sql-port.ts",
+  actions: ["cascade", "delete_explicit", "pseudonymise"],
+} as const satisfies Readonly<{ file: string; actions: readonly LifecycleAction[] }>;
+
+/**
+ * Independent logical-writer inventory. Keep this separate from the registry:
+ * deriving it from `LIFECYCLE_REGISTRY` would make a missing or invented owner
+ * validate itself. `tests/table-writers.test.ts` bridges these logical owners
+ * to the AST-discovered physical writer population; the dynamic writer above
+ * is outside that population by construction.
+ */
+export const LIFECYCLE_WRITER_INVENTORY = [
+  { table: "account", owner: "packages/auth", physicalWriters: [] },
+  { table: "auth_mail_outbox", owner: "packages/db/src/auth-mail.ts", physicalWriters: ["packages/db/src/auth-mail.ts"] },
+  { table: "auto_topup_protocol_rollouts", owner: "packages/credits/src/stripe/auto-topup-rollout.ts", physicalWriters: ["packages/credits/src/stripe/auto-topup-rollout.ts"] },
+  { table: "tier_checkout_protocol_rollouts", owner: "packages/credits/src/stripe/tier-checkout-rollout.ts", physicalWriters: ["packages/credits/src/stripe/tier-checkout-rollout.ts"] },
+  { table: "autopsies", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
+  { table: "autopsy_cache_claims", owner: "packages/db/src/trends-storage.ts", physicalWriters: ["packages/db/src/deletion-lifecycle.ts", "packages/db/src/system-spend.ts", "packages/db/src/trends-storage.ts"] },
+  { table: "brain_activation_snapshots", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
+  { table: "brain_docs", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
+  { table: "config_versions", owner: "packages/config/src", physicalWriters: ["packages/config/src/index.ts", "packages/db/src/seed.ts"] },
+  { table: "creator_profiles", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/deletion-lifecycle.ts", "packages/db/src/lifecycle-sql-port.ts", "packages/db/src/with-workspace.ts"] },
+  { table: "credit_ledger", owner: "packages/credits", physicalWriters: ["packages/credits/src/balance.ts", "packages/credits/src/ledger.ts"] },
+  { table: "deletion_cancellation_proofs", owner: "packages/db/src/auth-lifecycle.ts", physicalWriters: ["packages/db/src/auth-lifecycle.ts", "packages/db/src/deletion-lifecycle.ts"] },
+  { table: "deletion_external_commands", owner: "packages/db/src/deletion-external-commands.ts", physicalWriters: ["packages/db/src/deletion-external-commands.ts"] },
+  { table: "deletion_membership_snapshots", owner: "packages/db/src/deletion-lifecycle.ts", physicalWriters: ["packages/db/src/deletion-lifecycle.ts"] },
+  { table: "deletion_operation_transitions", owner: "packages/db/src/deletion-lifecycle.ts", physicalWriters: ["packages/db/src/deletion-lifecycle.ts"] },
+  { table: "deletion_operations", owner: "packages/db/src/deletion-lifecycle.ts", physicalWriters: ["packages/db/src/deletion-executor.ts", "packages/db/src/deletion-lifecycle.ts"] },
+  { table: "deletion_recovery_sessions", owner: "packages/db/src/auth-lifecycle.ts", physicalWriters: ["packages/db/src/auth-lifecycle.ts"] },
+  { table: "first_billable_attempts", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
+  { table: "frameworks", owner: "packages/db/src/frameworks.ts", physicalWriters: ["packages/db/src/frameworks.ts"] },
+  { table: "generation_attempts", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
+  { table: "generation_feedback", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
+  { table: "generations", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
+  { table: "membership_profile_selections", owner: "packages/db/src/profile-selection.ts", physicalWriters: ["packages/db/src/profile-selection.ts"] },
+  { table: "memberships", owner: "packages/db/src/bootstrap.ts", physicalWriters: ["packages/db/src/bootstrap.ts", "packages/db/src/deletion-lifecycle.ts", "packages/db/src/seed.ts"] },
+  { table: "model_usage", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
+  { table: "onboarding_inputs", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/promotion-ops.ts", "packages/db/src/with-workspace.ts"] },
+  { table: "onboarding_interview_drafts", owner: "packages/db/src/interview-ops.ts", physicalWriters: ["packages/db/src/interview-ops.ts"] },
+  { table: "pause_periods", owner: "packages/credits/src/pause.ts", physicalWriters: ["packages/credits/src/pause.ts"] },
+  { table: "promotion_proposals", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts"] },
+  { table: "proposal_evidence_feedback", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts"] },
+  { table: "proposal_evidence_results", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts"] },
+  { table: "rate_limit", owner: "packages/auth", physicalWriters: ["packages/db/src/auth-lifecycle.ts"] },
+  { table: "results", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
+  { table: "session", owner: "packages/auth", physicalWriters: ["packages/db/src/auth-lifecycle.ts", "packages/db/src/deletion-lifecycle.ts"] },
+  { table: "stripe_events", owner: "packages/credits/src/stripe/webhooks.ts", physicalWriters: ["packages/credits/src/stripe/webhooks.ts"] },
+  { table: "subscriptions", owner: "packages/credits/src/stripe", physicalWriters: ["packages/credits/src/pause.ts", "packages/credits/src/stripe/actions.ts", "packages/credits/src/stripe/auto-topup-rollout.ts", "packages/credits/src/stripe/auto-topup-v1-reconcile.ts", "packages/credits/src/stripe/auto-topup.ts", "packages/credits/src/stripe/customers.ts", "packages/credits/src/stripe/deletion-commands.ts", "packages/credits/src/stripe/tier-checkout-rollout.ts", "packages/credits/src/stripe/tier-checkout-v1-reconcile.ts", "packages/credits/src/stripe/webhooks.ts"] },
+  { table: "system_model_usage", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
+  { table: "system_model_usage_reconciliations", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
+  { table: "system_spend_claims", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
+  { table: "system_spend_daily", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
+  { table: "system_worker_health", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
+  { table: "tracked_niches", owner: "packages/db/src/trends-storage.ts", physicalWriters: ["packages/db/src/trends-storage.ts"] },
+  { table: "trend_items", owner: "packages/db/src/trends-storage.ts", physicalWriters: ["packages/db/src/trends-storage.ts"] },
+  { table: "trend_sources", owner: "packages/db/src/trends-storage.ts", physicalWriters: ["packages/db/src/trends-storage.ts"] },
+  { table: "trend_transcripts", owner: "packages/db/src/trends-storage.ts", physicalWriters: ["packages/db/src/trends-storage.ts"] },
+  { table: "user", owner: "packages/auth", physicalWriters: ["packages/db/src/deletion-lifecycle.ts", "packages/db/src/lifecycle-sql-port.ts", "packages/db/src/seed.ts", "packages/db/src/testing.ts"] },
+  { table: "users", owner: "packages/db/src/bootstrap.ts", physicalWriters: ["packages/db/src/bootstrap.ts", "packages/db/src/deletion-lifecycle.ts", "packages/db/src/lifecycle-sql-port.ts", "packages/db/src/seed.ts"] },
+  { table: "verification", owner: "packages/auth", physicalWriters: [] },
+  { table: "workspaces", owner: "packages/db/src/bootstrap.ts", physicalWriters: ["packages/db/src/bootstrap.ts", "packages/db/src/deletion-lifecycle.ts", "packages/db/src/lifecycle-sql-port.ts", "packages/db/src/seed.ts"] },
+  { table: "workspace_spend_monthly", owner: "packages/db/src/spend-rollup.ts", physicalWriters: ["packages/db/src/spend-rollup.ts"] },
+] as const satisfies readonly LifecycleWriterInventoryEntry[];
+
+export const EXTERNAL_WRITER_AUTHORITIES = [
+  { table: "account", owner: "better_auth_drizzle_adapter", sourceFile: "packages/auth/src/create-auth.ts", sourceToken: "drizzleAdapter" },
+  { table: "rate_limit", owner: "better_auth_database_rate_limiter", sourceFile: "packages/auth/src/create-auth.ts", sourceToken: "rateLimit" },
+  { table: "session", owner: "better_auth_drizzle_adapter", sourceFile: "packages/auth/src/create-auth.ts", sourceToken: "drizzleAdapter" },
+  { table: "user", owner: "better_auth_drizzle_adapter", sourceFile: "packages/auth/src/create-auth.ts", sourceToken: "drizzleAdapter" },
+  { table: "verification", owner: "better_auth_drizzle_adapter", sourceFile: "packages/auth/src/create-auth.ts", sourceToken: "drizzleAdapter" },
+] as const satisfies readonly ExternalWriterAuthority[];
+
+/**
+ * Pg-boss owns tables in its own schema at runtime rather than through the
+ * application migration journal. Keeping that store in an explicit lifecycle
+ * classification prevents the migration-table bijection from making it
+ * invisible merely because the dependency owns its DDL.
+ */
+export const PG_BOSS_JOB_FIELDS = [
+  "blocked", "blocking", "completed_on", "created_on", "data", "dead_letter",
+  "deletion_seconds", "expire_seconds", "group_id", "group_tier", "heartbeat_on",
+  "heartbeat_seconds", "id", "keep_until", "name", "output", "pending_dependencies",
+  "policy", "priority", "retry_backoff", "retry_count", "retry_delay", "retry_delay_max",
+  "retry_limit", "singleton_key", "singleton_on", "source_created_on", "source_id",
+  "source_name", "source_retry_count", "start_after", "started_on", "state",
+] as const;
+export const PG_BOSS_QUEUE_STATS_FIELDS = [
+  "active_count", "captured_on", "deferred_count", "failed_count", "id", "name",
+  "queued_count", "ready_count", "total_count",
+] as const;
+export const PG_BOSS_JOB_JSON_PATHS = [
+  "data$.jobId",
+  "data$.itemId",
+  "data$.attemptId",
+  "data$.autopsyCacheClaimId",
+  "data$.runId",
+] as const;
+
+const pgBossStore = (
+  store: string,
+  physicalKind: SupportingLifecycleStoreEntry["physicalKind"],
+  fields: readonly string[],
+  lifecycle: "persistent_control" | "expiring_runtime",
+  subjectBinding: SupportingLifecycleStoreEntry["subjectBinding"] = "installation",
+  governedJsonPaths: readonly string[] = []
+): SupportingLifecycleStoreEntry => ({
+  store,
+  physicalKind,
+  fields,
+  scope: "system",
+  writerOwner: "worker/pg-boss-runtime.ts",
+  sourceToken: "PgBoss",
+  action: lifecycle === "persistent_control" ? "not_applicable" : "delete_explicit",
+  retention: lifecycle === "persistent_control" ? "installation_lifetime" : "operational_90_days",
+  executor: lifecycle === "persistent_control" ? "system_retention" : "expiry_receiver",
+  residueProbe: lifecycle === "persistent_control" ? "system_residue" : "expiry_residue",
+  governedJsonPaths,
+  subjectBinding,
+});
+
+/**
+ * Exact pg-boss 12.29.0 physical table/column inventory. The two wildcard
+ * entries represent relations whose names are created dynamically by
+ * `plans.js`: per-queue job partitions and daily queue-stats partitions.
+ * Focused tests compare every fixed/job column and both partition templates
+ * to the installed dependency, so a dependency DDL change cannot stay green.
+ */
+export const SUPPORTING_LIFECYCLE_STORES = [
+  pgBossStore("pgboss.bam", "fixed_table", ["command", "completed_on", "created_on", "error", "id", "name", "queue", "started_on", "status", "table_name", "version"], "persistent_control"),
+  pgBossStore("pgboss.job_dependency", "fixed_table", ["child_id", "child_name", "parent_id", "parent_name"], "expiring_runtime", "source_ids"),
+  pgBossStore("pgboss.queue", "fixed_table", ["active_count", "created_on", "dead_letter", "deferred_count", "deletion_seconds", "expire_seconds", "failed_count", "heartbeat_seconds", "maintain_on", "monitor_on", "name", "notify", "partition", "policy", "queued_count", "ready_count", "ready_history", "retention_seconds", "retry_backoff", "retry_delay", "retry_delay_max", "retry_limit", "singletons_active", "table_name", "total_count", "updated_on", "warning_queued"], "persistent_control"),
+  pgBossStore("pgboss.queue_stats", "fixed_table", PG_BOSS_QUEUE_STATS_FIELDS, "expiring_runtime"),
+  pgBossStore("pgboss.schedule", "fixed_table", ["created_on", "cron", "data", "key", "name", "options", "timezone", "updated_on"], "persistent_control"),
+  pgBossStore("pgboss.subscription", "fixed_table", ["created_on", "event", "name", "updated_on"], "persistent_control"),
+  pgBossStore("pgboss.version", "fixed_table", ["bam_on", "cron_on", "flow_on", "reindex_on", "version"], "persistent_control"),
+  pgBossStore("pgboss.warning", "fixed_table", ["created_on", "data", "id", "message", "type"], "expiring_runtime"),
+  pgBossStore("pgboss.job", "job_table", PG_BOSS_JOB_FIELDS, "expiring_runtime", "source_ids", PG_BOSS_JOB_JSON_PATHS),
+  pgBossStore("pgboss.job_common", "job_table", PG_BOSS_JOB_FIELDS, "expiring_runtime", "source_ids", PG_BOSS_JOB_JSON_PATHS),
+  pgBossStore("pgboss.job_partition:*", "dynamic_job_partition", PG_BOSS_JOB_FIELDS, "expiring_runtime", "source_ids", PG_BOSS_JOB_JSON_PATHS),
+  pgBossStore("pgboss.queue_stats_partition:*", "dynamic_queue_stats_partition", PG_BOSS_QUEUE_STATS_FIELDS, "expiring_runtime"),
+] as const satisfies readonly SupportingLifecycleStoreEntry[];
+
+export type ExportDecision = { included: boolean; reason: string };
+/** @deprecated Export compatibility only. Deletion code must use LIFECYCLE_REGISTRY. */
+export type DeletionDecision = { behaviour: "cascade" | "retained" | "pseudonymised"; reason: string; legacyProjectionOnly: true };
+export type CreatorDataEntry = { table: string; holdsCreatorContent: boolean; export: ExportDecision; deletion: DeletionDecision };
+const PROFILE_CONTENT = new Set(["creator_profiles", "brain_docs", "onboarding_inputs", "onboarding_interview_drafts", "generations", "frameworks", "generation_feedback", "trend_sources", "tracked_niches", "trend_items", "trend_transcripts", "autopsies", "autopsy_cache_claims", "results", "promotion_proposals"]);
+const LEGACY_CREATOR_DATA_TABLES = new Set<AppTable>([
+  ...LIFECYCLE_REGISTRY.filter((entry) => entry.scope === "profile").map((entry) => entry.table),
+  "membership_profile_selections",
+  "workspace_spend_monthly",
+]);
+export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = APP_TABLES.filter((table) => LEGACY_CREATOR_DATA_TABLES.has(table)).map((table) => {
+  const entries = LIFECYCLE_REGISTRY.filter((entry) => entry.table === table);
+  const included = entries.some((entry) => entry.export === "included" && entry.exportProjector === "profile_creator");
+  const pseudonymised = entries.some((entry) => entry.action === "pseudonymise");
+  const retained = entries.every((entry) => entry.action === "retain_financial" || entry.action === "not_applicable");
+  return { table, holdsCreatorContent: PROFILE_CONTENT.has(table), export: { included, reason: included ? "The lifecycle registry assigns this table to the profile_creator projector, preserving the established scoped profile export." : "The lifecycle registry assigns no profile_creator projector to this table; identity, workspace, secret and system rows stay outside the profile export." }, deletion: { behaviour: table === "workspace_spend_monthly" ? "retained" : pseudonymised ? "pseudonymised" : retained ? "retained" : "cascade", legacyProjectionOnly: true, reason: table === "workspace_spend_monthly" ? "Legacy export compatibility only: financial records are retained for the dependency-aware clock and the workspace identifier is pseudonymised. Deletion executors must use LIFECYCLE_REGISTRY." : "Legacy export compatibility only: mixed row and field classes are intentionally collapsed here. Deletion executors must use LIFECYCLE_REGISTRY as the sole lifecycle authority." } };
+});
+export function creatorDataEntry(table: string): CreatorDataEntry | undefined { return CREATOR_DATA_REGISTRY.find((entry) => entry.table === table); }
+export const NOT_CREATOR_DATA: Readonly<Record<string, string>> = Object.fromEntries(
+  APP_TABLES.filter((table) => !LEGACY_CREATOR_DATA_TABLES.has(table)).map((table) => [
+    table,
+    "The lifecycle registry classifies this supporting identity, workspace, billing, authentication, or system table outside the legacy profile-creator export while retaining its explicit scope and lifecycle decisions.",
+  ])
+);

@@ -104,7 +104,6 @@ export const FRAMEWORK_ERROR_CODES = [
   // ever renders; none of them can.
   "unknown_mode",
   "mode_not_in_plan",
-  "mode_not_built_yet",
   // --- the role gate every profile write shares.
   "profile_role",
   "profile_archived",

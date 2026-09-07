@@ -417,6 +417,7 @@ describe.skipIf(!MAINTENANCE_URL)("M2a on real Postgres", () => {
           confidence: "unsupported" as const,
           saturation: "observed" as const,
           visibility: "private" as const,
+          rightsBasis: "profile_private" as const,
           ownerProfileId: profile.id,
           workspaceId,
         }))
@@ -451,6 +452,7 @@ describe.skipIf(!MAINTENANCE_URL)("M2a on real Postgres", () => {
         confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
+        rightsBasis: "profile_private",
         ownerProfileId: profile.id,
         workspaceId,
       });

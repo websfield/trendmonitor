@@ -1,0 +1,2 @@
+ALTER TABLE "deletion_recovery_sessions" ADD COLUMN "auth_user_id" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "deletion_recovery_sessions" ADD CONSTRAINT "deletion_recovery_sessions_auth_user_id_user_id_fk" FOREIGN KEY ("auth_user_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;

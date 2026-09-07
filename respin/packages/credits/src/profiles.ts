@@ -85,7 +85,9 @@ export async function createProfile(
   at: Date
 ): Promise<CreatorProfile> {
   assertScoped(scope);
-  if (scope.role === "viewer") throw new ProfileRoleError("create a creator profile", scope.role);
+  if (scope.role !== "owner") {
+    throw new ProfileRoleError("create a creator profile", scope.role, "owner");
+  }
 
   return db.transaction(async (tx) => {
     await takeWorkspaceLock(tx, scope.workspaceId);

@@ -3,8 +3,15 @@
 // transaction resolves and returns the EXISTING user's membership + workspace —
 // it never proceeds to workspace creation. The unique constraint alone does not
 // prevent a second workspace; this branch does.
-import { eq } from "drizzle-orm";
+import { asc, and, eq } from "drizzle-orm";
 import type { DbLike, TxLike } from "./db-like";
+import {
+  assertIdentityAcceptsMembership,
+  assertWorkspaceAcceptsMembership,
+  lockIdentityMembershipGraph,
+  lockWorkspaceMembershipGraph,
+  sortedWorkspaceIds,
+} from "./membership-lifecycle";
 import { memberships, users, workspaces } from "./schema";
 import type { Membership, User, Workspace } from "./schema";
 
@@ -49,20 +56,64 @@ export async function bootstrapInTx(
     user = existing;
   }
 
-  const [membership] = await tx
-    .select()
-    .from(memberships)
-    .where(eq(memberships.userId, user.id));
+  // R-118 global ordering: every membership creator locks the identity first.
+  // A first-ever identity cannot concurrently be deleted before its row
+  // exists; once the row exists, bootstrap and deletion meet on this lock.
+  await lockIdentityMembershipGraph(tx, user.id);
+  await assertIdentityAcceptsMembership(tx, user.id);
 
-  if (membership) {
-    const [workspace] = await tx
-      .select()
-      .from(workspaces)
-      .where(eq(workspaces.id, membership.workspaceId));
-    if (!workspace) {
-      throw new Error(
-        "bootstrap: membership exists but its workspace is missing — data integrity error"
-      );
+  const candidateWorkspaces = await tx
+    .select({ workspaceId: memberships.workspaceId })
+    .from(memberships)
+    .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
+    .where(
+      and(
+        eq(memberships.userId, user.id),
+        eq(memberships.lifecycleState, "active"),
+        eq(workspaces.lifecycleState, "active")
+      )
+    );
+
+  // Lock every initially eligible workspace in the global lexical order, then
+  // choose again. A deletion that won before a workspace lock is therefore
+  // observed rather than turning the oldest tombstoned membership into a
+  // bootstrap failure or an accidental resurrection.
+  for (const workspaceId of sortedWorkspaceIds(
+    candidateWorkspaces.map((candidate) => candidate.workspaceId)
+  )) {
+    await lockWorkspaceMembershipGraph(tx, workspaceId);
+  }
+
+  const [existingAuthority] = await tx
+    .select({ membership: memberships, workspace: workspaces })
+    .from(memberships)
+    .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
+    .where(
+      and(
+        eq(memberships.userId, user.id),
+        eq(memberships.lifecycleState, "active"),
+        eq(workspaces.lifecycleState, "active")
+      )
+    )
+    .orderBy(asc(memberships.createdAt), asc(memberships.id))
+    .limit(1);
+
+  if (existingAuthority) {
+    const { membership, workspace } = existingAuthority;
+    // The identity lock prevents another membership creator for this user;
+    // the sorted workspace locks make these re-read rows authoritative.
+    const [currentMembership] = await tx
+      .select({ id: memberships.id })
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.id, membership.id),
+          eq(memberships.lifecycleState, "active")
+        )
+      )
+      .limit(1);
+    if (!currentMembership) {
+      throw new Error("bootstrap: active membership changed while graph locks were held");
     }
     return { user, workspace, membership, created: false };
   }
@@ -74,6 +125,9 @@ export async function bootstrapInTx(
     .insert(workspaces)
     .values({ name: workspaceName })
     .returning();
+  await lockWorkspaceMembershipGraph(tx, workspace.id);
+  await assertIdentityAcceptsMembership(tx, user.id);
+  await assertWorkspaceAcceptsMembership(tx, workspace.id);
   const [newMembership] = await tx
     .insert(memberships)
     .values({ userId: user.id, workspaceId: workspace.id, role: "owner" })

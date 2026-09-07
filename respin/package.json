@@ -32,22 +32,34 @@
     "db:check": "pnpm --filter @respin/db db:check",
     "db:seed": "pnpm --filter @respin/db db:seed",
     "config:migrate": "pnpm --filter @respin/config config:migrate",
-    "stripe:setup": "pnpm --filter @respin/credits stripe:setup"
+    "stripe:setup": "pnpm --filter @respin/credits stripe:setup",
+    "stripe:auto-topup:rollout": "pnpm --filter @respin/credits stripe:auto-topup:rollout",
+    "stripe:auto-topup:reconcile-v1": "pnpm --filter @respin/credits stripe:auto-topup:reconcile-v1",
+    "worker:start": "tsx worker/main.ts",
+    "worker:typecheck": "tsc -p worker/tsconfig.json --pretty false",
+    "journal:forecast": "tsx scripts/journal-forecast.ts",
+    "journal:purge": "tsx scripts/journal-purge.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@respin/auth": "workspace:*",
     "@respin/config": "workspace:*",
     "@respin/credits": "workspace:*",
     "@respin/db": "workspace:*",
+    "@respin/llm": "workspace:*",
+    "@respin/trends": "workspace:*",
     "better-auth": "^1.6.28",
     "geist": "^1.7.2",
     "next": "^15.4.0",
+    "pg-boss": "12.29.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "stripe": "^22.5.0"
+    "stripe": "^22.5.0",
+    "tsx": "4.23.12"
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.17.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

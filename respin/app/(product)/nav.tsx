@@ -8,7 +8,12 @@ import { usePathname } from "next/navigation";
 
 const ITEMS = [
   { href: "/onboarding", label: "Onboarding" },
+  { href: "/trends", label: "Trends" },
   { href: "/studio", label: "Studio" },
+  // Slice 9a. Reachability is the point: a page nothing links to is inventory
+  // (Definition of Done), and this is the one screen where a creator's own
+  // posted outcomes go in and come back as a comparison against their own past.
+  { href: "/results", label: "Results" },
   { href: "/usage", label: "Usage" },
   { href: "/settings/billing", label: "Billing" },
 ] as const;

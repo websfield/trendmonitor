@@ -12,7 +12,6 @@ import {
   CHECK,
   ClaimWalkError,
   ContentSchemaError,
-  KindNotYetWritableError,
   SchemaShapeError,
   WRITABLE_BRAIN_KINDS,
   assertClosedSchema,
@@ -365,11 +364,36 @@ describe("parseBrainContent", () => {
     ).toThrow(ContentSchemaError);
   });
 
-  it("refuses performance_meta as not yet writable", () => {
-    expect(() => parseBrainContent("performance_meta", { baselineNote: "x" })).toThrow(
-      KindNotYetWritableError
-    );
-    expect(WRITABLE_BRAIN_KINDS.has("performance_meta")).toBe(false);
+  it("accepts the closed 9b performance_meta shape and refuses its old malformed placeholder", () => {
+    const content = {
+      rules: [{
+        metricLabel: "Followers",
+        metricKey: "followers",
+        metricUnit: "followers per 1k views",
+        metricDirection: "higher_is_better",
+        lever: "reach",
+        platform: "shorts",
+        audienceClass: "organic",
+        observedFrom: "2026-08-01T00:00:00.000Z",
+        observedTo: "2026-08-31T00:00:00.000Z",
+        treatmentN: 3,
+        baselineN: 3,
+        treatmentMedianPer1k: 2,
+        baselineMedianPer1k: 1,
+        effectPer1k: 1,
+        pastOutcome: "better",
+        evidenceStrength: "early",
+        selfReportedN: 6,
+        connectorVerifiedN: 0,
+        confounders: [],
+      }],
+    } as const;
+
+    expect(parseBrainContent("performance_meta", content)).toEqual(content);
+    expect(WRITABLE_BRAIN_KINDS.has("performance_meta")).toBe(true);
+    expect(() =>
+      parseBrainContent("performance_meta", { baselineNote: "x" })
+    ).toThrow(ContentSchemaError);
   });
 
   it("names the offending pointer when content does not match", () => {

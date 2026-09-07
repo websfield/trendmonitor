@@ -185,10 +185,9 @@ describe("promptFramework: one row as prompt material (R5b)", () => {
     }
   });
 
-  it("a SATURATED framework carries the warning; an observed one does not", () => {
-    // REQ-D02 / R5b: a saturated framework "warns and demands a fresh
-    // interpretation", and the warning rides on the row rather than on each
-    // screen — `@respin/db`'s own string, never a second wording here.
+  it("both saturated and observed legacy tags carry the unmeasured limitation", () => {
+    // Neither tag has a framework-level population/window, so both carry
+    // `@respin/db`'s own limitation rather than a second wording here.
     const saturated = promptFramework(
       row({ ...SHARED_FRAMEWORK_SEED[0], saturation: "saturated" })
     );
@@ -196,12 +195,16 @@ describe("promptFramework: one row as prompt material (R5b)", () => {
     const observed = promptFramework(
       row({ ...SHARED_FRAMEWORK_SEED[0], saturation: "observed" })
     );
-    expect(observed.summary).not.toContain(SATURATION_NOTICE);
-    // NON-VACUITY: the seed really does ship at least one saturated framework,
-    // so the branch above is about a state the product actually reaches.
+    expect(observed.summary).toContain(SATURATION_NOTICE);
+    // NON-VACUITY: both legacy tags are live in the seed, so the comparison is
+    // not two invented fixtures.
     expect(
       SHARED_FRAMEWORK_SEED.filter((f) => f.saturation === "saturated").length,
       "no seeded framework is saturated, so the notice has no live path"
+    ).toBeGreaterThan(0);
+    expect(
+      SHARED_FRAMEWORK_SEED.filter((f) => f.saturation === "observed").length,
+      "no seeded framework is observed, so the second tag is not live",
     ).toBeGreaterThan(0);
   });
 
@@ -379,7 +382,7 @@ describe("the fixture order is the accessor's order (R-77)", () => {
     // non-vacuity case below caught that on its first run, which is the whole
     // reason it is here: the scan was reading `generationFeedback` and
     // reporting on `eligibleFrameworks`.
-    const impl = /eligibleFrameworks: \(\) =>\s*\n\s*db\b/g;
+    const impl = /eligibleFrameworks: \(tx\?: TxLike\) =>\s*\r?\n\s*\(tx \?\? db\)/g;
     const hits = [...src.matchAll(impl)];
     expect(
       hits.length,
@@ -485,7 +488,8 @@ describe("R17: what the library costs the prompt, MEASURED", () => {
     // §7's 45s budget is actually about — and input tokens are not where
     // generation latency comes from, output tokens are. So this is a bound on
     // CONTEXT GROWTH, stated as such, and the deadline itself is R-40's
-    // `llm.overallDeadlineMs` (40s), which is unchanged by this slice.
+    // `llm.overallDeadlineMs` (120s since 2026-09-04 — R-100), unchanged by
+    // this slice.
     expect(SEED_ROWS.length, "the seeded library").toBe(9);
     expect(added, `the library adds ${added} characters to one prompt`)
       .toBeGreaterThan(0);

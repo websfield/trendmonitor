@@ -81,16 +81,31 @@ export const PROBE_DIRECTORY_NAMES = [
 ] as const;
 
 /**
- * The single-file probe convention: `__<anything>_probe.ts`.
+ * The single-file scratch convention: a filename that STARTS WITH `__`.
+ *
+ * WIDENED FROM `__<anything>_probe.ts` IN THE SLICE-8C FIX ROUND (code review
+ * round 1, C14), and the widening is the finding. The old pattern's population
+ * was "probes a SUITE plants", which is exactly the shape CLAUDE.md's
+ * 2026-08-29 lesson is about: during that very review a reviewer wrote
+ * `__rev_mut1.ts` and `__rev_mut2.ts` (501-line mutated copies of the money
+ * module) into `packages/credits/src/`, and a `__rev_probe` suite file into its
+ * `tests/`. None of the three patterns matched any of them, so while they
+ * existed they were committable, `isolation.test.ts` was red, and the recorded
+ * entry gate did not describe the tree. The convention is now the PREFIX, which
+ * covers a mutant, an aliased copy and a `.test.ts` probe as well as a plain
+ * one — nothing in this repo starts a real filename with `__`.
  *
  * A REGEX LITERAL, never assembled from a string — one lost backslash in an
  * assembled pattern turns a guard into a scan that matches nothing and reports
- * clean (CLAUDE.md, 2026-08-21). `tsconfig.json` already excludes the same
- * `__*_probe.ts` convention at any depth, for the same family of reasons (a survivor otherwise fails
- * every later `pnpm typecheck`), so the two conventions are deliberately the
- * same one.
+ * clean (CLAUDE.md, 2026-08-21).
+ *
+ * THE ONE THING IT DOES NOT COVER: `tsconfig.json` still excludes only the
+ * narrow `__*_probe.ts` glob, so a surviving `__rev_mut1.ts` is uncommittable but still
+ * typechecked. That is the loud failure, not the quiet one, and `tsconfig.json`
+ * is outside this fix round's ownership — recorded here rather than assumed
+ * away.
  */
-export const PROBE_FILE_RE = /^__[A-Za-z0-9]+(_[A-Za-z0-9]+)*_probe\.(ts|tsx)$/;
+export const PROBE_FILE_RE = /^__[A-Za-z0-9][A-Za-z0-9._-]*\.(ts|tsx)$/;
 
 /** True for ONE path segment that is a probe directory or a probe file. */
 export function isProbeArtifactSegment(segment: string): boolean {
@@ -121,5 +136,12 @@ export function isProbeArtifactPath(filePath: string): boolean {
 export const PROBE_GITIGNORE_PATTERNS = [
   "__scan_probe__/",
   "__stripe_scan_probe__/",
-  "__*_probe.ts",
+  "__*.ts",
+  "__*.tsx",
+  // NOT a probe artifact, and here for the same reason they are: `.tmp/` is
+  // where `tsx` and node's compile cache write when a script is run from
+  // `respin/`, and it was untracked AND un-ignored — `git status --short`
+  // listed `?? respin/.tmp/` beside the real, also-untracked source files of
+  // slice 8c, one `git add -A` from riding along (C14).
+  ".tmp/",
 ] as const;

@@ -34,6 +34,117 @@ describe("@respin/config", () => {
     expect(respinConfigV1.parse(CONFIG_V1_SEED)).toEqual(CONFIG_V1_SEED);
   });
 
+  it("defaults a pre-Spin document's requested strictness without weakening the code gate", () => {
+    const beforeSpin: Record<string, unknown> = { ...CONFIG_V1_SEED };
+    delete beforeSpin.similarity;
+    const parsed = respinConfigV1.parse(beforeSpin);
+    expect(parsed.similarity).toEqual({ strictness: 0.7 });
+  });
+
+  it("defaults a pre-R-95 document's tracked-niche allowance to the PRD §4G row (0/1/3/10)", () => {
+    const beforeTrackedNiches: Record<string, unknown> = { ...CONFIG_V1_SEED };
+    delete beforeTrackedNiches.trackedNiches;
+    expect(respinConfigV1.parse(beforeTrackedNiches).trackedNiches).toEqual({
+      free: 0,
+      creator: 1,
+      pro: 3,
+      studio: 10,
+    });
+    // ...and a document that prices it DIFFERENTLY is what the reader sees —
+    // the key is config, not a literal wearing a config name.
+    expect(
+      respinConfigV1.parse({ ...CONFIG_V1_SEED, trackedNiches: { free: 0, creator: 2, pro: 5, studio: 20 } })
+        .trackedNiches
+    ).toEqual({ free: 0, creator: 2, pro: 5, studio: 20 });
+    // `.strict()`: a fifth tier is a parse failure, not a silent allowance.
+    expect(() =>
+      respinConfigV1.parse({ ...CONFIG_V1_SEED, trackedNiches: { free: 0, creator: 1, pro: 3, studio: 10, enterprise: 99 } })
+    ).toThrow();
+  });
+
+  it("defaults pre-9b performance-learning access and keeps the tier map strict/config-driven", () => {
+    const before9b: Record<string, unknown> = { ...CONFIG_V1_SEED };
+    delete before9b.performanceLearning;
+    expect(respinConfigV1.parse(before9b).performanceLearning).toEqual({
+      free: "view_only",
+      creator: "full",
+      pro: "full",
+      studio: "full",
+    });
+
+    const inverted = respinConfigV1.parse({
+      ...CONFIG_V1_SEED,
+      performanceLearning: {
+        free: "full",
+        creator: "view_only",
+        pro: "full",
+        studio: "full",
+      },
+    });
+    expect(inverted.performanceLearning).toEqual({
+      free: "full",
+      creator: "view_only",
+      pro: "full",
+      studio: "full",
+    });
+
+    for (const performanceLearning of [
+      { free: "view_only", creator: "full", pro: "full" },
+      {
+        free: "view_only",
+        creator: "full",
+        pro: "full",
+        studio: "full",
+        enterprise: "full",
+      },
+      { free: "none", creator: "full", pro: "full", studio: "full" },
+    ]) {
+      expect(
+        respinConfigV1.safeParse({ ...CONFIG_V1_SEED, performanceLearning })
+          .success
+      ).toBe(false);
+    }
+  });
+
+  it("defaults pre-9b days-to-empty thresholds and refuses missing, non-positive, non-integer, or incoherent values", () => {
+    const before9b: Record<string, unknown> = { ...CONFIG_V1_SEED };
+    delete before9b.daysToEmpty;
+    expect(respinConfigV1.parse(before9b).daysToEmpty).toEqual({
+      trailingWindowDays: 30,
+      minimumDebitDays: 3,
+    });
+
+    expect(
+      respinConfigV1.parse({
+        ...CONFIG_V1_SEED,
+        daysToEmpty: { trailingWindowDays: 45, minimumDebitDays: 7 },
+      }).daysToEmpty
+    ).toEqual({ trailingWindowDays: 45, minimumDebitDays: 7 });
+
+    for (const daysToEmpty of [
+      { trailingWindowDays: 30 },
+      { trailingWindowDays: 0, minimumDebitDays: 3 },
+      { trailingWindowDays: 30, minimumDebitDays: -1 },
+      { trailingWindowDays: 30.5, minimumDebitDays: 3 },
+      { trailingWindowDays: 2, minimumDebitDays: 3 },
+      { trailingWindowDays: 30, minimumDebitDays: 3, extra: 1 },
+    ]) {
+      expect(
+        respinConfigV1.safeParse({ ...CONFIG_V1_SEED, daysToEmpty }).success
+      ).toBe(false);
+    }
+  });
+
+  it("materialises the existing system-autopsy code ceiling for a pre-cap document", () => {
+    const beforeSystemAutopsyCap: Record<string, unknown> = {
+      ...CONFIG_V1_SEED,
+    };
+    delete beforeSystemAutopsyCap.systemAutopsy;
+    expect(respinConfigV1.parse(beforeSystemAutopsyCap).systemAutopsy).toEqual({
+      dailyCapMicroUsd: 100_000_000,
+    });
+  });
+
   it("FAIL CLOSED: empty config_versions table → ConfigUnavailableError (never a default price)", async () => {
     const db = await createTestDb();
     await expect(getActiveConfig(db)).rejects.toThrow(ConfigUnavailableError);

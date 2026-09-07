@@ -235,12 +235,56 @@ export type ConfigValidation =
  * the app package, and importing it there would be a second validator). So the
  * shape crosses the boundary as plain data.
  *
- * This is NOT a replacement for the write-side validation — `appendConfigVersion`
- * still parses, so a caller that skips this cannot write an invalid document.
+ * NOT a replacement for `appendConfigVersion`'s parse, but NOT equivalent to it
+ * either, and the difference is load-bearing (code review, round 2). That
+ * function validates against the SCHEMA only; the `timeoutMs <= overallDeadlineMs`
+ * relation below lives here alone. So a caller that skips this CAN write a
+ * schema-valid document whose per-request timeout can never fire — and
+ * `applyConfigMigration` is exactly such a caller, by design: it must be able to
+ * append a document preserving an operator's incoherent legacy pair, or the
+ * correction that would repair it could never run. The residual is registered;
+ * the sentence that used to sit here claimed the opposite.
  */
 export function validateConfigContent(raw: unknown): ConfigValidation {
   const parsed = respinConfigV1.safeParse(raw);
-  if (parsed.success) return { ok: true, value: parsed.data };
+  if (parsed.success) {
+    // THE RELATION BOUNDS, CHECKED WHERE AN OPERATOR TYPES THEM.
+    //
+    // `respinConfigV1` validates every key in isolation, so nothing stopped
+    // `timeoutMs: 300_000` beside `overallDeadlineMs: 5_000` — a per-request
+    // timeout above the bound containing it can never fire, which is exactly
+    // the dead-config-shaped-like-a-control defect the 2026-09-04 change was
+    // fixing (code review CHANGE 6). "Guard where the path is built"
+    // (CLAUDE.md 2026-07-30).
+    //
+    // IT IS HERE AND NOT A `.refine()` ON THE SCHEMA, and the reason is the
+    // OTHER 2026-07-30 lesson — fail closed, but never without a way forward.
+    // The documents this relation is violated by are precisely the ones
+    // `CORRECTIONS` exists to repair (the shipped 60_000-over-40_000 pair), and
+    // `respinConfigV1` is the READ schema: a `.refine()` there makes those
+    // documents unparseable, so `prepareConfigMigration` refuses them and the
+    // correction that would fix them can never run. It also blocks
+    // `appendConfigVersion`, which is the migration's own writer — including
+    // the write that records an operator's preserved values. Measured: adding
+    // the refine reddened three correction tests for exactly that reason.
+    //
+    // So the relation is enforced on the OPERATOR'S edit, where there is always
+    // a way forward (type a different number), and legacy documents stay
+    // readable and repairable.
+    const { timeoutMs, overallDeadlineMs } = parsed.data.llm;
+    if (timeoutMs > overallDeadlineMs) {
+      return {
+        ok: false,
+        issues: [
+          {
+            path: "llm.timeoutMs",
+            message: `llm.timeoutMs (${timeoutMs}) must be less than or equal to llm.overallDeadlineMs (${overallDeadlineMs}): a per-request timeout above the deadline containing it can never fire.`,
+          },
+        ],
+      };
+    }
+    return { ok: true, value: parsed.data };
+  }
   return {
     ok: false,
     issues: parsed.error.issues.map((i) => ({

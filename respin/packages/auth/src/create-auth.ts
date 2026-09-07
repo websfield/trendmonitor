@@ -1,10 +1,27 @@
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import type { DbLike } from "@respin/db";
+import {
+  AUTH_MAIL_TTL_MS,
+  AUTH_PASSWORD_MAX_LENGTH,
+  AuthMailDeliveryError,
+  AuthMailRefusedError,
+  deliverAuthMail,
+  ordinaryLoginAllowed,
+  type AuthMailPort,
+  type DbLike,
+} from "@respin/db";
 
 export type CreateAuthOptions = {
   baseURL?: string;
   secret?: string;
+  /**
+   * The closed auth-delivery port (Phase 10b-1 Task 4). `null`/absent keeps
+   * the keyless dev-console path: nothing is sent and only the user id (plus,
+   * in development, the link) reaches the console. Production composes the
+   * Resend adapter in `server.ts` from `RESEND_API_KEY`/`RESEND_FROM`.
+   */
+  mail?: AuthMailPort | null;
   /**
    * Injected so a test can build the auth instance for a NAMED environment
    * rather than mutating `process.env` (audit 2026-08-17 #20). Defaults to the
@@ -275,6 +292,39 @@ export function resetPasswordLogLine(
   return `password reset requested (user ${user.id})`;
 }
 
+/** Same rule as the reset line: the verification URL is a credential too. */
+export function emailVerificationLogLine(
+  nodeEnv: string | undefined,
+  user: { id: string; email: string },
+  url: string
+): string {
+  if (nodeEnv === "development") {
+    return `[dev-only] email verification link for ${user.email}: ${url}`;
+  }
+  return `email verification requested (user ${user.id})`;
+}
+
+/**
+ * Better Auth token lifetimes, pinned to the closed authority's TTLs (plan
+ * C2: password reset 15 minutes, email verification 24 hours). Seconds,
+ * because that is the unit the installed options take.
+ */
+export const PASSWORD_RESET_TOKEN_TTL_SECONDS = AUTH_MAIL_TTL_MS.password_reset / 1_000;
+export const EMAIL_VERIFICATION_TOKEN_TTL_SECONDS =
+  AUTH_MAIL_TTL_MS.email_verification / 1_000;
+
+/**
+ * A refused or non-accepted send is reported by CODE only. The caller decides
+ * whether that surfaces (password reset: yes — never "check your email" for a
+ * mail that did not go) or is logged (signup verification: the account exists
+ * and can re-request).
+ */
+function authMailFailureCode(error: unknown): string {
+  if (error instanceof AuthMailRefusedError) return error.code;
+  if (error instanceof AuthMailDeliveryError) return `${error.status}:${error.code}`;
+  return "unexpected";
+}
+
 /**
  * Factory (testability: tests inject a PGlite db and run REAL sign-up flows).
  * The runtime instance is built lazily in server.ts — no env read at import.
@@ -284,6 +334,23 @@ export function createAuth(db: DbLike, opts: CreateAuthOptions = {}) {
     // The db's schema map already contains the generated auth tables —
     // packages/db/src/schema.ts re-exports auth-schema.ts (adapter-wiring pin).
     database: drizzleAdapter(db, { provider: "pg" }),
+    // Friendly application-level refusal. The migration's session-table
+    // trigger is the atomic authority for the deletion/sign-in race; this hook
+    // gives a correctly authenticated caller a stable response before the
+    // adapter reaches that trigger.
+    databaseHooks: {
+      session: {
+        create: {
+          before: async (candidate) => {
+            if (!(await ordinaryLoginAllowed(db, candidate.userId))) {
+              throw new APIError("FORBIDDEN", {
+                message: "Sign-in is disabled while account deletion is pending.",
+              });
+            }
+          },
+        },
+      },
+    },
     secret: opts.secret ?? process.env.BETTER_AUTH_SECRET,
     baseURL: opts.baseURL ?? process.env.BETTER_AUTH_URL,
     // AUTH RATE LIMITING, EXPLICIT (audit 2026-08-17 #20).
@@ -339,14 +406,68 @@ export function createAuth(db: DbLike, opts: CreateAuthOptions = {}) {
     },
     emailAndPassword: {
       enabled: true,
+      // Shared with the direct exact-session reauthentication authority. The
+      // installed Better Auth default is 128; pin it explicitly so an upgrade
+      // cannot widen one password-verification route without the other.
+      maxPasswordLength: AUTH_PASSWORD_MAX_LENGTH,
       revokeSessionsOnPasswordReset: true,
-      // SHORTCUT: no email provider until M6 (digests land there — auth-swap
-      // plan, Deferral Ledger). Ceiling: users cannot actually receive reset
-      // email; dev reads the link from the dev console. Guard: outside
-      // development the URL is never logged (resetPasswordLogLine).
-      // Upgrade trigger: M6 email provider — replace this stub with real send.
+      resetPasswordTokenExpiresIn: PASSWORD_RESET_TOKEN_TTL_SECONDS,
+      // Phase 10b-1 Task 4: with a mail port, every reset goes through the
+      // closed auth-delivery authority (quota admission → outbox row →
+      // Resend → recorded outcome). A refused or non-accepted send THROWS;
+      // the installed better-auth@1.6.28 runs this hook through its
+      // background-task helper and still answers "If this email exists…"
+      // (its enumeration guard, `dist/api/routes/password.mjs`), so the throw
+      // reaches Better Auth's error log with the code and the OUTBOX ROW is
+      // the durable truth — never a claim of delivery (auth-mail-wiring.test.ts,
+      // 10b1-task4-contract.md stated limitations). Without a port (keyless
+      // build, dev): the console line only, and outside development the URL
+      // is never logged (resetPasswordLogLine).
       sendResetPassword: async ({ user, url }) => {
-        console.log(resetPasswordLogLine(process.env.NODE_ENV, user, url));
+        const mail = opts.mail ?? null;
+        if (!mail) {
+          console.log(resetPasswordLogLine(process.env.NODE_ENV, user, url));
+          return;
+        }
+        try {
+          await deliverAuthMail(db, mail, {
+            purpose: "password_reset",
+            authUserId: user.id,
+            actionUrl: url,
+            actionExpiresAt: new Date(Date.now() + AUTH_MAIL_TTL_MS.password_reset),
+          });
+        } catch (error) {
+          throw new APIError("SERVICE_UNAVAILABLE", {
+            message: `Password reset email could not be sent (${authMailFailureCode(error)}).`,
+          });
+        }
+      },
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      expiresIn: EMAIL_VERIFICATION_TOKEN_TTL_SECONDS,
+      // Signup must not fail because a verification mail was refused or not
+      // accepted: the account exists and can re-request. The outbox row (or
+      // the absence of one, for a quota refusal) is the honest record; the
+      // console gets the code and the user id, never the address or URL.
+      sendVerificationEmail: async ({ user, url }) => {
+        const mail = opts.mail ?? null;
+        if (!mail) {
+          console.log(emailVerificationLogLine(process.env.NODE_ENV, user, url));
+          return;
+        }
+        try {
+          await deliverAuthMail(db, mail, {
+            purpose: "email_verification",
+            authUserId: user.id,
+            actionUrl: url,
+            actionExpiresAt: new Date(Date.now() + AUTH_MAIL_TTL_MS.email_verification),
+          });
+        } catch (error) {
+          console.error(
+            `email verification not sent (user ${user.id}): ${authMailFailureCode(error)}`
+          );
+        }
       },
     },
     ...(isGoogleConfigured()

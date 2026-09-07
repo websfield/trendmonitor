@@ -32,6 +32,9 @@ const scopeState = vi.hoisted(() => ({
   subscription: vi.fn(),
   getBalance: vi.fn(),
   getBillingState: vi.fn(),
+  usageRunwayFor: vi.fn(),
+  selectedProfileForMember: vi.fn(),
+  brainAssetSummary: vi.fn(),
 }));
 
 vi.mock("@respin/auth", () => ({
@@ -44,6 +47,8 @@ vi.mock("@respin/db", async (importOriginal) => ({
   respinDb: {
     ensureUserWorkspace: scopeState.ensureUserWorkspace,
     withWorkspace: scopeState.withWorkspace,
+    selectedProfileForMember: scopeState.selectedProfileForMember,
+    brainAssetSummary: scopeState.brainAssetSummary,
   },
 }));
 
@@ -52,6 +57,7 @@ vi.mock("@respin/credits/app-server", async (importOriginal) => ({
   respinCredits: {
     getBalance: scopeState.getBalance,
     getBillingState: scopeState.getBillingState,
+    usageRunwayFor: scopeState.usageRunwayFor,
   },
 }));
 
@@ -86,6 +92,23 @@ beforeEach(() => {
   scopeState.withWorkspace.mockResolvedValue(okScope());
   scopeState.getBalance.mockResolvedValue({ balance: 1250, asOf: NOW });
   scopeState.getBillingState.mockResolvedValue({ tier: "creator", state: "active" });
+  scopeState.usageRunwayFor.mockResolvedValue({
+    state: "no_spend",
+    asOf: NOW,
+    windowStart: new Date("2026-07-18T00:00:00Z"),
+    trailingWindowDays: 30,
+    minimumDebitDays: 3,
+    debitDayCount: 0,
+    balance: 1250,
+    totalDebit: 0,
+  });
+  scopeState.selectedProfileForMember.mockResolvedValue({ id: "profile_1" });
+  scopeState.brainAssetSummary.mockResolvedValue({
+    brainVersions: 2,
+    testedRules: 1,
+    loggedResults: 3,
+    feedback: 1,
+  });
   scopeState.ledger.mockResolvedValue([
     {
       id: "row_1",
@@ -134,6 +157,10 @@ describe("/usage page component: the wiring no test executed (round-3 NOTE)", ()
     // ...and the ledger read is CLAMPED at the page size + 1 (the "is there
     // more?" probe), never unbounded.
     expect(scopeState.ledger).toHaveBeenCalledWith({ limit: 51 });
+    const mintedScope = await scopeState.withWorkspace.mock.results[0].value;
+    expect(scopeState.usageRunwayFor).toHaveBeenCalledWith(mintedScope);
+    expect(scopeState.selectedProfileForMember).toHaveBeenCalledWith(mintedScope);
+    expect(scopeState.brainAssetSummary).toHaveBeenCalledWith(mintedScope, "profile_1");
   });
 
   it("WorkspaceAccessError from withWorkspace renders AccessRefusal — the branch round 2 could not reach", async () => {

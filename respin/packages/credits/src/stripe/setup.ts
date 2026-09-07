@@ -11,6 +11,7 @@
 import type { DbLike } from "@respin/db";
 import { getActiveConfig } from "@respin/config";
 import { getStripe } from "./adapter";
+import { packCheckoutV1PriceKey } from "./pack-price";
 
 const LOOKUP = {
   creator: "respin_creator_monthly",
@@ -142,8 +143,9 @@ export async function stripeSetup(db: DbLike): Promise<void> {
       `pack price ${packPrice.id} agrees with config v${version} (${packCents}c)`
     );
   }
-  results[packPrice.id] = "pack";
-  amounts[packPrice.id] = packPrice.unit_amount ?? null;
+  const packConfigKey = packCheckoutV1PriceKey(packPrice.id);
+  results[packConfigKey] = "pack";
+  amounts[packConfigKey] = packPrice.unit_amount ?? null;
 
   console.log("\nNEXT STEP — paste this into /admin/config as `stripePriceMap`:");
   console.log(JSON.stringify(results, null, 2));

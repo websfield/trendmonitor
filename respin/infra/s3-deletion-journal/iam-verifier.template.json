@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "R-124 RESTORE/VERIFIER principal: list, get and read retention. No write,",
+    "no delete. Mirrored by `JournalVerifierTransport`, whose only methods are",
+    "listVersions and getObjectVersion.",
+    "The prefix condition must admit the ENUMERATION as well as the per-operation listing: listJournalOperationIds lists '<ENVIRONMENT>/deletion-journal/' and loadJournalChain lists '<ENVIRONMENT>/deletion-journal/<operationId>/'. Both are covered by the pattern below; a bare '<ENVIRONMENT>/' listing is deliberately NOT granted."
+  ],
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListEveryVersionAndDeleteMarker",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": "arn:aws:s3:::<BUCKET>",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "<ENVIRONMENT>/deletion-journal/*"
+        }
+      }
+    },
+    {
+      "Sid": "ReadObjectsAndTheirRetention",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:GetObjectRetention",
+        "s3:GetObjectVersionAttributes"
+      ],
+      "Resource": "arn:aws:s3:::<BUCKET>/<ENVIRONMENT>/deletion-journal/*"
+    }
+  ]
+}

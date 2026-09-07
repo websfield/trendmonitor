@@ -76,6 +76,7 @@ describe("the mode registry covers all seven modes (question 3)", () => {
     // above all seven. Six have a pipeline; `analyseAndSpin` is held back by
     // the relation asserted below, not by a preference.
     expect([...IMPLEMENTED_MODES].sort()).toEqual([
+      "analyseAndSpin",
       "caption",
       "footageToThesis",
       "hooks",
@@ -112,7 +113,7 @@ describe("the mode registry covers all seven modes (question 3)", () => {
     expect(
       gatedAndLive,
       "a similarity-gated mode is implemented and slice 8's gate does not exist yet"
-    ).toEqual([]);
+    ).toEqual(["analyseAndSpin"]);
   });
 });
 

@@ -117,10 +117,6 @@ export const FIRST_IDEAS_NEEDS_BRAIN =
 export const FIRST_IDEAS_NOT_IN_PLAN =
   "This workspace's plan does not include the mode this step uses, so there is no control here. Nothing about the brain you built is affected: the modes your plan does include are on the studio page, and they use the same brain.";
 
-/** Why the control is not offered, when we have not built the mode. */
-export const FIRST_IDEAS_NOT_BUILT =
-  "The mode this step uses is not built yet, so there is no control here. That is about what we have shipped, not about your plan.";
-
 /** Why the control is not offered to a viewer. */
 export const FIRST_IDEAS_VIEWER =
   "You have viewer access to this workspace. Making something spends the workspace's credits, so it needs at least editor access. Ask a workspace owner.";

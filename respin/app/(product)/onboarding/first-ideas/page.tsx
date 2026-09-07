@@ -49,7 +49,6 @@ import { studioErrorFor, studioRefusalCopy } from "../../studio/copy";
 import { firstIdeasAction } from "./actions";
 import {
   FIRST_IDEAS_NEEDS_BRAIN,
-  FIRST_IDEAS_NOT_BUILT,
   FIRST_IDEAS_NOT_IN_PLAN,
   FIRST_IDEAS_PAUSED,
   FIRST_IDEAS_VIEWER,
@@ -197,11 +196,9 @@ export default async function FirstIdeasPage(props: {
         ? { reason: FIRST_IDEAS_PAUSED }
         : offer === undefined || offer.status === "not_in_plan"
           ? { reason: FIRST_IDEAS_NOT_IN_PLAN }
-          : offer.status === "not_built_yet"
-            ? { reason: FIRST_IDEAS_NOT_BUILT }
-            : !brainActivated
-              ? { reason: FIRST_IDEAS_NEEDS_BRAIN }
-              : null;
+          : !brainActivated
+            ? { reason: FIRST_IDEAS_NEEDS_BRAIN }
+            : null;
 
   const refusalCopy = studioRefusalCopy();
 

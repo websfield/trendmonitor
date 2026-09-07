@@ -17,12 +17,9 @@
 // CLAUDE.md's 2026-08-29 lesson exactly — a derived guard is only as wide as
 // its population, and a population that can empty must SAY SO rather than skip.
 //
-// SO EVERY POPULATION BELOW IS NAMED, DERIVED AND ASSERTED NON-EMPTY, with a
-// message that tells the next developer what to decide when it empties. When
-// slice 8 implements `analyseAndSpin`, `UNBUILT_MODES` empties and three cases
-// in this file go RED — which is the correct outcome, because `ModeNotBuiltYetError`
-// and the built gate become dead code on that day and deleting them is a
-// decision somebody should make on purpose.
+// Slice 8 discharged that self-expiring rule: all seven modes are reachable,
+// and the dead built-gate refusal was removed rather than kept as an unwitnessed
+// branch. The tier map remains total and independently checked below.
 //
 // PURE, and that is the second claim: nothing here touches a database, because
 // `mode-access.ts` is handed a RESOLVED tier and never derives one. The tier
@@ -40,7 +37,6 @@ import { CONFIG_V1_SEED } from "@respin/db";
 import {
   ENTITLEMENT_TIERS,
   MODE_TIERS,
-  ModeNotBuiltYetError,
   ModeNotInPlanError,
   TIER_MODES,
   TIER_PRIVATE_FRAMEWORKS,
@@ -51,6 +47,7 @@ import {
   modesIncludedIn,
   planIncludesMode,
   privateFrameworkEntitlement,
+  trackedNicheEntitlement,
   type EntitlementTier,
 } from "../src/mode-access";
 import { REVISION_CREDIT_COST_KEY } from "../src/generate";
@@ -80,36 +77,6 @@ const PRD_TABLE: Record<EntitlementTier, string[]> = {
  * a stale form post, a jsonb column or an `as` in a hurry looks like.
  */
 const UNCLASSIFIED_MODE = "seriesPlanner" as unknown as ModeId;
-
-/**
- * THE MODES THAT DO NOT EXIST YET — the population slice 6's `continue` hid.
- *
- * Derived, never listed: writing `["analyseAndSpin"]` here would be a second
- * population that stops agreeing with `IMPLEMENTED_MODES` the day slice 8
- * lands, which is the same defect one level up.
- */
-const UNBUILT_MODES = MODE_IDS.filter((m) => !IMPLEMENTED_MODES.includes(m));
-
-/**
- * EVERY (tier, mode) PAIR WHERE THE PLAN GATE AND THE BUILT GATE BOTH APPLY.
- *
- * This is the only population that can witness their ORDER: a mode that a tier
- * excludes AND the product has not built. Slice 6 wrote one literal pair
- * (`free`, `sourceToReel`) and it stopped being such a pair when stage B built
- * the mode — the case kept passing and stopped testing the order.
- */
-const PLAN_AND_BUILT_PAIRS = TIERS.flatMap((tier) =>
-  UNBUILT_MODES.filter((mode) => !PRD_TABLE[tier].includes(mode)).map(
-    (mode) => ({ tier, mode })
-  )
-);
-
-/** Every (tier, mode) pair where the plan allows it and it does not exist. */
-const IN_PLAN_BUT_UNBUILT_PAIRS = TIERS.flatMap((tier) =>
-  UNBUILT_MODES.filter((mode) => PRD_TABLE[tier].includes(mode)).map(
-    (mode) => ({ tier, mode })
-  )
-);
 
 describe("the mode -> tier map (R13/R14/R18)", () => {
   it("every mode has an entry, and the key space is exactly MODE_IDS", () => {
@@ -186,52 +153,23 @@ describe("the mode -> tier map (R13/R14/R18)", () => {
     }
   });
 
-  it("a mode in the plan but NOT BUILT is a different refusal", () => {
-    // THE POPULATION GUARD SLICE 6 DID NOT HAVE. When slice 8 implements
-    // `analyseAndSpin` this goes red, and that is the point: on that day
-    // `ModeNotBuiltYetError` and the built gate in `assertModeAllowed` have no
-    // reachable case left, and whether to delete them is a decision rather than
-    // a test that quietly stopped asserting anything.
-    expect(
-      UNBUILT_MODES,
-      "every mode is built, so ModeNotBuiltYetError has no witness left — delete the class and the built gate, or add the mode that needs them"
-    ).not.toHaveLength(0);
-    expect(
-      IN_PLAN_BUT_UNBUILT_PAIRS,
-      "no tier includes an unbuilt mode, so nothing can reach the built gate — see the note above"
-    ).not.toHaveLength(0);
-    for (const { tier, mode } of IN_PLAN_BUT_UNBUILT_PAIRS) {
-      expect(
-        () => assertModeAllowed(tier, mode),
-        `${tier}:${mode}`
-      ).toThrow(ModeNotBuiltYetError);
+  it("Spin is live for every paid tier and remains outside the Free entitlement", () => {
+    for (const tier of ["creator", "pro", "studio"] as const) {
+      expect(() => assertModeAllowed(tier, "analyseAndSpin")).not.toThrow();
     }
-    // ...and every BUILT mode passes on every tier whose plan includes it.
+    expect(() => assertModeAllowed("free", "analyseAndSpin")).toThrow(
+      ModeNotInPlanError
+    );
+  });
+
+  it("all modes are now built, while tier access still decides Spin", () => {
+    expect([...IMPLEMENTED_MODES].sort()).toEqual([...MODE_IDS].sort());
+    // Every registry mode passes on every tier whose plan includes it.
     for (const tier of TIERS) {
       for (const mode of IMPLEMENTED_MODES) {
         if (!PRD_TABLE[tier].includes(mode)) continue;
         expect(() => assertModeAllowed(tier, mode), `${tier}:${mode}`).not.toThrow();
       }
-    }
-  });
-
-  it("the plan gate runs BEFORE the built gate", () => {
-    // A creator asking for an unbuilt mode their plan ALSO excludes is told
-    // about their plan, because that is the stable answer: "we have not built
-    // it" stops being true the day slice 8 lands.
-    expect(
-      PLAN_AND_BUILT_PAIRS,
-      "no (tier, mode) pair triggers BOTH gates, so their order is unwitnessed — the order claim in assertModeAllowed's docblock is now unproven"
-    ).not.toHaveLength(0);
-    for (const { tier, mode } of PLAN_AND_BUILT_PAIRS) {
-      expect(
-        () => assertModeAllowed(tier, mode),
-        `${tier}:${mode}`
-      ).toThrow(ModeNotInPlanError);
-      // ...and NOT the other one, which is what "before" means here.
-      expect(() => assertModeAllowed(tier, mode)).not.toThrow(
-        ModeNotBuiltYetError
-      );
     }
   });
 
@@ -249,10 +187,6 @@ describe("the mode -> tier map (R13/R14/R18)", () => {
       expect(message.toLowerCase()).not.toContain("upgrade");
       expect(message.toLowerCase()).not.toContain("plan that includes");
     }
-    // ...and the built-gate refusal does not blame the creator's plan either.
-    const built = new ModeNotBuiltYetError("analyseAndSpin").message;
-    expect(built.toLowerCase()).not.toContain("upgrade");
-    expect(built).toContain("not about your plan");
   });
 
   it("every mode's credit-cost key exists in the stored config — and so does the revision's", () => {
@@ -343,6 +277,51 @@ describe("the tier -> private-framework entitlement map (R5c / REQ-D05)", () => 
   });
 });
 
+describe("the tier -> tracked-niche entitlement (R17)", () => {
+  const PRD_TRACKED_NICHES: Record<EntitlementTier, number> = {
+    free: 0,
+    creator: 1,
+    pro: 3,
+    studio: 10,
+  };
+
+  it("the SEEDED document is total over the resolved tier vocabulary and gives every tier PRD §4G's exact cap", () => {
+    // R-95: the allowance is the config document's `trackedNiches` row, so
+    // totality is a property of the SEED (and of the schema's `.default`),
+    // and this is where PRD §4G is read against it independently.
+    const seeded = CONFIG_V1_SEED.trackedNiches;
+    expect(Object.keys(seeded).sort()).toEqual([...ENTITLEMENT_TIERS].sort());
+    for (const tier of TIERS) {
+      expect(trackedNicheEntitlement(tier, seeded).maxTrackedNiches, tier).toBe(
+        PRD_TRACKED_NICHES[tier]
+      );
+    }
+  });
+
+  it("CONFIG, NOT A LITERAL: a document that prices a tier differently changes the entitlement", () => {
+    // The witness the repo uses for every config-not-code number: the same
+    // tier, two documents, two answers. A code map would answer the same
+    // number for both and this would go red.
+    const stricter = { ...CONFIG_V1_SEED.trackedNiches, pro: 1 };
+    expect(trackedNicheEntitlement("pro", CONFIG_V1_SEED.trackedNiches).maxTrackedNiches).toBe(3);
+    expect(trackedNicheEntitlement("pro", stricter).maxTrackedNiches).toBe(1);
+  });
+
+  it("refuses a cast-in tier instead of handing a writer an implicit cap", () => {
+    expect(() =>
+      trackedNicheEntitlement("enterprise" as EntitlementTier, CONFIG_V1_SEED.trackedNiches)
+    ).toThrow(UnknownEntitlementTierError);
+    // A document missing the tier is the same refusal, not `undefined`
+    // handed to the DB writer as a cap.
+    const withoutStudio = Object.fromEntries(
+      Object.entries(CONFIG_V1_SEED.trackedNiches).filter(([tier]) => tier !== "studio")
+    ) as typeof CONFIG_V1_SEED.trackedNiches;
+    expect(() =>
+      trackedNicheEntitlement("studio", withoutStudio)
+    ).toThrow(UnknownEntitlementTierError);
+  });
+});
+
 // ------------------------------------ the picker's data (slice 7, stage D)
 //
 // `modeOffers` is `assertModeAllowed` READ FORWARDS, and it exists so the mode
@@ -372,7 +351,6 @@ describe("modeOffers: the picker's data agrees with the gate (R1/R13/R14)", () =
   it("EVERY (tier, mode) pair agrees with assertModeAllowed, class for class", () => {
     let available = 0;
     let notInPlan = 0;
-    let notBuilt = 0;
     for (const tier of TIERS) {
       for (const offer of modeOffers(tier)) {
         let thrown: unknown;
@@ -387,48 +365,27 @@ describe("modeOffers: the picker's data agrees with the gate (R1/R13/R14)", () =
         } else if (offer.status === "not_in_plan") {
           expect(thrown, `${tier}/${offer.id}`).toBeInstanceOf(ModeNotInPlanError);
           notInPlan += 1;
-        } else {
-          expect(thrown, `${tier}/${offer.id}`).toBeInstanceOf(
-            ModeNotBuiltYetError
-          );
-          notBuilt += 1;
         }
       }
     }
-    // NON-VACUITY, and it is three separate facts rather than a total: an
+    // NON-VACUITY, and it is two separate facts rather than a total: an
     // implementation that answered `available` for everything would agree with
     // nothing, and one that answered `not_in_plan` for everything would agree
     // with `assertModeAllowed` on Free's four paid modes alone. All three
     // branches must be exercised by the real map.
-    expect(available + notInPlan + notBuilt).toBe(TIERS.length * MODE_IDS.length);
+    expect(available + notInPlan).toBe(TIERS.length * MODE_IDS.length);
     expect(available).toBeGreaterThan(0);
     expect(notInPlan).toBeGreaterThan(0);
-    expect(
-      notBuilt,
-      "UNBUILT_MODES has emptied — slice 8 shipped analyseAndSpin. Decide what `not_built_yet` is for before deleting this line."
-    ).toBeGreaterThan(0);
   });
 
-  it("the PLAN gate wins over the BUILT gate, in assertModeAllowed's own order", () => {
+  it("the picker exposes Spin to paid tiers and refuses it on Free", () => {
     // A Free workspace asking for `analyseAndSpin` is told its plan does not
-    // include it — true, and stable — rather than that it is unbuilt, which is
-    // also true today and misleading the day slice 8 lands. The picker must
-    // say the same thing the refusal says.
-    const unbuiltAndUnplanned = MODE_IDS.filter(
-      (m) => !IMPLEMENTED_MODES.includes(m) && !planIncludesMode("free", m)
-    );
-    expect(
-      unbuiltAndUnplanned.length,
-      "no mode is BOTH unbuilt and outside Free's plan, so this ordering case asserts nothing — re-derive it"
-    ).toBeGreaterThan(0);
-    for (const mode of unbuiltAndUnplanned) {
-      const offer = modeOffers("free").find((o) => o.id === mode);
-      expect(offer?.status, mode).toBe("not_in_plan");
-      // ...and on a tier that DOES include it, the same mode reports the other
-      // reason — so the two branches are distinguished by the tier, not fixed.
-      expect(modeOffers("pro").find((o) => o.id === mode)?.status, mode).toBe(
-        "not_built_yet"
-      );
+    // include it, while every paid tier offers it.
+    expect(modeOffers("free").find((o) => o.id === "analyseAndSpin")?.status)
+      .toBe("not_in_plan");
+    for (const tier of ["creator", "pro", "studio"] as const) {
+      expect(modeOffers(tier).find((o) => o.id === "analyseAndSpin")?.status)
+        .toBe("available");
     }
   });
 

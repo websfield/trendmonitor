@@ -104,6 +104,9 @@ export default async function BrainPage(props: {
         voiceHistory={[]}
         strategyHistory={[]}
         killtestHistory={[]}
+        performanceHistory={[]}
+        proposalHistory={[]}
+        assetCounts={null}
         interviewTouchedButUndrafted={{ strategy: false, killtest: false }}
         decideBlock={null}
         confirmVoiceAction="/brain"
@@ -150,6 +153,59 @@ export default async function BrainPage(props: {
   const strategy = selectCurrentBrainState(strategyHistory);
   const killtest = selectCurrentBrainState(killtestHistory);
 
+  // Performance Meta and proposal history are independent asset reads. A
+  // failure is named in their own panels rather than being misrepresented as
+  // an empty history or taking the creator's existing brain out with it.
+  let performanceHistory: Parameters<typeof BrainView>[0]["performanceHistory"] = null;
+  try {
+    performanceHistory = await respinDb.readBrainHistory(
+      scope,
+      profile.id,
+      "performance_meta"
+    );
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[brain] Performance Meta history unavailable", err);
+  }
+
+  let proposalHistory: Parameters<typeof BrainView>[0]["proposalHistory"] = null;
+  try {
+    const proposals = await respinDb.promotionProposalHistory(scope, profile.id);
+    proposalHistory = await Promise.all(
+      proposals.map(async (proposal) => {
+        try {
+          const review = await respinDb.promotionProposalReview(
+            scope,
+            profile.id,
+            proposal.id
+          );
+          return {
+            proposal,
+            resultEvidenceIds: review.resultEvidence.map((row) => row.id),
+            feedbackEvidenceIds: review.feedbackEvidence.map((row) => row.feedbackId),
+          };
+        } catch (err) {
+          rethrowNextControlFlow(err);
+          logRefusal("[brain] proposal evidence membership unavailable", err);
+          return { proposal, resultEvidenceIds: null, feedbackEvidenceIds: null };
+        }
+      })
+    );
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[brain] proposal history unavailable", err);
+  }
+
+  // The aggregate is a dedicated, scoped DB reader. Do not count the bounded
+  // result/feedback lists here: C7 requires the exact asset total.
+  let assetCounts: Parameters<typeof BrainView>[0]["assetCounts"] = null;
+  try {
+    assetCounts = await respinDb.brainAssetSummary(scope, profile.id);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[brain] exact asset counts unavailable", err);
+  }
+
   // Read once for the courtesy block below. A failure must not take the page
   // down: the pause is a courtesy here and the authority is the refusal
   // `confirmBrainDocFields` / `activateBrainDocCoherent` raise.
@@ -175,18 +231,17 @@ export default async function BrainPage(props: {
   // already known, so a control is not offered to somebody the server will
   // refuse. IT IS NOT THE ENFORCEMENT and must never become it — a server
   // action is a POST endpoint reachable without this page rendering at all, and
-  // `assertMayDecide` / `hasOpenPause` inside the capabilities are what refuse.
+  // `assertOwner` / `hasOpenPause` inside the capabilities are what refuse.
   //
-  // A VIEWER IS REFUSED, an editor is not: `decisions.md` R-43 records that an
-  // editor may confirm and activate, and why — REQ-B02's "the creator" is
-  // satisfied at the workspace, which is the grain every other authority in
-  // this product uses. ONE decideBlock, shared across all three kinds: role
+  // VIEWERS AND EDITORS ARE REFUSED: `decisions.md` R-118 supersedes R-43.
+  // Durable brain edits, confirmation and activation are owner-only. ONE
+  // decideBlock, shared across all three kinds: role
   // and pause are workspace-level facts, not per-kind ones (R12).
   const decideBlock =
-    scope.role === "viewer"
+    scope.role !== "owner"
       ? {
           reason:
-            "You have viewer access to this workspace, so you cannot edit, confirm or activate these rules. They decide what the product treats as true about this creator, so they need at least editor access. Ask a workspace owner.",
+            `You have ${scope.role} access to this workspace, so you cannot edit, confirm or activate these rules. They decide durable creator state, so R-118 requires owner access. Ask a workspace owner.`,
         }
       : paused
         ? {
@@ -246,6 +301,9 @@ export default async function BrainPage(props: {
       voiceHistory={voiceHistory}
       strategyHistory={strategyHistory}
       killtestHistory={killtestHistory}
+      performanceHistory={performanceHistory}
+      proposalHistory={proposalHistory}
+      assetCounts={assetCounts}
       interviewTouchedButUndrafted={interviewTouchedButUndrafted}
       decideBlock={decideBlock}
       // BOUND ARGUMENTS, not hidden fields, so the form has nothing to tamper

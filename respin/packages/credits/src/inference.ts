@@ -58,6 +58,7 @@ import { getWorkspaceBillingState, type BillingState } from "./state";
 import { getDbNow, takeWorkspaceLock } from "./clock";
 import {
   InsufficientCreditsError,
+  AutoTopupReconciliationRequiredError,
   UnchargedAttemptCapError,
   PostCallDebitError,
   UnpricedOperationError,
@@ -140,7 +141,7 @@ export class TopupInFlightError extends Error {
     public readonly cost: number
   ) {
     super(
-      `Not enough credits for this yet: balance ${balance}, this costs ${cost}. A top-up has been started, and credits land when your bank settles it. Nothing was spent and no model was called. Try again once your balance updates; if it does not, buy a pack from Billing.`
+      `Not enough credits for this yet: balance ${balance}, this costs ${cost}. A top-up has been started, and credits land when your bank settles it. Nothing was spent and no model was called. Try again only once your balance updates; if it does not, reconcile the pending top-up before buying anything else.`
     );
     this.name = "TopupInFlightError";
   }
@@ -540,7 +541,7 @@ export async function runInference(
   // 2. THE ROLE GATE, before touching anything else. The role is COPIED FROM
   //    THE WORKSPACE SCOPE at mint and is never a parameter, so there is no
   //    argument a caller can supply to raise it.
-  if (scope.role === "viewer") throw new InferenceRoleError(scope.role);
+  if (scope.role !== "owner") throw new InferenceRoleError(scope.role);
 
   // 3. R17 — THE ARCHIVED GATE, READ NOW. A `state` copied onto the scope at
   //    mint would be a snapshot, and a profile archived while a page sat open
@@ -669,6 +670,7 @@ export async function runInference(
         unchargedSince.getTime() === 0
           ? null
           : Math.round((at.getTime() - unchargedSince.getTime()) / 60_000),
+          bound: "attempts",
     });
     throw new UnchargedAttemptCapError(uncharged, unchargedCap);
   }
@@ -681,26 +683,28 @@ export async function runInference(
     const view = await deriveBalance(db, scope.workspaceId);
     if (view.balance < preCallCost) {
       const shortfall = preCallCost - view.balance;
-      // R10. EVERY TOP-UP OUTCOME IS CAUGHT, RETURNED OR THROWN: this call
-      // reaches Stripe, and an exception escaping here would surface as an
-      // opaque 500 on the one path whose entire job is to explain a refusal.
-      let triggered = false;
-      try {
-        const result = await maybeAutoTopup(
-          db,
-          scope.workspaceId,
-          shortfall,
-          at
+      // maybeAutoTopup converts every post-dispatch uncertainty into a durable
+      // reconciliation result carrying its attempt id. Pre-dispatch rollout,
+      // config, integrity, and clock refusals must keep their real type: calling
+      // them "in flight" would ask an operator to reconcile no provider call.
+      const outcome = await maybeAutoTopup(
+        db,
+        scope.workspaceId,
+        shortfall,
+        at
+      );
+      if (
+        outcome?.triggered === false &&
+        outcome.reason === "reconciliation_required"
+      ) {
+        throw new AutoTopupReconciliationRequiredError(
+          outcome.attemptId,
+          view.balance,
+          preCallCost
         );
-        triggered = result.triggered;
-      } catch {
-        // A top-up that could not even be attempted changes nothing about THIS
-        // attempt — it was already refused. The creator is told the truth
-        // either way, and why the top-up failed is Billing's to surface.
-        triggered = false;
       }
       // REFUSED REGARDLESS. A triggered top-up does not license proceeding.
-      throw triggered
+      throw outcome?.triggered
         ? new TopupInFlightError(view.balance, preCallCost)
         : new InsufficientCreditsError(view.balance, preCallCost);
     }

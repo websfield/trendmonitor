@@ -36,6 +36,14 @@ const PRE_CHANGE = (() => {
     ...(CONFIG_V1_SEED as Record<string, unknown>),
   };
   delete rest.profileCaps;
+  delete rest.similarity;
+  delete rest.systemAutopsy;
+  // R-95 (slice 8 fix pass): the tracked-niche allowance joined config.
+  delete rest.trackedNiches;
+  // Slice 9b: both additions are defaulted so code deploys before storage is
+  // materialised, then migrate-config appends them without touching choices.
+  delete rest.performanceLearning;
+  delete rest.daysToEmpty;
   return rest;
 })();
 
@@ -76,7 +84,14 @@ describe("AC-14 — migrate-config merges into the ACTIVE version, by appending"
     expect(result.status).toBe("migrated");
     if (result.status !== "migrated") throw new Error("unreachable");
     expect(result.fromVersion).toBe(v2);
-    expect(result.addedKeys).toEqual(["profileCaps"]);
+    expect(result.addedKeys).toEqual([
+      "profileCaps",
+      "trackedNiches",
+      "performanceLearning",
+      "daysToEmpty",
+      "similarity",
+      "systemAutopsy",
+    ]);
 
     const after = await rows(db);
     // EXACTLY one new row.
@@ -97,6 +112,26 @@ describe("AC-14 — migrate-config merges into the ACTIVE version, by appending"
       creator: 1,
       pro: 1,
       studio: 5,
+    });
+    expect(active.content.similarity).toEqual({ strictness: 0.7 });
+    expect(active.content.systemAutopsy).toEqual({
+      dailyCapMicroUsd: 100_000_000,
+    });
+    expect(active.content.trackedNiches).toEqual({
+      free: 0,
+      creator: 1,
+      pro: 3,
+      studio: 10,
+    });
+    expect(active.content.performanceLearning).toEqual({
+      free: "view_only",
+      creator: "full",
+      pro: "full",
+      studio: "full",
+    });
+    expect(active.content.daysToEmpty).toEqual({
+      trailingWindowDays: 30,
+      minimumDebitDays: 3,
     });
   });
 
@@ -224,7 +259,7 @@ describe("a CORRECTION reaches a database that already has the wrong value", () 
   // database. Raising the schema default fixes fresh installs and nothing else,
   // which left the slice undeployable by shipping code.
 
-  it("raises 1024 to 4000, and leaves every other key byte-identical", async () => {
+  it("CHAINS 1024 -> 4000 -> 12000 in one pass, and leaves every other key byte-identical", async () => {
     const db = await createTestDb();
     await seedDb(db);
     // A slice-2a-era document: parses fine, holds the wrong ceiling.
@@ -239,7 +274,13 @@ describe("a CORRECTION reaches a database that already has the wrong value", () 
     const result = await migrateConfigDefaults(db);
     expect(result.status).toBe("migrated");
     const after = await activeContent(db);
-    expect(after.llm.maxOutputTokens).toBe(4000);
+    // 12,000, NOT 4,000. Corrections apply in order to the same document, so
+    // the slice-3 correction (1024 -> 4000) and the slice-8c one
+    // (4000 -> 12000) both fire in a single pass. Asserting the ENDPOINT is
+    // what makes the chain a property rather than an accident: if the entries
+    // ever stop composing, a database seeded before slice 3 would be left on
+    // an intermediate value that no longer fits any reply the product makes.
+    expect(after.llm.maxOutputTokens).toBe(12_000);
     // Everything else came through untouched — the correction is surgical.
     // Compare every OTHER llm key, so "surgical" is asserted rather than
     // asserted-about. Built by deletion rather than destructuring, because an
@@ -254,6 +295,32 @@ describe("a CORRECTION reaches a database that already has the wrong value", () 
     expect(after.stripePriceMap).toEqual(before.stripePriceMap);
   });
 
+  it("corrects the deadline pair a real vendor call proved unusable", async () => {
+    // THESE TWO CORRECTIONS NEED THEIR OWN WITNESS. The chain test above only
+    // exercises `maxOutputTokens`, because `seedDb` already writes the new
+    // deadlines — so without this case the two entries added on 2026-09-04
+    // would be untested code that reads like coverage.
+    const db = await createTestDb();
+    await seedDb(db);
+    const before = await activeContent(db);
+    await db.insert(schema.configVersions).values({
+      content: {
+        ...before,
+        llm: { ...before.llm, overallDeadlineMs: 40_000, timeoutMs: 60_000 },
+      } as never,
+      createdBy: "seed",
+    });
+
+    const result = await migrateConfigDefaults(db);
+    expect(result.status).toBe("migrated");
+    const after = await activeContent(db);
+    // 40 s aborted every real spin at 40,130 ms; the real call takes 53.2 s.
+    expect(after.llm.overallDeadlineMs).toBe(120_000);
+    // The per-request timeout no longer sits ABOVE the bound that contains it.
+    expect(after.llm.timeoutMs).toBe(120_000);
+    expect(after.llm.timeoutMs).toBeLessThanOrEqual(after.llm.overallDeadlineMs);
+  });
+
   it("REFUSES an OPERATOR-AUTHORED document even when it holds the exact wrong value", async () => {
     // THE INVARIANT, in its sharpest form (billing gate round 2). Value
     // equality distinguishes numbers, not authors — and 1024 is a defensible
@@ -266,8 +333,107 @@ describe("a CORRECTION reaches a database that already has the wrong value", () 
       content: { ...before, llm: { ...before.llm, maxOutputTokens: 1024 } } as never,
       createdBy: "user_operator_1",
     });
-    expect(await migrateConfigDefaults(db)).toMatchObject({ status: "noop" });
+    // THE FIRST RUN NOW WRITES, and that is the fix rather than a regression.
+    // It appends a version holding the operator's 1024 UNCHANGED plus the
+    // record that this correction is consumed. Returning `noop` here is what
+    // the BLOCK was: nothing durable was written, so the pass laundered the
+    // document to `migrate-config` and the NEXT run corrected 1024 away.
+    const first = await migrateConfigDefaults(db);
+    expect(first.status).toBe("migrated");
+    expect(first).toMatchObject({
+      addedKeys: expect.arrayContaining([
+        "llm.maxOutputTokens (operator value preserved; correction consumed)",
+      ]),
+    });
     expect((await activeContent(db)).llm.maxOutputTokens).toBe(1024);
+  });
+
+  it("BLOCK 2026-09-04: a SECOND migrate run cannot overwrite the value an operator chose", async () => {
+    // THE REPRODUCTION, AS A TEST. A reviewer drove exactly this against a real
+    // database and watched three spend dials get rewritten upward: run 1
+    // correctly declined an operator's document, appended its result as
+    // `migrate-config` — a PRODUCT author — and run 2 then corrected the
+    // operator's own numbers. `migrateConfigDefaults`' docstring says a second
+    // run is a no-op, so this is not an exotic sequence.
+    //
+    // ALL THREE DIALS, not just the one the old test used: the entries added on
+    // 2026-09-04 fire on 40_000 and 60_000, which an operator would plausibly
+    // hold DELIBERATELY, because 40 s is the number tech-spec §132's
+    // "full script < 45s" budget asks them to hold.
+    const db = await createTestDb();
+    await seedDb(db);
+    const before = await activeContent(db);
+    await db.insert(schema.configVersions).values({
+      content: {
+        ...before,
+        llm: {
+          ...before.llm,
+          maxOutputTokens: 4000,
+          overallDeadlineMs: 40_000,
+          timeoutMs: 60_000,
+        },
+      } as never,
+      createdBy: "user_operator_1",
+    });
+
+    const runs = [
+      await migrateConfigDefaults(db),
+      await migrateConfigDefaults(db),
+      await migrateConfigDefaults(db),
+    ];
+    // Run 1 records the consumption; every run after it is a true no-op.
+    expect(runs[0].status).toBe("migrated");
+    expect(runs[1].status).toBe("noop");
+    expect(runs[2].status).toBe("noop");
+
+    const after = await activeContent(db);
+    expect(after.llm.maxOutputTokens).toBe(4000);
+    expect(after.llm.overallDeadlineMs).toBe(40_000);
+    expect(after.llm.timeoutMs).toBe(60_000);
+    // The record is durable and names the identities, not the paths — so a
+    // value the operator later sets back is still never re-corrected.
+    expect(after.appliedCorrections).toEqual(
+      expect.arrayContaining([
+        "llm.maxOutputTokens:4000→12000",
+        "llm.overallDeadlineMs:40000→120000",
+        "llm.timeoutMs:60000→120000",
+      ])
+    );
+  });
+
+  it("NON-VACUITY: the same three values on a PRODUCT-authored document ARE corrected", async () => {
+    // Without this, the test above would pass against a `CORRECTIONS` list
+    // that does nothing at all, or against a guard that declines everything.
+    // Same three values, same single difference: who wrote the row.
+    const db = await createTestDb();
+    await seedDb(db);
+    const before = await activeContent(db);
+    await db.insert(schema.configVersions).values({
+      content: {
+        ...before,
+        llm: {
+          ...before.llm,
+          maxOutputTokens: 4000,
+          overallDeadlineMs: 40_000,
+          timeoutMs: 60_000,
+        },
+      } as never,
+      createdBy: "seed",
+    });
+
+    expect((await migrateConfigDefaults(db)).status).toBe("migrated");
+    const after = await activeContent(db);
+    expect(after.llm.maxOutputTokens).toBe(12_000);
+    expect(after.llm.overallDeadlineMs).toBe(120_000);
+    expect(after.llm.timeoutMs).toBe(120_000);
+    // And consumed, so the record is written on the applying path too.
+    expect(after.appliedCorrections).toEqual(
+      expect.arrayContaining([
+        "llm.maxOutputTokens:4000→12000",
+        "llm.overallDeadlineMs:40000→120000",
+        "llm.timeoutMs:60000→120000",
+      ])
+    );
   });
 
   it("REFUSES to touch a value an operator chose — the value half of the guard", async () => {
@@ -309,6 +475,9 @@ describe("A-9 deploy order: code first, then migrate-config", () => {
   // copy: a copy would drift, and the whole point is that this is what OLDER
   // code's parser was.
   const PRE_M2A_SCHEMA = respinConfigV1.omit({ profileCaps: true }).strict();
+  const PRE_9B_SCHEMA = respinConfigV1
+    .omit({ performanceLearning: true, daysToEmpty: true })
+    .strict();
 
   it("OLD code cannot parse a document carrying the new key (why migrate-config runs SECOND)", () => {
     const withKey = {
@@ -345,5 +514,22 @@ describe("A-9 deploy order: code first, then migrate-config", () => {
     await seedAuthUser(db, "fresh");
     await seedDb(db);
     expect((await migrateConfigDefaults(db)).status).toBe("noop");
+  });
+
+  it("9b keeps the pre-materialisation rollback window safe and makes the post-materialisation boundary explicit", async () => {
+    expect(PRE_9B_SCHEMA.safeParse(PRE_CHANGE).success).toBe(true);
+    const parsedByNewCode = respinConfigV1.parse(PRE_CHANGE);
+    expect(parsedByNewCode.performanceLearning.free).toBe("view_only");
+    expect(parsedByNewCode.daysToEmpty).toEqual({
+      trailingWindowDays: 30,
+      minimumDebitDays: 3,
+    });
+
+    const materialised = respinConfigV1.parse(CONFIG_V1_SEED);
+    expect(
+      PRE_9B_SCHEMA.safeParse(materialised).success,
+      "old strict code must be known-unsafe after either 9b key is stored"
+    ).toBe(false);
+    expect(respinConfigV1.safeParse(materialised).success).toBe(true);
   });
 });

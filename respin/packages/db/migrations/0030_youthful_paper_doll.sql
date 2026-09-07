@@ -1,0 +1,44 @@
+-- Slice 9a fix pass (2026-09-04). THE COMPARISON READ'S INDEX.
+--
+-- One drizzle-generated statement from `results-schema.ts`; this header is the
+-- hand-written part. No column, no table, no constraint, no data change.
+--
+-- WHY IT EXISTS NOW AND NOT IN 0029. `COMPARISON_POPULATION_MAX` was 200 when
+-- `results` shipped, which is a DISPLAY PAGE SIZE inherited from
+-- `LEDGER_PAGE_MAX` by proximity. It has been re-derived from the domain (a
+-- creator posting 5x/day for 5 years, several observation windows each ->
+-- ~45,600 rows, so 50,000), which made "does this read need an index" a real
+-- question rather than a theoretical one. It was then MEASURED, twice, on this
+-- database, running exactly the query `comparableResults` emits with no
+-- stratum.
+--
+-- THE FIRST MEASUREMENT WAS MISLEADING AND IS RECORDED HERE RATHER THAN
+-- QUIETLY REPLACED. It reported "without: Parallel Seq Scan + external merge
+-- spilling 4344kB, 63.6 ms / with: Index Scan, no sort, 11.4 ms" at 60,000
+-- rows. Real readings, but the probe CREATED the index inside the loading
+-- transaction, giving it perfect physical correlation and fresh statistics that
+-- a normally-maintained index does not have. Re-measured fairly, the second
+-- number does not reproduce.
+--
+-- WHAT IS ACTUALLY TRUE, and it is a better warrant:
+--
+--   THE ORDINARY CREATOR (300 own rows in a 60,300-row table)
+--     Index Scan using this index, Index Cond on (profile_id, workspace_id),
+--     16 buffers, 102 kB in-memory quicksort. 0.18 ms.
+--     Without it, one creator's history costs a scan of the whole table -- and
+--     this is the shape EVERY creator has.
+--
+--   AT THE BOUND (60,000 own rows beside another 60,000)
+--     Seq Scan + "external merge Disk: 3592kB", 35.6 ms. The planner ignores
+--     this index and is right to: forcing it (`enable_seqscan = off`) gives
+--     38.5 ms. At 83% of a profile's rows an index adds random heap access and
+--     saves nothing, so ~36 ms is simply what the outlier case costs.
+--
+-- So the index is for the case every creator is in, not for the bound. The
+-- bound's cost is bounded instead by the PROJECTION `comparableResults`
+-- selects, which keeps a page around 25 MB rather than 120 MB.
+--
+-- IT IS ADDITIVE: nothing reads differently with it, and
+-- `results-schema.test.ts` (which runs the committed migrations into PGlite) is
+-- what proves the file applies in order.
+CREATE INDEX "results_profile_observed_idx" ON "results" USING btree ("profile_id","workspace_id","observed_to" DESC NULLS LAST,"id" DESC NULLS LAST);

@@ -64,6 +64,7 @@ export type GrantParams = {
   refType: string;
   refId: string;
   configVersion: number;
+  tierCheckoutAttemptId?: string;
 };
 
 export async function grantCredits(
@@ -83,19 +84,19 @@ export async function grantCredits(
       refType: p.refType,
       refId: p.refId,
       configVersion: p.configVersion,
+      tierCheckoutAttemptId: p.tierCheckoutAttemptId,
       createdAt,
     })
     .returning();
   return row;
 }
 
-export type PackParams = {
+type PackParamsBase = {
   workspaceId: VerifiedWorkspaceId;
   amount: number;
   expiresAt: Date;
   amountCents: number;
   stripeEventId?: string;
-  refType: string;
   refId: string;
   /**
    * REQUIRED, like the identical field on `DebitParams` and `GrantParams`
@@ -111,6 +112,23 @@ export type PackParams = {
    */
   configVersion: number;
 };
+
+export type PackParams = PackParamsBase &
+  (
+    | {
+        refType: "auto_topup";
+        stripeEventId: string;
+        autoTopupAttemptId: string;
+        autoTopupPeriodMonthUtc: string;
+        packCheckoutAttemptId?: never;
+      }
+    | {
+        refType: "checkout_session" | "checkout" | "test";
+        autoTopupAttemptId?: never;
+        autoTopupPeriodMonthUtc?: never;
+        packCheckoutAttemptId?: string;
+      }
+  );
 
 export async function purchasePackCredits(
   tx: TxLike,
@@ -130,6 +148,9 @@ export async function purchasePackCredits(
       stripeEventId: p.stripeEventId,
       refType: p.refType,
       refId: p.refId,
+      autoTopupAttemptId: p.autoTopupAttemptId,
+      autoTopupPeriodMonthUtc: p.autoTopupPeriodMonthUtc,
+      packCheckoutAttemptId: p.packCheckoutAttemptId,
       configVersion: p.configVersion,
       createdAt,
     })
@@ -211,6 +232,44 @@ export type RefundParams = {
   amount: number;
   originalDebitId: string;
   stripeEventId?: string;
+  /**
+   * WHAT THE REFUND ROW NAMES AS ITS REFERENCE (slice 8c, R-98). Absent, the
+   * row is `refType: "debit", refId: originalDebitId` — the M1 shape, unchanged
+   * for every existing caller. Present, the row carries THIS reference instead
+   * (the settlement writes `autopsy_refund` / `<claim id>`, so the compensating
+   * credit is findable by the CLAIM it compensates, which is the id the trends
+   * page and the creator hold).
+   *
+   * THE OVER-REFUND BUDGET IS PER SPELLING, NOT PER DEBIT — A KNOWN LIMITATION,
+   * WRITTEN DOWN BECAUSE THE PREVIOUS VERSION OF THIS COMMENT CLAIMED THE
+   * OPPOSITE (slice 8c round 1, billing CHANGE 1 / consolidated C4). It said "a
+   * caller cannot open a second refund budget for one debit by naming it
+   * differently". Naming it differently is EXACTLY what opens one: the guard
+   * (`pointsAtDebit`, below) can only match rows under the default reference or
+   * under THIS CALL'S `ref`, so a first refund written as
+   * `{autopsy_refund, claimId}` and a second written with `ref` ABSENT are each
+   * measured against a budget the other is invisible to. Two full refunds of
+   * one debit are accepted — 8 credits returned against a 4-credit debit,
+   * reproduced against this module by two reviewers independently, and again
+   * before this comment was written. `refType`/`refId` is ONE reference column
+   * pair and cannot carry both the claim and the debit, which is why this
+   * cannot be patched in place.
+   *
+   * WHY IT IS A LIMITATION AND NOT A LIVE MINT: `refundCredits` has exactly one
+   * production caller (`settleParkedAutopsies`), which always passes the same
+   * `ref`, and `credit_ledger_autopsy_refund_uq` refuses a repeat of that one
+   * spelling. Reaching the mint requires WRITING A SECOND CALLER — and `ref`
+   * being OPTIONAL is the hole, because the absent branch is the second
+   * spelling. `tests/ledger.test.ts` drives it and asserts TODAY'S behaviour
+   * (both refunds accepted), so this paragraph has a witness rather than a
+   * promise.
+   *
+   * OWNER: M6's admin refund surface — named below as this function's second
+   * reader, and the second caller is the TRIGGER. The fix is a per-DEBIT
+   * budget: carry the original debit id in its OWN column and sum over that.
+   * When M6 builds it, the test named above is what turns green.
+   */
+  ref?: { refType: string; refId: string };
 };
 
 /**
@@ -218,7 +277,10 @@ export type RefundParams = {
  * latest effective expiry of the lots the original debit consumed — a refund
  * of expiring credits must not mint never-expiring ones; a refund of a debit
  * whose lots have since expired is born expired (fail-safe, stated policy).
- * NO M1 caller — ships package-tested for the M6 admin surface.
+ *
+ * FIRST PRODUCTION CALLER: slice 8c's `settleParkedAutopsies` (R-98, the
+ * ledger's first compensating credit). Until then it shipped package-tested
+ * for the M6 admin surface, which is still its second reader.
  */
 export async function refundCredits(
   tx: TxLike,
@@ -246,9 +308,18 @@ export async function refundCredits(
       `refundCredits: ${p.originalDebitId} is not a debit row of this workspace`
     );
   }
-  const alreadyRefunded = rows
-    .filter((r) => r.kind === "refund" && r.refId === p.originalDebitId)
-    .reduce((s, r) => s + r.delta, 0);
+  // The refund rows this call can SEE pointing at this debit: the default
+  // reference, plus the caller's own `ref` when it named one. That is a budget
+  // per SPELLING, not per debit — the known limitation `RefundParams.ref`
+  // records in full, with its witness in `tests/ledger.test.ts` and M6's admin
+  // refund surface as its owner. Do not read this as "the guard is over the
+  // debit": a caller passing a DIFFERENT `ref` (or none) is measured against a
+  // budget the other spelling's rows are invisible to.
+  const pointsAtDebit = (r: CreditLedgerRow): boolean =>
+    r.kind === "refund" &&
+    ((r.refType === "debit" && r.refId === p.originalDebitId) ||
+      (p.ref !== undefined && r.refType === p.ref.refType && r.refId === p.ref.refId));
+  const alreadyRefunded = rows.filter(pointsAtDebit).reduce((s, r) => s + r.delta, 0);
   if (p.amount + alreadyRefunded > -debit.delta) {
     throw new LedgerIntegrityError(
       `refundCredits: refunding ${p.amount} would exceed the original debit (${-debit.delta}, already refunded ${alreadyRefunded})`
@@ -290,8 +361,8 @@ export async function refundCredits(
       delta: p.amount,
       kind: "refund",
       expiresAt,
-      refType: "debit",
-      refId: p.originalDebitId,
+      refType: p.ref?.refType ?? "debit",
+      refId: p.ref?.refId ?? p.originalDebitId,
       stripeEventId: p.stripeEventId,
       // A refund is a LOT, and `view.asOf` is the instant this transaction read
       // the ledger it is refunding against — no later row can exist for this

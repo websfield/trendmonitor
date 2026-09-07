@@ -27,7 +27,7 @@ import { brainActivationSnapshots } from "../src/onboarding-schema";
 import { memberships } from "../src/schema";
 import { pausePeriods } from "../src/billing-schema";
 import {
-  BrainRoleError,
+  ProfileRoleError,
   ProfileAccessError,
   ProvenanceError,
   ReferenceEchoError,
@@ -904,15 +904,15 @@ describe("confirm → activate, and the recorded reference corpus (C-29)", () =>
           tx
         )
       )
-    ).rejects.toThrow(BrainRoleError);
+    ).rejects.toThrow(ProfileRoleError);
     await expect(
       db.transaction((tx) =>
         viewerCaps.activateBrainDoc({ brainDocId: doc.id }, tx)
       )
-    ).rejects.toThrow(BrainRoleError);
+    ).rejects.toThrow(ProfileRoleError);
   });
 
-  it("C-12 non-vacuity: an EDITOR can do both", async () => {
+  it("R-118: an EDITOR cannot decide durable brain state; an OWNER can", async () => {
     const scope = await scopeFor();
     const caps = writeCapabilities(scope);
     const doc = await writeDoc(caps);
@@ -921,14 +921,32 @@ describe("confirm → activate, and the recorded reference corpus (C-29)", () =>
       .set({ role: "editor" })
       .where(eq(memberships.workspaceId, workspaceId));
     const editorCaps = writeCapabilities(await scopeFor());
+    await expect(
+      db.transaction((tx) =>
+        editorCaps.confirmBrainDocFields(
+          { brainDocId: doc.id, confirmedFields: confirmAll(STRATEGY) },
+          tx
+        )
+      )
+    ).rejects.toBeInstanceOf(ProfileRoleError);
+    await expect(
+      db.transaction((tx) =>
+        editorCaps.activateBrainDoc({ brainDocId: doc.id }, tx)
+      )
+    ).rejects.toBeInstanceOf(ProfileRoleError);
+    await db
+      .update(memberships)
+      .set({ role: "owner" })
+      .where(eq(memberships.workspaceId, workspaceId));
+    const ownerCaps = writeCapabilities(await scopeFor());
     await db.transaction((tx) =>
-      editorCaps.confirmBrainDocFields(
+      ownerCaps.confirmBrainDocFields(
         { brainDocId: doc.id, confirmedFields: confirmAll(STRATEGY) },
         tx
       )
     );
     const active = await db.transaction((tx) =>
-      editorCaps.activateBrainDoc({ brainDocId: doc.id }, tx)
+      ownerCaps.activateBrainDoc({ brainDocId: doc.id }, tx)
     );
     expect(active.status).toBe("active");
   });
@@ -1242,7 +1260,7 @@ describe("activateBrainDocCoherent — the coherent-activation snapshot (slice 3
       db.transaction((tx) =>
         writeCapabilities(viewerScope).activateBrainDocCoherent({ brainDocId: doc.id }, tx)
       )
-    ).rejects.toBeInstanceOf(BrainRoleError);
+    ).rejects.toBeInstanceOf(ProfileRoleError);
     expect(await db.select().from(brainActivationSnapshots)).toHaveLength(0);
     const [row] = await db.select().from(brainDocs).where(eq(brainDocs.id, doc.id));
     expect(row.status).toBe("proposed");

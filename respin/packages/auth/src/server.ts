@@ -5,16 +5,27 @@
 // this mechanically for every page under PROTECTED_PREFIXES.
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
+import { createHmac } from "node:crypto";
+import { getIp } from "better-auth/api";
 import { toNextJsHandler } from "better-auth/next-js";
-import { getServerDb } from "@respin/db";
+import {
+  beginIdentityCancellationRecoverySession as beginCancellationRecovery,
+  createIdentityCancellationProofWithPassword as createCancellationProof,
+  getServerDb,
+  reauthenticateSessionWithPassword,
+  type ReauthenticatedSessionRef,
+} from "@respin/db";
 import { adminAllowed, parseAdminAllowlist } from "./allowlist";
-import { createAuth, type Auth } from "./create-auth";
+import { createAuth, resolveTrustedProxies, type Auth } from "./create-auth";
+import { resendMailPortFromEnv } from "./resend-mail";
 
 let cached: Auth | undefined;
 
 /** Lazy runtime instance — no env/db access at import time (keyless build). */
 export function getAuth(): Auth {
-  cached ??= createAuth(getServerDb());
+  cached ??= createAuth(getServerDb(), {
+    mail: resendMailPortFromEnv(process.env),
+  });
   return cached;
 }
 
@@ -31,6 +42,77 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!session) return null;
   const { id, email, name } = session.user;
   return { id, email, name };
+}
+
+/** Fresh local-password proof for the exact currently authenticated session. */
+export async function reauthenticateCurrentSessionWithPassword(
+  password: string
+): Promise<ReauthenticatedSessionRef> {
+  const requestHeaders = await headers();
+  const current = await getAuth().api.getSession({ headers: requestHeaders });
+  if (!current) throw new Error("reauthentication_refused");
+  return reauthenticateSessionWithPassword(getServerDb(), {
+    authUserId: current.user.id,
+    sessionId: current.session.id,
+    password,
+    rateLimitKeyDigest: await authRateLimitKeyDigest(
+      "r118_reauthentication",
+      requestHeaders
+    ),
+  });
+}
+
+async function authRateLimitKeyDigest(
+  purpose: "r118_reauthentication" | "identity_cancellation",
+  requestHeaders: Headers
+): Promise<string> {
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) throw new Error("cancellation_recovery_refused");
+  const ip = getIp(requestHeaders, {
+    advanced: {
+      ipAddress: {
+        trustedProxies: resolveTrustedProxies(
+          process.env.NODE_ENV,
+          process.env.RESPIN_TRUSTED_PROXIES
+        ),
+      },
+    },
+  });
+  return createHmac("sha256", secret)
+    .update(`${purpose}\0${ip ?? "no-trusted-ip"}`, "utf8")
+    .digest("hex");
+}
+
+async function cancellationRateLimitKeyDigest(): Promise<string> {
+  return authRateLimitKeyDigest("identity_cancellation", await headers());
+}
+
+/** Exchange the delivered recovery credential for one bounded factor session. */
+export async function beginIdentityCancellationRecoverySession(
+  operationId: string,
+  recoverySecret: string
+): Promise<{ recoverySession: string; expiresAt: Date }> {
+  return beginCancellationRecovery(
+    getServerDb(),
+    operationId,
+    recoverySecret,
+    await cancellationRateLimitKeyDigest()
+  );
+}
+
+/** Cancellation-only factor proof; deliberately does not mint a login session. */
+export async function createIdentityCancellationProofWithPassword(
+  operationId: string,
+  recoverySession: string,
+  password: string
+): Promise<{ proofId: string; cancellationReceipt: string; expiresAt: Date }> {
+  return createCancellationProof(
+    getServerDb(),
+    operationId,
+    recoverySession,
+    password,
+    await cancellationRateLimitKeyDigest()
+  );
 }
 
 /** The real /studio gate: no valid session → redirect to sign-in. */

@@ -13,3 +13,12 @@
 # existed.
 *.md    text eol=lf
 *.json  text eol=lf
+
+# Shell scripts are executed on a Linux host. Under core.autocrlf=true a CRLF
+# checkout turns every backslash line continuation into an escaped carriage
+# return, so `pg_dump --dbname=... \` + CRLF runs as `pg_dump ... r` and the
+# next line as a command. Measured 2026-09-07: 10 broken continuations in
+# scripts/backup.sh and 6 in scripts/restore-drill.sh, reproduced with
+# `git checkout-index` through the real filters. The working tree being LF is
+# NOT the fix -- the blob was already LF; the checkout filter is what breaks it.
+*.sh    text eol=lf

@@ -134,8 +134,25 @@ export type UnchargedAttemptCapMetric = {
   purpose: string;
   /** Distinct uncharged-billable attempts counted inside the window. */
   attempts: number;
-  /** The configured cap this crossed. */
+  /**
+   * The configured ATTEMPT cap. NOT necessarily the one that was crossed —
+   * read `bound` for that.
+   */
   cap: number;
+  /**
+   * WHICH OF THE TWO BOUNDS ACTUALLY REFUSED (billing + code review, round 2).
+   *
+   * R-102 added a money-denominated twin of the attempt cap and reused this
+   * metric verbatim for it, so a cost refusal printed `attempts=2 cap=10` —
+   * numbers that say the cap was NOT crossed — on the only operator surface
+   * this control has. The two refusals were indistinguishable in telemetry,
+   * which is exactly the failure the counter exists to prevent ("the first
+   * abuse of an unmeasured channel is learned about from an invoice").
+   */
+  bound: "attempts" | "cost";
+  /** Spend in the window, and the money cap — present on a cost refusal. */
+  costMicroUsd?: number;
+  capMicroUsd?: number;
   /**
    * The window the count was taken over, or `null` for a LIFETIME count.
    *
@@ -157,8 +174,13 @@ function defaultCapSink(m: UnchargedAttemptCapMetric): void {
   // happened. The line carries everything needed to find the profile without a
   // second query, because the operator surface R-67 asks for does not exist
   // yet and a log line that needs a join is not one.
+  // `bound` FIRST after the name, because it decides how to read the rest.
+  const money =
+    m.bound === "cost"
+      ? ` cost_micro_usd=${m.costMicroUsd ?? "unknown"} cap_micro_usd=${m.capMicroUsd ?? "unknown"}`
+      : "";
   console.warn(
-    `[respin-metric] ${UNCHARGED_ATTEMPT_CAP_METRIC}=1 purpose=${m.purpose} attempts=${m.attempts} cap=${m.cap} window_minutes=${m.windowMinutes ?? "lifetime"} workspace=${m.workspaceId} profile=${m.profileId}`
+    `[respin-metric] ${UNCHARGED_ATTEMPT_CAP_METRIC}=1 bound=${m.bound} purpose=${m.purpose} attempts=${m.attempts} cap=${m.cap}${money} window_minutes=${m.windowMinutes ?? "lifetime"} workspace=${m.workspaceId} profile=${m.profileId}`
   );
 }
 

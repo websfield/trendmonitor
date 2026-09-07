@@ -20,7 +20,16 @@ export const PROTECTED_PREFIXES = [
   // is what makes the gate-completeness suite DEMAND `requireUser()` on the
   // page and on the action module beneath it.
   "/brain",
+  "/trends",
   "/studio",
+  // Slice 9a. Where a creator logs what a post of theirs actually did and reads
+  // it against their own past. Two reasons it is listed here rather than left
+  // to inherit anything: the rows beneath it are a creator's own outcome data
+  // (REQ-A03/R-9 — nothing crosses a profile or a workspace), and the action
+  // module beside the page is a POST endpoint in its own right, invocable by
+  // its stable action id without the page ever rendering. Adding the prefix is
+  // what makes `tests/gate-completeness.test.ts` DEMAND `requireUser()` on both.
+  "/results",
   "/usage",
   "/settings",
   "/admin",

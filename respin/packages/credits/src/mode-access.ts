@@ -26,16 +26,27 @@
 // a resolved tier and answers a question about it. A second derivation of the
 // tier is the defect class behind two M1 round-6 findings.
 import {
-  IMPLEMENTED_MODES,
   MODE_IDS,
   UnknownModeError,
   type ModeId,
 } from "@respin/modes";
-import type { PrivateFrameworkEntitlement } from "@respin/db";
+import type {
+  DbLike,
+  PrivateFrameworkEntitlement,
+  TrackedNicheEntitlement,
+  TxLike,
+  VerifiedWorkspaceId,
+} from "@respin/db";
+import {
+  ConfigUnavailableError,
+  getActiveConfig,
+  type RespinConfigV1,
+} from "@respin/config";
 // The ONE route in this package from a mode id to what a creator calls it —
 // see `mode-label.ts`'s own header for why the label does not live in a view.
 import { modeLabel } from "./mode-label";
-import type { BillingState } from "./state";
+import { getWorkspaceBillingState, type BillingState } from "./state";
+import { PerformanceLearningConfigUnavailableError } from "./errors";
 
 /** The tier vocabulary `BillingState.tier` uses — paid tiers plus `free`. */
 export type EntitlementTier = BillingState["tier"];
@@ -157,6 +168,103 @@ export const TIER_PRIVATE_FRAMEWORKS: Record<
 };
 
 /**
+ * R17's tracked-niche allowances — the ACTIVE CONFIG DOCUMENT's
+ * `trackedNiches` row (R-95, config not code; the same row shape as
+ * `profileCaps`, which this file's header says is where NUMBERS live). Free
+ * receives the digest only: zero means no persisted browsing/tracking
+ * entitlement. The DB writer receives the server-derived entitlement and
+ * never a form-selected cap.
+ */
+export type TrackedNicheAllowances = RespinConfigV1["trackedNiches"];
+
+/** The exact two access answers stored in the active config. */
+export type PerformanceLearningEntitlement =
+  RespinConfigV1["performanceLearning"][EntitlementTier];
+
+export type PerformanceLearningEntitlements =
+  RespinConfigV1["performanceLearning"];
+
+/**
+ * Pure, exhaustive half of C2's billing-state matrix.
+ *
+ * `free` and `incomplete` use the configured Free entry. A live paid state
+ * uses its exact configured tier. Any state carrying `unmapped_price`, or a
+ * malformed/cast state or map with no exact tier entry, is an operational
+ * refusal rather than an invented view-only answer.
+ */
+export function resolvePerformanceLearningEntitlement(
+  billing: BillingState,
+  entitlements: PerformanceLearningEntitlements
+): PerformanceLearningEntitlement {
+  if (billing.reason === "unmapped_price") {
+    throw new PerformanceLearningConfigUnavailableError("unmapped_price");
+  }
+
+  let tier: EntitlementTier;
+  switch (billing.state) {
+    case "free":
+    case "incomplete":
+      tier = "free";
+      break;
+    case "active":
+    case "grace":
+    case "paused":
+      tier = billing.tier;
+      if (tier === "free") {
+        throw new PerformanceLearningConfigUnavailableError("missing_tier");
+      }
+      break;
+    default: {
+      const exhaustive: never = billing.state;
+      throw new PerformanceLearningConfigUnavailableError(
+        "missing_tier",
+        exhaustive
+      );
+    }
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(entitlements, tier)) {
+    throw new PerformanceLearningConfigUnavailableError("missing_tier");
+  }
+  const entitlement = entitlements[tier];
+  if (entitlement !== "view_only" && entitlement !== "full") {
+    throw new PerformanceLearningConfigUnavailableError("missing_tier");
+  }
+  return entitlement;
+}
+
+/**
+ * The one server resolver for performance-learning access (C2 / R-112).
+ * Billing state comes only from `getWorkspaceBillingState`; callers cannot
+ * supply a tier, Stripe price, or subscription row.
+ */
+export async function performanceLearningEntitlementFor(
+  db: DbLike | TxLike,
+  workspaceId: VerifiedWorkspaceId,
+  at: Date
+): Promise<PerformanceLearningEntitlement> {
+  try {
+    const billing = await getWorkspaceBillingState(db, workspaceId, at);
+    const { content } = await getActiveConfig(db);
+    return resolvePerformanceLearningEntitlement(
+      billing,
+      content.performanceLearning
+    );
+  } catch (error) {
+    if (error instanceof PerformanceLearningConfigUnavailableError) {
+      throw error;
+    }
+    if (error instanceof ConfigUnavailableError) {
+      throw new PerformanceLearningConfigUnavailableError(
+        "config_unavailable",
+        error
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * A tier this build has no entitlement answer for.
  *
  * IT EXISTS BECAUSE `undefined` IS NOT AN ANSWER. `assertEntitled` in
@@ -194,6 +302,22 @@ export function privateFrameworkEntitlement(
 }
 
 /**
+ * Server-owned tracked-niche input for `trackNicheForProfile`, priced from the
+ * stored document rather than a code map (R-95). A tier the document does not
+ * price is refused by name — never `undefined`, which the writer would read as
+ * "no cap" or "cap 0" by accident rather than by decision.
+ */
+export function trackedNicheEntitlement(
+  tier: EntitlementTier,
+  allowances: TrackedNicheAllowances
+): TrackedNicheEntitlement {
+  if (!Object.prototype.hasOwnProperty.call(allowances, tier)) {
+    throw new UnknownEntitlementTierError(String(tier));
+  }
+  return { maxTrackedNiches: allowances[tier] };
+}
+
+/**
  * This mode is not in this plan (R18 / R15).
  *
  * IT DOES NOT NAME AN UPGRADE AS THE REMEDY, deliberately, and the precedent is
@@ -217,39 +341,6 @@ export class ModeNotInPlanError extends Error {
   }
 }
 
-/**
- * The mode is in the plan and does not exist yet.
- *
- * A SEPARATE CLASS FROM `ModeNotInPlanError`, because the two say opposite
- * things to the person reading them: one is "your plan does not include this",
- * which is about money, and this one is "we have not built it", which is about
- * us. Telling a paying creator their plan excludes a mode we simply have not
- * shipped would be a false statement about what they bought.
- *
- * IT EXISTS BECAUSE THE TIER MAP ALONE IS NOT ENOUGH. Slice 7 builds six of the
- * seven modes; `analyseAndSpin` is the seventh and is slice 8's, because it is
- * the one `similarityGated` mode and the gate does not exist yet
- * (`@respin/modes`' `IMPLEMENTED_MODES` states the relation, and its
- * `output.test.ts` enforces it). A tier-only gate would offer a Creator-tier
- * creator a mode with no pipeline behind it.
- *
- * WHEN SLICE 8 LANDS, THIS CLASS'S ONLY WITNESS DISAPPEARS, and that has to be
- * a RED TEST rather than a silent skip — see `mode-access.test.ts`'s
- * `UNBUILT_MODES` population guard. Slice 6's version of that test wrote
- * `if (IMPLEMENTED_MODES.includes(mode)) continue;`, which went vacuous the
- * moment stage B shipped the three Free modes: the loop asserted nothing and
- * nothing went red (CLAUDE.md 2026-08-29 — a derived guard is only as wide as
- * its population).
- */
-export class ModeNotBuiltYetError extends Error {
-  constructor(readonly mode: string) {
-    super(
-      `That mode is not built yet, so nothing ran and nothing was spent. This is about what we have shipped, not about your plan.`
-    );
-    this.name = "ModeNotBuiltYetError";
-  }
-}
-
 /** Whether a tier's plan includes a mode. Pure — no config, no database. */
 export function planIncludesMode(
   tier: EntitlementTier,
@@ -261,10 +352,9 @@ export function planIncludesMode(
 /**
  * Refuse a mode this workspace may not run, BEFORE anything is spent.
  *
- * THE PLAN GATE FIRST, THEN THE BUILT GATE, and the order is a statement about
- * what the creator is told: someone on Free asking for `analyseAndSpin` is told
- * their plan does not include it (true, and stable), not that it is unbuilt
- * (also true today, and misleading tomorrow).
+ * Slice 8 made all seven registry modes reachable. This is now solely the plan
+ * gate; `modeTiers` still gives an unclassified mode its distinct build-error
+ * answer rather than misreporting it as a plan decision.
  */
 export function assertModeAllowed(
   tier: EntitlementTier,
@@ -272,9 +362,6 @@ export function assertModeAllowed(
 ): void {
   if (!planIncludesMode(tier, mode)) {
     throw new ModeNotInPlanError(mode, tier, modesIncludedIn(tier));
-  }
-  if (!IMPLEMENTED_MODES.includes(mode)) {
-    throw new ModeNotBuiltYetError(mode);
   }
 }
 
@@ -294,9 +381,8 @@ export function assertModeAllowed(
  * IT IS TOTAL OVER `MODE_IDS`, not a filtered list, and that is what makes it
  * honest rather than merely convenient. A picker built from an "available"
  * list can only ever say what a creator MAY press; this says what the product
- * has and which of the two different reasons applies to each mode it will not
- * run — the same distinction `ModeNotInPlanError` and `ModeNotBuiltYetError`
- * exist to keep, offered before the press instead of after it.
+ * has and which plan-exclusion reason applies to each mode it will not run,
+ * offered before the press instead of after it.
  *
  * PURE, like everything else here: a resolved tier in, three fields out, no
  * config, no subscription row, no query. The label comes from `./mode-label`,
@@ -313,7 +399,7 @@ export type ModeOffer = {
    * include it (true, and stable) rather than that it is unbuilt (also true
    * today, and misleading tomorrow).
    */
-  status: "available" | "not_in_plan" | "not_built_yet";
+  status: "available" | "not_in_plan";
 };
 
 /**
@@ -344,8 +430,6 @@ export function modeOffers(tier: EntitlementTier): readonly ModeOffer[] {
     label: modeLabel(id),
     status: !planIncludesMode(tier, id)
       ? ("not_in_plan" as const)
-      : !IMPLEMENTED_MODES.includes(id)
-        ? ("not_built_yet" as const)
-        : ("available" as const),
+      : ("available" as const),
   }));
 }

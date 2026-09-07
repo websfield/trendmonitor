@@ -73,7 +73,6 @@ import {
   FIRST_IDEAS_INTRO,
   FIRST_IDEAS_NEEDS_BRAIN,
   FIRST_IDEAS_NEXT,
-  FIRST_IDEAS_NOT_BUILT,
   FIRST_IDEAS_NOT_IN_PLAN,
   FIRST_IDEAS_NO_RESULTS_BASIS,
   FIRST_IDEAS_PAUSED,
@@ -272,11 +271,8 @@ describe("B04 runs the mode the requirement names, resolved rather than typed", 
     // REQ-C01 mode 7 returns ideas as hook + thesis + framework rather than as
     // topics, which is what makes B04 an "aha" rather than a brainstorm.
     //
-    // "BUILT" IS `modeOffers`' OWN ANSWER: `available` is exactly
-    // "`assertModeAllowed` would not throw", which is the plan gate AND the
-    // `IMPLEMENTED_MODES` gate together. A mode that is in the registry and not
-    // shipped reports `not_built_yet` here, so this case would go red rather
-    // than offering a control with no pipeline behind it.
+    // `available` is `modeOffers`' server-owned plan answer. Slice 8's registry
+    // completeness test separately proves that every registry mode is built.
     expect(B04_OFFER, "the B04 mode is not in the registry at all").toBeDefined();
     expect(B04_OFFER!.status).toBe("available");
     // ...and it has a creator-facing name rather than reading as an id.
@@ -555,7 +551,6 @@ describe("what the screen shows", () => {
       FIRST_IDEAS_VIEWER,
       FIRST_IDEAS_PAUSED,
       FIRST_IDEAS_NOT_IN_PLAN,
-      FIRST_IDEAS_NOT_BUILT,
       FIRST_IDEAS_NEEDS_BRAIN,
     ];
     expect(new Set(reasons).size, "two gates share one sentence").toBe(reasons.length);
@@ -566,20 +561,14 @@ describe("what the screen shows", () => {
       // ...and the spend control is genuinely gone, not merely styled away.
       expect(html).not.toContain('name="input"');
     }
-    // THE TWO PLAN SENTENCES SAY OPPOSITE THINGS ABOUT WHOSE FAULT IT IS —
-    // `ModeNotInPlanError` and `ModeNotBuiltYetError`'s distinction, before the
-    // press instead of after it.
     expect(FIRST_IDEAS_NOT_IN_PLAN).toMatch(/plan does not include/i);
-    expect(FIRST_IDEAS_NOT_BUILT).toMatch(
-      /about what we have shipped, not about your plan/i
-    );
     // R15: neither sells anything.
     for (const reason of reasons) {
       expect(reason.toLowerCase()).not.toMatch(/upgrad|subscribe|a plan that includes/);
     }
   });
 
-  it("the gate ORDER matches the operation's — role, pause, plan, build, brain", () => {
+  it("the gate ORDER matches the operation's — role, pause, plan, brain", () => {
     // The sentence a creator reads before pressing and the refusal they would
     // get for pressing must say the same thing: a viewer on a Free plan is told
     // about their access, not about the plan.
@@ -595,7 +584,6 @@ describe("what the screen shows", () => {
       'scope.role === "viewer"',
       "paused",
       '"not_in_plan"',
-      '"not_built_yet"',
       "!brainActivated",
     ].map((needle) => chain.indexOf(needle));
     expect(order.every((i) => i >= 0), "a gate is missing from the block chain").toBe(
@@ -774,7 +762,6 @@ describe("R16/R21: it does not stream, and it claims no evidence about the creat
       FIRST_IDEAS_NO_RESULTS_BASIS: [FIRST_IDEAS_NO_RESULTS_BASIS],
       FIRST_IDEAS_NEEDS_BRAIN: [FIRST_IDEAS_NEEDS_BRAIN],
       FIRST_IDEAS_NOT_IN_PLAN: [FIRST_IDEAS_NOT_IN_PLAN],
-      FIRST_IDEAS_NOT_BUILT: [FIRST_IDEAS_NOT_BUILT],
       FIRST_IDEAS_VIEWER: [FIRST_IDEAS_VIEWER],
       FIRST_IDEAS_PAUSED: [FIRST_IDEAS_PAUSED],
       // The three functions are scanned over EVERY branch they have, because a

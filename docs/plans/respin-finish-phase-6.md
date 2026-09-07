@@ -171,7 +171,7 @@ R-48 split `billable` (did the vendor charge us — decides the REQ-G05 rollup) 
 
 ## Verification
 1. [ ] Entry gate on the CI shape, Docker live, zero skips; `db:check` clean
-2. [ ] **On a Free account with no card: sign up → onboard → activate → generate hooks → see the debit**, in a browser, against the real vendor
+2. [ ] **On a Free account with no card: sign up → onboard → activate → generate hooks → see the debit**, in a browser, against the real vendor. Follow [`respin-vendor-acceptance-walks.md`](../runbooks/respin-vendor-acceptance-walks.md), §5.
 3. [ ] A Free workspace's first balance read mints 25 credits; the second read mints nothing (R17)
 4. [ ] Two concurrent first reads mint **one** grant (R17's index, on real Postgres)
 5. [ ] A balance read inside a Stripe webhook transaction does not fail the webhook (R17's cost)

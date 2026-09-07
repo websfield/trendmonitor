@@ -550,6 +550,8 @@ describe("revision, lineage and its price (R6/R7/R8)", () => {
       input: "make it less wistful",
       brainActivationId: "00000000-0000-4000-8000-000000000001",
       promptBundleVersion: "bundle-x",
+      spinAutopsyId: null,
+      spinAnalysisVersion: null,
     };
     expect(hashRequest({ ...base, parentGenerationId: null })).not.toBe(
       hashRequest({ ...base, parentGenerationId: "00000000-0000-4000-8000-0000000000ab" })
@@ -559,6 +561,43 @@ describe("revision, lineage and its price (R6/R7/R8)", () => {
       hashRequest({ ...base, parentGenerationId: "00000000-0000-4000-8000-0000000000ab" })
     ).not.toBe(
       hashRequest({ ...base, parentGenerationId: "00000000-0000-4000-8000-0000000000ac" })
+    );
+  });
+
+  it("two Spins with the same creator input but different server-derived autopsy revisions have different payloads", () => {
+    const base = {
+      mode: "analyseAndSpin",
+      platform: "youtube",
+      input: "Make this original.",
+      brainActivationId: "00000000-0000-4000-8000-000000000001",
+      promptBundleVersion: "bundle-x",
+      parentGenerationId: null,
+    } as const;
+    expect(
+      hashRequest({
+        ...base,
+        spinAutopsyId: "00000000-0000-4000-8000-0000000000a1",
+        spinAnalysisVersion: "spin-v1",
+      })
+    ).not.toBe(
+      hashRequest({
+        ...base,
+        spinAutopsyId: "00000000-0000-4000-8000-0000000000a1",
+        spinAnalysisVersion: "spin-v2",
+      })
+    );
+    expect(
+      hashRequest({
+        ...base,
+        spinAutopsyId: "00000000-0000-4000-8000-0000000000a1",
+        spinAnalysisVersion: "spin-v1",
+      })
+    ).not.toBe(
+      hashRequest({
+        ...base,
+        spinAutopsyId: "00000000-0000-4000-8000-0000000000a2",
+        spinAnalysisVersion: "spin-v1",
+      })
     );
   });
 
@@ -675,6 +714,8 @@ describe("revision, lineage and its price (R6/R7/R8)", () => {
       brainActivationId: "00000000-0000-4000-8000-000000000001",
       promptBundleVersion: "bundle-x",
       parentGenerationId: null,
+      spinAutopsyId: null,
+      spinAnalysisVersion: null,
     };
     const FIELD_SEP = "\u0000";
     const RECORD_SEP = "\u0001";

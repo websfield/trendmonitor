@@ -4,6 +4,8 @@
 
 Plan: [`respin-finish-phase-7.md`](../plans/respin-finish-phase-7.md) · Ledger: [`respin-finish/ledger.md`](respin-finish/ledger.md) · Decisions: `decisions.md` **R-71 … R-79**
 
+Vendor-walk instructions: [`respin-vendor-acceptance-walks.md`](../runbooks/respin-vendor-acceptance-walks.md), §6.
+
 ---
 
 ## Readiness

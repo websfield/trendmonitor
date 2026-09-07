@@ -93,7 +93,6 @@ export const STUDIO_ERROR_CODES = [
   // --- the generation path's own refusals (slice 6).
   "brain_not_activated",
   "mode_not_in_plan",
-  "mode_not_built_yet",
   "unknown_mode",
   "generation_assembly",
   "generation_unusable",
@@ -105,6 +104,10 @@ export const STUDIO_ERROR_CODES = [
   "generation_recovery_required",
   "generation_attempt_state",
   "generation_uncharged_attempt_cap",
+  // The money-denominated twin (billing gate, 2026-09-04) — same screen, same
+  // spend path, so it needs its own copy here or it renders the neutral
+  // fallback on the one screen that spends a creator's credits.
+  "generation_uncharged_cost_cap",
   // --- the money and gate order this operation shares with `runInference`.
   "inference_role",
   "profile_archived",
@@ -136,6 +139,7 @@ export const STUDIO_ERROR_CODES = [
   // — and narrowing the population to dodge it is how a real refusal goes
   // missing.
   "uncharged_attempt_cap",
+  "topup_reconciliation_required",
   // A SECOND OVER-CAPTURE, KEPT FOR THE SAME REASON AND FOUND THE SAME WAY
   // (slice 7). `mode-access.ts` is in the derived population as a whole file
   // because it holds the plan gate this operation runs, so its

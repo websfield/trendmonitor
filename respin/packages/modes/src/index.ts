@@ -130,6 +130,15 @@ export {
   GenerationAssemblyError,
   HARD_RULE_BRIEF,
   MODE_BRIEFS,
+  // The reference block's statics and bounds (R-97). `packages/credits` fills
+  // `GenerationContext.reference` for the gated mode; the type it fills is the
+  // four-field projection and nothing else of the autopsy.
+  REFERENCE_BLOCK_HEADER,
+  REFERENCE_BLOCK_NOTE,
+  REFERENCE_MECHANISM_BEATS_MAX,
+  REFERENCE_MECHANISM_FIELDS,
+  REFERENCE_MECHANISM_LABELS,
+  REFERENCE_MECHANISM_TEXT_MAX_CODE_POINTS,
   REWRITE_INSTRUCTION,
   assembleGenerationPrompt,
   assembleRewritePrompt,
@@ -137,6 +146,7 @@ export {
   traceabilityCorpusFor,
   type Framework,
   type GenerationContext,
+  type SpinReferenceMechanism,
 } from "./assemble";
 
 export {
@@ -175,3 +185,14 @@ export {
   type GenerationRun,
   type ScoreCreatorRulesFn,
 } from "./pipeline";
+
+export {
+  CODE_SPIN_STRICTNESS_FLOOR,
+  SpinSimilarityError,
+  effectiveSpinStrictness,
+  evaluateSpinSimilarity,
+  type SpinReference,
+  type SpinSimilarityFailure,
+  type SpinSimilarityResult,
+  type SpinStructure,
+} from "./similarity";

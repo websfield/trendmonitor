@@ -54,8 +54,16 @@ export type BillingViewProps = {
   isOwner: boolean;
   /** `hasLiveStripeSubscription` — the ONE definition, read in the page. */
   hasLiveSubscription: boolean;
+  /** `mayChargeOffSession` — liveness alone does not authorize auto-charging. */
+  canArmAutoTopup: boolean;
   hasStripeCustomer: boolean;
-  autoTopup: { enabled: boolean; monthlyCapCents: number | null };
+  autoTopup: {
+    enabled: boolean;
+    legacyEnabled: boolean;
+    staged: boolean;
+    protocolState: "expanded" | "draining" | "active" | "unavailable";
+    monthlyCapCents: number | null;
+  };
   /** null when config could not be read — nothing is guessed. */
   config:
     | {
@@ -168,11 +176,33 @@ function ActionButton({
   );
 }
 
+function CurrentPasswordField({ helpId }: { helpId: string }) {
+  return (
+    <>
+      <label style={{ display: "block", marginBottom: "0.5rem" }}>
+        Current password{" "}
+        <input
+          type="password"
+          name="password"
+          autoComplete="current-password"
+          required
+          aria-describedby={helpId}
+        />
+      </label>
+      <p className="muted" id={helpId}>
+        Required to confirm this billing change. The proof applies only to this
+        signed-in session and expires after 10 minutes.
+      </p>
+    </>
+  );
+}
+
 export function BillingView(props: BillingViewProps) {
   const {
     state,
     isOwner,
     hasLiveSubscription,
+    canArmAutoTopup,
     hasStripeCustomer,
     autoTopup,
     config,
@@ -333,7 +363,9 @@ export function BillingView(props: BillingViewProps) {
             testId="recover-invoice"
             label="Pay the outstanding invoice"
             blockedBy={notOwner ?? noStripe}
-          />
+          >
+            <CurrentPasswordField helpId="recover-invoice-reauth-help" />
+          </ActionButton>
           <p className="muted">
             If there is nothing left to pay, the attempt has probably lapsed —
             Stripe expires an unpaid first invoice after about a day — and you
@@ -359,7 +391,9 @@ export function BillingView(props: BillingViewProps) {
                 ? null
                 : "No Stripe billing account exists for this workspace yet.")
             }
-          />
+          >
+            <CurrentPasswordField helpId="portal-manage-reauth-help" />
+          </ActionButton>
         </div>
       ) : (
         <div className="panel" data-testid="subscribe">
@@ -379,7 +413,9 @@ export function BillingView(props: BillingViewProps) {
                         ? null
                         : `No Stripe price is mapped for ${t.label}. An operator needs to run \`pnpm stripe:setup\` and paste the printed price ids into /admin/config as \`stripePriceMap\`.`)
                     }
-                  />
+                  >
+                    <CurrentPasswordField helpId={`subscribe-${t.tier}-reauth-help`} />
+                  </ActionButton>
                   <p className="muted">
                     {t.monthlyCredits} credits per month (from config v
                     {config.version}). The price is shown on Stripe&apos;s
@@ -413,7 +449,9 @@ export function BillingView(props: BillingViewProps) {
                   ? null
                   : "No Stripe price is mapped for the credit pack. An operator needs to run `pnpm stripe:setup` and paste the printed price ids into /admin/config as `stripePriceMap`.")
               }
-            />
+            >
+              <CurrentPasswordField helpId="buy-pack-reauth-help" />
+            </ActionButton>
             <p className="muted">
               A one-off pack. Packs are valid for longer than a monthly
               allowance, and monthly credits are always spent first so a pack is
@@ -439,7 +477,7 @@ export function BillingView(props: BillingViewProps) {
         {notOwner ? (
           <Blocked reason={notOwner} />
         ) : (
-          <form action={actions.autoTopup}>
+          <form action={actions.autoTopup} data-testid="auto-topup-form">
             {/* AUDIT #26: the copy below describes live behaviour NOTHING can
                 trigger yet. M1 ships and tests `maybeAutoTopup`, but its only
                 future caller is M3's debit site — so an owner arming this today
@@ -456,26 +494,50 @@ export function BillingView(props: BillingViewProps) {
                 was an accurate disclosure that became a false one, on the
                 setting whose whole subject is whether money moves without
                 being asked. Found by walking the product. */}
-            <p className="muted" id="auto-topup-unbuilt" data-testid="auto-topup-unbuilt">
-              This starts buying a pack when a run needs more credits than
-              you have. That run is still refused either way — auto-top-up
-              buys the credits, it does not let the attempt through. Retry once
-              they land. Nothing is charged until a top-up is actually needed.
+            <p
+              className="muted"
+              id="auto-topup-unbuilt"
+              data-testid="auto-topup-unbuilt"
+              data-protocol-state={autoTopup.protocolState}
+            >
+              {autoTopup.protocolState === "active"
+                ? "This starts buying a pack when a run needs more credits than you have. That run is still refused either way — auto-top-up buys the credits, it does not let the attempt through. Retry once they land. Nothing is charged until a top-up is actually needed."
+                : autoTopup.legacyEnabled
+                  ? "Legacy auto-top-up is still live during expansion and may buy a pack when credits run short. The drain step will fence that authority before activation; saving this form now moves the preference into the pending safer protocol."
+                : autoTopup.protocolState === "unavailable"
+                  ? "Auto-top-up activation could not be verified, so no automatic charge is assumed. You may save or remove the preference, but wait for the activation status to recover before relying on it."
+                  : "You may save this preference while the safer auto-top-up protocol is being activated. No automatic pack charge can run until activation finishes; this setting is pending, not currently on."}
+            </p>
+            <p className="muted" data-testid="auto-topup-status">
+              {autoTopup.enabled
+                ? "Auto-top-up is currently on."
+                : autoTopup.legacyEnabled
+                  ? "Auto-top-up is currently on under the legacy protocol."
+                : autoTopup.staged
+                  ? "Auto-top-up is saved and pending activation."
+                  : "Auto-top-up is currently off."}
             </p>
             <label style={{ display: "block", marginBottom: "0.5rem" }}>
               <input
                 type="checkbox"
                 className="toggle"
                 name="enabled"
-                defaultChecked={autoTopup.enabled}
-                disabled={!hasLiveSubscription && !autoTopup.enabled}
+                defaultChecked={
+                  autoTopup.enabled || autoTopup.legacyEnabled || autoTopup.staged
+                }
+                disabled={
+                  !canArmAutoTopup &&
+                  !autoTopup.enabled &&
+                  !autoTopup.legacyEnabled &&
+                  !autoTopup.staged
+                }
                 // AUDIT #17, the second cited control. Both reasons that can
                 // apply to this checkbox are named here — the M3 disclosure
                 // always, the liveness refusal when it bites — so the reason a
                 // control is dimmed reaches a screen reader with the control
                 // rather than as an unlinked paragraph after it.
                 aria-describedby={
-                  hasLiveSubscription
+                  canArmAutoTopup
                     ? "auto-topup-unbuilt"
                     : "auto-topup-unbuilt auto-topup-blocked-reason"
                 }
@@ -496,18 +558,19 @@ export function BillingView(props: BillingViewProps) {
                 }
               />
             </label>
+            <CurrentPasswordField helpId="auto-topup-reauth-help" />
             <button type="submit" className={buttonClass("secondary")}>
               Save auto-top-up
             </button>
-            {!hasLiveSubscription ? (
+            {!canArmAutoTopup ? (
               <p
                 className="muted"
                 id="auto-topup-blocked-reason"
                 data-testid="auto-topup-blocked"
               >
-                Turning auto-top-up ON needs a live subscription — there is no
-                saved payment method to charge without one. Turning it OFF is
-                always allowed.
+                {state.state === "incomplete"
+                  ? "Turning auto-top-up ON waits until the first subscription payment completes. No automatic pack charge can run while the subscription is incomplete. Turning it OFF is always allowed."
+                  : "Turning auto-top-up ON needs a subscription that can be charged off-session. There is no eligible saved payment authority right now. Turning it OFF is always allowed."}
               </p>
             ) : null}
             <p className="muted">
@@ -525,7 +588,9 @@ export function BillingView(props: BillingViewProps) {
             testId="resume-button"
             label="Resume subscription now"
             blockedBy={notOwner ?? noStripe}
-          />
+          >
+            <CurrentPasswordField helpId="resume-reauth-help" />
+          </ActionButton>
         </div>
       ) : null}
 
@@ -563,6 +628,7 @@ export function BillingView(props: BillingViewProps) {
                     ))}
                   </select>
                 </label>{" "}
+                <CurrentPasswordField helpId="pause-reauth-help" />
                 <button type="submit" className={buttonClass("secondary")}>
                   Pause subscription
                 </button>
@@ -609,6 +675,7 @@ export function BillingView(props: BillingViewProps) {
                     ))}
                   </select>
                 </label>{" "}
+                <CurrentPasswordField helpId="pause-offer-reauth-help" />
                 <button type="submit" className={buttonClass("primary")}>
                   Pause instead of cancelling
                 </button>
@@ -638,7 +705,9 @@ export function BillingView(props: BillingViewProps) {
                 ? null
                 : "No Stripe billing account exists for this workspace yet, so there is nothing to cancel.")
             }
-          />
+          >
+            <CurrentPasswordField helpId="cancel-final-reauth-help" />
+          </ActionButton>
         </div>
       ) : hasLiveSubscription ? (
         <div className="panel" data-testid="cancel-entry">

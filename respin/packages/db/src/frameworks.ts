@@ -31,11 +31,13 @@
 // is the SEAM: `@respin/credits` owns the tier -> entitlement mapping. The
 // db half fails closed either way, which `createProfile`'s cap — decided
 // entirely one layer up — deliberately does not.
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { DbLike, TxLike } from "./db-like";
 import { frameworks, type Framework } from "./brain-schema";
 import {
+  assertFreshProfileScopeInTx,
   ProfileScope,
   type VerifiedWorkspaceId,
   type WorkspaceScope,
@@ -1266,33 +1268,31 @@ export function frameworkSlug(name: string): string {
 // --------------------------------------------------------------- the readers
 
 /**
- * A framework as a READER hands it out, with R5b's saturation notice attached.
+ * A framework as a READER hands it out, with the unmeasured-market limitation attached.
  *
  * THE NOTICE IS PART OF THE ROW, not a thing each screen remembers to add.
- * REQ-D02 says saturated frameworks "warn and demand a fresh interpretation",
- * and a warning that every consumer has to reimplement is a warning one of
- * them will omit — which is the "fix the class, not the field" rule applied to
- * copy. `null` means there is nothing to warn about.
+ * The legacy tag has no population, window, or prevalence on EVERY row, so a
+ * limitation each screen has to reimplement is one a screen will omit. The
+ * value is therefore non-null until framework-level measurement exists.
  */
 export type EligibleFramework = Framework & {
-  saturationNotice: string | null;
+  saturationNotice: string;
 };
 
 /**
- * What a creator is told about a saturated framework.
+ * What a creator is told about every unmeasured framework saturation tag.
  *
  * IT DOES NOT PROMISE ANYTHING, and it deliberately avoids the vocabulary
  * `tests/support/forbidden-claims.ts` bans — no "guarantee", no "confidence",
- * no forecast. What it says is what is actually known: audiences have seen a
- * lot of this shape, so the mechanism has to be re-interpreted rather than
- * re-run.
+ * no forecast. It names exactly what is missing and therefore prevents any
+ * legacy curator tag from becoming a market claim.
  */
 export const SATURATION_NOTICE =
-  "Audiences have seen a lot of this shape lately. Treat it as a mechanism to re-interpret from scratch, not as a move that works because it worked before — a saturated shape re-run as-is is the version that stops landing.";
+  "Unmeasured curator/library tag: no market population, window, or prevalence has been recorded; re-interpret this mechanism from scratch.";
 
 const withSaturationNotice = (row: Framework): EligibleFramework => ({
   ...row,
-  saturationNotice: row.saturation === "saturated" ? SATURATION_NOTICE : null,
+  saturationNotice: SATURATION_NOTICE,
 });
 
 /**
@@ -1479,6 +1479,406 @@ function contentColumns(content: FrameworkContent) {
   };
 }
 
+type AutopsyFrameworkAnalysis = Readonly<{
+  hookMechanic: string;
+  beats: readonly string[];
+  ending: string;
+  followTrigger: string;
+}>;
+
+export type AutopsyFrameworkResolution = Readonly<{
+  kind: "matched" | "proposed";
+  framework: Framework;
+  created: boolean;
+}>;
+
+const TREND_ITEM_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * An internal trend reference without the UUID's digit runs.
+ *
+ * The mechanism scan correctly treats a raw UUID as a possible phone number,
+ * so writing the database id verbatim makes every real autopsy candidate fail
+ * before curation. Each hexadecimal nibble is encoded as one letter `a..p`;
+ * the mapping is reversible for the future curator UI and never weakens the
+ * scan with a UUID exception.
+ *
+ * WHAT IT IS, STATED EXACTLY (tenancy gate NOTE 4, fix round 1 — the previous
+ * wording, "contains no creator identity", was a stronger claim than the code
+ * supports). It carries no creator identity COLUMN: no profile id, no
+ * workspace id, no display name, nothing a reader could join a person from. It
+ * IS an opaque, reversible encoding of one `trend_items.id` — a foreign key
+ * into a table whose every private row is pair-predicated on read, so the ref
+ * resolves to nothing without direct database access.
+ *
+ * Which rows it can name is settled upstream rather than here: R-99 gates
+ * `resolveAutopsyFramework` — the only caller that persists what this builds —
+ * on `rights_scope = 'shared_analysis'` (`system-spend.ts`), so a ref reaching
+ * a shared framework row encodes an ownerless shared item. Since round 2's
+ * CHANGE B this is no longer run on private items AT ALL: the worker sends a
+ * private analysis to `assertAutopsyMechanismContent`, which stands its
+ * citations on a constant. Both callers are shared-library callers, and the
+ * encoding never leaves this file for a private claim.
+ */
+function frameworkTrendItemRef(trendItemId: string): string {
+  const normalized = trendItemId.trim().toLowerCase();
+  if (!TREND_ITEM_ID.test(normalized)) {
+    throw new FrameworkContentError(
+      "trendItemId",
+      "does not identify one opaque trend item"
+    );
+  }
+  const encoded = normalized
+    .replaceAll("-", "")
+    .split("")
+    .map((nibble) => String.fromCharCode(97 + Number.parseInt(nibble, 16)))
+    .join("");
+  return `trend-item-alpha-${encoded}`;
+}
+
+const normalizeMechanismIdentityText = (value: string) =>
+  value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+
+/** Source/evidence ids are deliberately excluded: they support a mechanism, not define it. */
+function mechanismFingerprint(content: Pick<FrameworkContent, "name" | "beats" | "whyItConverts">): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        name: normalizeMechanismIdentityText(content.name),
+        beats: content.beats.map(normalizeMechanismIdentityText),
+        whyItConverts: normalizeMechanismIdentityText(content.whyItConverts),
+      })
+    )
+    .digest("hex");
+}
+
+function storedMechanismFingerprint(row: Framework): string {
+  if (!Array.isArray(row.beats) || !row.beats.every((beat) => typeof beat === "string")) {
+    throw new FrameworkContentError(
+      "approved library beats",
+      "do not contain the mechanism text required for matching"
+    );
+  }
+  return mechanismFingerprint({
+    name: row.name,
+    beats: row.beats,
+    whyItConverts: row.whyItConverts,
+  });
+}
+
+/**
+ * The ref a CONTENT-ONLY scan stands its source/evidence entries on.
+ *
+ * A CONSTANT, never a trend item: which item an analysis came from is a
+ * shared-library question (who can open the citation), and the content scan is
+ * asking a different one (does this text carry a person, a link or a number).
+ * It is deliberately mechanism-level itself, so it contributes no finding of
+ * its own, and that is asserted rather than assumed: it is scanned like every
+ * other string, so the clean-analysis case in `packages/db/tests/frameworks.test.ts`
+ * could not pass if this constant tripped a rule.
+ */
+const CONTENT_SCAN_REF = "trend-item-alpha-content-scan-only";
+
+/**
+ * THE FRAMEWORK CONTENT ONE AUTOPSY CONTRIBUTES — the analysis-to-content
+ * mapping, written ONCE and read by BOTH callers below.
+ *
+ * WHY IT IS A FUNCTION RATHER THAN TWO OBJECT LITERALS. After R-99 there are
+ * two questions to ask of a completed autopsy (see `assertAutopsyFrameworkCandidate`),
+ * and both of them scan THIS text. A second literal would be a second
+ * population, and a field mapped into one and not the other is exactly the
+ * silent narrowing CLAUDE.md's 2026-08-29 lesson is about — here it would mean
+ * a private analysis whose new field carries a phone number reaching a
+ * generation prompt unscanned. One mapping, two consumers, and
+ * `contentStrings` walks whatever it produces.
+ *
+ * READ ONCE, into a new object, for `prepareContent`'s C-40 TOCTOU reason: each
+ * analysis field is read exactly once here, and everything downstream reads the
+ * copy.
+ */
+function autopsyCandidateContent(input: {
+  ref: string;
+  analysis: AutopsyFrameworkAnalysis;
+}): FrameworkContent {
+  const { ref } = input;
+  return {
+    name: input.analysis.hookMechanic,
+    beats: [...input.analysis.beats],
+    whyItConverts: [
+      `Hook mechanic: ${input.analysis.hookMechanic}.`,
+      `Ending mechanic: ${input.analysis.ending}.`,
+      `Follow trigger: ${input.analysis.followTrigger}.`,
+    ].join(" "),
+    // One autopsy cannot establish a goal or niche. Empty is more truthful
+    // than manufacturing an applicability claim for the curator to undo.
+    applicability: [],
+    sourceReferences: [{ kind: "trend_item", ref }],
+    evidenceEntries: [
+      {
+        kind: "trend_item",
+        ref,
+        observation:
+          "The fixed-order canonical autopsy recorded this hook, beat, ending, and follow-trigger mechanism.",
+      },
+    ],
+    testedCaveats: [
+      "Applicability and market prevalence were not measured by this autopsy.",
+    ],
+    saturation: "observed",
+  };
+}
+
+function prepareAutopsyFrameworkCandidate(input: {
+  trendItemId: string;
+  analysis: AutopsyFrameworkAnalysis;
+}): { content: FrameworkContent; fingerprint: string; slug: string } {
+  const content = prepareContent(
+    autopsyCandidateContent({
+      ref: frameworkTrendItemRef(input.trendItemId),
+      analysis: input.analysis,
+    })
+  );
+  const fingerprint = mechanismFingerprint(content);
+  return {
+    content,
+    fingerprint,
+    slug: `autopsy-${fingerprint}`.slice(0, FRAMEWORK_SLUG_MAX),
+  };
+}
+
+/**
+ * IS THIS ANALYSIS MECHANISM-LEVEL? — the CONTENT question, asked of every
+ * completed autopsy whatever its rights scope (tenancy + compliance round 2,
+ * CHANGE B).
+ *
+ * THE TWO QUESTIONS THIS FILE USED TO ASK AS ONE. Until R-99, every autopsied
+ * item was an ownerless shared row, so "is this text mechanism-level" and "is
+ * this a valid shared-library candidate" had the same population and one
+ * function answered both. R-99 split the populations — a `profile_private`
+ * claim proposes nothing to anyone — and the joined function then punished
+ * private pastes with a shared-library verdict: a beat such as "promise the 10x
+ * version before the constraint lands" trips `metric_unit`, burns the attempt,
+ * and five of those PARK the claim permanently, for a rule that no longer
+ * governs it. So the two questions are now two functions:
+ *
+ *   CONTENT (here)   — `assertMechanismLevel` over the analysis text. It is
+ *                      what `packages/modes/src/assemble.ts` relies on when it
+ *                      says a `SpinReferenceMechanism` carries no personal
+ *                      detail and no number, and it is the ONLY such scan on
+ *                      private autopsy text in the running system, so a private
+ *                      analysis that fails it must still fail. Nothing about
+ *                      the shared library is asked.
+ *   CANDIDACY (below) — that PLUS the shared-library row's own requirements:
+ *                      the reversible `trend_items` ref, the schema shape, and
+ *                      `assertFrameworkBounds`' name/text/list limits. Those
+ *                      are properties of a library row, not of the creator's
+ *                      material, and a private paste is refused by none of them.
+ *
+ * THE CONTENT CHECK IS THE SAME SCAN, NOT A LOOKALIKE: both call
+ * `assertMechanismLevel` over `autopsyCandidateContent`, so every analysis
+ * string is scanned by both paths under the same rules. The one difference is
+ * the ref, which is a constant here and an encoded item id there — the ref is
+ * the library's citation, and it is the library's problem.
+ */
+export function assertAutopsyMechanismContent(
+  analysis: AutopsyFrameworkAnalysis
+): void {
+  assertMechanismLevel(
+    autopsyCandidateContent({ ref: CONTENT_SCAN_REF, analysis })
+  );
+}
+
+/**
+ * Worker preflight for a SHARED claim: content that could not become a library
+ * row becomes a recorded analysis failure before the finalize transaction.
+ * Private claims run `assertAutopsyMechanismContent` instead — see there for
+ * which half of this is content and which half is candidacy.
+ */
+export function assertAutopsyFrameworkCandidate(input: {
+  trendItemId: string;
+  analysis: AutopsyFrameworkAnalysis;
+}): void {
+  void prepareAutopsyFrameworkCandidate(input);
+}
+
+export type SharedFrameworkRights =
+  | {
+      basis: "creator_consent";
+      subjectUserId: string;
+      evidenceId: string;
+    }
+  | {
+      basis: "independently_licensed";
+      evidenceId: string;
+    };
+
+function sharedRightsColumns(rights: SharedFrameworkRights) {
+  if (typeof rights.evidenceId !== "string" || !/\S/.test(rights.evidenceId)) {
+    throw new Error("shared framework rights evidence is required");
+  }
+  if (rights.basis === "creator_consent") {
+    if (typeof rights.subjectUserId !== "string" || !/\S/.test(rights.subjectUserId)) {
+      throw new Error("creator-consent framework rights require a domain user subject");
+    }
+    return {
+      rightsBasis: "creator_consent" as const,
+      rightsSubjectUserId: rights.subjectUserId,
+      rightsEvidenceId: rights.evidenceId,
+    };
+  }
+  return {
+    rightsBasis: "independently_licensed" as const,
+    rightsSubjectUserId: null,
+    rightsEvidenceId: rights.evidenceId,
+  };
+}
+
+function sharedFrameworkRightsMatch(
+  framework: Pick<Framework, "rightsBasis" | "rightsSubjectUserId" | "rightsEvidenceId">,
+  rights: SharedFrameworkRights,
+): boolean {
+  if (framework.rightsBasis !== rights.basis || framework.rightsEvidenceId !== rights.evidenceId) {
+    return false;
+  }
+  return rights.basis === "creator_consent"
+    ? framework.rightsSubjectUserId === rights.subjectUserId
+    : framework.rightsSubjectUserId === null;
+}
+
+function sharedFrameworkRightsPredicate(rights: SharedFrameworkRights) {
+  return rights.basis === "creator_consent"
+    ? and(
+        eq(frameworks.rightsBasis, "creator_consent"),
+        eq(frameworks.rightsSubjectUserId, rights.subjectUserId),
+        eq(frameworks.rightsEvidenceId, rights.evidenceId),
+      )
+    : and(
+        eq(frameworks.rightsBasis, "independently_licensed"),
+        isNull(frameworks.rightsSubjectUserId),
+        eq(frameworks.rightsEvidenceId, rights.evidenceId),
+      );
+}
+
+function rightsScopedFrameworkSlug(candidateSlug: string, rights: SharedFrameworkRights): string {
+  const rightsIdentity = rights.basis === "creator_consent"
+    ? [rights.basis, rights.subjectUserId, rights.evidenceId]
+    : [rights.basis, rights.evidenceId];
+  const suffix = createHash("sha256")
+    .update(JSON.stringify(rightsIdentity))
+    .digest("hex")
+    .slice(0, 16);
+  return `${candidateSlug.slice(0, FRAMEWORK_SLUG_MAX - suffix.length - 1)}-${suffix}`;
+}
+
+async function insertProposedSharedFramework(
+  db: DbLike | TxLike,
+  content: FrameworkContent,
+  slug: string,
+  version: number,
+  rights: SharedFrameworkRights,
+): Promise<Framework> {
+  const [row] = await db
+    .insert(frameworks)
+    .values({
+      ...contentColumns(content),
+      slug,
+      version,
+      visibility: "shared",
+      curatorStatus: "proposed",
+      ...sharedRightsColumns(rights),
+    })
+    .returning();
+  return row;
+}
+
+/**
+ * R-94's durable decision, called inside autopsy finalization's transaction.
+ *
+ * Matching is intentionally conservative and deterministic: normalized exact
+ * canonical mechanism content, or the stable fingerprint identity of a row a
+ * human curator refined. There is no model score or hidden strength cutoff.
+ * The advisory lock plus the live/version indexes make concurrent autopsies
+ * create or reuse one proposed row. Rejected/retired rows are not matches and
+ * are retained as superseded history before a fresh proposed version is made.
+ */
+export async function resolveAutopsyFramework(
+  tx: TxLike,
+  input: {
+    trendItemId: string;
+    analysis: AutopsyFrameworkAnalysis;
+    rights: SharedFrameworkRights;
+  }
+): Promise<AutopsyFrameworkResolution> {
+  const candidate = prepareAutopsyFrameworkCandidate(input);
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`frameworks:shared:${candidate.slug}`}, 0))`
+  );
+
+  // A mechanism match is usable only when it has identical deletion survival.
+  // Product seeds, licences, and separate consent subjects may carry the same
+  // mechanism while remaining distinct rights identities.
+  const liveFrameworks = await tx
+    .select()
+    .from(frameworks)
+    .where(and(
+      eq(frameworks.visibility, "shared"),
+      isNull(frameworks.supersededAt),
+      sharedFrameworkRightsPredicate(input.rights),
+    ));
+  const live = liveFrameworks.find(
+    (row) =>
+      storedMechanismFingerprint(row) === candidate.fingerprint &&
+      sharedFrameworkRightsMatch(row, input.rights)
+  );
+
+  if (live) {
+    if (
+      live.curatorStatus === "approved" &&
+      live.retiredAt === null
+    ) {
+      return { kind: "matched", framework: live, created: false };
+    }
+    if (live.curatorStatus === "proposed" && live.retiredAt === null) {
+      return { kind: "proposed", framework: live, created: false };
+    }
+    await tx
+      .update(frameworks)
+      .set({ supersededAt: sql`clock_timestamp()` })
+      .where(
+        and(eq(frameworks.id, live.id), isNull(frameworks.supersededAt))
+      );
+  }
+
+  const targetSlug = live?.slug ?? rightsScopedFrameworkSlug(candidate.slug, input.rights);
+
+  const [newest] = await tx
+    .select({ version: frameworks.version })
+    .from(frameworks)
+    .where(
+      and(
+        eq(frameworks.visibility, "shared"),
+        eq(frameworks.slug, targetSlug)
+      )
+    )
+    .orderBy(desc(frameworks.version))
+    .limit(1);
+  const version = (newest?.version ?? 0) + 1;
+  if (version > FRAMEWORK_VERSION_MAX) {
+    throw new FrameworkLimitError(
+      `the shared autopsy candidate reached version ${FRAMEWORK_VERSION_MAX}`
+    );
+  }
+  const framework = await insertProposedSharedFramework(
+    tx,
+    candidate.content,
+    targetSlug,
+    version,
+    input.rights,
+  );
+  return { kind: "proposed", framework, created: true };
+}
+
 /** The advisory key both private writes take, so versioning cannot race. */
 const frameworkLockKey = (workspaceId: string, profileId: string) =>
   `frameworks:${workspaceId}:${profileId}`;
@@ -1562,6 +1962,12 @@ export async function createPrivateFramework(
     workspaceId: profileScope.workspaceId as string,
   };
   return db.transaction(async (tx) => {
+    await assertFreshProfileScopeInTx(
+      tx,
+      profileScope,
+      ["owner"],
+      "create a framework for this creator"
+    );
     // REQ-G08 (billing gate, 2026-09-01): a paused workspace may READ its
     // frameworks and may not write one. See `assertNotPaused`.
     await assertNotPaused(tx, profileScope.workspaceId);
@@ -1598,6 +2004,7 @@ export async function createPrivateFramework(
         slug,
         version: 1,
         visibility: "private",
+        rightsBasis: "profile_private",
         curatorStatus: "proposed",
         ...ids,
       })
@@ -1651,6 +2058,12 @@ export async function editPrivateFramework(
     workspaceId: profileScope.workspaceId as string,
   };
   return db.transaction(async (tx) => {
+    await assertFreshProfileScopeInTx(
+      tx,
+      profileScope,
+      ["owner"],
+      "edit a framework for this creator"
+    );
     // REQ-G08 (billing gate, 2026-09-01): a paused workspace may READ its
     // frameworks and may not write one. See `assertNotPaused`.
     await assertNotPaused(tx, profileScope.workspaceId);
@@ -1686,6 +2099,7 @@ export async function editPrivateFramework(
         slug: base.slug,
         version: base.version + 1,
         visibility: "private",
+        rightsBasis: "profile_private",
         curatorStatus: base.curatorStatus,
         curatedBy: base.curatedBy,
         ...ids,
@@ -1724,6 +2138,12 @@ export async function approvePrivateFramework(
     workspaceId: profileScope.workspaceId as string,
   };
   return db.transaction(async (tx) => {
+    await assertFreshProfileScopeInTx(
+      tx,
+      profileScope,
+      ["owner"],
+      "approve a framework for this creator"
+    );
     // REQ-G08 (billing gate, 2026-09-01): a paused workspace may READ its
     // frameworks and may not write one. See `assertNotPaused`.
     await assertNotPaused(tx, profileScope.workspaceId);
@@ -1786,6 +2206,12 @@ export async function retirePrivateFramework(
     workspaceId: profileScope.workspaceId as string,
   };
   return db.transaction(async (tx) => {
+    await assertFreshProfileScopeInTx(
+      tx,
+      profileScope,
+      ["owner"],
+      "retire a framework for this creator"
+    );
     // REQ-G08 (billing gate, 2026-09-01): a paused workspace may READ its
     // frameworks and may not write one. See `assertNotPaused`.
     await assertNotPaused(tx, profileScope.workspaceId);
@@ -2320,6 +2746,7 @@ export async function seedSharedFrameworks(db: DbLike | TxLike): Promise<void> {
         slug: frameworkSlug(parsed.name),
         version: 1,
         visibility: "shared",
+        rightsBasis: "product_seed",
         // The two owner columns are LEFT UNSET rather than written as null:
         // `frameworks_shared_has_no_owner` refuses a shared row with either
         // one, so this is the constraint's shape rather than a convention.
@@ -2328,6 +2755,22 @@ export async function seedSharedFrameworks(db: DbLike | TxLike): Promise<void> {
       })
       .onConflictDoNothing();
   }
+}
+
+/** Trend-derived shared candidate: forced proposed, never self-approved. */
+export async function proposeSharedFramework(
+  db: DbLike | TxLike,
+  raw: unknown,
+  rights: SharedFrameworkRights,
+): Promise<Framework> {
+  const content = prepareContent(raw);
+  return insertProposedSharedFramework(
+    db,
+    content,
+    frameworkSlug(content.name),
+    1,
+    rights,
+  );
 }
 
 /**

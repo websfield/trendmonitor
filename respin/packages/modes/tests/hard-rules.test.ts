@@ -67,6 +67,7 @@ describe("the rule ids are a closed set", () => {
         "empty_weakest_point",
         "framework_not_offered",
         "idea_is_a_topic",
+        "similarity",
         "summarised_source",
       ].sort()
     );

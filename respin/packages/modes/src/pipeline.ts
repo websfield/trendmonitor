@@ -34,13 +34,19 @@ import {
   type HonestRefusal,
   type KillTestResult,
 } from "./kill-test";
-import { type ModeId } from "./modes";
+import { modeSpec, type ModeId } from "./modes";
 import {
   parseScriptOutput,
   renderDraft,
   type ScriptOutput,
 } from "./output";
 import { TRACEABILITY_LIMIT_NOTE } from "./traceability";
+import {
+  evaluateSpinSimilarity,
+  SpinSimilarityError,
+  assertTrustedReference,
+  type SpinReference,
+} from "./similarity";
 
 /**
  * Produce one draft.
@@ -105,10 +111,50 @@ export async function runGeneration(params: {
    * (`creatorRulesScored: false`) rather than rendered as "everything passed".
    */
   scoreCreatorRules?: ScoreCreatorRulesFn;
+  /**
+   * Required for the one similarity-gated mode. It is the trusted, bounded
+   * autopsy projection and the already-read stored config's requested
+   * strictness — never generic input or a second config read.
+   *
+   * THE GATE'S OBJECT AND THE PROMPT'S OBJECT ARE DIFFERENT OBJECTS (R-97).
+   * This one carries the autopsy's `hook`, `subjectTerms` and `structure` and
+   * goes ONLY to `evaluateSpinSimilarity`; `context.reference.mechanism`
+   * carries the four mechanism fields and goes ONLY to `assemble.ts`. Nothing
+   * in this file copies between them, and `spin-reference.test.ts` captures
+   * the assembled prompt to prove the gate's hook never appears in it.
+   */
+  spinSimilarity?: {
+    reference: SpinReference;
+    configuredStrictness: number;
+  };
 }): Promise<GenerationRun> {
   const { mode, context, generate, scoreCreatorRules } = params;
   const creatorRules = params.creatorRules ?? [];
   const bundle = promptBundleVersion(mode);
+  if (modeSpec(mode).similarityGated && !params.spinSimilarity) {
+    throw new SpinSimilarityError(
+      "a similarity-gated mode requires its trusted structured reference",
+    );
+  }
+  // THE REFERENCE IS CHECKED BEFORE ANY VENDOR CALL, not inside the gate that
+  // runs after draft 1 (billing + compliance gates, 2026-09-04, converged).
+  //
+  // `assertTrustedReference` used to run only inside `evaluateSpinSimilarity`,
+  // which is called on a PARSED draft — so a malformed reference was paid for
+  // before it was refused, deterministically, on every attempt for that
+  // reference. R-101 records that a real 63-word-hook autopsy hit exactly this,
+  // and the bound designed to catch a paid-but-undebited attempt could not see
+  // it: `meteredCall` had already written `consumedIncludedBuild: true`, and
+  // `countUnchargedBillableAttempts` filters those out, so
+  // `maxUnchargedBillableAttempts` never fired. An unbounded-rate paid-call
+  // loop with no counter and no cap.
+  //
+  // The reference is available here, at entry, with nothing spent. This can
+  // refuse nothing the gate would have accepted — it is the SAME assertion,
+  // moved earlier — so it costs no behaviour and saves every vendor call.
+  if (params.spinSimilarity) {
+    assertTrustedReference(params.spinSimilarity.reference);
+  }
 
   // ---- Draft 1.
   const firstReply = await generate(
@@ -116,7 +162,12 @@ export async function runGeneration(params: {
     1
   );
   const firstOutput = parseScriptOutput({ text: firstReply, mode });
-  const firstFindings = runKillTest({ output: firstOutput, mode, context });
+  const firstFindings = withSpinSimilarity({
+    output: firstOutput,
+    findings: runKillTest({ output: firstOutput, mode, context }),
+    mode,
+    similarity: params.spinSimilarity,
+  });
 
   if (decideAfterKillTest({ attempt: 1, findings: firstFindings }) === "accept") {
     return settle({
@@ -142,7 +193,12 @@ export async function runGeneration(params: {
     2
   );
   const secondOutput = parseScriptOutput({ text: secondReply, mode });
-  const secondFindings = runKillTest({ output: secondOutput, mode, context });
+  const secondFindings = withSpinSimilarity({
+    output: secondOutput,
+    findings: runKillTest({ output: secondOutput, mode, context }),
+    mode,
+    similarity: params.spinSimilarity,
+  });
 
   if (
     decideAfterKillTest({ attempt: 2, findings: secondFindings }) === "accept"
@@ -182,6 +238,62 @@ export async function runGeneration(params: {
       traceabilityLimitNote: TRACEABILITY_LIMIT_NOTE,
       refusal,
     },
+  };
+}
+
+/**
+ * Add the Spin gate only after the parsed output has completed the ordinary
+ * deterministic kill test, and before either acceptance branch can settle.
+ */
+function withSpinSimilarity(args: {
+  output: ScriptOutput;
+  findings: AttemptFindings;
+  mode: ModeId;
+  similarity:
+    | { reference: SpinReference; configuredStrictness: number }
+    | undefined;
+}): AttemptFindings {
+  if (!modeSpec(args.mode).similarityGated) return args.findings;
+  if (!args.similarity) {
+    throw new SpinSimilarityError(
+      "a similarity-gated mode requires its trusted structured reference",
+    );
+  }
+  const similarity = evaluateSpinSimilarity({
+    output: args.output,
+    reference: args.similarity.reference,
+    configuredStrictness: args.similarity.configuredStrictness,
+  });
+  if (similarity.accepted) return args.findings;
+  return {
+    ...args.findings,
+    hardRules: [
+      ...args.findings.hardRules,
+      ...similarity.failed.map((property) => ({
+        rule: "similarity" as const,
+        shape: property,
+        // The hook finding names the unit that actually carried the copy —
+        // a caption or a beat's VO as readily as a hook — because the gate
+        // compares every displayed unit (compliance gate round 1, 2026-09-03),
+        // and a finding that always said "/hooks" would send the rewrite to
+        // the wrong field. The field is the ONLY place the location is
+        // stated: `honestRefusal` already renders `rule at field`, so an
+        // excerpt that repeated it read the field twice. The excerpt is a
+        // static string — no candidate text crosses into the refusal.
+        field:
+          property === "subject"
+            ? "/thesis/statement"
+            : property === "hook"
+              ? (similarity.hookMatchField ?? "/hooks")
+              : "/beats",
+        excerpt:
+          property === "hook"
+            ? "spin similarity gate: hook wording did not change"
+            : `spin similarity gate: ${property} did not change`,
+        remedy:
+          "Change the subject, rewrite the hook in your own words, and alter at least one beat or turn.",
+      })),
+    ],
   };
 }
 

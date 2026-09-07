@@ -353,6 +353,13 @@ describe("M1 billing schema constraints (AC-4)", () => {
   // writer defect that must fail closed, never mint twice.
   it("credit_ledger: one pack per checkout session, and one grant per invoice (partial uniques, global by design)", async () => {
     const lot = { expiresAt: new Date(Date.now() + 24 * 3_600_000) };
+    const autoTopupReceipt = (refId: string) => ({
+      amountCents: 1000,
+      configVersion: 1,
+      stripeEventId: `evt_${refId}`,
+      autoTopupAttemptId: crypto.randomUUID(),
+      autoTopupPeriodMonthUtc: "2026-09",
+    });
     await db.insert(creditLedger).values({
       workspaceId: wsId, delta: 1000, kind: "pack",
       refType: "checkout_session", refId: "cs_1", ...lot,
@@ -394,22 +401,29 @@ describe("M1 billing schema constraints (AC-4)", () => {
     // below, which is the third partial unique).
     await db.insert(creditLedger).values({
       workspaceId: wsId, delta: 1000, kind: "pack",
-      refType: "auto_topup", refId: "cs_1", ...lot,
+      refType: "auto_topup", refId: "cs_1", ...autoTopupReceipt("cs_1"), ...lot,
     });
   });
 
   it("credit_ledger: one pack per PaymentIntent (the third partial unique, global by design)", async () => {
     const lot = { expiresAt: new Date(Date.now() + 24 * 3_600_000) };
+    const autoTopupReceipt = (suffix: string) => ({
+      amountCents: 1000,
+      configVersion: 1,
+      stripeEventId: `evt_pi_1_${suffix}`,
+      autoTopupAttemptId: crypto.randomUUID(),
+      autoTopupPeriodMonthUtc: "2026-09",
+    });
     await db.insert(creditLedger).values({
       workspaceId: wsId, delta: 1000, kind: "pack",
-      refType: "auto_topup", refId: "pi_1", amountCents: 1000, ...lot,
+      refType: "auto_topup", refId: "pi_1", ...autoTopupReceipt("first"), ...lot,
     });
     // The mint path that had no business-object unique while its two siblings
     // did (billing review finding 2) — a second event id carrying one PI.
     await expect(
       db.insert(creditLedger).values({
         workspaceId: wsId, delta: 1000, kind: "pack",
-        refType: "auto_topup", refId: "pi_1", amountCents: 1000, ...lot,
+        refType: "auto_topup", refId: "pi_1", ...autoTopupReceipt("second"), ...lot,
       })
     ).rejects.toThrow();
     // ...and a SECOND workspace claiming the same PaymentIntent is refused
@@ -418,7 +432,7 @@ describe("M1 billing schema constraints (AC-4)", () => {
     await expect(
       db.insert(creditLedger).values({
         workspaceId: wsId2, delta: 1000, kind: "pack",
-        refType: "auto_topup", refId: "pi_1", amountCents: 1000, ...lot,
+        refType: "auto_topup", refId: "pi_1", ...autoTopupReceipt("other"), ...lot,
       })
     ).rejects.toThrow();
     // Still partial: a checkout_session row may reuse the same ref id.
@@ -465,7 +479,7 @@ describe("M1 billing schema constraints (AC-4)", () => {
       .values({ workspaceId: wsId2, startedAt: new Date("2026-03-01T00:00:00Z") });
   });
 
-  it("cascades: workspace delete removes ledger, subscription, pauses, and ATTRIBUTED stripe_events; null-workspace events survive (teardown enumeration)", async () => {
+  it("workspace deletion detaches but retains immutable Stripe receipt attribution", async () => {
     await db
       .insert(creditLedger)
       .values({ workspaceId: wsId, delta: 10, kind: "grant", expiresAt: FUTURE });
@@ -480,12 +494,15 @@ describe("M1 billing schema constraints (AC-4)", () => {
       type: "invoice.paid",
       payload: {},
       workspaceId: wsId,
+      stripeCustomerId: "cus_c",
+      receiptAttribution: "workspace_attributed",
       outcome: "processed",
     });
     await db.insert(stripeEvents).values({
       id: "evt_unattributed",
       type: "invoice.paid",
       payload: {},
+      receiptAttribution: "unattributed",
       outcome: "refused_unknown_customer",
     });
 
@@ -495,7 +512,22 @@ describe("M1 billing schema constraints (AC-4)", () => {
     expect(await db.select().from(subscriptions)).toHaveLength(0);
     expect(await db.select().from(pausePeriods)).toHaveLength(0);
     const events = await db.select().from(stripeEvents);
-    expect(events.map((e) => e.id)).toEqual(["evt_unattributed"]);
+    expect(events).toHaveLength(2);
+    expect(events.find((event) => event.id === "evt_attributed")).toMatchObject({
+      workspaceId: null,
+      stripeCustomerId: "cus_c",
+      receiptAttribution: "workspace_attributed",
+    });
+    expect(events.find((event) => event.id === "evt_unattributed")).toMatchObject({
+      workspaceId: null,
+      stripeCustomerId: null,
+      receiptAttribution: "unattributed",
+    });
+    await expect(
+      db.update(stripeEvents)
+        .set({ receiptAttribution: "customer_attributed" })
+        .where(eq(stripeEvents.id, "evt_attributed"))
+    ).rejects.toThrow();
   });
 
   it("users.auth_user_id FK: unknown auth id rejected; auth-user delete RESTRICTED while a domain row exists", async () => {
@@ -601,7 +633,13 @@ describe("M1 billing schema constraints (AC-4)", () => {
 
   it("stripe_events: outcome vocabulary CHECK", async () => {
     await expect(
-      db.insert(stripeEvents).values({ id: "evt_bad", type: "x", payload: {}, outcome: "totally_new_outcome" })
+      db.insert(stripeEvents).values({
+        id: "evt_bad",
+        type: "x",
+        payload: {},
+        receiptAttribution: "unattributed",
+        outcome: "totally_new_outcome",
+      })
     ).rejects.toThrow();
   });
 });

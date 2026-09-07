@@ -7,6 +7,7 @@ import { requireUser } from "@respin/auth";
 import {
   hasLiveStripeSubscription,
   isStripeConfigured,
+  mayChargeOffSession,
   respinCredits,
 } from "@respin/credits/app-server";
 import { getActiveConfigServer } from "@respin/config/app-server";
@@ -55,6 +56,14 @@ export default async function BillingSettingsPage(props: {
   const errParam = search.e;
 
   const [subscription] = await scope.accessors.subscription();
+  let autoTopupProtocolState: BillingViewProps["autoTopup"]["protocolState"] =
+    "unavailable";
+  try {
+    autoTopupProtocolState = await respinCredits.getAutoTopupProtocolState();
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[billing] auto-top-up rollout state unavailable", err);
+  }
 
   // ONE liveness definition, four readers. The other three are inside
   // packages/credits (checkout's F1 guard, auto-top-up arming, maybeAutoTopup);
@@ -62,6 +71,9 @@ export default async function BillingSettingsPage(props: {
   // what "subscribed" looks like.
   const hasLiveSubscription = subscription
     ? hasLiveStripeSubscription(subscription)
+    : false;
+  const canArmAutoTopup = subscription
+    ? mayChargeOffSession(subscription)
     : false;
 
   let state: BillingViewProps["state"] = { tier: "free", state: "free" };
@@ -112,9 +124,20 @@ export default async function BillingSettingsPage(props: {
       state={state}
       isOwner={scope.role === "owner"}
       hasLiveSubscription={hasLiveSubscription}
+      canArmAutoTopup={canArmAutoTopup}
       hasStripeCustomer={Boolean(subscription)}
       autoTopup={{
-        enabled: subscription?.autoTopupEnabled ?? false,
+        enabled:
+          autoTopupProtocolState === "active" &&
+          (subscription?.autoTopupV1Enabled ?? false),
+        legacyEnabled:
+          autoTopupProtocolState === "expanded" &&
+          (subscription?.autoTopupEnabled ?? false),
+        staged:
+          autoTopupProtocolState !== "active" &&
+          ((subscription?.autoTopupRearmAfterUpgrade ?? false) ||
+            (subscription?.autoTopupV1Enabled ?? false)),
+        protocolState: autoTopupProtocolState,
         monthlyCapCents: subscription?.autoTopupMonthlyCapCents ?? null,
       }}
       config={config}

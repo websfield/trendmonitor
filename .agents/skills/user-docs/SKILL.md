@@ -1,7 +1,7 @@
 ---
 name: user-docs
 description: >-
-  Use $user-docs for the migrated Claude /user-docs workflow. Write and maintain the docs your USERS read — a getting-started guide, per-feature how-tos, and an FAQ under docs/help/ — derived from what actually shipped and written for a reader who has never seen the repo. Gated by the outbound-truth skill: a capability the docs describe must trace to shippe...
+  Use $user-docs for the migrated Claude /user-docs workflow. Write and maintain the docs your USERS read — a getting-started guide, per-feature how-tos, and an FAQ under docs/help/ — derived from what actually shipped...
 ---
 
 # user-docs
@@ -10,8 +10,12 @@ description: >-
 
 Read `.claude/commands/user-docs.md` completely before acting. Treat its instructions and frontmatter constraints as the authoritative workflow; this file only exposes it to Codex discovery.
 
+The canonical `CLAUDE.md` and `.claude/**` sources are read-only to Codex. Never edit them; mirror only upstream changes that were already made outside Codex.
+
+Then read `.codex/codex-overlay.md` completely and apply its Codex-only routing, context, and verification guidance without weakening the canonical workflow.
+
 Honor any `allowed-tools` metadata as a behavioral allowlist even when Codex cannot enforce that metadata declaratively.
 
 Apply the Claude-to-Codex compatibility mappings in the repository root `AGENTS.md`. Resolve every relative resource or script from the canonical source directory.
 
-If the workflow modifies Claude skills, commands, or agents, finish by running `.codex/scripts/sync-claude-compat.ps1` so Codex discovery remains current.
+The sync script only mirrors upstream Claude changes into its generated Codex targets. Do not change Claude sources from this workflow.

@@ -7,14 +7,63 @@ import { describe, expect, it, vi } from "vitest";
 // test cannot: maybeAutoTopup's SUCCESS path (code-review CHANGE — the trigger
 // path, the idempotency key the plan says "the Docker race case asserts", and
 // the cap's ALLOW direction all shipped with no test at all).
-const piCreate = vi.fn(async () => ({ id: "pi_created" }));
+const piCreate = vi.fn(async (params: Record<string, unknown>) => ({
+  id: "pi_created",
+  amount: params.amount,
+  currency: params.currency,
+  customer: params.customer,
+  metadata: params.metadata,
+  status: "succeeded",
+}));
+const piList = vi.fn(
+  async (): Promise<{
+    data: Record<string, unknown>[];
+    has_more: boolean;
+  }> => ({ data: [], has_more: false })
+);
+const piRetrieve = vi.fn();
+const piCancel = vi.fn();
 // Round-5 additions: the tier-checkout idempotency key and the pause resume
 // date are both arguments this package hands to Stripe and never stores, so
 // they are only observable through the client (billing review findings 3 + 4).
-const sessionCreate = vi.fn(async () => ({
+const sessionCreate = vi.fn(async (params: Record<string, unknown>) => ({
   id: "cs_created",
   url: "https://checkout.stripe.test/cs_created",
+  mode: params.mode,
+  customer: params.customer,
+  metadata: params.metadata,
+  payment_status: "unpaid",
+  status: "open",
+  subscription: null,
 }));
+const sessionList = vi.fn(
+  async (): Promise<{
+    data: Record<string, unknown>[];
+    has_more: boolean;
+  }> => ({ data: [], has_more: false })
+);
+const sessionRetrieve = vi.fn(async (id: string) => {
+  const params = sessionCreate.mock.calls.at(-1)?.[0] as
+    | Record<string, unknown>
+    | undefined;
+  const metadata = (params?.metadata ?? {}) as Record<string, unknown>;
+  const priceId =
+    typeof metadata.price_id === "string" ? metadata.price_id : "price_creator";
+  return {
+    id,
+    url: `https://checkout.stripe.test/${id}`,
+    mode: params?.mode ?? "subscription",
+    customer: params?.customer ?? "cus_created",
+    metadata,
+    payment_status: "unpaid",
+    status: "open",
+    subscription: null,
+    line_items: {
+      data: [{ price: { id: priceId } }],
+    },
+  };
+});
+const customerCreate = vi.fn(async () => ({ id: "cus_created" }));
 const subUpdate = vi.fn(async () => ({ id: "sub_updated" }));
 // Audit #7 + #8 (billing gate 2026-08-18). `prices.retrieve` is what
 // `resolvePackPrice` reads — it is now on BOTH charge paths, so the mock has to
@@ -27,40 +76,69 @@ const priceRetrieve = vi.fn(async () => ({
   unit_amount: 1000,
   currency: "usd",
 }));
-const subRetrieve = vi.fn(async () => ({
-  id: "sub_1",
-  latest_invoice: {
-    id: "in_open",
-    status: "open",
-    hosted_invoice_url: "https://invoice.stripe.test/in_open",
-  },
-}));
+const subRetrieve = vi.fn(async (_id?: string): Promise<Record<string, unknown>> => {
+  void _id;
+  return {
+    id: "sub_1",
+    latest_invoice: {
+      id: "in_open",
+      status: "open",
+      hosted_invoice_url: "https://invoice.stripe.test/in_open",
+    },
+  };
+});
 const invoiceRetrieve = vi.fn(async () => ({
   id: "in_expanded",
   status: "open",
   hosted_invoice_url: "https://invoice.stripe.test/in_expanded",
 }));
+const stripeIdentity = vi.fn(async () => ({
+  accountId: "acct_actionstest",
+  livemode: false,
+}));
 vi.mock("../src/stripe/adapter", async (importActual) => ({
   ...(await importActual<typeof import("../src/stripe/adapter")>()),
   getStripe: () => ({
-    paymentIntents: { create: piCreate },
-    checkout: { sessions: { create: sessionCreate } },
+    paymentIntents: {
+      create: piCreate,
+      list: piList,
+      retrieve: piRetrieve,
+      cancel: piCancel,
+    },
+    customers: { create: customerCreate },
+    checkout: {
+      sessions: {
+        create: sessionCreate,
+        list: sessionList,
+        retrieve: sessionRetrieve,
+      },
+    },
     subscriptions: { update: subUpdate, retrieve: subRetrieve },
     prices: { retrieve: priceRetrieve },
     invoices: { retrieve: invoiceRetrieve },
   }),
+  getAutoTopupAuthorityKey: () => "test-auto-topup-authority-key-32chars",
+  getAutoTopupAuthorityKeyMaterial: () => ({
+    id: "v1",
+    key: "test-auto-topup-authority-key-32chars",
+    fingerprint:
+      "sha256:fe3b3de1339e7ec571414d65c6f3091e4c11ebbae40b7b09031308abf4a734ab",
+  }),
+  getAuthenticatedStripeAccountIdentity: () => stripeIdentity(),
 }));
 import { eq } from "drizzle-orm";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  autoTopupProtocolRollouts,
   createTestDb,
   schema,
   seedAuthUser,
   seedDb,
   pausePeriods,
   subscriptions,
+  tierCheckoutProtocolRollouts,
   trustWorkspaceId,
   withWorkspace,
   type TestDb,
@@ -68,25 +146,39 @@ import {
 } from "@respin/db";
 import {
   AlreadySubscribedError,
+  BillingReauthenticationError,
   BillingRoleError,
   CheckoutInFlightError,
-  createInvoiceRecoveryUrl,
-  createPackCheckoutUrl,
-  createPortalUrl,
-  createTierCheckoutUrl,
+  CheckoutReconciliationRequiredError,
+  TIER_CHECKOUT_IDEMPOTENCY_SAFE_RETRY_MS,
+  createInvoiceRecoveryUrl as createInvoiceRecoveryUrlWithAuthority,
+  createPackCheckoutUrl as createPackCheckoutUrlWithAuthority,
+  createPortalUrl as createPortalUrlWithAuthority,
+  createTierCheckoutUrl as createTierCheckoutUrlWithAuthority,
   InvoiceRecoveryUnavailableError,
   NoLiveSubscriptionError,
   NotChargeableError,
   SubscriptionPausedError,
   pauseSubscription,
   resumeSubscription,
-  setAutoTopup,
+  setAutoTopup as setAutoTopupWithAuthority,
   UnknownTierPriceError,
 } from "../src/stripe/actions";
-import { maybeAutoTopup } from "../src/stripe/auto-topup";
+import {
+  AUTO_TOPUP_IDEMPOTENCY_SAFE_RETRY_MS,
+  maybeAutoTopup,
+} from "../src/stripe/auto-topup";
+import { AutoTopupRolloutError } from "../src/stripe/auto-topup-rollout";
+import { TierCheckoutRolloutError } from "../src/stripe/tier-checkout-rollout";
 import { getWorkspaceBillingState } from "../src/state";
 import { debitCredits } from "../src/ledger";
-import { WorkspacePausedError } from "../src/errors";
+import {
+  AutoTopupReconciliationRequiredError,
+  ClockSkewError,
+  WorkspacePausedError,
+} from "../src/errors";
+import { CLOCK_SKEW_MS } from "../src/clock";
+import { addMonthsUtc } from "../src/months";
 import {
   PackPriceMismatchError,
   PackPriceNotMappedError,
@@ -96,10 +188,136 @@ import { creditLedger, CONFIG_V1_SEED } from "@respin/db";
 import { appendConfigVersion } from "@respin/config";
 
 const URLS = { successUrl: "http://x/s", cancelUrl: "http://x/c" };
+const autoTopupReceipt = (refId: string, createdAt: Date) => ({
+  refType: "auto_topup" as const,
+  refId,
+  amountCents: 1000,
+  configVersion: 1,
+  stripeEventId: `evt_${refId}`,
+  autoTopupAttemptId: crypto.randomUUID(),
+  autoTopupPeriodMonthUtc: `${createdAt.getUTCFullYear()}-${String(createdAt.getUTCMonth() + 1).padStart(2, "0")}`,
+  createdAt,
+});
+const reauthenticationByScope = new WeakMap<
+  WorkspaceScope,
+  { authUserId: string; sessionId: string; reauthenticatedAt: Date }
+>();
+
+async function setAutoTopup(
+  db: TestDb,
+  scope: WorkspaceScope,
+  opts: { enabled: boolean; monthlyCapCents?: number }
+) {
+  const authority = reauthenticationByScope.get(scope);
+  if (!authority) throw new Error("test fixture is missing exact-session reauthentication");
+  return setAutoTopupWithAuthority(db, scope, opts, authority);
+}
+
+function reauthenticationFor(scope: WorkspaceScope) {
+  const authority = reauthenticationByScope.get(scope);
+  if (!authority) throw new Error("test fixture is missing exact-session reauthentication");
+  return authority;
+}
+
+async function pause(
+  db: TestDb,
+  scope: WorkspaceScope,
+  months: number,
+  at: Date
+) {
+  return pauseSubscription(db, scope, months, at, reauthenticationFor(scope));
+}
+
+async function resume(db: TestDb, scope: WorkspaceScope) {
+  return resumeSubscription(db, scope, reauthenticationFor(scope));
+}
+
+async function createTierCheckoutUrl(
+  db: TestDb,
+  scope: WorkspaceScope,
+  tier: "creator" | "pro" | "studio",
+  email: string,
+  urls: typeof URLS
+) {
+  return createTierCheckoutUrlWithAuthority(
+    db,
+    scope,
+    tier,
+    email,
+    urls,
+    reauthenticationFor(scope)
+  );
+}
+
+async function createPackCheckoutUrl(
+  db: TestDb,
+  scope: WorkspaceScope,
+  email: string,
+  urls: typeof URLS
+) {
+  return createPackCheckoutUrlWithAuthority(
+    db,
+    scope,
+    email,
+    urls,
+    reauthenticationFor(scope)
+  );
+}
+
+async function createPortalUrl(
+  db: TestDb,
+  scope: WorkspaceScope,
+  returnUrl: string
+) {
+  return createPortalUrlWithAuthority(
+    db,
+    scope,
+    returnUrl,
+    reauthenticationFor(scope)
+  );
+}
+
+async function createInvoiceRecoveryUrl(db: TestDb, scope: WorkspaceScope) {
+  return createInvoiceRecoveryUrlWithAuthority(db, scope, reauthenticationFor(scope));
+}
 
 async function setup(db: TestDb) {
   await seedAuthUser(db, "actions_user");
   await seedDb(db);
+  // Unit suites exercise the post-activation protocol. Migration-specific tests
+  // keep 0048's real `expanded` state and drive the operator transitions.
+  const rolloutAt = new Date();
+  await db
+    .update(autoTopupProtocolRollouts)
+    .set({
+      state: "active",
+      revision: 1,
+      fleetQuiescedAt: rolloutAt,
+      drainStartedAt: rolloutAt,
+      providerReconciledAt: rolloutAt,
+      reconciledCustomers: 0,
+      reconciledPaymentIntents: 0,
+      authorityKeyId: "v1",
+      authorityKeyFingerprint:
+        "sha256:fe3b3de1339e7ec571414d65c6f3091e4c11ebbae40b7b09031308abf4a734ab",
+      stripeAccountId: "acct_actionstest",
+      stripeLivemode: false,
+      activatedAt: rolloutAt,
+    });
+  await db
+    .update(tierCheckoutProtocolRollouts)
+    .set({
+      state: "active",
+      revision: 1,
+      fleetQuiescedAt: rolloutAt,
+      drainStartedAt: rolloutAt,
+      providerReconciledAt: rolloutAt,
+      reconciledCustomers: 0,
+      reconciledSessions: 0,
+      stripeAccountId: "acct_actionstest",
+      stripeLivemode: false,
+      activatedAt: rolloutAt,
+    });
   // A MAPPED PACK PRICE is now part of the baseline (audit #7, billing gate
   // 2026-08-18). `seedDb` ships `stripePriceMap: {}`, which was fine while
   // `maybeAutoTopup` computed its amount from `pack.priceUsd` — but that was
@@ -113,7 +331,10 @@ async function setup(db: TestDb) {
   // `appendConfigVersion` makes the newest version active, so they override this.
   await appendConfigVersion(
     db,
-    { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+    {
+      ...CONFIG_V1_SEED,
+      stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
+    },
     "actions-test-baseline"
   );
   const [w] = await db
@@ -142,15 +363,113 @@ async function setup(db: TestDb) {
     await db
       .insert(schema.memberships)
       .values({ userId: u.id, workspaceId: w.id, role });
+    const reauthenticatedAt = new Date();
+    const sessionId = `session-${authUserId}`;
+    await db.insert(schema.session).values({
+      id: sessionId,
+      token: `token-${authUserId}`,
+      userId: authUserId,
+      expiresAt: new Date(reauthenticatedAt.getTime() + 60 * 60 * 1_000),
+      updatedAt: reauthenticatedAt,
+      reauthenticatedAt,
+    });
     scopes[role] = await withWorkspace(db, { authUserId, workspaceId: w.id });
+    reauthenticationByScope.set(scopes[role], {
+      authUserId,
+      sessionId,
+      reauthenticatedAt,
+    });
   }
   const scopeOf = (role: "owner" | "editor" | "viewer"): WorkspaceScope =>
     scopes[role];
   return { wsId, scopeOf };
 }
 
+function activeTierCheckoutMapping(
+  workspaceId: ReturnType<typeof trustWorkspaceId>,
+  stripeCustomerId: string
+) {
+  return {
+    workspaceId,
+    stripeCustomerId,
+    stripeSubscriptionId: `checkout_fence:${workspaceId}`,
+    status: "incomplete" as const,
+    tierCheckoutFenceAt: new Date(),
+    tierCheckoutFenceSubscriptionId: null,
+    tierCheckoutFenceStatus: "none",
+    tierCheckoutFenceObservedSubscriptionId: null,
+  };
+}
+
+async function forceArmAutoTopup(
+  db: TestDb,
+  wsId: ReturnType<typeof trustWorkspaceId>,
+  monthlyCapCents = 5000
+) {
+  await db
+    .update(subscriptions)
+    .set({
+      autoTopupV1Enabled: true,
+      autoTopupMonthlyCapCents: monthlyCapCents,
+      autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
+    })
+    .where(eq(subscriptions.workspaceId, wsId));
+}
+
+async function ageTierCheckoutAttemptForTest(db: TestDb, wsId: string) {
+  const [attempt] = await db
+    .select()
+    .from(subscriptions)
+    .where(eq(subscriptions.workspaceId, wsId));
+  if (!attempt?.tierCheckoutAttemptId) {
+    throw new Error("test fixture has no durable tier Checkout attempt to age");
+  }
+  const authority = {
+    tierCheckoutAttemptId: attempt.tierCheckoutAttemptId,
+    tierCheckoutAttemptTier: attempt.tierCheckoutAttemptTier,
+    tierCheckoutAttemptPriceId: attempt.tierCheckoutAttemptPriceId,
+    tierCheckoutAttemptCustomerId: attempt.tierCheckoutAttemptCustomerId,
+    tierCheckoutAttemptSubscriptionGeneration:
+      attempt.tierCheckoutAttemptSubscriptionGeneration,
+    tierCheckoutAttemptIdempotencyKey: attempt.tierCheckoutAttemptIdempotencyKey,
+    tierCheckoutAttemptSessionId: attempt.tierCheckoutAttemptSessionId,
+    tierCheckoutAttemptSubscriptionId: attempt.tierCheckoutAttemptSubscriptionId,
+    tierCheckoutAttemptStripeAccountId: attempt.tierCheckoutAttemptStripeAccountId,
+    tierCheckoutAttemptStripeLivemode: attempt.tierCheckoutAttemptStripeLivemode,
+    tierCheckoutAttemptAuthority: attempt.tierCheckoutAttemptAuthority,
+  };
+  await db
+    .update(subscriptions)
+    .set({
+      tierCheckoutAttemptId: null,
+      tierCheckoutAttemptTier: null,
+      tierCheckoutAttemptPriceId: null,
+      tierCheckoutAttemptCustomerId: null,
+      tierCheckoutAttemptSubscriptionGeneration: null,
+      tierCheckoutAttemptIdempotencyKey: null,
+      tierCheckoutAttemptSessionId: null,
+      tierCheckoutAttemptSubscriptionId: null,
+      tierCheckoutAttemptStripeAccountId: null,
+      tierCheckoutAttemptStripeLivemode: null,
+      tierCheckoutAttemptAuthority: null,
+      tierCheckoutAttemptReservedAt: null,
+    })
+    .where(eq(subscriptions.workspaceId, wsId));
+  await db
+    .update(subscriptions)
+    .set({
+      ...authority,
+      tierCheckoutAttemptReservedAt: new Date(
+        Date.now() - TIER_CHECKOUT_IDEMPOTENCY_SAFE_RETRY_MS - 60_000
+      ),
+    })
+    .where(eq(subscriptions.workspaceId, wsId));
+  return attempt;
+}
+
 describe("owner-only billing actions (REQ-A02, AC-6 matrix)", () => {
-  it("all six actions throw BillingRoleError for editor and viewer", async () => {
+  it("all seven actions throw BillingRoleError for editor and viewer", async () => {
     const db = await createTestDb();
     const { scopeOf } = await setup(db);
     for (const role of ["editor", "viewer"] as const) {
@@ -159,8 +478,9 @@ describe("owner-only billing actions (REQ-A02, AC-6 matrix)", () => {
         ["tierCheckout", () => createTierCheckoutUrl(db, scope, "creator", "a@b.c", URLS)],
         ["packCheckout", () => createPackCheckoutUrl(db, scope, "a@b.c", URLS)],
         ["portal", () => createPortalUrl(db, scope, "http://x")],
-        ["pause", () => pauseSubscription(db, scope, 1, new Date())],
-        ["resume", () => resumeSubscription(db, scope)],
+        ["invoiceRecovery", () => createInvoiceRecoveryUrl(db, scope)],
+        ["pause", () => pause(db, scope, 1, new Date())],
+        ["resume", () => resume(db, scope)],
         ["autoTopup", () => setAutoTopup(db, scope, { enabled: false })],
       ];
       for (const [name, call] of calls) {
@@ -184,7 +504,7 @@ describe("owner-only billing actions (REQ-A02, AC-6 matrix)", () => {
       pausedAt: new Date(Date.now() - 3_600_000),
       resumesAt: new Date(Date.now() + 30 * 24 * 3_600_000),
     });
-    await resumeSubscription(db, scopeOf("owner"));
+    await resume(db, scopeOf("owner"));
     // Stripe was told to un-pause (so the local state must follow) ...
     expect(subUpdate).toHaveBeenCalledWith("sub_drift", { pause_collection: "" });
     const [sub] = await db.select().from(subscriptions);
@@ -224,7 +544,7 @@ describe("owner-only billing actions (REQ-A02, AC-6 matrix)", () => {
     });
     for (const months of [0, 4, 2.5]) {
       await expect(
-        pauseSubscription(db, scopeOf("owner"), months, new Date())
+        pause(db, scopeOf("owner"), months, new Date())
       ).rejects.toThrow(/pauseMonths/);
     }
   });
@@ -245,12 +565,162 @@ describe("owner-only billing actions (REQ-A02, AC-6 matrix)", () => {
     ).rejects.toThrow(/monthly cap/);
     await setAutoTopup(db, scopeOf("owner"), { enabled: true, monthlyCapCents: 3000 });
     let [row] = await db.select().from(subscriptions);
-    expect(row.autoTopupEnabled).toBe(true);
+    expect(row.autoTopupV1Enabled).toBe(true);
     expect(row.autoTopupMonthlyCapCents).toBe(3000);
     await setAutoTopup(db, scopeOf("owner"), { enabled: false });
     [row] = await db.select().from(subscriptions);
-    expect(row.autoTopupEnabled).toBe(false);
+    expect(row.autoTopupV1Enabled).toBe(false);
     expect(row.autoTopupMonthlyCapCents).toBeNull();
+  });
+
+  it("auto-top-up binds fresh proof fields to a real session and refuses foreign, stale, future, or expired authority", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    const ownerScope = scopeOf("owner");
+    const authority = reauthenticationByScope.get(ownerScope)!;
+    await db.insert(subscriptions).values({
+      workspaceId: wsId,
+      stripeCustomerId: "cus_reauth",
+      stripeSubscriptionId: "sub_reauth",
+      status: "active",
+    });
+
+    const secondOwnerReauthenticatedAt = new Date();
+    const secondOwnerSessionId = "session-actions_owner-second";
+    await db.insert(schema.session).values({
+      id: secondOwnerSessionId,
+      token: "token-actions_owner-second",
+      userId: authority.authUserId,
+      expiresAt: new Date(secondOwnerReauthenticatedAt.getTime() + 60 * 60 * 1_000),
+      updatedAt: secondOwnerReauthenticatedAt,
+      reauthenticatedAt: secondOwnerReauthenticatedAt,
+    });
+    const secondOwnerAuthority = {
+      authUserId: authority.authUserId,
+      sessionId: secondOwnerSessionId,
+      reauthenticatedAt: secondOwnerReauthenticatedAt,
+    };
+    await expect(
+      setAutoTopupWithAuthority(
+        db,
+        ownerScope,
+        { enabled: true, monthlyCapCents: 3000 },
+        secondOwnerAuthority
+      )
+    ).resolves.toBeUndefined();
+    await setAutoTopupWithAuthority(db, ownerScope, { enabled: false }, authority);
+
+    const foreignAuthority = reauthenticationByScope.get(scopeOf("editor"))!;
+    await expect(
+      setAutoTopupWithAuthority(
+        db,
+        ownerScope,
+        { enabled: true, monthlyCapCents: 3000 },
+        foreignAuthority
+      )
+    ).rejects.toBeInstanceOf(BillingReauthenticationError);
+    await expect(
+      setAutoTopupWithAuthority(
+        db,
+        ownerScope,
+        { enabled: true, monthlyCapCents: 3000 },
+        { ...authority, sessionId: foreignAuthority.sessionId }
+      )
+    ).rejects.toBeInstanceOf(BillingReauthenticationError);
+    expect((await db.select().from(subscriptions))[0].autoTopupV1Enabled).toBe(false);
+
+    for (const [label, reauthenticatedAt, expiresAt] of [
+      [
+        "stale",
+        new Date(Date.now() - 11 * 60 * 1_000),
+        new Date(Date.now() + 60 * 60 * 1_000),
+      ],
+      [
+        "future",
+        new Date(Date.now() + 60 * 1_000),
+        new Date(Date.now() + 60 * 60 * 1_000),
+      ],
+      ["expired", new Date(), new Date(Date.now() - 1)],
+    ] as const) {
+      await db
+        .update(schema.session)
+        .set({ reauthenticatedAt, expiresAt, updatedAt: new Date() })
+        .where(eq(schema.session.id, secondOwnerSessionId));
+      await expect(
+        setAutoTopupWithAuthority(
+          db,
+          ownerScope,
+          { enabled: true, monthlyCapCents: 3000 },
+          { ...secondOwnerAuthority, reauthenticatedAt }
+        ),
+        label
+      ).rejects.toBeInstanceOf(BillingReauthenticationError);
+      expect((await db.select().from(subscriptions))[0].autoTopupV1Enabled).toBe(false);
+    }
+
+    await db
+      .update(schema.memberships)
+      .set({ role: "editor", version: ownerScope.membershipVersion + 1 })
+      .where(eq(schema.memberships.userId, ownerScope.userId));
+    await expect(
+      setAutoTopupWithAuthority(
+        db,
+        ownerScope,
+        { enabled: true, monthlyCapCents: 3000 },
+        authority
+      )
+    ).rejects.toThrow("lifecycle_refused:scope_stale");
+    expect((await db.select().from(subscriptions))[0].autoTopupV1Enabled).toBe(false);
+  });
+
+  it("every Stripe payment capability refuses a foreign exact-session proof before provider work", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    const ownerScope = scopeOf("owner");
+    const foreignAuthority = reauthenticationFor(scopeOf("editor"));
+    await db.insert(subscriptions).values({
+      workspaceId: wsId,
+      stripeCustomerId: "cus_payment_reauth",
+      stripeSubscriptionId: "sub_payment_reauth",
+      status: "incomplete",
+    });
+    sessionCreate.mockClear();
+    priceRetrieve.mockClear();
+    subRetrieve.mockClear();
+
+    const calls = [
+      () =>
+        createTierCheckoutUrlWithAuthority(
+          db,
+          ownerScope,
+          "creator",
+          "a@b.c",
+          URLS,
+          foreignAuthority
+        ),
+      () =>
+        createPackCheckoutUrlWithAuthority(
+          db,
+          ownerScope,
+          "a@b.c",
+          URLS,
+          foreignAuthority
+        ),
+      () =>
+        createPortalUrlWithAuthority(
+          db,
+          ownerScope,
+          "https://return.test",
+          foreignAuthority
+        ),
+      () => createInvoiceRecoveryUrlWithAuthority(db, ownerScope, foreignAuthority),
+    ];
+    for (const call of calls) {
+      await expect(call()).rejects.toBeInstanceOf(BillingReauthenticationError);
+    }
+    expect(sessionCreate).not.toHaveBeenCalled();
+    expect(priceRetrieve).not.toHaveBeenCalled();
+    expect(subRetrieve).not.toHaveBeenCalled();
   });
 });
 
@@ -262,37 +732,98 @@ describe("round-5 regression pins (billing review findings 3 + 4)", () => {
       "test-admin"
     );
 
-  it("FINDING 3: two checkouts racing the same mirror state send the SAME Stripe idempotency key — so Stripe can only ever return ONE session", async () => {
+  it("commits durable customer and attempt authority before a lost Checkout response", async () => {
     sessionCreate.mockClear();
+    sessionList.mockClear();
+    customerCreate.mockClear();
+    sessionCreate.mockRejectedValueOnce(new Error("simulated Checkout response loss"));
     const db = await createTestDb();
     const { wsId, scopeOf } = await setup(db);
     await mapPrice(db);
-    await db.insert(subscriptions).values({
-      workspaceId: wsId,
-      stripeCustomerId: "cus_race",
-      status: "none",
-    });
-    // Both callers read the mirror BEFORE any webhook lands — the window in
-    // which the F1 guard is blind and two completed Checkouts would become
-    // two Stripe subscriptions on one workspace.
-    const [urlA, urlB] = await Promise.all([
-      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS),
-      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS),
+
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).rejects.toThrow(CheckoutReconciliationRequiredError);
+    expect(await db.select().from(subscriptions)).toEqual([
+      expect.objectContaining({
+        workspaceId: wsId,
+        stripeCustomerId: "cus_created",
+        tierCheckoutAttemptId: expect.any(String),
+        tierCheckoutAttemptSessionId: null,
+      }),
     ]);
-    expect(urlA).toBe(urlB);
+
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).resolves.toBe("https://checkout.stripe.test/cs_created");
+    expect(customerCreate).toHaveBeenCalledTimes(1);
     expect(sessionCreate).toHaveBeenCalledTimes(2);
-    const keyOf = (i: number) =>
-      (sessionCreate.mock.calls[i] as unknown as [unknown, { idempotencyKey: string }])[1]
-        .idempotencyKey;
-    expect(keyOf(0)).toBe(keyOf(1));
-    // Built from durable state ONLY — not a clock, not a random, and (round-5
-    // gate) not the tier or the caller's URLs either, both of which would
-    // narrow the guarantee to "one session per price" or hand its scope to an
-    // argument this package cannot control.
-    expect(keyOf(0)).toBe(`checkout:${wsId}:none`);
+    const calls = sessionCreate.mock.calls as unknown as [
+      unknown,
+      { idempotencyKey: string },
+    ][];
+    expect(calls[1]![0]).toMatchObject({ customer: "cus_created" });
+    expect(calls[1]![1].idempotencyKey).toBe(calls[0]![1].idempotencyKey);
   });
 
-  it("FINDING 3: two racers picking DIFFERENT tiers ALSO collapse to one key — the cross-tier race is the one the single-row mirror cannot even represent", async () => {
+  it("refuses provider reconciliation before any Session read or create when Stripe account/mode drift", async () => {
+    sessionCreate.mockClear();
+    sessionList.mockClear();
+    stripeIdentity.mockClear();
+    sessionCreate.mockRejectedValueOnce(new Error("lost provider response"));
+    const db = await createTestDb();
+    const { scopeOf } = await setup(db);
+    await mapPrice(db);
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).rejects.toThrow(CheckoutReconciliationRequiredError);
+    const readsBeforeDrift = sessionList.mock.calls.length;
+    stripeIdentity.mockResolvedValueOnce({
+      accountId: "acct_different",
+      livemode: true,
+    });
+
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).rejects.toThrow(TierCheckoutRolloutError);
+    expect(sessionList).toHaveBeenCalledTimes(readsBeforeDrift);
+    expect(sessionCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("FINDING 3: a same-tier follower retrieves the one durable provider Session", async () => {
+    sessionCreate.mockClear();
+    sessionList.mockClear();
+    sessionRetrieve.mockClear();
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await mapPrice(db);
+    await db
+      .insert(subscriptions)
+      .values(activeTierCheckoutMapping(wsId, "cus_race"));
+    const urlA = await createTierCheckoutUrl(
+      db,
+      scopeOf("owner"),
+      "creator",
+      "a@b.c",
+      URLS
+    );
+    const urlB = await createTierCheckoutUrl(
+      db,
+      scopeOf("owner"),
+      "creator",
+      "a@b.c",
+      URLS
+    );
+    expect(urlA).toBe(urlB);
+    expect(sessionCreate).toHaveBeenCalledTimes(1);
+    expect(sessionRetrieve).toHaveBeenCalledTimes(1);
+    const key = (
+      sessionCreate.mock.calls[0] as unknown as [unknown, { idempotencyKey: string }]
+    )[1].idempotencyKey;
+    expect(key).toMatch(new RegExp(`^checkout:v1:${wsId}:[0-9a-f-]{36}$`));
+  });
+
+  it("FINDING 3: cross-tier racers produce one Session and one typed refusal", async () => {
     sessionCreate.mockClear();
     const db = await createTestDb();
     const { wsId, scopeOf } = await setup(db);
@@ -304,37 +835,29 @@ describe("round-5 regression pins (billing review findings 3 + 4)", () => {
       },
       "test-admin"
     );
-    await db.insert(subscriptions).values({
-      workspaceId: wsId,
-      stripeCustomerId: "cus_xtier",
-      status: "none",
-    });
-    await Promise.all([
+    await db
+      .insert(subscriptions)
+      .values(activeTierCheckoutMapping(wsId, "cus_xtier"));
+    const outcomes = await Promise.allSettled([
       createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS),
       createTierCheckoutUrl(db, scopeOf("owner"), "pro", "a@b.c", URLS),
     ]);
-    const keyOf = (i: number) =>
-      (sessionCreate.mock.calls[i] as unknown as [unknown, { idempotencyKey: string }])[1]
-        .idempotencyKey;
-    // With the tier in the key these were two keys, two sessions and two
-    // Stripe subscriptions on one workspace — and `subscriptions` is one row
-    // per workspace, so the second would bill forever with nothing in our
-    // database pointing at it.
-    expect(keyOf(0)).toBe(keyOf(1));
-    expect(keyOf(0)).not.toContain("price_");
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.find((outcome) => outcome.status === "rejected")).toMatchObject({
+      status: "rejected",
+      reason: expect.any(CheckoutInFlightError),
+    });
+    expect(sessionCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("FINDING 3: a checkout on different terms while one is open is a TYPED refusal, not a raw Stripe 400", async () => {
+  it("FINDING 3: an uncertain provider response is a fail-closed reconciliation refusal", async () => {
     sessionCreate.mockClear();
     const db = await createTestDb();
     const { wsId, scopeOf } = await setup(db);
     await mapPrice(db);
-    await db.insert(subscriptions).values({
-      workspaceId: wsId,
-      stripeCustomerId: "cus_mismatch",
-      status: "none",
-    });
-    // What Stripe returns when a key is replayed with different parameters.
+    await db
+      .insert(subscriptions)
+      .values(activeTierCheckoutMapping(wsId, "cus_mismatch"));
     sessionCreate.mockRejectedValueOnce(
       Object.assign(new Error("Keys for idempotent requests..."), {
         type: "StripeIdempotencyError",
@@ -342,52 +865,213 @@ describe("round-5 regression pins (billing review findings 3 + 4)", () => {
     );
     await expect(
       createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
-    ).rejects.toThrow(CheckoutInFlightError);
-    // The refusal explains itself: the owner is told what to do, not shown a
-    // Stripe error code.
-    await expect(
-      (async () => {
-        sessionCreate.mockRejectedValueOnce(
-          Object.assign(new Error("x"), { type: "StripeIdempotencyError" })
-        );
-        return createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS);
-      })()
-    ).rejects.toThrow(/Finish or abandon the open Checkout/);
-    // ...and an UNRELATED Stripe failure is never disguised as this one.
-    sessionCreate.mockRejectedValueOnce(
-      Object.assign(new Error("card_declined"), { type: "StripeCardError" })
-    );
-    await expect(
-      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
-    ).rejects.toThrow(/card_declined/);
+    ).rejects.toThrow(CheckoutReconciliationRequiredError);
+    expect(sessionCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("FINDING 3: the key CHANGES once a subscription id exists, so subscribe → cancel → re-subscribe is not stuck replaying the completed session", async () => {
+  it("FINDING 3: a full subscription snapshot advances the generation and permits re-subscribe", async () => {
     sessionCreate.mockClear();
     const db = await createTestDb();
     const { wsId, scopeOf } = await setup(db);
     await mapPrice(db);
-    await db.insert(subscriptions).values({
-      workspaceId: wsId,
-      stripeCustomerId: "cus_again",
-      status: "none",
-    });
+    await db
+      .insert(subscriptions)
+      .values(activeTierCheckoutMapping(wsId, "cus_again"));
     await createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS);
-    // The webhook lands, then the customer cancels: the mirror keeps the DEAD
-    // subscription id, which is exactly what makes the next key different.
     await db
       .update(subscriptions)
-      .set({ stripeSubscriptionId: "sub_dead", status: "canceled" })
+      .set({
+        stripeSubscriptionId: "sub_dead",
+        status: "canceled",
+        tierCheckoutAttemptId: null,
+        tierCheckoutAttemptTier: null,
+        tierCheckoutAttemptPriceId: null,
+        tierCheckoutAttemptCustomerId: null,
+        tierCheckoutAttemptSubscriptionGeneration: null,
+        tierCheckoutAttemptIdempotencyKey: null,
+        tierCheckoutAttemptSessionId: null,
+        tierCheckoutAttemptSubscriptionId: null,
+        tierCheckoutAttemptStripeAccountId: null,
+        tierCheckoutAttemptStripeLivemode: null,
+        tierCheckoutAttemptAuthority: null,
+        tierCheckoutAttemptReservedAt: null,
+        tierCheckoutFenceAt: null,
+        tierCheckoutFenceSubscriptionId: null,
+        tierCheckoutFenceStatus: null,
+      })
       .where(eq(subscriptions.workspaceId, wsId));
     await createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS);
     const keyOf = (i: number) =>
       (sessionCreate.mock.calls[i] as unknown as [unknown, { idempotencyKey: string }])[1]
         .idempotencyKey;
     expect(keyOf(1)).not.toBe(keyOf(0));
-    expect(keyOf(1)).toBe(`checkout:${wsId}:sub_dead`);
+    expect(keyOf(1)).toMatch(new RegExp(`^checkout:v1:${wsId}:[0-9a-f-]{36}$`));
   });
 
-  it("FINDING 4: a pause started on 31 January resumes on 28 February — never 3 March, which would outrun pauseMonths.max", async () => {
+  it("ignores A/B historical Checkout Sessions only after Stripe proves both subscriptions terminal", async () => {
+    sessionCreate.mockClear();
+    sessionList.mockClear();
+    subRetrieve.mockClear();
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await mapPrice(db);
+    await db
+      .insert(subscriptions)
+      .values(activeTierCheckoutMapping(wsId, "cus_history"));
+    await db
+      .update(subscriptions)
+      .set({
+        tierCheckoutFenceSubscriptionId: "sub_history_b",
+        tierCheckoutFenceStatus: "canceled",
+      })
+      .where(eq(subscriptions.workspaceId, wsId));
+    sessionList.mockResolvedValueOnce({
+      data: [
+        {
+          id: "cs_history_a",
+          mode: "subscription",
+          customer: "cus_history",
+          metadata: { workspace_id: wsId },
+          payment_status: "paid",
+          status: "complete",
+          subscription: "sub_history_a",
+        },
+        {
+          id: "cs_history_b",
+          mode: "subscription",
+          customer: "cus_history",
+          metadata: { workspace_id: wsId },
+          payment_status: "paid",
+          status: "complete",
+          subscription: "sub_history_b",
+        },
+      ],
+      has_more: false,
+    });
+    subRetrieve
+      .mockImplementationOnce(async (id?: string) => ({ id, status: "canceled" }))
+      .mockImplementationOnce(async (id?: string) => ({ id, status: "canceled" }));
+
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).resolves.toBe("https://checkout.stripe.test/cs_created");
+    expect(subRetrieve.mock.calls.map(([id]) => id)).toEqual([
+      "sub_history_a",
+      "sub_history_b",
+    ]);
+    expect(sessionCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["missing workspace metadata", {}],
+    ["wrong workspace metadata", { workspace_id: "workspace-other" }],
+  ])("refuses an open mapped-customer Session with %s", async (_label, metadata) => {
+    sessionCreate.mockClear();
+    sessionList.mockClear();
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await mapPrice(db);
+    await db
+      .insert(subscriptions)
+      .values(activeTierCheckoutMapping(wsId, "cus_identity_conflict"));
+    sessionList.mockResolvedValueOnce({
+      data: [
+        {
+          id: "cs_identity_conflict",
+          mode: "subscription",
+          customer: "cus_identity_conflict",
+          metadata,
+          payment_status: "unpaid",
+          status: "open",
+          subscription: null,
+        },
+      ],
+      has_more: false,
+    });
+
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).rejects.toBeInstanceOf(CheckoutReconciliationRequiredError);
+    expect(sessionCreate).not.toHaveBeenCalled();
+  });
+
+  it("finds a completed Session after idempotency expiry and never creates a second subscription", async () => {
+    sessionCreate.mockClear();
+    sessionList.mockClear();
+    sessionCreate.mockRejectedValueOnce(new Error("lost after provider accepted"));
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await mapPrice(db);
+
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).rejects.toThrow(CheckoutReconciliationRequiredError);
+    const attempt = await ageTierCheckoutAttemptForTest(db, wsId);
+    sessionList.mockResolvedValueOnce({
+      data: [
+        {
+          id: "cs_completed_delayed",
+          url: null,
+          mode: "subscription",
+          customer: "cus_created",
+          metadata: {
+            workspace_id: wsId,
+            respin_kind: "tier_checkout",
+            respin_checkout_attempt_id: attempt!.tierCheckoutAttemptId,
+            tier: "creator",
+            price_id: "price_creator",
+            ...(attempt!.tierCheckoutAttemptAuthority as Record<string, string>),
+          },
+          line_items: {
+            data: [{ price: { id: "price_creator" } }],
+          },
+          payment_status: "paid",
+          status: "complete",
+          subscription: "sub_delayed",
+        },
+      ],
+      has_more: false,
+    });
+
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).rejects.toThrow(CheckoutReconciliationRequiredError);
+    expect(sessionCreate).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(subscriptions)).toEqual([
+      expect.objectContaining({
+        tierCheckoutAttemptId: attempt!.tierCheckoutAttemptId,
+        tierCheckoutAttemptSessionId: "cs_completed_delayed",
+      }),
+    ]);
+  });
+
+  it("retires an old attempt only after a complete provider scan proves no Session exists", async () => {
+    sessionCreate.mockClear();
+    sessionList.mockClear();
+    sessionCreate.mockRejectedValueOnce(new Error("lost before provider record"));
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await mapPrice(db);
+
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).rejects.toThrow(CheckoutReconciliationRequiredError);
+    const oldAttempt = await ageTierCheckoutAttemptForTest(db, wsId);
+
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).resolves.toBe("https://checkout.stripe.test/cs_created");
+    const [replacement] = await db.select().from(subscriptions);
+    expect(replacement?.tierCheckoutAttemptId).not.toBe(oldAttempt?.tierCheckoutAttemptId);
+    expect(sessionCreate).toHaveBeenCalledTimes(2);
+    const calls = sessionCreate.mock.calls as unknown as [
+      unknown,
+      { idempotencyKey: string },
+    ][];
+    expect(calls[1]![1].idempotencyKey).not.toBe(calls[0]![1].idempotencyKey);
+  });
+
+  it("derives the provider pause deadline from the locked database clock", async () => {
     subUpdate.mockClear();
     const db = await createTestDb();
     const { wsId, scopeOf } = await setup(db);
@@ -397,22 +1081,38 @@ describe("round-5 regression pins (billing review findings 3 + 4)", () => {
       stripeSubscriptionId: "sub_pause",
       status: "active",
     });
-    await pauseSubscription(
-      db,
-      scopeOf("owner"),
-      1,
-      new Date("2027-01-31T00:00:00.000Z")
-    );
+    const requestedAt = new Date();
+    await pause(db, scopeOf("owner"), 1, requestedAt);
     const [, params] = subUpdate.mock.calls[0] as unknown as [
       string,
       { pause_collection: { resumes_at: number } },
     ];
-    expect(new Date(params.pause_collection.resumes_at * 1000).toISOString()).toBe(
-      "2027-02-28T00:00:00.000Z"
-    );
+    const providerResumeAt = new Date(params.pause_collection.resumes_at * 1000);
+    const requestClockEstimate = addMonthsUtc(requestedAt, 1);
+    expect(Math.abs(providerResumeAt.getTime() - requestClockEstimate.getTime()))
+      .toBeLessThan(3_000);
     // ...and the local mirror agrees with what Stripe was told.
     const [row] = await db.select().from(subscriptions);
-    expect(row.resumesAt?.toISOString()).toBe("2027-02-28T00:00:00.000Z");
+    expect(Math.abs(row.resumesAt!.getTime() - providerResumeAt.getTime())).toBeLessThan(1000);
+  });
+
+  it.each([-1, 1])("refuses a caller clock outside the skew window before Stripe (%i)", async (direction) => {
+    subUpdate.mockClear();
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await db.insert(subscriptions).values({
+      workspaceId: wsId,
+      stripeCustomerId: "cus_pause_skew",
+      stripeSubscriptionId: "sub_pause_skew",
+      status: "active",
+    });
+    const skewed = new Date(
+      Date.now() + direction * (CLOCK_SKEW_MS + 5_000)
+    );
+    await expect(pause(db, scopeOf("owner"), 1, skewed)).rejects.toThrow(
+      ClockSkewError
+    );
+    expect(subUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -430,9 +1130,12 @@ describe("round-7 pins (billing round-7 CHANGE 1 + CHANGE 7)", () => {
       stripeCustomerId: "cus_gone",
       stripeSubscriptionId: "sub_gone",
       status: "canceled",
-      autoTopupEnabled: true,
+      autoTopupV1Enabled: true,
+      autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
       autoTopupMonthlyCapCents: 5000,
     });
+    await forceArmAutoTopup(db, wsId);
     expect(await maybeAutoTopup(db, wsId, 100, new Date())).toEqual({
       triggered: false,
       reason: "not_subscribed",
@@ -445,12 +1148,13 @@ describe("round-7 pins (billing round-7 CHANGE 1 + CHANGE 7)", () => {
     const db = await createTestDb();
     const { wsId } = await setup(db);
     await db.insert(subscriptions).values({
-      workspaceId: wsId,
-      stripeCustomerId: "cus_packs_only",
-      status: "none",
-      autoTopupEnabled: true,
+      ...activeTierCheckoutMapping(wsId, "cus_packs_only"),
+      autoTopupV1Enabled: true,
+      autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
       autoTopupMonthlyCapCents: 5000,
     });
+    await forceArmAutoTopup(db, wsId);
     expect(await maybeAutoTopup(db, wsId, 100, new Date())).toEqual({
       triggered: false,
       reason: "not_subscribed",
@@ -472,9 +1176,12 @@ describe("round-7 pins (billing round-7 CHANGE 1 + CHANGE 7)", () => {
         stripeSubscriptionId: "sub_live",
         status: row.status,
         cancelAtPeriodEnd: row.cancelAtPeriodEnd,
-        autoTopupEnabled: true,
+        autoTopupV1Enabled: true,
+        autoTopupProtocolVersion: 1,
+        autoTopupAttemptCutoverAt: new Date(),
         autoTopupMonthlyCapCents: 5000,
       });
+      await forceArmAutoTopup(db, wsId);
       // A subscription in dunning, or one cancelling at period end, is still a
       // subscription: it exists in Stripe and the customer is still served.
       expect(
@@ -548,7 +1255,13 @@ describe("maybeAutoTopup refusal paths (keyless — every refusal precedes Strip
     // that models it teaches the wrong pattern (code-review NOTE).
     await db
       .update(subscriptions)
-      .set({ autoTopupEnabled: true, autoTopupMonthlyCapCents: 5000, pausedAt: new Date() })
+      .set({
+        autoTopupV1Enabled: true,
+        autoTopupProtocolVersion: 1,
+        autoTopupAttemptCutoverAt: new Date(),
+        autoTopupMonthlyCapCents: 5000,
+        pausedAt: new Date(),
+      })
       .where(eq(subscriptions.workspaceId, wsId));
     expect(await maybeAutoTopup(db, wsId, 100, new Date())).toEqual({
       triggered: false, reason: "paused",
@@ -561,22 +1274,22 @@ describe("maybeAutoTopup refusal paths (keyless — every refusal precedes Strip
     await db.insert(subscriptions).values({
       workspaceId: wsId, stripeCustomerId: "cus_cap",
       stripeSubscriptionId: "sub_cap", status: "active",
-      autoTopupEnabled: true, autoTopupMonthlyCapCents: 2500, // 2 packs max ($10 each)
+      autoTopupV1Enabled: true, autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
+      autoTopupMonthlyCapCents: 2500, // 2 packs max ($10 each)
     });
+    await forceArmAutoTopup(db, wsId, 2500);
     const at = new Date();
     const monthStart = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
     const lastMonth = new Date(monthStart.getTime() - 24 * 3_600_000);
     // LAST month's top-ups never count against THIS month's cap
     await db.insert(creditLedger).values([
-      { workspaceId: wsId, delta: 1000, kind: "pack", refType: "auto_topup",
-        refId: "pi_old", amountCents: 1000, createdAt: lastMonth,
+      { workspaceId: wsId, delta: 1000, kind: "pack", ...autoTopupReceipt("pi_old", lastMonth),
         expiresAt: new Date(at.getTime() + 365 * 24 * 3_600_000) },
       // two top-ups THIS month = 2000c spent; a third pack (1000c) would break the 2500c cap
-      { workspaceId: wsId, delta: 1000, kind: "pack", refType: "auto_topup",
-        refId: "pi_1", amountCents: 1000, createdAt: new Date(monthStart.getTime() + 1000),
+      { workspaceId: wsId, delta: 1000, kind: "pack", ...autoTopupReceipt("pi_1", new Date(monthStart.getTime() + 1000)),
         expiresAt: new Date(at.getTime() + 365 * 24 * 3_600_000) },
-      { workspaceId: wsId, delta: 1000, kind: "pack", refType: "auto_topup",
-        refId: "pi_2", amountCents: 1000, createdAt: new Date(monthStart.getTime() + 2000),
+      { workspaceId: wsId, delta: 1000, kind: "pack", ...autoTopupReceipt("pi_2", new Date(monthStart.getTime() + 2000)),
         expiresAt: new Date(at.getTime() + 365 * 24 * 3_600_000) },
     ]);
     expect(await maybeAutoTopup(db, wsId, 100, at)).toEqual({
@@ -592,7 +1305,12 @@ describe("maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)", 
   const enable = async (db: TestDb, wsId: ReturnType<typeof trustWorkspaceId>) =>
     db
       .update(subscriptions)
-      .set({ autoTopupEnabled: true, autoTopupMonthlyCapCents: 3000 })
+      .set({
+        autoTopupV1Enabled: true,
+        autoTopupMonthlyCapCents: 3000,
+        autoTopupProtocolVersion: 1,
+        autoTopupAttemptCutoverAt: new Date(),
+      })
       .where(eq(subscriptions.workspaceId, wsId));
 
   it("triggers ONE PaymentIntent for the pack price, and writes NO ledger row (credits land via the webhook)", async () => {
@@ -628,10 +1346,43 @@ describe("maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)", 
     // n = 0 rows this month → the FIRST key. Asserted here because the plan
     // claims the Docker race case asserts it, and no test did.
     const yyyyMm = `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}`;
-    expect(opts.idempotencyKey).toBe(`autotopup:${wsId}:${yyyyMm}:1`);
+    expect(opts.idempotencyKey).toMatch(
+      new RegExp(
+        `^autotopup:v1:${wsId}:${yyyyMm}:1:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
+        "i"
+      )
+    );
     // The credit is the WEBHOOK's job (single-tx, event-id idempotent).
     expect(await db.select().from(creditLedger)).toHaveLength(0);
   });
+
+  it.each([
+    ["ahead", CLOCK_SKEW_MS * 2],
+    ["behind", -(CLOCK_SKEW_MS * 2)],
+  ] as const)(
+    "refuses a caller clock %s of the database clock before creating a PaymentIntent",
+    async (_direction, offsetMs) => {
+      piCreate.mockClear();
+      const db = await createTestDb();
+      const { wsId } = await setup(db);
+      await db.insert(subscriptions).values({
+        workspaceId: wsId,
+        stripeCustomerId: "cus_clock",
+        stripeSubscriptionId: "sub_clock",
+        status: "active",
+        autoTopupV1Enabled: true,
+        autoTopupProtocolVersion: 1,
+        autoTopupAttemptCutoverAt: new Date(),
+        autoTopupMonthlyCapCents: 3000,
+      });
+      await forceArmAutoTopup(db, wsId, 3000);
+
+      await expect(
+        maybeAutoTopup(db, wsId, 100, new Date(Date.now() + offsetMs))
+      ).rejects.toBeInstanceOf(ClockSkewError);
+      expect(piCreate).not.toHaveBeenCalled();
+    }
+  );
 
   it("the idempotency key advances with the month's row count (n=2 → :3)", async () => {
     piCreate.mockClear();
@@ -648,12 +1399,10 @@ describe("maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)", 
     const monthStart = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
     const expiresAt = new Date(at.getTime() + 365 * 24 * 3_600_000);
     await db.insert(creditLedger).values([
-      { workspaceId: wsId, delta: 1000, kind: "pack", refType: "auto_topup",
-        refId: "pi_1", amountCents: 1000,
-        createdAt: new Date(monthStart.getTime() + 1000), expiresAt },
-      { workspaceId: wsId, delta: 1000, kind: "pack", refType: "auto_topup",
-        refId: "pi_2", amountCents: 1000,
-        createdAt: new Date(monthStart.getTime() + 2000), expiresAt },
+      { workspaceId: wsId, delta: 1000, kind: "pack",
+        ...autoTopupReceipt("pi_1", new Date(monthStart.getTime() + 1000)), expiresAt },
+      { workspaceId: wsId, delta: 1000, kind: "pack",
+        ...autoTopupReceipt("pi_2", new Date(monthStart.getTime() + 2000)), expiresAt },
     ]);
     expect((await maybeAutoTopup(db, wsId, 100, at)).triggered).toBe(true);
     const [, opts] = piCreate.mock.calls[0] as unknown as [
@@ -661,7 +1410,12 @@ describe("maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)", 
       { idempotencyKey: string },
     ];
     const yyyyMm = `${at.getUTCFullYear()}-${String(at.getUTCMonth() + 1).padStart(2, "0")}`;
-    expect(opts.idempotencyKey).toBe(`autotopup:${wsId}:${yyyyMm}:3`);
+    expect(opts.idempotencyKey).toMatch(
+      new RegExp(
+        `^autotopup:v1:${wsId}:${yyyyMm}:3:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
+        "i"
+      )
+    );
   });
 
   it("the cap boundary ALLOWS exactly-at-cap and refuses one cent over (the direction no test covered)", async () => {
@@ -677,15 +1431,17 @@ describe("maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)", 
         stripeCustomerId: "cus_A",
         stripeSubscriptionId: "sub_A",
         status: "active",
-        autoTopupEnabled: true,
+        autoTopupV1Enabled: true,
+        autoTopupProtocolVersion: 1,
+        autoTopupAttemptCutoverAt: new Date(),
         autoTopupMonthlyCapCents: capCents,
       });
+      await forceArmAutoTopup(db, wsId, capCents);
       const at = new Date();
       const monthStart = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
       await db.insert(creditLedger).values({
-        workspaceId: wsId, delta: 1000, kind: "pack", refType: "auto_topup",
-        refId: "pi_1", amountCents: 1000,
-        createdAt: new Date(monthStart.getTime() + 1000),
+        workspaceId: wsId, delta: 1000, kind: "pack",
+        ...autoTopupReceipt("pi_1", new Date(monthStart.getTime() + 1000)),
         expiresAt: new Date(at.getTime() + 365 * 24 * 3_600_000),
       });
       const result = await maybeAutoTopup(db, wsId, 100, at);
@@ -695,6 +1451,210 @@ describe("maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)", 
         expect(piCreate).not.toHaveBeenCalled();
       }
     }
+  });
+});
+
+describe("durable auto-top-up dispatch recovery", () => {
+  async function armed(db: TestDb, customerId: string) {
+    const { wsId } = await setup(db);
+    await db.insert(subscriptions).values({
+      workspaceId: wsId,
+      stripeCustomerId: customerId,
+      stripeSubscriptionId: `sub_${customerId}`,
+      status: "active",
+      autoTopupV1Enabled: true,
+      autoTopupMonthlyCapCents: 5000,
+      autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
+    });
+    await forceArmAutoTopup(db, wsId);
+    return wsId;
+  }
+
+  it("a lost create response reconciles the signed attempt and never creates a second PaymentIntent", async () => {
+    const db = await createTestDb();
+    const wsId = await armed(db, "cus_lost_response");
+    let providerPi: Record<string, unknown> | undefined;
+    piCreate.mockClear();
+    piList.mockClear();
+    piCreate.mockImplementationOnce(async (params) => {
+      providerPi = {
+        id: "pi_lost_response",
+        amount: params.amount,
+        currency: params.currency,
+        customer: params.customer,
+        created: Math.floor(Date.now() / 1000),
+        metadata: params.metadata,
+        status: "processing",
+      };
+      throw new Error("transport ended after Stripe accepted the request");
+    });
+
+    const unknown = await maybeAutoTopup(db, wsId, 100, new Date());
+    expect(unknown).toMatchObject({
+      triggered: false,
+      reason: "reconciliation_required",
+    });
+    let [pending] = await db.select().from(subscriptions);
+    expect(pending.autoTopupAttemptDispatchedAt).not.toBeNull();
+    expect(pending.autoTopupAttemptPaymentIntentId).toBeNull();
+
+    piList.mockResolvedValueOnce({ data: [providerPi!], has_more: false });
+    expect(await maybeAutoTopup(db, wsId, 100, new Date())).toEqual({
+      triggered: true,
+      paymentIntentId: "pi_lost_response",
+    });
+    expect(piCreate).toHaveBeenCalledTimes(1);
+    expect((piList.mock.calls as unknown[][])[0]?.[0]).not.toHaveProperty(
+      "created"
+    );
+    [pending] = await db.select().from(subscriptions);
+    expect(pending.autoTopupAttemptPaymentIntentId).toBe("pi_lost_response");
+    expect(pending.autoTopupAttemptPaymentIntentStatus).toBe("processing");
+  });
+
+  it("an unresolved response older than the safe idempotency window retires only after a full empty reconciliation, then creates a fresh attempt", async () => {
+    const db = await createTestDb();
+    const wsId = await armed(db, "cus_old_unknown");
+    piCreate.mockClear();
+    piList.mockClear();
+    piCreate.mockRejectedValueOnce(new Error("unknown provider outcome"));
+    expect(await maybeAutoTopup(db, wsId, 100, new Date())).toMatchObject({
+      triggered: false,
+      reason: "reconciliation_required",
+    });
+
+    const old = new Date(Date.now() - AUTO_TOPUP_IDEMPOTENCY_SAFE_RETRY_MS - 60_000);
+    await db
+      .update(subscriptions)
+      .set({
+        autoTopupAttemptReservedAt: old,
+        autoTopupAttemptDispatchedAt: old,
+      })
+      .where(eq(subscriptions.workspaceId, wsId));
+    piList.mockResolvedValueOnce({ data: [], has_more: false });
+
+    expect(await maybeAutoTopup(db, wsId, 100, new Date())).toEqual({
+      triggered: true,
+      paymentIntentId: "pi_created",
+    });
+    expect(piList).toHaveBeenCalledTimes(1);
+    expect(piCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["disabled", "paused", "cap"] as const)(
+    "reconciles a durable pre-provider reservation before retiring it when %s wins the transaction gap",
+    async (change) => {
+      const db = await createTestDb();
+      const wsId = await armed(db, `cus_undispatched_${change}`);
+      piCreate.mockClear();
+      piList.mockClear();
+      piCreate.mockRejectedValueOnce(new Error("unknown provider outcome"));
+      expect(await maybeAutoTopup(db, wsId, 100, new Date())).toMatchObject({
+        triggered: false,
+        reason: "reconciliation_required",
+      });
+      await db
+        .update(subscriptions)
+        .set({
+          ...(change === "disabled" ? { autoTopupV1Enabled: false } : {}),
+          ...(change === "paused" ? { pausedAt: new Date() } : {}),
+          ...(change === "cap" ? { autoTopupMonthlyCapCents: 1 } : {}),
+        })
+        .where(eq(subscriptions.workspaceId, wsId));
+
+      const result = await maybeAutoTopup(db, wsId, 100, new Date());
+      expect(result).toEqual({
+        triggered: false,
+        reason: change === "cap" ? "cap_reached" : change,
+      });
+      const [sub] = await db.select().from(subscriptions);
+      expect(sub.autoTopupAttemptId).toBeNull();
+      expect(piCreate).toHaveBeenCalledTimes(1);
+      expect(piList).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(["disabled", "paused", "cap"] as const)(
+    "reconciles a dispatched unknown before honoring a later %s refusal",
+    async (change) => {
+      const db = await createTestDb();
+      const wsId = await armed(db, `cus_dispatched_${change}`);
+      piCreate.mockClear();
+      piList.mockClear();
+      piCreate.mockRejectedValueOnce(new Error("lost create response"));
+      expect(await maybeAutoTopup(db, wsId, 100, new Date())).toMatchObject({
+        triggered: false,
+        reason: "reconciliation_required",
+      });
+      const [params] = piCreate.mock.calls[0] as unknown as [
+        Record<string, unknown>,
+      ];
+      await db
+        .update(subscriptions)
+        .set({
+          ...(change === "disabled" ? { autoTopupV1Enabled: false } : {}),
+          ...(change === "paused" ? { pausedAt: new Date() } : {}),
+          ...(change === "cap" ? { autoTopupMonthlyCapCents: 1 } : {}),
+        })
+        .where(eq(subscriptions.workspaceId, wsId));
+      piList.mockResolvedValueOnce({
+        data: [{
+          id: `pi_dispatched_${change}`,
+          amount: params.amount,
+          currency: params.currency,
+          customer: params.customer,
+          created: Math.floor(Date.now() / 1000),
+          metadata: params.metadata,
+          status: "processing",
+        }],
+        has_more: false,
+      });
+
+      expect(await maybeAutoTopup(db, wsId, 100, new Date())).toEqual({
+        triggered: true,
+        paymentIntentId: `pi_dispatched_${change}`,
+      });
+      expect(piList).toHaveBeenCalledTimes(1);
+      expect(piCreate).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("cancels and retires a first-call decline before returning the manual-purchase refusal", async () => {
+    const db = await createTestDb();
+    const wsId = await armed(db, "cus_declined_bound");
+    piCreate.mockClear();
+    piList.mockClear();
+    piCreate.mockImplementationOnce(async (params) => {
+      const error = new Error("card declined") as Error & {
+        payment_intent: Record<string, unknown>;
+      };
+      error.payment_intent = {
+        id: "pi_declined_bound",
+        amount: params.amount,
+        currency: params.currency,
+        customer: params.customer,
+        created: Math.floor(Date.now() / 1000),
+        metadata: params.metadata,
+        status: "requires_payment_method",
+      };
+      piCancel.mockResolvedValueOnce({
+        ...error.payment_intent,
+        status: "canceled",
+      });
+      throw error;
+    });
+
+    expect(await maybeAutoTopup(db, wsId, 100, new Date())).toEqual({
+      triggered: false,
+      reason: "payment_failed",
+    });
+    expect(piCancel).toHaveBeenCalledWith("pi_declined_bound");
+    expect(piCreate).toHaveBeenCalledTimes(1);
+    expect(piList).not.toHaveBeenCalled();
+    const [pending] = await db.select().from(subscriptions);
+    expect(pending.autoTopupAttemptId).toBeNull();
+    expect(pending.autoTopupAttemptPaymentIntentId).toBeNull();
   });
 });
 
@@ -709,8 +1669,19 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
       stripeCustomerId: "cus_live_x",
       stripeSubscriptionId: "sub_live_x",
       status: "active",
+      autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
       ...over,
     } as never);
+    if (over.autoTopupV1Enabled === true) {
+      await forceArmAutoTopup(
+        db,
+        trustWorkspaceId(wsId),
+        typeof over.autoTopupMonthlyCapCents === "number"
+          ? over.autoTopupMonthlyCapCents
+          : 5000
+      );
+    }
   };
 
   it("CHANGE 4: setAutoTopup REFUSES to arm on a canceled subscription — the state DEAD_SUBSCRIPTION_FIELDS exists to make impossible", async () => {
@@ -722,17 +1693,24 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
     ).rejects.toThrow(NoLiveSubscriptionError);
     // ...and the row was NOT armed. The round-8 defence was "the trigger
     // refuses anyway", which is true and beside the point: Phase 4 renders THIS
-    // row, and {canceled, autoTopupEnabled: true} is the state the whole
+    // row, and {canceled, autoTopupV1Enabled: true} is the state the whole
     // DEAD_SUBSCRIPTION_FIELDS mechanism was introduced to prevent.
     const [row] = await db.select().from(subscriptions);
-    expect(row.autoTopupEnabled).toBe(false);
+    expect(row.autoTopupV1Enabled).toBe(false);
     expect(row.autoTopupMonthlyCapCents).toBeNull();
   });
 
   it("CHANGE 4: a workspace that NEVER subscribed (pack-only customer) cannot arm it either", async () => {
     const db = await createTestDb();
     const { wsId, scopeOf } = await setup(db);
-    await mkSub(db, wsId, { stripeSubscriptionId: null, status: "none" });
+    await mkSub(db, wsId, {
+      stripeSubscriptionId: `checkout_fence:${wsId}`,
+      status: "incomplete",
+      tierCheckoutFenceAt: new Date(),
+      tierCheckoutFenceSubscriptionId: null,
+      tierCheckoutFenceStatus: "none",
+      tierCheckoutFenceObservedSubscriptionId: null,
+    });
     await expect(
       setAutoTopup(db, scopeOf("owner"), { enabled: true, monthlyCapCents: 5000 })
     ).rejects.toThrow(NoLiveSubscriptionError);
@@ -747,12 +1725,12 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
     const { wsId, scopeOf } = await setup(db);
     await mkSub(db, wsId, {
       status: "canceled",
-      autoTopupEnabled: true,
+      autoTopupV1Enabled: true,
       autoTopupMonthlyCapCents: 5000,
     });
     await setAutoTopup(db, scopeOf("owner"), { enabled: false });
     const [row] = await db.select().from(subscriptions);
-    expect(row.autoTopupEnabled).toBe(false);
+    expect(row.autoTopupV1Enabled).toBe(false);
     expect(row.autoTopupMonthlyCapCents).toBeNull();
   });
 
@@ -776,7 +1754,7 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
         monthlyCapCents: 5000,
       });
       const [row] = await db.select().from(subscriptions);
-      expect(row.autoTopupEnabled, JSON.stringify(over)).toBe(true);
+      expect(row.autoTopupV1Enabled, JSON.stringify(over)).toBe(true);
     }
   });
 
@@ -797,7 +1775,7 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
     ).rejects.toThrow(NotChargeableError);
     // NOTHING was written — the refusal precedes the update.
     const [row] = await db.select().from(subscriptions);
-    expect(row.autoTopupEnabled).toBe(false);
+    expect(row.autoTopupV1Enabled).toBe(false);
     expect(row.autoTopupMonthlyCapCents).toBeNull();
   });
 
@@ -806,12 +1784,12 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
     const { wsId, scopeOf } = await setup(db);
     await mkSub(db, wsId, {
       status: "unpaid",
-      autoTopupEnabled: true,
+      autoTopupV1Enabled: true,
       autoTopupMonthlyCapCents: 5000,
     });
     await setAutoTopup(db, scopeOf("owner"), { enabled: false });
     const [row] = await db.select().from(subscriptions);
-    expect(row.autoTopupEnabled).toBe(false);
+    expect(row.autoTopupV1Enabled).toBe(false);
   });
 
   // AUDIT #6, the CHARGE site. `setAutoTopup` refusing to arm is not enough on
@@ -822,7 +1800,7 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
     const { wsId } = await setup(db);
     await mkSub(db, wsId, {
       status: "unpaid",
-      autoTopupEnabled: true,
+      autoTopupV1Enabled: true,
       autoTopupMonthlyCapCents: 5000,
     });
     piCreate.mockClear();
@@ -830,17 +1808,56 @@ describe("round-10 pins (billing CHANGE 4: one liveness definition, three reader
     expect(result).toEqual({ triggered: false, reason: "not_chargeable" });
     expect(piCreate).not.toHaveBeenCalled();
   });
+
+  it("an `incomplete` subscription is live but cannot trigger an off-session PaymentIntent", async () => {
+    const db = await createTestDb();
+    const { wsId } = await setup(db);
+    await mkSub(db, wsId, {
+      status: "incomplete",
+      autoTopupV1Enabled: true,
+      autoTopupMonthlyCapCents: 5000,
+    });
+    piCreate.mockClear();
+    expect(await maybeAutoTopup(db, wsId, 10, new Date())).toEqual({
+      triggered: false,
+      reason: "not_chargeable",
+    });
+    expect(piCreate).not.toHaveBeenCalled();
+  });
 });
 
 // ========== billing gate 2026-08-18: the untested money paths ==============
 
 describe("audit #1 (package half): the AUTHORITATIVE pause refusal on the pack path", () => {
+  it("refuses Stripe account drift before creating a customer or durable mapping", async () => {
+    const db = await createTestDb();
+    const { scopeOf } = await setup(db);
+    stripeIdentity.mockResolvedValueOnce({
+      accountId: "acct_wrong_deployment",
+      livemode: false,
+    });
+    customerCreate.mockClear();
+    priceRetrieve.mockClear();
+    sessionCreate.mockClear();
+
+    await expect(
+      createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
+    ).rejects.toBeInstanceOf(TierCheckoutRolloutError);
+    expect(customerCreate).not.toHaveBeenCalled();
+    expect(priceRetrieve).not.toHaveBeenCalled();
+    expect(sessionCreate).not.toHaveBeenCalled();
+    expect(await db.select().from(subscriptions)).toHaveLength(0);
+  });
+
   it("a paused workspace's pack checkout throws SubscriptionPausedError and reaches NO Stripe call", async () => {
     const db = await createTestDb();
     const { wsId, scopeOf } = await setup(db);
     await appendConfigVersion(
       db,
-      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      {
+        ...CONFIG_V1_SEED,
+        stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
+      },
       "test"
     );
     await db.insert(subscriptions).values({
@@ -866,7 +1883,10 @@ describe("audit #1 (package half): the AUTHORITATIVE pause refusal on the pack p
     const { wsId, scopeOf } = await setup(db);
     await appendConfigVersion(
       db,
-      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      {
+        ...CONFIG_V1_SEED,
+        stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
+      },
       "test"
     );
     await db.insert(subscriptions).values({
@@ -879,6 +1899,128 @@ describe("audit #1 (package half): the AUTHORITATIVE pause refusal on the pack p
       createPackCheckoutUrl(db, scopeOf("owner"), "a@b.test", URLS)
     ).resolves.toContain("checkout.stripe.test");
     expect(sessionCreate).toHaveBeenCalled();
+  });
+});
+
+describe("manual pack checkout is fenced by durable auto-top-up authority", () => {
+  async function armedPackWorkspace(db: TestDb, suffix: string) {
+    const { wsId, scopeOf } = await setup(db);
+    await db.insert(subscriptions).values({
+      workspaceId: wsId,
+      stripeCustomerId: `cus_pack_fence_${suffix}`,
+      stripeSubscriptionId: `sub_pack_fence_${suffix}`,
+      status: "active",
+      autoTopupV1Enabled: true,
+      autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
+      autoTopupMonthlyCapCents: 5000,
+    });
+    await forceArmAutoTopup(db, wsId);
+    return { wsId, scope: scopeOf("owner") };
+  }
+
+  it.each([
+    ["provider visibility is unknown", "unknown"],
+    ["the exact PaymentIntent is processing", "processing"],
+    ["the exact PaymentIntent succeeded before settlement", "succeeded"],
+  ] as const)("refuses before Checkout when %s", async (_label, state) => {
+    const db = await createTestDb();
+    const { wsId, scope } = await armedPackWorkspace(db, state);
+    piCreate.mockClear();
+    sessionCreate.mockClear();
+    if (state === "unknown") {
+      piCreate.mockRejectedValueOnce(
+        new Error("transport ended after Stripe accepted the request")
+      );
+    } else {
+      piCreate.mockImplementationOnce(async (params) => ({
+        id: `pi_pack_fence_${state}`,
+        amount: params.amount,
+        currency: params.currency,
+        customer: params.customer,
+        metadata: params.metadata,
+        status: state,
+      }));
+    }
+    await maybeAutoTopup(db, wsId, 100, new Date());
+
+    await expect(
+      createPackCheckoutUrl(db, scope, "a@b.test", URLS)
+    ).rejects.toBeInstanceOf(AutoTopupReconciliationRequiredError);
+    expect(sessionCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows Checkout after the exact failed automatic intent is canceled and retired", async () => {
+    const db = await createTestDb();
+    const { wsId, scope } = await armedPackWorkspace(db, "retired");
+    piCreate.mockClear();
+    piCancel.mockClear();
+    sessionCreate.mockClear();
+    let failedPi: {
+      id: string;
+      amount: unknown;
+      currency: unknown;
+      customer: unknown;
+      metadata: unknown;
+      status: string;
+    } | null = null;
+    piCreate.mockImplementationOnce(async (params) => {
+      failedPi = {
+        id: "pi_pack_fence_retired",
+        amount: params.amount,
+        currency: params.currency,
+        customer: params.customer,
+        metadata: params.metadata,
+        status: "requires_payment_method",
+      };
+      return failedPi;
+    });
+    piCancel.mockImplementationOnce(async () => ({
+      ...failedPi!,
+      status: "canceled",
+    }));
+    expect(await maybeAutoTopup(db, wsId, 100, new Date())).toMatchObject({
+      triggered: false,
+      reason: "payment_failed",
+    });
+
+    await expect(
+      createPackCheckoutUrl(db, scope, "a@b.test", URLS)
+    ).resolves.toContain("checkout.stripe.test");
+    expect(sessionCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("auto-top-up preference saves revalidate active rollout authority", () => {
+  it("refuses enabling under key drift while still allowing the owner to disable", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await db.insert(subscriptions).values({
+      workspaceId: wsId,
+      stripeCustomerId: "cus_binding_drift",
+      stripeSubscriptionId: "sub_binding_drift",
+      status: "active",
+      autoTopupV1Enabled: true,
+      autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
+      autoTopupMonthlyCapCents: 5000,
+    });
+    await db
+      .update(autoTopupProtocolRollouts)
+      .set({ authorityKeyFingerprint: `sha256:${"0".repeat(64)}` });
+
+    await expect(
+      setAutoTopup(db, scopeOf("owner"), {
+        enabled: true,
+        monthlyCapCents: 5000,
+      })
+    ).rejects.toBeInstanceOf(AutoTopupRolloutError);
+    await expect(
+      setAutoTopup(db, scopeOf("owner"), { enabled: false })
+    ).resolves.toBeUndefined();
+    const [row] = await db.select().from(subscriptions);
+    expect(row.autoTopupV1Enabled).toBe(false);
+    expect(row.autoTopupMonthlyCapCents).toBeNull();
   });
 });
 
@@ -899,7 +2041,10 @@ describe("audit #5 drift: the pack path and the billing page agree on 'paused'",
     const { wsId, scopeOf } = await setup(db);
     await appendConfigVersion(
       db,
-      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      {
+        ...CONFIG_V1_SEED,
+        stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
+      },
       "test"
     );
     // The exact #5 drift: cancelled in Stripe, with a pause flag that outlived
@@ -953,7 +2098,10 @@ describe("audit #5 drift: the pack path and the billing page agree on 'paused'",
     const { wsId, scopeOf } = await setup(db);
     await appendConfigVersion(
       db,
-      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      {
+        ...CONFIG_V1_SEED,
+        stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
+      },
       "test"
     );
     // Mirror looks DEAD — no live subscription, so `isPausedSubscription` (and
@@ -980,7 +2128,10 @@ describe("audit #5 drift: the pack path and the billing page agree on 'paused'",
     const { wsId, scopeOf } = await setup(db);
     await appendConfigVersion(
       db,
-      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      {
+        ...CONFIG_V1_SEED,
+        stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
+      },
       "test"
     );
     await db.insert(subscriptions).values({
@@ -1043,7 +2194,7 @@ describe("audit #5 drift: the pack path and the billing page agree on 'paused'",
 
     // 4. Resume cannot clear it — this is exactly why no reaper exists yet.
     await expect(
-      resumeSubscription(db, scopeOf("owner"))
+      resume(db, scopeOf("owner"))
     ).rejects.toBeInstanceOf(NoLiveSubscriptionError);
 
     // 5. And the charge path is permitted, because the AUTHORITY has no open
@@ -1059,7 +2210,10 @@ describe("audit #5 drift: the pack path and the billing page agree on 'paused'",
     const { wsId, scopeOf } = await setup(db);
     await appendConfigVersion(
       db,
-      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      {
+        ...CONFIG_V1_SEED,
+        stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
+      },
       "test"
     );
     await db.insert(subscriptions).values({
@@ -1085,14 +2239,20 @@ describe("audit #7: ONE pack-price authority — the auto-top-up half", () => {
     const { wsId } = await setup(db);
     await appendConfigVersion(
       db,
-      { ...CONFIG_V1_SEED, stripePriceMap: { price_pack: "pack" } },
+      {
+        ...CONFIG_V1_SEED,
+        stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
+      },
       "test"
     );
     await db.insert(subscriptions).values({
       workspaceId: wsId, stripeCustomerId: "cus_at", stripeSubscriptionId: "sub_at",
       stripePriceId: "price_creator", status: "active",
-      autoTopupEnabled: true, autoTopupMonthlyCapCents: 5000,
+      autoTopupV1Enabled: true, autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
+      autoTopupMonthlyCapCents: 5000,
     });
+    await forceArmAutoTopup(db, wsId);
     return { wsId };
   }
 
@@ -1122,7 +2282,7 @@ describe("audit #7: ONE pack-price authority — the auto-top-up half", () => {
       {
         ...CONFIG_V1_SEED,
         pack: { ...CONFIG_V1_SEED.pack, priceUsd: 25 },
-        stripePriceMap: { price_pack: "pack" },
+        stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
       },
       "admin-who-changed-the-price"
     );
@@ -1160,8 +2320,11 @@ describe("audit #7: ONE pack-price authority — the auto-top-up half", () => {
     await db.insert(subscriptions).values({
       workspaceId: wsId, stripeCustomerId: "cus_np", stripeSubscriptionId: "sub_np",
       stripePriceId: "price_creator", status: "active",
-      autoTopupEnabled: true, autoTopupMonthlyCapCents: 5000,
+      autoTopupV1Enabled: true, autoTopupProtocolVersion: 1,
+      autoTopupAttemptCutoverAt: new Date(),
+      autoTopupMonthlyCapCents: 5000,
     });
+    await forceArmAutoTopup(db, wsId);
     piCreate.mockClear();
     await expect(maybeAutoTopup(db, wsId, 10, new Date())).rejects.toBeInstanceOf(
       PackPriceNotMappedError
@@ -1274,8 +2437,8 @@ describe("the owner's pause/resume path serializes with the webhook writers", ()
     return SRC.slice(start, next === -1 ? SRC.length : next);
   }
 
-  it.each(["pauseSubscription", "resumeSubscription"])(
-    "%s takes the workspace lock",
+  it.each(["pauseSubscription", "resumeSubscription", "setAutoTopup"])(
+    "%s rechecks exact-session authority after billing locks and before mutation",
     (fn) => {
       const body = bodyOf(fn)
         .replace(/\/\/.*/g, "")
@@ -1294,18 +2457,138 @@ describe("the owner's pause/resume path serializes with the webhook writers", ()
       //  - before any write, which is the property that rules out an
       //    advisory-lock-vs-row-lock cycle across the seven call sites.
       const lockAt = body.indexOf("takeWorkspaceLock");
-      const clockAt = body.indexOf("getDbNow(");
+      const authorityCalls = [
+        ...body.matchAll(/requireReauthenticatedOwnerInTx/g),
+      ].map((match) => match.index!);
+      const rowLockAt = body.indexOf('.for("update")');
+      const mutationAt =
+        fn === "setAutoTopup"
+          ? body.indexOf(".update(subscriptions)", rowLockAt)
+          : body.indexOf("getStripe().subscriptions.update", rowLockAt);
+      const clockAt = body.indexOf(
+        fn === "pauseSubscription" ? "assertWriteClock(" : "getDbNow("
+      );
+      expect(
+        authorityCalls,
+        `${fn} must verify before and after billing locks`
+      ).toHaveLength(2);
+      expect(authorityCalls[0], `${fn} must lock lifecycle authority before billing state`)
+        .toBeLessThan(lockAt);
+      expect(lockAt).toBeLessThan(rowLockAt);
+      expect(rowLockAt).toBeLessThan(authorityCalls[1]!);
+      expect(authorityCalls[1], `${fn} must recheck immediately before mutation`)
+        .toBeLessThan(mutationAt);
+      if (fn === "setAutoTopup") return;
       expect(clockAt, `${fn} must read the db clock inside its transaction`)
         .toBeGreaterThan(-1);
       expect(
         lockAt,
         `${fn} must take the lock BEFORE reading the clock — reading it first lets a contended wait produce a ClockSkewError on an ordinary pause`
       ).toBeLessThan(clockAt);
+      if (fn === "pauseSubscription") {
+        const configAt = body.indexOf("getActiveConfig(");
+        expect(configAt, "pause bounds must be re-read under the billing lock")
+          .toBeGreaterThan(lockAt);
+        expect(configAt).toBeLessThan(mutationAt);
+      }
     }
   );
+
+  it.each([
+    ["createTierCheckoutUrl", ".checkout.sessions"],
+    ["createPackCheckoutUrl", ".checkout.sessions.create("],
+    ["createPortalUrl", "getStripe().billingPortal.sessions.create"],
+    ["createInvoiceRecoveryUrl", "getStripe().subscriptions.retrieve"],
+  ] as const)(
+    "%s keeps lifecycle and billing authority locked through the Stripe capability call",
+    (fn, providerNeedle) => {
+      const body = bodyOf(fn)
+        .replace(/\/\/.*$/gm, "")
+        .replace(/\/\*[\s\S]*?\*\//g, "");
+      const providerAt = body.indexOf(providerNeedle);
+      const lockAt = body.lastIndexOf("takeWorkspaceLock", providerAt);
+      const rowLockAt = Math.max(
+        body.lastIndexOf("subscriptionRow(tx", providerAt),
+        body.lastIndexOf('.for("update")', providerAt)
+      );
+      const authorityAt = body.lastIndexOf(
+        "requireReauthenticatedOwnerInTx",
+        providerAt
+      );
+      expect(providerAt, `${fn} must contain the provider call`).toBeGreaterThan(-1);
+      expect(lockAt).toBeGreaterThan(-1);
+      expect(rowLockAt).toBeGreaterThan(lockAt);
+      expect(authorityAt).toBeGreaterThan(rowLockAt);
+      expect(providerAt).toBeGreaterThan(authorityAt);
+      if (fn === "createInvoiceRecoveryUrl") {
+        const returnAt = body.indexOf("return invoice.hosted_invoice_url");
+        expect(body.lastIndexOf("requireReauthenticatedOwnerInTx", returnAt))
+          .toBeGreaterThan(providerAt);
+      }
+    }
+  );
+
+  it("subscriptionRow takes a row lock for checkout serialization", () => {
+    const start = SRC.indexOf("async function subscriptionRow(");
+    const end = SRC.indexOf("\nexport type CheckoutUrls", start);
+    const body = SRC.slice(start, end);
+    expect(body).toContain('.for("update")');
+  });
+
+  it("tier checkout persists the active price before provider dispatch and recovers from that authority", () => {
+    const body = bodyOf("createTierCheckoutUrl")
+      .replace(/\/\/.*$/gm, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const configAt = body.indexOf("getActiveConfig(tx)");
+    const priceAt = body.indexOf("const priceId", configAt);
+    const persistedAt = body.indexOf("tierCheckoutAttemptPriceId: reserved.priceId");
+    const providerCreateAt = body.indexOf(".checkout.sessions.create");
+    expect(configAt).toBeGreaterThan(-1);
+    expect(priceAt).toBeGreaterThan(configAt);
+    expect(persistedAt).toBeGreaterThan(priceAt);
+    expect(providerCreateAt).toBeGreaterThan(persistedAt);
+    expect(body.slice(providerCreateAt, body.indexOf(");", providerCreateAt))).toContain(
+      "line_items: [{ price: dispatchAttempt.priceId"
+    );
+    // A config edit after reservation cannot strand recovery or silently swap
+    // the price of an already-authoritative provider attempt.
+    expect(body.slice(persistedAt, providerCreateAt)).not.toContain("getActiveConfig(tx)");
+  });
 
   it("NON-VACUITY: the slicer really isolates one function", () => {
     expect(bodyOf("pauseSubscription")).not.toContain("resumeSubscription(");
     expect(bodyOf("resumeSubscription")).toContain("NotPausedError");
+  });
+});
+
+describe("the billing server action forwards the exact-session authority", () => {
+  const SRC = readFileSync(
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../app/(product)/settings/billing/actions.ts"
+    ),
+    "utf8"
+  );
+
+  it.each([
+    ["subscribeAction", "respinCredits.createTierCheckoutUrl("],
+    ["buyPackAction", "respinCredits.createPackCheckoutUrl("],
+    ["openPortalAction", "respinCredits.createPortalUrl("],
+    ["recoverInvoiceAction", "respinCredits.createInvoiceRecoveryUrl("],
+    ["pauseAction", "respinCredits.pauseSubscription("],
+    ["resumeAction", "respinCredits.resumeSubscription("],
+    ["setAutoTopupAction", "respinCredits.setAutoTopup("],
+  ] as const)("%s reauthenticates the current session and forwards that result", (fn, call) => {
+    const start = SRC.indexOf(`export async function ${fn}(`);
+    const next = SRC.indexOf("\nexport async function ", start + 1);
+    const body = SRC.slice(start, next === -1 ? SRC.length : next);
+    const reauthenticationAt = body.indexOf(
+      "const authority = await billingReauthentication(formData)"
+    );
+    const mutationAt = body.indexOf(call);
+    expect(start).toBeGreaterThan(-1);
+    expect(reauthenticationAt).toBeGreaterThan(-1);
+    expect(reauthenticationAt).toBeLessThan(mutationAt);
+    expect(body.slice(mutationAt)).toMatch(/authority\s*\)/);
   });
 });

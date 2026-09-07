@@ -12,6 +12,7 @@
 // empty and which milestone fills it. No projected burn, no estimated
 // days-to-empty, no invoice list we do not have.
 import type { ReactNode } from "react";
+import type { UsageRunwayResult } from "@respin/credits/app-server";
 import { Banner } from "../../ui/banner";
 import { buttonClass } from "../../ui/button";
 import { LedgerTable } from "../../ui/ledger-table";
@@ -97,6 +98,18 @@ export type BurnByMode =
  */
 export type BurnPeriodView = { start: Date; noun: string; phrase: string };
 
+/** Exact, scoped brain-asset counts. This is a read for every billing state. */
+export type UsageBrainAssets =
+  | {
+      state: "available";
+      brainVersions: number;
+      testedRules: number;
+      loggedResults: number;
+      feedback: number;
+    }
+  | { state: "no_profile" }
+  | { state: "unavailable" };
+
 export type UsageViewProps = {
   balance:
     | { ok: true; value: number; asOf: Date }
@@ -104,6 +117,9 @@ export type UsageViewProps = {
   burn: MonthlyBurn;
   period: BurnPeriodView;
   burnByMode: BurnByMode;
+  /** One-snapshot, ledger-derived runway read. Never derived from page rows. */
+  runway: UsageRunwayResult;
+  brainAssets: UsageBrainAssets;
   rows: UsageLedgerRow[];
   /** True when the ledger has more rows than this page shows. */
   moreRows: boolean;
@@ -186,8 +202,16 @@ export function spendVisibility(
  */
 export const KNOWN_SPEND_PURPOSES = ["onboarding_brain", "generation"] as const;
 
+/**
+ * Creator-paid ledger debits that do not enter the model-attempt purpose
+ * vocabulary. A pasted-reference autopsy owns its own durable claim and debit,
+ * so counting only `PricedOperation` purposes would repeat 8c-W2's omission.
+ */
+export const KNOWN_DIRECT_CHARGE_REF_TYPES = ["autopsy_claim"] as const;
+
 /** Kept as a named export: it is the number the note's own wording depends on. */
-export const KNOWN_SPEND_PURPOSE_COUNT: number = KNOWN_SPEND_PURPOSES.length;
+export const KNOWN_SPEND_PURPOSE_COUNT: number =
+  KNOWN_SPEND_PURPOSES.length + KNOWN_DIRECT_CHARGE_REF_TYPES.length;
 
 /**
  * WHAT THIS SENTENCE MAY NOT DO, stated because R17a's own requirement says it
@@ -199,14 +223,15 @@ export const KNOWN_SPEND_PURPOSE_COUNT: number = KNOWN_SPEND_PURPOSES.length;
  * terminal generation its `ref_id` names — so the sentence now describes a
  * mechanism the page really runs instead of naming an absence.
  *
- * AND IT SAYS WHY THE SECOND PURPOSE IS NOT A MODE. Both things that spend
- * credits debit with the same `ref_type` (R-63), so "these credits went to a
- * mode" is a claim earned by the join, not by the row — and the voice-brain
- * build appearing on its own line is that claim being honest rather than
- * tidy.
+ * AND IT SAYS WHY ONLY GENERATION IS A MODE. The two `PricedOperation`
+ * purposes share the `inference` ref_type (R-63), while a direct pasted-
+ * reference autopsy debit uses `autopsy_claim`; neither row shape itself
+ * carries a mode. "These credits went to a mode" is earned only by the
+ * successful generation join, so creator-brain and autopsy charges appear
+ * separately rather than being given an invented mode.
  */
 export function burnByModeNote(): string {
-  return `The split is made by joining each charge to the draft it paid for, never by dividing up a cost total. ${KNOWN_SPEND_PURPOSE_COUNT} things spend credits today: generating a draft in the studio, which is what the modes above are, and building a creator's voice brain, which is not a mode and is listed separately. Nothing here is estimated from the totals: every number is the sum of your real charges.`;
+  return `The split is made by joining each charge to the record it paid for, never by dividing up a cost total. ${KNOWN_SPEND_PURPOSE_COUNT} things spend credits today: generating a draft in the studio, which is what the modes above are; building a creator's voice brain; and running an autopsy for a reference you paste. The last two are not modes and are listed separately. Nothing here is estimated from the totals: every number is the sum of your real charges.`;
 }
 
 /**
@@ -220,17 +245,6 @@ export function burnByModeNote(): string {
  */
 export function burnPeriodLine(period: BurnPeriodView): string {
   return `Since ${day(period.start)} — ${period.phrase}.`;
-}
-
-/** The "Days to empty" note. Same rule: the clamped page cannot prove absence. */
-export function daysToEmptyNote(v: SpendVisibility): string {
-  if (v === "spent") {
-    return "Not enough data yet. This needs a longer spending history than this workspace has to measure a rate.";
-  }
-  if (v === "unknown") {
-    return "Not enough data. This needs a spending history to measure, and none appears in the entries shown below.";
-  }
-  return "Not enough data. This needs a spending history to measure, and no credits have been spent from this workspace yet.";
 }
 
 /**
@@ -314,12 +328,96 @@ function BurnSplit({ burnByMode }: { burnByMode: BurnByMode }) {
   );
 }
 
+/**
+ * C8's operational runway state.  The projection is deliberately opaque to
+ * this component: it arrives from `usageRunwayFor`, whose one transaction owns
+ * the DB clock, active config, open-pause state, balance and debit aggregate.
+ */
+function RunwayPanel({ runway }: { runway: UsageRunwayResult }) {
+  if (runway.state === "estimate") {
+    return (
+      <>
+        <p data-testid="runway-estimate">
+          <strong>Estimated {runway.daysToEmpty} days to empty.</strong>
+        </p>
+        <Note>
+          This estimate uses the configured trailing {runway.trailingWindowDays} days,
+          {" "}{runway.debitDayCount} distinct debit days, and your current
+          ledger-derived balance of {runway.balance} credits as of {runway.asOf.toISOString()}.
+        </Note>
+      </>
+    );
+  }
+
+  if (runway.state === "paused") {
+    return (
+      <p className="muted" data-testid="runway-paused">
+        Not applicable while this workspace is paused. Credits are not debited
+        and expiry clocks are frozen, so there is no current spending rate to project.
+      </p>
+    );
+  }
+
+  if (runway.state === "no_spend") {
+    return (
+      <p className="muted" data-testid="runway-no-spend">
+        No debit was recorded in the configured trailing {runway.trailingWindowDays} days,
+        so there is no spending rate to estimate from.
+      </p>
+    );
+  }
+
+  if (runway.state === "too_few_debit_days") {
+    return (
+      <p className="muted" data-testid="runway-too-few-debit-days">
+        Estimate unavailable: {runway.debitDayCount} distinct debit days were recorded
+        in the configured trailing {runway.trailingWindowDays} days. It needs at least
+        {" "}{runway.minimumDebitDays} debit days before using a rate.
+      </p>
+    );
+  }
+
+  const copy = {
+    config: "the configured trailing window could not be read",
+    pause: "the pause state could not be read",
+    balance: "the ledger-derived balance could not be read",
+    ledger: "the ledger debit history could not be read",
+  } as const;
+  return (
+    <p className="muted" data-testid={`runway-read-unavailable-${runway.component}`}>
+      Runway estimate unavailable because {copy[runway.component]}. No estimate is shown.
+    </p>
+  );
+}
+
+function BrainAssetSummary({ assets }: { assets: UsageBrainAssets }) {
+  if (assets.state === "no_profile") {
+    return <p className="muted">Create or select a creator profile to see its brain assets.</p>;
+  }
+  if (assets.state === "unavailable") {
+    return <p className="muted">Brain-asset counts could not be read right now.</p>;
+  }
+  return (
+    <>
+      <p data-testid="usage-brain-asset-counts">
+        <span className="num">{assets.brainVersions}</span> brain versions, {" "}
+        <span className="num">{assets.testedRules}</span> tested rules, {" "}
+        <span className="num">{assets.loggedResults}</span> logged results, and {" "}
+        <span className="num">{assets.feedback}</span> feedback entries.
+      </p>
+      <p className="muted">These are your creator brain assets, including history.</p>
+    </>
+  );
+}
+
 export function UsageView(props: UsageViewProps) {
   const {
     balance,
     burn,
     burnByMode,
     period,
+    runway,
+    brainAssets,
     rows,
     moreRows,
     paused,
@@ -327,7 +425,6 @@ export function UsageView(props: UsageViewProps) {
     error,
     billingHref,
   } = props;
-  const spend = spendVisibility(rows, moreRows);
   // The noun the burn TOTAL uses in-sentence, from the period the page
   // derived — never from a default. `BURN_PERIOD_COPY` is a total `Record`
   // over the two kinds, so there is no third answer to fall back to, and the
@@ -440,7 +537,19 @@ export function UsageView(props: UsageViewProps) {
 
       <div className="panel" data-testid="days-to-empty">
         <h2 style={{ marginTop: 0 }}>Days to empty</h2>
-        <Note>{daysToEmptyNote(spend)}</Note>
+        <RunwayPanel runway={runway} />
+      </div>
+
+      <div className="panel" data-testid="usage-brain-assets">
+        <h2>Brain assets</h2>
+        <BrainAssetSummary assets={brainAssets} />
+        <a
+          href="/brain"
+          className={buttonClass("secondary")}
+          style={{ minHeight: "44px", minWidth: "44px" }}
+        >
+          View your Creator Brain
+        </a>
       </div>
 
       <div className="panel" data-testid="ledger">
@@ -474,10 +583,24 @@ export function UsageView(props: UsageViewProps) {
             live Stripe keys to be worth anything. The portal link IS the M1
             slice; the brain-as-asset panel that shares this page lands at M2. */}
         {portal.available ? (
-          <form action={portal.action}>
+          <form action={portal.action} data-testid="usage-portal">
             {/* Send a refusal back HERE rather than to the billing page the
                 reader did not ask for. The action allowlists this value. */}
             <input type="hidden" name="from" value="/usage" />
+            <label style={{ display: "block", marginBottom: "0.5rem" }}>
+              Current password{" "}
+              <input
+                type="password"
+                name="password"
+                autoComplete="current-password"
+                required
+                aria-describedby="usage-portal-reauth-help"
+              />
+            </label>
+            <p className="muted" id="usage-portal-reauth-help">
+              Required to confirm this billing change. The proof applies only to
+              this signed-in session and expires after 10 minutes.
+            </p>
             <button type="submit" className={buttonClass("primary")}>
               Open the Customer Portal
             </button>

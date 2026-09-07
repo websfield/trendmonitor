@@ -10,7 +10,10 @@
 // EVERY DOCUMENT HERE IS WRITTEN TO `fixtures.ts`'s DISCIPLINE: no digits, no
 // dates, no currency, so a mode fixture that comes back dirty is dirty for the
 // reason the test is about rather than for a specific nobody supplied.
-import { type GenerationContext } from "../../src/assemble";
+import {
+  type GenerationContext,
+  type SpinReferenceMechanism,
+} from "../../src/assemble";
 import { MODE_IDS, type ModeId } from "../../src/modes";
 
 import { CLEAN_HOOKS } from "./fixtures";
@@ -42,6 +45,39 @@ export const SEEDED_CONTEXT: GenerationContext = {
   // An ORIGINAL, said out loud: `unvouchedSpecifics` is required, so a fixture
   // cannot inherit "nothing is unvouched" from a missing key.
   unvouchedSpecifics: [],
+};
+
+/**
+ * The mechanism a Spin adapts (slice 8c, R-97) — the autopsy's four-field
+ * projection and nothing else of the reference.
+ *
+ * WRITTEN TO THE SAME DISCIPLINE AS EVERY FIXTURE HERE: no digits, no dates,
+ * no currency, no proper nouns — so a spin that comes back dirty is dirty for
+ * the reason its test is about. `spin-reference.test.ts` keeps its OWN
+ * mechanism that deliberately plants specifics; this one is the clean one the
+ * per-mode walk runs against.
+ *
+ * It shares NO content word with `mode-checks.test.ts`'s
+ * `DISTANT_SPIN_REFERENCE` hook or `pipeline.test.ts`'s `SPIN_REFERENCE` hook
+ * beyond grammar words, so a prompt that contained the gate's hook could not
+ * pass the "gate's hook never reaches the prompt" witness by coincidence.
+ */
+export const SPIN_MECHANISM: SpinReferenceMechanism = {
+  hookMechanic:
+    "opens on a regret the viewer has already paid for, then names the shortcut that caused it",
+  beats: [
+    "show the shortcut being taken as if it were sensible",
+    "turn on the hidden cost the shortcut was hiding all along",
+    "return to the constraint that made the shortcut tempting",
+  ],
+  ending: "name the one preparation step that would have prevented the regret",
+  followTrigger: "promise to compare a slower choice next time",
+};
+
+/** The seeded context WITH the mechanism — what the gated mode requires. */
+export const SPIN_CONTEXT: GenerationContext = {
+  ...SEEDED_CONTEXT,
+  reference: { mechanism: SPIN_MECHANISM },
 };
 
 /**
@@ -224,7 +260,13 @@ export const CONTEXT_FOR: Record<ModeId, GenerationContext> =
   Object.fromEntries(
     MODE_IDS.map((m) => [
       m,
-      m === "sourceToReel" ? SOURCE_CONTEXT : SEEDED_CONTEXT,
+      // The gated mode carries its mechanism (R-97) and no other mode may —
+      // `assertReferenceMechanism` refuses both directions at assembly.
+      m === "sourceToReel"
+        ? SOURCE_CONTEXT
+        : m === "analyseAndSpin"
+          ? SPIN_CONTEXT
+          : SEEDED_CONTEXT,
     ])
   ) as Record<ModeId, GenerationContext>;
 

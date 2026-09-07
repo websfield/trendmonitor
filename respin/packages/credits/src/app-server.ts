@@ -12,6 +12,7 @@
 import {
   getServerDb,
   getServerRunSlots,
+  type ReauthenticatedSessionRef,
   type VerifiedWorkspaceId,
   type WorkspaceScope,
 } from "@respin/db";
@@ -19,6 +20,7 @@ import { deriveBalance, type BalanceView } from "./balance";
 import {
   getWorkspaceBillingState,
   hasLiveStripeSubscription,
+  mayChargeOffSession,
   type BillingState,
 } from "./state";
 // THE AUTHORITY, not the mirror on `BillingState` (see `hasOpenPause` below).
@@ -26,11 +28,13 @@ import { hasOpenPause } from "./pause";
 import { LedgerIntegrityError } from "./fold";
 import {
   ClockSkewError,
+  AutoTopupReconciliationRequiredError,
   InsufficientCreditsError,
   PostCallDebitError,
   UnchargedAttemptCapError,
 } from "./errors";
 import {
+  AutoTopupAttemptIntegrityError,
   AutoTopupShortfallError,
   AutoTopupUnnamedRefusalError,
 } from "./stripe/auto-topup";
@@ -44,8 +48,10 @@ import {
   setAutoTopup,
   AlreadySubscribedError,
   AutoTopupCapError,
+  BillingReauthenticationError,
   BillingRoleError,
   CheckoutInFlightError,
+  CheckoutReconciliationRequiredError,
   InvoiceRecoveryUnavailableError,
   NoLiveSubscriptionError,
   NoStripeCustomerError,
@@ -64,9 +70,19 @@ import {
   PackPriceUnavailableError,
 } from "./stripe/pack-price";
 import {
+  AutoTopupAuthorityKeyError,
   isStripeConfigured,
+  StripeAccountBindingError,
   StripeNotConfiguredError,
 } from "./stripe/adapter";
+import { AutoTopupAuthoritySignatureError } from "./stripe/auto-topup-authority";
+import {
+  AutoTopupRolloutError,
+  getAutoTopupProtocolState,
+  type AutoTopupProtocolState,
+} from "./stripe/auto-topup-rollout";
+import { TierCheckoutRolloutError } from "./stripe/tier-checkout-rollout";
+import { TierCheckoutAuthorityError } from "./stripe/tier-checkout-authority";
 import { CustomerMappingLostError } from "./stripe/customers";
 import { createProfile } from "./profiles";
 import {
@@ -91,6 +107,8 @@ import {
   GenerationPayloadMismatchError,
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
+  GenerationUnchargedCostCapError,
+  PerformanceLearningConfigUnavailableError,
   RevisionParentError,
   UnpricedOperationError,
 } from "./errors";
@@ -100,9 +118,11 @@ import {
   type GenerateResult,
 } from "./generate";
 import {
-  ModeNotBuiltYetError,
   ModeNotInPlanError,
   UnknownEntitlementTierError,
+  performanceLearningEntitlementFor,
+  trackedNicheEntitlement,
+  type PerformanceLearningEntitlement,
 } from "./mode-access";
 import { GenerationAttemptStateError } from "@respin/db";
 // THE PIPELINE'S OWN REFUSALS, RE-EXPORTED AS VALUES (the `LlmError`
@@ -117,9 +137,27 @@ import {
   KillTestError,
   NoCreatorRulesError,
   ScriptOutputError,
+  SpinSimilarityError,
   UnknownModeError,
 } from "@respin/modes";
 import { ConfigNotMigratedError, getActiveConfig } from "@respin/config";
+// Slice 8c (R-98): the pasted reference's money, and its two refusals.
+import {
+  pastedReferenceQuote,
+  settleParkedAutopsies,
+  submitPastedReference,
+  type PastedReferenceQuote,
+  type SettleParkedAutopsiesResult,
+  type SubmitPastedReferenceResult,
+} from "./pasted-reference";
+import { PastedReferenceInputError, PastedReferenceTierError } from "./errors";
+import { RefundSourceNeverExpiresError } from "./ledger";
+import type { PastedReferenceIntakeInput } from "@respin/db";
+import {
+  assertUsageRunwayScope,
+  usageRunwayFor,
+  type UsageRunwayResult,
+} from "./days-to-empty";
 
 /**
  * Two PURE reads app/** needs to render honestly, deliberately re-exported as
@@ -136,7 +174,7 @@ import { ConfigNotMigratedError, getActiveConfig } from "@respin/config";
  * - `isStripeConfigured` answers the keyless question the same way the adapter
  *   does, so the page's disabled state and the action's refusal cannot drift.
  */
-export { hasLiveStripeSubscription, isStripeConfigured };
+export { hasLiveStripeSubscription, isStripeConfigured, mayChargeOffSession };
 // Slice 2b, R7 / slice 6, R17a: the burn-period authority AND the vocabulary
 // for naming it to the creator — pure, no DB call, so plain re-exports like the
 // two above rather than `respinCredits` methods. `BURN_PERIOD_COPY` travels
@@ -177,7 +215,11 @@ export type { ModeOffer } from "./mode-access";
 // Pro and Studio only), and `UnknownEntitlementTierError` above is what it
 // raises rather than returning `undefined`, which `assertEntitled` would treat
 // as "not included" by accident rather than by decision.
-export { privateFrameworkEntitlement } from "./mode-access";
+export {
+  performanceLearningEntitlementFor,
+  privateFrameworkEntitlement,
+  trackedNicheEntitlement,
+} from "./mode-access";
 // Slice 7, R8 — WHAT A PRESS WILL COST, BEFORE THE PRESS, for a screen that
 // now offers six modes and a revision instead of one fixed price.
 //
@@ -244,9 +286,17 @@ export { onboardingBrainPrices } from "./included-build";
 export {
   AlreadySubscribedError,
   AutoTopupCapError,
+  BillingReauthenticationError,
   BillingRoleError,
   CheckoutInFlightError,
+  CheckoutReconciliationRequiredError,
   ClockSkewError,
+  AutoTopupReconciliationRequiredError,
+  AutoTopupAuthorityKeyError,
+  AutoTopupAuthoritySignatureError,
+  AutoTopupRolloutError,
+  TierCheckoutRolloutError,
+  TierCheckoutAuthorityError,
   CustomerMappingLostError,
   LedgerIntegrityError,
   NoLiveSubscriptionError,
@@ -254,6 +304,7 @@ export {
   NotPausedError,
   PauseLengthError,
   StripeNotConfiguredError,
+  StripeAccountBindingError,
   StripeSessionUrlMissingError,
   UnknownTierPriceError,
   // Audit 2026-08-17 remediation (R1). Each is reachable from a facade method,
@@ -301,6 +352,7 @@ export {
   // `AutoTopupShortfallError` is the anonymous `new Error` the same rule
   // forced into a class, one file over.
   InsufficientCreditsError,
+  AutoTopupAttemptIntegrityError,
   AutoTopupShortfallError,
   AutoTopupUnnamedRefusalError,
   // Slice 3 — the composed voice inference. Both are reachable from
@@ -318,9 +370,8 @@ export {
   BrainPointerDivergenceError,
   // Slice 6 — every refusal `respinCredits.generate` can raise. The four
   // groups say different things and the studio screen has to tell them apart:
-  // what the plan includes (`ModeNotInPlanError`) vs what we have shipped
-  // (`ModeNotBuiltYetError`); what the creator must do first
-  // (`BrainNotActivatedError`); what a repeated submission means
+  // what the plan includes (`ModeNotInPlanError`); what the creator must do
+  // first (`BrainNotActivatedError`); what a repeated submission means
   // (`GenerationInFlightError`, `GenerationAlreadyRefusedError`,
   // `GenerationPayloadMismatchError`); and the two that mean money moved or
   // may have (`GenerationRecoveryRequiredError`, `PostCallDebitError` above).
@@ -331,7 +382,7 @@ export {
   GenerationPayloadMismatchError,
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
-  ModeNotBuiltYetError,
+  GenerationUnchargedCostCapError,
   ModeNotInPlanError,
   UnpricedOperationError,
   // Slice 7 (R5c/REQ-D05) — no tier→entitlement answer for this plan. Not a
@@ -344,11 +395,32 @@ export {
   // Raised BEFORE the vendor call, so the copy's job is to say that nothing was
   // spent and which output to reopen, never to sell anything.
   RevisionParentError,
+  // Slice 8c (R-98) — `respinCredits.submitPastedReference`'s two refusals of
+  // its own (the rest it raises are already above: `InsufficientCreditsError`,
+  // `WorkspacePausedError` via @respin/db, `ClockSkewError`,
+  // `LedgerIntegrityError`; `ProfileRoleError` and `PostContentError` are
+  // @respin/db's and reach `billing-errors.ts` through that facade). The tier
+  // refusal names the plan and does not sell; the input refusal names the
+  // FIELD so the panel can point at the control.
+  PastedReferenceTierError,
+  PastedReferenceInputError,
+  PerformanceLearningConfigUnavailableError,
+  // ...and `settleParkedAutopsies` -> `refundCredits`' one typed refusal: the
+  // original debit consumed only never-expiring credits (an admin goodwill
+  // adjust), so no refund expiry can be computed (D-M1-7). An operator's case,
+  // reachable from a page load, so it needs copy rather than a 500.
+  RefundSourceNeverExpiresError,
   // ...and the pipeline's, from `@respin/modes`.
   GenerationAssemblyError,
   KillTestError,
   NoCreatorRulesError,
   ScriptOutputError,
+  // RE-EXPORTED 2026-09-04 so `billing-errors.ts` can map it. Both money and
+  // compliance reviewers found independently that a `SpinSimilarityError`
+  // rendered "Something went wrong": `app/**` may not import `@respin/modes`
+  // (R-64), so without this line the class is unreachable to the copy table
+  // and `billingErrorCode` falls through to `unknown`.
+  SpinSimilarityError,
   UnknownModeError,
 };
 export type {
@@ -358,14 +430,25 @@ export type {
   GenerateParams,
   GenerateResult,
   InferVoiceResult,
+  PastedReferenceIntakeInput,
+  PastedReferenceQuote,
+  PerformanceLearningEntitlement,
+  SettleParkedAutopsiesResult,
+  SubmitPastedReferenceResult,
+  UsageRunwayResult,
   // Still exported although the facade method that took it is gone:
   // `InferVoiceResult.run` IS a `RunInferenceResult`, so app/** needs the type
   // to name the metering facts it renders. `RunInferenceParams` left with the
   // method — a params type for a call app/** can no longer make.
   RunInferenceResult,
+  AutoTopupProtocolState,
 };
 
 export const respinCredits = {
+  /** Read-only projection used to distinguish an active v1 opt-in from a
+   * preference staged during expansion/drain. */
+  getAutoTopupProtocolState: (): Promise<AutoTopupProtocolState> =>
+    getAutoTopupProtocolState(getServerDb()),
   /**
    * Slice 1's profile creation. On THIS facade rather than on `respinDb`, and
    * the reason is the layering R-30 constraint 2 fixes: the cap is priced off
@@ -476,13 +559,73 @@ export const respinCredits = {
       new Date()
     );
   },
+  /**
+   * Slice 8c (R-98) — WHAT A PASTE WILL COST, for the `/trends` panel: the
+   * active document's `creditCosts.autopsy`, the derived balance, the tier and
+   * whether the writer would refuse on tier or pause. A QUOTE, not a decision
+   * — the writer below is the authority at the moment of the press.
+   */
+  pastedReferenceQuote: (workspaceId: VerifiedWorkspaceId, at: Date): Promise<PastedReferenceQuote> =>
+    pastedReferenceQuote(getServerDb(), workspaceId, at),
+  /**
+   * Slice 8c (R-98) — THE PASTE, AND ITS DEBIT, IN ONE TRANSACTION. On this
+   * facade and not on `respinDb` for the reason `createProfile` is: the tier
+   * gate, the price and the ledger are this package's. `new Date()` enters
+   * here, as it does for `createProfile`, so the operation can be tested at a
+   * clock boundary. The stage-A intake it composes has NO bind of its own on
+   * `respinDb` any more — a screen that reached it would paste for free.
+   */
+  submitPastedReference: (
+    scope: WorkspaceScope,
+    profileId: string,
+    input: PastedReferenceIntakeInput
+  ): Promise<SubmitPastedReferenceResult> =>
+    submitPastedReference(getServerDb(), scope, profileId, input, new Date()),
+  /**
+   * Slice 8c (R-98) — THE ONE WRITE `/trends` MAKES ON LOAD: return the price
+   * of every parked pasted-reference claim not yet refunded, once per claim.
+   * Idempotent, creator-scoped, deferred (not refused) during an open pause.
+   */
+  settleParkedAutopsies: (scope: WorkspaceScope, profileId: string): Promise<SettleParkedAutopsiesResult> =>
+    settleParkedAutopsies(getServerDb(), scope, profileId),
   getBalance: (workspaceId: VerifiedWorkspaceId): Promise<BalanceView> =>
     deriveBalance(getServerDb(), workspaceId),
+  /** C8's one-snapshot balance/runway read for the usage surface. */
+  usageRunwayFor: (scope: WorkspaceScope): Promise<UsageRunwayResult> => {
+    assertUsageRunwayScope(scope);
+    return usageRunwayFor(getServerDb(), scope);
+  },
   getBillingState: (
     workspaceId: VerifiedWorkspaceId,
     at: Date
   ): Promise<BillingState> =>
     getWorkspaceBillingState(getServerDb(), workspaceId, at),
+  /**
+   * C2 / R-112: the sole server facade for performance-learning access.
+   * The caller supplies only workspace identity and time; tier and config are
+   * resolved behind this boundary from their authorities.
+   */
+  performanceLearningEntitlementFor: (
+    workspaceId: VerifiedWorkspaceId,
+    at: Date
+  ): Promise<PerformanceLearningEntitlement> =>
+    performanceLearningEntitlementFor(getServerDb(), workspaceId, at),
+  /**
+   * THE TRACKED-NICHE ALLOWANCE for this workspace's resolved tier, read from
+   * the ACTIVE CONFIG DOCUMENT (R-95: config, not a code map) — the only place
+   * a screen may obtain the `entitlement` that `respinDb.trackNiche` requires
+   * with no default. `app/**` cannot read `@respin/config`, so the read lives
+   * here, beside the tier authority it is keyed on.
+   */
+  trackedNicheEntitlementFor: async (
+    workspaceId: VerifiedWorkspaceId,
+    at: Date
+  ): Promise<ReturnType<typeof trackedNicheEntitlement>> => {
+    const db = getServerDb();
+    const billing = await getWorkspaceBillingState(db, workspaceId, at);
+    const { content } = await getActiveConfig(db);
+    return trackedNicheEntitlement(billing.tier, content.trackedNiches);
+  },
   /**
    * IS THIS WORKSPACE PAUSED — the AUTHORITY, for screens that offer a control
    * a paused server will refuse.
@@ -510,23 +653,36 @@ export const respinCredits = {
     scope: WorkspaceScope,
     tier: "creator" | "pro" | "studio",
     email: string,
-    urls: CheckoutUrls
-  ) => createTierCheckoutUrl(getServerDb(), scope, tier, email, urls),
+    urls: CheckoutUrls,
+    authority: ReauthenticatedSessionRef
+  ) => createTierCheckoutUrl(getServerDb(), scope, tier, email, urls, authority),
   createPackCheckoutUrl: (
     scope: WorkspaceScope,
     email: string,
-    urls: CheckoutUrls
-  ) => createPackCheckoutUrl(getServerDb(), scope, email, urls),
-  createPortalUrl: (scope: WorkspaceScope, returnUrl: string) =>
-    createPortalUrl(getServerDb(), scope, returnUrl),
-  createInvoiceRecoveryUrl: (scope: WorkspaceScope) =>
-    createInvoiceRecoveryUrl(getServerDb(), scope),
-  pauseSubscription: (scope: WorkspaceScope, months: number) =>
-    pauseSubscription(getServerDb(), scope, months, new Date()),
-  resumeSubscription: (scope: WorkspaceScope) =>
-    resumeSubscription(getServerDb(), scope),
+    urls: CheckoutUrls,
+    authority: ReauthenticatedSessionRef
+  ) => createPackCheckoutUrl(getServerDb(), scope, email, urls, authority),
+  createPortalUrl: (
+    scope: WorkspaceScope,
+    returnUrl: string,
+    authority: ReauthenticatedSessionRef
+  ) => createPortalUrl(getServerDb(), scope, returnUrl, authority),
+  createInvoiceRecoveryUrl: (
+    scope: WorkspaceScope,
+    authority: ReauthenticatedSessionRef
+  ) => createInvoiceRecoveryUrl(getServerDb(), scope, authority),
+  pauseSubscription: (
+    scope: WorkspaceScope,
+    months: number,
+    authority: ReauthenticatedSessionRef
+  ) => pauseSubscription(getServerDb(), scope, months, new Date(), authority),
+  resumeSubscription: (
+    scope: WorkspaceScope,
+    authority: ReauthenticatedSessionRef
+  ) => resumeSubscription(getServerDb(), scope, authority),
   setAutoTopup: (
     scope: WorkspaceScope,
-    opts: { enabled: boolean; monthlyCapCents?: number }
-  ) => setAutoTopup(getServerDb(), scope, opts),
+    opts: { enabled: boolean; monthlyCapCents?: number },
+    authority: ReauthenticatedSessionRef
+  ) => setAutoTopup(getServerDb(), scope, opts, authority),
 };

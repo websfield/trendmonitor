@@ -61,12 +61,13 @@ import {
   type OnboardingInterviewDraft,
 } from "./onboarding-schema";
 import {
+  assertFreshProfileScopeInTx,
   ProfileScope,
   writeCapabilities,
   type SourceEvidenceEntry,
   type WorkspaceScope,
 } from "./with-workspace";
-import { CHECK, METRIC_DIRECTIONS } from "./brain-content";
+import { CHECK, METRIC_DIRECTIONS, metricKeyFromLabel } from "./brain-content";
 import type { BrainDocReason } from "./brain-reason";
 import { InterviewAnswerError, InterviewDraftSubmittedError, ProfileRoleError } from "./errors";
 
@@ -224,7 +225,7 @@ async function readDraftRow(
  * today's caller happens to be is the shape that produced that finding.
  */
 function assertMayAnswer(role: string, act: string): void {
-  if (role === "viewer") throw new ProfileRoleError(act, role);
+  if (role !== "owner") throw new ProfileRoleError(act, role, "owner");
 }
 
 /**
@@ -253,6 +254,12 @@ export async function saveInterviewDraft(
     workspaceId: profileScope.workspaceId as string,
   };
   return db.transaction(async (tx) => {
+    await assertFreshProfileScopeInTx(
+      tx,
+      profileScope,
+      ["owner"],
+      "save answers to this creator's interview"
+    );
     // THE SAME LOCK, THE SAME KEY, AND FOR THE SAME REASON `writeBrainDoc` /
     // `confirmBrainDocFields` / `activateBrainDoc` / `submitInterview` all
     // take it first (`with-workspace.ts`): this file's own read-merge-write
@@ -310,12 +317,15 @@ export async function getInterviewDraft(
   profileId: string
 ): Promise<OnboardingInterviewDraft | null> {
   const profileScope = await ProfileScope.mint(db, scope, profileId);
-  const row = await readDraftRow(
-    db,
-    profileScope.profileId as string,
-    profileScope.workspaceId as string
-  );
-  return row ?? null;
+  return db.transaction(async (tx) => {
+    await assertFreshProfileScopeInTx(tx, profileScope);
+    const row = await readDraftRow(
+      tx,
+      profileScope.profileId as string,
+      profileScope.workspaceId as string
+    );
+    return row ?? null;
+  });
 }
 
 export type SubmitInterviewResult = {
@@ -327,23 +337,25 @@ export type SubmitInterviewResult = {
 const STRATEGY_REASON: BrainDocReason = { code: "onboarding_inference" };
 const KILLTEST_REASON: BrainDocReason = { code: "onboarding_inference" };
 
-/**
- * Turn a decided label into a legible (but NEVER load-bearing) slug.
+/*
+ * THE PRIVATE SLUG HELPER THAT STOOD HERE HAS MOVED to `brain-content.ts` as
+ * `metricKeyFromLabel` (slice 9a BLOCK, 2026-09-04). Its old name is not
+ * repeated here: `tests/symbol-citations.test.ts` refuses a comment that names
+ * a symbol a reader cannot find, and that is the right rule — the history is
+ * worth keeping, the dead identifier is not.
  *
- * `metric.key` is `serverOwned` in `brain-content.ts`, which means
- * `parseBrainContent` STRIPS whatever this writes before it is ever stored —
- * see that file's own header. This function exists only so a reader of the
- * PRE-STRIP payload (a test, a log line) sees something legible rather than
- * a constant; no code anywhere reads the stored value back.
+ * Its docblock said the slug "is never read back" and that the function
+ * "exists only so a reader of the PRE-STRIP payload sees something legible".
+ * BOTH HALVES WENT FALSE when slice 9a made the metric's identity
+ * load-bearing: `declaredMetricOf` derives the same slug at read time, and it
+ * decides whether a creator can log a result at all.
+ *
+ * The STRIP is unchanged and still correct — `metric.key` is `serverOwned`,
+ * `parseBrainContent` removes it, and what this module writes into the
+ * pre-strip payload is still never stored. What changed is that the slug RULE
+ * is now shared, so the identity a result is filed under and the identity the
+ * interview names are one function instead of two copies.
  */
-function slugifyForKey(label: string): string {
-  const slug = label
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug.length > 0 ? slug : "metric";
-}
 
 /** One decided answer's stored, cited rows — collected before content is built. */
 type RowsByField = Map<InterviewFieldKey, OnboardingInput[]>;
@@ -441,7 +453,9 @@ function buildDocContents(
   const metric: Record<string, unknown> = {
     key: (() => {
       const labelAnswer = answers.metricLabel;
-      return labelAnswer?.status === "decided" ? slugifyForKey(labelAnswer.value) : "unset";
+      return labelAnswer?.status === "decided"
+        ? metricKeyFromLabel(labelAnswer.value)
+        : "unset";
     })(),
     label: scalarValue("metricLabel"),
     unit: scalarValue("metricUnit"),
@@ -513,6 +527,12 @@ export async function submitInterview(
 
   return db.transaction(async (tx) => {
     const txScope = await ProfileScope.mint(tx, scope, profileId);
+    await assertFreshProfileScopeInTx(
+      tx,
+      txScope,
+      ["owner"],
+      "submit this creator's interview"
+    );
     const caps = writeCapabilities(txScope);
     const ids = {
       profileId: txScope.profileId as string,

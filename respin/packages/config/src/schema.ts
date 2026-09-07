@@ -121,6 +121,73 @@ export const respinConfigV1 = z
       })
       .strict()
       .default({ free: 1, creator: 1, pro: 1, studio: 5 }),
+    // How many niches a tier may TRACK (PRD §4G pricing table, "Trend monitor"
+    // row; REQ-E05 — Free: digest only, so 0). Slice 8 fix pass, R-95: this
+    // was `TIER_TRACKED_NICHES` in `packages/credits/src/mode-access.ts`, a
+    // numeric per-tier allowance in code, which R-37's rule and that file's
+    // own header both say belongs here beside `profileCaps` (billing gate
+    // CHANGE 3, 2026-09-03). Same shape, same numbers, same A-9 reason for the
+    // `.default(...)`: a stored document written before this key existed
+    // must still parse, so DEPLOY CODE FIRST, then `migrate-config`.
+    trackedNiches: z
+      .object({
+        free: z.number().int().min(0),
+        creator: z.number().int().min(0),
+        pro: z.number().int().min(0),
+        studio: z.number().int().min(0),
+      })
+      .strict()
+      .default({ free: 0, creator: 1, pro: 3, studio: 10 }),
+    // PERFORMANCE-LEARNING ACCESS (slice 9b, R-112 / PRD §4G).
+    //
+    // The exhaustive tier map is configuration, not tier-shaped code. A
+    // caller resolving billing state must use the exact entry for the
+    // authoritative tier; a missing tier is therefore a parse failure rather
+    // than a guessed downgrade. The custom-inversion witness deliberately
+    // makes Free `full` and Creator `view_only` to prove the reader follows
+    // this document instead of hard-coding paid = full.
+    //
+    // `.default(...)` preserves the ordered rollout: migration 0033 first,
+    // then code can read a pre-materialisation document, and only then does
+    // `config:migrate` store the key. Once stored, an old strict parser is not
+    // rollback-safe; rollback must retain this parser or roll forward.
+    performanceLearning: z
+      .object({
+        free: z.enum(["view_only", "full"]),
+        creator: z.enum(["view_only", "full"]),
+        pro: z.enum(["view_only", "full"]),
+        studio: z.enum(["view_only", "full"]),
+      })
+      .strict()
+      .default({
+        free: "view_only",
+        creator: "full",
+        pro: "full",
+        studio: "full",
+      }),
+    // REQ-G07's conservative monthly-burn runway window (slice 9b).
+    //
+    // Thirty trailing days matches the product's monthly-burn context. Three
+    // distinct non-zero debit days is the explicit repeated-use minimum: one
+    // or two days are too sensitive to one session or retry pattern. This is
+    // a product threshold, not a statistical-confidence claim, so both values
+    // live in versioned config and remain editable at /admin/config.
+    //
+    // The relationship is enforced here as well as at the projection: an
+    // impossible minimum wider than its window is a drifted config document.
+    // The object default has the same rollout/rollback semantics as
+    // `performanceLearning` above.
+    daysToEmpty: z
+      .object({
+        trailingWindowDays: z.number().int().positive(),
+        minimumDebitDays: z.number().int().positive(),
+      })
+      .strict()
+      .refine((value) => value.minimumDebitDays <= value.trailingWindowDays, {
+        message:
+          "daysToEmpty.minimumDebitDays must be less than or equal to daysToEmpty.trailingWindowDays",
+      })
+      .default({ trailingWindowDays: 30, minimumDebitDays: 3 }),
     // HOW MANY MODEL CALLS ONE WORKSPACE MAY HAVE IN FLIGHT AT ONCE
     // (tech-spec §6, production BLOCK 4 of 2026-08-28).
     //
@@ -246,20 +313,31 @@ export const respinConfigV1 = z
     // generation is settled, no debit is taken, and all three calls are
     // billable rows under ONE attempt id.
     //
-    //   draft + rewrite   2 x 4000 x 15000 = 120,000,000 nano-USD
-    //   scoring (Haiku)   1 x 4000 x  5000 =  20,000,000 nano-USD
-    //   per counted attempt                = 140,000,000 = 0.14 USD
-    //   x 10                               = 1.40 USD per profile per window
+    //   draft + rewrite   2 x 12000 x 15000 = 360,000,000 nano-USD
+    //   scoring (Haiku)   1 x 12000 x  5000 =  60,000,000 nano-USD
+    //   per counted attempt                 = 420,000,000 = 0.42 USD
+    //   x 10                                = 4.20 USD per profile per window
+    //
+    // TRIPLED ON 2026-09-04, and the increase is REAL rather than a
+    // recalculation: `maxOutputTokens` went 4,000 -> 12,000 because the first
+    // `analyseAndSpin` generation that ever completed against a real vendor
+    // needed 5,060 output tokens and every spin was truncating. This ceiling
+    // is the price of the mode working at all, and 10 uncharged attempts is
+    // now 4.20 USD of output exposure per profile per window rather than 1.40.
+    // `maxUnchargedBillableAttempts` was sized against the old figure and has
+    // NOT been re-derived against this one — that is an open billing decision,
+    // not a settled number, and it is recorded as such rather than adjusted
+    // here in passing.
     //
     // AND INPUT IS ON TOP OF THAT AND NO KEY HERE BOUNDS IT. `maxOutputTokens`
     // bounds the REPLY only; every one of those three calls also pays input at
     // `inputNanoUsdPerToken` (3000 Sonnet / 1000 Haiku), and the rewrite's
     // prompt CONTAINS draft 1's whole reply while the scoring prompt contains
-    // the rendered draft. So 1.40 USD of output ceiling per profile per window
+    // the rendered draft. So 4.20 USD of output ceiling per profile per window
     // is a FLOOR on the exposure, not the exposure — the honest form of this
     // number, and the reason the old 0.60 was wrong in the dangerous
     // direction. Ours and never the creator's, either way.
-    // `generation-pricing.test.ts` recomputes the 140,000,000 from the seeded
+    // `generation-pricing.test.ts` recomputes the 420,000,000 from the seeded
     // document, so a price or ceiling change reddens a test rather than
     // leaving this arithmetic quietly stale.
     //
@@ -339,6 +417,36 @@ export const respinConfigV1 = z
     generation: z
       .object({
         maxUnchargedBillableAttempts: z.number().int().min(1).default(10),
+        /**
+         * THE SAME BOUND, DENOMINATED IN MONEY (billing gate, 2026-09-04).
+         *
+         * The attempt cap is correctly sized and stays 10 — the count runs
+         * outside any lock, so the bound's accepted width is one burst of
+         * `concurrencyLimits.studio`, and re-deriving it downward would break
+         * it. What was wrong is the UNIT: this cap bounds spend and counted
+         * attempts, and the proof is that `llm.maxOutputTokens` moved 4,000 ->
+         * 12,000, the worst case per uncharged attempt went 0.14 -> 0.42 USD,
+         * and not one control noticed. On Free — no card required — ten
+         * attempts an hour is a floor of 100.80 USD per profile per day.
+         *
+         * The product already has the right shape one directory over: the
+         * autopsy worker reserves against `systemAutopsy.dailyCapMicroUsd`
+         * before it calls a vendor. The generation path had no money bound at
+         * all.
+         *
+         * 1,000,000 micro-USD = 1.00 USD per profile per window. UNMEASURED
+         * LAUNCH BOUND, chosen as roughly two worst-case uncharged attempts at
+         * today's ceiling rather than from observed data — it binds before the
+         * attempt cap when attempts are expensive and never binds when they are
+         * cheap. Revisit trigger: the first 200 uncharged billable attempts'
+         * measured cost, and it moves with `llm.maxOutputTokens` rather than
+         * being left behind by it, which is the whole point of the key.
+         *
+         * IT REPLACES NOTHING. A row whose `cost_state` is `unknown` carries a
+         * NULL cost and contributes zero to the sum, which understates in the
+         * dangerous direction — the attempt cap is what bounds those.
+         */
+        maxUnchargedBillableCostMicroUsd: z.number().int().min(1).default(1_000_000),
         unchargedAttemptWindowMinutes: z.number().int().min(1).default(60),
         frameworkContextCharBudget: z.number().int().min(1).default(20_000),
       })
@@ -354,9 +462,30 @@ export const respinConfigV1 = z
       // against it false, and the whole framework library silently dropped.
       .default({
         maxUnchargedBillableAttempts: 10,
+        maxUnchargedBillableCostMicroUsd: 1_000_000,
         unchargedAttemptWindowMinutes: 60,
         frameworkContextCharBudget: 20_000,
       }),
+    // Spin's requested lexical-change strictness. The pipeline clamps this to
+    // its code-owned refusal floor, so config can only tighten the hard gate.
+    similarity: z
+      .object({ strictness: z.number().finite().min(0).max(1).default(0.7) })
+      .strict()
+      .default({ strictness: 0.7 }),
+    // Sessionless autopsies spend product budget, not creator credits. The
+    // worker clamps this dial to its independent code ceiling, so a stored
+    // value can only tighten that release limit.
+    systemAutopsy: z
+      .object({
+        dailyCapMicroUsd: z
+          .number()
+          .int()
+          .min(0)
+          .max(Number.MAX_SAFE_INTEGER)
+          .default(100_000_000),
+      })
+      .strict()
+      .default({ dailyCapMicroUsd: 100_000_000 }),
     // THE MODEL LAYER (slice 2a, tech-spec §1 / R-5). Everything the
     // provider adapter needs that must be changeable without a deploy: which
     // model each class of operation uses, what each model costs us, and the
@@ -404,19 +533,34 @@ export const respinConfigV1 = z
         timeoutMs: z.number().int().positive(),
         // THE WHOLE CALL'S DEADLINE, RETRIES INCLUDED (production CHANGE 6).
         //
-        // `timeoutMs × (maxRetries + 1)` is 180s at the defaults below, plus
-        // the SDK's backoff — roughly 181s of a Next.js SERVER ACTION, against
-        // the < 45s full-script budget in tech-spec §7. Long before that a
-        // proxy cuts the browser's connection while the server keeps running,
-        // and the server still writes `model_usage` and still charges: the
-        // creator sees a dead page and a debit they cannot explain. A per-
-        // attempt timeout cannot express this bound, because the whole defect
-        // is that attempts ACCUMULATE.
+        // `timeoutMs × (maxRetries + 1)` is 360s at the defaults below, plus
+        // the SDK's backoff — that much of a Next.js SERVER ACTION if every
+        // attempt runs to its own timeout. Long before that a proxy cuts the
+        // browser's connection while the server keeps running, and the server
+        // still writes `model_usage` and still charges: the creator sees a dead
+        // page and a debit they cannot explain. A per-attempt timeout cannot
+        // express this bound, because the whole defect is that attempts
+        // ACCUMULATE. That is what this key is for and it is why it is 120s
+        // rather than 360s.
         //
-        // 40_000 rather than 45_000: the deadline has to leave room for the
-        // work either side of it inside the same budget — the pre-call reads
-        // and, more importantly, the `model_usage` commit and the debit, which
-        // run AFTER the vendor answers and must not be what breaches §7.
+        // THIS PARAGRAPH USED TO SAY 180s AND ARGUE FOR 40_000 (billing and
+        // code review, both 2026-09-04). It read "40_000 rather than 45_000:
+        // the deadline has to leave room for the work either side of it inside
+        // [tech-spec §7's < 45s] budget" — an argument for a number that had
+        // been changed out from under it, citing a budget the product does not
+        // meet. A real `analyseAndSpin` generation takes 53.2s, so 40_000
+        // aborted EVERY spin at 40,130 ms; §132's budget is now annotated as
+        // breached and open (`decisions.md` R-100) rather than quoted here as
+        // live. Golden rule 1: a claim recorded is verified against the file it
+        // names, and this one was not.
+        //
+        // THE UPPER BOUND IS NOT §7, IT IS THE AUTOPSY CLAIM LEASE. The same
+        // key is read by the sessionless worker, which spends it up to
+        // `AUTOPSY_VENDOR_CALLS_PER_ATTEMPT` times in sequence and REFUSES TO
+        // START above `AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS` (135,000). The
+        // usable window is therefore 53,233 < x <= 135,000, and
+        // `respin/tests/llm-deadline-coherence.test.ts` is what holds it across
+        // the three packages that cannot import one another.
         //
         // `.default(...)` for the A-9 reason every key here carries. It is a
         // NESTED key, and `mergeMissing` in `migrate-config.ts:151-172` walks
@@ -429,7 +573,7 @@ export const respinConfigV1 = z
         // deadline still bounds the call. A defaulted price would bill a
         // creator against a number nobody chose, which is why that one is a
         // refusal and this one is not.
-        overallDeadlineMs: z.number().int().positive().default(40_000),
+        overallDeadlineMs: z.number().int().positive().default(120_000),
         // Bounded, and 0 is legal (it means "no retry"). A retry shares the
         // calling attempt's `attempt_id`, so retries never inflate the
         // distinct-attempt count D-M2-2 prices against (R5).
@@ -456,11 +600,61 @@ export const respinConfigV1 = z
             outputNanoUsdPerToken: 5000,
           },
         },
-        maxOutputTokens: 4000,
-        timeoutMs: 60_000,
-        overallDeadlineMs: 40_000,
+        // MEASURED, NOT CHOSEN (2026-09-04). The first `analyseAndSpin`
+        // generation that ever ran to completion against the real vendor took
+        // 53.2 s and produced 5,060 output tokens. The shipped values were
+        // 40 s and 4,000 tokens, so EVERY spin failed — first at the deadline
+        // (`LlmUnavailableError`, 0 tokens, `unavailable`), and once past that
+        // at the ceiling (`LlmTruncatedError`, billed). Neither was reachable
+        // by any test: no generation had ever completed against a real vendor,
+        // and the failure only appears at the real reply's real length.
+        //
+        // 12,000 is 2.4x the measured natural length; 120 s is 2.3x the
+        // measured duration AND sits under
+        // `AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS` (135,000 — four sequential
+        // stages plus margin inside the autopsy claim lease), which a larger
+        // deadline would breach and the worker would refuse to start.
+        //
+        // `timeoutMs` MATCHES the deadline rather than sitting under it. It
+        // used to be 60 s against a 40 s deadline — a per-request timeout the
+        // outer bound could never let expire, so it was dead config that read
+        // like a control. Equal values mean one bound, honestly stated. It
+        // also means `maxRetries` cannot fit a second full-length attempt;
+        // that is stated rather than papered over, because a 53 s natural call
+        // never had room for a retry inside a lease-bounded deadline.
+        maxOutputTokens: 12_000,
+        timeoutMs: 120_000,
+        overallDeadlineMs: 120_000,
         maxRetries: 2,
       }),
+    /**
+     * Corrections `config:migrate` has already consumed on this database.
+     *
+     * BOOKKEEPING, NOT PRODUCT CONFIG, and it lives in the document because
+     * that is the only thing `config_versions` carries forward.
+     *
+     * WHY IT EXISTS (billing gate BLOCK, 2026-09-04). `CORRECTIONS` claimed it
+     * "fires only when … the active version was written by the product
+     * itself", and a reviewer falsified it against a real database in two
+     * ordinary `config:migrate` runs. Provenance was a property of the ACTIVE
+     * ROW, and every migrate pass appends its own result as `migrate-config` —
+     * a product author. So run 1 correctly skipped an operator's document,
+     * laundered it into a product-authored one, and run 2 overwrote their
+     * `maxOutputTokens`, `overallDeadlineMs` and `timeoutMs`. The function's
+     * own docstring says a second run is a no-op.
+     *
+     * A MARKER ALONE DOES NOT FIX THAT, and that is the part worth reading:
+     * after the laundering pass nothing can tell that 4000 was the operator's
+     * choice. So the rule is not "record what we changed" but **record what we
+     * DECLINED** — when a correction matches on an operator-authored document
+     * we consume its id and leave the value alone, which makes the operator's
+     * choice permanent instead of merely deferred by one run.
+     *
+     * An entry is a correction IDENTITY (`path:from→to`), not a path, so a
+     * value an operator later sets back to `from` is still never re-corrected,
+     * and adding a genuinely new correction for the same path still fires.
+     */
+    appliedCorrections: z.array(z.string()).default([]),
   })
   .strict();
 

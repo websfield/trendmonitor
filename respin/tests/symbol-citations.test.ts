@@ -51,7 +51,7 @@
 // while the list held 41 — the arithmetic was a measurement of one day and the
 // list has grown since (the root-level pass of R-82 added `poolOptions`), so a
 // number derived by subtraction here rots the first time an entry is added.
-// It holds 41 entries, and that count is BOUND: the case "the header's count
+// It holds 39 entries, and that count is BOUND: the case "the header's count
 // is the list's own length" reads this sentence out of this file and compares
 // it to `KNOWN_ABSENT.length`, exactly as `packages/llm/tests/no-text.test.ts`
 // binds its own header count. Each entry is a name this workspace deliberately
@@ -132,16 +132,24 @@ const PRESENCE_EXCLUDED = "tests/symbol-citations.test.ts";
  *     SDKs' error classes (`packages/llm/src/anthropic.ts` names the Python
  *     SDK as the owner of two of them).
  *   `OtherString`, `PriceUpdateParams` — Stripe SDK types.
- *   `RangeError`, `SyntaxError` — ECMAScript globals.
- *   `RequestInfo`, `RequestInit` — DOM lib types; the citing comment is ABOUT
- *     one of them not resolving under this package's `lib` setting.
+ *   `SyntaxError` — an ECMAScript global. `RangeError` is deliberately absent
+ *     from this registry because this workspace now declares its own runway
+ *     validation symbol under that name.
+ *   `RequestInfo` — a DOM lib type; the citing comment is ABOUT it not
+ *     resolving under this package's `lib` setting. (`RequestInit` left this
+ *     list when the Resend adapter started typing its fetch options with it.)
  *   `TaggedTemplateExpression`, `TemplateExpression` — TypeScript AST node
  *     names.
  *   `allowImportNames` — an ESLint `no-restricted-imports` option key; it
  *     lives in `eslint.config.mjs`, which is not TypeScript and not scanned.
- *   `getIPFromHeader`, `parseCIDR`, `isDevelopment`, `isTest` — Better Auth
- *     internals.
+ *   `getIPFromHeader`, `parseCIDR`, `isDevelopment` — Better Auth internals
+ *     (`isTest` left this list on 2026-09-03 when `tests/no-scraping.test.ts`
+ *     declared one of its own).
  *   `onTaskUpdate` — vitest/birpc internal.
+ *   `updateQueue` left this registry when the lifecycle writer scan began
+ *     enumerating pg-boss mutator names locally. It remains vendor-owned, but
+ *     words inside workspace string literals count as present by this scan's
+ *     stated contract.
  *   `unhandledRejection` — a Node process event name.
  *
  * DELIBERATELY ABSENT FROM THIS WORKSPACE — deleted, renamed, never built, or
@@ -184,9 +192,7 @@ const KNOWN_ABSENT: readonly string[] = [
   "InternalServerError",
   "OtherString",
   "PriceUpdateParams",
-  "RangeError",
   "RequestInfo",
-  "RequestInit",
   "RunInferenceState",
   "SyntaxError",
   "TaggedTemplateExpression",
@@ -207,7 +213,6 @@ const KNOWN_ABSENT: readonly string[] = [
   "isDevelopment",
   "isPaused",
   "isQueryApiRead",
-  "isTest",
   "markdownFor",
   "onTaskUpdate",
   "onboardingInputsForExport",
@@ -215,6 +220,11 @@ const KNOWN_ABSENT: readonly string[] = [
   "poolOptions",
   "priorAttempts",
   "reactivateProfile",
+  // react-dom 19.2.8 internal, named by `paste-panel.tsx`'s controlled-select
+  // comment. The claim it supports was verified by reading the INSTALLED
+  // package (code review round 1, C5), which is exactly why the name is not
+  // one of ours.
+  "requestFormReset",
   "runOnboardingInferenceAction",
   "setupStripeProducts",
   "trustGenerationId",

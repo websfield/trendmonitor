@@ -10,6 +10,8 @@ real vendor**. That has not happened. Engineering completion and evidence comple
 **Ledger:** [`respin-finish/ledger.md`](respin-finish/ledger.md) (slice 6 section) ·
 **Decisions:** `decisions.md` **R-63 … R-70**
 
+**Deferred vendor-walk instructions:** [`respin-vendor-acceptance-walks.md`](../runbooks/respin-vendor-acceptance-walks.md), §5.
+
 ---
 
 ## Report card

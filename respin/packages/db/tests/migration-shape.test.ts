@@ -130,6 +130,105 @@ describe("the block extractor itself, PLANTED (billing gate round 2 NOTE)", () =
   });
 });
 
+describe("migration 0033 (slice 9b): proposal persistence and summary classes", () => {
+  const sql = migrationSql("0033_");
+
+  it("adds the closed proposal vocabularies and both product-summary input classes", () => {
+    expect(sql).toContain(
+      `CREATE TYPE "public"."promotion_proposal_source" AS ENUM('results', 'feedback')`
+    );
+    expect(sql).toContain(
+      `CREATE TYPE "public"."promotion_proposal_status" AS ENUM('proposed', 'accepted', 'rejected', 'stale', 'superseded')`
+    );
+    expect(sql).toContain(
+      `CREATE TYPE "public"."promotion_proposal_strength" AS ENUM('early', 'repeated', 'corroborated')`
+    );
+    for (const value of ["result_summary", "feedback_summary"]) {
+      expect(sql).toContain(
+        `ALTER TYPE "public"."onboarding_input_class" ADD VALUE '${value}'`
+      );
+    }
+  });
+
+  it("does not use newly-added onboarding enum labels inside the same migration transaction", () => {
+    expect(sql).toContain(
+      `"onboarding_inputs"."input_class"::text NOT IN ('result_summary', 'feedback_summary')`
+    );
+    expect(sql).not.toContain(
+      `"onboarding_inputs"."input_class" NOT IN ('result_summary', 'feedback_summary')`
+    );
+  });
+
+  it("creates exactly the proposal row plus its two relational evidence joins", () => {
+    const created = [...sql.matchAll(/CREATE TABLE\s+"([a-z_]+)"/gi)].map(
+      (match) => match[1]
+    );
+    expect(created).toEqual([
+      "promotion_proposals",
+      "proposal_evidence_feedback",
+      "proposal_evidence_results",
+    ]);
+    const feedback = createTableBlock(sql, "proposal_evidence_feedback");
+    expect(feedback).not.toContain("generation_id");
+    expect(feedback).not.toContain("reaction");
+    expect(feedback).not.toContain("target");
+  });
+
+  it("adds composite FK targets before any 0033 foreign key can reference them", () => {
+    const activationUnique = offsetOf(
+      sql,
+      'ADD CONSTRAINT "brain_activation_snapshots_id_profile_workspace_uq" UNIQUE'
+    );
+    const feedbackUnique = offsetOf(
+      sql,
+      'ADD CONSTRAINT "generation_feedback_id_profile_workspace_uq" UNIQUE'
+    );
+    expect(activationUnique).toBeLessThan(
+      offsetOf(sql, 'ADD CONSTRAINT "promotion_proposals_accepted_activation_fk"')
+    );
+    expect(feedbackUnique).toBeLessThan(
+      offsetOf(sql, 'ADD CONSTRAINT "proposal_evidence_feedback_feedback_fk"')
+    );
+  });
+
+  it("pins every same-tenant edge and its delete/update action", () => {
+    const expected = [
+      ["promotion_proposals_profile_workspace_fk", "creator_profiles"],
+      ["promotion_proposals_basis_doc_fk", "brain_docs"],
+      ["promotion_proposals_accepted_doc_fk", "brain_docs"],
+      ["promotion_proposals_accepted_activation_fk", "brain_activation_snapshots"],
+      ["proposal_evidence_feedback_proposal_fk", "promotion_proposals"],
+      ["proposal_evidence_feedback_feedback_fk", "generation_feedback"],
+      ["proposal_evidence_results_proposal_fk", "promotion_proposals"],
+      ["proposal_evidence_results_result_fk", "results"],
+    ] as const;
+    for (const [name, target] of expected) {
+      const at = offsetOf(sql, `ADD CONSTRAINT "${name}"`);
+      const end = offsetOf(sql, ";", at);
+      const statement = sql.slice(at, end);
+      expect(statement).toContain(`REFERENCES "public"."${target}"`);
+      expect(statement).toContain("ON DELETE cascade");
+      expect(statement).toContain("ON UPDATE restrict");
+    }
+    expect(sql).toMatch(
+      /promotion_proposals_decision_user_id_users_id_fk[\s\S]*?REFERENCES "public"\."users"\("id"\) ON DELETE set null/i
+    );
+  });
+
+  it("holds source/basis/target, lifecycle, idempotency and summary attribution as database constraints", () => {
+    for (const name of [
+      "promotion_proposals_payload_is_object",
+      "promotion_proposals_source_basis",
+      "promotion_proposals_source_target",
+      "promotion_proposals_decision_shape",
+      "promotion_proposals_evidence_digest_uq",
+      "onboarding_inputs_summaries_have_no_caller_attribution",
+    ]) {
+      expect(sql, `${name} is absent`).toContain(`"${name}"`);
+    }
+  });
+});
+
 describe("AC-10 (structure): migration 0011", () => {
   const sql = migrationSql("0011_");
 
@@ -829,5 +928,444 @@ describe("migration 0024 (R-80): the included-build claim, and its backfill", ()
     // violate. The only ALTER it may contain is the new table's own FK.
     const alters = [...sql.matchAll(/ALTER TABLE "([a-z_]+)"/gi)].map((m) => m[1]);
     expect([...new Set(alters)]).toEqual(["first_billable_attempts"]);
+  });
+});
+
+describe("migration 0026 (R-96): the unavailable baseline, and the transcript's reference input", () => {
+  const sql = migrationSql("0026_");
+  const previous = migrationSql("0025_");
+  // Every assertion paired with a planted violation, as the 0024 block states.
+  const withoutFirst = (needle: RegExp): string => sql.replace(needle, "");
+  const EIGHT = [
+    "channel_id", "video_views", "channel_median_recent_views", "baseline_sample_size",
+    "baseline_observation_ids", "baseline_window_starts_at", "baseline_window_ends_at", "outlier_ratio",
+  ];
+
+  it("creates NO table and alters exactly trend_items and trend_transcripts (expand-only)", () => {
+    expect([...sql.matchAll(/CREATE TABLE\s+"([a-z_]+)"/gi)]).toEqual([]);
+    const alters = [...sql.matchAll(/ALTER TABLE "([a-z_]+)"/gi)].map((m) => m[1]);
+    expect([...new Set(alters)].sort()).toEqual(["trend_items", "trend_transcripts"]);
+    expect(sql).toMatch(/CREATE TYPE "public"\."trend_baseline_state" AS ENUM\('measured', 'unavailable'\)/);
+  });
+
+  it("baseline_state arrives NOT NULL WITH DEFAULT 'measured' — the default IS the backfill", () => {
+    const COLUMN = /ADD COLUMN "baseline_state" "trend_baseline_state" DEFAULT 'measured' NOT NULL/;
+    expect(COLUMN.test(sql)).toBe(true);
+    expect(COLUMN.test(withoutFirst(COLUMN))).toBe(false);
+  });
+
+  it("EXACTLY the eight baseline columns drop NOT NULL — no more, no fewer", () => {
+    const dropped = [...sql.matchAll(/ALTER TABLE "trend_items" ALTER COLUMN "([a-z_]+)" DROP NOT NULL/g)].map((m) => m[1]);
+    expect([...dropped].sort()).toEqual([...EIGHT].sort());
+    // `source_published_at` is deliberately NOT among them.
+    expect(dropped).not.toContain("source_published_at");
+    const outlierDrop = /ALTER TABLE "trend_items" ALTER COLUMN "outlier_ratio" DROP NOT NULL;--> statement-breakpoint(?:\r?\n|$)/;
+    const matches = sql.match(new RegExp(outlierDrop.source, "g")) ?? [];
+    expect(
+      matches,
+      "the plant must remove exactly one real outlier_ratio statement"
+    ).toHaveLength(1);
+    const planted = withoutFirst(outlierDrop);
+    expect(
+      sql.length - planted.length,
+      "withoutFirst must remove the complete one matched statement"
+    ).toBe(matches[0]!.length);
+    expect([...planted.matchAll(/ALTER COLUMN "([a-z_]+)" DROP NOT NULL/g)].map((m) => m[1]).sort()).not.toEqual([...EIGHT].sort());
+  });
+
+  it("the two arithmetic CHECKs are re-issued as `'unavailable' OR (<0025's predicate, VERBATIM>)`", () => {
+    // Read 0025's predicates out of 0025 itself, so "verbatim" is measured
+    // against the file rather than restated here.
+    const predicateOf = (name: string): string => {
+      const line = previous.split("\n").find((l) => l.includes(`CONSTRAINT "${name}" CHECK (`));
+      expect(line, name + " is not in 0025").toBeDefined();
+      const start = line!.indexOf("CHECK (") + "CHECK (".length;
+      return line!.slice(start, line!.lastIndexOf("),"));
+    };
+    const provenance = predicateOf("trend_items_baseline_provenance");
+    const ratio = predicateOf("trend_items_outlier_ratio_matches_inputs");
+    expect(provenance).toContain("jsonb_array_length");
+    expect(ratio).toContain("ROUND(");
+    const PROV = `ADD CONSTRAINT "trend_items_baseline_provenance" CHECK ("trend_items"."baseline_state" = 'unavailable' OR (${provenance}));`;
+    const RATIO = `ADD CONSTRAINT "trend_items_outlier_ratio_matches_inputs" CHECK ("trend_items"."baseline_state" = 'unavailable' OR ${ratio});`;
+    expect(sql).toContain(PROV);
+    expect(sql).toContain(RATIO);
+    // Both are DROPPED before they are re-added (a re-add without the drop fails on a live database).
+    expect(offsetOf(sql, 'DROP CONSTRAINT "trend_items_baseline_provenance"')).toBeLessThan(offsetOf(sql, PROV));
+    expect(offsetOf(sql, 'DROP CONSTRAINT "trend_items_outlier_ratio_matches_inputs"')).toBeLessThan(offsetOf(sql, RATIO));
+    // Planted: a predicate that quietly loosened one comparison is not verbatim.
+    expect(sql.replace("> 0 AND", ">= 0 AND")).not.toContain(PROV);
+  });
+
+  it("the shape CHECK names ALL EIGHT in both branches and ties `unavailable` to `profile_private`", () => {
+    const line = sql.split("\n").find((l) => l.includes('ADD CONSTRAINT "trend_items_baseline_state_shape"'));
+    expect(line).toBeDefined();
+    for (const column of EIGHT) {
+      expect(line!.match(new RegExp(`"${column}" IS NULL`, "g")), column + " IS NULL").toHaveLength(1);
+      expect(line!.match(new RegExp(`"${column}" IS NOT NULL`, "g")), column + " IS NOT NULL").toHaveLength(1);
+    }
+    expect(line).toMatch(/"baseline_state" = 'unavailable' AND "trend_items"\."rights_scope" = 'profile_private'/);
+    // Planted: with one column removed from the NULL branch, the count is wrong.
+    const planted = line!.replace('AND "trend_items"."outlier_ratio" IS NULL', "");
+    expect(planted.match(/"outlier_ratio" IS NULL/g)).toBeNull();
+  });
+
+  it("reference_input_id: FK → onboarding_inputs(id) ON DELETE cascade, a unique index, and the IS NOT DISTINCT FROM CHECK", () => {
+    const FK = /"trend_transcripts_reference_input_id_onboarding_inputs_id_fk" FOREIGN KEY \("reference_input_id"\) REFERENCES "public"\."onboarding_inputs"\("id"\) ON DELETE cascade/;
+    expect(FK.test(sql)).toBe(true);
+    expect(FK.test(withoutFirst(FK))).toBe(false);
+    const UQ = /CREATE UNIQUE INDEX "trend_transcripts_reference_input_uq" ON "trend_transcripts" USING btree \("reference_input_id"\)/;
+    expect(UQ.test(sql)).toBe(true);
+    expect(UQ.test(withoutFirst(UQ))).toBe(false);
+    const CHECK = /ADD CONSTRAINT "trend_transcripts_creator_paste_has_reference" CHECK \(\("trend_transcripts"\."provenance"->>'kind' IS NOT DISTINCT FROM 'creator_paste'\) = \("trend_transcripts"\."reference_input_id" IS NOT NULL\)\)/;
+    expect(CHECK.test(sql)).toBe(true);
+    expect(CHECK.test(withoutFirst(CHECK))).toBe(false);
+    // Planted: the `=` spelling (NULL passes) is NOT what shipped.
+    expect(sql).not.toMatch(/provenance"->>'kind' = 'creator_paste'\)/);
+    // Nullable, deliberately: pre-0026 rows and shared rows have no input.
+    expect(sql).toMatch(/ADD COLUMN "reference_input_id" uuid;/);
+  });
+
+  it("the header documents compatibility, order, rollback, restore and the deletion registry", () => {
+    for (const heading of ["FORWARD / BACKWARD COMPATIBILITY", "ORDER: expand", "ROLLBACK", "RESTORE IMPLICATIONS", "DELETION-REGISTRY IMPACT"]) {
+      expect(sql, heading).toContain(heading);
+    }
+    // The rollback names its one destructive step rather than hiding it.
+    expect(sql).toMatch(/DELETE FROM trend_items WHERE baseline_state = 'unavailable'/);
+    // Planted: a header with the rollback section deleted is seen.
+    expect(sql.replace(/-- ROLLBACK[\s\S]*?-- RESTORE/, "-- RESTORE")).not.toContain("ROLLBACK");
+  });
+});
+
+describe("migration 0028 (C11): the unmeasured reason names its cause, and the backfill sits between the two constraints", () => {
+  const sql = migrationSql("0028_");
+  const withoutFirst = (needle: RegExp): string => sql.replace(needle, "");
+
+  it("alters exactly trend_items, creates and drops nothing else", () => {
+    expect([...sql.matchAll(/CREATE TABLE\s+"([a-z_]+)"/gi)]).toEqual([]);
+    expect([...sql.matchAll(/CREATE (UNIQUE )?INDEX/gi)]).toEqual([]);
+    expect([...new Set([...sql.matchAll(/ALTER TABLE "([a-z_]+)"/gi)].map((m) => m[1]))]).toEqual(["trend_items"]);
+    // One constraint dropped, the same one re-added: this is a re-issue, not a
+    // second control.
+    expect([...sql.matchAll(/DROP CONSTRAINT "([a-z_]+)"/g)].map((m) => m[1])).toEqual(["trend_items_saturation_measurement_nonempty"]);
+    expect([...sql.matchAll(/ADD CONSTRAINT "([a-z_]+)"/g)].map((m) => m[1])).toEqual(["trend_items_saturation_measurement_nonempty"]);
+  });
+
+  it("the reason is tied to baseline_state by a CASE — not widened to a two-value list", () => {
+    const CASE_TIE = /"saturation_unmeasured_reason" = CASE WHEN "trend_items"\."baseline_state" = 'unavailable' THEN 'no_population' ELSE 'incomplete_provenance' END/;
+    expect(CASE_TIE.test(sql)).toBe(true);
+    expect(CASE_TIE.test(withoutFirst(CASE_TIE))).toBe(false);
+    // THE MUTATION THIS ASSERTION EXISTS FOR: `IN ('no_population',
+    // 'incomplete_provenance')` admits both reasons on both states, which is a
+    // vocabulary and not a tie — an `unavailable` row could still ship
+    // `incomplete_provenance`, the exact defect 0028 closes.
+    expect(sql).not.toMatch(/"saturation_unmeasured_reason" IN \(/);
+    // The measured branch is untouched: it still requires the reason to be NULL.
+    expect(sql).toContain(`"trend_items"."saturation_unmeasured_reason" IS NULL`);
+  });
+
+  it("IT BACKFILLS, and the backfill runs BETWEEN the drop and the re-add", () => {
+    const UPDATE = `UPDATE "trend_items" SET "saturation_unmeasured_reason" = 'no_population' WHERE "baseline_state" = 'unavailable' AND "saturation" = 'unmeasured' AND "saturation_unmeasured_reason" IS DISTINCT FROM 'no_population';`;
+    expect(sql).toContain(UPDATE);
+    // Order is the whole point: re-adding the CHECK before the rows are
+    // relabelled fails on any populated database.
+    expect(offsetOf(sql, 'DROP CONSTRAINT "trend_items_saturation_measurement_nonempty"'))
+      .toBeLessThan(offsetOf(sql, UPDATE));
+    expect(offsetOf(sql, UPDATE))
+      .toBeLessThan(offsetOf(sql, 'ADD CONSTRAINT "trend_items_saturation_measurement_nonempty"'));
+    // Planted, with PLAIN STRING operations rather than an assembled regex
+    // (CLAUDE.md 2026-08-21 — a scan built from a string literal fails open the
+    // day one backslash is lost): the statement appears EXACTLY once, and with
+    // that one occurrence removed the file no longer contains it. The header's
+    // ROLLBACK section quotes a different, unquoted UPDATE, so this cannot be
+    // satisfied by prose.
+    expect(sql.split(UPDATE)).toHaveLength(2);
+    expect(sql.replace(UPDATE, "")).not.toContain(UPDATE);
+    // ...and the backfill is IDEMPOTENT by its own predicate, so a re-run and a
+    // restore-then-apply are no-ops rather than a second relabelling.
+    expect(UPDATE).toContain(`IS DISTINCT FROM 'no_population'`);
+  });
+
+  it("the header documents compatibility, order, rollback, restore and the deletion registry — including that it is NOT expand-only", () => {
+    for (const heading of ["FORWARD / BACKWARD COMPATIBILITY", "ORDER: expand", "ROLLBACK", "RESTORE IMPLICATIONS", "DELETION-REGISTRY IMPACT"]) {
+      expect(sql, heading).toContain(heading);
+    }
+    // The one operational fact a reader must not miss: old code writing the old
+    // reason is REFUSED, so deploy order is not free.
+    expect(sql).toContain("DEPLOY ORDER");
+    expect(sql).toContain("never before it");
+    // The rollback names what it cannot restore rather than claiming to be clean.
+    expect(sql).toContain("NOT loss-free");
+    // Planted, again with plain string slicing: with the ROLLBACK SECTION cut
+    // out, its heading is gone. (`toContain("ROLLBACK")` alone would be
+    // satisfied by the compatibility paragraph, which mentions rolling back —
+    // the heading is what this asserts.)
+    const rollbackAt = offsetOf(sql, "-- ROLLBACK (no automated down");
+    const restoreAt = offsetOf(sql, "-- RESTORE IMPLICATIONS", rollbackAt);
+    expect(sql.slice(0, rollbackAt) + sql.slice(restoreAt)).not.toContain("-- ROLLBACK (no automated down");
+  });
+});
+
+describe("migration 0034: persisted rights and Stripe receipt attribution", () => {
+  const sql = migrationSql("0034_");
+
+  it("fails closed instead of guessing subjects for pre-existing shared analysis", () => {
+    for (const table of ["trend_transcripts", "autopsy_cache_claims", "autopsies"]) {
+      expect(sql).toContain(`SELECT 1 FROM "${table}" WHERE "rights_scope" = 'shared_analysis'`);
+    }
+    expect(sql).toContain("no subject was guessed");
+    expect(sql).toContain(`"curated_by" IS DISTINCT FROM 'seed:respin-library-v1'`);
+    expect(sql).toContain("explicit rights attribution for pre-existing non-seed shared frameworks");
+  });
+
+  it("backfills only deterministic classes before setting the new columns NOT NULL", () => {
+    expect(sql).toContain(`SET "rights_basis" = 'profile_private'`);
+    expect(sql).toContain(`WHEN "visibility" = 'shared' AND "curated_by" = 'seed:respin-library-v1' THEN 'product_seed'`);
+    expect(sql).toContain(`WHEN "workspace_id" IS NOT NULL THEN 'workspace_attributed'`);
+    expect(sql).toContain(`WHEN "stripe_customer_id" IS NOT NULL THEN 'customer_attributed'`);
+    expect(sql).toContain(`ELSE 'unattributed'`);
+    expect(offsetOf(sql, `UPDATE "stripe_events"`))
+      .toBeLessThan(offsetOf(sql, `ALTER TABLE "stripe_events" ALTER COLUMN "receipt_attribution" SET NOT NULL`));
+  });
+
+  it("uses SET NULL and immutable persisted classifications", () => {
+    expect(sql).toContain(
+      `"stripe_events_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE set null ON UPDATE no action`,
+    );
+    expect(sql).toContain(
+      `"autopsies_matched_framework_id_frameworks_id_fk" FOREIGN KEY ("matched_framework_id") REFERENCES "public"."frameworks"("id") ON DELETE set null`,
+    );
+    for (const trigger of [
+      "trend_transcripts_rights_immutable",
+      "autopsy_cache_claims_rights_immutable",
+      "autopsies_rights_immutable",
+      "frameworks_rights_immutable",
+      "stripe_events_receipt_attribution_immutable",
+    ]) {
+      expect(sql).toContain(`CREATE TRIGGER ${trigger}`);
+    }
+  });
+
+  it("requires non-NULL, nonblank evidence for consent and licences on every rights table", () => {
+    for (const table of ["trend_transcripts", "autopsy_cache_claims", "autopsies", "frameworks"]) {
+      expect(sql.match(new RegExp(`"${table}"\\."rights_evidence_id" IS NOT NULL`, "g"))).toHaveLength(2);
+      expect(sql.match(new RegExp(`"${table}"\\."rights_evidence_id" ~ '\\[\\^\\[:space:\\]\\]'`, "g"))).toHaveLength(2);
+    }
+  });
+});
+
+describe("migration 0046: durable scoped authority and cross-scope requester privacy", () => {
+  const sql = migrationSql("0046_");
+
+  it("fails closed on active legacy sessionless operations before mutating the table", () => {
+    const guard = `WHERE "request_session_digest" IS NULL\n      AND "state" NOT IN ('complete', 'cancelled')`;
+    const firstMutation = `ALTER TABLE "deletion_operations" DROP CONSTRAINT "deletion_operations_request_session_digest_shape"`;
+    expect(sql).toContain(guard);
+    expect(sql).toContain("refuses to fabricate missing deletion request session authority");
+    expect(offsetOf(sql, guard)).toBeLessThan(offsetOf(sql, firstMutation));
+    expect(sql).not.toContain(`ALTER COLUMN "request_session_digest" SET NOT NULL`);
+    expect(sql).toContain(`"state" IN ('complete', 'cancelled') AND "deletion_operations"."request_session_digest" IS NULL`);
+    expect(sql).toContain(`"state" NOT IN ('complete', 'cancelled') AND "deletion_operations"."request_session_digest" ~ '^[0-9a-f]{64}$'`);
+  });
+
+  it("backfills domain-separated requester digests before tightening either table", () => {
+    for (const table of ["deletion_operations", "deletion_operation_transitions"]) {
+      const add = `ALTER TABLE "${table}" ADD COLUMN "requester_digest" text;`;
+      const update = `UPDATE "${table}"
+SET "requester_digest" = encode(`;
+      const tighten = `ALTER TABLE "${table}" ALTER COLUMN "requester_digest" SET NOT NULL;`;
+      expect(sql).toContain(add);
+      expect(sql).toContain(update);
+      expect(sql).toContain(`respin:deletion-requester:v1:`);
+      expect(offsetOf(sql, add)).toBeLessThan(offsetOf(sql, update));
+      expect(offsetOf(sql, update)).toBeLessThan(offsetOf(sql, tighten));
+    }
+  });
+
+  it("makes the stable digest, not the nullable human id, the transition identity", () => {
+    const childDrop = `DROP CONSTRAINT "deletion_operation_transitions_operation_identity_fk"`;
+    const parentDrop = `DROP CONSTRAINT "deletion_operations_transition_identity_uq"`;
+    const parentUnique = `ADD CONSTRAINT "deletion_operations_transition_identity_uq" UNIQUE("id","scope","target_key","requester_digest","payload_hash")`;
+    const childFk = `FOREIGN KEY ("operation_id","scope","target_key","requester_digest","payload_hash")`;
+    expect(offsetOf(sql, childDrop)).toBeLessThan(offsetOf(sql, parentDrop));
+    expect(sql).toContain(parentUnique);
+    expect(sql).toContain(childFk);
+    expect(offsetOf(sql, parentUnique)).toBeLessThan(offsetOf(sql, childFk));
+    expect(sql.match(/requester_user_id_users_id_fk" FOREIGN KEY \("requester_user_id"\)[^;]+ON DELETE set null/g)).toHaveLength(2);
+    expect(sql).not.toContain(`FOREIGN KEY ("operation_id","scope","target_key","requester_user_id","payload_hash")`);
+  });
+});
+
+describe("migration 0047: profile deletion restore authority is total and scoped", () => {
+  const sql = migrationSql("0047_");
+
+  it("fails closed on legacy rows before installing the constraint", () => {
+    const guard = `WHERE ("scope" = 'profile' AND (`;
+    const constraint =
+      `ALTER TABLE "deletion_operations" ADD CONSTRAINT "deletion_operations_profile_prior_state_shape"`;
+    expect(sql).toContain(guard);
+    expect(sql).toContain(`"profile_prior_state" NOT IN ('active', 'archived')`);
+    expect(sql).toContain(`"scope" <> 'profile' AND "profile_prior_state" IS NOT NULL`);
+    expect(sql).toContain("refuses invalid deletion profile restore authority");
+    expect(offsetOf(sql, guard)).toBeLessThan(offsetOf(sql, constraint));
+  });
+
+  it("changes only deletion_operations and closes both halves of the shape", () => {
+    expect([...new Set([...sql.matchAll(/ALTER TABLE "([a-z_]+)"/g)].map((m) => m[1]))])
+      .toEqual(["deletion_operations"]);
+    expect(sql).not.toContain(`ALTER TABLE "memberships"`);
+    expect(sql).toContain(
+      `"deletion_operations"."scope" = 'profile' AND "deletion_operations"."profile_prior_state" IN ('active', 'archived')`
+    );
+    expect(sql).toContain(
+      `"deletion_operations"."scope" <> 'profile' AND "deletion_operations"."profile_prior_state" IS NULL`
+    );
+    expect(sql).toContain(`) IS TRUE`);
+  });
+});
+
+describe("migration 0048: durable auto-top-up attempt and rollout authority", () => {
+  const sql = migrationSql("0048_");
+
+  it("runs its populated-money preflight before any DDL", () => {
+    const guard = "0048 preflight: a legacy auto_topup row lacks";
+    expect(sql).toContain(guard);
+    expect(offsetOf(sql, guard)).toBeLessThan(
+      offsetOf(sql, 'CREATE TABLE "auto_topup_protocol_rollouts"')
+    );
+  });
+
+  it("keeps expansion protocol-0 by default and normalizes fresh inserts only after activation", () => {
+    expect(sql).toContain(
+      'ADD COLUMN "auto_topup_protocol_version" integer DEFAULT 0 NOT NULL'
+    );
+    expect(sql).toContain(
+      'ADD COLUMN "auto_topup_attempt_cutover_at" timestamp with time zone'
+    );
+    expect(sql).toContain('CREATE FUNCTION "normalize_auto_topup_protocol_insert"()');
+    expect(sql).toContain(`WHERE "protocol" = 'v1' AND "state" = 'active'`);
+    expect(sql).toContain('NEW."auto_topup_protocol_version" := 1');
+    expect(sql).toContain('NEW."auto_topup_attempt_cutover_at" := clock_timestamp()');
+    expect(sql).toContain('NEW."auto_topup_attempt_id" := NEW."id"');
+    expect(sql).toContain('NEW."auto_topup_period_month_utc" := to_char(');
+    expect(sql).toContain(
+      "auto_topup ledger rows require durable attempt authority after activation"
+    );
+  });
+
+  it("makes rollout revisions part of every legal state shape", () => {
+    const rollout = createTableBlock(sql, "auto_topup_protocol_rollouts");
+    expect(rollout).toContain('"revision" integer DEFAULT 0 NOT NULL');
+    expect(rollout).toContain('"state" = \'expanded\'\n        AND "auto_topup_protocol_rollouts"."revision" = 0');
+    expect(rollout).toContain('"state" = \'draining\'\n        AND "auto_topup_protocol_rollouts"."revision" > 0');
+    expect(rollout).toContain('"state" = \'active\'\n        AND "auto_topup_protocol_rollouts"."revision" > 0');
+  });
+
+  it("requires reservation, dispatch and claim authority atomically for every pending attempt", () => {
+    const constraintAt = offsetOf(
+      sql,
+      'ADD CONSTRAINT "subscriptions_auto_topup_attempt_shape"'
+    );
+    const constraint = sql.slice(
+      constraintAt,
+      offsetOf(sql, ");", constraintAt)
+    );
+    for (const predicate of [
+      '"auto_topup_attempt_reserved_at" IS NOT NULL',
+      '"auto_topup_attempt_dispatched_at" >= "subscriptions"."auto_topup_attempt_reserved_at"',
+      '"auto_topup_attempt_claim_id" IS NOT NULL',
+      '"auto_topup_attempt_claimed_at" >= "subscriptions"."auto_topup_attempt_dispatched_at"',
+    ]) {
+      expect(constraint, `${predicate} is absent`).toContain(predicate);
+    }
+  });
+
+  it("makes nullable money-state comparisons fail closed instead of passing as UNKNOWN", () => {
+    for (const constraintName of [
+      "auto_topup_protocol_rollouts_shape",
+      "credit_ledger_auto_topup_attempt_shape",
+      "subscriptions_auto_topup_attempt_shape",
+      "subscriptions_auto_topup_protocol_shape",
+    ]) {
+      const constraintAt = offsetOf(sql, `CONSTRAINT "${constraintName}"`);
+      const constraint = sql.slice(
+        constraintAt,
+        offsetOf(sql, ");", constraintAt) + 2
+      );
+      expect(constraint, `${constraintName} must reject SQL UNKNOWN`).toContain(
+        ")) IS TRUE)"
+      );
+    }
+  });
+});
+
+describe("migration 0049: staged durable tier Checkout authority", () => {
+  const sql = migrationSql("0049_");
+
+  it("is one atomic expansion with a closed rollout and no intermediate attempt shape", () => {
+    expect(sql).toContain('CREATE TABLE "tier_checkout_protocol_rollouts"');
+    expect(sql).toContain(
+      'INSERT INTO "tier_checkout_protocol_rollouts" ("protocol", "state", "revision")'
+    );
+    expect(sql).toContain("VALUES ('v1', 'expanded', 0)");
+    expect(sql).toContain('ADD COLUMN "tier_checkout_attempt_stripe_account_id" text');
+    expect(sql).toContain('ADD COLUMN "tier_checkout_attempt_stripe_livemode" boolean');
+    expect(sql).toContain('ADD COLUMN "tier_checkout_fence_observed_subscription_id" text');
+  });
+
+  it("keeps expansion transparent to old webhooks and serializes every later subscription write", () => {
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION "respin_tier_checkout_write_guard"()');
+    expect(sql).toContain("IF rollout_state = 'expanded' THEN");
+    expect(sql).toContain("FOR SHARE");
+    expect(sql).toContain(
+      'CREATE TRIGGER "subscriptions_tier_checkout_write_guard"'
+    );
+    expect(sql).toContain("tier Checkout attempt creation requires active rollout");
+    expect(sql).toContain("tier Checkout attempt authority is immutable");
+  });
+
+  it("fences legacy inserts and irreversible transitions only after draining begins", () => {
+    expect(sql).toContain("IF TG_OP = 'INSERT'");
+    expect(sql).toContain(
+      "NEW.\"stripe_subscription_id\" := 'checkout_fence:' || NEW.\"workspace_id\"::text"
+    );
+    expect(sql).toContain("NEW.\"status\" IN ('canceled', 'incomplete_expired')");
+    expect(sql).toContain(
+      'NEW."tier_checkout_fence_subscription_id" := NEW."stripe_subscription_id"'
+    );
+  });
+
+  it("binds attempts to the active rollout account/mode and rejects SQL UNKNOWN", () => {
+    expect(sql).toContain("rollout_state NOT IN ('draining', 'active')");
+    expect(sql).toContain(
+      'NEW."tier_checkout_attempt_stripe_account_id" IS DISTINCT FROM rollout_account'
+    );
+    expect(sql).toContain(
+      'NEW."tier_checkout_attempt_stripe_livemode" IS DISTINCT FROM rollout_livemode'
+    );
+    for (const constraintName of [
+      "tier_checkout_protocol_rollouts_shape",
+      "credit_ledger_pack_checkout_attempt_shape",
+      "credit_ledger_tier_checkout_attempt_shape",
+      "subscriptions_tier_checkout_attempt_shape",
+      "subscriptions_tier_checkout_fence_shape",
+    ]) {
+      const constraintAt = offsetOf(sql, `CONSTRAINT "${constraintName}"`);
+      const constraint = sql.slice(
+        constraintAt,
+        offsetOf(sql, ");", constraintAt) + 2
+      );
+      expect(constraint, `${constraintName} must reject SQL UNKNOWN`).toContain(
+        ")) IS TRUE)"
+      );
+    }
+  });
+
+  it("guards every post-expansion config write and pins pack expiry to UTC", () => {
+    expect(sql).toContain('CREATE TRIGGER "config_versions_pack_checkout_write_guard"');
+    expect(sql).toContain("IF rollout_state IN ('draining', 'active') THEN");
+    expect(sql).toContain("FOR SHARE");
+    expect(sql).toContain("to_timestamp(provider_created) AT TIME ZONE 'UTC'");
+    expect(sql).toContain("AT TIME ZONE 'UTC' THEN");
   });
 });

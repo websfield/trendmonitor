@@ -71,13 +71,9 @@ export class ProfileCapError extends Error {
 }
 
 /**
- * A role refusal on a PROFILE-GRAINED WRITE: creating a creator profile, or
- * appending to a creator's onboarding corpus.
- *
- * SEPARATE from `BrainRoleError`, which refuses `viewer` on confirming and
- * activating — those two decide what the product BELIEVES about a creator, and
- * their copy says so. These refuse a viewer on writes that either consume a
- * per-tier entitlement or land permanently in an immutable record.
+ * A role refusal on a profile-grained write. R-118 makes durable profile,
+ * onboarding, brain and proposal changes owner-only while generation,
+ * structured feedback and results remain available to editors.
  *
  * IT CARRIES AN `act` BECAUSE THE TENANCY GATE BLOCKED ON THE MISSING ONE
  * (2026-08-27, register item G-13). Slice 1 gave `createProfile` a role gate
@@ -92,10 +88,11 @@ export class ProfileCapError extends Error {
 export class ProfileRoleError extends Error {
   constructor(
     readonly act: string,
-    role: string
+    role: string,
+    requiredRole: "owner" | "editor" = "editor"
   ) {
     super(
-      `A ${role} cannot ${act}. That write is drawn from the workspace's paid per-tier allowance or lands permanently in a creator's record, so it needs at least editor access (REQ-A02). Ask a workspace owner.`
+      `A ${role} cannot ${act}. That write is drawn from the workspace's paid per-tier allowance or lands permanently in a creator's record, so it needs ${requiredRole === "owner" ? "owner" : "at least editor"} access (REQ-A02). Ask a workspace owner.`
     );
     this.name = "ProfileRoleError";
   }
@@ -498,6 +495,50 @@ export class FeedbackReactionError extends Error {
  * `ProfileAccessError` rule — sharpened here for the reason
  * `GenerationLineageError` states: a generation id is a uuidv7, so a
  * distinguishable refusal leaks creation TIME as well as existence.
+ *
+ * ------------------------------------------------------------------------
+ * THE BASIS FOR "NOTHING WAS CHANGED", stated here for all FOUR refusals in
+ * this file that make that promise — this one, `FeedbackDuplicateError`,
+ * `ResultTargetError` and `ResultDuplicateError`. Each of the other three
+ * points back at this paragraph.
+ *
+ * THE PROMISE RESTS ON A TRANSACTION SHAPE, NOT ON THIS FUNCTION. It is a
+ * claim about the whole call path, and until 2026-09-04 the reason it was
+ * true lived in `feedback-ops.ts` and `results-ops.ts` — two files away from
+ * the sentence making it. It is put beside the claim here because a claim
+ * whose warrant lives somewhere else is a claim nobody re-checks when the
+ * somewhere else changes.
+ *
+ * WHAT MAKES IT TRUE TODAY, verified rather than assumed: each of the four
+ * is thrown from exactly ONE capability (`recordGenerationFeedback` or
+ * `recordResult` in `with-workspace.ts`), and each of those capabilities has
+ * exactly ONE caller (`recordFeedback`, `recordResult` in the two ops
+ * modules), which opens a transaction wrapping that capability AND NOTHING
+ * ELSE. So a throw rolls back a transaction that has written at most the one
+ * row the refusal is about — and for the two pre-write refusals, not even
+ * that. The capabilities take a REQUIRED `tx` from their caller, which is
+ * exactly why the shape is the caller's to change and the promise is the
+ * caller's to keep.
+ *
+ * REVISIT TRIGGER: any change that widens one of those transactions beyond
+ * one row — a second caller that composes feedback or a result into a
+ * larger unit of work, or an ops function that writes before delegating. At
+ * that point the sentence is describing a rollback that no longer restores
+ * what the reader thinks it does, and it must move to the caller that still
+ * knows, or go.
+ *
+ * WHY THESE FOUR KEEP THE SENTENCE AND `ComparisonStratumError` LOST IT.
+ * That class had the same claim removed rather than documented, and the
+ * difference is the RAISER SET, not the wording. These four are raised by
+ * one capability each, called from one place each, all inside this package
+ * — a closed set whose transaction shape is checkable in one sitting and is
+ * checked above. `ComparisonStratumError` is raised by a scoped READ whose
+ * callers are open by design (9b composes strata; any future comparison site
+ * may hold one), so no paragraph here could stay true about it. A recorded
+ * basis is the right instrument for a closed set; removing the claim is the
+ * right instrument for an open one. That is the same rule applied to two
+ * different facts, not two rules.
+ * ------------------------------------------------------------------------
  */
 export class FeedbackTargetError extends Error {
   constructor() {
@@ -527,6 +568,11 @@ export class FeedbackNoteError extends Error {
  * creator typed the second time while showing them a success state. Telling
  * them the reaction is already recorded is the honest version, and it is the
  * one message that does not imply their words were kept.
+ *
+ * ITS "NOTHING WAS CHANGED" RESTS ON `recordGenerationFeedback`'s
+ * ONE-ROW TRANSACTION, and here the row is not written at all: the
+ * `onConflictDoNothing` returned nothing, which is what raises this. See
+ * `FeedbackTargetError` for the full basis and its revisit trigger.
  */
 export class FeedbackDuplicateError extends Error {
   constructor() {
@@ -698,5 +744,212 @@ export class InterviewAnswerError extends Error {
       `That interview answer was not stored: ${detail}. Every field is answered, explicitly marked not-decided, or (where the question allows it) explicitly declined — there is no fourth, implicit state.`
     );
     this.name = "InterviewAnswerError";
+  }
+}
+
+export class PerformanceLearningEntitlementError extends Error {
+  constructor() {
+    super("This workspace has view-only performance learning access. Existing results and proposal history remain readable, but recording results or changing the brain requires full access.");
+    this.name = "PerformanceLearningEntitlementError";
+  }
+}
+
+export class PromotionAccessError extends Error {
+  constructor() {
+    super("That promotion proposal is not available for this creator profile.");
+    this.name = "PromotionAccessError";
+  }
+}
+
+export class PromotionPayloadError extends Error {
+  constructor(detail: string) {
+    super(`The stored promotion proposal is not usable: ${detail}. Nothing was changed.`);
+    this.name = "PromotionPayloadError";
+  }
+}
+
+export class PromotionFreshnessError extends Error {
+  constructor(detail: string) {
+    super(`This promotion proposal is no longer the exact version you reviewed: ${detail}. Refresh and review it again; nothing was changed.`);
+    this.name = "PromotionFreshnessError";
+  }
+}
+
+export class PromotionDecisionError extends Error {
+  constructor(detail: string) {
+    super(`That promotion decision was refused: ${detail}. Nothing was changed.`);
+    this.name = "PromotionDecisionError";
+  }
+}
+
+/**
+ * A treatment key could not be derived from a generation (slice 9a, C4).
+ *
+ * A REFUSAL RATHER THAN A FABRICATED KEY. The treatment key is the sixth
+ * comparability predicate — three results sharing it are claimed to be three
+ * runs of ONE thing — so a key built from a blank part, or from a part that
+ * carried the `|` the key is joined with, would let two different treatments
+ * produce one string and a cohort of three unrelated posts warrant a rule.
+ * `treatmentKeyFor` refuses instead, which is the same "under-record rather
+ * than over-claim" direction `frameworkVersionsUsed` states one package over.
+ *
+ * It names no id: the caller supplies the generation, so the reader already
+ * knows which one, and a message carrying a uuidv7 leaks creation time.
+ */
+export class TreatmentKeyError extends Error {
+  constructor(detail: string) {
+    super(
+      `That result was not recorded because what it tested could not be identified: ${detail}. Nothing was stored — a result compared against a cohort we could not name would be a comparison to something else.`
+    );
+    this.name = "TreatmentKeyError";
+  }
+}
+
+/**
+ * A logged result does not fit the shape `results` declares (slice 9a, R6-R9).
+ *
+ * ONE CLASS WITH A DETAIL rather than eight, the `InterviewAnswerError` and
+ * `FeedbackNoteError` idiom: every case here is "the numbers or labels on this
+ * form do not describe a storable observation", the remedy is the same
+ * sentence, and eight classes would each need their own copy in
+ * `billing-errors.ts` for one screen.
+ *
+ * WHY IT EXISTS AT ALL, rather than letting the CHECKs speak: a raw 23514 has
+ * no case in `billing-errors.ts` and renders as "Something went wrong" — the
+ * outcome every typed refusal in this file exists to prevent. The constraints
+ * are still what make the row UNSTORABLE; this is what makes the refusal
+ * SAYABLE, the same division `FeedbackTargetError` records.
+ */
+export class ResultInputError extends Error {
+  constructor(detail: string) {
+    super(
+      `That result was not recorded: ${detail}. Nothing was stored — fix that and log it again.`
+    );
+    this.name = "ResultInputError";
+  }
+}
+
+/**
+ * A result named an output, or a declared metric, that is not this creator's
+ * (slice 9a, R5/R8).
+ *
+ * ONE BYTE-IDENTICAL MESSAGE for foreign, nonexistent and malformed ids —
+ * the `ProfileAccessError` rule, sharpened for the reason
+ * `FeedbackTargetError` states: a generation id is a uuidv7, so a
+ * distinguishable refusal leaks creation TIME as well as existence.
+ *
+ * IT ALSO COVERS THE MISSING DECLARATION (R8), and that is deliberate rather
+ * than lazy: "you have not declared a north-star metric yet" is a different
+ * remedy from "that output is not yours", so `recordResult` raises
+ * `ResultInputError` with the metric detail for the DECLARATION case and this
+ * one only when an id was named that this profile cannot reach.
+ *
+ * ITS "NOTHING WAS CHANGED" RESTS ON `recordResult`'s ONE-ROW TRANSACTION,
+ * and this refusal is raised BEFORE the insert, so the rollback restores a
+ * transaction that had written nothing. See `FeedbackTargetError` for the
+ * full basis and its revisit trigger.
+ */
+export class ResultTargetError extends Error {
+  constructor() {
+    super(
+      "That result was not recorded because the output it is about is not available on this creator profile. Open the output from your own history and log the result from there — nothing was changed."
+    );
+    this.name = "ResultTargetError";
+  }
+}
+
+/**
+ * The same observation is already logged (slice 9a).
+ *
+ * A REFUSAL RATHER THAN A SILENT NO-OP, the `FeedbackDuplicateError` argument:
+ * `results` is append-only under
+ * `results_generation_metric_window_uq`, so a second submission could only be
+ * swallowed — and swallowing it would show a success state for numbers that
+ * were not kept. It matters more here than for feedback, because a cohort
+ * minimum reached by pressing submit three times is a rule warranted by one
+ * post.
+ *
+ * ITS REMEDY WAS HARMFUL UNTIL MIGRATION 0032, and the copy is corrected with
+ * the index rather than instead of it. `results_generation_metric_window_uq`
+ * omitted `platform`, so one draft posted to TikTok and to Reels was refused as
+ * a duplicate — and this message told the creator to change the observation
+ * window. `results` is append-only with no delete path, so a creator who
+ * followed that instruction wrote a falsified window into their own baseline,
+ * permanently. The index now carries `platform`, so the refusal only fires on
+ * a real duplicate, and the sentence now NAMES the full key instead of naming
+ * three fifths of it.
+ *
+ * ITS "NOTHING WAS CHANGED" RESTS ON `recordResult`'s ONE-ROW TRANSACTION,
+ * and here the row is not written at all: the `onConflictDoNothing` returned
+ * nothing, which is what raises this. See `FeedbackTargetError` for the full
+ * basis and its revisit trigger.
+ */
+export class ResultDuplicateError extends Error {
+  constructor() {
+    super(
+      "A result for that output, platform, metric, audience and observation window is already logged, so nothing was changed and the numbers you just typed were not saved. If you are reporting how the same post did LATER, log a different observation window; a different platform or a paid/organic split is a separate result and can be logged as it is."
+    );
+    this.name = "ResultDuplicateError";
+  }
+}
+
+/**
+ * A comparison was asked for over a stratum that cannot be queried (slice 9a).
+ *
+ * ITS OWN CLASS RATHER THAN `WorkspaceAccessError`, and the reason is a defect
+ * that was found before it shipped rather than after (2026-09-04, builder C's
+ * check). The scoped read originally refused with `WorkspaceAccessError`,
+ * which IS covered in `app/(product)/billing-errors.ts` — so the failure would
+ * not have rendered as "Something went wrong". It would have rendered as
+ * something worse: that code's copy says "You do not have access to this
+ * workspace. Sign in with the account that owns it, or ask its owner for
+ * access." A creator whose comparison could not be set up would have been
+ * told, confidently, to sign in as somebody else. This repo's 2026-07-30
+ * lesson is about refusals whose printed fix is unusable; a printed fix that
+ * is usable and WRONG is on the same side of that line.
+ *
+ * ONE CLASS SERVING TWO CAUSES IS HOW THAT COPY BECAME WRONG, so the causes
+ * are split instead. `WorkspaceAccessError` keeps its meaning: you are asking
+ * about a workspace that is not yours. This means: the population you asked to
+ * compare over is not one this product can describe.
+ *
+ * WHAT THE READER CAN ACTUALLY DO, which is the requirement on this message
+ * and the reason it does not ask them to change anything about their results:
+ * NOTHING they typed caused it. A stratum is server-composed — 9a does not
+ * pass one at all, and 9b composes it from stored rows — so reaching this is
+ * OUR defect, and the honest remedy is to say so and offer the one action
+ * that can help (reload).
+ *
+ * IT DELIBERATELY DOES NOT SAY "NOTHING WAS CHANGED", AND THAT ABSENCE IS
+ * THE DECISION. The message carried that reassurance when this class was
+ * written, and it was true — the only raiser was a scoped READ. But it is
+ * a claim about the WHOLE CALL PATH made by a sentence that can only see
+ * this function, and nothing structurally stops 9b raising this class from
+ * inside a transaction that has already written: at that moment the copy
+ * becomes a confident, WRONG reassurance — the same class of defect as the
+ * one this class was split out of (a usable and wrong remedy), one slice
+ * later. This repo's own Lessons are mostly instances closed while the
+ * class stayed open one field over, so this one is closed before it opens:
+ * a sentence that cannot become wrong beats one that is true today and
+ * unguarded tomorrow.
+ *
+ * A CALLER THAT CAN HONESTLY PROMISE IT MUST SAY SO ITSELF. A future raiser
+ * that KNOWS nothing was written — because it holds the transaction and it
+ * rolls back, or because it had not written yet — should put that promise in
+ * ITS OWN message or screen copy, where the knowledge actually is. This
+ * class will not make it on every caller's behalf. `profile-scope.test.ts`
+ * pins the absence, so re-adding an unconditional reassurance here is a red
+ * test rather than a kindness somebody typed back in.
+ *
+ * IT NAMES NO IDENTIFIER, the `ProfileAccessError` rule: a stratum carries a
+ * `brain_docs` uuid, and a message echoing one leaks creation time. `detail`
+ * names WHICH PART of the stratum was unusable in words, never its value.
+ */
+export class ComparisonStratumError extends Error {
+  constructor(detail: string) {
+    super(
+      `That comparison could not be set up: ${detail}. This is a fault on our side, not something wrong with the results you logged. Reload the page and try again.`
+    );
+    this.name = "ComparisonStratumError";
   }
 }

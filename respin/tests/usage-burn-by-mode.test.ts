@@ -24,6 +24,7 @@ import { dirname, join, resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  KNOWN_DIRECT_CHARGE_REF_TYPES,
   KNOWN_SPEND_PURPOSES,
   KNOWN_SPEND_PURPOSE_COUNT,
   burnByModeNote,
@@ -75,6 +76,25 @@ function distinctPurposeLiterals(): Set<string> {
   return found;
 }
 
+/**
+ * Direct creator-paid debits that deliberately sit outside `PricedOperation`.
+ * Today that is the private pasted-reference autopsy claim. Deriving it from
+ * the Credits package keeps the rendered usage explanation tied to the money
+ * path instead of duplicating the observation in prose.
+ */
+function distinctDirectChargeRefTypes(): Set<string> {
+  const found = new Set<string>();
+  for (const file of sourceFiles(CREDITS_SRC)) {
+    const src = withoutComments(readFileSync(file, "utf8"));
+    for (const m of src.matchAll(
+      /export\s+const\s+\w*DEBIT_REF_TYPE\w*\s*=\s*(["'`])([^"'`]*)\1/g
+    )) {
+      found.add(m[2]);
+    }
+  }
+  return found;
+}
+
 describe("R9/R17a: the by-mode note's claim is derived from the real purposes, not asserted", () => {
   it("the scan is not vacuous — it finds both purposes known to exist today", () => {
     const purposes = distinctPurposeLiterals();
@@ -97,7 +117,16 @@ describe("R9/R17a: the by-mode note's claim is derived from the real purposes, n
       purposes,
       `packages/credits/src now writes these distinct spend purposes (${purposes.join(", ")}) but usage-view.tsx names ${[...KNOWN_SPEND_PURPOSES].join(", ")} — burnByModeNote's copy is stale`
     ).toEqual([...KNOWN_SPEND_PURPOSES].sort());
-    expect(purposes.length).toBe(KNOWN_SPEND_PURPOSE_COUNT);
+    expect(purposes.length).toBe(KNOWN_SPEND_PURPOSES.length);
+  });
+
+  it("the direct-charge scan is non-vacuous and pins the pasted-reference autopsy debit", () => {
+    const refTypes = [...distinctDirectChargeRefTypes()].sort();
+    expect(refTypes).toContain("autopsy_claim");
+    expect(refTypes).toEqual([...KNOWN_DIRECT_CHARGE_REF_TYPES].sort());
+    expect(
+      distinctPurposeLiterals().size + refTypes.length
+    ).toBe(KNOWN_SPEND_PURPOSE_COUNT);
   });
 
   it("the note names the real count, says how the split is MADE, and never claims an estimate", () => {
@@ -112,9 +141,10 @@ describe("R9/R17a: the by-mode note's claim is derived from the real purposes, n
     // R17a: no mode inference from the cost rollup, said to the creator.
     expect(note).toMatch(/nothing here is estimated from the totals/i);
     // ...and it names the mechanism that replaced the absence.
-    expect(note).toMatch(/joining each charge to the draft it paid for/i);
-    // The second purpose is named as NOT a mode — the join's whole point.
-    expect(note).toMatch(/voice brain, which is not a mode/i);
+    expect(note).toMatch(/joining each charge to the record it paid for/i);
+    expect(note).toMatch(/building a creator's voice brain/i);
+    expect(note).toMatch(/autopsy for a reference you paste/i);
+    expect(note).toMatch(/last two are not modes/i);
   });
 });
 
@@ -179,8 +209,8 @@ describe("M13: by-mode burn may not be derived from workspace_spend_monthly", ()
       "utf8"
     );
     const planted = functionSource(src, "burnByMode").replace(
-      "assertScoped(scope);",
-      "assertScoped(scope);\n  await db.select().from(workspaceSpendMonthly);"
+      "return withFreshWorkspaceRead(db, scope, async (tx) => {",
+      "return withFreshWorkspaceRead(db, scope, async (tx) => {\n  await tx.select().from(workspaceSpendMonthly);"
     );
     expect(mentionsCostRollup(withoutComments(planted))).toEqual([
       "workspaceSpendMonthly",
@@ -195,7 +225,7 @@ describe("M13: by-mode burn may not be derived from workspace_spend_monthly", ()
     const body = withoutComments(functionSource(src, "burnByMode"));
     expect(body).toContain("generationAttempts");
     expect(body).toContain("generations.mode");
-    expect(body).toContain("assertScoped(scope)");
+    expect(body).toContain("withFreshWorkspaceRead(db, scope");
   });
 
   it("neither producer of the by-mode number touches the cost rollup", () => {
@@ -220,12 +250,15 @@ const dbMocks = vi.hoisted(() => ({
   withWorkspace: vi.fn(),
   monthlySpend: vi.fn(),
   burnByMode: vi.fn(),
+  selectedProfileForMember: vi.fn(),
+  brainAssetSummary: vi.fn(),
   ledger: vi.fn(),
   subscription: vi.fn(),
 }));
 const creditMocks = vi.hoisted(() => ({
   getBalance: vi.fn(),
   getBillingState: vi.fn(),
+  usageRunwayFor: vi.fn(),
 }));
 
 vi.mock("@respin/auth", () => ({
@@ -240,6 +273,8 @@ vi.mock("@respin/db", async (importOriginal) => ({
     withWorkspace: dbMocks.withWorkspace,
     monthlySpend: dbMocks.monthlySpend,
     burnByMode: dbMocks.burnByMode,
+    selectedProfileForMember: dbMocks.selectedProfileForMember,
+    brainAssetSummary: dbMocks.brainAssetSummary,
   },
 }));
 
@@ -251,6 +286,7 @@ vi.mock("@respin/credits/app-server", async (importOriginal) => ({
   respinCredits: {
     getBalance: creditMocks.getBalance,
     getBillingState: creditMocks.getBillingState,
+    usageRunwayFor: creditMocks.usageRunwayFor,
   },
 }));
 
@@ -279,6 +315,23 @@ describe("/usage renders the split from the scoped join, on the right period", (
     creditMocks.getBillingState.mockResolvedValue({
       tier: "free",
       state: "free",
+    });
+    creditMocks.usageRunwayFor.mockResolvedValue({
+      state: "no_spend",
+      asOf: NOW,
+      windowStart: new Date("2026-07-18T00:00:00Z"),
+      trailingWindowDays: 30,
+      minimumDebitDays: 3,
+      debitDayCount: 0,
+      balance: 22,
+      totalDebit: 0,
+    });
+    dbMocks.selectedProfileForMember.mockResolvedValue({ id: "profile_1" });
+    dbMocks.brainAssetSummary.mockResolvedValue({
+      brainVersions: 1,
+      testedRules: 0,
+      loggedResults: 0,
+      feedback: 0,
     });
     dbMocks.ledger.mockResolvedValue([]);
     dbMocks.subscription.mockResolvedValue([]);
@@ -313,6 +366,14 @@ describe("/usage renders the split from the scoped join, on the right period", (
     const html = await renderUsage();
     expect(html).toContain('data-testid="burn-not-a-generation"');
     expect(html).toContain("Not a studio draft");
+  });
+
+  it("renders every current credit spender in the explanatory note (8c-W2)", async () => {
+    const html = await renderUsage();
+    expect(html).toContain(`${KNOWN_SPEND_PURPOSE_COUNT} things spend credits today`);
+    expect(html).toContain("generating a draft in the studio");
+    expect(html).toContain("building a creator&#x27;s voice brain");
+    expect(html).toContain("autopsy for a reference you paste");
   });
 
   it("a charge whose draft never settled is shown as unattributed, with its own note", async () => {
@@ -369,5 +430,8 @@ describe("/usage renders the split from the scoped join, on the right period", (
     await renderUsage();
     const [scopeArg] = dbMocks.burnByMode.mock.calls[0];
     expect(scopeArg).toBe(await dbMocks.withWorkspace.mock.results[0].value);
+    expect(creditMocks.usageRunwayFor).toHaveBeenCalledWith(scopeArg);
+    expect(dbMocks.selectedProfileForMember).toHaveBeenCalledWith(scopeArg);
+    expect(dbMocks.brainAssetSummary).toHaveBeenCalledWith(scopeArg, "profile_1");
   });
 });

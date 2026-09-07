@@ -74,6 +74,32 @@ export type BrainKindSectionData = {
   active: BrainVersionView | null;
 };
 
+/** Immutable proposal membership, projected by the scoped page reader. */
+export type ProposalHistoryItem = {
+  proposal: {
+    id: string;
+    source: "results" | "feedback";
+    status: "proposed" | "accepted" | "rejected" | "stale" | "superseded";
+    evidenceDigest: string;
+    createdAt: Date;
+    acceptedActivationId: string | null;
+    acceptedBrainDocId: string | null;
+    decisionUserId: string | null;
+    decisionRole: "owner" | "editor" | null;
+    decisionAt: Date | null;
+  };
+  resultEvidenceIds: string[] | null;
+  feedbackEvidenceIds: string[] | null;
+};
+
+/** Exact, scoped asset counts. A missing reader is never rendered as zero. */
+export type BrainAssetCounts = {
+  brainVersions: number;
+  testedRules: number;
+  loggedResults: number;
+  feedback: number;
+};
+
 /**
  * Select the actionable state from the facade's newest-first history.
  *
@@ -102,6 +128,9 @@ export type BrainViewProps = {
   voiceHistory: BrainVersionView[];
   strategyHistory: BrainVersionView[];
   killtestHistory: BrainVersionView[];
+  performanceHistory: BrainVersionView[] | null;
+  proposalHistory: ProposalHistoryItem[] | null;
+  assetCounts: BrainAssetCounts | null;
   /**
    * Per target, true when the creator SUBMITTED the interview and answered
    * at least one field belonging to that target, but the target still has
@@ -897,6 +926,212 @@ function KindSection({
   );
 }
 
+function performanceRuleIndexes(version: BrainVersionView): number[] {
+  return [...new Set(
+    version.claims.flatMap((claim) => {
+      const match = /^\/rules\/(\d+)\//.exec(claim.pointer);
+      return match ? [Number(match[1])] : [];
+    })
+  )].sort((a, b) => a - b);
+}
+
+function performanceValue(
+  version: BrainVersionView,
+  ruleIndex: number,
+  field: string
+): string | null {
+  return version.claims.find((claim) => claim.pointer === `/rules/${ruleIndex}/${field}`)?.value ?? null;
+}
+
+function performanceValues(
+  version: BrainVersionView,
+  ruleIndex: number,
+  field: string
+): string[] {
+  const prefix = `/rules/${ruleIndex}/${field}/`;
+  return version.claims
+    .filter((claim) => claim.pointer.startsWith(prefix))
+    .sort((a, b) => a.pointer.localeCompare(b.pointer))
+    .map((claim) => claim.value);
+}
+
+/** The signed stored effect states the observed direction, not the verdict. */
+function relationFromStoredEffect(effectPer1k: string | null): "higher" | "lower" | null {
+  const effect = Number(effectPer1k);
+  if (!Number.isFinite(effect) || effect === 0) return null;
+  return effect > 0 ? "higher" : "lower";
+}
+
+function PerformanceMetaVersion({ version }: { version: BrainVersionView }) {
+  const rules = performanceRuleIndexes(version);
+  return (
+    <div data-testid="performance-meta-version">
+      <p className="muted">
+        Version {version.version}, {version.status}, recorded {day(version.createdAt)}.
+      </p>
+      {rules.length === 0 ? (
+        <p className="muted">No tested rules are recorded in this version.</p>
+      ) : rules.map((index) => {
+        const label = performanceValue(version, index, "metricLabel");
+        const metricKey = performanceValue(version, index, "metricKey");
+        const metricUnit = performanceValue(version, index, "metricUnit");
+        const metricDirection = performanceValue(version, index, "metricDirection");
+        const lever = performanceValue(version, index, "lever");
+        const platform = performanceValue(version, index, "platform");
+        const audienceClass = performanceValue(version, index, "audienceClass");
+        const observedFrom = performanceValue(version, index, "observedFrom");
+        const observedTo = performanceValue(version, index, "observedTo");
+        const treatmentN = performanceValue(version, index, "treatmentN");
+        const baselineN = performanceValue(version, index, "baselineN");
+        const treatmentMedian = performanceValue(version, index, "treatmentMedianPer1k");
+        const baselineMedian = performanceValue(version, index, "baselineMedianPer1k");
+        const effectPer1k = performanceValue(version, index, "effectPer1k");
+        const observedRelation = relationFromStoredEffect(effectPer1k);
+        const pastOutcome = performanceValue(version, index, "pastOutcome");
+        const selfReportedN = performanceValue(version, index, "selfReportedN");
+        const connectorVerifiedN = performanceValue(version, index, "connectorVerifiedN");
+        const strength = performanceValue(version, index, "evidenceStrength");
+        const confounders = performanceValues(version, index, "confounders");
+        return (
+          <div className="post-row" data-testid="performance-meta-rule" key={index}>
+            <p className="muted" data-creator-authored="metric-label">
+              Creator-authored metric label: {label ?? "Not recorded"}
+            </p>
+            <dl data-testid="performance-meta-details">
+              <dt>Metric key</dt><dd>{metricKey ?? "Not recorded"}</dd>
+              <dt>Metric unit</dt><dd>{metricUnit ?? "Not recorded"}</dd>
+              <dt>Metric direction</dt><dd>{metricDirection ?? "Not recorded"}</dd>
+              <dt>Lever</dt><dd>{lever ?? "Not recorded"}</dd>
+              <dt>Platform</dt><dd>{platform ?? "Not recorded"}</dd>
+              <dt>Audience class</dt><dd>{audienceClass ?? "Not recorded"}</dd>
+              <dt>Observation envelope</dt><dd>{observedFrom ?? "Not recorded"} to {observedTo ?? "Not recorded"}</dd>
+              <dt>Treatment</dt><dd>n {treatmentN ?? "Not recorded"}; median per 1,000 {treatmentMedian ?? "Not recorded"}</dd>
+              <dt>Baseline</dt><dd>n {baselineN ?? "Not recorded"}; median per 1,000 {baselineMedian ?? "Not recorded"}</dd>
+              <dt>Signed effect per 1,000</dt><dd>{effectPer1k ?? "Not recorded"}</dd>
+              <dt>Past outcome</dt><dd>{pastOutcome ?? "Not recorded"}</dd>
+              <dt>Evidence counts</dt><dd>{selfReportedN ?? "Not recorded"} quantified self-reported; {connectorVerifiedN ?? "Not recorded"} connector verified</dd>
+            </dl>
+            {observedRelation ? (
+              <p data-testid="performance-outcome-summary">
+                This treatment was {observedRelation} than this baseline in these observations.
+              </p>
+            ) : (
+              <p className="muted">A past comparison direction was not recorded for this rule.</p>
+            )}
+            <p className="muted" data-testid="performance-strength">
+              Evidence strength: {strength ?? "Not recorded"}. Evidence strength describes the recorded evidence, not confidence or probability.
+            </p>
+            <div data-testid="performance-confounders">
+              <p className="muted">Structured confounders</p>
+              {confounders.length ? <p>{confounders.map((confounder, position) => <span key={confounder}>{position ? ", " : ""}{confounder}</span>)}</p> : <p className="muted">None recorded.</p>}
+            </div>
+            <p className="muted" data-testid="performance-noncausal">
+              This describes past observations, does not establish cause, and is not a forecast.
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PerformanceMeta({ history }: { history: BrainVersionView[] | null }) {
+  if (history === null) {
+    return (
+      <section data-testid="performance-meta-unavailable">
+        <h2>Performance Meta</h2>
+        <p className="muted">Performance Meta could not be read right now. Other brain history remains available.</p>
+      </section>
+    );
+  }
+  const current = history.find((version) => version.status === "active") ?? null;
+  return (
+    <section data-testid="performance-meta">
+      <h2>Performance Meta</h2>
+      <div className="panel" data-testid="performance-meta-current">
+        <h3>Current</h3>
+        {current ? <PerformanceMetaVersion version={current} /> : (
+          <p className="muted">No Performance Meta version is active yet. Accepted result proposals appear here after their explicit activation.</p>
+        )}
+      </div>
+      <div className="panel" data-testid="performance-meta-history">
+        <h3>History</h3>
+        {history.length === 0 ? <p className="muted">No Performance Meta versions have been recorded yet.</p> : history.map((version) => (
+          <PerformanceMetaVersion key={version.brainDocId} version={version} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function decisionAttribution(proposal: ProposalHistoryItem["proposal"]): string | null {
+  if (proposal.status !== "accepted" && proposal.status !== "rejected") return null;
+  if (proposal.decisionRole === null || proposal.decisionAt === null) {
+    return "Decision details were not recorded.";
+  }
+  const actor = proposal.decisionUserId === null
+    ? `Deleted member · ${proposal.decisionRole}`
+    : `Member ${proposal.decisionUserId} · ${proposal.decisionRole}`;
+  return `Decision: ${actor}. Recorded ${proposal.decisionAt.toISOString()}.`;
+}
+
+function ProposalHistory({ proposals }: { proposals: ProposalHistoryItem[] | null }) {
+  if (proposals === null) {
+    return (
+      <section data-testid="proposal-history-unavailable">
+        <h2>Proposal history</h2>
+        <p className="muted">Proposal history could not be read right now.</p>
+      </section>
+    );
+  }
+  return (
+    <section data-testid="proposal-history">
+      <h2>Proposal history</h2>
+      {proposals.length === 0 ? <p className="muted">No result or feedback proposal has been recorded yet.</p> : proposals.map(({ proposal, resultEvidenceIds, feedbackEvidenceIds }) => (
+        <div className="panel" data-testid="proposal-history-item" key={proposal.id}>
+          <p><strong>{proposal.source === "results" ? "Result" : "Feedback"} proposal</strong></p>
+          <p className="muted">Status: {proposal.status}. Recorded {day(proposal.createdAt)}.</p>
+          <p className="muted">Immutable evidence digest: {proposal.evidenceDigest}.</p>
+          {decisionAttribution(proposal) ? (
+            <p className="muted" data-testid="proposal-decision">
+              {decisionAttribution(proposal)}
+            </p>
+          ) : null}
+          {resultEvidenceIds === null || feedbackEvidenceIds === null ? (
+            <p className="muted">Its immutable evidence membership could not be read right now.</p>
+          ) : (
+            <>
+              <p data-testid="proposal-result-evidence">Result evidence IDs: {resultEvidenceIds.length ? resultEvidenceIds.join(", ") : "None"}.</p>
+              <p data-testid="proposal-feedback-evidence">Feedback evidence IDs: {feedbackEvidenceIds.length ? feedbackEvidenceIds.join(", ") : "None"}.</p>
+            </>
+          )}
+          {proposal.status === "accepted" ? (
+            <p data-testid="proposal-accepted-activation">
+              Accepted activation: {proposal.acceptedActivationId ?? "Not recorded"}. Activated brain version: {proposal.acceptedBrainDocId ?? "Not recorded"}.
+            </p>
+          ) : null}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function BrainAssets({ counts }: { counts: BrainAssetCounts | null }) {
+  return (
+    <section className="panel" data-testid="brain-assets">
+      <h2>Brain assets</h2>
+      {counts ? (
+        <div>
+          <p><span className="num">{counts.brainVersions}</span> brain versions</p>
+          <p><span className="num">{counts.testedRules}</span> tested rules</p>
+          <p><span className="num">{counts.loggedResults}</span> logged results</p>
+          <p><span className="num">{counts.feedback}</span> feedback entries</p>
+        </div>
+      ) : <p className="muted">Exact brain-asset counts could not be read right now.</p>}
+    </section>
+  );
+}
+
 export function BrainView({
   profileName,
   voice,
@@ -905,6 +1140,9 @@ export function BrainView({
   voiceHistory,
   strategyHistory,
   killtestHistory,
+  performanceHistory,
+  proposalHistory,
+  assetCounts,
   interviewTouchedButUndrafted,
   decideBlock,
   confirmVoiceAction,
@@ -951,6 +1189,12 @@ export function BrainView({
           </div>
         </div>
       ) : null}
+
+      <BrainAssets counts={assetCounts} />
+
+      <PerformanceMeta history={performanceHistory} />
+
+      <ProposalHistory proposals={proposalHistory} />
 
       <KindSection
         heading="How you write"

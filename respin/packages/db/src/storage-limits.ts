@@ -35,6 +35,27 @@ export const BRAIN_DOCUMENT_TEXT_MAX = 500_000;
 export const FEEDBACK_NOTE_MAX = 2_000;
 
 /**
+ * Bounds on ONE logged result (slice 9a, R5-R9).
+ *
+ * THE SAME CLASS AS `FEEDBACK_NOTE_MAX` AND FOR THE SAME REASON: both columns
+ * are `text` with no length constraint, both are browser-reachable, both are
+ * export-included, and `results` has no delete path either. The note bound is
+ * deliberately the SAME NUMBER as feedback's — one creator paragraph is one
+ * creator paragraph, and two limits that mean the same thing should not
+ * disagree — but it is its own constant, because the two can move for
+ * different reasons.
+ *
+ * `RESULT_PLATFORM_MAX` bounds a short label ("YouTube Shorts",
+ * "Instagram Reels"). It is deliberately NOT an enum: the platform vocabulary
+ * belongs to the product's surfaces rather than to this package, and pinning
+ * it as a pgEnum would mean a migration per platform — the trade
+ * `generation_attempts.mode` states one file over, with the same consequence
+ * (a typo is storable, so it splits a cohort rather than corrupting one).
+ */
+export const RESULT_NOTE_MAX = 2_000;
+export const RESULT_PLATFORM_MAX = 80;
+
+/**
  * Bounds on ONE private framework, and on how many a profile may hold.
  *
  * The same class of ceiling as the onboarding pair above and for the same

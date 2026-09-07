@@ -60,7 +60,6 @@ import {
   UsageView,
   burnByModeNote,
   burnPeriodLine,
-  daysToEmptyNote,
   type UsageViewProps,
 } from "../app/(product)/usage/usage-view";
 
@@ -92,6 +91,25 @@ const base: UsageViewProps = {
     ],
     notAGeneration: { credits: 5, debits: 1 },
     nonTerminalClaim: { credits: 0, debits: 0 },
+  },
+  runway: {
+    state: "estimate",
+    asOf: AS_OF,
+    windowStart: AS_OF,
+    trailingWindowDays: 30,
+    minimumDebitDays: 3,
+    debitDayCount: 3,
+    balance: 20,
+    totalDebit: 14,
+    dailyRate: 14 / 30,
+    daysToEmpty: 43,
+  },
+  brainAssets: {
+    state: "available",
+    brainVersions: 2,
+    testedRules: 1,
+    loggedResults: 3,
+    feedback: 1,
   },
   rows: [
     {
@@ -433,18 +451,21 @@ describe("/usage claims nothing this product cannot support", () => {
     expect(UNCHARGED_CAP_WINDOW_CLAUSE.length).toBeGreaterThan(30);
   });
 
-  it("the page's own SPEND SENTENCES are scanned as strings too", () => {
-    // The note functions are the copy slice 6 added, and two of them can render
-    // in states the fixtures above do not reach (`daysToEmptyNote` takes a
-    // visibility the props cannot always produce). Reading them directly closes
-    // that gap rather than assuming the render covered it.
+  it("the page's own spend and runway sentences are scanned from rendered states", () => {
+    const runwayStates = [
+      { ...base.runway, state: "paused" as const },
+      { ...base.runway, state: "no_spend" as const },
+      { ...base.runway, state: "too_few_debit_days" as const, debitDayCount: 2 },
+      { state: "read_unavailable" as const, component: "config" as const, asOf: AS_OF },
+      { state: "read_unavailable" as const, component: "pause" as const, asOf: AS_OF },
+      { state: "read_unavailable" as const, component: "balance" as const, asOf: AS_OF },
+      { state: "read_unavailable" as const, component: "ledger" as const, asOf: AS_OF },
+    ] as unknown as UsageViewProps["runway"][];
     const sentences = [
       burnByModeNote(),
       burnPeriodLine({ start: AS_OF, noun: "month", phrase: "this calendar month" }),
       burnPeriodLine({ start: AS_OF, noun: "period", phrase: "this billing period" }),
-      daysToEmptyNote("spent"),
-      daysToEmptyNote("unknown"),
-      daysToEmptyNote("none"),
+      ...runwayStates.map((runway) => visibleCopy(render({ runway }))),
       NO_BILLING_ACCOUNT_REASON,
       PORTAL_NOT_OWNER_REASON,
     ];

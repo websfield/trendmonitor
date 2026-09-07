@@ -18,8 +18,14 @@
 import {
   AlreadySubscribedError,
   AutoTopupCapError,
+  AutoTopupAuthorityKeyError,
+  AutoTopupAuthoritySignatureError,
+  BillingReauthenticationError,
   BillingRoleError,
   CheckoutInFlightError,
+  CheckoutReconciliationRequiredError,
+  TierCheckoutAuthorityError,
+  TierCheckoutRolloutError,
   ClockSkewError,
   CustomerMappingLostError,
   InvoiceRecoveryUnavailableError,
@@ -34,6 +40,7 @@ import {
   PackPriceUnavailableError,
   PauseLengthError,
   StripeNotConfiguredError,
+  StripeAccountBindingError,
   StripeSessionUrlMissingError,
   SubscriptionPausedError,
   UnknownTierPriceError,
@@ -42,6 +49,9 @@ import {
   // app-reachable for the first time because `runInference` is the product's
   // first app-reachable SPEND.
   AutoTopupShortfallError,
+  AutoTopupReconciliationRequiredError,
+  AutoTopupRolloutError,
+  AutoTopupAttemptIntegrityError,
   AutoTopupUnnamedRefusalError,
   ConfigNotMigratedError,
   AssemblyError,
@@ -66,13 +76,14 @@ import {
   BrainNotActivatedError,
   GenerationAlreadyRefusedError,
   GenerationAssemblyError,
+  SpinSimilarityError,
   GenerationAttemptStateError,
   GenerationInFlightError,
   GenerationPayloadMismatchError,
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
+  GenerationUnchargedCostCapError,
   KillTestError,
-  ModeNotBuiltYetError,
   ModeNotInPlanError,
   NoCreatorRulesError,
   ScriptOutputError,
@@ -84,6 +95,18 @@ import {
   // nothing was spent, and neither sells anything.
   RevisionParentError,
   UnknownEntitlementTierError,
+  // SLICE 8c (R8/R13) — the two refusals `submitPastedReference` adds. Both
+  // are raised BEFORE any row is written and before any credit moves, so both
+  // copies say so; the tier one names the plans and sells nothing (the
+  // `profile_cap` precedent), and the input one branches on the INSTANCE's
+  // `field` (the `RunSlotBusyError` precedent) so a creator is told which box
+  // to fix.
+  PastedReferenceInputError,
+  PastedReferenceTierError,
+  // ...and `settleParkedAutopsies` -> `refundCredits`' one typed refusal,
+  // reachable from a `/trends` PAGE LOAD (the one write that page makes).
+  RefundSourceNeverExpiresError,
+  PerformanceLearningConfigUnavailableError,
   // Not a class — the one SENTENCE a windowed uncharged-billable cap owes its
   // reader, imported rather than retyped so this map and the package message
   // cannot disagree about whether that refusal clears itself.
@@ -112,6 +135,8 @@ import {
   PostAttestationError,
   EvidenceUnreadableError,
   ExportBusyError,
+  AuthMailDeliveryError,
+  AuthMailRefusedError,
   ExportClassificationError,
   ProfileAccessError,
   ProfileCapError,
@@ -144,6 +169,40 @@ import {
   FrameworkContentError,
   FrameworkLimitError,
   PrivateFrameworkTierError,
+  // SLICE 9A — the results surface's four typed refusals. Same rule as the ten
+  // above, and the same reason stated once more because this slice is where it
+  // was nearly broken: `/results` returns its refusal as ACTION STATE rather
+  // than as a `?e=` redirect, so `logResultAction` resolves whatever code its
+  // catch classifies through `BILLING_ERROR_COPY` and sends the words down
+  // with the state. Without these four, every one of them would arrive at the
+  // creator as "Something went wrong" — a second live instance of registered
+  // open finding `8c-R15`, on the one screen whose whole job is honesty about
+  // what is and is not known.
+  TreatmentKeyError,
+  ResultInputError,
+  ResultTargetError,
+  ResultDuplicateError,
+  // SLICE 9A, added after the slice's own reading of the four above found the
+  // hole it fills: the stratum refusal used to be a `WorkspaceAccessError`,
+  // and THAT class is covered here — so it would not have rendered
+  // "Something went wrong". It would have rendered something worse. See the
+  // copy entry for what, and for why this class exists at all.
+  ComparisonStratumError,
+  // SLICE 9A. FROM `@respin/db`, NOT FROM `@respin/brain`, although
+  // `@respin/brain` is where the class is written. That package is denied to
+  // `app/**` on purpose — `buildLeverComparisons` trusts its caller to have
+  // scoped the rows, so the fetch and the comparison must not be a package
+  // boundary apart — and importing it here to name a class would be exactly
+  // the "widening a package boundary for a convenience" this file's own
+  // precedent refuses. `@respin/db` composes the comparison and re-exports
+  // the refusal, so this screen gets the one inert value it needs for an
+  // `instanceof` and no access to the builder or anything else in there.
+  ComparisonInputError,
+  PerformanceLearningEntitlementError,
+  PromotionAccessError,
+  PromotionPayloadError,
+  PromotionFreshnessError,
+  PromotionDecisionError,
 } from "@respin/db";
 
 /**
@@ -169,12 +228,16 @@ export const BILLING_ERROR_CODES = [
   "app_base_url_missing",
   "already_subscribed",
   "checkout_in_flight",
+  "checkout_reconciliation_required",
+  "tier_checkout_authority",
+  "tier_checkout_rollout",
   "not_owner",
   "no_stripe_customer",
   "no_live_subscription",
   "not_paused",
   "pause_length",
   "auto_topup_cap",
+  "billing_reauthentication",
   "stripe_not_configured",
   "stripe_session_url_missing",
   "unknown_tier_price",
@@ -215,6 +278,8 @@ export const BILLING_ERROR_CODES = [
   "brain_version_limit",
   "onboarding_input_limit",
   "export_busy",
+  "auth_mail_refused",
+  "auth_mail_delivery",
   "scope_forgery",
   "usage_raw",
   // M2b-1. `brain-content.ts` and `echo.ts` reached a deployed process for the
@@ -257,10 +322,13 @@ export const BILLING_ERROR_CODES = [
   "inference_role",
   "profile_archived",
   "topup_in_flight",
+  "topup_reconciliation_required",
+  "auto_topup_status_unavailable",
   "insufficient_credits",
   "config_not_migrated",
   "autotopup_shortfall",
   "llm_unavailable",
+  "reference_unusable",
   // Slice 3 — the composed voice inference. Only the first of these three is
   // something the creator can act on; the other two are ours, and their copy
   // says so rather than offering a button that cannot help.
@@ -324,9 +392,9 @@ export const BILLING_ERROR_CODES = [
   "generation_payload_mismatch",
   "generation_recovery_required",
   "generation_uncharged_attempt_cap",
+  "generation_uncharged_cost_cap",
   "generation_unusable",
   "kill_test_failed",
-  "mode_not_built_yet",
   "mode_not_in_plan",
   "no_creator_rules",
   "unknown_mode",
@@ -363,6 +431,54 @@ export const BILLING_ERROR_CODES = [
   "framework_limit",
   "private_framework_tier",
   "unknown_entitlement_tier",
+  // SLICE 8c — the paste-a-reference refusals (R8, R13; R-96/R-98).
+  //
+  // FIVE CODES FOR ONE INPUT CLASS, and that is the `RevisionParentError`
+  // precedent rather than a new idea: `PastedReferenceInputError` carries a
+  // `field` (`sourceUrl` | `title` | `transcript` | `niche`), and those are four
+  // different boxes on the form with four different limits. One code would
+  // tell a creator whose URL was refused to shorten a transcript that was
+  // fine. `pasted_reference_input` is the neutral fallback for a field this
+  // build does not know, and it names no box because it cannot know which.
+  "pasted_reference_tier",
+  "pasted_reference_input",
+  "pasted_reference_url",
+  "pasted_reference_title",
+  "pasted_reference_transcript",
+  "pasted_reference_niche",
+  // The parked-autopsy REFUND's one typed refusal (R9, R-98): the credits the
+  // paste consumed came from a never-expiring lot, so `refundCredits` cannot
+  // date the returned credits and stops rather than mint an expiry nobody
+  // chose. An operator's case, and the copy says so.
+  "refund_source_never_expires",
+  // SLICE 9A. FOUR CODES RATHER THAN ONE, and the split is the whole value:
+  // "what that draft tested could not be identified", "the form does not
+  // describe a storable observation", "that draft is not this creator's" and
+  // "you already logged that window" have four DIFFERENT remedies, and a
+  // creator handed the wrong one does the wrong thing. `results` is
+  // append-only with no update and no delete path, so a refusal that sends
+  // someone to re-type numbers they cannot correct is worse here than on any
+  // other form in the product.
+  "result_treatment_key",
+  "result_input",
+  "result_target",
+  "result_duplicate",
+  // NOT A FIFTH RESULT-FORM REFUSAL, which is why it is not named
+  // `result_*`: the four above are things a creator's submission can be, and
+  // this one is a thing the PRODUCT can fail to describe. A creator reaching
+  // it has done nothing wrong and has nothing on the form to correct.
+  "comparison_stratum",
+  // ONE CODE FOR NINE THROW SITES — see the copy entry for why they are one
+  // refusal and not several.
+  "comparison_input",
+  // Slice 9b. Keep operational configuration failure separate from Free
+  // view-only access: an unmapped price is ours to repair, not a plan limit.
+  "performance_learning_unavailable",
+  "performance_learning_view_only",
+  "promotion_access",
+  "promotion_payload",
+  "promotion_freshness",
+  "promotion_decision",
   "unknown",
 ] as const;
 
@@ -375,12 +491,19 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: AppBaseUrlMissingError, code: "app_base_url_missing" },
   { cls: AlreadySubscribedError, code: "already_subscribed" },
   { cls: CheckoutInFlightError, code: "checkout_in_flight" },
+  {
+    cls: CheckoutReconciliationRequiredError,
+    code: "checkout_reconciliation_required",
+  },
+  { cls: TierCheckoutAuthorityError, code: "tier_checkout_authority" },
+  { cls: TierCheckoutRolloutError, code: "tier_checkout_rollout" },
   { cls: BillingRoleError, code: "not_owner" },
   { cls: NoStripeCustomerError, code: "no_stripe_customer" },
   { cls: NoLiveSubscriptionError, code: "no_live_subscription" },
   { cls: NotPausedError, code: "not_paused" },
   { cls: PauseLengthError, code: "pause_length" },
   { cls: AutoTopupCapError, code: "auto_topup_cap" },
+  { cls: BillingReauthenticationError, code: "billing_reauthentication" },
   { cls: StripeNotConfiguredError, code: "stripe_not_configured" },
   { cls: StripeSessionUrlMissingError, code: "stripe_session_url_missing" },
   { cls: UnknownTierPriceError, code: "unknown_tier_price" },
@@ -427,6 +550,11 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: BrainVersionLimitError, code: "brain_version_limit" },
   { cls: OnboardingInputLimitError, code: "onboarding_input_limit" },
   { cls: ExportBusyError, code: "export_busy" },
+  // Phase 10b-1 Task 4: the closed auth-delivery authority. A refusal means
+  // nothing was sent (quota or recipient); a delivery error means the
+  // provider did not durably accept it. Neither is ever reported as sent.
+  { cls: AuthMailRefusedError, code: "auth_mail_refused" },
+  { cls: AuthMailDeliveryError, code: "auth_mail_delivery" },
   { cls: ProvenanceError, code: "provenance" },
   { cls: ScopeForgeryError, code: "scope_forgery" },
   { cls: UsageRawError, code: "usage_raw" },
@@ -475,10 +603,25 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   // is the false statement; telling them we are busy is not.
   { cls: RunSlotBusyError, code: "server_at_capacity" },
   { cls: TopupInFlightError, code: "topup_in_flight" },
+  {
+    cls: AutoTopupReconciliationRequiredError,
+    code: "topup_reconciliation_required",
+  },
+  { cls: AutoTopupRolloutError, code: "auto_topup_status_unavailable" },
+  { cls: AutoTopupAuthorityKeyError, code: "auto_topup_status_unavailable" },
+  { cls: StripeAccountBindingError, code: "auto_topup_status_unavailable" },
+  {
+    cls: AutoTopupAuthoritySignatureError,
+    code: "topup_reconciliation_required",
+  },
   { cls: InsufficientCreditsError, code: "insufficient_credits" },
   { cls: PostCallDebitError, code: "debit_refused_after_call" },
   { cls: ConfigNotMigratedError, code: "config_not_migrated" },
   { cls: AutoTopupShortfallError, code: "autotopup_shortfall" },
+  {
+    cls: AutoTopupAttemptIntegrityError,
+    code: "topup_reconciliation_required",
+  },
   { cls: AutoTopupUnnamedRefusalError, code: "autotopup_shortfall" },
   { cls: LlmError, code: "llm_unavailable" },
   // Slice 3b, Stage B1.
@@ -493,16 +636,24 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   // request at all"), so it needs its own entry and its own words.
   { cls: BrainNotActivatedError, code: "brain_not_activated" },
   { cls: ModeNotInPlanError, code: "mode_not_in_plan" },
-  { cls: ModeNotBuiltYetError, code: "mode_not_built_yet" },
   { cls: UnknownModeError, code: "unknown_mode" },
   { cls: UnpricedOperationError, code: "unpriced_operation" },
   { cls: GenerationUnchargedAttemptCapError, code: "generation_uncharged_attempt_cap" },
+  // The money-denominated twin (billing gate, 2026-09-04). Neither subclasses
+  // the other, so walk order decides nothing between them.
+  { cls: GenerationUnchargedCostCapError, code: "generation_uncharged_cost_cap" },
   { cls: GenerationInFlightError, code: "generation_in_flight" },
   { cls: GenerationAlreadyRefusedError, code: "generation_already_refused" },
   { cls: GenerationPayloadMismatchError, code: "generation_payload_mismatch" },
   { cls: GenerationRecoveryRequiredError, code: "generation_recovery_required" },
   { cls: GenerationAttemptStateError, code: "generation_attempt_state" },
   { cls: GenerationAssemblyError, code: "generation_assembly" },
+  // SLICE 8c CLOSE-OUT (2026-09-04). Both the billing and the compliance
+  // reviewer found this independently: a `SpinSimilarityError` had no entry
+  // here, so `billingErrorCode` fell through to `unknown` and a creator whose
+  // spin hit it read "Something went wrong". It is OUR data being refused by
+  // OUR bounds, so the copy says so and does not send them to reword anything.
+  { cls: SpinSimilarityError, code: "reference_unusable" },
   { cls: ScriptOutputError, code: "generation_unusable" },
   { cls: KillTestError, code: "kill_test_failed" },
   { cls: NoCreatorRulesError, code: "no_creator_rules" },
@@ -527,6 +678,30 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: FrameworkLimitError, code: "framework_limit" },
   { cls: PrivateFrameworkTierError, code: "private_framework_tier" },
   { cls: UnknownEntitlementTierError, code: "unknown_entitlement_tier" },
+  // SLICE 8c. Neither subclasses anything in this table. The input class's
+  // ENTRY IS THE FALLBACK, NOT THE USUAL PATH: `billingErrorCode` branches on
+  // its `field` BEFORE walking this table, exactly as it does for
+  // `RevisionParentError`; the entry exists because the completeness test
+  // enumerates the facades' error CLASSES.
+  { cls: PastedReferenceTierError, code: "pasted_reference_tier" },
+  { cls: PastedReferenceInputError, code: "pasted_reference_input" },
+  { cls: RefundSourceNeverExpiresError, code: "refund_source_never_expires" },
+  // SLICE 9A. None of the four subclasses anything else in this table, and
+  // none has an instance branch: `logResultAction` forwards form strings and
+  // takes no decision, so the class IS the refusal and this table is the whole
+  // mapping.
+  { cls: TreatmentKeyError, code: "result_treatment_key" },
+  { cls: ResultInputError, code: "result_input" },
+  { cls: ResultTargetError, code: "result_target" },
+  { cls: ResultDuplicateError, code: "result_duplicate" },
+  { cls: ComparisonStratumError, code: "comparison_stratum" },
+  { cls: ComparisonInputError, code: "comparison_input" },
+  { cls: PerformanceLearningConfigUnavailableError, code: "performance_learning_unavailable" },
+  { cls: PerformanceLearningEntitlementError, code: "performance_learning_view_only" },
+  { cls: PromotionAccessError, code: "promotion_access" },
+  { cls: PromotionPayloadError, code: "promotion_payload" },
+  { cls: PromotionFreshnessError, code: "promotion_freshness" },
+  { cls: PromotionDecisionError, code: "promotion_decision" },
 ];
 
 /** The class names this module claims to handle (read by the completeness test). */
@@ -567,6 +742,13 @@ export const INSTANCE_BRANCH_CODES: Readonly<
     "revision_parent_not_revisable",
     "revision_parent_different_mode",
     "revision_parent_unreadable",
+  ],
+  // Slice 8c. Four fields, four sentences — see the codes' own block above.
+  PastedReferenceInputError: [
+    "pasted_reference_url",
+    "pasted_reference_title",
+    "pasted_reference_transcript",
+    "pasted_reference_niche",
   ],
 };
 
@@ -762,7 +944,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   topup_in_flight: {
     title: "Not enough credits yet — a top-up is on its way",
     detail:
-      "This attempt was refused and nothing was spent: no model was called and this attempt did not use up your first run for this creator. A top-up has been started, and credits land when your bank settles it. Try again once your balance updates on this page — and if it does not, buy a pack from Billing rather than waiting.",
+      "This attempt was refused and nothing was spent: no model was called and this attempt did not use up your first run for this creator. A top-up has been started, and credits land when your bank settles it. Try again only once your balance updates; if it does not, ask an administrator to reconcile the pending top-up before buying anything else.",
   },
   insufficient_credits: {
     title: "Not enough credits for this",
@@ -848,6 +1030,20 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "A complete export is already being prepared",
     detail:
       "Another export for this workspace is still in progress. Wait for that download to finish, then try the export again. No Brain data was changed.",
+  },
+  auth_mail_refused: {
+    title: "We could not send that email right now",
+    detail:
+      "The product's email allowance for today or this month is used up, or the address on the account could not be resolved. Nothing was sent. Try again later; if this keeps happening, contact support.",
+  },
+  // Covers BOTH delivery statuses the error carries: a definitive provider
+  // refusal and an indeterminate exchange (timeout, 5xx, idempotent replay).
+  // The second may still arrive, so the copy claims neither direction
+  // (round-1 lean S3).
+  auth_mail_delivery: {
+    title: "That email was not confirmed as sent",
+    detail:
+      "The mail provider did not confirm the message. It may still arrive; if it does not, request it again in a few minutes. Nothing else on your account was changed.",
   },
   // Slice 4 (R12, R13). THIS COPY NAMES THE CATEGORY, NEVER THE SPECIFIC POST
   // OR SPAN — and that is a statement about the CHANNELS this string travels
@@ -978,14 +1174,17 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
       "Each plan includes a set number of creator profiles, and this workspace is using all of them. Nothing was created and nothing was lost — the onboarding page shows your plan and how many profiles it includes.",
   },
   profile_role: {
-    // ONE CODE, THREE ACTS. `ProfileRoleError` covers creating a profile,
-    // adding a post, and writing a brain document, so this copy may not
-    // describe only the first — a viewer whose PASTE was refused used to read
-    // "Nothing was created" about a post (tenancy gate, 2026-08-27). The `?e=`
-    // channel carries a code and not the act, so the copy covers the class.
+    // ONE CODE, FOUR ACTS. `ProfileRoleError` covers creating a profile,
+    // adding a post, writing a brain document, and (slice 8) tracking or
+    // untracking a trend niche, so this copy may not describe only the first —
+    // a viewer whose PASTE was refused used to read "Nothing was created" about
+    // a post (tenancy gate, 2026-08-27). The `?e=` channel carries a code and
+    // not the act, so the copy covers the class.
+    // ...and (slice 8c) a FIFTH act: pasting a reference for autopsy, which
+    // spends the workspace's credits and lands in the creator's record.
     title: "Viewer access cannot change this creator's record",
     detail:
-      "Adding creator profiles or posts needs at least editor access — profiles come out of the workspace's paid allowance, and posts become part of a creator's permanent record. Nothing was saved. Ask a workspace owner to make the change, or to give you editor access.",
+      "Adding creator profiles or posts, pasting a reference for autopsy, or changing the trends this creator tracks, needs at least editor access — profiles come out of the workspace's paid allowance, posts and pasted references become part of a creator's permanent record, and tracked niches and autopsies use the plan's allowance and credits. Nothing was saved and nothing was charged. Ask a workspace owner to make the change, or to give you editor access.",
   },
   profile_name: {
     title: "That profile name cannot be used",
@@ -1120,15 +1319,6 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     detail:
       "Plans differ in which modes they include, and this workspace's plan does not include the one that was asked for. Nothing was spent and no model was called. The billing page shows what this workspace is on today.",
   },
-  mode_not_built_yet: {
-    // A SEPARATE CODE FROM `mode_not_in_plan`, because the two say opposite
-    // things about whose fault it is. Telling a paying creator their plan
-    // excludes a mode this product has simply not shipped is a false statement
-    // about what they bought.
-    title: "That mode is not built yet",
-    detail:
-      "This is about what we have shipped, not about your plan: that mode has no pipeline behind it yet, so nothing ran. Nothing was spent and no model was called. Hooks is the mode that works today.",
-  },
   unknown_mode: {
     title: "That is not one of this product's modes",
     detail:
@@ -1138,6 +1328,17 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "This build could not price that run",
     detail:
       "Rather than charge a number nobody chose, the run stopped before it started. Nothing was spent and no model was called. This is a fault in the build rather than anything you did; please tell us so an operator can fix it.",
+  },
+  generation_uncharged_cost_cap: {
+    // SAME SENTENCE TO THE CREATOR AS ITS SIBLING, and deliberately so: which
+    // of the two bounds bit is an OPERATOR's diagnosis (frequency versus cost
+    // per call), and the creator's situation is identical either way — our
+    // fault, nothing spent, self-clearing inside the window. Saying "you have
+    // spent too much" would be false: these are attempts they were not charged
+    // for.
+    title: "Too many failed drafts for this creator just now",
+    detail:
+      `Recent drafts for this creator kept failing in a way that costs us money and costs you nothing, so we have paused new ones for a short while rather than keep burning them. Nothing was spent and no model was called this time, and no credits were used. ${UNCHARGED_CAP_WINDOW_CLAUSE} It is a fault on our side rather than anything you did — please tell us if it keeps happening.`,
   },
   generation_uncharged_attempt_cap: {
     // THE OPPOSITE RULE FROM `uncharged_attempt_cap` ABOVE, and that is the
@@ -1216,6 +1417,15 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "There was not enough to build a draft from",
     detail:
       "A draft needs something to work from: what you typed in, a platform, and an activated brain for this creator. One of those was missing, so nothing was built. Nothing was spent and no model was called. Fill in the box, pick a platform, and make sure this creator has an activated brain.",
+  },
+  reference_unusable: {
+    // OURS, AND THE COPY SAYS SO. The trusted autopsy projection is something
+    // this product built; a creator cannot fix it by rewriting their input, so
+    // the remedy must not imply they can. Nothing is charged: the reference is
+    // now checked at `runGeneration` entry, before any vendor call.
+    title: "This trend could not be used as a reference",
+    detail:
+      "The analysis behind this trend is not in a shape the copy check can compare a draft against, so nothing was generated. Nothing was spent and no model was called. This is our side of it rather than anything about what you wrote — try a different trend, and tell us if it keeps happening on this one.",
   },
   generation_unusable: {
     // OUR PARSE FAILURE, and the money sentence is the point (slice card
@@ -1379,11 +1589,313 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     detail:
       "This build has no answer for the plan on this workspace, so nothing was changed rather than guessed at. That is about our configuration, not about your plan, and nothing you can change from here will fix it. Nothing was spent. Please tell us; the shared framework library is unaffected meanwhile.",
   },
+  // ------------------------------------------------------- SLICE 8c (R13)
+  //
+  // The paste-a-reference refusals. Every one is raised BEFORE any row is
+  // written and before any credit moves (R8's order: mint → tier → pause →
+  // lock → balance → intake → debit), so every one says so. NO NUMBER IS TYPED
+  // HERE: the transcript limit and the title limit are stated on the form
+  // itself from the package constants (`POST_CONTENT_MAX`,
+  // `PASTED_REFERENCE_TITLE_MAX`), and this map is static — the `feedback_note`
+  // precedent, "longer than the limit shown under the box".
+  pasted_reference_tier: {
+    // IT NAMES THE PLANS AND DOES NOT SELL ONE — the `profile_cap` /
+    // `mode_not_in_plan` precedent, on a refusal that is the single most
+    // tempting place in this product to write "upgrade". Free stays
+    // digest-only (REQ-E05, R-96); the reader gets the boundary and the
+    // billing page, which is where plans are compared without a refusal
+    // banner steering the comparison.
+    title: "This plan does not include pasting references",
+    detail:
+      "Pasting a reference for autopsy is part of the Creator, Pro and Studio plans, and this workspace's plan does not include it. Nothing was saved and nothing was charged. The billing page shows what this workspace is on today.",
+  },
+  pasted_reference_input: {
+    title: "That reference was not saved",
+    detail:
+      "One of the four fields — the link, the title, the transcript or the niche — was refused, and this build could not say which. Nothing was saved and nothing was charged. Check each against the limit shown beside it and submit again.",
+  },
+  pasted_reference_url: {
+    title: "That link cannot be used",
+    detail:
+      "The link has to be a full public web address starting with http:// or https://, and this one was not. Nothing was saved and nothing was charged. Paste the video's address as it appears in the browser and submit again.",
+  },
+  pasted_reference_title: {
+    title: "That title is too long",
+    detail:
+      "The title is optional, and when given it has to fit the limit shown under the box. Nothing was saved and nothing was charged. Shorten it, or leave it blank and the link's site is shown instead.",
+  },
+  pasted_reference_transcript: {
+    title: "That transcript was not saved",
+    detail:
+      "The transcript has to be present, not blank, and within the limit shown under the box. Nothing was saved and nothing was charged. Paste the transcript of one video and submit again.",
+  },
+  pasted_reference_niche: {
+    title: "That niche is not one this creator tracks",
+    detail:
+      "A pasted reference can only be filed under a niche this creator profile already tracks, and this one was not on that list — usually because the page has been open since the niche was removed. Nothing was saved and nothing was charged. Reload, pick a niche from the list or choose none, and submit again.",
+  },
+  refund_source_never_expires: {
+    // RAISED ON A PAGE LOAD, NOT A PRESS: `/trends` settles parked autopsies
+    // before it reads them, and this is `refundCredits` refusing to date the
+    // returned credits because the ones the paste consumed had no expiry
+    // (D-M1-7). The page shows this instead of the feed, so the copy has to
+    // say plainly that the money is not lost, that nothing else on the page
+    // is wrong, and that the fix is an operator's — a goodwill adjustment
+    // with an explicit expiry — rather than anything the reader can press.
+    title: "A refund you are owed could not be dated",
+    detail:
+      "An autopsy you paid for could not be completed, so its credits are due back to you — but the credits that paid for it came from a grant with no expiry date, and rather than invent an expiry for the returned ones the refund stopped. Nothing was taken from your balance and the return is still owed, not lost. This is ours to resolve: an operator can return the credits as an adjustment with an explicit expiry. Please tell us; the refusal code and error type are recorded.",
+  },
+  // ----------------------------------------------------- SLICE 9A: /results
+  //
+  // FOUR REFUSALS, FOUR REMEDIES, AND EVERY REMEDY IS SOMETHING THE READER CAN
+  // DO. `results` is append-only: no update path, no delete path. So a refusal
+  // that leaves a creator holding numbers they cannot store, or that sends
+  // them to press the same button again, is the shape CLAUDE.md's 2026-07-30
+  // lesson names — a control that becomes the outage. Two of the four (the
+  // treatment key and the duplicate) therefore name a DIFFERENT act that works
+  // rather than a retry that cannot.
+  //
+  // AND NONE OF THEM PROMISES ANYTHING. `tests/results-honesty.test.tsx`
+  // renders every code in this table through the results refusal banner and
+  // scans it against the shared claims canon, because `/results` resolves
+  // whatever code its catch classifies — the channel is open, so the whole
+  // table is this screen's copy.
+  result_treatment_key: {
+    title: "That result was not logged, because what it tested could not be identified",
+    detail:
+      "A result about one of your drafts carries a record of what that draft was built from — the framework, the mode, and the version of your brain that was in force — and for this one, part of that record is missing or unreadable. Nothing was stored and nothing was spent. Rather than guess, this refuses: a treatment named wrongly would put your post in a group it does not belong to. You can log the same result right now by choosing the option that says it is not about one of your Respin drafts — it still counts towards your own baseline, and it says plainly that nothing here can name what it tested.",
+  },
+  result_input: {
+    title: "That result was not logged",
+    detail:
+      "Something on the form does not describe an observation that can be stored. The usual causes are an end date that is not after the start date, a count entered without its denominator or a denominator without its count, a denominator of zero, or a blank note that was sent as if it said something. Nothing was stored and nothing was spent, and the values are still in the form. Check the window and each lever against the notes beside them, then log it again.",
+  },
+  result_target: {
+    title: "That draft is not available on this creator profile",
+    detail:
+      "The result was not stored, because the draft it names could not be found for this creator. That usually means this page was open while the selected creator profile changed underneath it. Reload the page and pick the draft from this creator's own list, or choose the option that says it is not about one of your Respin drafts if it was about something else. Nothing was changed and nothing was spent.",
+  },
+  result_duplicate: {
+    title: "A result for that draft, metric and window is already logged",
+    detail:
+      "Nothing was changed, and the numbers you just typed were NOT kept. A logged result is a record of what you observed, so it is never overwritten and never quietly replaced — a cohort minimum reached by pressing submit twice would be a rule warranted by one post. If you are reporting how the same post did over a longer or a later period, change the observation window and log it again: that is a second observation, not a correction.",
+  },
+  checkout_reconciliation_required: {
+    title: "This checkout needs reconciliation",
+    detail:
+      "A subscription checkout may already exist or may have completed, but its webhook has not safely converged with this workspace yet. No new checkout was opened because that could bill you twice. Wait a few minutes and reload; if it persists, an operator must reconcile the saved checkout attempt with Stripe before you try again.",
+  },
+  tier_checkout_authority: {
+    title: "Subscription billing authority could not be verified",
+    detail:
+      "The billing request did not continue because its signed subscription authority did not match the provider-bound rollout. Reload and try once; if it persists, an operator must reconcile the saved checkout attempt and billing rollout before you continue.",
+  },
+  tier_checkout_rollout: {
+    title: "Subscription checkout is temporarily unavailable",
+    detail:
+      "The safer subscription-checkout protocol has not finished its operator-controlled rollout, so no checkout was opened and nothing was charged. Try again after the rollout is complete; an operator can inspect the rollout status if this persists.",
+  },
+  topup_reconciliation_required: {
+    title: "A top-up may still be in flight",
+    detail:
+      "This run was refused and no model was called, but the payment provider did not confirm whether the automatic top-up completed. Do not buy another pack or retry yet: an administrator must reconcile the pending top-up first, then your balance will update if it succeeded.",
+  },
+  auto_topup_status_unavailable: {
+    title: "Auto-top-up status is temporarily unavailable",
+    detail:
+      "The billing page cannot verify whether the safer auto-top-up protocol is active, so it does not present a pending preference as live. Reload before changing this setting; if the status remains unavailable, ask an administrator to check the rollout state.",
+  },
+  billing_reauthentication: {
+    title: "Confirm this billing change",
+    detail:
+      "Enter the current password for this signed-in session and try again. Nothing was changed or charged.",
+  },
+  performance_learning_unavailable: {
+    title: "Performance records are temporarily unavailable",
+    detail:
+      "This is an operational configuration issue, not a restriction of your plan. Your results and proposal history remain readable. An operator needs to repair the billing configuration before performance-record writes can continue.",
+  },
+  performance_learning_view_only: {
+    title: "This workspace has view-only performance-record access",
+    detail:
+      "Your results and proposal history remain readable. Logging results, refreshing proposals, and changing the brain require full performance-record access.",
+  },
+  promotion_access: {
+    title: "That proposal is not available here",
+    detail:
+      "It may belong to another creator profile or no longer be readable. Your existing results and proposal history remain available; reload this page and choose a proposal from this creator profile.",
+  },
+  promotion_payload: {
+    title: "That proposal cannot be reviewed",
+    detail:
+      "Its stored evidence no longer has a usable review shape, so no decision was made. Refresh proposals and review the current record again; if this remains, an operator needs to investigate.",
+  },
+  promotion_freshness: {
+    title: "That proposal is no longer the version you reviewed",
+    detail:
+      "No decision was made. Refresh the proposal and read every field and source again before choosing accept or reject.",
+  },
+  promotion_decision: {
+    title: "That proposal decision was refused",
+    detail:
+      "No decision was made because the complete reviewed field set was not available. Open the full review again and use its decision controls.",
+  },
+  /**
+   * THE COMPARISON'S POPULATION COULD NOT BE DESCRIBED (slice 9a).
+   *
+   * WHY THE CLASS EXISTS, because the copy only makes sense with it: this
+   * refusal used to be a `WorkspaceAccessError`, which IS covered in this
+   * table — so it would never have rendered "Something went wrong". It would
+   * have rendered something worse. That code's copy says "Sign in with the
+   * account that owns it, or ask its owner for access", so a creator whose
+   * comparison could not be set up would have been told, confidently, to sign
+   * in as somebody else. A printed fix that is USABLE AND WRONG sits on the
+   * same side of CLAUDE.md's 2026-07-30 line as one that cannot be followed.
+   *
+   * SCOPE, STATED RATHER THAN ASSUMED: 9a CANNOT REACH THIS. This screen
+   * passes no stratum at all — the comparison arrives already built from the
+   * facade — so there is no path from `/results` to this copy in this slice.
+   * It is owed anyway for two reasons: 9b's first stratum-passing caller is
+   * the one that will hit it, and `tests/billing-ui.test.tsx` derives its
+   * population from "every Error class app/** can receive from a facade",
+   * which is exactly the derived population CLAUDE.md's 2026-08-29 lesson says
+   * goes stale the day a second path appears.
+   *
+   * IT MAKES NO CLAIM ABOUT WHAT WAS PRESERVED, and that absence is the
+   * decision rather than an omission — the class's own message dropped the
+   * same sentence for the same reason. "Nothing was changed" is a claim about
+   * the whole call path, and nothing structurally stops a later caller raising
+   * this from inside a transaction that has already written; the reassurance
+   * would then be confident and wrong, which is the defect this class was
+   * split out of, one slice later. A caller that KNOWS what it preserved says
+   * so itself, where the knowledge is.
+   *
+   * NOT A SYNONYM EITHER. `profile-scope.test.ts` pins the absence by
+   * PATTERN and discloses its own limit — it bans the spellings it
+   * enumerates, not the class of claim — so "your results are safe", "nothing
+   * was lost" and every kindly-worded cousin are out by this paragraph rather
+   * than by a regex. What is said instead is the true and useful half: the
+   * fault is ours, the reader caused none of it, and there is nothing on the
+   * form to correct.
+   *
+   * IT NAMES NO PART AND NO VALUE. The class's `detail` says which part of
+   * the stratum was unusable in words; that message never crosses to a screen
+   * or a log (`safe-log.ts`), and this static copy cannot see it — so the
+   * sentence describes the KIND of failure and does not pretend to know which.
+   */
+  comparison_stratum: {
+    title: "That comparison could not be set up",
+    detail:
+      "The population this comparison was asked to cover was not one the product could describe, so no comparison is shown. This is a fault on our side, not something wrong with the results you logged: you caused none of it and there is nothing on the form to correct. Reload the page and try again; if it keeps happening, please contact support, because the refusal code and error type are recorded.",
+  },
+  /**
+   * A COMPARISON COULD NOT BE COMPUTED FROM STORED ROWS (slice 9a).
+   *
+   * NINE THROW SITES, ONE CODE, and the judgement is the same one that split
+   * `comparison_stratum` out of `workspace_access` — applied here and coming
+   * out the other way. The four `result_*` codes are four things a creator's
+   * SUBMISSION can be, so they need four remedies. These nine are one thing:
+   * the product could not compute a comparison from data it had already
+   * stored. A creator can act on none of them, the remedy is identical for
+   * all nine, and splitting them would produce codes whose creator-facing
+   * words were the same sentence typed twice.
+   *
+   * ---- AN OPERATOR GAP THIS ENTRY RECORDS AND DOES NOT CLOSE. NO OWNER YET.
+   *
+   * WHAT ONE CODE COSTS: `logRefusal` records the code and the class name, so
+   * an operator reading a log line cannot tell a zero denominator from a
+   * cross-profile refusal — nine causes arrive as one line. A second code
+   * would not fix it either, and that is the part worth keeping: all nine are
+   * ONE class, so the class name is equally uninformative, and splitting
+   * creator-facing copy to do a taxonomy's job would give two identical
+   * sentences and still no operator signal.
+   *
+   * THE INSTRUMENT THAT WOULD FIX IT IS NOT A CODE. It is the exception's own
+   * detail, which names the cause in words and which `safe-log.ts`
+   * deliberately does not log — for a reason that is right and unrelated to
+   * this (a foreign error's message can carry creator content). Closing this
+   * therefore means a way to carry a SAFE, closed-vocabulary cause label from
+   * a package to a log line, which is a piece of machinery this product does
+   * not have and which no slice owns. Left stated rather than invented here:
+   * a cause label smuggled into this table would be a screen's copy map
+   * pretending to be operator telemetry.
+   *
+   * THE ONE THAT WOULD MOST DESERVE ITS OWN CODE IS THE ONE THAT MUST NOT HAVE
+   * IT: the cross-profile guard (rows from more than one profile reaching one
+   * comparison). Its remedy is identical, and a distinguishable refusal would
+   * tell a creator that another profile's rows touched their comparison —
+   * alarming, unactionable, and a disclosure that helps nobody.
+   *
+   * ---- WHICH OF THE NINE ARE BELIEVED UNREACHABLE, AND WHY THAT IS THE
+   * REASON THE COPY EXISTS RATHER THAN A REASON TO SKIP IT. Slice 8c's
+   * `llm_unavailable` was also believed unreachable, and it was the blocker
+   * that ended that slice unwalked.
+   *
+   *   - HALF A LEVER PAIR, and A RESULT WINDOW THAT DOES NOT MOVE FORWARD, are
+   *     enforced by `results_lever_pairs_complete` and
+   *     `results_window_forward`. Two layers; a row reaching these did not
+   *     come from this product's writer.
+   *   - A NON-FINITE LEVER VALUE and a NON-POSITIVE DENOMINATOR are guarded by
+   *     ONE layer, not two, and this correction is measured rather than
+   *     assumed: `results_denominators_positive` does NOT close the NaN case.
+   *     Verified against the running Postgres 17 —
+   *     `select 'NaN'::numeric > 0` returns TRUE — so a stored `NaN`
+   *     denominator passes that CHECK and is caught only by `decimalOrThrow`
+   *     at the writer. Anything that writes a lever without going through
+   *     `recordResult` reaches this refusal.
+   *   - A BLANK TREATMENT KEY and a STRATUM WINDOW THAT DOES NOT MOVE FORWARD
+   *     are arguments the composition builds, so they are OUR bug, not a
+   *     stored-data problem.
+   *   - A DECLARED METRIC THAT IS MISSING, or that disagrees with the key the
+   *     result copied, is the MOST reachable of the nine: no CHECK can span
+   *     two tables, so nothing but the writer's own single read makes those
+   *     agree.
+   *
+   * IT MAKES NO CLAIM ABOUT WHAT WAS PRESERVED, in any spelling — the
+   * `comparison_stratum` rule, and for the same reason. The reassurance would
+   * be a claim about a whole call path made by copy that can see none of it.
+   * A/S out-pinning pattern catches the spellings it enumerates and not a
+   * synonym, so this paragraph is what keeps "your results are safe" and its
+   * cousins out.
+   *
+   * IT DESCRIBES NO PAGE BEHAVIOUR, and that absence is the point. It used to
+   * say "this page stopped rather than show you part of the picture", which
+   * was true of the whole-page refusal and became false the moment the
+   * comparison read was contained so the form and the history survive — and a
+   * test had PINNED the false half, calling it an accurate description. A
+   * sentence about what the screen does around a refusal is a sentence a
+   * layout change falsifies; this one says what did not happen and what the
+   * reader can do, which no rendering decision can make untrue.
+   */
+  comparison_input: {
+    title: "That comparison could not be computed",
+    detail:
+      "The product could not build a comparison out of results it had already stored, so no comparison is shown. This is a fault on our side, not something wrong with the results you logged: nothing you entered caused it and there is nothing on the form to correct. Reload the page and try again; if it keeps happening, please contact support, because the refusal code and error type are recorded.",
+  },
   unknown: {
     title: "Something went wrong",
     detail:
       "The action did not complete and nothing was charged. Try again; if it keeps happening, contact support. The refusal code, error type and any server-derived context are recorded without exception details.",
   },
+};
+
+/**
+ * `PastedReferenceInputError.field` -> the sentence that is true for it.
+ *
+ * The keys are the paste form's four fields (`app/(product)/trends/paste-state.ts`
+ * `PASTE_REFUSED_FIELDS`), written out for the same reason
+ * `REVISION_PARENT_CODES` is: the union is not something a screen imports from
+ * a package's internals. What keeps them honest is `tests/billing-ui.test.tsx`'s
+ * "EVERY `PastedReferenceInputError` field has its own code, and the `??`
+ * fallback is live", which drives every field and one the map does not answer
+ * for through `billingErrorCode`.
+ */
+const PASTED_REFERENCE_FIELD_CODES: Readonly<Record<string, BillingErrorCode>> = {
+  sourceUrl: "pasted_reference_url",
+  title: "pasted_reference_title",
+  transcript: "pasted_reference_transcript",
+  niche: "pasted_reference_niche",
 };
 
 /**
@@ -1458,6 +1970,14 @@ export function billingErrorCode(err: unknown): BillingErrorCode {
   // it before it existed.)
   if (err instanceof RevisionParentError) {
     return REVISION_PARENT_CODES[err.reason] ?? "revision_parent";
+  }
+  // SAME REASON, FOURTH INSTANCE (slice 8c). `PastedReferenceInputError`
+  // carries the FIELD it refused, and "shorten the transcript" is false advice
+  // for a creator whose link was the problem. The `??` is live for the same
+  // rolling-deploy reason as the branch above, and is driven with a field cast
+  // in through `as never` by `tests/billing-ui.test.tsx`.
+  if (err instanceof PastedReferenceInputError) {
+    return PASTED_REFERENCE_FIELD_CODES[err.field] ?? "pasted_reference_input";
   }
   for (const h of HANDLERS) {
     if (err instanceof h.cls) return h.code;

@@ -104,8 +104,25 @@ describe("walkCodeFiles hides probe artifacts by default, and shows them on requ
     expect(PROBE_FILE_RE.test("__cage_probe.ts")).toBe(true);
     expect(PROBE_FILE_RE.test("__p6b_probe.tsx")).toBe(true);
     expect(PROBE_FILE_RE.test("probe.ts")).toBe(false);
-    expect(PROBE_FILE_RE.test("__probe.ts")).toBe(false);
     expect(PROBE_FILE_RE.test("with-workspace.ts")).toBe(false);
+  });
+
+  it("the convention covers a REVIEWER's scratch files, not only a suite's probes (C14)", () => {
+    // THE THREE FILES THAT SLIPPED THROUGH, by name. During the slice-8c
+    // review a reviewer wrote mutated 501-line copies of the money module into
+    // `packages/credits/src/` and a probe suite into its `tests/`; none of the
+    // three original patterns matched any of them, so while they existed they
+    // were committable and one live suite was red for an invisible reason.
+    for (const name of ["__rev_mut1.ts", "__rev_mut2.ts", "__rev_probe.test.ts", "__probe.ts"]) {
+      expect(PROBE_FILE_RE.test(name), name).toBe(true);
+      expect(isProbeArtifactPath(`packages/credits/src/${name}`), name).toBe(true);
+    }
+    // ...and the widening did not swallow product code: nothing in this repo
+    // starts a filename with `__`, and a name that merely CONTAINS one does
+    // not qualify.
+    for (const name of ["with-workspace.ts", "page.tsx", "my__probe.ts", "_single.ts", "__.ts"]) {
+      expect(PROBE_FILE_RE.test(name), name).toBe(false);
+    }
   });
 });
 
@@ -137,6 +154,21 @@ describe("the INSTALLED git ignores every planted probe path", () => {
       ).toBe(true);
     }
   );
+
+  it("a reviewer's scratch file and the tool scratch DIRECTORY are ignored too (C14)", async () => {
+    // Driven against the INSTALLED git, like everything else in this block:
+    // `git check-ignore --no-index` on these exact paths returned 1 (NOT
+    // ignored) during the slice-8c review, with `?? respin/.tmp/` sitting in
+    // `git status --short` beside an entirely untracked slice.
+    for (const path of [
+      "packages/credits/src/__rev_mut1.ts",
+      "packages/credits/tests/__rev_probe.test.ts",
+      "app/(product)/__anything.tsx",
+      ".tmp/node-compile-cache/x.ts",
+    ]) {
+      expect(await ignored(path), path).toBe(true);
+    }
+  });
 
   it("NON-VACUITY: real product files are NOT ignored", async () => {
     // A check-ignore that answered "true" for everything would pass the block

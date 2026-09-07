@@ -31,14 +31,17 @@ import {
 // The VALUE, from the package that owns the closed set — `billing-errors.ts`
 // writes the four reasons out because the union TYPE is not on the facade, and
 // a test that repeated that list would be a third copy of it.
-import { REVISION_PARENT_REFUSALS } from "@respin/credits";
+import { PASTED_REFERENCE_INPUT_FIELDS, REVISION_PARENT_REFUSALS } from "@respin/credits";
+// THE SHARED CANON, not a local regex — this file carried no honesty sweep at
+// all until the slice-8c review (C12). Same import every other screen suite
+// uses, so a word added there reaches the refusal map too.
+import { FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS } from "./support/forbidden-claims";
 
 /** This file's own directory — the anchor for the source reads below. */
 const HERE = dirname(fileURLToPath(import.meta.url));
 import {
   UsageView,
   burnByModeNote,
-  daysToEmptyNote,
   spendVisibility,
   type UsageViewProps,
 } from "../app/(product)/usage/usage-view";
@@ -112,6 +115,23 @@ function usageProps(over: Partial<UsageViewProps> = {}): UsageViewProps {
       notAGeneration: { credits: 0, debits: 0 },
       nonTerminalClaim: { credits: 0, debits: 0 },
     },
+    runway: {
+      state: "no_spend",
+      asOf: NOW,
+      windowStart: NOW,
+      trailingWindowDays: 30,
+      minimumDebitDays: 3,
+      debitDayCount: 0,
+      balance: 250,
+      totalDebit: 0,
+    },
+    brainAssets: {
+      state: "available",
+      brainVersions: 0,
+      testedRules: 0,
+      loggedResults: 0,
+      feedback: 0,
+    },
     rows: [],
     moreRows: false,
     paused: null,
@@ -119,7 +139,7 @@ function usageProps(over: Partial<UsageViewProps> = {}): UsageViewProps {
     error: null,
     billingHref: "/settings/billing",
     ...over,
-  };
+  } as UsageViewProps;
 }
 
 const CONFIG_OK: Extract<BillingViewProps["config"], { ok: true }> = {
@@ -145,12 +165,20 @@ const CONFIG_OK: Extract<BillingViewProps["config"], { ok: true }> = {
 const STRIPE_REMEDY = PAGE_STRIPE_REMEDY;
 
 function billingProps(over: Partial<BillingViewProps> = {}): BillingViewProps {
+  const hasLiveSubscription = over.hasLiveSubscription ?? true;
   return {
     state: { tier: "creator", state: "active" },
     isOwner: true,
-    hasLiveSubscription: true,
+    hasLiveSubscription,
+    canArmAutoTopup: over.canArmAutoTopup ?? hasLiveSubscription,
     hasStripeCustomer: true,
-    autoTopup: { enabled: false, monthlyCapCents: null },
+    autoTopup: {
+      enabled: false,
+      legacyEnabled: false,
+      staged: false,
+      protocolState: "active",
+      monthlyCapCents: null,
+    },
     config: CONFIG_OK,
     stripe: { configured: true, remedy: STRIPE_REMEDY },
     error: null,
@@ -823,7 +851,7 @@ describe("REQ-G07 empty states say WHY they are empty (non-negotiable 6)", () =>
     // about a split the page cannot compute.
     expect(out).toContain('data-testid="burn-by-mode-empty"');
     expect(out).toContain('data-testid="days-to-empty"');
-    expect(out).toContain("Not enough data");
+    expect(out).toContain("No debit was recorded in the configured trailing 30 days");
   });
 
   it("an empty ledger explains what would put rows in it", () => {
@@ -1113,6 +1141,48 @@ describe("billing error copy: completeness and hygiene", () => {
     );
   });
 
+  it("EVERY `PastedReferenceInputError` field has its own code, and the `??` fallback is live (slice 8c)", () => {
+    // THE POPULATION IS THE PACKAGE'S OWN CLOSED SET, so a fifth field added
+    // there reddens here rather than degrading to the neutral fallback for a
+    // creator (CLAUDE.md, 2026-08-29).
+    const fields = [...PASTED_REFERENCE_INPUT_FIELDS];
+    expect(fields.length).toBeGreaterThanOrEqual(4);
+    const codes = fields.map((field) =>
+      billingErrorCode(new creditsFacade.PastedReferenceInputError(field, "detail withheld"))
+    );
+    // FOUR FIELDS, FOUR DIFFERENT SENTENCES: "shorten the transcript" is false
+    // advice for a creator whose link was the problem.
+    expect(new Set(codes).size, "two fields share one code").toBe(fields.length);
+    for (const code of codes) {
+      expect(code, "a field fell through to the neutral fallback").not.toBe("pasted_reference_input");
+      expect(BILLING_ERROR_CODES as readonly string[]).toContain(code);
+      const copy = BILLING_ERROR_COPY[code];
+      expect(copy.detail.length).toBeGreaterThan(30);
+      // Every one says the money did not move (R8: refused before any row).
+      expect(copy.detail).toMatch(/nothing was charged/i);
+      // ...and none types a limit: the limits are stated on the form from the
+      // package constants (R10/R13), never here.
+      expect(`${copy.title} ${copy.detail}`).not.toMatch(/\d{2,}/);
+    }
+    expect(new Set(codes.map((c) => BILLING_ERROR_COPY[c].detail)).size).toBe(fields.length);
+
+    // The `??` is driven with a field this build never constructs.
+    const fromAnotherBuild = new creditsFacade.PastedReferenceInputError(
+      "a_field_this_build_has_never_heard_of" as never,
+      "detail withheld"
+    );
+    expect(billingErrorCode(fromAnotherBuild)).toBe("pasted_reference_input");
+    expect(BILLING_ERROR_COPY.pasted_reference_input.detail).toMatch(/could not say which/i);
+
+    // The tier refusal names the plans and sells nothing (covered by the
+    // map-wide sell scan too; pinned here because this is the entry the rule
+    // was most at risk on).
+    expect(billingErrorCode(new creditsFacade.PastedReferenceTierError("free"))).toBe("pasted_reference_tier");
+    const tier = BILLING_ERROR_COPY.pasted_reference_tier;
+    expect(tier.detail).toContain("Creator, Pro and Studio");
+    expect(tier.detail).toMatch(/nothing was charged/i);
+  });
+
   it("billingErrorCode maps a real instance to its code, and anything else to unknown", () => {
     expect(billingErrorCode(new creditsFacade.NotPausedError())).toBe("not_paused");
     expect(billingErrorCode(new creditsFacade.BillingRoleError("viewer"))).toBe(
@@ -1182,6 +1252,7 @@ describe("audit #8: an INCOMPLETE subscription gets its own state and a remedy t
       // checkout guard is RIGHT to block a second plan here, so the fixture
       // carries the same liveness the page computes.
       hasLiveSubscription: true,
+      canArmAutoTopup: false,
     });
 
   it("names the state, keeps the entitlement claim at Free, and says which plan is pending", () => {
@@ -1312,6 +1383,146 @@ describe("audit #26: the auto-top-up control explains WHEN it applies", () => {
     expect(out).toContain('id="auto-topup-unbuilt"');
   });
 
+  it("does not offer auto-top-up before the first payment completes", () => {
+    const out = html(
+      <BillingView
+        {...billingProps({
+          state: { tier: "free", state: "incomplete", pendingTier: "creator" },
+          hasLiveSubscription: true,
+          canArmAutoTopup: false,
+        })}
+      />
+    );
+    expect(out).toContain('name="enabled"');
+    expect(out).toContain("disabled");
+    expect(out).toContain("waits until the first subscription payment completes");
+    expect(out).toContain('id="auto-topup-blocked-reason"');
+  });
+
+  it("shows legacy authority as live during expansion, not as a pending preference", () => {
+    const out = html(
+      <BillingView
+        {...billingProps({
+          autoTopup: {
+            enabled: false,
+            legacyEnabled: true,
+            staged: false,
+            protocolState: "expanded",
+            monthlyCapCents: 5000,
+          },
+        })}
+      />
+    );
+    expect(out).toContain('data-protocol-state="expanded"');
+    expect(out).toContain("currently on under the legacy protocol");
+    expect(out).toContain("may buy a pack");
+    expect(out).not.toContain("saved and pending activation");
+  });
+
+  it("shows the remembered opt-in as pending while the drain fence is closed", () => {
+    const out = html(
+      <BillingView
+        {...billingProps({
+          autoTopup: {
+            enabled: false,
+            legacyEnabled: false,
+            staged: true,
+            protocolState: "draining",
+            monthlyCapCents: 5000,
+          },
+        })}
+      />
+    );
+    expect(out).toContain('data-protocol-state="draining"');
+    expect(out).toContain("saved and pending activation");
+    expect(out).toContain("No automatic pack charge can run until activation finishes");
+  });
+
+  it("shows only the v1 opt-in as currently on after activation", () => {
+    const out = html(
+      <BillingView
+        {...billingProps({
+          autoTopup: {
+            enabled: true,
+            legacyEnabled: false,
+            staged: false,
+            protocolState: "active",
+            monthlyCapCents: 5000,
+          },
+        })}
+      />
+    );
+    expect(out).toContain('data-protocol-state="active"');
+    expect(out).toContain("Auto-top-up is currently on");
+    expect(out).not.toContain("pending activation");
+  });
+
+  it("requires a current-password proof on every R-118 billing mutation", () => {
+    const active = html(<BillingView {...billingProps()} />);
+    const unsubscribed = html(
+      <BillingView
+        {...billingProps({
+          state: { tier: "free", state: "free" },
+          hasLiveSubscription: false,
+          hasStripeCustomer: false,
+        })}
+      />
+    );
+    const incomplete = html(
+      <BillingView
+        {...billingProps({
+          state: { tier: "creator", state: "incomplete", pendingTier: "creator" },
+        })}
+      />
+    );
+    const paused = html(
+      <BillingView
+        {...billingProps({
+          state: {
+            tier: "creator",
+            state: "paused",
+            resumesAt: new Date("2026-11-01T00:00:00Z"),
+          },
+        })}
+      />
+    );
+    const cancellationOffer = html(
+      <BillingView {...billingProps({ showCancel: true })} />
+    );
+    const usage = html(<UsageView {...usageProps()} />);
+    const formFor = (out: string, testId: string): string => {
+      const marker = out.indexOf(`data-testid="${testId}"`);
+      expect(marker, `${testId} form must render`).toBeGreaterThan(-1);
+      const start = out.lastIndexOf("<form", marker);
+      const end = out.indexOf("</form>", marker);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(marker);
+      return out.slice(start, end + "</form>".length);
+    };
+    for (const [surface, out, testId, helpId] of [
+      ["auto-top-up", active, "auto-topup-form", "auto-topup-reauth-help"],
+      ["pause", active, "pause-form", "pause-reauth-help"],
+      ["resume", paused, "resume-button", "resume-reauth-help"],
+      ["pause offer", cancellationOffer, "pause-offer-form", "pause-offer-reauth-help"],
+      ["tier checkout", unsubscribed, "subscribe-creator", "subscribe-creator-reauth-help"],
+      ["pack checkout", active, "buy-pack", "buy-pack-reauth-help"],
+      ["portal", active, "portal-manage", "portal-manage-reauth-help"],
+      ["invoice recovery", incomplete, "recover-invoice", "recover-invoice-reauth-help"],
+      ["cancellation portal", cancellationOffer, "cancel-final", "cancel-final-reauth-help"],
+      ["usage portal", usage, "usage-portal", "usage-portal-reauth-help"],
+    ] as const) {
+      const form = formFor(out, testId);
+      expect(form, `${surface} must require a password`).toContain('type="password"');
+      expect(form, `${surface} must submit the password`).toContain('name="password"');
+      expect(form, `${surface} must use password-manager current-password semantics`).toContain(
+        'autoComplete="current-password"'
+      );
+      expect(form, `${surface} must link exact-session help`).toContain(`id="${helpId}"`);
+      expect(form).toContain("only to this signed-in session");
+      expect(form).toContain("expires after 10 minutes");
+    }
+  });
+
   it("with no live subscription the checkbox names BOTH reasons", () => {
     const out = html(
       <BillingView {...billingProps({ hasLiveSubscription: false })} />
@@ -1370,17 +1581,23 @@ describe("the money screens never deny a spend the page can see (fix round, 2026
     expect(spendVisibility([{ delta: 100 }], false)).toBe("none");
   });
 
-  it("daysToEmptyNote never claims nothing was spent once a debit is visible", () => {
-    const note = daysToEmptyNote("spent");
-    expect(note).not.toMatch(/nothing has been spent/i);
-    expect(note).not.toMatch(/no credits have been spent/i);
-  });
-
-  it("daysToEmptyNote does not claim completeness on a clamped page", () => {
-    const note = daysToEmptyNote("unknown");
-    expect(note).not.toMatch(/nothing has been spent from this workspace/i);
-    // ...it scopes the claim to what is shown instead.
-    expect(note).toMatch(/shown below/i);
+  it("RunwayPanel names each server reader absence rather than deriving from the page", () => {
+    for (const [component, expected] of [
+      ["config", "the configured trailing window could not be read"],
+      ["pause", "the pause state could not be read"],
+      ["balance", "the ledger-derived balance could not be read"],
+      ["ledger", "the ledger debit history could not be read"],
+    ] as const) {
+      const out = html(
+        <UsageView
+          {...usageProps({
+            runway: { state: "read_unavailable", component, asOf: NOW },
+          })}
+        />
+      );
+      expect(out).toContain(expected);
+      expect(out).not.toContain("Not enough data");
+    }
   });
 
   it("burnByModeNote (R9, slice 2b) no longer varies by spend visibility — the burn TOTAL panel answers that now — and never claims a spend total itself", () => {
@@ -1542,6 +1759,19 @@ describe("a refusal names what happened to the money (fix round, 2026-08-28)", (
     );
   });
 
+  it("an unknown top-up outcome forbids another purchase or retry and hides its attempt id", () => {
+    const attemptId = "019b0d7a-86df-7000-8000-000000000123";
+    const err = new creditsFacade.AutoTopupReconciliationRequiredError(
+      attemptId,
+      0,
+      50
+    );
+    expect(billingErrorCode(err)).toBe("topup_reconciliation_required");
+    const copy = BILLING_ERROR_COPY.topup_reconciliation_required;
+    expect(copy.detail).toMatch(/do not buy another pack or retry yet/i);
+    expect(`${copy.title} ${copy.detail}`).not.toContain(attemptId);
+  });
+
   it("the payload-mismatch copy carries BOTH causes, like the error it renders", () => {
     // THE DEFECT (slice 7 cross-boundary pass, 2026-09-01). The screen said
     // "the request reused an id that belongs to another draft" — an accusation
@@ -1646,5 +1876,57 @@ describe("audit #16: the admin config error summary is reachable and tied to the
     expect(out).not.toContain("aria-describedby");
     // the field is still labelled, always
     expect(out).toContain('for="config-content"');
+  });
+});
+
+// ------------------------- the claims canon, over EVERY refusal in the map (C12, compliance NOTE 2)
+
+/**
+ * `BILLING_ERROR_COPY` IS A CREATOR-FACING SURFACE, and until this block it
+ * was never swept against the shared claims canon — `tests/support/forbidden-
+ * claims.ts` was not imported by this file at all. It was checked only for the
+ * entitlement-price class ("your included run was not used"), which is one
+ * word family out of the canon's two lists.
+ *
+ * THE POPULATION IS `Object.keys(BILLING_ERROR_COPY)`, DERIVED (CLAUDE.md
+ * 2026-08-29). `/trends`' paste action resolves whatever code its `catch`
+ * classifies through this map and ships the words to the client, `/usage` and
+ * `/settings/billing` render any code arriving as `?e=`, and the per-screen
+ * override tables fall through to it — so the set a creator can read is the
+ * whole map, not the handful any one screen enumerates. Compliance named
+ * `refund_source_never_expires` and `pasted_reference_input` as two that were
+ * outside every sweep; a derived population makes naming them unnecessary.
+ */
+describe("no refusal copy in the shared map makes a forbidden or performance claim (R23)", () => {
+  const CANON = [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS];
+  const CODES = Object.keys(BILLING_ERROR_COPY) as BillingErrorCode[];
+
+  it("the sweep's population is the WHOLE map, and it is not empty", () => {
+    // Non-vacuity for the `it.each` below: an empty table is a green suite.
+    expect(CODES.length).toBeGreaterThan(20);
+    expect(CODES).toEqual(expect.arrayContaining([...BILLING_ERROR_CODES]));
+    // The two compliance named by hand are in it BECAUSE the population is
+    // derived, not because anyone listed them.
+    expect(CODES).toContain("refund_source_never_expires");
+    expect(CODES).toContain("pasted_reference_input");
+  });
+
+  it.each(CODES)("%s: title + detail are clean against every canon pattern", (code) => {
+    const copy = BILLING_ERROR_COPY[code];
+    const text = `${copy.title} ${copy.detail}`.toLowerCase();
+    for (const [label, re] of CANON) {
+      expect(text, `"${label}" in BILLING_ERROR_COPY.${code}`).not.toMatch(re);
+    }
+  });
+
+  it("NON-VACUITY: a planted claim in a copy entry is caught by the same loop", () => {
+    const planted = "We guarantee this will perform and get you more views.".toLowerCase();
+    const hits = CANON.filter(([, re]) => re.test(planted)).map(([label]) => label);
+    expect(hits).toEqual(expect.arrayContaining(["guarantee", "will perform", "more views"]));
+  });
+
+  it.each(CODES)("%s: does not apologise for a refusal (R15)", (code) => {
+    const copy = BILLING_ERROR_COPY[code];
+    expect(`${copy.title} ${copy.detail}`).not.toMatch(/\bsorry\b|\bunfortunately\b|\bapolog/i);
   });
 });

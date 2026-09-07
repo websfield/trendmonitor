@@ -28,14 +28,14 @@ vi.mock("@respin/db", async (importOriginal) => {
   return { ...actual, getServerDb: () => state.db };
 });
 
-import { createTestDb } from "@respin/db";
+import { AUTH_PASSWORD_MAX_LENGTH, createTestDb, schema } from "@respin/db";
 import {
   getAuth,
   getSessionUser,
   requireAdmin,
   requireUser,
 } from "../src/server";
-import { resetPasswordLogLine } from "../src/create-auth";
+import { createAuth, resetPasswordLogLine } from "../src/create-auth";
 
 const EMAIL = "creator@test.dev";
 const PASSWORD = "correct-horse-battery";
@@ -102,6 +102,36 @@ describe("Better Auth on PGlite (the real flow)", () => {
     });
     expect(res.ok).toBe(false);
   });
+
+  it("rejects a correct ordinary sign-in while identity deletion disables login", async () => {
+    const db = state.db as Awaited<ReturnType<typeof createTestDb>>;
+    const [identity] = await db
+      .select({ id: schema.user.id })
+      .from(schema.user);
+    expect(identity).toBeDefined();
+    const before = await db
+      .select({ id: schema.session.id })
+      .from(schema.session);
+    await db
+      .update(schema.user)
+      .set({ ordinaryLoginDisabledAt: new Date() });
+    try {
+      const res = await getAuth().api.signInEmail({
+        body: { email: EMAIL, password: PASSWORD },
+        asResponse: true,
+      });
+      expect(res.status).toBe(403);
+      expect(
+        await db
+          .select({ id: schema.session.id })
+          .from(schema.session)
+      ).toEqual(before);
+    } finally {
+      await db
+        .update(schema.user)
+        .set({ ordinaryLoginDisabledAt: null });
+    }
+  });
 });
 
 // AC-4 (code-gate CHANGE 2): the DEPLOYED middleware, exercised with the REAL
@@ -166,5 +196,36 @@ describe("password-reset stub guard (plan-review pre-mortem)", () => {
       expect(line).not.toContain("a@b.c");
       expect(line).toContain(USER.id);
     }
+  });
+});
+
+describe("shared password authority ceiling", () => {
+  it("accepts the ceiling and refuses one character above it on the real sign-up route", async () => {
+    expect(AUTH_PASSWORD_MAX_LENGTH).toBe(128);
+    const db = await createTestDb();
+    const auth = createAuth(db, {
+      baseURL: "http://localhost:3000",
+      secret: "password-ceiling-test-secret",
+      nodeEnv: "test",
+    });
+    const accepted = await auth.api.signUpEmail({
+      body: {
+        name: "Ceiling",
+        email: "ceiling@test.dev",
+        password: "x".repeat(AUTH_PASSWORD_MAX_LENGTH),
+      },
+      asResponse: true,
+    });
+    expect(accepted.ok).toBe(true);
+    const refused = await auth.api.signUpEmail({
+      body: {
+        name: "Above Ceiling",
+        email: "above-ceiling@test.dev",
+        password: "x".repeat(AUTH_PASSWORD_MAX_LENGTH + 1),
+      },
+      asResponse: true,
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.status).toBe(400);
   });
 });

@@ -1,164 +1,195 @@
-# Slice 10a: Public surface + observability
+# Slice 10a — Verified-only launch truth, real Sample Spin, and observability
 
-## An anonymous visitor can…
-**Type an idea on the landing page, see it generated twice side by side — generic versus through a clearly-labelled fictional sample brain, with the rules that shaped the output highlighted — and subscribe.**
+**Codebase review:** [`../progress/respin-finish/10-codebase-review.md`](../progress/respin-finish/10-codebase-review.md)
 
-## …and an operator can
-**Induce an error in production and see it in the collector, with no creator content in it.**
+**Decision authority:** owner-approved R-115–R-117/R-121 plus reversible build-plan defaults R-122/R-123 in [`../initial/decisions.md`](../initial/decisions.md)
 
-Two sentences, because observability has no user path and a slice that shipped it alone would be substrate. The demo is the acceptance walk; the observability half is walked by an operator and is not "done" until someone has actually seen an induced error arrive.
+**Depends on:** Slice 10b-1's executable lifecycle registry/receiver gate plus inspected interfaces from Slices 8/8c/9a/9b. Although its identifier is 10a, this card executes after 10b-1 so it cannot create a retained public-abuse store ahead of deletion/retention authority. The earlier slices remain `ALMOST`; this dependency proves interface reuse only and inherits no browser, vendor, latency, pilot, or clean-entry-gate evidence.
 
-## Why this shape
+## A visitor can…
 
-- **Today's landing demo is hardcoded copy and the file says so** — `app/(marketing)/page.tsx:5-7`: *"The real comparison demo (REQ-H02) still lands at M6; this page renders the mockup's illustrative before/after, not product output."* This slice makes it real, and **that disclosure must come down in the same change** or the product ships a screen calling its own live demo a mockup. `tests/stale-disclosure.test.ts` exists precisely to pair a disclosure with the code fact that would falsify it.
-- **There is no observability of any kind.** No Sentry, no PostHog, no OpenTelemetry, no logging library, no `instrumentation.ts`, and **no observability environment variable in `env.example`**. Everything is `console.*`. The one metrics module (`packages/credits/src/metrics.ts`) is deliberately package-internal and pinned as such by `isolation.test.ts:373-376`, so `app/**` cannot emit or redirect money-path telemetry — a property to preserve, not to work around.
-- **There is no application-level rate limiting.** The only limiter is Better Auth's, on its own endpoints, keyed on the resolved client IP. A public surface that reaches a model is the first thing in this product that an anonymous stranger can make spend money.
+**Enter an idea, run a clearly labelled Sample Spin through a fictional sample brain and synthetic reference, see the synthetic original beside only a gate-passed transformed output with the shaping rules highlighted, or receive an honest terminal refusal; then reach truthful pricing and signup.**
 
-## Open items closing here
-**G-15** — the import-time throw in `brain-content.ts:418`, recorded ACCEPTED in R-33 with no code moved. Its trigger is "slice 10a's observability pass, **or** the first deploy where a schema-registry edit ships without a full CI run". This is that pass.
+## An operator can…
 
-## Prerequisites
-- [ ] Slices 8 and 9 shipped (the demo spins, so the pipeline it demonstrates is the real one)
-- [ ] **A red test is fixed first, and it is red now.** `tests/gate-completeness.test.ts:626` fails on `app/(marketing)/for/[audience]/page.tsx` — an entrypoint added by the concurrent marketing stream with no `PUBLIC_ENTRYPOINTS` entry. It is the same failure the slice-3 ledger reports as "1264/1265". **It should be fixed the day someone reads this, not carried to slice 10a** — a default-deny gate suite that is habitually red is a gate suite nobody trusts
+**See durable cost/outcome facts for every anonymous model call, observe an induced content-safe error, and read a mature-cohort activation report whose numerator, denominator, exclusions, and code version are explicit.**
 
----
+## Least confident
 
-## The three questions the stub left open, answered
+The current buffered provider path can take longer than the old latency budget. This slice must prove terminal withholding and useful refusal/loading states under that latency; it cannot repair the latency architecture or advertise a speed claim.
 
-### 1. Whose brain does the demo run on, and what asserts it is not a real creator's?
+## Scope and non-goals
 
-**A checked-in fixture, not a database row — and that is the assertion.**
+This slice owns the verified-only correction (R-115), REQ-H01/H02, public Sample Spin, the first public paid-call abuse boundary, generalisation of system spend, content-safe Sentry, aggregate activation reporting, G-15, and public-copy truth affected by those changes.
 
-The weak version of this is a seeded `creator_profiles` row flagged `is_sample`, with a test asserting the flag. That test proves a boolean, not a property: the row lives in the same table as real creators, reachable by the same accessors, and one query without the flag predicate leaks a real brain onto a public page.
+It does **not** add an analytics connector, generic/no-brain generation, a second spend ledger, tenant API access, seats, revenue, deletion state machines, streaming, platform policy guidance, pilot evidence, efficacy evidence, or a performance-learning claim. The deletion/lifecycle foundation already exists from 10b-1; this slice only registers its new row classes against that authority. It cannot close the open 8/9 evidence residuals.
 
-The strong version is structural, and it costs less: **the sample brain is a fixture file, the demo path never mints a `ProfileScope`, and therefore there is no profile it could read.** REQ-A03's isolation is not "enforced" on this path — it is unreachable, which is the same argument the M2a cage rests on.
+## Ownership
 
-**What is still owed:** the fixture is content, and R-29's rule applies to it — no real person's voice, specifics, numbers or performance data. Reuse the mechanism-level content validator that slice 7 ships with the framework library and slice 8 applies to proposals; do not create a third scan.
+One `respin-engineer` owns the slice write surface and integrates in task order; any bounded helper receives non-overlapping files and a pinned contract. Full `respin-learning-reviewer`, `respin-compliance-reviewer`, `respin-billing-reviewer`, and `respin-tenancy-reviewer` gates review the stable slice, followed by final code review. Reviewers are read-only and never become implementation owners.
 
-### 2. What is the rate limit, and does it reuse `rate_limit`?
+## Pinned contracts
 
-**A separate limiter, keyed by HMAC over a canonical IP — it does not reuse `rate_limit`.**
+### C1 — verified-only result learning
 
-`rate_limit.key` holds a **plaintext client IP** with a 24-hour retention sentence (R-26) and **no receiver until slice 10b**. Reusing it means the first public surface in the product adds plaintext IPs, at internet volume, to a store whose retention policy is in force and unexecuted. That is the wrong direction on the one slice before the receiver lands.
+`packages/brain` remains the sole comparison/proposal constructor. Its result path filters numerical inputs to `evidenceState === "connector_verified"` before forming either treatment or baseline and before deriving the displayed stratum window, group heads, evidence digest, or any aggregate. The rule applies independently to both populations and to every derivative (n, median, effect, improvement, proposal eligibility/presentation). Adding, deleting, or changing an unverified row must leave the verified window, group heads, digest, strength display, and proposal byte-identical. `quantified_self_reported` and `unquantified` remain stored/readable with provenance but never enter those derivatives. Reach/conversion, paid/organic, platform, metric declaration, profile, and treatment key remain separate.
 
-Use a versioned server-secret HMAC over a canonical IPv4/IPv6 representation. A salt-only hash is
-forbidden: the IP address space is small enough to brute-force. Retain only the HMAC bucket for the
-shortest limit/debug window, support key rotation, and never claim it is anonymous. This also keeps the
-two limiters separable: Better Auth owns its table and runtime contract (`auth-schema.ts:85-102`).
+The result UI has three explicit states:
 
-**The limit itself is a spend bound, so it is set from spend, not from feel**: the demo costs us two vendor calls per run (generic + brained), at Haiku-class classification pricing where possible. Code sets a **ceiling**; configuration may only lower/tighten it. Calling this a floor reverses the safety property.
+| Available evidence | Display |
+|---|---|
+| self-reported/unquantified only | raw entries and provenance; “comparison unavailable: verified analytics are not connected” |
+| either verified population below `MIN_COMPARABLE_RESULTS` | exact verified n and short-population reason; no effect/proposal |
+| both verified populations at least the one shared minimum | verified comparison and proposal eligibility |
 
-### 3. Is this one slice, or does observability split off?
+No connector writer is added. A source scan and writer registry must prove only the future connector seam can mint `connector_verified`; fixtures may create it only in tests. Repeated categorical feedback proposals remain available and are labelled feedback-derived.
 
-**One slice, with two acceptance walks (see the top of this card).**
+Remove the current `MIN_COMPARABLE_RESULTS + 2` “strong” presentation threshold and its mixed/self-reported copy. Phase 10 has one result-evidence boundary: below the shared verified minimum is unavailable; at or above it a new result proposal keeps persisted `source = results`, stores existing evidence enum `corroborated`, and derives presenter label “verified result evidence” plus exact treatment/baseline n—never “strong.” Repeated-feedback proposals keep persisted `source = feedback`, store `repeated`, and derive presenter label “structured feedback” plus exact occurrence count. No new source enum is introduced and no new writer emits `early`. Every historic `source = results` presenter/audit derives eligibility and wording from joined evidence rows plus both n, never `early|repeated|corroborated` alone: rejected/stale/superseded `early` or `repeated` rows containing nonverified evidence read “legacy mixed/unverified evidence—not learning eligible”; fully verified history reads its exact verified n; accepted nonverified rows remain the pre-deploy BLOCK C1 requires. Feedback+`repeated` stays distinct by source. This compatibility mapping preserves both current enums while preventing them from inventing a threshold. A later strength taxonomy requires measured calibration and a recorded decision.
 
-Observability alone has no creator path, so it would be substrate — the shape this whole plan exists to prevent. The demo alone is a public surface that reaches a model with no way to see it failing. Together they are coherent: **the first anonymous, unauthenticated, money-spending surface in the product is also the first one that needs to be watchable.**
+Before deployment, a read-only audit classifies all result proposals and their evidence. Still-proposed non-verified result proposals become `superseded` through one reviewed idempotent migration operation; rejected/stale/superseded rows remain immutable history. Any accepted result proposal containing a non-verified row is a **deployment BLOCK** with proposal/profile/workspace ids and no content. It is never silently detached from an active brain. The zero/non-zero audit result is recorded in the slice card.
 
-**What does split off:** the PostHog activation funnel (signup → brain → first script) is analytics, not error reporting, and it depends on events emitted across slices 3, 5 and 6. If it is not buildable inside this slice's budget, it is **cut with its reason recorded** rather than half-instrumented — a funnel missing one step reports a false drop-off, which is worse than no funnel.
+### C2 — the public product is one real Sample Spin
 
----
+The fixture is checked-in, fictional, rights-cleared synthetic content with provenance and review date. It contains a sample Voice/Strategy/Kill Test and two separately typed projections from one immutable synthetic reference identity: similarity receives exact `hook + subjectTerms + structure`; prompt context receives exact `hookMechanic + beats + ending + followTrigger`. Bounds and canonical serialization are explicit for every field; neither projection may receive transcript text or substitute for the other. The mechanism-level validator runs at build/test time and at fixture load. Composition happens in a layer that may depend on DB validation and Modes; `@respin/modes` must not import `@respin/db`.
 
-## Requirements
+The visitor idea is parsed as `Untrusted<SampleSpinIdea>` by a strict schema, capped by Unicode code points, and serialised into one delimited data field. It never changes system instructions, selects tools, names a tenant, or overrides fixture/gates. Prompt-injection fixtures include delimiter closure, instruction text, encoded instructions, and attempts to request secrets/policy bypass.
 
-### The comparison demo (REQ-H02 / R-14)
-- [ ] **R1:** A visitor types or picks an idea and sees **the same idea generated twice, side by side** — generic (no brain) versus through the fictional sample brain — with the brain's rules that shaped the output **highlighted inline**. The highlighting is the point: it is the product's answer to "why not just ChatGPT" and a demo without it is two paragraphs.
-- [ ] **R2:** The sample brain is a fixture and the demo path mints no `ProfileScope` (question 1), asserted by the AC-13 cage scan rather than by a comment.
-- [ ] **R3:** **Zero credit cost** (REQ-H02). The demo debits nothing and touches no ledger.
-- [ ] **R4:** **IP rate-limited** per question 2, with canonical-IP keyed HMAC, short retention, key version/rotation, a code ceiling and config-may-only-tighten clamp.
-- [ ] **R4a:** The demo also has atomic global daily vendor-cost and concurrency ceilings, maximum input length, maximum output tokens, overall timeout and prompt fencing that treats visitor text only as data. Every ceiling is checked before outbound work when possible; two-call runs reserve/release their full budget safely.
-- [ ] **R5:** The two outputs **genuinely differ in voice and structure** — M6's acceptance criterion, and it is a property of output, so the honest instrument is a fixture set plus a human looking, and the card says so rather than claiming a test proves it.
-- [ ] **R6:** The demo runs the **real pipeline** (`packages/modes`), not a second implementation. A demo that diverges from the product is a marketing asset, and REQ-H02 calls it proof.
-- [ ] **R7:** `app/(marketing)/page.tsx:5-7`'s "this is a mockup" disclosure is removed, and `tests/stale-disclosure.test.ts` gains the pairing that would catch it going stale in the other direction.
-- [ ] **R8:** The demo makes **no guarantee** (REQ-I04) and names the weakest point of what it produces, exactly as the product does. `tests/support/forbidden-claims.ts` runs over the real rendered copy.
+The sessionless orchestrator calls the production `runGeneration` with mode `analyseAndSpin`, the fixture's two trusted projections, sample context, active similarity strictness/config version, and the same output schema, Kill Test, hard-rule, traceability, `outputTextUnits`, and similarity functions. The code-owned similarity floor still clamps config so runtime can only tighten. All creator-facing units are gate inputs. One rewrite is allowed. A second failure returns a typed content-free refusal; neither draft is emitted, persisted, replayed, logged, attached to an error, or sent to telemetry.
 
-### The public surface (REQ-H01)
-- [ ] **R9:** Pricing wired to checkout; terms and privacy pages; a changelog. `tests/landing-pricing.test.ts` already pins prices, allowances and profile caps to `CONFIG_V1_SEED` and bans digits in the mechanic tags — **new copy that states a number joins that binding** rather than restating it.
-- [ ] **R10:** Every new public entrypoint is added to `PUBLIC_ENTRYPOINTS` with a written `why` (`tests/gate-completeness.test.ts:186-199`). The default-deny suite is the mechanism; the prerequisite above is why it must be green first.
-- [ ] **R11:** The privacy page's capability claims are **true of the code that exists**. This is the outbound-truth rule, and the specific hazard is a privacy policy describing a deletion path that lands in slice 10b.
+The response is terminal: `accepted` contains the synthetic original, accepted Spin, weakest point, highlighted fixture rule ids, and a deterministic neutral disclosure object `policy_check_required`; `refused` contains a stable reason and safe next action. Rule highlighting is derived from server-selected fixture rule ids recorded in gate evidence, not model-authored prose. The model-authored disclosure field is ignored and never displayed. 10c replaces the neutral object with the closed, dated platform registry; the public feature flag cannot turn on before that gate. No generic control is generated. The endpoint mints no session/WorkspaceScope/ProfileScope, performs no tenant query, and changes no credit ledger row.
 
-### Observability
-- [ ] **R12:** Error reporting exists and **carries no creator content**. `app/(product)/safe-log.ts`'s rule — *"a message is safe to log iff we wrote it"* — is the contract, and the collector integration must not widen it. The `DrizzleQueryError` bound-parameter leak that rule exists for (R-36) is exactly what an error reporter would otherwise ship to a third party.
-- [ ] **R13:** Structured logs carry a request id (tech-spec §7). `console.*` with a correlation id is an acceptable answer; a logging library is not required by anything.
-- [ ] **R14:** `packages/credits/src/metrics.ts` stays package-internal. `isolation.test.ts:373-376` pins it; the observability work must route around that rather than through it.
-- [ ] **R15:** Every new configuration value is documented in `env.example`, which today documents ten and is the operator's only inventory.
-- [ ] **R16:** **G-15 closed.** `brain-content.ts:418`'s import-time `assertRegistryClosed` throw makes an unimportable `@respin/db` a 500 on every Stripe delivery with no env escape. R-33 accepted it on likelihood and billing named the axis it does not reach — blast radius. This is the pass that owes it a resolution: move it, give it an escape, or record a third refusal with the deploy check that makes the likelihood argument true.
-- [ ] **R17:** **The observability walk is real** — an induced error in a deployed process appears in the collector, and it is checked that no prompt, completion, post text or brain content came with it.
+Pre-register a 10-idea evaluation set before implementation, using the build-plan M3 precedent of 10 real generations. The set spans five creator-intent classes (story, lesson, opinion, process, announcement), two ideas each, all compatible with the single fictional brain; the exact text and expected reference relation are checked in. For every run record accepted/refused, model/config/prompt/fixture versions, all deterministic gate outcomes, and a named product-owner yes/no rubric for voice specificity, filmability, understandable original-to-Spin transformation, and accurate rule highlighting. Refusals remain in the denominator. Report exact n and failures. This demonstrates sampled transformation/usability only—never performance, uplift, learning, or the PRD pilot metric.
 
-### The activation funnel (REQ-G05 metric 1)
-- [ ] **R18:** The signup → brain → first script funnel reports, **or is cut with its reason recorded** (question 3). It is not half-instrumented.
+### C3 — one system-spend authority
 
----
+Generalise the existing system-spend schema/service:
 
-## Left to the developer
+```ts
+type SystemSpendPurpose = "trend_autopsy" | "public_sample_spin";
+```
 
-- **The demo's input surface** — free text, a picker, or both. Free text is a prompt-injection surface reaching a model on an unauthenticated path; whichever is chosen, the input is data, never instruction.
-- **The collector.** Sentry is named in tech-spec §7 and nothing depends on it being Sentry.
-- **Where the HMAC key/version live** (question 2) — secret management plus rotation is documented per R15; never reuse an auth/session secret.
-- **Test file layout.**
+Purpose attribution is a checked union: autopsy claims name the existing trend/autopsy identity; demo claims name an opaque idempotency request id and no tenant/profile/autopsy id. Keep one `system_spend_daily` global row and one atomic claim → call → append actual/unknown usage per HTTP attempt → finalise/reconcile state machine. Preserve autopsy behavior and tests. The demo sets provider/SDK retries to zero and cannot call before the R-123 worst-case reservation for two generation-model drafts plus one classification/scoring call succeeds. A hidden retry or fourth call is an invariant failure. An outbound-started crash with no trusted completion is finalised unknown/recovery-required and never automatically reissued.
 
-## Tasks
-1. [ ] **Fix the red `gate-completeness` test** (prerequisite)
-2. [ ] The sample-brain fixture + the mechanism-level content scan (R2, question 1)
-3. [ ] The demo path: real pipeline, zero credit, no `ProfileScope` (R1, R3, R6)
-4. [ ] The keyed-HMAC IP limiter, code ceiling/config clamp, global daily cost + concurrency reservations, input/output/deadline bounds and prompt fence (R4/R4a)
-5. [ ] Rule highlighting + the difference fixtures (R1, R5)
-6. [ ] Remove the mockup disclosure; add the stale-disclosure pairing (R7)
-7. [ ] Pricing/legal/changelog + `PUBLIC_ENTRYPOINTS` entries + the number bindings (R9–R11)
-8. [ ] Error reporting with the safe-log contract; request ids; `env.example` (R12–R15)
-9. [ ] G-15's resolution (R16)
-10. [ ] The activation funnel, or its recorded cut (R18)
-11. [ ] Walk both: the demo in a browser as an anonymous visitor; an induced error in the collector
+Code keeps the existing $100/day global maximum and adds R-123's $10/day public-demo purpose maximum inside the same authority; runtime config may only tighten. Admission deterministically token-counts the assembled prompts and refuses before outbound work above 600 idea code points, 40,000 input/12,000 output tokens per draft, or 16,000 input/512 output tokens for scoring. Reserve the exact active-price worst case for all three calls ($0.61856 at the recorded launch prices), even when rewrite/scoring is not reached. Review after 7 days or 200 attempts and whenever any model, price, prompt/output limit, call count, retry policy, or deadline changes.
 
-## Files — *expected surface. Deviate and say why in the ledger; this is not a contract.*
-| File | Action | Purpose |
+A closed inventory lists every provider-call site and its money authority: tenant generation → tenant credits/usage; trend autopsy and Sample Spin → system spend. A source test fails on any unregistered provider call. “Zero visitor credits” never implies zero cost fact.
+
+### C4 — public abuse and retention
+
+Reuse the one trusted-proxy/canonical-client-IP resolver. Store only `HMAC-SHA256(dedicatedVersionedKey, canonicalIp)` plus key version and counters; never store/log the raw IP. During rotation, admission computes current and immediately prior HMAC candidates and queries/locks both atomically. If either has an unexpired row, that row is the one canonical bucket; otherwise it creates only the current-version row. Concurrent rotation/admission cannot mint two windows for one IP. Prior key material remains available only until the latest bucket opened under it expires (at most 24 hours from rotation), and an independent probe must find no unexpired prior-version row before erasure; no older version is accepted. A DB-atomic limiter permits one admitted outbound-capable logical request per bucket per rolling 24 hours and two concurrent attempts globally, then composes the R-123 input/output/120-second shared deadline controls with C3's spend reservation. Schema/input validation that refuses before a spend claim is non-consuming; once claim/admission succeeds, accepted, gate-refused, failed, or recovery-required terminal outcomes all consume the bucket. Refusals are indistinguishable with respect to bucket existence. Rotate-at-boundary and concurrent dual-candidate mutations must redden if they admit twice.
+
+The limiter table is created only after 10b-1's lifecycle gate is executable. In this same migration it registers its `system/public_sample_spin` row class, excluded-system export behavior, 24-hour deletion rule, writer owner, receiver executor, and independent residue probe. The traffic-independent pg-boss receiver and health signal ship enabled in this slice. Each row has immutable `bucket_started_at` and `expires_at <= bucket_started_at + 24 hours`; accepted, refused, duplicate, and blocked requests update counters but never extend expiry, and a request after expiry enters a separately identified new window. The separate `public_sample_spin` system-metering row class contains no IP HMAC/content/tenant identity and follows R-122's system-cost financial clock: seven years after the call/day completes under the recorded launch assumption, with destructive purge disabled until legal review. A populated migration/deletion/expiry fixture must pass before the public flag can turn on. The endpoint stores neither idea nor output. Request ids, gate/outcome codes, durations, token/cost facts, and limiter results are content-free.
+
+### C5 — observability and activation
+
+Sentry integration reuses `safe-log.ts`'s stable allowlist. Disable request bodies, headers, cookies, query strings, user identity, breadcrumbs that include content, replay, attachments, source prompt/completion, brain/reference/output text, emails, raw IPs, workspace/profile/generation ids, and raw error messages. `beforeSend` creates a new allowlisted payload; it never forwards the original error/event object. An induced secret-shaped/content-shaped error proves absence in the collector payload.
+
+Start on the official [Sentry Developer allowance](https://sentry.io/pricing/) (5,000 errors/month; 30-day lookback) with a code operational budget of 4,000 accepted error events/month and sampling/config that can only tighten. PostHog receives only aggregate mature-cohort activation events under one system identity, and suppresses every daily cohort whose denominator is below 10; internal exact reporting shows `externally_suppressed_small_cell`, never zero. Start on its [official free allowance](https://posthog.com/pricing) and cap this product emitter at 10,000 events/month. No usage-based upgrade or payment is authorised by this plan.
+
+Activation reporting consumes 10b-1's sole `queryActivation(userId, asOf)` live-account wrapper and live+identifier-free-aggregate query seam; this slice may not copy the SQL/rules. The shared authority implements these DB facts: every distinct `users.created_at` in a UTC signup-day cohort enters the denominator except ids in audited `ADMIN_USER_IDS` or documented `ACTIVATION_EXCLUDED_USER_IDS`; no email/name/domain heuristic exists. Success requires email verification, one complete brain activation, and a settled usable `footageToThesis | ideaToScript | sourceToReel | analyseAndSpin` generation within 24 hours of signup in any workspace/profile the user can access. Hooks/caption/ideation, public Sample Spin, refused/recovery-required and test-only rows never qualify. Deduplicate per user and report only after the full 24-hour window matures. Persist/report only cohort date, numerator, denominator, exclusion counts and metric-code version; do not emit user/workspace/profile/content ids externally. The 40% day-90 target is displayed as a target, never as achieved engineering evidence.
+
+G-15 closes by moving the import-time registry assertion into an explicit CI/startup preflight with a stable refusal and a test proving ordinary package import cannot take Stripe delivery down. Do not add a silent escape hatch.
+
+## Derived budgets
+
+| Bound | Derivation / authority |
+|---|---|
+| verified treatment/baseline minimum 3 each | `CLAUDE.md` rule 4, PRD REQ-F03, one `MIN_COMPARABLE_RESULTS` reader |
+| Sample Spin reservation | R-123 exact three-call formula; $0.61856 at launch prices; no provider retry; every HTTP attempt metered |
+| global/purpose daily spend | existing $100/day global code ceiling + $10/day Sample purpose cap; at today's maximum price, at most 16 admitted attempts/day |
+| public velocity/concurrency/input/deadline | 1 accepted/HMAC/rolling 24h; 2 global concurrent; 600 idea code points; exact token caps above; one shared 120s deadline |
+| HMAC bucket ≤24 hours | R-117 |
+| Sentry 4,000/month | 80% of cited 5,000/month free allowance |
+| PostHog 10,000/month | 1% of cited 1,000,000/month free allowance; aggregate events only |
+| activation window 24 hours; target 40% by day 90 | PRD success metric 1; target is not completion evidence |
+
+## Deferral ledger
+
+| Deferred item | Why it is not in 10a | Receiver |
 |---|---|---|
-| `respin/app/(marketing)/**` | Modify | The live demo, pricing, legal, changelog; the disclosure removal |
-| `respin/app/api/demo/route.ts` | Create | The anonymous demo endpoint, rate-limited, zero-credit |
-| `respin/packages/modes/src/demo-brain.ts` | Create | The fixture sample brain (question 1) |
-| `respin/packages/db/src/rate-limit-demo.ts` | Create | Keyed-HMAC IP buckets plus atomic global budget/concurrency reservations |
-| `respin/packages/config/src/schema.ts` | Modify | Demo limits, clamped to compiled ceilings |
-| `respin/instrumentation.ts` | Create | The collector wiring |
-| `respin/app/(product)/safe-log.ts` | Modify | The collector path, same contract |
-| `respin/packages/db/src/brain-content.ts` | Modify | G-15's resolution (R16) |
-| `respin/env.example` | Modify | The collector, the salt, the funnel key |
-| `respin/tests/gate-completeness.test.ts` | Modify | `PUBLIC_ENTRYPOINTS` for every new public page |
-| `respin/tests/stale-disclosure.test.ts` | Modify | R7's pairing |
-| `respin/tests/landing-pricing.test.ts` | Modify | R9's bindings for any new number |
+| analytics connector and connector-verified writer | PRD F05 and tech-spec §8 place general connectors post-pilot; fixtures cannot substitute | post-M6 connector plan, triggered by an authorised provider integration; R-115 gate applies |
+| generation streaming / latency target | current provider path is buffered and 8c-L1 remains open | future performance slice owning 8c-L1; launch copy states no latency |
+| platform-specific policy registry and public Sample enablement | 10a returns only deterministic neutral `policy_check_required`; public release needs dated platform policy | 10c C4–C5; the public flag remains off until it passes |
+| seats/revenue/curation | depends on 10b-1 lifecycle contract | 10b-2 C1–C7 |
+| workspace API/disclosure/FAQ | depends on human authority and lifecycle contracts | 10c C1–C6 |
+| legal review, production collector/email provisioning, pilot/efficacy evidence | external evidence cannot be manufactured by implementation | M6 launch checklist / post-M6 evidence phase; engineering status remains separate |
+
+## Task sequence and handoffs
+
+1. Confirm 10b-1's registry/receiver/restore gate is green, then correct verified-only eligibility, copy, writer closure, and deployment audit; preserve feedback proposals.
+2. Generalise system spend and migrate existing autopsy data compatibly; prove old autopsy behavior.
+3. Add validated fictional fixtures and the sessionless Sample Spin orchestrator.
+4. Register every new row class/field set in 10b-1's executable gate; add HMAC limiter, exact R-123 concurrency/deadline/input/output controls, receiver, and worker health.
+5. Replace the marketing mockup with terminal Sample Spin states and truthful pricing/legal/changelog entrypoints.
+6. Add content-safe Sentry and exact aggregate activation reporting; close G-15.
+7. Run focused and full gates, browser/operator walks behind the disabled public flag, populate the slice card, and hand stable Sample/system-spend interfaces to 10b-2/10c.
+
+## Expected files
+
+- `respin/packages/brain/src/{comparison,proposal}.ts` and focused tests.
+- Result/proposal UI, copy, writer/population guards, and a pre-deploy proposal audit under `respin/packages/db`/scripts.
+- `respin/packages/db/src/system-spend*.ts`, next additive migration, system-spend tests.
+- A sample fixture/validator adapter outside the Modes→DB dependency direction; `respin/packages/credits/src/public-sample-spin.ts` (or the equivalent existing orchestration layer).
+- `respin/app/api/demo/route.ts`, marketing pages/components/actions, public-entrypoint and stale-disclosure tests.
+- Limiter schema/service, pg-boss receiver/schedule/health, config ceilings.
+- `respin/instrumentation.ts`, safe event adapter, aggregate activation query/job, `env.example`, operator docs.
+
+Deviations are recorded in the implementation ledger with the authority preserved; this list is not permission to create duplicate services.
 
 ## Verification
-1. [ ] Entry gate on the CI shape, Docker live, zero skips; `db:check` clean
-2. [ ] **As an anonymous visitor in a browser: type an idea → two outputs → the rules highlighted → subscribe** (M6's criterion)
-3. [ ] The two outputs differ in voice **and** structure (R5) — fixtures plus a human verdict, reported as such
-4. [ ] The demo debits nothing — the ledger is unchanged after N runs (R3)
-5. [ ] Exceeding the limit → refused, and the refusal does not leak whether the IP is known (R4)
-6. [ ] Config cannot raise any demo limit above its code ceiling (R4/R4a)
-7. [ ] The demo path mints no `ProfileScope` (R2, AC-13 scan)
-8. [ ] The sample brain's content contains no real person's specifics (question 1's scan)
-9. [ ] An induced error reaches the collector **with no creator content in it** (R12, R17)
-10. [ ] `env.example` documents every new variable (R15)
-11. [ ] Every public page is in `PUBLIC_ENTRYPOINTS`; the suite is green (R10)
-12. [ ] Race requests at IP/global-cost/concurrency ceilings → accepted work never exceeds a ceiling; timeout/input/output/prompt-injection fixtures fail safely (R4/R4a)
-13. [ ] HMAC rotation preserves the intended overlap window and expires old buckets; a salt-only hash implementation fails the invariant test (R4)
 
-## Mutations to plant (name the population)
-| # | Mutation | Should redden |
-|---|---|---|
-| M1 | Demo path mints a `ProfileScope` | Verification 7 |
-| M2 | Rate limiter disabled | Verification 5 |
-| M3 | Config allowed to exceed the code ceiling | Verification 6 |
-| M4 | Demo debits a credit | Verification 4 |
-| M5 | Error reporter passes the raw error object | Verification 9 |
-| M6 | Demo reimplemented instead of calling `packages/modes` | R6's shared-path test |
-| M7 | Sample brain seeded as a database row | Verification 7 / the fixture assertion |
-| M8 | Demo global daily budget or concurrency reservation removed | Verification 12 |
-| M9 | IP key changed to an unkeyed/salted digest | Verification 13 |
+### Focused engineering checks
 
-**Population note — read before reporting "N of N".** Seven mutations on code that will exist. **The hazards this matrix cannot reach:** (a) **R5 is the slice's headline and is a property of generated text** — "genuinely differ in voice and structure" cannot be proven by a test, only sampled; report it as a sampled verdict with its n, never as coverage. (b) **R11 is outbound truth** — a privacy page describing slice 10b's deletion path would pass every test in the repo, because no test reads the privacy page against the code. (c) **R17 is an operator walk**, and the thing it checks is an absence (no creator content in the payload), which no mutation of our code can create — the leak would come from a library's error shape, which is the exact class R-36's `safe-log` rule was written for after `DrizzleQueryError` printed a creator's post to stdout. Before claiming a matrix result, state which requirements have no control, and have someone other than the author plant at least three mutations against the demo path.
+- Brain tests: both populations reject self-reported/unquantified rows before window/group/digest derivation; adding/removing/changing an unverified row leaves every verified derivative byte-identical; the unexplained five-row strength tier and stale mixed/self-reported copy are absent; minimum-n, paid/organic, platform, metric, reach/conversion and treatment isolation remain exact; feedback proposals still work.
+- Proposal audit: zero/non-zero accepted-result cases; proposed invalidation idempotent; an accepted non-verified proposal blocks and names only ids.
+- Modes/compliance: forced near-copy on each output unit, subject/hook/structure mutations, hard-rule/traceability failure, one rewrite then refusal, no failed draft in response/replay/storage/log/telemetry, prompt-injection corpus, fixture provenance/validator.
+- Spend: exact three-call reservation across both model prices/bounds, no SDK retry, per-HTTP-attempt actual/unknown finalise, first-call transport failure, hidden retry/fourth-call mutation, daily/purpose/concurrency edges, crash recovery, duplicate request, no automatic reissue, autopsy regression, provider-call inventory, no ledger debit.
+- Retention: bucket expiry without traffic, key rotation, raw-IP absence, endpoint no-store.
+- Observability: induced safe error arrives; canary content placed in request/error does not; activation tests cover unverified denominator, email-verification success step, all four eligible modes, hooks/caption/ideation/Sample/test/refused exclusions, audited-id-only exclusions, maturation/dedup, 10b-1 deleted-account carry-forward, external denominator `<10` suppression, and exact internal nonzero display.
+- `pnpm -C respin typecheck`, `pnpm -C respin lint`, `pnpm -C respin db:check`, narrow tests, then the canonical Docker/live zero-skip entry gate and `next build` once stable.
+
+### Acceptance walks
+
+1. Anonymous browser: enter idea → checking → accepted Sample Spin or typed refusal; synthetic original and accepted output are side by side; highlighted rules and weakest point are visible; ledger unchanged.
+2. Forced-near-copy browser/API fixture: no candidate text appears at any time and retry returns the same terminal refusal without a new vendor sequence.
+3. Operator: induce a canary error and inspect the actual Sentry payload for absence of all forbidden content/identity fields.
+4. Operator: read one matured activation cohort with reproducible numerator/denominator/exclusions, and verify the external event is aggregate-only.
+
+## Mutation and non-vacuity matrix
+
+| Mutation | Must redden |
+|---|---|
+| Admit self-reported row to either numerical population | verified-only brain tests |
+| Let an unverified row alter window/group head/digest/strength | derivative byte-identity tests |
+| Let a fixture/admin writer mint `connector_verified` | writer-closure test |
+| Skip production `analyseAndSpin` or similarity on demo | parity/import-closure and forced-copy tests |
+| Emit first draft before gates | response/storage/telemetry canary test |
+| Remove a gate-visible output unit | output-unit population test |
+| Call provider before system claim or add a second daily table | authority/inventory and crash tests |
+| Enable SDK retry, omit scorer reservation, or allow a fourth HTTP call | attempt-count/reservation tests |
+| Treat unknown finalisation as zero or retry it | spend state-machine tests |
+| Debit tenant credits | ledger-delta test |
+| Store/log raw IP, visitor idea, prompt, or output | schema/payload canary tests |
+| Disable expiry receiver | time-advanced worker test |
+| Let repeated requests extend a HMAC bucket past `bucket_started_at + 24h` | immutable-window expiry test |
+| Forward raw Sentry error/event | collector canary test |
+| Count an immature or duplicate activation | cohort-boundary tests |
+| Drop email verification, admit a non-script/demo/test row, add heuristic exclusions, or lose a deleted-before-maturity denominator | activation contract/mutation matrix |
+| Emit a PostHog activation cell with denominator `<10` or render suppression as zero | small-cell privacy test |
+
+**Population:** every result aggregate/proposal constructor, every Sample Spin output field from `outputTextUnits`, every provider-call site, every demo/observability persistence writer, and every activation source table is enumerated from exports/schema rather than a handwritten subset. At least three mutations are planted by someone other than the implementer. Visual usefulness and text quality remain sampled human judgements and are reported with sample n, model/config/prompt versions and failures—not as mutation coverage or uplift.
+
+## Rollout, rollback, budgets, and evidence
+
+Use expand → migrate/audit → compatible code → disabled preview flag. Keep the landing mockup disclosure through this slice; 10a is not authorised to enable the public Sample Spin. Only 10c may turn it on after the closed platform registry, claim ledger, privacy text, and upstream gates pass. If the accepted-proposal audit is non-zero, stop before verified-only deployment. Schema rollback is forward-only after new purpose rows exist; disable the preview flag and roll forward rather than deleting cost/audit facts. Config may tighten limits immediately.
+
+Record official pricing URLs and review dates, derived ceilings/formulae, migration/fresh-install/rollback results, gate outputs, browser screenshots, Sentry payload inspection, activation query evidence, mutation population/results, and every unearned external residual in the slice report card.
 
 ## Done when
-- [ ] All requirements met, all verification steps pass
-- [ ] **Both** walks done — the visitor's in a browser, the operator's against a deployed process
-- [ ] **Spin compliance**, **billing** (Full gates), **learning honesty** and **brain tenancy** (Full gates) PASS — reviewers in **isolated worktrees**
-- [ ] G-15 closed in the disposition register, whichever way it resolves
-- [ ] `decisions.md` carries: the fixture-not-a-row sample brain, keyed-HMAC IP limiter/rotation and why `rate_limit` was not reused, demo code ceilings/config tightening, G-15's resolution, and the funnel's build-or-cut
-- [ ] `build-plan.md` M6's demo and funnel criteria are measured; remaining M6 criteria belong to 10b-1, 10b-2 and 10c and are **not** claimed here
+
+- All contracts and checks above pass on the current tree; the proposal preflight is recorded.
+- The preview visitor and operator walks are completed with evidence, without claiming latency, policy completeness, pilot, or performance proof; the public flag remains off for 10c.
+- Every system call is metered by the one authority; every demo bucket expires without traffic; no tenant/content leak exists.
+- PRD/build-plan/tech-spec/marketing/privacy/changelog are consistent with R-115–R-117/R-121.
+- Full Respin billing, tenancy, spin-compliance, and learning-honesty gates PASS; final code review PASS.
+- Every 10a table/row class/field set passes 10b-1's already-executable gate; 10b-2/10c receive stable Sample/system-spend interfaces.

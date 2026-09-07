@@ -106,10 +106,10 @@ export default async function InterviewPage(props: {
   ) as Record<(typeof INTERVIEW_FIELDS)[number]["key"], ReturnType<typeof fieldState>>;
 
   const writeBlock =
-    scope.role === "viewer"
+    scope.role !== "owner"
       ? {
           reason:
-            "You have viewer access to this workspace, so you cannot answer or submit this creator's interview. Ask a workspace owner for editor access.",
+            `You have ${scope.role} access to this workspace, so you cannot answer or submit this creator's interview. R-118 makes durable onboarding work owner-only; ask a workspace owner to make this change.`,
         }
       : null;
 

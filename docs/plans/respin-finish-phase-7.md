@@ -130,7 +130,7 @@ The credit is still debited, per slice 6's question-4 table: an honest refusal i
 
 ## Verification
 1. [ ] Entry gate on the CI shape, Docker live, zero skips; `db:check` clean
-2. [ ] **All seven modes generated in a browser**, against the real vendor, each producing a valid `ScriptOutput`
+2. [ ] **All seven modes generated in a browser**, against the real vendor, each producing a valid `ScriptOutput`. Follow [`respin-vendor-acceptance-walks.md`](../runbooks/respin-vendor-acceptance-walks.md), §6.
 3. [ ] A revision → new row, `parent_id` set, kill test **re-run**, priced as a revision (R6–R8)
 4. [ ] A revision of an output whose parent passed, where the revision violates a hard rule → **refused** (R7's whole point)
 5. [ ] A mode added with no tier-map entry → a test fails (R14's non-vacuity)

@@ -20,6 +20,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { isProbeArtifactSegment } from "./support/probe-artifacts";
 import {
   createTestDb,
   onboardingInputs,
@@ -170,6 +171,7 @@ describe("the rule is enforced, not merely conventional (source scan)", () => {
   // (`tests/action-gate.test.ts` scans `app/**` for a sibling rule).
   const walk = (dir: string): string[] =>
     readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      if (isProbeArtifactSegment(e.name)) return [];
       const full = resolve(dir, e.name);
       if (e.isDirectory()) return walk(full);
       return /\.tsx?$/.test(e.name) ? [full] : [];

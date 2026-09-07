@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "R-124 WRITER principal: create only, under one prefix, and nothing else.",
+    "It cannot delete, add a delete marker, copy over, change retention, suspend",
+    "versioning, or bypass a lock — those verbs are simply absent, and the",
+    "bucket policy denies them again. The application-code mirror of this is",
+    "`JournalWriterTransport` in packages/db/src/deletion-journal.ts, whose only",
+    "method is putObject."
+  ],
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ConditionalCreateOnly",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::<BUCKET>/<ENVIRONMENT>/deletion-journal/*",
+      "Condition": {
+        "Null": { "s3:if-none-match": "false" },
+        "StringEquals": {
+          "s3:x-amz-server-side-encryption": "AES256",
+          "s3:x-amz-object-lock-mode": "COMPLIANCE"
+        }
+      }
+    }
+  ]
+}

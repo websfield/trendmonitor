@@ -155,18 +155,16 @@ function FrameworkRow({ framework }: { framework: FrameworkView }) {
         by `@respin/db`'s readers rather than written here — "a warning that
         every consumer has to reimplement is a warning one of them will omit" —
         so this renders the value it was handed and holds no sentence of its
-        own. `null` means there is nothing to warn about, which is why the
-        branch is on the notice and not on the saturation value.
+        own. Every row is unmeasured until a framework-level population/window
+        exists, so the limitation is unconditional.
       */}
-      {framework.saturationNotice !== null ? (
-        <Banner
-          title="This shape is worn out"
-          data-testid="framework-saturation-notice"
-          role="note"
-        >
-          <p className="muted">{framework.saturationNotice}</p>
-        </Banner>
-      ) : null}
+      <Banner
+        title="Framework limitation"
+        data-testid="framework-saturation-notice"
+        role="note"
+      >
+        <p className="muted">{framework.saturationNotice}</p>
+      </Banner>
     </li>
   );
 }

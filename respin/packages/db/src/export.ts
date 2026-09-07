@@ -9,7 +9,11 @@ import {
 import { CHECK } from "./brain-content";
 import { classifyBrainReason, type BrainDocReasonCode } from "./brain-reason";
 import { ExportBusyError } from "./errors";
-import { EVIDENCE_UNVERIFIED_ANNOTATION, claimsForHistory } from "./brain-ops";
+import {
+  EVIDENCE_UNVERIFIED_ANNOTATION,
+  claimsForHistory,
+  type BrainClaimView,
+} from "./brain-ops";
 import {
   ProfileScope,
   PROFILE_EXPORT_TABLES,
@@ -85,13 +89,12 @@ const ABSENCE_CREATOR_EDIT: AbsenceCopy = {
 /**
  * The sentence that claims NOTHING about whose absence this is.
  *
- * Used wherever none of the three above is known to be true: the kind nothing
- * writes and no interview asks about (`performance_meta` is outside
- * `WRITABLE_BRAIN_KINDS`, so no document of that kind exists to project
- * today), the `correction` reason code (which has no write path yet, so there
- * is no fact about who left the field unstated), and a stored reason this
- * build cannot classify at all. Borrowing one of the other three there would
- * be inventing the reason for an absence, which is the whole defect.
+ * Used wherever none of the three above is known to be true: a Performance
+ * Meta record whose promoted source left a position `[check]`, the
+ * `correction` reason code (which has no write path yet, so there is no fact
+ * about who left the field unstated), and a stored reason this build cannot
+ * classify at all. Borrowing one of the other three there would be inventing
+ * the reason for an absence, which is the whole defect.
  */
 const ABSENCE_UNSTATED: AbsenceCopy = {
   stem: "This position is recorded as not stated.",
@@ -141,6 +144,7 @@ const ABSENCE_BY_REASON: Record<BrainDocReasonCode, AbsenceCopy | null> = {
   // No write path emits this code today, so there is no fact about who left
   // the position unstated. Claim nothing rather than guess.
   correction: ABSENCE_UNSTATED,
+  brain_promotion: ABSENCE_UNSTATED,
 };
 
 /** The copy for one absence, selected by BOTH dimensions (kind, stored reason). */
@@ -266,6 +270,29 @@ export const KILLTEST_FIELD_LABELS: Record<string, string> = {
   bannedVibes: "Vibes or tones you never want",
 };
 
+/** C5's stored Performance Meta fields, named without exposing JSON pointers. */
+export const PERFORMANCE_META_FIELD_LABELS: Record<string, string> = {
+  metricLabel: "Creator-authored metric label",
+  metricKey: "Metric key",
+  metricUnit: "Metric unit",
+  metricDirection: "Metric direction",
+  lever: "Lever",
+  platform: "Platform",
+  audienceClass: "Audience class",
+  observedFrom: "Observation start",
+  observedTo: "Observation end",
+  treatmentN: "Treatment count",
+  baselineN: "Baseline count",
+  treatmentMedianPer1k: "Treatment median per 1,000",
+  baselineMedianPer1k: "Baseline median per 1,000",
+  effectPer1k: "Signed effect per 1,000",
+  pastOutcome: "Past outcome",
+  evidenceStrength: "Evidence strength",
+  selfReportedN: "Quantified self-reported evidence count",
+  connectorVerifiedN: "Connector-verified evidence count",
+  confounders: "Structured confounders",
+};
+
 /** Readable labels for `METRIC_DIRECTIONS`' two closed values. */
 export const METRIC_DIRECTION_LABELS: Record<string, string> = {
   higher_is_better: "Higher is better",
@@ -325,6 +352,12 @@ export function killtestClaimLabel(pointer: string): string | null {
   return indexedLabel(KILLTEST_FIELD_LABELS, pointer.split("/").filter((p) => p.length > 0));
 }
 
+export function performanceMetaClaimLabel(pointer: string): string | null {
+  const match = /^\/rules\/\d+\/([^/]+)(?:\/\d+)?$/.exec(pointer);
+  if (!match) return null;
+  return PERFORMANCE_META_FIELD_LABELS[match[1]] ?? null;
+}
+
 /** True for a claim position that belongs in the metric panel, not the general list (R7). */
 export function isMetricPointer(pointer: string): boolean {
   return pointer.startsWith("/metric/");
@@ -334,10 +367,7 @@ const CLAIM_LABELLERS: Record<BrainKind, (pointer: string) => string | null> = {
   voice: claimLabel,
   strategy: strategyClaimLabel,
   killtest: killtestClaimLabel,
-  // Nothing writes this kind (`WRITABLE_BRAIN_KINDS`), so it has no fields and
-  // therefore no field names. Named explicitly rather than defaulted, for the
-  // same reason `EXPORT_ABSENCE_BY_KIND` is a Record.
-  performance_meta: () => null,
+  performance_meta: performanceMetaClaimLabel,
 };
 
 /** The human name for one claim position of one kind, or null if we have none. */
@@ -777,6 +807,17 @@ async function inputsForDocs(
   return profileScope.accessors.onboardingInputsByIds(citedInputIds(docs), tx);
 }
 
+/** JSON has no bigint primitive; creator exports retain exact integer bytes as strings. */
+function exportJson(value: unknown): string {
+  const encoded = JSON.stringify(value, (_key, item) =>
+    typeof item === "bigint" ? item.toString() : item
+  );
+  if (encoded === undefined) {
+    throw new Error("creator export encountered a value JSON cannot represent");
+  }
+  return encoded;
+}
+
 async function streamJsonExport(
   tx: TxLike,
   profileScope: ProfileScope,
@@ -791,7 +832,7 @@ async function streamJsonExport(
     reason: entry.export.reason,
   }));
   await emit(
-    `{"schemaVersion":"respin.creator-export.v1","generatedAt":${JSON.stringify(generatedAt.toISOString())},"profileId":${JSON.stringify(profileId)},"registry":${JSON.stringify(registry)},"tables":{`
+    `{"schemaVersion":"respin.creator-export.v1","generatedAt":${exportJson(generatedAt.toISOString())},"profileId":${exportJson(profileId)},"registry":${exportJson(registry)},"tables":{`
   );
   let firstTable = true;
   // `plan` IS the registry's included set, typed (`exportPlan`), computed
@@ -799,12 +840,12 @@ async function streamJsonExport(
   // disagree with `registry` above — which is exactly what R11's key-set
   // equality test compares.
   for (const table of plan) {
-    await emit(`${firstTable ? "" : ","}${JSON.stringify(table)}:[`);
+    await emit(`${firstTable ? "" : ","}${exportJson(table)}:[`);
     firstTable = false;
     let firstRow = true;
     await forEachExportPage(profileScope, table, tx, async (rows) => {
       for (const row of rows) {
-        await emit(`${firstRow ? "" : ","}${JSON.stringify(row)}`);
+        await emit(`${firstRow ? "" : ","}${exportJson(row)}`);
         firstRow = false;
       }
     });
@@ -816,7 +857,7 @@ async function streamJsonExport(
     const docs = rows as BrainDoc[];
     const inputs = await inputsForDocs(profileScope, docs, tx);
     for (const annotation of evidenceAnnotations(docs, inputs)) {
-      await emit(`${firstAnnotation ? "" : ","}${JSON.stringify(annotation)}`);
+      await emit(`${firstAnnotation ? "" : ","}${exportJson(annotation)}`);
       firstAnnotation = false;
     }
   });
@@ -838,6 +879,126 @@ function replacementFromMetadata(
           candidate.activatedAt?.getTime() === transition)
     )?.version ?? null
   );
+}
+
+const PERFORMANCE_RULE_FIELDS = [
+  "metricKey",
+  "metricUnit",
+  "metricDirection",
+  "lever",
+  "platform",
+  "audienceClass",
+  "observedFrom",
+  "observedTo",
+  "treatmentN",
+  "baselineN",
+  "treatmentMedianPer1k",
+  "baselineMedianPer1k",
+  "effectPer1k",
+  "pastOutcome",
+  "selfReportedN",
+  "connectorVerifiedN",
+  "evidenceStrength",
+] as const;
+
+function performanceRuleIndexes(claims: readonly BrainClaimView[]): number[] {
+  return [...new Set(
+    claims.flatMap((claim) => {
+      const match = /^\/rules\/(\d+)\//.exec(claim.pointer);
+      return match ? [Number(match[1])] : [];
+    })
+  )].sort((left, right) => left - right);
+}
+
+function performanceClaim(
+  claims: readonly BrainClaimView[],
+  ruleIndex: number,
+  field: string
+): BrainClaimView | null {
+  return claims.find((claim) => claim.pointer === `/rules/${ruleIndex}/${field}`) ?? null;
+}
+
+function performanceClaims(
+  claims: readonly BrainClaimView[],
+  ruleIndex: number,
+  field: string
+): BrainClaimView[] {
+  const prefix = `/rules/${ruleIndex}/${field}/`;
+  return claims
+    .filter((claim) => claim.pointer.startsWith(prefix))
+    .sort((left, right) => left.pointer.localeCompare(right.pointer));
+}
+
+function observedRelation(effect: string | null): string | null {
+  if (effect === null || effect.trim() === "") return null;
+  const value = Number(effect);
+  if (!Number.isFinite(value)) return null;
+  if (value > 0) return "This treatment was higher than this baseline in these observations.";
+  if (value < 0) return "This treatment was lower than this baseline in these observations.";
+  return "This treatment was level with this baseline in these observations.";
+}
+
+function appendPerformanceEvidence(
+  lines: string[],
+  doc: BrainDoc,
+  claim: BrainClaimView
+): void {
+  if (claim.value === CHECK) {
+    lines.push(`  ${exportAbsenceSentence(doc.kind, doc.reason)}`);
+    return;
+  }
+  if (claim.source && claim.quote) {
+    lines.push(`  ${quoteIntro(claim.source.inputClass, exportDay(claim.source.postedAt))}`);
+    lines.push(`  > ${claim.quote}`);
+  }
+  if (claim.evidenceAnnotation) lines.push(`  > ${claim.evidenceAnnotation}`);
+}
+
+/**
+ * Performance Meta is a recorded observation, not a generic brain claim list.
+ * Keep its C5 envelope readable as one rule and put the non-causal disclosure
+ * immediately after every signed comparison.
+ */
+export function renderPerformanceMetaMarkdown(
+  doc: BrainDoc,
+  claims: readonly BrainClaimView[]
+): string[] {
+  const lines: string[] = [];
+  const indexes = performanceRuleIndexes(claims);
+  if (indexes.length === 0) return [NO_RULES_RECORDED, ""];
+
+  for (const index of indexes) {
+    const metricLabel = performanceClaim(claims, index, "metricLabel");
+    lines.push(`### Performance record ${index + 1}`, "");
+    lines.push(
+      `Creator-authored metric label: ${metricLabel?.value ?? "Not recorded"}`,
+      ""
+    );
+    if (metricLabel) appendPerformanceEvidence(lines, doc, metricLabel);
+
+    for (const field of PERFORMANCE_RULE_FIELDS) {
+      const claim = performanceClaim(claims, index, field);
+      const label = PERFORMANCE_META_FIELD_LABELS[field];
+      lines.push(`- ${label}: ${claim?.value ?? "Not recorded"}`);
+      if (claim) appendPerformanceEvidence(lines, doc, claim);
+    }
+
+    const confounders = performanceClaims(claims, index, "confounders");
+    lines.push(
+      `- ${PERFORMANCE_META_FIELD_LABELS.confounders}: ${
+        confounders.length ? confounders.map((claim) => claim.value).join(", ") : "None recorded"
+      }`
+    );
+    for (const claim of confounders) appendPerformanceEvidence(lines, doc, claim);
+
+    const effect = performanceClaim(claims, index, "effectPer1k")?.value ?? null;
+    lines.push("", observedRelation(effect) ?? "A signed comparison direction was not recorded for this rule.");
+    lines.push(
+      "This describes past observations, does not establish cause, and is not a forecast.",
+      ""
+    );
+  }
+  return lines;
 }
 
 async function streamMarkdownExport(
@@ -894,33 +1055,37 @@ async function streamMarkdownExport(
       lines.push("");
       try {
         const view = claimsForHistory(doc, inputById);
-        for (const claim of view.claims) {
-          lines.push(`### ${exportClaimHeading(doc.kind, claim.pointer)}`, "");
-          // SELECTED BY (KIND, REASON), not one sentence for all four and not
-          // one per kind either (F3; compliance gate round 2). For
-          // `strategy`/`killtest` nobody searched anything — the creator left
-          // an interview field undecided — and for ANY kind whose version the
-          // creator EDITED, the `[check]` is their own decision. The voice
-          // sentence in either case attributes their deliberate choice to a
-          // failed search of ours, in the artefact of record (REQ-I03).
-          if (claim.value === CHECK)
-            lines.push(exportAbsenceSentence(doc.kind, doc.reason), "");
-          else {
-            lines.push(exportClaimValue(claim.pointer, claim.value), "");
-            if (claim.quote) {
-              // WHOSE WORDS THESE ARE, and when (F4). Without this line a
-              // creator's own typed declaration is an unattributed blockquote
-              // formally identical to a quote lifted from a saved post, and
-              // R5/R6's whole warrant is "you told us so, on this date".
-              if (claim.source) {
-                lines.push(
-                  quoteIntro(claim.source.inputClass, exportDay(claim.source.postedAt)),
-                  ""
-                );
+        if (doc.kind === "performance_meta") {
+          lines.push(...renderPerformanceMetaMarkdown(doc, view.claims));
+        } else {
+          for (const claim of view.claims) {
+            lines.push(`### ${exportClaimHeading(doc.kind, claim.pointer)}`, "");
+            // SELECTED BY (KIND, REASON), not one sentence for all four and not
+            // one per kind either (F3; compliance gate round 2). For
+            // `strategy`/`killtest` nobody searched anything — the creator left
+            // an interview field undecided — and for ANY kind whose version the
+            // creator EDITED, the `[check]` is their own decision. The voice
+            // sentence in either case attributes their deliberate choice to a
+            // failed search of ours, in the artefact of record (REQ-I03).
+            if (claim.value === CHECK)
+              lines.push(exportAbsenceSentence(doc.kind, doc.reason), "");
+            else {
+              lines.push(exportClaimValue(claim.pointer, claim.value), "");
+              if (claim.quote) {
+                // WHOSE WORDS THESE ARE, and when (F4). Without this line a
+                // creator's own typed declaration is an unattributed blockquote
+                // formally identical to a quote lifted from a saved post, and
+                // R5/R6's whole warrant is "you told us so, on this date".
+                if (claim.source) {
+                  lines.push(
+                    quoteIntro(claim.source.inputClass, exportDay(claim.source.postedAt)),
+                    ""
+                  );
+                }
+                lines.push(`> ${claim.quote}`, "");
               }
-              lines.push(`> ${claim.quote}`, "");
+              if (claim.evidenceAnnotation) lines.push(`> ${claim.evidenceAnnotation}`, "");
             }
-            if (claim.evidenceAnnotation) lines.push(`> ${claim.evidenceAnnotation}`, "");
           }
         }
       } catch {

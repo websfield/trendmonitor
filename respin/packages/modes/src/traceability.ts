@@ -99,6 +99,15 @@ export type TraceabilityFinding = {
  * already draws for the voice inference).
  */
 export type TraceabilityCorpus = {
+  /*
+   * TWO CHANNELS, AND THE SPIN REFERENCE IS DELIBERATELY NOT A THIRD (R-97).
+   * `GenerationContext.reference` — another creator's mechanism, rendered in
+   * the spin prompt — has no slot here and `traceabilityCorpusFor` never reads
+   * it: a specific that appears only in that block is one the creator never
+   * gave, and it is refused as untraced exactly as a framework blurb's would
+   * be. `spin-reference.test.ts` plants one and reddens on mutation M4 (the
+   * block added to `input`).
+   */
   brain: readonly string[];
   input: readonly string[];
   /**
@@ -199,8 +208,31 @@ export const SPECIFIC_SHAPES: readonly {
     id: "month-date",
     kind: "date",
     enforcement: "hard",
+    // THE `(?!\d)` ON THE DAY GROUP IS LOAD-BEARING, and it is the only thing
+    // making this shape's extent agree with `buildCorpusIndex`, which reads
+    // the creator's material with a DIFFERENT pair of regexes (`WORDLIKE` +
+    // `WRITTEN_NUMBER`). Without it the optional day group is greedy with no
+    // digit boundary, so "March 2024" tokenised as "March 20" — the year eaten
+    // as a day-of-month — and the rule failed in BOTH directions, both of them
+    // measured end to end through `runGeneration` (slice 8c round 1):
+    //
+    //   FAIL-OPEN. A brain holding "in June" and any bare `20` ("20 minutes")
+    //   vouched for the span "June 20" of an INVENTED "June 2019" — `traceable`
+    //   decomposes it to `june` + `20`, both present — and the over-wide span
+    //   then made `plain-number`'s match on `2019` OVERLAP and be skipped. Zero
+    //   findings, rendered under `TRACEABILITY_LIMIT_NOTE`'s claim that every
+    //   number and date was checked. That is REQ-I03.
+    //
+    //   FALSE REFUSAL. A creator's own "March 2024" was refused after two paid
+    //   vendor calls, quoting 'March 20' — a token absent from their draft —
+    //   and `REWRITE_INSTRUCTION`'s remedy could not clear it, because a marker
+    //   written beside the date left "24 " between the match end and the
+    //   marker.
+    //
+    // `traceability.test.ts` pins both directions, the round trip over every
+    // shape, and each date form's exact token.
     pattern:
-      /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t|tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b\.?(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,?\s+\d{4})?/g,
+      /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t|tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b\.?(?:\s+\d{1,2}(?:st|nd|rd|th)?(?!\d))?(?:,?\s+\d{4})?/g,
     specimen: "Filmed in March 2024.",
   },
   {
@@ -286,12 +318,19 @@ const WRITTEN_NUMBER = /\d[\d,]*(?:\.\d+)?/g;
  * Currency symbols, percent signs and thousands separators are stripped,
  * because `$1,200` in a draft and `1200` in the creator's brain are the same
  * specific and a scan that flagged it is a scan nobody reads.
+ *
+ * INTERNAL WHITESPACE IS COLLAPSED, because a token may now be COMPOSITE — a
+ * `month-date` is one key such as `march 20 2024`, and `"March 20,  2024"` and
+ * `"March 20, 2024"` are the same specific written twice. Folding the comma
+ * away is what already made `20,` and `20` agree; folding the run of spaces is
+ * the same fold one character wider.
  */
 function normalise(token: string): string {
   return token
     .normalize("NFC")
     .replace(/[$£€%]/g, "")
     .replace(/,/g, "")
+    .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
@@ -344,6 +383,14 @@ function normalise(token: string): string {
  * in their OWN note loses that number as corpus material and may see it
  * flagged. That is the safe direction — they wrote "I am not sure about this"
  * beside it — and the price is a `[check]` offer, not a deletion.
+ *
+ * THIS IS THE ONE PLACE THAT STILL READS RAW MATCHES rather than
+ * `resolveSpecifics`, and it is deliberate. Blanking every shape's raw match
+ * beside a marker removes MORE than the resolved tokenisation would, and more
+ * removed from the corpus means more flagged in the draft — the direction this
+ * file already chooses everywhere. Using the resolver here would only ever
+ * leave more marked material vouching, which is the direction that laundered
+ * `$4,000` in the first place.
  */
 export function stripMarkedSpecifics(text: string): string {
   if (!text.includes(CHECK)) return text;
@@ -375,10 +422,38 @@ export function stripMarkedSpecifics(text: string): string {
 /**
  * Every token the corpus can vouch for.
  *
- * TWO PASSES, because one tokeniser cannot do both jobs: `WORDLIKE` reads
- * `1,200` as `1` and `200` (the comma is not part of a word), so a second pass
- * over `WRITTEN_NUMBER` adds the separator-stripped `1200` a draft would be
- * compared against.
+ * THREE PASSES, AND THE THIRD IS THE ONE THAT MAKES THE TWO SIDES AGREE.
+ *
+ *   `WORDLIKE` reads `1,200` as `1` and `200` (the comma is not part of a
+ *   word), so a second pass over `WRITTEN_NUMBER` adds the separator-stripped
+ *   `1200` a draft would be compared against. Both are kept: a proper noun is
+ *   traceable word by word, and those words come from `WORDLIKE`.
+ *
+ *   THE THIRD PASS RUNS `resolveSpecifics` — the SAME tokeniser
+ *   `scanTraceability` reads the model's output with — so the index holds the
+ *   creator's specifics AT THE EXTENTS THE SCAN WILL LOOK THEM UP AT, and
+ *   holds COMPOSITE entries: `march 2024` is one key, not two. Before this,
+ *   the corpus was read with a different pair of regexes and the two sides'
+ *   extents disagreed, which is the whole of this rule's defect history (see
+ *   `resolveSpecifics`). It is also what lets `traceable` refuse to decompose
+ *   a date: the traceable direction now has a key to hit.
+ *
+ * A NOTE ON WHAT THE THIRD PASS DOES NOT CHANGE. Every token it adds for a
+ * single-word shape is already there from the first two passes once
+ * `normalise` has folded it (`$40` → `40`, `12%` → `12`). Its whole new
+ * contribution is multi-token specifics and agreed extents.
+ *
+ * AND WHAT IT COSTS, MEASURED RATHER THAN GUESSED. Seven patterns per sentence
+ * instead of two over the document: on a 42 kB corpus, warm, this function
+ * went from 2.1 ms to 12.6 ms per call and `scanTraceability` from 2.5 ms to
+ * 15 ms — about 6x, linear in corpus size, a few times per generation, against
+ * a path whose vendor call takes seconds. It was NOT optimised: the obvious
+ * win (reusing the raw match pass when nothing has been claimed yet) is a
+ * branch whose two sides must stay equivalent inside the tokeniser this
+ * product's hard integrity rule depends on, and that trade is not worth 5 ms.
+ * If a brain ever makes this matter, the fix is to build the index ONCE per
+ * generation instead of once per scan — the corpus does not change between a
+ * draft and its rewrite.
  *
  * A `[check]`-MARKED SPECIFIC CONTRIBUTES NOTHING — see `stripMarkedSpecifics`.
  *
@@ -397,8 +472,17 @@ export function buildCorpusIndex(corpus: TraceabilityCorpus): Set<string> {
     const text = stripMarkedSpecifics(raw);
     for (const m of text.matchAll(WORDLIKE)) index.add(normalise(m[0]));
     for (const m of text.matchAll(WRITTEN_NUMBER)) index.add(normalise(m[0]));
+    for (const span of spans(text)) {
+      for (const found of resolveSpecifics(span.text)) {
+        index.add(normalise(found.token));
+      }
+    }
   }
   for (const token of corpus.unvouched ?? []) {
+    // THE WHOLE TOKEN FIRST, and it is now enough for a composite: the caller
+    // reports the specifics THIS scan found, and this scan and the index read
+    // the text with the same tokeniser — so a parent draft's reported
+    // `March 2024` is exactly the key the index holds for it.
     index.delete(normalise(token));
     for (const m of token.matchAll(WORDLIKE)) index.delete(normalise(m[0]));
     for (const m of token.matchAll(WRITTEN_NUMBER)) index.delete(normalise(m[0]));
@@ -417,10 +501,19 @@ type Span = { text: string; start: number };
  *
  * The separator class carries `\n` as well as sentence enders, so a unit never
  * spans a line break (a hook set is several outputs, not one paragraph).
+ *
+ * A DECIMAL POINT IS NOT A SENTENCE ENDER, and leaving it as one was the same
+ * defect `traceable` refuses decomposition for, arriving through the splitter
+ * instead of through the shape list. MEASURED before this exception existed:
+ * `12.5%` was split into the span "…12" and the span "5%…", so a brain holding
+ * "I shot 12 videos" and "5% of the time it works" — two unrelated documents —
+ * vouched for an INVENTED `12.5%` with zero findings; likewise `1` + `5x` for
+ * `1.5x` and `1200` + `50` for `$1,200.50`. All three are HARD shapes. A
+ * quantity is one specific whichever function takes it apart.
  */
 function spans(text: string): Span[] {
   const out: Span[] = [];
-  for (const m of text.matchAll(/[^.!?…\n]+/g)) {
+  for (const m of text.matchAll(/(?:[^.!?…\n]|(?<=\d)\.(?=\d))+/g)) {
     if (m[0].trim().length === 0) continue;
     out.push({ text: m[0], start: m.index });
   }
@@ -529,13 +622,32 @@ function traceable(
   index: ReadonlySet<string>
 ): boolean {
   // WHOLE TOKEN FIRST, with separators folded, so `1,200` in a draft matches
-  // `1200` in the brain.
+  // `1200` in the brain — and, since `buildCorpusIndex` runs the SAME
+  // tokeniser, so that `March 2024` in a draft matches `March 2024` in the
+  // brain as ONE key.
   if (index.has(normalise(token))) return true;
-  // A NUMBER IS ONE SPECIFIC AND IS NEVER DECOMPOSED. Falling through to the
-  // per-word rule below would let a brain that merely contains the digits `1`
-  // and `200` vouch for the quantity `1,200` — a hard-enforcement finding
-  // silently cleared by two unrelated tokens.
-  if (kind === "number") return false;
+  // A NUMBER OR A DATE IS ONE SPECIFIC AND IS NEVER DECOMPOSED. Falling
+  // through to the per-word rule below would let a brain that merely contains
+  // the digits `1` and `200` vouch for the quantity `1,200` — a
+  // hard-enforcement finding silently cleared by two unrelated tokens.
+  //
+  // A DATE IS THE SAME ARGUMENT, and it was left out of it for one round.
+  // MEASURED before this line changed: a brain saying "I filmed in March" in
+  // one document and "2024 was a hard year" in another vouched for the hook
+  // "The March 2024 rebuild" with ZERO findings, and three unrelated tokens
+  // (`March`, `20`, `2024`) vouched for "On March 20, 2024 we filmed". A
+  // creator's own history was dated for them, under `TRACEABILITY_LIMIT_NOTE`.
+  // `iso-date` never decomposed — but only by accident of tokenisation (one
+  // `WORDLIKE` token, so `parts.length > 1` was false), so the two hard date
+  // shapes behaved oppositely for no reason anyone had stated.
+  //
+  // THIS LINE IS ONLY SAFE BECAUSE THE INDEX CARRIES COMPOSITES. On its own it
+  // would hard-refuse EVERY month-date including one the creator typed
+  // verbatim — round 1's false-refusal direction, restored. The whole-token
+  // lookup above is what makes the traceable direction still work, and it can
+  // only hit because `buildCorpusIndex` now tokenises with `resolveSpecifics`.
+  // The two changes are one change.
+  if (kind === "number" || kind === "date") return false;
   const parts = token.match(WORDLIKE) ?? [];
   // A MULTI-WORD NAME IS TRACEABLE ONLY IF EVERY WORD IS. The recall-preserving
   // direction: half a known name is still a specific the creator did not give.
@@ -562,6 +674,318 @@ function trimOpeners(
 }
 
 /**
+ * ONE TOKENISER, RUN ON BOTH SIDES — the extent is a COMPUTED property.
+ * ==================================================================
+ *
+ * WHAT WENT WRONG TWICE. `buildCorpusIndex` read the creator's material with
+ * `WORDLIKE` + `WRITTEN_NUMBER`; `scanTraceability` read the model's output
+ * with `SPECIFIC_SHAPES`. Two tokenisers, so their EXTENTS disagreed, and
+ * every defect this rule has shipped is a consequence of that one fact:
+ *
+ *   ROUND 1. `month-date`'s greedy day group read "March 2024" as "March 20",
+ *   which the corpus could vouch for word by word, and the over-wide span made
+ *   `plain-number`'s match on the year OVERLAP and be skipped. Fixed with a
+ *   `(?!\d)` lookahead on the day group.
+ *
+ *   ROUND 2, one regex group over. The YEAR group has no digit boundary and
+ *   the day group still claims a 1-2 digit number followed by `%`, `x` or `,`.
+ *   MEASURED end to end through `runGeneration`: a brain saying "…I run 3
+ *   times a week and I started in June." cleared the hook "Since June 3x more
+ *   people watch the slow way" with `hardRules: []` and `traceability: []` —
+ *   `month-date` claimed "June 3", `multiplier`'s "3x" overlapped and was
+ *   skipped, and an INVENTED performance claim rendered under
+ *   `TRACEABILITY_LIMIT_NOTE`'s sentence that every number was checked. And in
+ *   the other direction, "By June 250000 views it was over" against a corpus
+ *   containing that exact sentence was REFUSED after two paid vendor calls,
+ *   quoting 'June 2500'.
+ *
+ * SO THE HEURISTIC IS NOT TUNED A THIRD TIME (CLAUDE.md's ledger: stop tuning,
+ * make it structural). No pattern in `SPECIFIC_SHAPES` changed for this fix.
+ * What changed is that ONE function decides every extent, and both sides call
+ * it: `scanTraceability` on the model's output and `buildCorpusIndex` on the
+ * creator's material. A specific found in the draft is looked up as the same
+ * token the same tokeniser would have found in the brain, so `corpus == draft`
+ * cannot produce a finding BY CONSTRUCTION rather than by enumeration.
+ *
+ * THE TWO RULES IT ADDS TO PRIORITY ORDER, both stated as properties:
+ *
+ *   1. PRIORITY RESOLVES CONTAINMENT; IT DOES NOT LICENCE A CUT. An earlier
+ *      shape may CONTAIN a later one — that is what priority is for
+ *      (`2026-08-31` is one date and not three numbers; `$40` is one amount
+ *      and not the number 40). It may not swallow the HEAD of one, and no
+ *      match may end inside a run of digits. Both conditions are checked and
+ *      the match is re-taken inside the narrowed window (`repairedExtent`,
+ *      where the two are stated as properties). "June 3x" → `month-date`
+ *      gives up the day and reads "June"; "3x" is then scanned as the
+ *      multiplier it is. "June 250000" → "June", and `plain-number` reads the
+ *      whole 250000. "March 12,000" → "March". No pattern was touched.
+ *
+ *   2. A CLAIMED SPAN NARROWS A LATER SHAPE, IT DOES NOT CANCEL IT. A later
+ *      shape is re-matched in the GAPS between claimed spans instead of being
+ *      dropped whole. MEASURED before this change: "In March Anna arrived."
+ *      produced NO finding for `Anna` at all — the capitalised run "In March
+ *      Anna" overlapped the month's span and was discarded entire — while "In
+ *      the room Anna arrived." flagged it. One adjacent month word suppressed
+ *      a finding, on the flag side of the same defect class.
+ *
+ * TERMINATION is by construction: each repair step strictly shrinks the
+ * window, and `REPAIR_STEPS` bounds it anyway. A match that cannot be repaired
+ * is DROPPED, which is the safe direction — dropping an outer match exposes
+ * the specifics inside it to their own shapes.
+ */
+type ResolvedSpecific = {
+  shape: (typeof SPECIFIC_SHAPES)[number];
+  /** The specific, exactly as it appears in the text. */
+  token: string;
+  /** UTF-16 offsets into the span text this was resolved in. */
+  start: number;
+  end: number;
+};
+
+/** A match of ANY shape, before priority or extent repair — boundary evidence. */
+type RawMatch = { priority: number; start: number; end: number };
+
+/** How many times an extent may be re-taken before the match is dropped. */
+const REPAIR_STEPS = 8;
+
+/** A shape's regex, FRESH: a shared /g regex carries `lastIndex` between calls. */
+function shapeRegex(priority: number): RegExp {
+  const shape = SPECIFIC_SHAPES[priority];
+  return new RegExp(shape.pattern.source, shape.pattern.flags);
+}
+
+function rawMatches(text: string): RawMatch[] {
+  const out: RawMatch[] = [];
+  for (let priority = 0; priority < SPECIFIC_SHAPES.length; priority++) {
+    for (const m of text.matchAll(shapeRegex(priority))) {
+      out.push({ priority, start: m.index, end: m.index + m[0].length });
+    }
+  }
+  return out;
+}
+
+const DIGIT = /\d/;
+
+/** Where the run of digits containing `at - 1` begins (or `at`, if none does). */
+function digitRunStart(text: string, at: number): number {
+  let i = at;
+  while (i > 0 && DIGIT.test(text[i - 1])) i--;
+  return i;
+}
+
+/** One past the end of the run of digits containing `at` (or `at`, if none). */
+function digitRunEnd(text: string, at: number): number {
+  let i = at;
+  while (i < text.length && DIGIT.test(text[i])) i++;
+  return i;
+}
+
+/**
+ * Re-take a match until its boundaries are legal, or drop it.
+ *
+ * TWO BOUNDARY CONDITIONS, both properties of the token set rather than of any
+ * one pattern:
+ *
+ *  A. NO EDGE OF A SPECIFIC SITS INSIDE A RUN OF DIGITS. This is round 1's
+ *     `(?!\d)` lookahead, stated ONCE for every shape at the tokenising layer
+ *     instead of on one regex group — which is why round 2 found the same
+ *     defect one group over. Only `month-date` can violate it (every other
+ *     pattern is bounded by `\b`, a symbol or a greedy digit run), and
+ *     `traceability.test.ts` asserts the invariant over `SPECIFIC_SHAPES`
+ *     rather than over a list of date forms. "June 250000" retakes as "June".
+ *
+ *     THE CONDITION IS "INSIDE A RUN", NOT "BESIDE A DIGIT", and the
+ *     difference is measured: `currency` opens on a symbol, so "It was 20$40
+ *     total." legitimately yields `plain-number:"20"` and `currency:"$40"`
+ *     with the amount starting immediately after a digit. Nothing is cut
+ *     there and both specifics are reported, so the wider claim would have
+ *     been false — the kind of over-stated property this rule has already
+ *     shipped twice.
+ *
+ *     AND IT IS REDUNDANT TODAY — SAID OUT LOUD RATHER THAN LEFT TO LOOK
+ *     LOAD-BEARING. Deleting this block was planted as a mutation and the
+ *     whole suite stayed GREEN (175/175), because `plain-number` matches every
+ *     bare digit run, so rule B is already cutting at the same place. It is
+ *     kept as the direct statement of the invariant at the point of
+ *     enforcement, so the invariant does not silently depend on another
+ *     shape's presence and priority. What has the witness is the PROPERTY
+ *     ("no specific ever begins or ends flush against a digit", asserted
+ *     generatively) and the coupling that currently delivers it
+ *     ("`plain-number` sits below every hard shape") — not this mechanism.
+ *     Deleting BOTH A and B reddens the property.
+ *
+ *  B. A MATCH MAY CONTAIN A LOWER-PRIORITY TOKEN, NEVER SWALLOW ITS HEAD.
+ *     Containment is what priority is for; cutting is an extent error. The
+ *     rule is one-sided on purpose, and the reason is a property of these
+ *     patterns rather than a list of cases: EVERY SHAPE IS LEFT-ANCHORED, so a
+ *     token whose head survives is re-found by rule 2 in the gap before the
+ *     claimed span (the capitalised run "Since June" keeps "Since"), while a
+ *     token whose head is swallowed is gone for good ("June 3" leaves "x", and
+ *     the multiplier is unscanned). MEASURED: making it two-sided instead
+ *     dropped `month-date` entirely from "Since June 3x…", because a
+ *     capitalised run ending inside a month name is an ordinary sentence.
+ *
+ * Each step strictly shrinks the window, so this terminates; `REPAIR_STEPS`
+ * bounds it regardless. An unrepairable match is DROPPED, which is the safe
+ * direction: the specifics inside it are then scanned by their own shapes.
+ */
+function repairedExtent(
+  text: string,
+  priority: number,
+  start: number,
+  end: number,
+  raws: readonly RawMatch[]
+): { start: number; end: number } | null {
+  let lo = start;
+  let hi = end;
+  for (let step = 0; step < REPAIR_STEPS; step++) {
+    let cutLo = lo;
+    let cutHi = hi;
+    // (A) the edges may not sit inside a run of digits.
+    if (hi < text.length && DIGIT.test(text[hi])) {
+      cutHi = Math.min(cutHi, digitRunStart(text, hi));
+    }
+    if (lo > 0 && DIGIT.test(text[lo - 1])) {
+      cutLo = Math.max(cutLo, digitRunEnd(text, lo - 1));
+    }
+    // (B) the right edge may not swallow the head of a lower-priority token.
+    for (const r of raws) {
+      if (r.priority <= priority) continue;
+      if (r.start > lo && r.start < hi && r.end > hi) {
+        cutHi = Math.min(cutHi, r.start);
+      }
+    }
+    if (cutLo === lo && cutHi === hi) return { start: lo, end: hi };
+    if (cutLo >= cutHi) return null;
+    const again = [...text.slice(cutLo, cutHi).matchAll(shapeRegex(priority))][0];
+    if (!again) return null;
+    lo = cutLo + again.index;
+    hi = lo + again[0].length;
+  }
+  return null;
+}
+
+/** The stretches of `[0, length)` no accepted match has claimed, in order. */
+function gapsIn(length: number, used: readonly [number, number][]): [number, number][] {
+  const claimed = [...used].sort((a, b) => a[0] - b[0]);
+  const out: [number, number][] = [];
+  let at = 0;
+  for (const [from, to] of claimed) {
+    if (from > at) out.push([at, from]);
+    at = Math.max(at, to);
+  }
+  if (at < length) out.push([at, length]);
+  return out;
+}
+
+/**
+ * Every specific in ONE span, with its resolved extent.
+ *
+ * `skip` is the caller's veto, applied BEFORE the span is claimed — so a
+ * skipped match is as if the shape never matched there. `scanTraceability`
+ * passes the sentence-initial-capital census; `buildCorpusIndex` passes
+ * nothing, because the corpus is the vouching side and a word capitalised only
+ * by grammar still vouches for itself (`WORDLIKE` indexes it either way, so
+ * the two sides cannot disagree about it).
+ */
+function resolveSpecifics(
+  text: string,
+  skip?: (found: ResolvedSpecific) => boolean
+): ResolvedSpecific[] {
+  const raws = rawMatches(text);
+  const used: [number, number][] = [];
+  const overlaps = (s: number, e: number) => used.some(([a, b]) => s < b && a < e);
+  const out: ResolvedSpecific[] = [];
+
+  for (let priority = 0; priority < SPECIFIC_SHAPES.length; priority++) {
+    const shape = SPECIFIC_SHAPES[priority];
+    for (const [from, to] of gapsIn(text.length, used)) {
+      for (const m of text.slice(from, to).matchAll(shapeRegex(priority))) {
+        const fixed = repairedExtent(
+          text,
+          priority,
+          from + m.index,
+          from + m.index + m[0].length,
+          raws
+        );
+        if (!fixed) continue;
+        let { start } = fixed;
+        let token = text.slice(start, fixed.end);
+        if (shape.kind === "proper_noun") {
+          const trimmed = trimOpeners(token);
+          if (!trimmed) continue;
+          start += trimmed.offset;
+          token = trimmed.token;
+        }
+        const found = { shape, token, start, end: start + token.length };
+        // A BACKSTOP, NOT THE MECHANISM: the gap walk already excludes every
+        // claimed span, matches within one gap are disjoint, and a repair only
+        // ever shrinks — so nothing should reach this. It is kept because a
+        // double-claimed span is a silently dropped finding, and deleting it
+        // would make that depend on all three of those facts staying true.
+        if (overlaps(found.start, found.end)) continue;
+        if (skip?.(found)) continue;
+        used.push([found.start, found.end]);
+        out.push(found);
+      }
+    }
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * The tokenisation of a text, as `shape:token` — the extent policy, OBSERVABLE.
+ *
+ * It exists so the policy can be hashed into `prompt_bundle_version` and
+ * asserted in a test, rather than described in a comment. REQ-J02's question
+ * is "what changed?", and this rule's history is that its PATTERNS stayed
+ * byte-identical while the population of drafts reaching a creator moved
+ * twice.
+ */
+export function specificExtents(text: string): string[] {
+  const out: string[] = [];
+  for (const span of spans(text)) {
+    for (const found of resolveSpecifics(span.text)) {
+      out.push(found.shape.id + ":" + found.token);
+    }
+  }
+  return out;
+}
+
+/**
+ * The texts `bundle.ts` fingerprints the extent policy over.
+ *
+ * A FIXTURE, AND ITS LIMIT IS STATED. Every other line of `gateDescription` is
+ * derived from a constant that changes when the rule changes; the resolution
+ * policy has no such constant, and a hand-bumped one is the
+ * `VOICE_PROMPT_BUNDLE_VERSION` anti-pattern `bundle.ts`'s own header names.
+ * So the version carries the policy's BEHAVIOUR on these texts instead: change
+ * how extents resolve and the digest moves with no one remembering to bump
+ * anything. THE RESIDUAL: a resolution change invisible to every probe here
+ * moves no version. The list is therefore the adjacency classes this rule has
+ * actually failed on plus one specimen per shape, and `traceability.test.ts`
+ * asserts every shape id appears in the tokenisation of some probe.
+ */
+export const EXTENT_PROBES: readonly string[] = [
+  // The round-2 straddles: a month word beside a unit-bearing number.
+  "Since June 3x more people watch",
+  "In March 12,000 people signed up",
+  "By June 250000 views it was over",
+  "Sept 5 was 20% up on the week",
+  // The round-1 forms, where the day and the year are the date's own.
+  "The March 2024 rebuild",
+  "On March 20, 2024 we filmed",
+  "We filmed it in March 20th, 2024 and stopped",
+  // A capitalised run that CONTAINS a higher-priority shape.
+  "In March Anna arrived",
+  // One specimen per remaining shape, so the fingerprint is not date-only.
+  "Filmed on 2026-08-31",
+  "It cost $40 and lifted 12%",
+  "It took 1,200 takes",
+  "I still play The Beatles",
+];
+
+/**
  * Scan the output's text units for untraceable specifics.
  *
  * PURE, AND IT MUTATES NOTHING. It returns findings; what happens next is the
@@ -585,51 +1009,32 @@ export function scanTraceability(
       const markers = markerPositions(span.text);
       const opening = firstWordStart(span.text);
 
-      const used: [number, number][] = [];
-      const overlaps = (s: number, e: number) =>
-        used.some(([a, b]) => s < b && a < e);
+      // ONE TOKENISER, AND `buildCorpusIndex` CALLS THE SAME ONE — see
+      // `resolveSpecifics`. The census veto is passed in rather than applied
+      // afterwards, because a skipped match must not claim its span: it has to
+      // be as if this shape never matched here.
+      const resolved = resolveSpecifics(
+        span.text,
+        (found) =>
+          found.shape.kind === "proper_noun" &&
+          (found.token.match(WORDLIKE) ?? []).length === 1 &&
+          found.start === opening &&
+          !midCaps.has(normalise(found.token))
+      );
 
-      for (const shape of SPECIFIC_SHAPES) {
-        // A FRESH RegExp PER SPAN. A module-level /g regex carries `lastIndex`
-        // between calls, so sharing one would make the scan's result depend on
-        // what it scanned before it — the most confusing kind of fail-open.
-        const re = new RegExp(shape.pattern.source, shape.pattern.flags);
-        for (const m of span.text.matchAll(re)) {
-          let token = m[0];
-          let local = m.index;
-          if (shape.kind === "proper_noun") {
-            const trimmed = trimOpeners(token);
-            if (!trimmed) continue;
-            local += trimmed.offset;
-            token = trimmed.token;
-          }
-          const end = local + token.length;
-          if (overlaps(local, end)) continue;
-          // A LONE SENTENCE-INITIAL CAPITAL is grammar until the census says
-          // otherwise. Skipped BEFORE the span is marked used, so it is as if
-          // this shape never matched here.
-          if (
-            shape.kind === "proper_noun" &&
-            (token.match(WORDLIKE) ?? []).length === 1 &&
-            local === opening &&
-            !midCaps.has(normalise(token))
-          ) {
-            continue;
-          }
-          used.push([local, end]);
-          if (markedAdjacently(span.text, local, end, markers)) continue;
-          if (traceable(token, shape.kind, index)) continue;
-          out.push({
-            kind: shape.kind,
-            shape: shape.id,
-            enforcement: enforcementFor(shape, unit.field),
-            token,
-            field: unit.field,
-            unit: excerpt(span.text),
-            startUtf16: span.start + local,
-            endUtf16: span.start + end,
-          });
-        }
+      for (const { shape, token, start, end } of resolved) {
+        if (markedAdjacently(span.text, start, end, markers)) continue;
+        if (traceable(token, shape.kind, index)) continue;
+        out.push({
+          kind: shape.kind,
+          shape: shape.id,
+          enforcement: enforcementFor(shape, unit.field),
+          token,
+          field: unit.field,
+          unit: excerpt(span.text),
+          startUtf16: span.start + start,
+          endUtf16: span.start + end,
+        });
       }
     }
   }
@@ -644,6 +1049,15 @@ export function scanTraceability(
  * reworded, and the original string is untouched — `traceability.test.ts`
  * asserts that stripping the added markers returns the input byte for byte, so
  * a version of this function that deleted the token could not pass.
+ *
+ * AND THE MARKER LANDS BESIDE THE TOKEN, NEVER INSIDE IT. That is a weaker
+ * claim than the one above and it is the one that was false: this function
+ * writes at a finding's `endUtf16`, so a shape claiming an over-wide extent
+ * splits the creator's own text and the byte-for-byte round trip above stays
+ * green anyway (MEASURED, slice 8c round 1: "…in March 2024" came back as
+ * "…in March 20 [check]24"). `traceability.test.ts`'s "offerCheck never lands
+ * the marker INSIDE the token it is marking" asserts it over every shape in
+ * `SPECIFIC_SHAPES`, which is where an extent bug can come back.
  *
  * Applied right to left so an earlier insertion cannot shift a later offset.
  */

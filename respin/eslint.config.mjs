@@ -18,7 +18,12 @@ import tseslint from "typescript-eslint";
 const STRIPE_SDK_DENY =
   "app/** never constructs a Stripe client — every Stripe call goes through @respin/credits/app-server, which owns the lazy adapter, the pinned API version and the keyless refusal (AC-9). The ONE exception is app/api/stripe/webhook/route.ts EXACTLY, which needs the static Stripe.webhooks.constructEvent signature check (no API key, keyless-build safe); the grant is that single file, not the subtree, so a helper beside it cannot re-export the SDK.";
 
-function appRestrictedImports({ adminSurface = false, webhookSurface = false } = {}) {
+function appRestrictedImports({
+  adminSurface = false,
+  webhookSurface = false,
+  systemWorkerSurface = false,
+  operatorScriptSurface = false,
+} = {}) {
   return [
     "error",
     {
@@ -28,6 +33,95 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
           allowImportNames: [
             "respinDb",
             "WorkspaceAccessError",
+            // Phase 10b-1 Task 5: operator scripts (scripts/**) get the PURE
+            // projections and nothing else — the cost forecast, the enablement
+            // decision derived from it, and the restore/purge verifier. Not one
+            // of these can open a connection, mutate a row, or touch a deletion
+            // operation, which is exactly why an operator CLI may hold them and
+            // a route may not.
+            ...(operatorScriptSurface
+              ? [
+                  "describeForecast",
+                  "forecastDeletionJournalCost",
+                  "journalEnablementDecision",
+                  "validatePriceSnapshot",
+                  "journalPurgeCandidates",
+                  "listJournalOperationIds",
+                  "loadJournalChain",
+                  "planJournalRestore",
+                  "compareRestoredState",
+                  "assertJournalConfig",
+                  "JOURNAL_FORECAST_ALERT_CENTS",
+                  "JOURNAL_FORECAST_CEILING_CENTS",
+                  "R124_LAUNCH_ENVELOPE",
+                  "DeletionJournalConfig",
+                  "DeletionJournalForecast",
+                  "JournalEnablementDecision",
+                  "JournalOperationChain",
+                  "JournalRestorePlan",
+                  "JournalUsageBasis",
+                  "S3PriceSnapshot",
+                  "VerifiedJournalRecord",
+                ]
+              : []),
+            // Slice 8's dedicated, sessionless worker gets only the inert code
+            // ceilings, its DB type, and the one system-spend adapter. The
+            // app-facing rule calls this builder without `systemWorkerSurface`,
+            // so none of these names become reachable from a route or page.
+            ...(systemWorkerSurface
+              ? [
+                  "AUTOPSY_ATTEMPT_CODE_CEILING",
+                  "AUTOPSY_VENDOR_CALLS_PER_ATTEMPT",
+                  // The wall-clock family: the worker derives its job expiry
+                  // from the claim lease and refuses a config deadline that
+                  // would outrun it (slice 8 fix pass, 2026-09-03).
+                  "AUTOPSY_CLAIM_LEASE_MS",
+                  "assertAutopsyDeadlineWithinLease",
+                  "SYSTEM_AUTOPSY_DAILY_CODE_CEILING_MICRO_USD",
+                  // BOTH HALVES OF THE PREFLIGHT (R-99; round 2, CHANGE B):
+                  // shared-library candidacy, and the content scan that runs on
+                  // a private claim instead. Neither takes a scope, a profile
+                  // or a workspace — they are pure functions over the analysis
+                  // the worker already holds.
+                  "assertAutopsyFrameworkCandidate",
+                  "assertAutopsyMechanismContent",
+                  "createSystemWorkerDb",
+                  "closeSystemWorkerDb",
+                  "createSystemAutopsyAttemptStore",
+                  "recordSystemWorkerHealth",
+                  "recoverStaleSystemAutopsyAttempts",
+                  "systemAutopsyQueueCandidates",
+                  "systemWorkerOperationalState",
+                  "systemRefreshNiches",
+                  "SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING",
+                  "SYSTEM_REFRESH_NICHE_BATCH_CODE_CEILING",
+                  "SYSTEM_WORKER_QUERY_POOL_CODE_CEILING",
+                  "SystemAutopsyQueueCandidate",
+                  "SystemWorkerOperationalState",
+                  // Phase 10b-1 Task 4: the deletion lifecycle executor runs
+                  // ONLY in this worker. One tick function, the fail-closed
+                  // enablement default, the migration-inventory reader the
+                  // registry needs at runtime, and the port/summary types.
+                  "advanceDeletionOperations",
+                  "ERASURE_DISABLED",
+                  "migrationInventory",
+                  "erasureHold",
+                  "DeletionExecutorPorts",
+                  "DeletionJournalPort",
+                  "DeletionLifecycleTickSummary",
+                  "DeletionScope",
+                  "ErasureEnablementPort",
+                  "MigrationInventory",
+                  // Phase 10b-1 Task 5: the worker composes the R-124 external
+                  // journal. Config validation and the store factory only — the
+                  // restore verifier, the purge transport and the cost forecast
+                  // are operator-script surface, not worker surface, and stay out
+                  // deliberately so a tick can never purge or price anything.
+                  "assertJournalConfig",
+                  "createDeletionJournalStore",
+                  "DeletionJournalConfig",
+                ]
+              : []),
             // types only below
             "Db",
             "DbLike",
@@ -54,6 +148,11 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             // "Something went wrong".
             "WorkspacePausedError",
             "ProfileAccessError",
+            "PerformanceLearningEntitlementError",
+            "PromotionAccessError",
+            "PromotionPayloadError",
+            "PromotionFreshnessError",
+            "PromotionDecisionError",
             "ProvenanceError",
             "BrainEditEmptyError",
             // SLICE 5, STAGE 2 (G3). The no-op edit refusal, split off
@@ -67,6 +166,11 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             "BrainDocumentLimitError",
             "BrainVersionLimitError",
             "ExportBusyError",
+            // Phase 10b-1 Task 4: the closed auth-delivery refusals, so the
+            // billing copy map can name them (never thrown by a page today —
+            // Better Auth maps them to an APIError — but the copy rule is mechanical).
+            "AuthMailDeliveryError",
+            "AuthMailRefusedError",
             "OnboardingInputLimitError",
             "BRAIN_EDIT_MAX_FIELDS",
             "BRAIN_EDIT_POINTER_MAX",
@@ -117,6 +221,10 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             // panel the same way `POST_CONTENT_MAX` is stated on the paste
             // form — one source, never a hand-copied number.
             "REFERENCE_COUNT_MAX",
+            // Slice 8c. The pasted-reference TITLE ceiling, stated on the
+            // paste panel the same way `POST_CONTENT_MAX` is stated on the
+            // transcript box (R13: no number is typed in a screen file).
+            "PASTED_REFERENCE_TITLE_MAX",
             // Slice 3. Two more inert refusal values that `billing-errors.ts`
             // maps to copy, added ONE BY ONE rather than by widening the rule:
             // `PostAttestationError` (R8's "you did not say you wrote this")
@@ -280,14 +388,126 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             "FrameworkContentError",
             "FrameworkLimitError",
             "PrivateFrameworkTierError",
+            // SLICE 9A (results). NO COUNT IS STATED HERE, DELIBERATELY —
+            // and that absence is the third version of this comment, which is
+            // why it is worth a sentence. It said EIGHT, then NINE, then TEN,
+            // and was corrected each time; the second correction was very
+            // nearly shipped as a comment CLAIMING the first had happened. A
+            // number that must be edited in lockstep with a list, in the file
+            // whose whole job is being the boundary's truth, is a stale claim
+            // waiting to happen — and `git diff` shows the list changing, so
+            // the count added nothing a reader could not see.
+            //
+            // WHAT THE COMMENT IS ACTUALLY FOR, and what does not go stale:
+            // EVERY name below was added only after an ACTUAL `eslint app lib`
+            // denial named it, never for symmetry with a sibling. The original
+            // eight were measured together — exactly eight violations at two
+            // import sites — and each later one was measured on its own.
+            //
+            // `ComparisonStratumError` and `ComparisonInputError` were each
+            // added later and each measured the same way — neither appeared in
+            // the original run of eight because `billing-errors.ts` did not yet
+            // import it, and each became the single remaining `app`+`lib` lint
+            // error the moment its import landed. It was
+            // measured the same way and separately: it did not appear in that
+            // run of eight because `billing-errors.ts` did not yet import it,
+            // and it became the single remaining `app`+`lib` lint error the
+            // moment that import landed. It is sequenced INTO the same change
+            // as its copy so the tree is never lint-red between turns.
+            //
+            // THE FOUR REFUSALS, on the slice-7 rule above: inert values
+            // `app/(product)/billing-errors.ts` maps to copy. Without them a
+            // `recordResult` refusal renders as "Something went wrong", which
+            // is open finding 8c-R15's exact shape — a second instance of a
+            // defect class already in the register, added by the slice whose
+            // subject is honesty. `tests/billing-ui.test.tsx` DERIVES the
+            // population ("every Error class app/** can receive from a facade
+            // has copy here"), so this list is checked against the facade
+            // rather than against memory.
+            "TreatmentKeyError",
+            "ResultInputError",
+            "ResultTargetError",
+            "ResultDuplicateError",
+            // The fifth refusal, from `comparableResults`' stratum validation.
+            // A DISTINCT CLASS rather than the `WorkspaceAccessError` it would
+            // otherwise have reused: that class IS handled, so this was never
+            // the "Something went wrong" hole it was first reported as — its
+            // copy says "sign in with the account that owns it", which is a
+            // confident WRONG remedy for a malformed-input defect, and a
+            // wrong instruction is worse than a generic one. 9a raises this on
+            // no path (the screen passes no stratum); it is owed because 9b's
+            // first stratum-passing caller is the one that hits it.
+            "ComparisonStratumError",
+            // The TENTH name, and the count above was corrected again with
+            // it rather than left saying nine. It is `@respin/brain`'s
+            // refusal, re-exported through `@respin/db`'s facade — the screen
+            // needs the class for `instanceof`, and re-exporting is what lets
+            // it have that WITHOUT `@respin/brain` joining the sanctioned
+            // surface. Nine throw sites rendered "Something went wrong"
+            // without it.
+            "ComparisonInputError",
+            // The note ceiling. `recordResult` refuses at 2,001 code points
+            // with `ResultInputError`, and the form could not STATE the limit
+            // without either importing this or typing `2000` into the screen —
+            // a second copy of a ceiling the screen cannot read, which is the
+            // drift these constants exist to prevent. Builder C refused the
+            // hard-coded number and reported the gap instead; this is the half
+            // that closes it. There is no database ceiling on `results.note`
+            // (the column is unbounded `text`; its CHECK enforces
+            // non-blankness only), so this constant IS the limit.
+            "RESULT_NOTE_MAX",
+            // THE FOUR CLOSED VOCABULARIES the log form renders as controls
+            // (`app/(product)/results/page.tsx` passes each to the panel).
+            // The alternative is four app-side literal copies of four closed
+            // sets — the drift this slice's own pinned contract exists to
+            // prevent — so the import is the narrower option, not the wider
+            // one. They are `as const` string arrays: no capability, no
+            // connection, no table.
+            //
+            // `RESULT_LEVERS` WAS THE ONE WORTH ARGUING ABOUT, and it is here
+            // deliberately. `results/projection.ts` already holds `ROW_LEVERS`
+            // as a local literal (a row's lever columns cannot be reached from
+            // a string without an index signature that would make a typo
+            // compile), and the form could have been handed THAT instead,
+            // saving a widening. It is not, because then the form's options
+            // would be an app-side list kept true by a test, where this makes
+            // them the package's vocabulary by construction.
+            //
+            // WHAT STAYS DENIED, and it is the half that matters: `results`
+            // (the table object — a raw insert needs the table),
+            // `treatmentKeyFor` (C4's server-computed key; a screen that could
+            // compute one could fabricate one), `declaredMetricOf`, the
+            // pgEnums, and every row type — `results/projection.ts` reaches
+            // those by INDEXED ACCESS off what `respinDb` returns. Fixtures
+            // for both halves are in tests/import-boundary.test.ts.
+            "RESULT_EVIDENCE_STATES",
+            "RESULT_AUDIENCE_CLASSES",
+            "RESULT_CONFOUNDER_CODES",
+            "RESULT_LEVERS",
           ],
           message:
             "app/** may import only the sanctioned @respin/db surface (respinDb, WorkspaceAccessError, the typed refusals, types) — every query goes through withWorkspace, and the write capabilities are package-only (tenancy T1, M2a A-2b)",
         },
         {
+          // Phase 10b-1 Task 5, round-1 tenancy C4 / code CHANGE 10. The S3
+          // adapter exposes THREE principals and operator scripts need only two.
+          // `s3JournalWriter` is the credential that can APPEND a journal
+          // version, and a forged `cancelled` version is exactly the input the
+          // restore verifier's new cancellation-after-erasure check exists to
+          // refuse — so the writer stays worker-only, by name, and an operator
+          // script that reaches for it is a lint error rather than a review note.
+          name: "@respin/db/deletion-journal-s3",
+          allowImportNames: operatorScriptSurface
+            ? ["createS3JournalClient", "s3JournalVerifier", "s3JournalPurger"]
+            : ["createS3JournalClient", "s3JournalWriter", "s3JournalVerifier", "s3JournalPurger"],
+          message:
+            "scripts/** may hold the verifier and purge principals only — s3JournalWriter is the worker's, because it is the credential that can append a journal version (tenancy T1, R-124)",
+        },
+        {
           name: "@respin/auth",
           allowImportNames: [
             "getSessionUser",
+            "reauthenticateCurrentSessionWithPassword",
             "requireUser",
             "requireAdmin",
             "authHandlers",
@@ -305,11 +525,42 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
           message:
             "app/** never imports the raw @respin/credits root — use the wired facade @respin/credits/app-server (tenancy T1, M1 phase 3 task 8b)",
         },
-        {
-          name: "@respin/config",
-          message:
-            "app/** never imports the raw @respin/config root — use @respin/config/app-server (reads) or, from app/(admin) only, @respin/config/admin-server (writes)",
-        },
+        ...(systemWorkerSurface
+          ? [
+              {
+                name: "@respin/config",
+                allowImportNames: [
+                  "getActiveConfig",
+                  "getActiveConfigRequiringStored",
+                  "ActiveConfig",
+                ],
+                message:
+                  "worker/** may read only the active validated config and its type; config writes and app facades remain denied",
+              },
+              {
+                name: "@respin/llm",
+                allowImportNames: [
+                  "createAnthropicProvider",
+                  "costMicroUsd",
+                  "priceFor",
+                  "stripFence",
+                  "LlmError",
+                  "LlmTruncatedError",
+                  "ModelPriceUnknownError",
+                  "LlmProvider",
+                  "ModelPrice",
+                ],
+                message:
+                  "worker/** may use only the neutral provider adapter, pricing helpers and closed error/type surface",
+              },
+            ]
+          : [
+              {
+                name: "@respin/config",
+                message:
+                  "app/** never imports the raw @respin/config root — use @respin/config/app-server (reads) or, from app/(admin) only, @respin/config/admin-server (writes)",
+              },
+            ]),
         // The cage denied every DOMAIN route to Stripe and left the SDK itself
         // wide open (round-2 CHANGE 5). `stripe` is a direct dependency of the
         // app package, so `new Stripe(process.env.STRIPE_SECRET_KEY!)` in a
@@ -365,9 +616,18 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
           message: STRIPE_SDK_DENY,
         },
         {
-          group: ["@respin/db/*"],
+          // Phase 10b-1 Task 5: the dedicated worker's ONE door into @respin/db's
+          // internals — the AWS SDK adapter for the R-124 deletion journal. It is
+          // a separate entrypoint precisely so the SDK never enters the app
+          // bundle; app/** and lib/** still get the package root and nothing else.
+          group:
+            systemWorkerSurface || operatorScriptSurface
+              ? ["@respin/db/*", "!@respin/db/deletion-journal-s3"]
+              : ["@respin/db/*"],
           message:
-            "no deep imports into @respin/db from app/** — the package root's sanctioned surface is the only door (tenancy T1)",
+            systemWorkerSurface || operatorScriptSurface
+              ? "worker/** and scripts/** may import only @respin/db/deletion-journal-s3 (the R-124 S3 journal adapter) beyond the package root; the worker holds the WRITER, an operator script holds the verifier/purge principals (tenancy T1)"
+              : "no deep imports into @respin/db from app/** — the package root's sanctioned surface is the only door (tenancy T1)",
         },
         {
           group: ["@respin/auth/*", "!@respin/auth/client"],
@@ -381,10 +641,17 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
                 "!@respin/credits/app-server",
                 "!@respin/credits/webhook-server",
               ]
-            : ["@respin/credits/*", "!@respin/credits/app-server"],
+            : systemWorkerSurface
+              ? // The dedicated worker's ONE door into credits: the Stripe-backed
+                // deletion command adapter (Phase 10b-1 Task 4). The app facade
+                // is a session-shaped surface the sessionless worker never uses.
+                ["@respin/credits/*", "!@respin/credits/deletion-server"]
+              : ["@respin/credits/*", "!@respin/credits/app-server"],
           message: webhookSurface
             ? "sanctioned @respin/credits entrypoints here: ./app-server (the wired facade) and ./webhook-server (the Stripe dispatcher, behind the signature check)"
-            : "the only sanctioned deep import into @respin/credits is ./app-server (the wired facade) — ./webhook-server dispatches Stripe events and is app/api/stripe/** only",
+            : systemWorkerSurface
+              ? "worker/** may import only @respin/credits/deletion-server (the deletion command adapter); the app facade and the webhook dispatcher are app-only"
+              : "the only sanctioned deep import into @respin/credits is ./app-server (the wired facade) — ./webhook-server dispatches Stripe events and is app/api/stripe/** only",
         },
         {
           group: adminSurface
@@ -464,11 +731,29 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
           //     precedent, that widening a package boundary so a screen or a
           //     test can name a class is "loosening a tenancy boundary for a
           //     convenience".
+          //   `@respin/brain` (slice 9a, R3) — DENIED, deliberately, and the
+          //     reason is NOT that a median is dangerous. It is that
+          //     `buildLeverComparisons` takes rows its docblock says are
+          //     "ALREADY profile-scoped by the caller": the whole tenancy
+          //     property of a comparison lives in the code that FETCHED the
+          //     rows, and that code goes through `withWorkspace`. Granting the
+          //     package root to app/** would put the fetch and the comparison
+          //     on opposite sides of a package boundary and make a screen the
+          //     thing responsible for scoping a cohort (REQ-A03, R-9). The
+          //     TYPES are denied with it, for `billing-errors.ts`'s recorded
+          //     precedent: widening a package boundary so a screen can name a
+          //     class is "loosening a tenancy boundary for a convenience".
+          //     WHAT THIS COSTS, stated because it is a live obligation and
+          //     not a theory: 9a's comparison screen therefore needs a facade
+          //     — a scoped accessor that fetches AND compares — or the
+          //     comparison is unreachable from a browser, which is the
+          //     "inventory, not done" shape the finish plan exists to stop.
           //
-          // Fixtures for both live in tests/import-boundary.test.ts, and slice
-          // 6 adds the packages/**-direction half: `@respin/modes` ROOT is
-          // reachable from packages/credits (stage C composes it) while
-          // `@respin/modes/src/...` is not.
+          // Fixtures for each of these live in tests/import-boundary.test.ts,
+          // and slice 6 adds the packages/**-direction half: `@respin/modes`
+          // ROOT is reachable from packages/credits (stage C composes it)
+          // while `@respin/modes/src/...` is not. Slice 9a repeats that half
+          // for `@respin/brain`, whose caller is a package.
           group: [
             "@respin/*",
             "@respin/*/**",
@@ -477,9 +762,22 @@ function appRestrictedImports({ adminSurface = false, webhookSurface = false } =
             "!@respin/auth",
             "!@respin/credits",
             "!@respin/config",
+            ...(systemWorkerSurface ? ["!@respin/trends", "!@respin/llm"] : []),
             // The sanctioned deep entrypoints.
             "!@respin/auth/client",
-            "!@respin/credits/app-server",
+            ...(systemWorkerSurface
+              ? ["!@respin/credits/deletion-server"]
+              : operatorScriptSurface
+                ? []
+                : ["!@respin/credits/app-server"]),
+            // Phase 10b-1 Task 5 — the R-124 S3 journal adapter. The worker
+            // (writer principal) and operator scripts (verifier/purge
+            // principals) only, so the AWS SDK never enters the app bundle.
+            // Denied for app/** and lib/** by the fixtures in
+            // tests/import-boundary.test.ts.
+            ...(systemWorkerSurface || operatorScriptSurface
+              ? ["!@respin/db/deletion-journal-s3"]
+              : []),
             "!@respin/config/app-server",
             ...(adminSurface ? ["!@respin/config/admin-server"] : []),
             ...(webhookSurface ? ["!@respin/credits/webhook-server"] : []),
@@ -543,7 +841,26 @@ const APP_DIRECTION_DENY = {
 
 export default tseslint.config(
   {
-    ignores: [".next/**", "node_modules/**", "**/node_modules/**", "next-env.d.ts"],
+    // `.tmp/**` AND THE `__` SCRATCH CONVENTION are here for the same reason
+    // as `.next/**`: they hold files nobody wrote as source (code review round
+    // 1, C14). `.tmp/` is where `tsx` and node's compile cache land when a
+    // script is run from `respin/`, and a reviewer's scratch file there made
+    // `pnpm lint` exit 1 with 14 errors from code that is not part of the
+    // build — so "lint 0" was not reproducible on an untidy tree. The `__*`
+    // patterns are the same population `.gitignore` refuses to commit; a
+    // planted probe is a deliberate violation and lint reporting it is noise,
+    // not a finding.
+    ignores: [
+      ".next/**",
+      "node_modules/**",
+      "**/node_modules/**",
+      "next-env.d.ts",
+      ".tmp/**",
+      "**/__*.ts",
+      "**/__*.tsx",
+      "**/__scan_probe__/**",
+      "**/__stripe_scan_probe__/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -618,6 +935,15 @@ export default tseslint.config(
     },
   },
   {
+    // Slice 8's dedicated process is neither app code nor a domain package.
+    // It may compose the trend validator and the exact system-spend DB adapter,
+    // while the same default-deny still blocks raw DB/table/query surfaces.
+    files: ["worker/**/*.ts"],
+    rules: {
+      "no-restricted-imports": appRestrictedImports({ systemWorkerSurface: true }),
+    },
+  },
+  {
     // app/(admin)/** — same rule via the same builder, plus the config WRITE
     // entrypoint. Never widened elsewhere.
     files: ["app/(admin)/**/*.ts", "app/(admin)/**/*.tsx"],
@@ -641,6 +967,28 @@ export default tseslint.config(
     files: ["app/api/stripe/webhook/route.ts"],
     rules: {
       "no-restricted-imports": appRestrictedImports({ webhookSurface: true }),
+    },
+  },
+  {
+    // scripts/** — operator CLIs (Phase 10b-1 Task 5). Run by a person at a
+    // terminal, never by a request.
+    //
+    // WHAT THIS SURFACE ACTUALLY ADMITS, corrected after round 1 caught the
+    // first version of this comment overclaiming:
+    //   * the deletion-journal cost forecast and the enablement decision derived
+    //     from it — pure functions with no imports at all;
+    //   * the restore verifier and purge-candidate projections;
+    //   * the S3 adapter's VERIFIER and PURGE principals (the writer is denied
+    //     by name above — journal-purge.ts genuinely deletes S3 object versions,
+    //     so "every name here is a total function" was never true);
+    //   * `respinDb`, which every surface inherits from the base allowlist and
+    //     which DOES open a connection. It is not needed by any script here; it
+    //     is listed so the next reader is not misled about the boundary.
+    // The default-deny still blocks raw DB construction, table objects, the
+    // write capabilities and the scope values.
+    files: ["scripts/**/*.ts"],
+    rules: {
+      "no-restricted-imports": appRestrictedImports({ operatorScriptSurface: true }),
     },
   }
 );

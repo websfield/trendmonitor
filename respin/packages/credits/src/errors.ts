@@ -217,6 +217,32 @@ export class GenerationUnchargedAttemptCapError extends Error {
 }
 
 /**
+ * The same bound as the class above, in MONEY (billing gate, 2026-09-04).
+ *
+ * A SEPARATE CLASS RATHER THAN A SECOND REASON ON THE ONE ABOVE, because the
+ * two say different true things to an operator: "ten failures an hour" and
+ * "a dollar an hour" are different diagnoses, and which one bit tells them
+ * whether the cause is frequency or cost per call. The creator-facing sentence
+ * is deliberately the same shape — this is our fault, nothing was spent, it
+ * will keep happening until we fix it.
+ *
+ * NO CREATOR TEXT AND NO VENDOR TEXT: numbers and our own literals only, the
+ * `@respin/llm` `errors.ts` rule applied to the same kind of message.
+ */
+export class GenerationUnchargedCostCapError extends Error {
+  constructor(
+    readonly costMicroUsd: number,
+    readonly capMicroUsd: number,
+    readonly windowMinutes: number
+  ) {
+    super(
+      `This creator's generations in the last ${windowMinutes} minutes have cost us ${costMicroUsd} micro-USD in attempts that failed in a way that charged you nothing, which is over the limit (${capMicroUsd}). Nothing was spent and no model was called this time. ${UNCHARGED_CAP_WINDOW_CLAUSE} It is a fault on our side rather than anything you did, and it will keep happening until the cause is fixed; please tell us.`
+    );
+    this.name = "GenerationUnchargedCostCapError";
+  }
+}
+
+/**
  * This creator has no coherent brain to generate from (slice 6, R9a).
  *
  * `generations.brain_activation_id` is NOT NULL because "a later brain or
@@ -509,3 +535,103 @@ const REVISION_PARENT_MESSAGES: Record<RevisionParentRefusal, string> = {
   parent_unreadable:
     "That output cannot be read back in the shape this version of the product expects, so nothing was built from it. Nothing was generated and nothing was spent — the output itself is untouched, and a new generation in the same mode is the way forward while we look at it.",
 };
+
+/**
+ * A pasted reference is a paid-tier act (R-98; REQ-E05 keeps Free digest-only).
+ *
+ * IT DOES NOT NAME AN UPGRADE AS THE REMEDY, deliberately — the `profile_cap`
+ * and `ModeNotInPlanError` precedent: the copy states which plan the workspace
+ * is on and what that plan does not include, and stops. It is raised BEFORE
+ * any row and BEFORE the workspace lock is contended for anything, so "nothing
+ * was spent" is literally true and the sentence says so.
+ *
+ * `tier` is the RESOLVED entitlement tier from `getWorkspaceBillingState`
+ * (the one authority), never a mirror column read by the caller.
+ */
+export class PastedReferenceTierError extends Error {
+  constructor(readonly tier: string) {
+    super(
+      `This plan (${tier}) does not include pasting a reference for autopsy. Nothing was stored and nothing was spent.`
+    );
+    this.name = "PastedReferenceTierError";
+  }
+}
+
+/** The pasted-reference fields a refusal can name. A closed set, so a screen can point at the control. */
+export const PASTED_REFERENCE_INPUT_FIELDS = [
+  "sourceUrl",
+  "title",
+  "transcript",
+  "niche",
+] as const;
+export type PastedReferenceInputField = (typeof PASTED_REFERENCE_INPUT_FIELDS)[number];
+
+/**
+ * One of the paste's fields was refused by the storage layer's own shape
+ * rules — an absolute http(s) URL, a title within `PASTED_REFERENCE_TITLE_MAX`
+ * code points, text for the transcript, a niche the profile actually tracks.
+ *
+ * WHY A CLASS OF ITS OWN. `intakePastedReference` (stage A, `@respin/db`)
+ * refuses those with a bare `Error`, which has no class for `app/**` to
+ * `instanceof` and would render as "Something went wrong" on the one panel
+ * that spends a creator's credits. `submitPastedReference` classifies the
+ * bare message into `field` — the message itself is kept verbatim as `detail`
+ * so the storage layer stays the author of the rule. Blank or over-ceiling
+ * TRANSCRIPT text is NOT this class: slice 4's `PostContentError` already
+ * covers it and `billing-errors.ts` already renders it.
+ */
+export class PastedReferenceInputError extends Error {
+  constructor(
+    readonly field: PastedReferenceInputField,
+    readonly detail: string
+  ) {
+    super(`The pasted reference's ${field} was refused: ${detail}. Nothing was stored and nothing was spent.`);
+    this.name = "PastedReferenceInputError";
+  }
+}
+
+/**
+ * Stripe may have accepted the idempotent auto-top-up request, but the caller
+ * did not receive an authoritative response. The durable attempt must be
+ * reconciled before the creator buys or retries, or they could pay twice.
+ *
+ * Only the random attempt id crosses the app facade. Customer, PaymentIntent,
+ * request, and provider error details remain server-side.
+ */
+export class AutoTopupReconciliationRequiredError extends Error {
+  constructor(
+    public readonly attemptId: string | null,
+    public readonly balance: number,
+    public readonly cost: number
+  ) {
+    super(
+      `Auto-top-up${attemptId ? ` attempt ${attemptId}` : ""} has an unknown provider outcome. Reconciliation is required before another purchase or retry.`
+    );
+    this.name = "AutoTopupReconciliationRequiredError";
+  }
+}
+
+/**
+ * Performance-learning access could not be resolved from authoritative
+ * billing state plus the active config (slice 9b, C2 / R-112).
+ *
+ * This is deliberately an operational refusal, not a view-only entitlement:
+ * an unmapped Stripe price, unreadable config, or incomplete tier map says
+ * the product does not know the answer. Claiming "view only" would turn an
+ * operator fault into a false statement about the creator's plan.
+ */
+export class PerformanceLearningConfigUnavailableError extends Error {
+  constructor(
+    readonly reason:
+      | "config_unavailable"
+      | "unmapped_price"
+      | "missing_tier",
+    cause?: unknown
+  ) {
+    super(
+      "Performance-learning access is unavailable because the billing configuration could not be resolved. This is an operational issue, not a view-only plan decision.",
+      cause === undefined ? undefined : { cause }
+    );
+    this.name = "PerformanceLearningConfigUnavailableError";
+  }
+}

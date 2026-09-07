@@ -1,7 +1,7 @@
 ---
 name: create-plan
 description: >-
-  Use $create-plan for the migrated Claude /create-plan workflow. Create an implementation plan (codebase review + master plan + per-phase plans with project conventions pinned), then gate it through a multi-agent plan review before handing off to /start-teams. Do NOT use for a small, clear change — /shape (or /go) routes it to /implement's fast lane, no pl...
+  Use $create-plan for the migrated Claude /create-plan workflow. Create an implementation plan (codebase review + master plan + per-phase plans with project conventions pinned), then gate it through a multi-agent plan...
 ---
 
 # create-plan
@@ -10,8 +10,12 @@ description: >-
 
 Read `.claude/commands/create-plan.md` completely before acting. Treat its instructions and frontmatter constraints as the authoritative workflow; this file only exposes it to Codex discovery.
 
+The canonical `CLAUDE.md` and `.claude/**` sources are read-only to Codex. Never edit them; mirror only upstream changes that were already made outside Codex.
+
+Then read `.codex/codex-overlay.md` completely and apply its Codex-only routing, context, and verification guidance without weakening the canonical workflow.
+
 Honor any `allowed-tools` metadata as a behavioral allowlist even when Codex cannot enforce that metadata declaratively.
 
 Apply the Claude-to-Codex compatibility mappings in the repository root `AGENTS.md`. Resolve every relative resource or script from the canonical source directory.
 
-If the workflow modifies Claude skills, commands, or agents, finish by running `.codex/scripts/sync-claude-compat.ps1` so Codex discovery remains current.
+The sync script only mirrors upstream Claude changes into its generated Codex targets. Do not change Claude sources from this workflow.

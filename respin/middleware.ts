@@ -28,7 +28,9 @@ export const config = {
   matcher: [
     "/onboarding/:path*",
     "/brain/:path*",
+    "/trends/:path*",
     "/studio/:path*",
+    "/results/:path*",
     "/usage/:path*",
     "/settings/:path*",
     "/admin/:path*",

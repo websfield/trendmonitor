@@ -11,9 +11,15 @@
 // (see ../../billing-errors.ts for why not the message). The raw error is
 // logged server-side, which is where its ids and instants belong.
 import { redirect } from "next/navigation";
-import { requireUser } from "@respin/auth";
+import {
+  reauthenticateCurrentSessionWithPassword,
+  requireUser,
+} from "@respin/auth";
 import { respinDb } from "@respin/db";
-import { respinCredits } from "@respin/credits/app-server";
+import {
+  BillingReauthenticationError,
+  respinCredits,
+} from "@respin/credits/app-server";
 import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
 import {
   AppBaseUrlMissingError,
@@ -95,11 +101,13 @@ export async function subscribeAction(formData: FormData): Promise<void> {
       throw new Error(`unknown tier "${tier}"`);
     }
     const scope = await respinDb.withWorkspace({ authUserId: user.id });
+    const authority = await billingReauthentication(formData);
     url = await respinCredits.createTierCheckoutUrl(
       scope,
       tier,
       user.email,
-      checkoutUrls()
+      checkoutUrls(),
+      authority
     );
   } catch (err) {
     rethrowNextControlFlow(err);
@@ -113,10 +121,12 @@ export async function buyPackAction(formData: FormData): Promise<void> {
   let url: string;
   try {
     const scope = await respinDb.withWorkspace({ authUserId: user.id });
+    const authority = await billingReauthentication(formData);
     url = await respinCredits.createPackCheckoutUrl(
       scope,
       user.email,
-      checkoutUrls()
+      checkoutUrls(),
+      authority
     );
   } catch (err) {
     rethrowNextControlFlow(err);
@@ -130,9 +140,11 @@ export async function openPortalAction(formData: FormData): Promise<void> {
   let url: string;
   try {
     const scope = await respinDb.withWorkspace({ authUserId: user.id });
+    const authority = await billingReauthentication(formData);
     url = await respinCredits.createPortalUrl(
       scope,
-      `${appBaseUrl()}${BILLING_PATH}`
+      `${appBaseUrl()}${BILLING_PATH}`,
+      authority
     );
   } catch (err) {
     rethrowNextControlFlow(err);
@@ -151,7 +163,8 @@ export async function recoverInvoiceAction(formData: FormData): Promise<void> {
   let url: string;
   try {
     const scope = await respinDb.withWorkspace({ authUserId: user.id });
-    url = await respinCredits.createInvoiceRecoveryUrl(scope);
+    const authority = await billingReauthentication(formData);
+    url = await respinCredits.createInvoiceRecoveryUrl(scope, authority);
   } catch (err) {
     rethrowNextControlFlow(err);
     redirect(failHref(err, formData));
@@ -159,14 +172,32 @@ export async function recoverInvoiceAction(formData: FormData): Promise<void> {
   redirect(url);
 }
 
+async function billingReauthentication(
+  formData: FormData
+): Promise<Awaited<ReturnType<typeof reauthenticateCurrentSessionWithPassword>>> {
+  try {
+    return await reauthenticateCurrentSessionWithPassword(
+      String(formData.get("password") ?? "")
+    );
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    throw new BillingReauthenticationError();
+  }
+}
+
 export async function pauseAction(formData: FormData): Promise<void> {
   const user = await requireUser();
   try {
     const scope = await respinDb.withWorkspace({ authUserId: user.id });
+    const authority = await billingReauthentication(formData);
     // Number(), not a bounded union: the range is CONFIG (`pauseMonths`), and
     // the package validates against the active version. A type-level 1|2|3 here
     // would be a second, un-versioned authority.
-    await respinCredits.pauseSubscription(scope, Number(formData.get("months")));
+    await respinCredits.pauseSubscription(
+      scope,
+      Number(formData.get("months")),
+      authority
+    );
   } catch (err) {
     rethrowNextControlFlow(err);
     redirect(failHref(err, formData));
@@ -178,7 +209,8 @@ export async function resumeAction(formData: FormData): Promise<void> {
   const user = await requireUser();
   try {
     const scope = await respinDb.withWorkspace({ authUserId: user.id });
-    await respinCredits.resumeSubscription(scope);
+    const authority = await billingReauthentication(formData);
+    await respinCredits.resumeSubscription(scope, authority);
   } catch (err) {
     rethrowNextControlFlow(err);
     redirect(failHref(err, formData));
@@ -195,10 +227,15 @@ export async function setAutoTopupAction(formData: FormData): Promise<void> {
     // real charged amounts). A blank or non-numeric field becomes NaN, which
     // the package refuses with AutoTopupCapError — one validator, not two.
     const capUsd = Number(String(formData.get("capUsd") ?? ""));
-    await respinCredits.setAutoTopup(scope, {
-      enabled,
-      monthlyCapCents: enabled ? Math.round(capUsd * 100) : undefined,
-    });
+    const authority = await billingReauthentication(formData);
+    await respinCredits.setAutoTopup(
+      scope,
+      {
+        enabled,
+        monthlyCapCents: enabled ? Math.round(capUsd * 100) : undefined,
+      },
+      authority
+    );
   } catch (err) {
     rethrowNextControlFlow(err);
     redirect(failHref(err, formData));

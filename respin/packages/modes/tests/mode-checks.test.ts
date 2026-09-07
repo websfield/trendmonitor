@@ -66,6 +66,12 @@ import {
 const parsed = (mode: ModeId, doc: unknown) =>
   parseScriptOutput({ text: asReply(doc), mode });
 
+const DISTANT_SPIN_REFERENCE = {
+  subjectTerms: ["aquarium", "coral lighting"],
+  hook: "The reef light setting I stopped using",
+  structure: { beatCount: 7, turnBeat: 5 },
+} as const;
+
 /** Run the per-mode checks over a document, in the mode's own context. */
 const checks = (
   mode: ModeId,
@@ -172,6 +178,9 @@ describe("R2: every mode produces a schema-valid ScriptOutput (M3's criterion)",
         mode,
         context: CONTEXT_FOR[mode],
         generate: async () => asReply(OUTPUT_FOR[mode]),
+        spinSimilarity: mode === "analyseAndSpin"
+          ? { reference: DISTANT_SPIN_REFERENCE, configuredStrictness: 0 }
+          : undefined,
       });
       if (run.status !== "usable") {
         throw new Error(
@@ -186,19 +195,8 @@ describe("R2: every mode produces a schema-valid ScriptOutput (M3's criterion)",
     }
   );
 
-  it("IMPLEMENTED_MODES names the six that are reachable — never the spin one", () => {
-    // The similarity gate is slice 8's (tech-spec §3 step 4, non-negotiable 1),
-    // and `output.test.ts` holds the relation that keeps a gated mode out of
-    // this list. Six modes have a pipeline; the seventh has a gate that does
-    // not exist yet.
-    expect([...IMPLEMENTED_MODES].sort()).toEqual([
-      "caption",
-      "footageToThesis",
-      "hooks",
-      "ideaToScript",
-      "ideation",
-      "sourceToReel",
-    ]);
+  it("IMPLEMENTED_MODES names all seven reachable modes, including gated Spin", () => {
+    expect([...IMPLEMENTED_MODES].sort()).toEqual([...MODE_IDS].sort());
     for (const m of IMPLEMENTED_MODES) expect(MODE_IDS).toContain(m);
   });
 });

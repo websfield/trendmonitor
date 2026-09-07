@@ -37,6 +37,10 @@ const ALLOWED = new Map<string, string>([
     "packages/credits/src/stripe/webhooks.ts",
     "the dispatcher, and it only WRITES (D-M1-1 records the raw event so a redelivery can be told from a first delivery). It never reads the column back.",
   ],
+  [
+    "packages/db/src/lifecycle-subjects.ts",
+    "the deletion executor's subject capture selects ONLY the event id for a workspace, so the receipt ids survive the FK being nulled; it names the table and never the payload column (Phase 10b-1 Task 4).",
+  ],
 ]);
 
 const SKIP_DIRS = new Set([

@@ -40,15 +40,27 @@ describe("route protection matcher (AC-3)", () => {
     expect(isProtectedPath("/sign-up")).toBe(false);
   });
 
-  it("protects /studio and /admin prefixes", () => {
+  it("protects /trends, /studio and /admin prefixes", () => {
+    expect(isProtectedPath("/trends")).toBe(true);
+    expect(isProtectedPath("/trends/anything")).toBe(true);
     expect(isProtectedPath("/studio")).toBe(true);
     expect(isProtectedPath("/studio/anything")).toBe(true);
     expect(isProtectedPath("/admin")).toBe(true);
     expect(isProtectedPath("/admin/model-spend")).toBe(true);
   });
 
+  // Slice 9a. The results surface, under its own prefix: the rows beneath it
+  // are a creator's own outcome data, and the action module beside the page is
+  // a POST endpoint in its own right.
+  it("protects /results", () => {
+    expect(isProtectedPath("/results")).toBe(true);
+    expect(isProtectedPath("/results/anything")).toBe(true);
+  });
+
   it("does not protect look-alike prefixes", () => {
     expect(isProtectedPath("/studios")).toBe(false);
+    expect(isProtectedPath("/resultsx")).toBe(false);
+    expect(isProtectedPath("/trendsetters")).toBe(false);
     expect(isProtectedPath("/administrator")).toBe(false);
   });
 
@@ -121,6 +133,17 @@ describe("stripe webhook route (M1 phase 3)", () => {
     } finally {
       delete process.env.STRIPE_WEBHOOK_SECRET;
     }
+  });
+
+  it("refuses an oversized unauthenticated body before signature verification", async () => {
+    const res = await webhookPost(
+      new Request("http://x/api/stripe/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": "t=1,v1=deadbeef" },
+        body: "x".repeat(1024 * 1024 + 1),
+      })
+    );
+    expect(res.status).toBe(413);
   });
 
   it("a VALIDLY signed payload passes verification (proven via the SDK's generateTestHeaderString) and proceeds past the 400 layer", async () => {

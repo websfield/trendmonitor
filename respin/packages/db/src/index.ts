@@ -4,6 +4,240 @@
 // - createDb/schema/seed/testing are for packages/** and tests only.
 export * as schema from "./schema";
 export {
+  AUTH_PASSWORD_MAX_LENGTH,
+  beginIdentityCancellationRecoverySession,
+  CANCELLATION_FACTOR_MAX_ATTEMPTS,
+  CANCELLATION_RECOVERY_SESSION_TTL_MS,
+  createIdentityCancellationProofWithPassword,
+  ordinaryLoginAllowed,
+  reauthenticateSessionWithPassword,
+  assertReauthenticatedWorkspaceScopeInTx,
+  type ReauthenticatedSessionRef,
+} from "./auth-lifecycle";
+export {
+  deletionCancellationProofs,
+  deletionExternalCommandKind,
+  deletionExternalCommandPhase,
+  deletionExternalCommands,
+  deletionExternalCommandStatus,
+  deletionMembershipSnapshots,
+  deletionOperations,
+  deletionOperationTransitions,
+  deletionRecoverySessions,
+  deletionOperationState,
+  deletionScope,
+  membershipRecoveryOutcome,
+  recoveryDeliveryStatus,
+  type DeletionExternalCommand,
+  type DeletionExternalCommandKind,
+  type DeletionExternalCommandPhase,
+  type DeletionExternalCommandStatus,
+  type DeletionMembershipSnapshot,
+  type DeletionCancellationProof,
+  type DeletionOperation,
+  type DeletionOperationState,
+  type DeletionOperationTransition,
+  type DeletionRecoverySession,
+  type DeletionScope,
+  type MembershipRecoveryOutcome,
+  type RecoveryDeliveryStatus,
+} from "./lifecycle-schema";
+export {
+  authMailDeliveryStatus,
+  authMailOutbox,
+  authMailPurpose,
+  type AuthMailDeliveryStatus,
+  type AuthMailOutboxRow,
+  type AuthMailPurpose,
+} from "./auth-mail-schema";
+export {
+  admitAuthMail,
+  AUTH_MAIL_COMPILED_CEILINGS,
+  AUTH_MAIL_OUTCOME_RETENTION_MS,
+  AUTH_MAIL_PURPOSES,
+  AUTH_MAIL_SECURITY_RESERVE,
+  AUTH_MAIL_TTL_MS,
+  AuthMailDeliveryError,
+  AuthMailRefusedError,
+  createAuthMailRecoveryDelivery,
+  deliverAuthMail,
+  recordAuthMailOutcome,
+  renderAuthMail,
+  resolveAuthMailCeilings,
+  sendAdmittedAuthMail,
+  sweepExpiredAuthMail,
+  type AuthMailAdmission,
+  type AuthMailAdmissionParams,
+  type AuthMailCeilings,
+  type AuthMailMessage,
+  type AuthMailPort,
+  type AuthMailSendResult,
+} from "./auth-mail";
+export {
+  advanceDeletionOperations,
+  DELETION_EXECUTOR_LEASE_MS,
+  DELETION_EXECUTOR_MAX_COMMAND_ATTEMPTS,
+  DELETION_EXECUTOR_MAX_ERASURE_FAILURES,
+  ERASURE_DISABLED,
+  eraseOperation,
+  erasureHold,
+  FINANCIAL_CHAIN_TABLES,
+  STRIPE_PAYLOAD_RECEIVER_WIRED,
+  unretainedFinancialChainTables,
+  type DeletionExecutorOptions,
+  type DeletionExecutorPorts,
+  type DeletionLifecycleTickSummary,
+  type DeletionTickOutcome,
+  type ErasureEnablementPort,
+  type ErasureResult,
+} from "./deletion-executor";
+export {
+  createSqlLifecycleMutationPort,
+  createSqlResidueProbePort,
+  loadTableMetaInTx,
+  orderTargetsForExecution,
+  PG_BOSS_PHYSICAL_SCHEMA,
+  type ErasureReceipt,
+} from "./lifecycle-sql-port";
+export {
+  captureLifecycleSubjectsInTx,
+  captureSourceIdsInTx,
+  captureVerificationRowsInTx,
+  SENTINEL_AUTH_USER_ID,
+  SENTINEL_UUID,
+  targetAppliesToOperation,
+} from "./lifecycle-subjects";
+export {
+  assertNoUnknownExternalCommands,
+  AUTO_TOPUP_DISARMED_FIELDS,
+  autoTopupChargeAuthorityArmed,
+  dispatchExternalCommands,
+  enqueueExternalCommandInTx,
+  EXTERNAL_COMMAND_KINDS,
+  EXTERNAL_COMMAND_MAX_ATTEMPTS,
+  EXTERNAL_COMMAND_PHASE_BY_KIND,
+  externalCommandSummary,
+  latestExternalCommandInTx,
+  recordExternalCommandOutcome,
+  retryFailedExternalCommandInTx,
+  type AutoTopupChargeAuthority,
+  type ExternalCommandPort,
+  type ExternalCommandResult,
+  type ExternalCommandSummary,
+} from "./deletion-external-commands";
+export {
+  abandonJournalPlan,
+  assertDeletionTransition,
+  DELETION_GRACE_MS,
+  DELETION_JOURNAL_RETAIN_MS,
+  DELETION_REAUTH_MAX_AGE_MS,
+} from "./deletion-lifecycle";
+export type {
+  DeletionJournalPort,
+  JournalTransitionRequest,
+  JournalTransitionResult,
+  MembershipRestoreCandidate,
+  MembershipRestoreDecision,
+  MembershipRestorePolicyPort,
+  RecoveryDeliveryPort,
+  RecoveryDeliveryRequest,
+  RecoveryDeliveryResult,
+} from "./deletion-ports";
+export {
+  canonicalJournalPayload,
+  journalReceiptDigest,
+  journalRequestChecksum,
+} from "./deletion-ports";
+// Task 5 — the external deletion journal (R-124). The S3 SDK adapter is
+// exported separately (`deletion-journal-s3`) so only the worker composition
+// pulls the AWS client in.
+export {
+  assertJournalConfig,
+  createDeletionJournalStore,
+  journalObjectBody,
+  journalObjectKey,
+  journalOperationPrefix,
+  journalRetentionRefusal,
+  journalVersionSegment,
+  parseJournalObjectKey,
+  // `DeletionJournalConfigError` is deliberately NOT exported here. It is a
+  // deployment-misconfiguration error thrown by `assertJournalConfig`, which
+  // only the worker and operator scripts may call — app/** cannot reach it, so
+  // it is not part of the app-facing facade and has no billing copy. Exporting
+  // it put it on the surface `billing-ui.test.tsx` enumerates, which correctly
+  // demanded copy for an error no screen can ever receive.
+  JOURNAL_CONFLICT_RETENTION,
+  JOURNAL_CONFLICT_SCHEMA,
+  JOURNAL_CONFLICT_VERSION_EXISTS,
+  JOURNAL_KEY_INFIX,
+  JOURNAL_MAX_VERSION,
+  JOURNAL_VERSION_PAD,
+  type DeletionJournalConfig,
+  type DeletionJournalStore,
+  type JournalDeleteResult,
+  type JournalListedVersion,
+  type JournalPurgeTransport,
+  type JournalPutRequest,
+  type JournalPutResult,
+  type JournalReadResult,
+  type JournalVerifierTransport,
+  type JournalWriterTransport,
+} from "./deletion-journal";
+export {
+  IRREVERSIBLE_STATES,
+  compareRestoredState,
+  journalPurgeCandidates,
+  journalReplayAction,
+  listJournalOperationIds,
+  loadJournalChain,
+  parseJournalRecord,
+  planJournalRestore,
+  verifyJournalChain,
+  JOURNAL_CONFLICT_CODES,
+  JOURNAL_REPLAY_ACTIONS,
+  type JournalConflict,
+  type JournalConflictCode,
+  type JournalOperationChain,
+  type JournalReplayAction,
+  type JournalReplayStep,
+  type JournalRestorePlan,
+  type VerifiedJournalRecord,
+} from "./deletion-journal-restore";
+export {
+  describeForecast,
+  forecastDeletionJournalCost,
+  journalEnablementDecision,
+  parseUsdToNano,
+  validatePriceSnapshot,
+  JOURNAL_FORECAST_ALERT_CENTS,
+  JOURNAL_FORECAST_CEILING_CENTS,
+  JOURNAL_FORECAST_WITHHELD_CODES,
+  JOURNAL_PRICE_SNAPSHOT_MAX_AGE_DAYS,
+  R124_LAUNCH_ENVELOPE,
+  type DeletionJournalForecast,
+  type ForecastInput,
+  type JournalEnablementDecision,
+  type JournalForecastWithheldCode,
+  type JournalUsageBasis,
+  type S3PriceSnapshot,
+  type SnapshotValidation,
+} from "./deletion-journal-cost";
+export {
+  assertIdentityAcceptsMembership,
+  assertFreshProfileAuthority,
+  assertFreshWorkspaceAuthority,
+  assertProfileLifecycleAccess,
+  assertProfileLifecycleTransactionAccess,
+  assertWorkspaceAcceptsMembership,
+  assertWorkspaceLifecycleAccess,
+  assertWorkspaceLifecycleTransactionAccess,
+  lockIdentityMembershipGraph,
+  lockWorkspaceMembershipGraph,
+  workspaceAcceptsMembership,
+  sortedWorkspaceIds,
+  withMembershipGraphLocks,
+} from "./membership-lifecycle";
+export {
   membershipRole,
   memberships,
   users,
@@ -14,20 +248,30 @@ export {
   type Workspace,
 } from "./schema";
 export {
+  autoTopupProtocolRollouts,
   configVersions,
   creditKind,
   creditLedger,
   pausePeriods,
   stripeEvents,
   subscriptions,
+  tierCheckoutProtocolRollouts,
+  type AutoTopupProtocolRollout,
   type ConfigVersionRow,
   type CreditKind,
   type CreditLedgerRow,
   type PausePeriod,
   type StripeEventRow,
   type Subscription,
+  type TierCheckoutProtocolRollout,
 } from "./billing-schema";
-export { createDb, type Db } from "./client";
+export {
+  createDb,
+  createSystemWorkerDb,
+  closeSystemWorkerDb,
+  SYSTEM_WORKER_QUERY_POOL_CODE_CEILING,
+  type Db,
+} from "./client";
 export { type DbLike, type TxLike } from "./db-like";
 export {
   assertSeedAllowed,
@@ -43,6 +287,8 @@ export {
 } from "./bootstrap";
 export {
   withWorkspace,
+  assertFreshProfileScopeInTx,
+  assertFreshWorkspaceScopeInTx,
   WorkspaceAccessError,
   trustWorkspaceId,
   assertScoped,
@@ -78,6 +324,17 @@ export {
   type AdvanceGenerationAttemptParams,
   type SettleGenerationParams,
   type SettleGenerationResult,
+  // Slice 9a. The caller-suppliable half of one logged result — the type the
+  // `/results` form's action builds and `respinDb.recordResult` takes. The
+  // capability itself is NOT exported here and never will be: `app/**` cannot
+  // import `writeCapabilities` at all.
+  type RecordResultParams,
+  type PerformanceLearningEntitlement,
+  // Slice 9a, the truncated-population fix: the bound one comparison may be
+  // computed over. Exported so a caller can name the number in copy without
+  // re-typing it - the `ComparableResults` return carries it too, for a caller
+  // that would rather not import at all.
+  COMPARISON_POPULATION_MAX,
   type VerifiedUserId,
   CALLER_SUPPLIABLE_BRAIN_FIELDS,
   monthlySpend,
@@ -87,6 +344,10 @@ export {
   type BurnByModeBucket,
   type BurnByModeResult,
   type BurnByModeRow,
+  usageRunwayDebits,
+  type UsageRunwayDebits,
+  brainAssetSummary,
+  type BrainAssetSummary,
 } from "./with-workspace";
 // Slice 2b's spend-record surface — the month truncation the rollup upsert
 // uses (composed into `recordModelUsage` already, inside `with-workspace.ts`),
@@ -205,6 +466,51 @@ export {
   FrameworkLimitError,
   PrivateFrameworkTierError,
 } from "./errors";
+// Slice 9a's four refusals. THEIR OBLIGATION IS NOT YET DISCHARGED, and this
+// is the record rather than a silent export: the ten above each have a
+// `HANDLERS` entry and a `BILLING_ERROR_COPY` entry in
+// `app/(product)/billing-errors.ts` and a name in the `@respin/db`
+// `allowImportNames` block of `eslint.config.mjs`. These four have NEITHER
+// yet, because 9a's `/results` route and the import-boundary allowlist are
+// owned by the builders shipping alongside this one. Until both land, a
+// `recordResult` refusal reaching a screen renders as "Something went wrong" —
+// the exact outcome each typed refusal exists to prevent — so the route slice
+// owes all three edits in one change, the way stage A's obligation was
+// discharged above.
+//
+//   TreatmentKeyError   — what a result tested could not be identified from
+//                         the generation it names (C4). Nothing stored.
+//   ResultInputError    — the numbers, labels, window or note on the form do
+//                         not describe a storable observation (R6-R9), or the
+//                         profile has declared no usable north-star metric to
+//                         measure against (R8).
+//   ResultTargetError   — the output the result is about is not this
+//                         creator's (byte-identical for foreign, missing and
+//                         malformed ids).
+//   ResultDuplicateError— that output, metric and window is already logged;
+//                         the numbers just typed were NOT kept.
+//   ComparisonStratumError - the population a comparison was asked for over
+//                         is not one this product can describe. RAISED BY A
+//                         SCOPED READ, not by a write, and it is the fifth
+//                         because splitting it OUT of `WorkspaceAccessError`
+//                         is what stopped a creator being told to "sign in
+//                         with the account that owns it" for our own malformed
+//                         argument (2026-09-04). 9a NEVER RAISES IT - the
+//                         screen passes no stratum - so its copy is owed by
+//                         the slice that adds the first stratum-passing
+//                         caller, which is 9b.
+export {
+  TreatmentKeyError,
+  ResultInputError,
+  ResultTargetError,
+  ResultDuplicateError,
+  ComparisonStratumError,
+  PerformanceLearningEntitlementError,
+  PromotionAccessError,
+  PromotionPayloadError,
+  PromotionFreshnessError,
+  PromotionDecisionError,
+} from "./errors";
 // ---------------------------------------------------------------------------
 // The creator-data registry is a SOURCE module so M2b's export and deletion
 // paths can read it — which requires it to be reachable, and it was not: the
@@ -213,12 +519,91 @@ export {
 // (tenancy gate 2026-08-23). Exported here, which is the door it was always
 // meant to arrive through.
 export {
+  APP_TABLES,
+  ROW_CLASSES_BY_TABLE,
+  LIFECYCLE_REGISTRY,
+  LIFECYCLE_WRITER_INVENTORY,
+  EXTERNAL_WRITER_AUTHORITIES,
+  SUPPORTING_LIFECYCLE_STORES,
+  PG_BOSS_JOB_FIELDS,
+  PG_BOSS_JOB_JSON_PATHS,
+  PG_BOSS_QUEUE_STATS_FIELDS,
+  SPLIT_TABLE_FIELD_SETS,
+  ROW_CLASS_INVENTORY,
+  JSON_PATH_INVENTORY,
+  JSON_COLUMN_INVENTORY,
+  validateLifecycleClosure,
   CREATOR_DATA_REGISTRY,
   creatorDataEntry,
+  type AppTable,
+  type DataScope,
+  type DataRowClass,
+  type RowClassFor,
+  type LifecycleAction,
+  type LifecycleClassEntry,
+  type LifecycleFieldSet,
+  type LifecycleFieldSetFor,
+  type LifecycleFieldSetName,
+  type SplitTable,
+  type SplitFieldFor,
+  type RetentionRule,
+  type ExecutorId,
+  type ProbeId,
+  type ExternalWriterAuthority,
+  type SupportingLifecycleStoreEntry,
   type CreatorDataEntry,
   type ExportDecision,
   type DeletionDecision,
 } from "./creator-data-registry";
+export {
+  migrationInventory,
+  inventoryTable,
+  validateLifecycleSourceInventory,
+  type MigrationSource,
+  type MigrationTable,
+  type MigrationForeignKey,
+  type MigrationInventory,
+  type LifecycleWriterInventoryEntry,
+  type RowClassInventoryEntry,
+  type JsonPathInventoryEntry,
+  type JsonColumnInventoryEntry,
+} from "./lifecycle-inventory";
+export {
+  LIFECYCLE_EXECUTORS,
+  compileLifecycleExecutionTargets,
+  lifecycleTargetMatchesRow,
+  type LifecycleExecutionTarget,
+  type LifecycleRowSelector,
+  type IdentityLifecycleSubject,
+  type BetterAuthVerificationSnapshot,
+  type LifecycleSourceIdSnapshot,
+  type ProfileLifecycleSubject,
+  type WorkspaceLifecycleSubject,
+  type SystemLifecycleSubject,
+  type RelatedLifecycleSubject,
+  type LifecycleSubject,
+  type LifecycleRuntimeSubjects,
+  type LifecycleSubjectField,
+  type LifecycleSubjectMatch,
+  type LifecycleSnapshotSet,
+  type LifecycleSnapshotLocation,
+  type LifecycleSnapshotMatch,
+  type LifecycleSubjectPredicate,
+  type LifecycleMutationPort,
+  type LifecycleExecutorImplementation,
+  type LifecycleExecutorImplementations,
+} from "./lifecycle-executors";
+export {
+  LIFECYCLE_PROBES,
+  deriveExpectedResidueProbes,
+  residueProbeMatchesRow,
+  assertProbeClosure,
+  assertExecutorProbeAgreement,
+  type ExpectedResidueProbe,
+  type ResidueProbePort,
+  type ResidueProbeImplementation,
+  type ResidueProbeImplementations,
+} from "./lifecycle-probes";
 export { hasOpenPause } from "./pause";
 export {
   brainKind,
@@ -266,6 +651,162 @@ export {
   type GenerationFeedbackRow,
   type NewGenerationFeedback,
 } from "./generation-schema";
+// Slice 9a — the logged result. Exported through the root for the same reason
+// every other schema module is: the `exports` map has only ".", so this is the
+// door `packages/**` (including `@respin/brain`'s comparison builder, which
+// takes `ResultRow[]`) and the package's own suites arrive through. The WRITE
+// surface is not here: it is `recordResult` on `writeCapabilities`, which
+// `app/**` cannot import at all.
+//
+// The three VOCABULARIES are inert data the results UI renders its controls
+// from, allowlisted to `app/**` for the reason `GENERATION_FEEDBACK_REACTIONS`
+// is — the alternative is a hand-copied second list, which is how two
+// vocabularies drift. `treatmentKeyFor` and `declaredMetricOf` are exported
+// because they are the ONE producer and the ONE reader of their respective
+// facts (C3/C4), and a second copy of either is a second answer.
+// THE COMPARISON'S OWN REFUSAL, RE-EXPORTED FROM `@respin/brain` THROUGH THIS
+// FACADE. `app/**` may not import `@respin/brain` — that boundary is deliberate
+// (the comparison builder trusts its caller to have scoped the rows, so the
+// code that fetches and the code that compares must not be separated by a
+// boundary a screen can reach across) — and `app/(product)/billing-errors.ts`
+// needs the CLASS to map it to copy with `instanceof`.
+//
+// A RE-EXPORT RATHER THAN WIDENING THE BOUNDARY, which is the whole point: the
+// screen gets the one inert value it needs to render a readable refusal, and
+// gains no access to the builder, the vocabulary or anything else in that
+// package. Without this, all NINE of its throw sites render "Something went
+// wrong" — registered open finding `8c-R15`'s exact shape, in the slice whose
+// subject is honesty.
+export { ComparisonInputError } from "@respin/brain";
+export {
+  RESULT_AUDIENCE_CLASSES,
+  RESULT_CONFOUNDER_CODES,
+  RESULT_EVIDENCE_STATES,
+  RESULT_LEVERS,
+  declaredMetricOf,
+  resultAudienceClass,
+  resultEvidenceState,
+  results,
+  treatmentKeyFor,
+  type ComparableResultRow,
+  type ComparableResults,
+  type ComparableResultsStratum,
+  type DeclaredMetric,
+  type NewResult,
+  type ResultAudienceClass,
+  type ResultConfounderCode,
+  type ResultEvidenceState,
+  type ResultLever,
+  type ResultRow,
+} from "./results-schema";
+// Slice 8 non-tenant worker accounting. These operations deliberately accept a
+// raw DB handle; they cannot take a WorkspaceScope because no sessionless
+// product-overhead spend may acquire a creator or workspace identity.
+// The one wall-clock family (lease, per-stage deadline ceiling, job expiry)
+// and its refusal — the worker derives its bounds from these, never a literal.
+// The refusal's error CLASS stays package-private on purpose: only the
+// sessionless worker resolves `llm.overallDeadlineMs`, so no facade can hand
+// it to `app/**`, and exporting it would oblige `billing-errors.ts` to carry
+// copy for a screen that can never receive it.
+export {
+  AUTOPSY_ATTEMPT_WALL_CLOCK_CODE_CEILING_MS,
+  AUTOPSY_CLAIM_LEASE_MS,
+  AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS,
+  assertAutopsyDeadlineWithinLease,
+} from "./autopsy-policy";
+export {
+  AUTOPSY_ATTEMPT_CODE_CEILING,
+  AUTOPSY_VENDOR_CALLS_PER_ATTEMPT,
+  SYSTEM_AUTOPSY_DAILY_CODE_CEILING_MICRO_USD,
+  SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING,
+  recordSystemWorkerHealth,
+  createSystemAutopsyAttemptStore,
+  recoverStaleSystemAutopsyAttempts,
+  systemAutopsyQueueCandidates,
+  systemWorkerOperationalState,
+  type SystemWorkerHealthSnapshot,
+  type SystemWorkerOperationalState,
+  type SystemAutopsyQueueCandidate,
+  type SystemAutopsyAttemptStore,
+  type SystemAutopsyAttemptClaim,
+  type SystemAutopsyAttemptRecord,
+} from "./system-spend";
+export {
+  createTrendSource,
+  recordSharedTrendItem,
+  recordPrivateTrendItem,
+  recordPrivateTrendTranscript,
+  recordSharedTrendTranscript,
+  digestTranscriptContent,
+  claimSharedAutopsyForSystem,
+  claimPrivateAutopsyForSystem,
+  trackNicheForProfile,
+  trackedNichesForProfile,
+  systemRefreshNiches,
+  SYSTEM_REFRESH_NICHE_BATCH_CODE_CEILING,
+  untrackNicheForProfile,
+  feedItemsForProfile,
+  trendFeedProjection,
+  reusableAutopsyForProfile,
+  spinReferenceForProfile,
+  // Slice 8c (R-96): the paste intake `@respin/credits` composes its R-98
+  // debit around, its owner-only readers, and the URL rule they key on.
+  intakePastedReference,
+  pastedReferencesForProfile,
+  pastedReferenceForProfile,
+  // Fix round 1: the money's own population — EVERY parked private claim, not
+  // the newest one per item the display projection returns.
+  parkedAutopsyClaimsForProfile,
+  normalisePastedReferenceUrl,
+  AUTOPSY_ANALYSIS_VERSION,
+  PASTED_REFERENCE_TITLE_MAX,
+  type SharedTrendItemInput,
+  type PrivateTrendItemInput,
+  type UnavailableBaselineTrendItemInput,
+  type SharedTrendTranscriptInput,
+  type PrivateTrendTranscriptInput,
+  type CreatorPasteProvenance,
+  type SharedSystemAutopsyClaimResult,
+  type PrivateSystemAutopsyClaimResult,
+  type SystemAutopsyClaimResult,
+  type ScopedSpinReference,
+  type TrackedNicheEntitlement,
+  type TrendFeedItem,
+  type CanonicalAutopsyAnalysis,
+  type PastedReferenceIntakeInput,
+  type PastedReferenceIntakeResult,
+  type PastedReference,
+  type PastedReferenceClaim,
+  type PastedReferenceClaimStatus,
+  parseCanonicalAutopsyAnalysis,
+} from "./trends-storage";
+export {
+  autopsies,
+  autopsyCacheClaims,
+  trendItems,
+  trendSources,
+  trendTranscripts,
+  trackedNiches,
+  trendRightsScope,
+  transcriptState,
+  trendSaturation,
+  trendBaselineState,
+  systemModelUsage,
+  systemModelUsageReconciliations,
+  systemSpendClaims,
+  systemSpendDaily,
+  systemWorkerHealth,
+  systemCostState,
+  systemUsageOutcome,
+  type Autopsy,
+  type AutopsyCacheClaim,
+  type TrendItem,
+  type TrendTranscript,
+  type TrackedNiche,
+  type SystemModelUsage,
+  type SystemModelUsageReconciliation,
+  type SystemWorkerHealth,
+} from "./schema";
 // Slice 7 (R5a-R5c). The shared library, the mechanism-level content scan and
 // the private-framework operations. The WRITE surface here takes a
 // `WorkspaceScope` and a `db` handle, so — like `appendOwnPost` and the
@@ -282,6 +823,10 @@ export {
   frameworkSlug,
   listPrivateFrameworks,
   retirePrivateFramework,
+  proposeSharedFramework,
+  assertAutopsyFrameworkCandidate,
+  assertAutopsyMechanismContent,
+  resolveAutopsyFramework,
   seedSharedFrameworks,
   sharedFrameworkLibrary,
   FRAMEWORK_GOALS,
@@ -298,6 +843,7 @@ export {
   type FrameworkNiche,
   type FrameworkSourceKind,
   type PrivateFrameworkEntitlement,
+  type AutopsyFrameworkResolution,
   // The bounds the framework UI states. Inert numbers re-exported from
   // `storage-limits.ts` through `frameworks.ts`, for the reason
   // `POST_CONTENT_MAX` is exported through `onboarding-ops.ts`: one source, so
@@ -344,6 +890,7 @@ export {
   type CostState,
   type FirstBillableAttempt,
   type InputClass,
+  type StoredInputClass,
   type ModelUsageRow,
   type OnboardingInput,
   type ResolvedTier,
@@ -355,6 +902,25 @@ export {
   type OnboardingInterviewDraft,
   type BrainActivationSnapshot,
 } from "./onboarding-schema";
+export {
+  promotionProposalSource,
+  promotionProposalStatus,
+  promotionProposalStrength,
+  promotionProposals,
+  proposalEvidenceFeedback,
+  proposalEvidenceResultRole,
+  proposalEvidenceResults,
+  type NewPromotionProposal,
+  type PromotionProposal,
+  type PromotionDecisionRole,
+  type PromotionProposalSource,
+  type PromotionProposalStatus,
+  type PromotionProposalStrength,
+  type PromotionTargetKind,
+  type ProposalEvidenceFeedback,
+  type ProposalEvidenceResult,
+  type ProposalEvidenceResultRole,
+} from "./promotion-schema";
 // THE BRAIN CONTENT AND ECHO MODULES REACH A DEPLOYED PROCESS THROUGH HERE.
 //
 // Until this block existed, NOTHING in `respin/**` imported `brain-content.ts`
@@ -462,6 +1028,12 @@ export {
   type BrainClaimEdit,
   type DeclaredMetricEdit,
 } from "./brain-ops";
+export {
+  type DecidePromotionProposalParams,
+  type PromotionDecisionResult,
+  type PromotionProposalReview,
+  type PromotionReviewClaim,
+} from "./promotion-ops";
 // ONE exporter (slice 5 gate round 1). `exportBrain`/`exportBrainFile` and
 // their materialising helpers had zero `app/**` callers while carrying every
 // export witness, so they are gone and `openBrainExport` is the whole surface.
@@ -511,6 +1083,15 @@ export {
   BRAIN_DOCUMENT_TEXT_MAX,
   // Slice 7 (R10): the ceiling the feedback note's textarea states.
   FEEDBACK_NOTE_MAX,
+  // Slice 9a: the same, for the RESULT note's textarea. Exported because
+  // `app/(product)/results/log-panel.tsx` states the ceiling beside the box
+  // and `recordResult` refuses at 2,001 — a form that silently takes a note
+  // it will refuse, then points at "the limit shown beside it" when there is
+  // none, is the defect builder C found and deleted the false comment for.
+  // The number must NOT be typed into the screen: a second copy of a ceiling
+  // drifts the day it moves. `eslint.config.mjs`'s `allowImportNames` for
+  // `@respin/db` needs it too — that half is builder B's file.
+  RESULT_NOTE_MAX,
 } from "./storage-limits";
 // Slice 2a's concurrency bound (tech-spec §6). `RunSlots` is the PORT and
 // `pgRunSlots` the real implementation; the server's singleton is
@@ -560,3 +1141,10 @@ export {
   DOCKER_TEST_DB_NAME_PATTERN,
   type TestDb,
 } from "./testing";
+export {
+  createFakeS3,
+  type FakeS3,
+  type FakeS3Failure,
+  type FakeS3Options,
+  type FakeS3Tamper,
+} from "./testing-s3";

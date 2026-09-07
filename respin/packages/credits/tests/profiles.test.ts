@@ -216,7 +216,7 @@ describe("createProfile — the cap (R2)", () => {
 });
 
 describe("createProfile — the gates in front of the cap", () => {
-  it("REFUSES a viewer, and does NOT refuse an editor (REQ-A02, both directions)", async () => {
+  it("R-118: REFUSES viewers and editors before profile creation", async () => {
     const viewerDb = await createTestDb();
     const viewer = await setup(viewerDb, { role: "viewer" });
     const err = await createProfile(viewerDb, viewer, "Anna", now()).catch((e) => e);
@@ -225,8 +225,9 @@ describe("createProfile — the gates in front of the cap", () => {
 
     const editorDb = await createTestDb();
     const editor = await setup(editorDb, { role: "editor" });
-    const ok = await createProfile(editorDb, editor, "Anna", now());
-    expect(ok.displayName).toBe("Anna");
+    const editorErr = await createProfile(editorDb, editor, "Anna", now()).catch((e) => e);
+    expect(editorErr).toBeInstanceOf(ProfileRoleError);
+    expect(await editorDb.select().from(creatorProfiles)).toHaveLength(0);
   });
 
   it("REFUSES under an open pause, and creates again once it is closed (REQ-G08)", async () => {

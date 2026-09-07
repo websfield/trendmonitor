@@ -5,20 +5,28 @@
 // conflicts after the winner commits → DuplicateStripeEvent (→ 200).
 // Refusal log lines carry event id + outcome only — NEVER payloads.
 // This file is a sanctioned trustWorkspaceId import site (webhook resolution).
+import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
   creditLedger,
+  lockWorkspaceMembershipGraph,
   stripeEvents,
   subscriptions,
+  workspaces,
   type DbLike,
   type TxLike,
   type VerifiedWorkspaceId,
+  AUTO_TOPUP_DISARMED_FIELDS,
 } from "@respin/db";
-import { getActiveConfig, type SubscriptionTier } from "@respin/config";
+import { getActiveConfig } from "@respin/config";
 import type Stripe from "stripe";
 import { CLOCK_SKEW_MS, getDbNow, takeWorkspaceLock } from "../clock";
 import { addMonthsUtc } from "../months";
-import { IRREVERSIBLE_STATUSES, TERMINAL_STATUSES } from "../state";
+import {
+  hasLiveStripeSubscription,
+  IRREVERSIBLE_STATUSES,
+  TERMINAL_STATUSES,
+} from "../state";
 import { grantCredits, purchasePackCredits } from "../ledger";
 import {
   clearPauseMirror,
@@ -27,6 +35,34 @@ import {
   openPauseStartedKnownAt,
 } from "../pause";
 import { workspaceForCustomer } from "./customers";
+import {
+  assertTierCheckoutProtocolRecoveryReady,
+  getTierCheckoutProtocolState,
+} from "./tier-checkout-rollout";
+import {
+  AutoTopupAttemptIntegrityError,
+  bindPendingAutoTopupPaymentIntent,
+  clearPendingAutoTopupAttempt,
+  pendingAutoTopupAttempt,
+} from "./auto-topup";
+import { verifyAutoTopupAuthority } from "./auto-topup-authority";
+import { assertAutoTopupProtocolRecoveryReady } from "./auto-topup-rollout";
+import {
+  getAuthenticatedStripeAccountIdentity,
+  getStripe,
+  STRIPE_MAX_CALL_WINDOW_MS,
+} from "./adapter";
+import { verifyPackCheckoutAuthority } from "./pack-checkout-authority";
+import {
+  verifyTierCheckoutAuthority,
+} from "./tier-checkout-authority";
+import {
+  hasTierInvoiceAuthorityMetadata,
+  tierInvoiceAuthorityMetadata,
+  tierInvoiceAuthorityMetadataFromProvider,
+  verifyTierInvoiceAuthority,
+  type TierInvoiceAuthority,
+} from "./tier-invoice-authority";
 
 /** The stored vocabulary — matches the stripe_events_outcome CHECK exactly. */
 export type StripeEventOutcome =
@@ -35,8 +71,29 @@ export type StripeEventOutcome =
   | "refused_identity_mismatch"
   | "ignored";
 
+export type StripeEventHandlingOptions = Readonly<{ recovery?: boolean }>;
+
+type StripeReceiptContext = {
+  tierInvoiceAuthority: Record<string, string> | null;
+};
+
+function stringRecordOrNull(value: unknown): Record<string, string> | null {
+  return value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.values(value).every((item) => typeof item === "string")
+    ? (value as Record<string, string>)
+    : null;
+}
+
 export class DuplicateStripeEvent extends Error {
-  constructor(public readonly eventId: string) {
+  constructor(
+    public readonly eventId: string,
+    public readonly tierInvoiceAuthority: Record<string, string> | null = null,
+    public readonly receiptOutcome: StripeEventOutcome | null = null,
+    public readonly receiptWorkspaceId: string | null = null,
+    public readonly storedTierInvoiceAuthority: Record<string, string> | null = null
+  ) {
     super(`Stripe event ${eventId} already has a final outcome`);
     this.name = "DuplicateStripeEvent";
   }
@@ -53,6 +110,26 @@ const IDEMPOTENCY_CONSTRAINTS = ["stripe_events_pkey", "credit_ledger_stripe_eve
 const GRANT_BILLING_REASONS = new Set(["subscription_create", "subscription_cycle"]);
 // Subscription statuses whose arrival should clear nothing but stale grace.
 const ACTIVE_STATUSES = new Set(["active", "trialing"]);
+const CLEAR_TIER_CHECKOUT_ATTEMPT = {
+  tierCheckoutAttemptId: null,
+  tierCheckoutAttemptTier: null,
+  tierCheckoutAttemptPriceId: null,
+  tierCheckoutAttemptCustomerId: null,
+  tierCheckoutAttemptSubscriptionGeneration: null,
+  tierCheckoutAttemptIdempotencyKey: null,
+  tierCheckoutAttemptSessionId: null,
+  tierCheckoutAttemptSubscriptionId: null,
+  tierCheckoutAttemptStripeAccountId: null,
+  tierCheckoutAttemptStripeLivemode: null,
+  tierCheckoutAttemptAuthority: null,
+  tierCheckoutAttemptReservedAt: null,
+} as const;
+const CLEAR_TIER_CHECKOUT_FENCE = {
+  tierCheckoutFenceAt: null,
+  tierCheckoutFenceSubscriptionId: null,
+  tierCheckoutFenceStatus: null,
+  tierCheckoutFenceObservedSubscriptionId: null,
+} as const;
 // End states. A subscription in one of these is DEAD: no invoice, however
 // late, may lift it back to a paid tier (code-review BLOCK — resurrection).
 // MOVED to state.ts (audit 2026-08-17 #6): it was defined here while its
@@ -90,6 +167,29 @@ function customerIdOf(event: Stripe.Event): string | null {
   // An expanded customer object on a non-customer event.
   const expanded = obj.customer as { id?: string } | null | undefined;
   return typeof expanded?.id === "string" ? expanded.id : null;
+}
+
+function objectId(value: { id: string } | string | null | undefined): string | null {
+  return typeof value === "string" ? value : value?.id ?? null;
+}
+
+export type StripeReceiptAttribution =
+  | "workspace_attributed"
+  | "customer_attributed"
+  | "unattributed";
+
+/** Classify only receipt-time facts; later FK detachment never reclassifies. */
+export function classifyStripeReceiptAttribution(
+  workspaceId: string | null,
+  customerId: string | null,
+): StripeReceiptAttribution {
+  if (workspaceId !== null) {
+    if (customerId === null) {
+      throw new Error("a workspace-attributed Stripe receipt must name its customer");
+    }
+    return "workspace_attributed";
+  }
+  return customerId === null ? "unattributed" : "customer_attributed";
 }
 
 /**
@@ -139,7 +239,7 @@ function subscriptionLinesOf(invoice: Stripe.Invoice): Stripe.InvoiceLineItem[] 
  *    the next reader.
  *  - `graceExpiresAt`: a stale dunning deadline on a dead subscription was the
  *    trigger a late `invoice.paid` used to revive on.
- *  - `autoTopupEnabled` / `autoTopupMonthlyCapCents`: an off-session charging
+ *  - `autoTopupV1Enabled` / `autoTopupMonthlyCapCents`: an off-session charging
  *    authority. Left armed, a workspace that cancelled still had M3's debit
  *    site able to charge it a $10 pack. Stated consequence, deliberately the
  *    safe direction: the opt-in does not survive a cancellation — a
@@ -152,8 +252,9 @@ const DEAD_SUBSCRIPTION_FIELDS = {
   // date, and whatever this row says after it dies is inherited forever.
   cancelAt: null,
   graceExpiresAt: null,
-  autoTopupEnabled: false,
-  autoTopupMonthlyCapCents: null,
+  // The auto-top-up charge authority, shared with the deletion executor's
+  // fence (Phase 10b-1 Task 4, round-1 billing BLOCK): one set, two sites.
+  ...AUTO_TOPUP_DISARMED_FIELDS,
   // The stale PAID TIER (audit 2026-08-17 #5). Tier is derived at READ time
   // from this column × the active config's `stripePriceMap` (state.ts), so a
   // dead subscription that keeps its price id keeps answering "creator" to
@@ -419,30 +520,458 @@ function packAmountCents(
   return substituted;
 }
 
+type TierInvoiceCore = Readonly<{
+  invoiceId: string;
+  subscriptionId: string;
+  customerId: string;
+  priceId: string;
+  periodStart: number;
+  periodEnd: number;
+}>;
+
+const INVOICE_LINE_PAGE_SIZE = 100;
+const MAX_INVOICE_LINE_PAGES = 10;
+const MAX_INVOICE_LINES = INVOICE_LINE_PAGE_SIZE * MAX_INVOICE_LINE_PAGES;
+
+async function withCompleteInvoiceLines(
+  invoice: Stripe.Invoice,
+  eventId: string
+): Promise<Stripe.Invoice> {
+  if (invoice.lines?.has_more !== true) return invoice;
+  if (!invoice.id) {
+    throw new Error(
+      `invoice.paid ${eventId}: paginated invoice has no id, so its complete provider line set cannot be retrieved`
+    );
+  }
+
+  const data: Stripe.InvoiceLineItem[] = [];
+  const seenCursors = new Set<string>();
+  let startingAfter: string | undefined;
+  for (let pageNumber = 0; pageNumber < MAX_INVOICE_LINE_PAGES; pageNumber += 1) {
+    const page = await getStripe().invoices.listLineItems(invoice.id, {
+      limit: INVOICE_LINE_PAGE_SIZE,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    });
+    data.push(...page.data);
+    if (data.length > MAX_INVOICE_LINES) {
+      throw new Error(
+        `invoice.paid ${eventId}: invoice ${invoice.id} exceeds the bounded ${MAX_INVOICE_LINES}-line reconciliation limit`
+      );
+    }
+    if (!page.has_more) {
+      return {
+        ...invoice,
+        lines: { ...invoice.lines, data, has_more: false },
+      };
+    }
+    const cursor = page.data.at(-1)?.id;
+    if (!cursor || seenCursors.has(cursor)) {
+      throw new Error(
+        `invoice.paid ${eventId}: invoice ${invoice.id} line pagination did not advance`
+      );
+    }
+    seenCursors.add(cursor);
+    startingAfter = cursor;
+  }
+  throw new Error(
+    `invoice.paid ${eventId}: invoice ${invoice.id} line pagination exceeded ${MAX_INVOICE_LINE_PAGES} pages`
+  );
+}
+
+function tierInvoiceCore(invoice: Stripe.Invoice, eventId: string): TierInvoiceCore {
+  const invoiceId = invoice.id;
+  const subscriptionId = invoiceSubscriptionId(invoice);
+  const customerId = objectId(invoice.customer);
+  const lines = subscriptionLinesOf(invoice);
+  const line = lines.length === 1 ? lines[0] : undefined;
+  const priceId = priceIdOfLine(line);
+  const periodStart = line?.period?.start;
+  const periodEnd = line?.period?.end;
+  if (
+    invoice.lines?.has_more === true ||
+    !invoiceId ||
+    !subscriptionId ||
+    !customerId ||
+    lines.length !== 1 ||
+    !priceId ||
+    typeof periodStart !== "number" ||
+    typeof periodEnd !== "number"
+  ) {
+    throw new Error(
+      `invoice.paid ${eventId}: invoice ${invoiceId || "(no id)"} lacks the exact single-line invoice/subscription/customer/price/period identity required for signed invoice authority`
+    );
+  }
+  return {
+    invoiceId,
+    subscriptionId,
+    customerId,
+    priceId,
+    periodStart,
+    periodEnd,
+  };
+}
+
+async function resolveTierInvoiceAuthority(
+  tx: TxLike,
+  event: Stripe.Event,
+  eventInvoice: Stripe.Invoice,
+  workspaceId: VerifiedWorkspaceId,
+  checkoutAttemptId: string,
+  options: StripeEventHandlingOptions
+): Promise<{
+  authority: TierInvoiceAuthority;
+  metadata: Record<string, string>;
+}> {
+  await assertAutoTopupProtocolRecoveryReady(tx);
+  const rollout = await assertTierCheckoutProtocolRecoveryReady(tx);
+  const provider = {
+    accountId: rollout.stripeAccountId!,
+    livemode: rollout.stripeLivemode!,
+  };
+  const eventCore = tierInvoiceCore(eventInvoice, event.id);
+  if (
+    eventInvoice.livemode !== provider.livemode ||
+    event.livemode !== provider.livemode ||
+    (event.account !== undefined && event.account !== provider.accountId)
+  ) {
+    throw new Error(
+      `invoice.paid ${event.id}: event core differs from the provider-bound rollout`
+    );
+  }
+
+  const verifyCurrent = async (
+    current: Stripe.Invoice
+  ): Promise<{ authority: TierInvoiceAuthority; metadata: Record<string, string> }> => {
+    const completeCurrent = await withCompleteInvoiceLines(current, event.id);
+    const currentCore = tierInvoiceCore(completeCurrent, event.id);
+    if (completeCurrent.livemode !== provider.livemode) {
+      throw new Error(
+        `invoice.paid ${event.id}: provider Invoice livemode differs from rollout authority`
+      );
+    }
+    const metadata = tierInvoiceAuthorityMetadataFromProvider(completeCurrent.metadata);
+    const authority = verifyTierInvoiceAuthority(
+      metadata,
+      { ...currentCore, workspaceId },
+      provider
+    );
+    // The historical Event is immutable and may not carry the metadata update,
+    // but every economic identity field in that Event must be exactly the one
+    // the provider Invoice authority signed.
+    verifyTierInvoiceAuthority(
+      metadata,
+      { ...eventCore, workspaceId },
+      provider
+    );
+    const eventAttempt =
+      eventInvoice.parent?.subscription_details?.metadata
+        ?.respin_checkout_attempt_id ?? null;
+    const currentAttempt =
+      completeCurrent.parent?.subscription_details?.metadata
+        ?.respin_checkout_attempt_id ?? null;
+    if (
+      authority.checkoutAttemptId !== checkoutAttemptId ||
+      eventAttempt !== checkoutAttemptId ||
+      currentAttempt !== checkoutAttemptId
+    ) {
+      throw new Error(
+        `invoice.paid ${event.id}: signed invoice authority differs from immutable Checkout generation metadata`
+      );
+    }
+    return { authority, metadata };
+  };
+
+  let current = await getStripe().invoices.retrieve(eventCore.invoiceId);
+  if (hasTierInvoiceAuthorityMetadata(current.metadata)) {
+    return await verifyCurrent(current);
+  }
+  if (options.recovery) {
+    throw new Error(
+      `invoice.paid ${event.id}: PITR recovery requires pre-existing signed authority on provider Invoice ${eventCore.invoiceId}`
+    );
+  }
+
+  const { version, content } = await getActiveConfig(tx);
+  const tier = content.stripePriceMap[eventCore.priceId];
+  if (tier !== "creator" && tier !== "pro" && tier !== "studio") {
+    throw new Error(
+      `invoice.paid ${event.id}: price ${eventCore.priceId} is not mapped to a paid tier in active config version ${version}`
+    );
+  }
+  const metadata = tierInvoiceAuthorityMetadata({
+    ...eventCore,
+    workspaceId,
+    checkoutAttemptId,
+    tier,
+    allowance: content.allowances[tier],
+    configVersion: version,
+    monthlyPeriodDays: content.monthlyPeriodDays,
+    stripeAccountId: provider.accountId,
+    stripeLivemode: provider.livemode,
+  });
+
+  let updateError: unknown = null;
+  try {
+    await getStripe().invoices.update(
+      eventCore.invoiceId,
+      { metadata },
+      { idempotencyKey: `tier-invoice-authority:v1:${eventCore.invoiceId}` }
+    );
+  } catch (error) {
+    // A transport failure can happen after Stripe committed the metadata.
+    // Retrieve-and-verify is the only authority for that unknown outcome.
+    updateError = error;
+  }
+  try {
+    current = await getStripe().invoices.retrieve(eventCore.invoiceId);
+    return await verifyCurrent(current);
+  } catch (verificationError) {
+    if (updateError) throw updateError;
+    throw verificationError;
+  }
+}
+
+function subscriptionSnapshotKey(sub: Stripe.Subscription): string {
+  const items = sub.items?.data ?? [];
+  const item = items.length === 1 ? items[0] : null;
+  return JSON.stringify([
+    sub.id,
+    objectId(sub.customer),
+    sub.status,
+    item ? objectId(item.price) : null,
+    item?.current_period_start ?? null,
+    item?.current_period_end ?? null,
+    sub.cancel_at_period_end,
+    sub.cancel_at ?? null,
+    sub.pause_collection !== null,
+    sub.pause_collection?.resumes_at ?? null,
+    sub.livemode,
+  ]);
+}
+
+function mirrorMatchesSubscriptionSnapshot(
+  mirror: typeof subscriptions.$inferSelect,
+  sub: Stripe.Subscription
+): boolean {
+  const items = sub.items?.data ?? [];
+  const item = items.length === 1 ? items[0] : null;
+  return Boolean(
+    item &&
+      mirror.stripeSubscriptionId === sub.id &&
+      mirror.status === sub.status &&
+      mirror.stripePriceId === objectId(item.price) &&
+      mirror.currentPeriodStart?.getTime() === item.current_period_start * 1000 &&
+      mirror.currentPeriodEnd?.getTime() === item.current_period_end * 1000 &&
+      mirror.cancelAtPeriodEnd === sub.cancel_at_period_end &&
+      (mirror.cancelAt?.getTime() ?? null) ===
+        (sub.cancel_at ? sub.cancel_at * 1000 : null) &&
+      (mirror.pausedAt !== null) === (sub.pause_collection !== null) &&
+      (mirror.resumesAt?.getTime() ?? null) ===
+        (sub.pause_collection?.resumes_at
+          ? sub.pause_collection.resumes_at * 1000
+          : null)
+  );
+}
+
+async function providerConfirmsSubscriptionSnapshot(
+  sub: Stripe.Subscription
+): Promise<boolean> {
+  const current = await getStripe().subscriptions.retrieve(sub.id);
+  return subscriptionSnapshotKey(current) === subscriptionSnapshotKey(sub);
+}
+
+/**
+ * Credit validity starts when Stripe authenticated the settlement, never when
+ * a delayed webhook or PITR recovery happened to reach this database.
+ */
+async function settlementAt(tx: TxLike, event: Stripe.Event): Promise<Date> {
+  if (!Number.isSafeInteger(event.created) || event.created <= 0) {
+    throw new Error(
+      `${event.type} ${event.id}: Stripe event created is not a positive integer second`
+    );
+  }
+  const settledAt = new Date(event.created * 1000);
+  const now = await getDbNow(tx);
+  if (settledAt.getTime() > now.getTime() + CLOCK_SKEW_MS) {
+    throw new Error(
+      `${event.type} ${event.id}: Stripe settlement time is more than ${CLOCK_SKEW_MS / 1000}s ahead of the database clock`
+    );
+  }
+  return settledAt;
+}
+
+async function assertTierCheckoutEventProviderAuthority(
+  tx: TxLike,
+  event: Stripe.Event,
+  object: { livemode?: boolean },
+  attempt: {
+    tierCheckoutAttemptId: string | null;
+    tierCheckoutAttemptTier: string | null;
+    tierCheckoutAttemptPriceId: string | null;
+    tierCheckoutAttemptCustomerId: string | null;
+    tierCheckoutAttemptSessionId: string | null;
+    tierCheckoutAttemptSubscriptionId: string | null;
+    tierCheckoutAttemptStripeAccountId: string | null;
+    tierCheckoutAttemptStripeLivemode: boolean | null;
+    tierCheckoutAttemptAuthority: unknown;
+  }
+): Promise<void> {
+  await assertAutoTopupProtocolRecoveryReady(tx);
+  const rollout = await assertTierCheckoutProtocolRecoveryReady(tx);
+  if (
+    !attempt.tierCheckoutAttemptId ||
+    !attempt.tierCheckoutAttemptStripeAccountId ||
+    attempt.tierCheckoutAttemptStripeLivemode === null ||
+    attempt.tierCheckoutAttemptStripeAccountId !== rollout.stripeAccountId ||
+    attempt.tierCheckoutAttemptStripeLivemode !== rollout.stripeLivemode ||
+    event.livemode !== rollout.stripeLivemode ||
+    object.livemode !== rollout.stripeLivemode ||
+    (event.account !== undefined && event.account !== rollout.stripeAccountId)
+  ) {
+    throw new Error(
+      `${event.type} ${event.id}: durable tier Checkout attempt does not match the active Stripe account/livemode authority`
+    );
+  }
+
+  const attemptId = attempt.tierCheckoutAttemptId;
+  const tier = attempt.tierCheckoutAttemptTier;
+  const priceId = attempt.tierCheckoutAttemptPriceId;
+  const customerId = attempt.tierCheckoutAttemptCustomerId;
+  if (!attemptId || !tier || !priceId || !customerId) {
+    throw new Error(
+      `${event.type} ${event.id}: durable tier Checkout generation record is incomplete`
+    );
+  }
+  const storedAuthority = attempt.tierCheckoutAttemptAuthority;
+  if (
+    !storedAuthority ||
+    typeof storedAuthority !== "object" ||
+    Array.isArray(storedAuthority) ||
+    !Object.values(storedAuthority).every((value) => typeof value === "string")
+  ) {
+    throw new Error(
+      `${event.type} ${event.id}: durable tier Checkout signed authority is missing or malformed`
+    );
+  }
+  const candidate = event.data.object;
+  const candidateMetadata =
+    candidate.object === "invoice"
+      ? (candidate as Stripe.Invoice).parent?.subscription_details?.metadata
+      : (candidate as Stripe.Checkout.Session | Stripe.Subscription).metadata;
+  for (const [key, value] of Object.entries(
+    storedAuthority as Record<string, string>
+  )) {
+    if (candidateMetadata?.[key] !== value) {
+      throw new Error(
+        `${event.type} ${event.id}: provider tier authority differs from the durable attempt`
+      );
+    }
+  }
+  verifyTierCheckoutAuthority(
+    candidateMetadata,
+    { attemptId, workspaceId: candidateMetadata?.workspace_id ?? "", customerId },
+    {
+      accountId: rollout.stripeAccountId!,
+      livemode: rollout.stripeLivemode!,
+    }
+  );
+  if (candidate.object === "checkout.session") {
+    const supplied = candidate as Stripe.Checkout.Session;
+    const session = supplied.line_items
+      ? supplied
+      : await getStripe().checkout.sessions.retrieve(candidate.id, {
+          expand: ["line_items.data.price"],
+        });
+    const lines = session.line_items?.data ?? [];
+    const linePrice = lines.length === 1 ? objectId(lines[0]?.price) : null;
+    if (
+      session.mode !== "subscription" ||
+      objectId(session.customer) !== customerId ||
+      session.metadata?.respin_checkout_attempt_id !== attemptId ||
+      session.metadata?.tier !== tier ||
+      session.metadata?.price_id !== priceId ||
+      linePrice !== priceId ||
+      (attempt.tierCheckoutAttemptSessionId !== null &&
+        session.id !== attempt.tierCheckoutAttemptSessionId) ||
+      (attempt.tierCheckoutAttemptSubscriptionId !== null &&
+        objectId(session.subscription) !== attempt.tierCheckoutAttemptSubscriptionId)
+    ) {
+      throw new Error(
+        `${event.type} ${event.id}: Checkout Session differs from the durable tier attempt`
+      );
+    }
+  } else if (candidate.object === "subscription") {
+    const sub = candidate as Stripe.Subscription;
+    const lines = sub.items?.data ?? [];
+    const linePrice = lines.length === 1 ? objectId(lines[0]?.price) : null;
+    if (
+      objectId(sub.customer) !== customerId ||
+      sub.metadata?.respin_checkout_attempt_id !== attemptId ||
+      sub.metadata?.tier !== tier ||
+      sub.metadata?.price_id !== priceId ||
+      linePrice !== priceId ||
+      (attempt.tierCheckoutAttemptSubscriptionId !== null &&
+        sub.id !== attempt.tierCheckoutAttemptSubscriptionId)
+    ) {
+      throw new Error(
+        `${event.type} ${event.id}: Subscription differs from the durable tier attempt`
+      );
+    }
+  } else if (candidate.object === "invoice") {
+    const invoice = candidate as Stripe.Invoice;
+    const metadata = invoice.parent?.subscription_details?.metadata;
+    if (
+      objectId(invoice.customer) !== customerId ||
+      metadata?.respin_checkout_attempt_id !== attemptId ||
+      (attempt.tierCheckoutAttemptSubscriptionId !== null &&
+        invoiceSubscriptionId(invoice) !== attempt.tierCheckoutAttemptSubscriptionId)
+    ) {
+      throw new Error(
+        `${event.type} ${event.id}: Invoice differs from the durable tier attempt`
+      );
+    }
+  }
+}
+
 /**
  * Handle one verified Stripe event. Returns the recorded outcome; throws on
  * handler failure (the route turns that into a non-2xx so Stripe retries) and
  * DuplicateStripeEvent when the event already has a final outcome (→ 200).
  */
-export async function handleStripeEvent(
-  db: DbLike,
-  event: Stripe.Event
+export async function handleStripeEventInTransaction(
+  tx: TxLike,
+  event: Stripe.Event,
+  options: StripeEventHandlingOptions = {}
 ): Promise<StripeEventOutcome> {
-  try {
-    return await db.transaction(async (tx) => {
       const [existing] = await tx
-        .select({ outcome: stripeEvents.outcome })
+        .select({
+          outcome: stripeEvents.outcome,
+          workspaceId: stripeEvents.workspaceId,
+          tierInvoiceAuthority: stripeEvents.tierInvoiceAuthority,
+        })
         .from(stripeEvents)
         .where(eq(stripeEvents.id, event.id))
         .limit(1);
-      if (existing) throw new DuplicateStripeEvent(event.id);
+      if (existing && !options.recovery) {
+        throw new DuplicateStripeEvent(
+          event.id,
+          null,
+          existing.outcome as StripeEventOutcome,
+          existing.workspaceId,
+          stringRecordOrNull(existing.tierInvoiceAuthority)
+        );
+      }
 
       const customerId = customerIdOf(event);
       const workspaceId = customerId
         ? await workspaceForCustomer(tx, customerId)
         : null;
+      const receiptAttribution = classifyStripeReceiptAttribution(
+        workspaceId,
+        customerId,
+      );
 
-      // THE WORKSPACE LOCK — audit 2026-08-17 #3, the audit's most
+      // THE WORKSPACE LOCKS — audit 2026-08-17 #3, the audit's most
       // cross-confirmed finding (a Claude depth read, the correctness critic,
       // and Codex independently landed on the same lines).
       //
@@ -461,9 +990,15 @@ export async function handleStripeEvent(
       // BUILT, so a sixth writer added later inherits the guard instead of
       // needing to remember it. Consequences worth stating:
       //
-      //  - It is the FIRST lock this transaction takes, and `deriveBalance` /
-      //    `debitCredits` re-acquire the same xact lock as a no-op (D-M1-7), so
-      //    the ordering cannot deadlock against the ledger paths.
+      //  - The lifecycle graph lock is first and the billing lock is second,
+      //    matching deletion, restore, and request-time charge creation. The
+      //    lifecycle row and customer mapping are then re-read under both
+      //    locks. A tombstoned/detached workspace still receives an immutable
+      //    financial receipt, but no billing mirror, allowance, pack, or
+      //    auto-top-up mutation can recreate capability after deletion.
+      //  - `deriveBalance` / `debitCredits` re-acquire the billing xact lock as
+      //    a no-op (D-M1-7), so the ordering cannot deadlock against the ledger
+      //    paths.
       //  - It also closes #28 without widening the idempotency list. Two events
       //    carrying the SAME business object (one checkout session, one invoice,
       //    one PaymentIntent) necessarily resolve to the same workspace, so they
@@ -477,9 +1012,68 @@ export async function handleStripeEvent(
       //  - Unattributed events (`workspaceId === null`) take no lock. They also
       //    write nothing — they can only refuse — so there is nothing to
       //    serialize.
-      if (workspaceId) await takeWorkspaceLock(tx, workspaceId);
+      let lifecycleAllowsDispatch = true;
+      if (workspaceId) {
+        await lockWorkspaceMembershipGraph(tx, workspaceId);
+        await takeWorkspaceLock(tx, workspaceId);
+        const [workspace] = await tx
+          .select({ state: workspaces.lifecycleState })
+          .from(workspaces)
+          .where(eq(workspaces.id, workspaceId))
+          .limit(1);
+        const reboundWorkspace = customerId
+          ? await workspaceForCustomer(tx, customerId)
+          : null;
+        lifecycleAllowsDispatch =
+          workspace?.state === "active" && reboundWorkspace === workspaceId;
+      }
 
-      const outcome = await dispatch(tx, event, workspaceId);
+      if (existing) {
+        let verifiedInvoiceAuthority: Record<string, string> | null = null;
+        if (
+          event.type === "invoice.paid" &&
+          workspaceId &&
+          GRANT_BILLING_REASONS.has(
+            (event.data.object as Stripe.Invoice).billing_reason ?? ""
+          )
+        ) {
+          const invoice = event.data.object as Stripe.Invoice;
+          const attemptId =
+            invoice.parent?.subscription_details?.metadata
+              ?.respin_checkout_attempt_id;
+          if (attemptId) {
+            verifiedInvoiceAuthority = (
+              await resolveTierInvoiceAuthority(
+                tx,
+                event,
+                invoice,
+                workspaceId,
+                attemptId,
+                { recovery: true }
+              )
+            ).metadata;
+          }
+        }
+        throw new DuplicateStripeEvent(
+          event.id,
+          verifiedInvoiceAuthority,
+          existing.outcome as StripeEventOutcome,
+          existing.workspaceId,
+          stringRecordOrNull(existing.tierInvoiceAuthority)
+        );
+      }
+
+      const receiptContext: StripeReceiptContext = {
+        tierInvoiceAuthority: null,
+      };
+      const outcome = await dispatch(
+        tx,
+        event,
+        workspaceId,
+        lifecycleAllowsDispatch,
+        options,
+        receiptContext
+      );
       if (outcome !== "processed") {
         // Payload-free refusal log (D-M1-6): ids + type + outcome only, never
         // payload fields. `event.type` joins it per audit 2026-08-17 #27 —
@@ -495,16 +1089,27 @@ export async function handleStripeEvent(
         id: event.id,
         type: event.type,
         payload: event as unknown as Record<string, unknown>,
-        // Receipt-time attribution regardless of outcome: attributed rows join
-        // the REQ-A04 deletion cascade; only genuinely unattributable rows are
-        // left to the M6 retention sweep.
+        tierInvoiceAuthority: receiptContext.tierInvoiceAuthority,
+        // Receipt-time attribution regardless of outcome. It remains immutable
+        // after workspace FK detachment, so a retained financial receipt never
+        // becomes indistinguishable from a genuinely unattributed event.
         workspaceId,
         stripeCustomerId: customerId,
+        receiptAttribution,
         outcome,
         processedAt: now,
       });
       return outcome;
-    });
+}
+
+export async function handleStripeEvent(
+  db: DbLike,
+  event: Stripe.Event
+): Promise<StripeEventOutcome> {
+  try {
+    return await db.transaction((tx) =>
+      handleStripeEventInTransaction(tx, event)
+    );
   } catch (err) {
     if (err instanceof DuplicateStripeEvent) throw err;
     // A concurrent duplicate loses the idempotency constraint AFTER the winner
@@ -533,8 +1138,16 @@ function isIdempotencyViolation(err: unknown): boolean {
 async function dispatch(
   tx: TxLike,
   event: Stripe.Event,
-  workspaceId: VerifiedWorkspaceId | null
+  workspaceId: VerifiedWorkspaceId | null,
+  workspaceActive: boolean,
+  options: StripeEventHandlingOptions,
+  receiptContext: StripeReceiptContext
 ): Promise<StripeEventOutcome> {
+  if (!workspaceActive) {
+    // The outer handler still appends the immutable Stripe receipt, but a
+    // tombstoned workspace cannot gain credits or mutate billing authority.
+    return "ignored";
+  }
   switch (event.type) {
     case "checkout.session.completed":
     case "checkout.session.async_payment_succeeded": {
@@ -585,42 +1198,86 @@ async function dispatch(
           );
           return "ignored";
         }
-        const { version, content } = await getActiveConfig(tx);
-        const now = await getDbNow(tx);
+        const settledAt = await settlementAt(tx, event);
+        const hasV1Authority = Object.keys(session.metadata ?? {}).some((key) =>
+          [
+            "authority_key_id",
+            "respin_pack_attempt_id",
+            "customer_id",
+            "price_id",
+            "amount_cents",
+            "currency",
+            "credits",
+            "validity_months",
+            "config_version",
+            "stripe_account_id",
+            "stripe_livemode",
+            "respin_authority_sig",
+          ].includes(key)
+        );
+        let packTerms: {
+          attemptId: string | null;
+          amountCents: number;
+          credits: number;
+          validityMonths: number;
+          configVersion: number;
+        };
+        if (hasV1Authority) {
+          await assertAutoTopupProtocolRecoveryReady(tx);
+          await assertTierCheckoutProtocolRecoveryReady(tx);
+          const exactSession = session.line_items
+            ? session
+            : await getStripe().checkout.sessions.retrieve(session.id, {
+                expand: ["line_items.data.price"],
+              });
+          packTerms = verifyPackCheckoutAuthority(
+            exactSession,
+            workspaceId,
+            event,
+            await getAuthenticatedStripeAccountIdentity()
+          );
+        } else {
+          // The tier-Checkout fleet drain is also the durable boundary for the
+          // last binary that could create unsigned pack Sessions. The provider
+          // audit rejects legacy Sessions created after this timestamp, making
+          // this compatibility branch a finite provider set rather than a
+          // permanent downgrade from signed purchase authority.
+          const rolloutState = await getTierCheckoutProtocolState(tx);
+          if (rolloutState !== "expanded") {
+            const rollout = await assertTierCheckoutProtocolRecoveryReady(tx);
+            if (
+              !rollout.drainStartedAt ||
+              !Number.isSafeInteger(session.created) ||
+              session.created * 1000 >
+                rollout.drainStartedAt.getTime() + STRIPE_MAX_CALL_WINDOW_MS ||
+              event.livemode !== rollout.stripeLivemode ||
+              session.livemode !== rollout.stripeLivemode ||
+              (event.account !== undefined && event.account !== rollout.stripeAccountId)
+            ) {
+              throw new Error(
+                `pack session ${session.id}: unsigned legacy authority is outside the provider-bound fleet-drain cutoff`
+              );
+            }
+          }
+          const { version, content } = await getActiveConfig(tx);
+          packTerms = {
+            attemptId: null,
+            amountCents: packAmountCents(session, content, event.id),
+            credits: content.pack.credits,
+            validityMonths: content.pack.validityMonths,
+            configVersion: version,
+          };
+        }
         await purchasePackCredits(tx, {
           workspaceId,
-          amount: content.pack.credits,
-          expiresAt: addMonthsUtc(now, content.pack.validityMonths),
-          // WHAT STRIPE ACTUALLY CHARGED for this session, with a fallback
-          // that is NOT a second price authority (billing gate, 2026-08-18).
-          //
-          // The fallback reads like a second price authority after audit #7
-          // removed one. It is NOT one — but the reason is narrower than it
-          // first looks, and the narrow version is the true one (billing gate,
-          // 2026-08-18). `resolvePackPrice` refuses to build a Checkout when
-          // config and the Stripe Price disagree — at SESSION-CREATION time.
-          // This code runs at SETTLEMENT. An `/admin/config` price edit in
-          // between is sanctioned and deploy-free, so the two are equal only
-          // for a config that has not moved since the session was created.
-          //
-          // What actually carries this is that the branch is unreachable
-          // (`payment_status === "paid"` is asserted above, and a paid Session
-          // always carries `amount_total`), and that failing closed would be
-          // worse than substituting: rolling back would withhold
-          // credits the customer has already paid for — exactly the outcome
-          // R-28 decided against for this same branch — over a figure that
-          // feeds the margin rollup and not what the customer receives
-          // (`content.pack.credits` decides that, and is read from the same
-          // config snapshot). It is LOGGED rather than substituted silently
-          // because an unreachable branch that fires is a Stripe-contract
-          // surprise on a money column, and the operator needs to know the
-          // recorded figure is the one that may need reconciling.
-
-          amountCents: packAmountCents(session, content, event.id),
+          amount: packTerms.credits,
+          expiresAt: addMonthsUtc(settledAt, packTerms.validityMonths),
+          amountCents: packTerms.amountCents,
           stripeEventId: event.id,
           refType: "checkout_session",
           refId: session.id,
-          configVersion: version,
+          packCheckoutAttemptId: packTerms.attemptId ?? undefined,
+          configVersion: packTerms.configVersion,
         });
         return "processed";
       }
@@ -681,9 +1338,80 @@ async function dispatch(
             );
             return "ignored";
           }
+          const attemptId = session.metadata?.respin_checkout_attempt_id;
+          if (
+            attemptId &&
+            mirror?.tierCheckoutAttemptId &&
+            attemptId !== mirror.tierCheckoutAttemptId
+          ) {
+            // A delayed event from an older attempt must never bind or repoint
+            // the workspace while a newer durable attempt is authoritative.
+            return "ignored";
+          }
+          if (mirror?.tierCheckoutFenceAt) {
+            // The sentinel is the mixed-version fence: an old action sees an
+            // incomplete live subscription and cannot create a legacy Session.
+            // A partial checkout event may bind the exact Session but must not
+            // remove or overwrite that sentinel. The full subscription snapshot
+            // below binds id + status atomically and releases it.
+            if (subId === mirror.tierCheckoutFenceSubscriptionId) {
+              // This is a delayed Checkout event for the generation whose
+              // death established the fence. It is historical evidence, not
+              // the new generation the open attempt is waiting for.
+              return "ignored";
+            }
+            if (
+              (await getTierCheckoutProtocolState(tx)) === "active" &&
+              !mirror.tierCheckoutAttemptId
+            ) {
+              throw new Error(
+                `${event.type} ${event.id}: active tier Checkout protocol has no durable attempt for subscription ${subId}; refusing to advance its fence`
+              );
+            }
+            if (mirror.tierCheckoutAttemptId) {
+              await assertTierCheckoutEventProviderAuthority(
+                tx,
+                event,
+                session,
+                mirror
+              );
+            }
+            if (
+              mirror.tierCheckoutFenceObservedSubscriptionId &&
+              mirror.tierCheckoutFenceObservedSubscriptionId !== subId
+            ) {
+              throw new Error(
+                `${event.type} ${event.id}: fenced workspace already observed subscription ${mirror.tierCheckoutFenceObservedSubscriptionId}, but checkout ${session.id} names ${subId}; refusing to hide a possible duplicate subscription`
+              );
+            }
+            if (mirror.tierCheckoutAttemptId && attemptId !== mirror.tierCheckoutAttemptId) {
+              throw new Error(
+                `${event.type} ${event.id}: subscription ${subId} is not bound to durable Checkout attempt ${mirror.tierCheckoutAttemptId}; refusing to replace its mixed-version fence`
+              );
+            }
+            await tx
+              .update(subscriptions)
+              .set({
+                stripeSubscriptionId: subId,
+                tierCheckoutFenceObservedSubscriptionId: subId,
+                ...(attemptId && attemptId === mirror.tierCheckoutAttemptId
+                  ? {
+                      tierCheckoutAttemptSessionId: session.id,
+                      tierCheckoutAttemptSubscriptionId: subId,
+                    }
+                  : {}),
+              })
+              .where(eq(subscriptions.workspaceId, workspaceId));
+            return "processed";
+          }
           await tx
             .update(subscriptions)
-            .set({ stripeSubscriptionId: subId })
+            .set({
+              stripeSubscriptionId: subId,
+              ...(attemptId && attemptId === mirror?.tierCheckoutAttemptId
+                ? { tierCheckoutAttemptSessionId: session.id }
+                : {}),
+            })
             .where(eq(subscriptions.workspaceId, workspaceId));
         }
         return "processed";
@@ -705,6 +1433,73 @@ async function dispatch(
       // overwrite newer state (code-review CHANGE: order-blind mirror writes).
       if (mirror?.mirrorEventAt && mirror.mirrorEventAt.getTime() > eventAt.getTime()) {
         return "ignored";
+      }
+      if (
+        mirror?.tierCheckoutFenceAt &&
+        sub.id === mirror.tierCheckoutFenceSubscriptionId
+      ) {
+        // The fence retains the last dead subscription generation solely so
+        // provider reconciliation can distinguish history from a new Checkout.
+        // A delayed snapshot for that dead generation must not overwrite the
+        // sentinel that keeps rolling old binaries from opening a legacy
+        // Session.
+        return "ignored";
+      }
+      if (
+        mirror &&
+        !mirror.tierCheckoutFenceAt &&
+        mirror.stripeSubscriptionId !== sub.id &&
+        hasLiveStripeSubscription(mirror)
+      ) {
+        throw new Error(
+          `${event.type} ${event.id}: workspace already mirrors live subscription ${mirror.stripeSubscriptionId}, but the snapshot names ${sub.id}; refusing to hide a possible duplicate subscription. REMEDY: reconcile both provider subscriptions before redelivery`
+        );
+      }
+      const advancesTierCheckoutFence = Boolean(
+        mirror?.tierCheckoutFenceAt &&
+          sub.id !== mirror.tierCheckoutFenceSubscriptionId
+      );
+      if (
+        advancesTierCheckoutFence &&
+        (await getTierCheckoutProtocolState(tx)) === "active" &&
+        !mirror?.tierCheckoutAttemptId
+      ) {
+        throw new Error(
+          `${event.type} ${event.id}: active tier Checkout protocol has no durable attempt for subscription ${sub.id}; refusing to release its fence`
+        );
+      }
+      if (advancesTierCheckoutFence && mirror?.tierCheckoutAttemptId) {
+        await assertTierCheckoutEventProviderAuthority(tx, event, sub, mirror);
+      }
+      if (
+        advancesTierCheckoutFence &&
+        mirror?.tierCheckoutAttemptId &&
+        (sub.metadata?.workspace_id !== workspaceId ||
+          sub.metadata?.respin_kind !== "tier_checkout" ||
+          sub.metadata?.respin_checkout_attempt_id !==
+            mirror.tierCheckoutAttemptId)
+      ) {
+        throw new Error(
+          `${event.type} ${event.id}: subscription ${sub.id} would replace a durable Checkout fence but is not bound to attempt ${mirror.tierCheckoutAttemptId}; refusing to discard an open-attempt authority. REMEDY: reconcile both the incoming subscription and the saved Checkout Session in Stripe, then redeliver only after the duplicate-subscription risk is resolved`
+        );
+      }
+      if (
+        advancesTierCheckoutFence &&
+        mirror?.tierCheckoutFenceObservedSubscriptionId &&
+        mirror.tierCheckoutFenceObservedSubscriptionId !== sub.id
+      ) {
+        throw new Error(
+          `${event.type} ${event.id}: fenced workspace already observed subscription ${mirror.tierCheckoutFenceObservedSubscriptionId}, but the full snapshot names ${sub.id}; refusing to hide a possible duplicate subscription`
+        );
+      }
+      if (
+        advancesTierCheckoutFence &&
+        mirror?.tierCheckoutAttemptSubscriptionId &&
+        mirror.tierCheckoutAttemptSubscriptionId !== sub.id
+      ) {
+        throw new Error(
+          `${event.type} ${event.id}: durable Checkout attempt is bound to subscription ${mirror.tierCheckoutAttemptSubscriptionId}, but the full snapshot names ${sub.id}; refusing to release the fence for a different subscription`
+        );
       }
       // TERMINAL guard — the resurrection rule the invoice writers already
       // have, which this one lacked (billing review finding 5). The order
@@ -765,6 +1560,14 @@ async function dispatch(
         );
       }
       const item = items[0];
+      if (
+        mirror?.mirrorEventAt?.getTime() === eventAt.getTime() &&
+        mirror.stripeSubscriptionId === sub.id &&
+        !mirrorMatchesSubscriptionSnapshot(mirror, sub) &&
+        !(await providerConfirmsSubscriptionSnapshot(sub))
+      ) {
+        return "ignored";
+      }
       const now = await getDbNow(tx);
       // Grace must NOT depend on delivery order (billing review finding 1).
       // `invoice.payment_failed` is what normally opens the 7-day window, but
@@ -801,6 +1604,19 @@ async function dispatch(
           // reader that turns the pair into a date.
           cancelAt: sub.cancel_at ? new Date(sub.cancel_at * 1000) : null,
           mirrorEventAt: eventAt,
+          // A full snapshot for a subscription different from the generation
+          // that opened the durable Checkout is the only webhook proof that the
+          // attempt advanced. Clear all attempt authority atomically with that
+          // full mirror write. A stale update for the old generation cannot
+          // clear a newer attempt.
+          ...(advancesTierCheckoutFence
+            ? {
+                tierCheckoutGenerationAttemptId:
+                  mirror!.tierCheckoutAttemptId,
+                ...CLEAR_TIER_CHECKOUT_ATTEMPT,
+                ...CLEAR_TIER_CHECKOUT_FENCE,
+              }
+            : {}),
           // A snapshot that lands an IRREVERSIBLE status is a death notice, and
           // must leave exactly what `customer.subscription.deleted` leaves —
           // including overriding the `cancel_at_period_end: true` the payload
@@ -910,6 +1726,14 @@ async function dispatch(
       if (prior?.mirrorEventAt && prior.mirrorEventAt.getTime() > eventAt.getTime()) {
         return "ignored";
       }
+      if (
+        prior?.mirrorEventAt?.getTime() === eventAt.getTime() &&
+        prior.stripeSubscriptionId === sub.id &&
+        !IRREVERSIBLE_STATUSES.has(prior.status) &&
+        !(await providerConfirmsSubscriptionSnapshot(sub))
+      ) {
+        return "ignored";
+      }
       // The mirror image of the checkout guard above: a `deleted` for an OLD
       // subscription must not cancel the CURRENT one. This branch writes
       // `stripeSubscriptionId: sub.id` unconditionally, so without this a late
@@ -917,7 +1741,57 @@ async function dispatch(
       // sub_2, which is an ordinary flow when the cancel event is delayed —
       // would both cancel the live subscription and repoint the mirror at the
       // dead one, taking the pause with it.
-      if (prior?.stripeSubscriptionId && prior.stripeSubscriptionId !== sub.id) {
+      const fencedDeletion = Boolean(
+        prior?.tierCheckoutFenceAt &&
+          sub.id !== prior.tierCheckoutFenceSubscriptionId
+      );
+      if (
+        fencedDeletion &&
+        (await getTierCheckoutProtocolState(tx)) === "active" &&
+        !prior?.tierCheckoutAttemptId
+      ) {
+        throw new Error(
+          `customer.subscription.deleted ${event.id}: active tier Checkout protocol has no durable attempt for subscription ${sub.id}; refusing to advance its fence`
+        );
+      }
+      if (fencedDeletion && prior?.tierCheckoutAttemptId) {
+        await assertTierCheckoutEventProviderAuthority(tx, event, sub, prior);
+      }
+      if (
+        fencedDeletion &&
+        prior?.tierCheckoutAttemptId &&
+        (sub.metadata?.workspace_id !== workspaceId ||
+          sub.metadata?.respin_kind !== "tier_checkout" ||
+          sub.metadata?.respin_checkout_attempt_id !==
+            prior.tierCheckoutAttemptId)
+      ) {
+        throw new Error(
+          `customer.subscription.deleted ${event.id}: subscription ${sub.id} is not bound to durable Checkout attempt ${prior.tierCheckoutAttemptId}; refusing to discard its authority`
+        );
+      }
+      if (
+        fencedDeletion &&
+        prior?.tierCheckoutFenceObservedSubscriptionId &&
+        prior.tierCheckoutFenceObservedSubscriptionId !== sub.id
+      ) {
+        throw new Error(
+          `customer.subscription.deleted ${event.id}: fenced workspace observed ${prior.tierCheckoutFenceObservedSubscriptionId}, but deletion names ${sub.id}; refusing ambiguous terminal authority`
+        );
+      }
+      if (
+        fencedDeletion &&
+        prior?.tierCheckoutAttemptSubscriptionId &&
+        prior.tierCheckoutAttemptSubscriptionId !== sub.id
+      ) {
+        throw new Error(
+          `customer.subscription.deleted ${event.id}: durable Checkout attempt is bound to subscription ${prior.tierCheckoutAttemptSubscriptionId}, but deletion names ${sub.id}; refusing ambiguous terminal authority`
+        );
+      }
+      if (
+        !fencedDeletion &&
+        prior?.stripeSubscriptionId &&
+        prior.stripeSubscriptionId !== sub.id
+      ) {
         console.warn(
           `[stripe-webhook] ${event.id} cancels ${sub.id} but the mirror holds ${prior.stripeSubscriptionId}; refusing to cancel a different subscription`
         );
@@ -939,8 +1813,10 @@ async function dispatch(
       await tx
         .update(subscriptions)
         .set({
-          status: "canceled",
-          stripeSubscriptionId: sub.id,
+          status: fencedDeletion ? "incomplete" : "canceled",
+          stripeSubscriptionId: fencedDeletion
+            ? `checkout_fence:${workspaceId}`
+            : sub.id,
           mirrorEventAt: new Date(event.created * 1000),
           // Nothing reset these fields before round 6, and no further events
           // exist for a dead subscription to reset them later — so whatever
@@ -949,13 +1825,28 @@ async function dispatch(
           // CHANGE 1 for the auto-top-up authority). One definition, shared
           // with the mirror writer above, so the two cannot drift.
           ...DEAD_SUBSCRIPTION_FIELDS,
+          ...(fencedDeletion
+            ? {
+                tierCheckoutGenerationAttemptId:
+                  prior!.tierCheckoutAttemptId,
+                ...CLEAR_TIER_CHECKOUT_ATTEMPT,
+                // A deletion can beat the first full snapshot. Preserve the
+                // mixed-version sentinel, but move its historical generation
+                // forward to the subscription Stripe has now proven dead. A
+                // delayed `created` for this exact id is then history, while a
+                // later explicit Checkout attempt can establish a new one.
+                tierCheckoutFenceSubscriptionId: sub.id,
+                tierCheckoutFenceStatus: sub.status,
+                tierCheckoutFenceObservedSubscriptionId: null,
+              }
+            : {}),
         })
         .where(eq(subscriptions.workspaceId, workspaceId));
       return "processed";
     }
 
     case "invoice.paid": {
-      const invoice = event.data.object as Stripe.Invoice;
+      let invoice = event.data.object as Stripe.Invoice;
       if (!workspaceId) return "refused_unknown_customer";
       // Cycle-only grants (plan-review F2): proration/one-off invoice.paid
       // shapes are IGNORED with zero ledger writes — never a throw on money
@@ -972,12 +1863,49 @@ async function dispatch(
       // invoice.period_end is "the latest timestamp at which invoice items can
       // be associated with this invoice" (SDK docs) — creation time on a
       // subscription_create invoice, which destroyed REQ-G02's rollover.
+      invoice = await withCompleteInvoiceLines(invoice, event.id);
       const lines = subscriptionLinesOf(invoice);
       const [mirror] = await tx
         .select()
         .from(subscriptions)
         .where(eq(subscriptions.workspaceId, workspaceId))
         .limit(1);
+      const subscriptionMetadata =
+        invoice.parent?.subscription_details?.metadata ?? null;
+      let invoiceAuthority: TierInvoiceAuthority | null = null;
+      const providerAttemptId = subscriptionMetadata?.respin_checkout_attempt_id;
+      if (providerAttemptId) {
+        await assertAutoTopupProtocolRecoveryReady(tx);
+        const rollout = await assertTierCheckoutProtocolRecoveryReady(tx);
+        const invoiceCustomerId = objectId(invoice.customer);
+        if (!invoiceCustomerId) {
+          throw new Error(
+            `invoice.paid ${event.id}: signed tier authority has no customer identity`
+          );
+        }
+        const generationAuthority = verifyTierCheckoutAuthority(
+          subscriptionMetadata,
+          {
+            attemptId: providerAttemptId,
+            workspaceId,
+            customerId: invoiceCustomerId,
+          },
+          {
+            accountId: rollout.stripeAccountId!,
+            livemode: rollout.stripeLivemode!,
+          }
+        );
+        if (
+          event.livemode !== generationAuthority.stripeLivemode ||
+          invoice.livemode !== generationAuthority.stripeLivemode ||
+          (event.account !== undefined &&
+            event.account !== generationAuthority.stripeAccountId)
+        ) {
+          throw new Error(
+            `invoice.paid ${event.id}: event or invoice differs from signed tier provider authority`
+          );
+        }
+      }
 
       // AUDIT #4 — WHICH subscription generated this invoice? Checked BEFORE any
       // grant or status write, and before the shape refusals below, because a
@@ -990,14 +1918,110 @@ async function dispatch(
           `invoice.paid ${event.id}: billing_reason ${invoice.billing_reason} implies a subscription generated this invoice, but no subscription id could be read from \`parent.subscription_details.subscription\` — refusing to grant an allowance that cannot be attributed to a subscription. The installed SDK types that field as \`string | Subscription\` and always present for a subscription invoice, so its absence means the API version or the object shape has changed. REMEDY: compare invoice ${invoice.id ?? "(no id)"} against the API version pinned in adapter.ts. Stripe will redeliver`
         );
       }
-      if (!invoiceMatchesMirror(invoiceSubId, mirror?.stripeSubscriptionId ?? null)) {
+      const expectedV1AttemptId =
+        mirror?.tierCheckoutGenerationAttemptId &&
+        (mirror.stripeSubscriptionId === invoiceSubId ||
+          mirror.tierCheckoutFenceSubscriptionId === invoiceSubId)
+          ? mirror.tierCheckoutGenerationAttemptId
+          : null;
+      if (expectedV1AttemptId && providerAttemptId !== expectedV1AttemptId) {
+        throw new Error(
+          `invoice.paid ${event.id}: subscription ${invoiceSubId} belongs to signed tier generation ${expectedV1AttemptId}, but the invoice omitted or changed that authority`
+        );
+      }
+      let boundMirrorSubId = mirror?.stripeSubscriptionId ?? null;
+      const invoiceIsForRetainedDeadGeneration = Boolean(
+        mirror?.tierCheckoutFenceAt &&
+          mirror.tierCheckoutFenceSubscriptionId === invoiceSubId
+      );
+      if (mirror?.tierCheckoutFenceAt && !invoiceIsForRetainedDeadGeneration) {
+        if (
+          (await getTierCheckoutProtocolState(tx)) === "active" &&
+          !mirror.tierCheckoutAttemptId
+        ) {
+          throw new Error(
+            `invoice.paid ${event.id}: active tier Checkout protocol has no durable attempt for subscription ${invoiceSubId}; refusing to grant or advance its fence`
+          );
+        }
+        if (mirror.tierCheckoutAttemptId) {
+          await assertTierCheckoutEventProviderAuthority(
+            tx,
+            event,
+            invoice,
+            mirror
+          );
+        }
+        if (
+          mirror.tierCheckoutAttemptId &&
+          (subscriptionMetadata?.workspace_id !== workspaceId ||
+            subscriptionMetadata?.respin_kind !== "tier_checkout" ||
+            subscriptionMetadata?.respin_checkout_attempt_id !==
+              mirror.tierCheckoutAttemptId)
+        ) {
+          throw new Error(
+            `invoice.paid ${event.id}: subscription ${invoiceSubId} is not bound to durable Checkout attempt ${mirror.tierCheckoutAttemptId}; refusing to grant or discard the invoice while duplicate-subscription risk is unresolved`
+          );
+        }
+        if (
+          mirror.tierCheckoutFenceObservedSubscriptionId &&
+          mirror.tierCheckoutFenceObservedSubscriptionId !== invoiceSubId
+        ) {
+          throw new Error(
+            `invoice.paid ${event.id}: fenced workspace already observed subscription ${mirror.tierCheckoutFenceObservedSubscriptionId}, but this paid invoice names ${invoiceSubId}; refusing to hide a possible duplicate subscription`
+          );
+        }
+        if (!mirror.tierCheckoutFenceObservedSubscriptionId && workspaceActive) {
+          await tx
+            .update(subscriptions)
+            .set({
+              stripeSubscriptionId: invoiceSubId,
+              tierCheckoutFenceObservedSubscriptionId: invoiceSubId,
+              ...(mirror.tierCheckoutAttemptId
+                ? { tierCheckoutAttemptSubscriptionId: invoiceSubId }
+                : {}),
+            })
+            .where(eq(subscriptions.workspaceId, workspaceId));
+        }
+        // A deleted workspace may still settle the exact paid invoice that was
+        // already in flight, but must not recreate its billing mirror/fence.
+        // The durable attempt metadata above is sufficient identity authority
+        // for the financial row; only an active workspace may persist the bind.
+        boundMirrorSubId = invoiceSubId;
+      }
+      if (invoiceIsForRetainedDeadGeneration) {
+        // Preserve the long-standing policy that a paid invoice for the dead
+        // subscription may still receive the allowance it paid for. It is not,
+        // however, evidence of the new Checkout generation: use the retained
+        // id only for this invoice's identity check and do not bind any fence
+        // or attempt field to it.
+        boundMirrorSubId = invoiceSubId;
+      }
+      if (!invoiceMatchesMirror(invoiceSubId, boundMirrorSubId)) {
+        if (providerAttemptId) {
+          throw new Error(
+            `invoice.paid ${event.id}: signed tier generation ${providerAttemptId} names subscription ${invoiceSubId}, but this workspace is bound to ${boundMirrorSubId ?? "(none)"}; refusing to consume a possible duplicate paid subscription without reconciliation`
+          );
+        }
         // `ignored`, not a throw: this invoice is genuinely not ours to act on,
         // and a throw would make Stripe redeliver it forever. Diagnosable by
         // ids alone (D-M1-6: ids in the log, never payload fields).
         console.warn(
-          `[stripe-webhook] ${event.id} invoice ${invoice.id ?? "(no id)"} was generated by subscription ${invoiceSubId}, but this workspace's mirror is bound to ${mirror?.stripeSubscriptionId ?? "(none)"} — ignoring; an allowance is never granted for a subscription the mirror does not hold`
+          `[stripe-webhook] ${event.id} invoice ${invoice.id ?? "(no id)"} was generated by subscription ${invoiceSubId}, but this workspace's mirror is bound to ${boundMirrorSubId ?? "(none)"} — ignoring; an allowance is never granted for a subscription the mirror does not hold`
         );
         return "ignored";
+      }
+
+      if (providerAttemptId) {
+        const resolved = await resolveTierInvoiceAuthority(
+          tx,
+          event,
+          invoice,
+          workspaceId,
+          providerAttemptId,
+          options
+        );
+        invoiceAuthority = resolved.authority;
+        receiptContext.tierInvoiceAuthority = resolved.metadata;
       }
 
       // D-AUDIT-1 / REQ-G08 — "While paused: no charges, no monthly grants."
@@ -1079,8 +2103,10 @@ async function dispatch(
       // can turn real money into a permanent Stripe retry loop must be
       // operator-adjustable without a deploy (B5). The config read moved above
       // this guard so the message can quote the active band and version.
-      const { version, content } = await getActiveConfig(tx);
-      const band = content.monthlyPeriodDays;
+      const legacyConfig = invoiceAuthority ? null : await getActiveConfig(tx);
+      const version = invoiceAuthority?.configVersion ?? legacyConfig!.version;
+      const band =
+        invoiceAuthority?.monthlyPeriodDays ?? legacyConfig!.content.monthlyPeriodDays;
       const periodDays = (periodEnd - periodStart) / 86_400;
       if (periodDays < band.min || periodDays > band.max) {
         throw new Error(
@@ -1092,7 +2118,9 @@ async function dispatch(
       // mirror is only a fallback (it may already hold a newer price, and an
       // invoice.paid can arrive before subscription.created).
       const priceId = priceIdOfLine(line) ?? mirror?.stripePriceId ?? null;
-      const tier = priceId ? content.stripePriceMap[priceId] : undefined;
+      const tier = priceId
+        ? invoiceAuthority?.tier ?? legacyConfig?.content.stripePriceMap[priceId]
+        : undefined;
       if (tier !== "creator" && tier !== "pro" && tier !== "studio") {
         // Unmapped price on a GRANT-BEARING invoice: fail closed by throwing —
         // the whole tx (incl. the event row) rolls back, Stripe retries, and a
@@ -1139,13 +2167,16 @@ async function dispatch(
 
       await grantCredits(tx, {
         workspaceId,
-        amount: content.allowances[tier as SubscriptionTier],
+        amount:
+          invoiceAuthority?.allowance ??
+          legacyConfig!.content.allowances[tier],
         // REQ-G02: expiry at service period_end + 1 month IS the rollover.
         expiresAt: addMonthsUtc(servicePeriodEnd, 1),
         stripeEventId: event.id,
         refType: "invoice",
         refId: invoiceRef,
         configVersion: version,
+        tierCheckoutAttemptId: invoiceAuthority?.checkoutAttemptId ?? undefined,
       });
       // Payment recovered → clear grace, and lift a dunning status back to
       // active ONLY while the subscription is still alive.
@@ -1173,7 +2204,12 @@ async function dispatch(
       // `graceExpiresAt` ONLY inside its `past_due` branch, which a terminal
       // status never reaches. Asserted both ways in stripe.test.ts rather than
       // claimed here.
-      if (mirror?.graceExpiresAt && !invoiceIsStale(mirror, event)) {
+      if (
+        workspaceActive &&
+        !invoiceIsForRetainedDeadGeneration &&
+        mirror?.graceExpiresAt &&
+        !invoiceIsStale(mirror, event)
+      ) {
         const revivable =
           invoiceMayWriteStatus(mirror, event) && !ACTIVE_STATUSES.has(mirror.status);
         await tx
@@ -1244,6 +2280,59 @@ async function dispatch(
       return "processed";
     }
 
+    case "payment_intent.payment_failed":
+    case "payment_intent.canceled": {
+      const pi = event.data.object as Stripe.PaymentIntent;
+      if (pi.metadata?.respin_kind !== "auto_topup") return "ignored";
+      if (!workspaceId) return "refused_unknown_customer";
+      if (pi.metadata?.workspace_id !== workspaceId) {
+        return "refused_identity_mismatch";
+      }
+      const attemptId = pi.metadata?.respin_attempt_id;
+      if (!attemptId) return "ignored"; // Protocol-0 had no durable attempt.
+      const rollout = await assertAutoTopupProtocolRecoveryReady(tx);
+      if (
+        rollout.stripeLivemode !== event.livemode ||
+        rollout.stripeLivemode !== pi.livemode ||
+        (event.account !== undefined &&
+          event.account !== rollout.stripeAccountId)
+      ) {
+        throw new AutoTopupAttemptIntegrityError(
+          `terminal event ${pi.id} does not match the rollout livemode binding`
+        );
+      }
+      const authority = verifyAutoTopupAuthority(pi, workspaceId);
+      const [sub] = await tx
+        .select()
+        .from(subscriptions)
+        .where(eq(subscriptions.workspaceId, workspaceId))
+        .limit(1);
+      if (!sub) return "refused_unknown_customer";
+      const pending = pendingAutoTopupAttempt(sub);
+      if (!pending || pending.id !== attemptId) return "ignored";
+      if (
+        authority.attemptId !== pending.id ||
+        authority.periodMonthUtc !== pending.periodMonthUtc ||
+        authority.amountCents !== pending.amountCents ||
+        authority.currency !== pending.currency ||
+        authority.priceId !== pending.priceId ||
+        authority.credits !== pending.credits ||
+        authority.validityMonths !== pending.validityMonths ||
+        authority.configVersion !== pending.configVersion ||
+        authority.customerId !== pending.customerId ||
+        (pending.paymentIntentId !== null && pending.paymentIntentId !== pi.id)
+      ) {
+        throw new AutoTopupAttemptIntegrityError(
+          `terminal event ${pi.id} does not match stored attempt ${attemptId}`
+        );
+      }
+      // A failure event is conclusive provider identity even when the original
+      // response was lost. Bind its PI id/status before returning so the
+      // request path can never create another PI after idempotency expiry.
+      await bindPendingAutoTopupPaymentIntent(tx, workspaceId, pending, pi);
+      return "processed";
+    }
+
     case "payment_intent.succeeded": {
       const pi = event.data.object as Stripe.PaymentIntent;
       // The PI that accompanies every pack Checkout has no auto-top-up
@@ -1280,18 +2369,145 @@ async function dispatch(
         );
         return "ignored";
       }
-      const { version, content } = await getActiveConfig(tx);
-      const now = await getDbNow(tx);
+
+      const [sub] = await tx
+        .select()
+        .from(subscriptions)
+        .where(eq(subscriptions.workspaceId, workspaceId))
+        .limit(1);
+      if (!sub) return "refused_unknown_customer";
+
+      const attemptId = pi.metadata?.respin_attempt_id;
+      if (!attemptId) {
+        // Deployment-only compatibility for PIs created by the old protocol.
+        // The cutoff is persisted per subscription; it is not a rolling window
+        // that could mint a newly created metadata-bypass PI forever.
+        const legacyCreatedAt =
+          typeof pi.created === "number" ? new Date(pi.created * 1000) : null;
+        const legacyAllowed =
+          legacyCreatedAt !== null &&
+          (sub.autoTopupProtocolVersion === 0 ||
+            (sub.autoTopupAttemptCutoverAt !== null &&
+              legacyCreatedAt <= sub.autoTopupAttemptCutoverAt));
+        if (!legacyAllowed) {
+          throw new AutoTopupAttemptIntegrityError(
+            `PaymentIntent ${pi.id} has no attempt id after the persisted cutover`
+          );
+        }
+        const { version, content } = await getActiveConfig(tx);
+        const settledAt = await settlementAt(tx, event);
+        await purchasePackCredits(tx, {
+          workspaceId,
+          amount: content.pack.credits,
+          expiresAt: addMonthsUtc(settledAt, content.pack.validityMonths),
+          amountCents: pi.amount,
+          stripeEventId: event.id,
+          refType: "auto_topup",
+          refId: pi.id,
+          autoTopupAttemptId: randomUUID(),
+          autoTopupPeriodMonthUtc: `${legacyCreatedAt.getUTCFullYear()}-${String(legacyCreatedAt.getUTCMonth() + 1).padStart(2, "0")}`,
+          configVersion: version,
+        });
+        return "processed";
+      }
+
+      const rollout = await assertAutoTopupProtocolRecoveryReady(tx);
+      if (
+        rollout.stripeLivemode !== event.livemode ||
+        rollout.stripeLivemode !== pi.livemode ||
+        (event.account !== undefined &&
+          event.account !== rollout.stripeAccountId)
+      ) {
+        throw new AutoTopupAttemptIntegrityError(
+          `PaymentIntent ${pi.id} does not match the rollout livemode binding`
+        );
+      }
+      const signedAuthority = verifyAutoTopupAuthority(pi, workspaceId);
+
+      const pending = pendingAutoTopupAttempt(sub);
+      if (!pending || pending.id !== attemptId) {
+        const [settledAttempt] = await tx
+          .select({ id: creditLedger.id, refId: creditLedger.refId })
+          .from(creditLedger)
+          .where(eq(creditLedger.autoTopupAttemptId, attemptId))
+          .limit(1);
+        if (settledAttempt) {
+          if (settledAttempt.refId !== pi.id) {
+            throw new AutoTopupAttemptIntegrityError(
+              `signed attempt ${attemptId} is already settled by a different PaymentIntent ${settledAttempt.refId}`
+            );
+          }
+          return "ignored";
+        }
+        if (pending) {
+          throw new AutoTopupAttemptIntegrityError(
+            `provider-only attempt ${attemptId} conflicts with pending attempt ${pending.id}`
+          );
+        }
+        // Point-in-time restore recovery: the provider-carried authority is
+        // HMAC-signed and the verified PI itself binds amount/currency/customer.
+        // This can reconstruct a mint even when both the pending row and the
+        // config version were created after the restored database snapshot.
+        const settledAt = await settlementAt(tx, event);
+        await purchasePackCredits(tx, {
+          workspaceId,
+          amount: signedAuthority.credits,
+          expiresAt: addMonthsUtc(settledAt, signedAuthority.validityMonths),
+          amountCents: signedAuthority.amountCents,
+          stripeEventId: event.id,
+          refType: "auto_topup",
+          refId: pi.id,
+          autoTopupAttemptId: signedAuthority.attemptId,
+          autoTopupPeriodMonthUtc: signedAuthority.periodMonthUtc,
+          configVersion: signedAuthority.configVersion,
+        });
+        return "processed";
+      }
+
+      const piCustomer =
+        typeof pi.customer === "string" ? pi.customer : pi.customer?.id ?? null;
+      if (
+        metaWs !== workspaceId ||
+        signedAuthority.attemptId !== pending.id ||
+        signedAuthority.periodMonthUtc !== pending.periodMonthUtc ||
+        signedAuthority.amountCents !== pending.amountCents ||
+        signedAuthority.currency !== pending.currency ||
+        signedAuthority.priceId !== pending.priceId ||
+        signedAuthority.credits !== pending.credits ||
+        signedAuthority.validityMonths !== pending.validityMonths ||
+        signedAuthority.configVersion !== pending.configVersion ||
+        signedAuthority.customerId !== pending.customerId ||
+        pending.customerId !== sub.stripeCustomerId ||
+        piCustomer !== pending.customerId ||
+        pi.amount !== pending.amountCents ||
+        pi.currency !== pending.currency ||
+        pi.metadata?.period_month_utc !== pending.periodMonthUtc ||
+        pi.metadata?.config_version !== String(pending.configVersion) ||
+        (pending.paymentIntentId !== null && pending.paymentIntentId !== pi.id)
+      ) {
+        throw new AutoTopupAttemptIntegrityError(
+          `PaymentIntent ${pi.id} does not match stored attempt ${attemptId}`
+        );
+      }
+
+      const settledAt = await settlementAt(tx, event);
       await purchasePackCredits(tx, {
         workspaceId,
-        amount: content.pack.credits,
-        expiresAt: addMonthsUtc(now, content.pack.validityMonths),
-        amountCents: pi.amount,
+        amount: pending.credits,
+        expiresAt: addMonthsUtc(settledAt, pending.validityMonths),
+        amountCents: pending.amountCents,
         stripeEventId: event.id,
         refType: "auto_topup",
         refId: pi.id,
-        configVersion: version,
+        autoTopupAttemptId: pending.id,
+        autoTopupPeriodMonthUtc: pending.periodMonthUtc,
+        configVersion: pending.configVersion,
       });
+      if (!(await clearPendingAutoTopupAttempt(tx, workspaceId, pending.id))) {
+        throw new AutoTopupAttemptIntegrityError(
+          `attempt ${pending.id} changed before settlement`
+        );
+      }
       return "processed";
     }
 

@@ -43,6 +43,15 @@ export const TERMINAL_STATUSES = new Set([
   "unpaid",
 ]);
 
+// A subscription can exist without being served yet (`incomplete`) or while
+// Stripe has paused it. Auto-top-up is a subscriber benefit, so off-session
+// pack charging is limited to the statuses that actually receive service.
+export const OFF_SESSION_CHARGEABLE_STATUSES = new Set([
+  "active",
+  "trialing",
+  "past_due",
+]);
+
 /**
  * May we initiate an OFF-SESSION charge (auto-top-up's PaymentIntent) for this
  * workspace right now? — the ONE definition, for the same reason
@@ -69,7 +78,7 @@ export function mayChargeOffSession(row: {
 }): boolean {
   return (
     hasLiveStripeSubscription(row) &&
-    !TERMINAL_STATUSES.has(row.status) &&
+    OFF_SESSION_CHARGEABLE_STATUSES.has(row.status) &&
     row.pausedAt === null
   );
 }
@@ -97,9 +106,12 @@ export function mayChargeOffSession(row: {
 export function hasLiveStripeSubscription(row: {
   stripeSubscriptionId: string | null;
   status: string;
+  tierCheckoutFenceAt?: Date | null;
 }): boolean {
   return (
-    row.stripeSubscriptionId !== null && !IRREVERSIBLE_STATUSES.has(row.status)
+    row.tierCheckoutFenceAt == null &&
+    row.stripeSubscriptionId !== null &&
+    !IRREVERSIBLE_STATUSES.has(row.status)
   );
 }
 
@@ -225,6 +237,13 @@ export async function getWorkspaceBillingState(
     .limit(1);
   // Free = ABSENCE of a subscriptions row (B6) — or a dead one.
   if (!sub) return { tier: "free", state: "free" };
+  // A mixed-version Checkout fence deliberately looks like an `incomplete`
+  // live subscription to OLD binaries so they cannot create a legacy Session.
+  // New readers must project the retained eligible-to-subscribe generation,
+  // not advertise a nonexistent invoice or paid entitlement.
+  if (sub.tierCheckoutFenceAt !== null) {
+    return { tier: "free", state: "free" };
+  }
 
   const resolveTier = async (): Promise<
     { tier: SubscriptionTier; reason?: undefined } | { tier: "free"; reason: "unmapped_price" }

@@ -40,7 +40,11 @@ import {
   type LlmProvider,
   type OwnPost,
 } from "@respin/llm";
-import { runInference, type RunInferenceResult } from "./inference";
+import {
+  InferenceRoleError,
+  runInference,
+  type RunInferenceResult,
+} from "./inference";
 import { BrainPointerDivergenceError } from "./errors";
 
 /**
@@ -155,6 +159,11 @@ export async function inferVoice(
   // forge. Minted here as well as inside `runInference` because this function
   // reads the creator's posts BEFORE the call, and that read must be caged too.
   const scope = await mintProfileScope(db, workspaceScope, profileId);
+  // Building the durable onboarding brain is owner-only. Keep this outer gate
+  // before corpus reads and before `runInference` can reserve a slot, contact a
+  // provider, or debit credits; the transaction-local capability check remains
+  // the final write authority.
+  if (scope.role !== "owner") throw new InferenceRoleError(scope.role);
 
   // R4 — ONLY THE CREATOR'S OWN POSTS REACH A MODEL.
   //

@@ -25,7 +25,21 @@ import {
   generationFeedback,
   generations,
 } from "../src/generation-schema";
+import { results } from "../src/results-schema";
+import {
+  promotionProposals,
+  proposalEvidenceFeedback,
+  proposalEvidenceResults,
+} from "../src/promotion-schema";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
+import {
+  autopsies,
+  autopsyCacheClaims,
+  trackedNiches,
+  trendItems,
+  trendSources,
+  trendTranscripts,
+} from "../src/trends-schema";
 import {
   ProfileScope,
   PROFILE_EXPORT_TABLES,
@@ -35,6 +49,7 @@ import {
   type WorkspaceScope,
 } from "../src/with-workspace";
 import { ExportBusyError, ProfileAccessError } from "../src/errors";
+import { intakePastedReference } from "../src/trends-storage";
 import { editBrainDocument } from "../src/brain-ops";
 import { CHECK } from "../src/brain-content";
 import {
@@ -327,7 +342,7 @@ describe("REQ-A04 brain export", () => {
       table: "future_creator_rows",
       holdsCreatorContent: true,
       export: { included: true, reason: "A planted future creator-data table for the guard." },
-      deletion: { behaviour: "cascade", reason: "A planted deletion decision for the guard." },
+      deletion: { behaviour: "cascade", reason: "A planted deletion decision for the guard.", legacyProjectionOnly: true },
     };
     expect(() => exportPlan([planted])).toThrow(/future_creator_rows/);
     expect(() => exportPlan([planted])).toThrow(ExportClassificationError);
@@ -349,7 +364,7 @@ describe("REQ-A04 brain export", () => {
       table: "future_creator_rows",
       holdsCreatorContent: true,
       export: { included: true, reason: "A planted future creator-data table for the guard." },
-      deletion: { behaviour: "cascade", reason: "A planted deletion decision for the guard." },
+      deletion: { behaviour: "cascade", reason: "A planted deletion decision for the guard.", legacyProjectionOnly: true },
     };
     const transaction = vi.spyOn(db, "transaction");
     let acquireCalls = 0;
@@ -730,12 +745,128 @@ describe("REQ-A04 brain export", () => {
       // returns nothing ("its check is vacuous"), and the leak check needs a
       // sibling row to leak. The NOTE carries the marker, so a leaked row is
       // identifiable in the emitted JSON rather than merely counted.
-      await db.insert(generationFeedback).values({
+      const [feedback] = await db.insert(generationFeedback).values({
         profileId: owner,
         workspaceId,
         generationId: generation.id,
         reaction: "used_as_is",
         note: `${marker}-FEEDBACK`,
+      }).returning();
+      // Slice 9a (R5): one logged result for each, for exactly the reason the
+      // feedback event above carries one. The NOTE carries the marker, so a
+      // leaked row is identifiable in the emitted JSON rather than merely
+      // counted. `metricDeclaredByDocId` names the OWNER's own brain document,
+      // because `results_metric_doc_fk` refuses anything else — which is the
+      // C3 tenancy property doing its job on this fixture.
+      const [result] = await db.insert(results).values({
+        profileId: owner,
+        workspaceId,
+        generationId: generation.id,
+        platform: "shorts",
+        audienceClass: "organic",
+        metricKey: "followers",
+        metricDeclaredByDocId: owner === profileId ? doc.id : siblingDoc.id,
+        observedFrom: new Date("2026-08-01T00:00:00Z"),
+        observedTo: new Date("2026-08-08T00:00:00Z"),
+        treatmentKey: `|hookSet|${snapshots[index].id}|followers`,
+        evidenceState: "quantified_self_reported",
+        reachValue: "4000",
+        reachDenominator: "1000",
+        note: `${marker}-RESULT`,
+      }).returning();
+      // Slice 9b: raw proposal history and both relational membership tables
+      // are creator data too. One deliberately mixed schema-valid fixture is
+      // enough here because this case tests export tenancy, while the
+      // operation suite separately refuses mixed source evidence.
+      const [proposal] = await db.insert(promotionProposals).values({
+        profileId: owner,
+        workspaceId,
+        source: "results",
+        targetKind: "performance_meta",
+        targetPointer: "/rules/-",
+        payload: { marker: `${marker}-PROPOSAL` },
+        familyKey: `${marker}-FAMILY`,
+        evidenceDigest: (index === 0 ? "a" : "b").repeat(64),
+        strength: "early",
+      }).returning();
+      await db.insert(proposalEvidenceResults).values({
+        proposalId: proposal.id,
+        profileId: owner,
+        workspaceId,
+        resultId: result.id,
+        role: "treatment",
+      });
+      await db.insert(proposalEvidenceFeedback).values({
+        proposalId: proposal.id,
+        profileId: owner,
+        workspaceId,
+        feedbackId: feedback.id,
+      });
+      await db.insert(trackedNiches).values({
+        profileId: owner,
+        workspaceId,
+        niche: `${marker}-NICHE`,
+      });
+      const [trendSource] = await db.insert(trendSources).values({
+        kind: "submitted",
+        externalId: `${marker}-SOURCE`,
+        sourceUrl: `https://example.test/${index}`,
+        profileId: owner,
+        workspaceId,
+      }).returning();
+      const [trendItem] = await db.insert(trendItems).values({
+        sourceId: trendSource.id,
+        externalVideoId: `${marker}-VIDEO`,
+        niche: `${marker}-NICHE`,
+        title: `${marker}-TREND`,
+        channelId: `${marker}-CHANNEL`,
+        videoViews: 200n,
+        channelMedianRecentViews: "100",
+        baselineSampleSize: 1,
+        baselineObservationIds: [`${marker}-BASELINE`],
+        baselineWindowStartsAt: new Date("2026-08-01T00:00:00.000Z"),
+        baselineWindowEndsAt: new Date("2026-09-01T00:00:00.000Z"),
+        sourcePublishedAt: new Date("2026-08-31T00:00:00.000Z"),
+        outlierRatio: "2",
+        rightsScope: "profile_private",
+        profileId: owner,
+        workspaceId,
+        transcriptState: "transcript_available",
+        saturation: "unmeasured",
+        saturationUnmeasuredReason: "incomplete_provenance",
+      }).returning();
+      const digest = `digest_${marker}`;
+      await db.insert(trendTranscripts).values({
+        trendItemId: trendItem.id,
+        rightsScope: "profile_private",
+        rightsBasis: "profile_private",
+        profileId: owner,
+        workspaceId,
+        content: `${marker}-TRANSCRIPT`,
+        contentDigest: digest,
+        provenance: { provider: "creator_paste" },
+      });
+      await db.insert(autopsies).values({
+        trendItemId: trendItem.id,
+        contentDigest: digest,
+        analysisVersion: "export-v1",
+        rightsScope: "profile_private",
+        rightsBasis: "profile_private",
+        profileId: owner,
+        workspaceId,
+        status: "completed",
+        analysis: { marker: `${marker}-AUTOPSY` },
+      });
+      await db.insert(autopsyCacheClaims).values({
+        trendItemId: trendItem.id,
+        contentDigest: `claim_${marker}`,
+        analysisVersion: "export-v1",
+        rightsScope: "profile_private",
+        rightsBasis: "profile_private",
+        profileId: owner,
+        workspaceId,
+        cacheScopeKey: owner,
+        status: "pending",
       });
     }
     await db.insert(frameworks).values([
@@ -751,6 +882,7 @@ describe("REQ-A04 brain export", () => {
         confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
+        rightsBasis: "profile_private",
         ownerProfileId: profileId,
         workspaceId,
       },
@@ -766,6 +898,7 @@ describe("REQ-A04 brain export", () => {
         confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
+        rightsBasis: "profile_private",
         ownerProfileId: sibling.id,
         workspaceId,
       },
@@ -776,6 +909,23 @@ describe("REQ-A04 brain export", () => {
     // have a sibling row above, so a dropped predicate in any single branch of
     // `exportPage` is caught here rather than in five untested branches.
     expect(Object.keys(parsed.tables)).toEqual(INCLUDED_TABLES);
+    expect(
+      (parsed.tables.trend_items as Array<{ videoViews: unknown }>)[0].videoViews,
+      "the exact bigint view count must survive the JSON format"
+    ).toBe("200");
+    // Slice 8 fix pass (tenancy CHANGE 5, 2026-09-03): the creator's own
+    // SUBMITTED URL is in their export, keyed by the same source id their
+    // private trend_items row points at; the sibling's URL is not (the
+    // "SIBLING-" loop below covers that half for this table too).
+    const [submitted] = parsed.tables.trend_sources as Array<{
+      id: string; kind: string; externalId: string; sourceUrl: string;
+    }>;
+    expect(submitted).toMatchObject({
+      kind: "submitted",
+      externalId: "TARGET-SCRIPT-SOURCE",
+      sourceUrl: "https://example.test/0",
+    });
+    expect((parsed.tables.trend_items as Array<{ sourceId: string }>)[0].sourceId).toBe(submitted.id);
     for (const [table, rows] of Object.entries(parsed.tables)) {
       expect(rows.length, `${table} returned nothing — its check is vacuous`).toBe(1);
       expect(
@@ -787,6 +937,32 @@ describe("REQ-A04 brain export", () => {
     // tables this export just read from.
     const siblingParsed = await jsonExport(workspaceScope, sibling.id);
     expect(JSON.stringify(siblingParsed.tables)).toContain("SIBLING-BRAIN");
+  });
+
+  it("R7 (slice 8c): the transcript's referenceInputId is exported beside the row and names the creator's own reference input", async () => {
+    const { workspaceScope } = await seedVoice();
+    const paste = await intakePastedReference(db, workspaceScope, profileId, {
+      sourceUrl: "https://example.test/r7?utm_source=x", transcript: "R7-PASTED-TRANSCRIPT",
+    });
+    const parsed = await jsonExport(workspaceScope);
+    const [transcript] = parsed.tables.trend_transcripts as Array<{ id: string; referenceInputId: string | null; trendItemId: string }>;
+    expect(transcript).toMatchObject({ referenceInputId: paste.referenceInputId, trendItemId: paste.itemId });
+    const inputs = parsed.tables.onboarding_inputs as Array<{ id: string; inputClass: string; sourceUrl: string | null; content: string }>;
+    expect(inputs.find((row) => row.id === paste.referenceInputId)).toMatchObject({
+      inputClass: "reference", sourceUrl: "https://example.test/r7", content: "R7-PASTED-TRANSCRIPT",
+    });
+    // The item the transcript hangs off is in the same file, with NO invented baseline.
+    const [item] = parsed.tables.trend_items as Array<{
+      id: string; baselineState: string; outlierRatio: unknown; videoViews: unknown;
+      saturation: string; saturationUnmeasuredReason: string;
+    }>;
+    // C11 (0028): the export is where the WRONG reason was found, so it is
+    // where the right one is pinned. A paste's provenance is complete; what it
+    // lacks is a population.
+    expect(item).toMatchObject({
+      id: paste.itemId, baselineState: "unavailable", outlierRatio: null, videoViews: null,
+      saturation: "unmeasured", saturationUnmeasuredReason: "no_population",
+    });
   });
 
   it("R13: a profile in another workspace is refused, not partially exported", async () => {
@@ -824,6 +1000,7 @@ describe("REQ-A04 brain export", () => {
         confidence: "unsupported",
         saturation: "observed",
         visibility: "private",
+        rightsBasis: "profile_private",
         ownerProfileId: profileId,
         workspaceId,
       },
@@ -842,6 +1019,8 @@ describe("REQ-A04 brain export", () => {
         confidence: "unsupported",
         saturation: "observed",
         visibility: "shared",
+        rightsBasis: "independently_licensed",
+        rightsEvidenceId: "test-license:export",
       },
     ]);
 
@@ -871,6 +1050,7 @@ describe("REQ-A04 brain export", () => {
         confidence: "unsupported" as const,
         saturation: "observed" as const,
         visibility: "private" as const,
+        rightsBasis: "profile_private" as const,
         ownerProfileId: profileId,
         workspaceId,
       }))
@@ -887,6 +1067,8 @@ describe("REQ-A04 brain export", () => {
       confidence: "unsupported",
       saturation: "observed",
       visibility: "shared",
+      rightsBasis: "independently_licensed",
+      rightsEvidenceId: "test-license:export-paging",
     });
 
     const parsed = await jsonExport(workspaceScope);

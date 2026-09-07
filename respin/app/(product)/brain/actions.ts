@@ -5,7 +5,7 @@
 // are the acts REQ-B02 puts a human in front of.
 //
 // THIN WRAPPERS, like every other action in this app. The role gate
-// (`assertMayDecide`), the pause gate, the pointer/placeholder validation, the
+// (`assertOwner`), the pause gate, the pointer/placeholder validation, the
 // all-positions-confirmed check, the confirmation sha over `(content,
 // source_evidence)` and the echo bar all live in `@respin/db` and are tested
 // there. Nothing is decided in this file.

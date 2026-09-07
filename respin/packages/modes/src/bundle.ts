@@ -35,6 +35,9 @@ import {
   FRAMEWORK_EVIDENCE_NOTE,
   GENERATION_SYSTEM,
   HARD_RULE_BRIEF,
+  REFERENCE_BLOCK_HEADER,
+  REFERENCE_BLOCK_NOTE,
+  REFERENCE_MECHANISM_LABELS,
   REWRITE_INSTRUCTION,
   modeBriefText,
   outputContractFor,
@@ -58,7 +61,11 @@ import {
   WEAKEST_POINT_MIN_WORDS,
 } from "./mode-checks";
 import { modeSpec, type ModeId } from "./modes";
-import { SPECIFIC_SHAPES } from "./traceability";
+import {
+  EXTENT_PROBES,
+  SPECIFIC_SHAPES,
+  specificExtents,
+} from "./traceability";
 
 /** The prefix every version this package mints carries. */
 export const PROMPT_BUNDLE_NAMESPACE = "modes";
@@ -90,6 +97,21 @@ function gateDescription(): string {
     // question ("what changed?") has to see it.
     "specificEnforcement=" +
       SPECIFIC_SHAPES.map((s) => s.id + "=" + s.enforcement).join(","),
+    // THE EXTENT POLICY, AS BEHAVIOUR RATHER THAN AS A NAME. Which drafts
+    // survive depends on how the shapes' matches are RESOLVED against each
+    // other as much as on the patterns themselves, and slice 8c proved it
+    // twice: the population of drafts reaching a creator moved in round 1 and
+    // again in round 2 with `SPECIFIC_SHAPES` byte-identical either side of the
+    // second move. There is no constant to hash for that, and a hand-bumped
+    // policy string is the `VOICE_PROMPT_BUNDLE_VERSION` anti-pattern this
+    // file's header exists to reject — so the line carries the tokeniser's
+    // OUTPUT on a fixed probe set instead. Change how extents resolve and the
+    // digest moves with nobody remembering to bump anything. `EXTENT_PROBES`
+    // states its own residual: a change invisible to every probe moves nothing.
+    "specificExtent=" +
+      EXTENT_PROBES.map((t) => t + "=>" + specificExtents(t).join("/")).join(
+        "|"
+      ),
     "claims=" +
       OUTPUT_CLAIM_SHAPES.map(
         (s) => s.family + ":" + s.id + "~" + s.pattern.source
@@ -144,6 +166,16 @@ export function bundlePartsFor(mode: ModeId): Record<string, string> {
       FRAMEWORK_EVIDENCE_NOTE,
       FRAMEWORK_EVIDENCE_LABEL,
       FRAMEWORK_BLOCK_EMPTY,
+    ].join("\n"),
+    // THE REFERENCE BLOCK'S STATIC WORDS (slice 8c R11, R-97), for the reason
+    // the framework block's are: the header is what makes a model read the
+    // mechanism as another creator's to adapt rather than quote, and a
+    // rewrite of it changes which drafts the gate then refuses. The mechanism
+    // itself is per generation and stays OUT.
+    referenceBlock: [
+      REFERENCE_BLOCK_HEADER,
+      REFERENCE_BLOCK_NOTE,
+      ...Object.values(REFERENCE_MECHANISM_LABELS),
     ].join("\n"),
     gates: gateDescription(),
   };

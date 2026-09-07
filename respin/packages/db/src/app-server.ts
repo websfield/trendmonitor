@@ -16,13 +16,25 @@ import {
   withWorkspace,
   monthlySpend,
   burnByMode,
+  brainAssetSummary,
+  ProfileScope,
+  writeCapabilities,
   type ActivateBrainDocCoherentResult,
   type BurnByModeResult,
+  type BrainAssetSummary,
   type LedgerPage,
   type MonthlySpendResult,
   type WorkspaceCtx,
   type WorkspaceScope,
 } from "./with-workspace";
+import {
+  promotionProposalHistoryInScope,
+  promotionProposalReviewInScope,
+  type DecidePromotionProposalParams,
+  type PromotionDecisionResult,
+  type PromotionProposalReview,
+} from "./promotion-ops";
+import type { PromotionProposal } from "./promotion-schema";
 import {
   appendOwnPost,
   appendReferencePost,
@@ -90,13 +102,49 @@ import type { Framework } from "./brain-schema";
 // reason as above; `listFeedback` returns RAW stored events by requirement
 // (R11), so there is deliberately no summary method here to bind.
 import { listFeedback, recordFeedback } from "./feedback-ops";
-import type { GenerationFeedbackRow } from "./generation-schema";
-import type { RecordGenerationFeedbackParams } from "./with-workspace";
+import type { Generation, GenerationFeedbackRow } from "./generation-schema";
+// Slice 9a. The results readers, the SAME shape as the feedback pair one line
+// up and for the same reasons: positional `WorkspaceScope`, and `listResults`
+// returns RAW stored rows by requirement (contract C5 puts every comparison in
+// `@respin/brain`).
+//
+// THE SENTENCE THAT USED TO END THIS COMMENT — "so there is deliberately no
+// comparison method here to bind" — WAS TRUE WHEN WRITTEN AND IS NOW FALSE. It
+// is corrected rather than deleted, because the distinction it protects still
+// holds and is the easy one to lose: there IS a comparison method bound below;
+// what there is not, and must never be, is a comparison CONSTRUCTED in
+// `@respin/db`. `resultComparisons` scopes, fetches, calls `@respin/brain` and
+// returns — see `results-comparison-ops.ts` for why GROUPING went there rather
+// than here, which was a corrected mistake and not an obvious choice (R-105).
+import {
+  declaredMetricForProfile,
+  generationsForResultLog,
+  listResults,
+  recordResult,
+} from "./results-ops";
+import { resultComparisons } from "./results-comparison-ops";
+import type { ComparisonGroup } from "@respin/brain";
+import type { DeclaredMetric, ResultRow } from "./results-schema";
+import type {
+  RecordGenerationFeedbackParams,
+  RecordResultParams,
+  PerformanceLearningEntitlement,
+} from "./with-workspace";
 import type { OnboardingInterviewDraft } from "./onboarding-schema";
 import {
   selectActiveProfile,
   selectedProfileForMember,
 } from "./profile-selection";
+import {
+  pastedReferencesForProfile,
+  trackNicheForProfile,
+  trackedNichesForProfile,
+  trendFeedProjection,
+  untrackNicheForProfile,
+  type PastedReference,
+  type TrackedNicheEntitlement,
+  type TrendFeedItem,
+} from "./trends-storage";
 
 let cached: Db | undefined;
 
@@ -168,6 +216,36 @@ export const respinDb = {
     selectedProfileForMember(getServerDb(), scope),
   selectActiveProfile: (scope: WorkspaceScope, profileId: string) =>
     selectActiveProfile(getServerDb(), scope, profileId),
+  trendFeed: (
+    scope: WorkspaceScope,
+    profileId: string,
+    now?: Date
+  ): Promise<TrendFeedItem[]> => trendFeedProjection(getServerDb(), scope, profileId, now),
+  trackNiche: (
+    scope: WorkspaceScope,
+    profileId: string,
+    niche: string,
+    entitlement: TrackedNicheEntitlement
+  ) => trackNicheForProfile(getServerDb(), scope, profileId, niche, entitlement),
+  trackedNiches: (scope: WorkspaceScope, profileId: string) =>
+    trackedNichesForProfile(getServerDb(), scope, profileId),
+  untrackNiche: (
+    scope: WorkspaceScope,
+    profileId: string,
+    trackedNicheId: string
+  ) => untrackNicheForProfile(getServerDb(), scope, profileId, trackedNicheId),
+  // Slice 8c (R-96). The owner-only READ of pasted references is the app's
+  // path to the section on `/trends`; it is scoped like `trackedNiches`.
+  pastedReferences: (scope: WorkspaceScope, profileId: string): Promise<PastedReference[]> =>
+    pastedReferencesForProfile(getServerDb(), scope, profileId),
+  // THERE IS DELIBERATELY NO `intakePastedReference` BIND HERE (slice 8c
+  // stage B, R-98). The stage-A intake is unmetered by design — the debit
+  // rides in `@respin/credits`' `submitPastedReference`, which composes the
+  // package-index export on its own transaction handle — so a bind on THIS
+  // facade was a door through which a screen could paste for free. Stage A
+  // bound it provisionally and asked stage B to delete it if no non-bypass
+  // caller appeared; none did (`app/**` builds against `respinCredits`), so
+  // it is gone. The READ stays: it spends nothing.
   // Slice 1's intake pair. Both take a WorkspaceScope POSITIONALLY rather than
   // inside an options object, and that is not a style choice: the AC-13
   // completeness scan in `tests/profile-cage.test.ts` finds scope-taking
@@ -473,4 +551,92 @@ export const respinDb = {
     page?: LedgerPage
   ): Promise<GenerationFeedbackRow[]> =>
     listFeedback(getServerDb(), scope, profileId, page),
+  brainAssetSummary: (
+    scope: WorkspaceScope,
+    profileId: string
+  ): Promise<BrainAssetSummary> =>
+    brainAssetSummary(getServerDb(), scope, profileId),
+  // Slice 9a, R5-R9. `params` is the capability's own param type, the
+  // `recordFeedback` line above: validation (the closed vocabularies, the
+  // lever pairs, the window, the note rules and the R8 declared-metric
+  // refusal) belongs to `recordResult`, which is also where every
+  // server-derived column is built.
+  recordResult: (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: RecordResultParams,
+    entitlement: PerformanceLearningEntitlement
+  ): Promise<ResultRow> =>
+    recordResult(getServerDb(), scope, profileId, params, entitlement),
+  // RAW ROWS, no comparison — see `results-ops.ts`'s header for what this
+  // surface may never grow.
+  listResults: (
+    scope: WorkspaceScope,
+    profileId: string,
+    page?: LedgerPage
+  ): Promise<ResultRow[]> => listResults(getServerDb(), scope, profileId, page),
+  // R8. `null` is a PAGE STATE ("you have not declared a north-star metric
+  // yet"), not an error - see `declaredMetricForProfile` for why the read and
+  // the write answer the same absence differently.
+  declaredMetricForProfile: (
+    scope: WorkspaceScope,
+    profileId: string
+  ): Promise<DeclaredMetric | null> =>
+    declaredMetricForProfile(getServerDb(), scope, profileId),
+  // The output picker's scoped list. Whole rows; the projection decides what
+  // of a generation a picker may show.
+  generationsForResultLog: (
+    scope: WorkspaceScope,
+    profileId: string,
+    page?: LedgerPage
+  ): Promise<Generation[]> =>
+    generationsForResultLog(getServerDb(), scope, profileId, page),
+  // THE COMPARISON SEAM. Composition only: it constructs nothing, and the
+  // WHOLE eligible population goes to `@respin/brain`, which owns grouping as
+  // well as comparison.
+  //
+  // NO `page` PARAMETER, deliberately, and it is the one parameter a reader
+  // will expect to find here: a comparison over a page is not a comparison.
+  // The population's own bound plus the `truncated` flag the accessor MEASURES
+  // are how this is bounded honestly instead — a clipped read is reported as
+  // clipped rather than silently compared.
+  resultComparisons: (
+    scope: WorkspaceScope,
+    profileId: string
+  ): Promise<ComparisonGroup[]> =>
+    resultComparisons(getServerDb(), scope, profileId),
+  refreshPromotionProposals: async (
+    scope: WorkspaceScope,
+    profileId: string,
+    entitlement: PerformanceLearningEntitlement
+  ): Promise<PromotionProposal[]> => {
+    const profileScope = await ProfileScope.mint(getServerDb(), scope, profileId);
+    const caps = writeCapabilities(profileScope);
+    return getServerDb().transaction((tx) => caps.refreshPromotionProposals(entitlement, tx));
+  },
+  promotionProposalReview: async (
+    scope: WorkspaceScope,
+    profileId: string,
+    proposalId: string
+  ): Promise<PromotionProposalReview> => {
+    const profileScope = await ProfileScope.mint(getServerDb(), scope, profileId);
+    return getServerDb().transaction((tx) => promotionProposalReviewInScope(profileScope, proposalId, tx));
+  },
+  promotionProposalHistory: async (
+    scope: WorkspaceScope,
+    profileId: string
+  ): Promise<PromotionProposal[]> => {
+    const profileScope = await ProfileScope.mint(getServerDb(), scope, profileId);
+    return promotionProposalHistoryInScope(profileScope);
+  },
+  decidePromotionProposal: async (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: DecidePromotionProposalParams,
+    entitlement: PerformanceLearningEntitlement
+  ): Promise<PromotionDecisionResult> => {
+    const profileScope = await ProfileScope.mint(getServerDb(), scope, profileId);
+    const caps = writeCapabilities(profileScope);
+    return getServerDb().transaction((tx) => caps.decidePromotionProposal(params, entitlement, tx));
+  },
 };

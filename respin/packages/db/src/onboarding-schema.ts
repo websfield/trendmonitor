@@ -26,6 +26,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -64,10 +65,19 @@ const updatedAt = () =>
 //     brain-doc CONTENT may be a verbatim substring of a `reference` input.
 //     That is a corpus-wide check rather than a per-entry one, and M2a has no
 //     content generator to gate.
-export const inputClass = pgEnum("onboarding_input_class", [
+export const PUBLIC_INPUT_CLASSES = [
   "own_post",
   "reference",
   "creator_authored",
+] as const;
+
+export const inputClass = pgEnum("onboarding_input_class", [
+  ...PUBLIC_INPUT_CLASSES,
+  // Product-built immutable evidence summaries. These are stored classes but
+  // deliberately excluded from public InputClass below: generic intake may
+  // never self-label creator input as a product conclusion.
+  "result_summary",
+  "feedback_summary",
 ]);
 
 export const usageOutcome = pgEnum("model_usage_outcome", [
@@ -166,6 +176,17 @@ export const onboardingInputs = pgTable(
     check(
       "onboarding_inputs_field_key_iff_creator_authored",
       sql`(${t.inputClass} = 'creator_authored') = (${t.fieldKey} IS NOT NULL)`
+    ),
+    check(
+      "onboarding_inputs_summaries_have_no_caller_attribution",
+      // TEXT COMPARISON IS DEPLOY-SAFETY, not a semantic widening. PostgreSQL
+      // refuses a newly-added enum value used in the same transaction as
+      // `ALTER TYPE ... ADD VALUE`; Drizzle applies all pending statements in
+      // one transaction. Casting the column to text keeps the closed enum as
+      // the storage authority while allowing the additive CHECK to be created
+      // by the real migrator on an existing 0032 database.
+      sql`${t.inputClass}::text NOT IN ('result_summary', 'feedback_summary')
+          OR (${t.fieldKey} IS NULL AND ${t.sourceUrl} IS NULL)`
     ),
   ]
 );
@@ -285,6 +306,11 @@ export const brainActivationSnapshots = pgTable(
       foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
       name: "brain_activation_snapshots_profile_workspace_fk",
     }).onDelete("cascade"),
+    unique("brain_activation_snapshots_id_profile_workspace_uq").on(
+      t.id,
+      t.profileId,
+      t.workspaceId
+    ),
   ]
 );
 
@@ -553,7 +579,10 @@ export type WorkspaceSpendMonthlyRow = typeof workspaceSpendMonthly.$inferSelect
 export type FirstBillableAttempt = typeof firstBillableAttempts.$inferSelect;
 export type NewFirstBillableAttempt =
   typeof firstBillableAttempts.$inferInsert;
-export type InputClass = (typeof inputClass.enumValues)[number];
+/** The generic creator-intake API's pre-9b public union. */
+export type InputClass = (typeof PUBLIC_INPUT_CLASSES)[number];
+/** Every value persisted in onboarding_inputs, including product summaries. */
+export type StoredInputClass = (typeof inputClass.enumValues)[number];
 export type CostState = (typeof costState.enumValues)[number];
 export type ResolvedTier = (typeof resolvedTier.enumValues)[number];
 export type OnboardingInterviewDraft =

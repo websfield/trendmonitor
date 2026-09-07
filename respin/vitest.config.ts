@@ -7,7 +7,11 @@ export default defineConfig({
   esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
-    include: ["tests/**/*.test.{ts,tsx}", "packages/**/tests/**/*.test.ts"],
+    include: [
+      "tests/**/*.test.{ts,tsx}",
+      "packages/**/tests/**/*.test.ts",
+      "worker/tests/**/*.test.ts",
+    ],
 
     // BOTH raised 30s -> 60s when migration 0012 landed (M2b-1).
     //

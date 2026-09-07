@@ -70,6 +70,38 @@ export default async function UsagePage(props: {
     balance = { ok: false, title: copy.title, detail: copy.detail };
   }
 
+  // C8's runway read is intentionally separate from the visible ledger page.
+  // `usageRunwayFor` owns one repeatable-read transaction containing the DB
+  // clock, active config, open-pause state, derived balance and debit history.
+  // It returns a named unavailable state for every component it can safely
+  // degrade, so this page neither substitutes a wall clock nor derives a rate.
+  let runway: Parameters<typeof UsageView>[0]["runway"];
+  try {
+    runway = await respinCredits.usageRunwayFor(scope);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[usage] runway read unavailable", err);
+    // The projection's named unavailable states require its authoritative DB
+    // instant. When acquiring that instant itself fails, inventing a timestamp
+    // would turn an outage into a false observation, so use the page's normal
+    // refusal surface rather than manufacturing a fifth projection state.
+    return <AccessRefusal copy={billingErrorDisplay(err)} />;
+  }
+
+  // Brain assets are a free, paused-safe read. The aggregate is scoped and
+  // exact in the DB layer; this page does not count a bounded history list.
+  let brainAssets: Parameters<typeof UsageView>[0]["brainAssets"];
+  try {
+    const profile = await respinDb.selectedProfileForMember(scope);
+    brainAssets = profile
+      ? { state: "available", ...(await respinDb.brainAssetSummary(scope, profile.id)) }
+      : { state: "no_profile" };
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[usage] brain assets unavailable", err);
+    brainAssets = { state: "unavailable" };
+  }
+
   // One extra row is fetched purely to answer "is there more?" honestly —
   // without it the page would have to either claim completeness it cannot
   // check, or count the whole table.
@@ -193,6 +225,8 @@ export default async function UsagePage(props: {
       // second answer that can name a window the derivation did not choose.
       period={{ start: period.start, ...BURN_PERIOD_COPY[period.kind] }}
       burnByMode={burnByMode}
+      runway={runway}
+      brainAssets={brainAssets}
       rows={rows}
       moreRows={moreRows}
       paused={paused}
