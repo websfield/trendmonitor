@@ -1,0 +1,74 @@
+-- R-98 (slice 8c, closing the SESSION-PAUSE open item (c)): ONE DEBIT AND ONE
+-- REFUND PER AUTOPSY CLAIM, SETTLED IN THE SCHEMA.
+--
+-- All three statements are drizzle-generated from `billing-schema.ts`; this
+-- header is the only hand-written part.
+--
+-- WHAT IT ADDS.
+--   Two PARTIAL UNIQUE INDEXES on `credit_ledger (ref_type, ref_id)`, one
+--     WHERE ref_type = 'autopsy_claim', one WHERE ref_type = 'autopsy_refund'.
+--   One CHECK, `credit_ledger_autopsy_ref`: a row of either ref_type must name
+--     its claim. NULLs are DISTINCT in a unique index, so without it a NULL
+--     `ref_id` slips past both indexes and the guarantee becomes
+--     idempotency-unless-the-writer-forgets — the same sentence
+--     `credit_ledger_expiry_ref` and `credit_ledger_free_allowance_ref`
+--     already carry for their own partial uniques.
+--   Nothing else: no column, no data movement.
+--
+-- WHY, AND WHAT WAS ALREADY TRUE. `submitPastedReference` reads the claim's
+--   debit before debiting and `settleParkedAutopsies` reads the refund before
+--   crediting, both inside the WORKSPACE ADVISORY LOCK, and the Docker
+--   concurrency proof races eight of each. That lock is a real control; it is
+--   also an application convention, and a read-then-write on a table with no
+--   constraint behind it is one forgotten `takeWorkspaceLock` — or one repair
+--   script run by hand — away from paying a creator back twice for one parked
+--   autopsy. A mint out of nothing is the one direction the ledger must never
+--   fail in, so it is settled here, in the same shape the five Stripe-object
+--   siblings and `credit_ledger_inference_debit_uq` already use.
+--
+-- FORWARD / BACKWARD COMPATIBILITY (expand-only).
+--   Old code against the new schema: it writes at most one `autopsy_claim` row
+--   per claim and one `autopsy_refund` row per claim already (the lock is what
+--   made that true), and both writers always set `ref_id` to the claim id, so
+--   neither the indexes nor the CHECK can fire on it. A duplicate becomes a
+--   unique violation instead of a silent second row — a transaction abort, not
+--   a corrupt balance.
+--   New code against the old schema: identical behaviour, one control weaker.
+--   The application logic does not read either index, so deploy order is free.
+--
+-- ORDER: expand -> migrate -> contract. EXPAND is this file. MIGRATE and
+--   CONTRACT are both nothing. The two CREATE UNIQUE INDEX statements and the
+--   ADD CONSTRAINT ... CHECK all VALIDATE every existing `credit_ledger` row
+--   of those two ref types on the way in — which is the point at which a
+--   pre-existing duplicate or NULL-ref row would surface. There are none in
+--   any environment today: the two ref types are slice 8c's, and nothing has
+--   yet written them outside tests, whose databases are created per run. On a
+--   populated database that has run 8c, a failure here is a real double-debit,
+--   double-refund or unattributed row to be investigated, not a migration to
+--   force through. B-4's lesson (0012 set NOT NULL + a CHECK on a populated
+--   table) is the reason that sentence is here rather than assumed.
+--   NOT `CONCURRENTLY`: the drizzle migrator runs each file in one
+--   transaction, and CREATE INDEX CONCURRENTLY cannot run inside one. On
+--   `credit_ledger` at production size this takes a brief write-blocking lock;
+--   if that table is ever large enough for that to matter, the indexes are
+--   created by hand with CONCURRENTLY and this file marked applied.
+--
+-- ROLLBACK (no automated down; hand SQL, in this order):
+--   ALTER TABLE credit_ledger DROP CONSTRAINT credit_ledger_autopsy_ref;
+--   DROP INDEX credit_ledger_autopsy_claim_uq;
+--   DROP INDEX credit_ledger_autopsy_refund_uq;
+--   Non-destructive: no row is touched, and the advisory-lock control that
+--   held before this migration holds after it.
+--
+-- RESTORE IMPLICATIONS. A pre-0027 dump restored onto the new schema builds
+--   both indexes and validates the CHECK, and fails only if it carries a
+--   duplicate or a NULL-ref row — see EXPAND. A post-0027 dump restored onto
+--   the old schema simply lacks all three.
+--
+-- DELETION-REGISTRY IMPACT: none. No table, column or FK is added, so
+--   `creator-data-registry.ts` and its cascade test are unchanged;
+--   `credit_ledger` already cascades from `workspaces`.
+
+CREATE UNIQUE INDEX "credit_ledger_autopsy_claim_uq" ON "credit_ledger" USING btree ("ref_type","ref_id") WHERE "credit_ledger"."ref_type" = 'autopsy_claim';--> statement-breakpoint
+CREATE UNIQUE INDEX "credit_ledger_autopsy_refund_uq" ON "credit_ledger" USING btree ("ref_type","ref_id") WHERE "credit_ledger"."ref_type" = 'autopsy_refund';--> statement-breakpoint
+ALTER TABLE "credit_ledger" ADD CONSTRAINT "credit_ledger_autopsy_ref" CHECK ("credit_ledger"."ref_type" NOT IN ('autopsy_claim','autopsy_refund') OR "credit_ledger"."ref_id" IS NOT NULL);

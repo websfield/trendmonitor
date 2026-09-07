@@ -1,0 +1,43 @@
+[Unit]
+Description=Respin pg-boss system worker
+# `After=postgresql.service` orders this unit after a HOST-installed Postgres
+# only. Against the docker-compose Postgres (the R-42 connection arithmetic
+# cites respin/docker-compose.yml) it is INERT: no such unit exists, systemd
+# ignores the unknown name, and the worker may start before the container
+# accepts connections. That start fails (pg-boss connectionTimeoutMillis
+# 10 s) and Restart=on-failure/RestartSec=5 covers the race — bounded by the
+# start limit below so a PERMANENT failure (a missing env value, an option
+# the installed pg-boss refuses) does not loop every 5 s forever: after
+# StartLimitBurst failed starts inside StartLimitIntervalSec the unit stays
+# `failed` until `systemctl reset-failed respin-worker`. Ten tries at ~15 s
+# each is ~150 s of retrying, enough for a container to come up on boot. The
+# worker cannot alert on its own absence (runbook: "What the worker cannot
+# alert on itself"); the external heartbeat-age check is what catches a unit
+# that stopped retrying.
+After=network-online.target postgresql.service
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=respin
+Group=respin
+WorkingDirectory=/opt/respin/current
+EnvironmentFile=/etc/respin/respin-worker.env
+ExecStart=/opt/respin/current/node_modules/.bin/tsx worker/main.ts
+Restart=on-failure
+RestartSec=5
+# 45 s = the runtime's 30 s graceful pg-boss stop plus process overhead. Past
+# the 30 s, pg-boss fails whatever is still in flight while the handler keeps
+# running; see the runbook's "Production process and systemd" for what that
+# means for an autopsy attempt (money-safe, recorded as a stale lease).
+TimeoutStopSec=45
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

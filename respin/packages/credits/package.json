@@ -1,0 +1,36 @@
+{
+  "name": "@respin/credits",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./app-server": "./src/app-server.ts",
+    "./webhook-server": "./src/webhook-server.ts",
+    "./deletion-server": "./src/deletion-server.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:concurrency": "vitest run --root ../.. packages/credits/tests/concurrency.docker.test.ts",
+    "stripe:setup": "tsx src/stripe/setup-cli.ts",
+    "stripe:auto-topup:rollout": "tsx src/stripe/auto-topup-rollout-cli.ts",
+    "stripe:auto-topup:reconcile-v1": "tsx src/stripe/auto-topup-v1-reconcile-cli.ts",
+    "stripe:tier-checkout:rollout": "tsx src/stripe/tier-checkout-rollout-cli.ts"
+  },
+  "dependencies": {
+    "@respin/config": "workspace:*",
+    "@respin/db": "workspace:*",
+    "@respin/llm": "workspace:*",
+    "@respin/modes": "workspace:*",
+    "drizzle-orm": "^0.44.0",
+    "stripe": "^22.5.0"
+  },
+  "devDependencies": {
+    "@respin/trends": "workspace:*",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "tsx": "^4.20.0"
+  }
+}

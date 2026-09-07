@@ -1,0 +1,74 @@
+
+> respin@0.0.0 build C:\projects\ai.playground\trendMonitor\respin
+> next build
+
+   ▲ Next.js 15.5.23
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 17.4s
+   Linting and checking validity of types ...
+
+ ⚠ The Next.js plugin was not detected in your ESLint configuration. See https://nextjs.org/docs/app/api-reference/config/eslint#migrating-existing-config
+   Collecting page data ...
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+   Generating static pages (0/11) ...
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+   Generating static pages (2/11) 
+   Generating static pages (5/11) 
+   Generating static pages (8/11) 
+ ✓ Generating static pages (11/11)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                 Size  First Load JS
+┌ ○ /                                      164 B         109 kB
+├ ○ /_not-found                            997 B         104 kB
+├ ƒ /admin                                 143 B         103 kB
+├ ƒ /admin/config                         1.6 kB         105 kB
+├ ƒ /admin/model-spend                     143 B         103 kB
+├ ƒ /api/auth/[...all]                     143 B         103 kB
+├ ƒ /api/export                            143 B         103 kB
+├ ƒ /api/stripe/webhook                    143 B         103 kB
+├ ƒ /brain                               1.29 kB         104 kB
+├ ● /for/[audience]                        164 B         109 kB
+├   ├ /for/women
+├   ├ /for/business
+├   └ /for/coaches
+├ ƒ /onboarding                          2.61 kB         106 kB
+├ ƒ /onboarding/first-ideas              1.61 kB         111 kB
+├ ƒ /onboarding/interview                  521 B         104 kB
+├ ƒ /results                             7.14 kB         110 kB
+├ ƒ /settings/billing                      143 B         103 kB
+├ ○ /sign-in                             1.27 kB         115 kB
+├ ○ /sign-up                             1.27 kB         115 kB
+├ ƒ /studio                               2.6 kB         112 kB
+├ ƒ /studio/frameworks                    3.1 kB         106 kB
+├ ƒ /trends                              4.43 kB         107 kB
+└ ƒ /usage                                 143 B         103 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/1e9670fa-2d7df238e6dfbceb.js  54.2 kB
+  ├ chunks/264-ee37288ed9e7d4f7.js       46.8 kB
+  └ other shared chunks (total)          1.99 kB
+
+
+ƒ Middleware                             34.7 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+exit=0

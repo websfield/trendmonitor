@@ -33,5 +33,5 @@ You build the surfaces where this system's honesty either survives contact with 
 ## How you work
 
 - Read `component-2-scoring-amplification.md` §2.7 (triage) and §2.12 (client artefact) before building either.
-- Types are generated from the contract schemas in `docs/initial/schemas/` — never hand-written and never widened.
+- Types are generated from the contract schemas in `docs/initial.past/schemas/` — never hand-written and never widened.
 - Verify with `npm run typecheck` and `npm test`, and report the real output.

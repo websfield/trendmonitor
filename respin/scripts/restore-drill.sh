@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+# Restore drill for Respin (audit 2026-08-17 #9, and the half that matters).
+#
+# "No backup has ever been restored" was the finding. A backup file is a claim;
+# a restore is the evidence. This script turns the claim into a check anyone can
+# re-run, and it REFUSES to report success unless the money tables actually came
+# back with rows in them.
+#
+# It restores into an ISOLATED database — never over a live one — and the name
+# is guarded the way `createDockerTestDb` guards its own (packages/db/src/
+# testing.ts): only a `respin_restore_drill*` name may be dropped, because
+# everything below the guard is destructive.
+#
+# USAGE
+#   BACKUP_FILE=/mnt/backups/respin/respin-<stamp>.dump.gz.gpg \
+#   BACKUP_PASSPHRASE_FILE=/etc/respin/backup.pass \
+#   MAINTENANCE_URL=postgres://respin:...@host:5432/postgres \
+#   bash scripts/restore-drill.sh   # (authored on Windows; no +x bit is set)
+set -euo pipefail
+
+: "${BACKUP_FILE:?BACKUP_FILE is required}"
+: "${BACKUP_PASSPHRASE_FILE:?BACKUP_PASSPHRASE_FILE is required}"
+: "${MAINTENANCE_URL:?MAINTENANCE_URL is required (a maintenance database on the target server)}"
+DRILL_DB="${DRILL_DB:-respin_restore_drill}"
+
+# THE GUARD, before anything destructive and before any connection — same rule
+# and the same reason as the test harness's: this script runs DROP DATABASE.
+# FULL MATCH, not a prefix glob. `respin_restore_drill*` accepted anything that
+# merely STARTED with the safe name, and the value was then interpolated
+# unquoted into `psql -c`, which executes every statement in the string. So
+#   DRILL_DB='respin_restore_drill; DROP DATABASE respin_prod; --'
+# passed the guard and dropped production. Demonstrated in the Task 5 round-1
+# gate. The character class below admits only what a database name may contain,
+# so no separator, quote or semicolon can survive it (CLAUDE.md golden rule 3,
+# and non-negotiable 7: a guard's population is a list, not a pattern that
+# happens to start right).
+case "$DRILL_DB" in
+  respin_restore_drill) ;;
+  respin_restore_drill_[a-z0-9_]*)
+    case "$DRILL_DB" in
+      *[!a-z0-9_]*)
+        echo "FATAL: refusing to drop \"${DRILL_DB}\" — a drill database name may contain only lowercase letters, digits and underscores." >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    echo "FATAL: refusing to drop \"${DRILL_DB}\" — this script DROPS the target database, so it only ever operates on the exact name respin_restore_drill or respin_restore_drill_<suffix>." >&2
+    exit 1
+    ;;
+esac
+if [ "${#DRILL_DB}" -gt 63 ]; then
+  echo "FATAL: \"${DRILL_DB}\" exceeds PostgreSQL's 63-character identifier limit." >&2
+  exit 1
+fi
+
+# --- STEP 2 (plan C4): restore with app, workers and network serving DISABLED.
+# A script cannot verify that someone else's worker is stopped, so it does the
+# next most honest thing: it refuses to run until the operator states it, and
+# the statement lands in the transcript. An unattended cron cannot satisfy this
+# by accident, which is the point -- this drill is a deliberate act.
+: "${RESTORE_SERVING_DISABLED:?RESTORE_SERVING_DISABLED must be set to \"confirmed\" -- stop the app and every worker pointed at the restore target FIRST. A restore that serves before its tombstones are replayed has un-deleted someone.}"
+if [ "$RESTORE_SERVING_DISABLED" != "confirmed" ]; then
+  echo "FATAL: RESTORE_SERVING_DISABLED must be exactly \"confirmed\", got \"${RESTORE_SERVING_DISABLED}\"." >&2
+  exit 1
+fi
+
+command -v pg_restore >/dev/null || { echo "FATAL: pg_restore not on PATH." >&2; exit 1; }
+command -v psql >/dev/null || { echo "FATAL: psql not on PATH." >&2; exit 1; }
+
+# The backup's own manifest (written by backup.sh) names the tombstones that
+# were already active when the dump was taken. A NULL there means the query
+# could not run: absence of an answer, not absence of tombstones.
+MANIFEST_FILE="${BACKUP_FILE%.dump.gz.gpg}.manifest.json"
+if [ -r "$MANIFEST_FILE" ]; then
+  node -e '
+    const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    if (m.activeTombstones === null) {
+      console.error("FATAL: " + process.argv[1] + " records activeTombstones=null. The backup could not read the tombstone table, so this restore cannot know what it is about to bring back. Do not serve from it.");
+      process.exit(1);
+    }
+    console.log("[drill] manifest: created " + m.createdAt + ", expires " + m.expiresAt + ", active tombstones at backup time: " + m.activeTombstones.length);
+  ' "$MANIFEST_FILE" || exit 1
+else
+  echo "WARNING: no manifest beside ${BACKUP_FILE}. This backup predates the C4 manifest, so the tombstones active at backup time are unknown and the journal is the only authority." >&2
+fi
+
+SUMS="${BACKUP_FILE%.dump.gz.gpg}.sha256"
+if [ -r "$SUMS" ]; then
+  echo "[drill] verifying checksum"
+  ( cd "$(dirname "$BACKUP_FILE")" && sha256sum -c "$(basename "$SUMS")" >/dev/null ) \
+    || { echo "FATAL: checksum mismatch — this backup is corrupt. Do NOT rely on it." >&2; exit 1; }
+else
+  echo "WARNING: no .sha256 beside ${BACKUP_FILE}; restoring unverified." >&2
+fi
+
+# The URI reaches node through the ENVIRONMENT, not argv: /proc/<pid>/cmdline is
+# world-readable on Linux, so a credentialed URI on a command line publishes the
+# password to every local account (CLAUDE.md golden rule 2).
+TARGET_URL="$(RESPIN_MAINT_URI="$MAINTENANCE_URL" RESPIN_DRILL_DB="$DRILL_DB" node -e '
+  const u = new URL(process.env.RESPIN_MAINT_URI);
+  u.pathname = "/" + process.env.RESPIN_DRILL_DB;
+  console.log(u.toString());
+')"
+# The SAME URI with the password removed. Every line this script PRINTS uses
+# this one; only the psql/pg_restore invocations use the credentialed form, and
+# they take it through PGPASSWORD rather than argv.
+TARGET_URL_SAFE="$(RESPIN_MAINT_URI="$TARGET_URL" node -e '
+  try { const u = new URL(process.env.RESPIN_MAINT_URI); u.password = ""; console.log(u.toString()); }
+  catch { console.log("(unparseable target url)"); }
+')"
+
+echo "[drill] recreating ${DRILL_DB}"
+# `-v db=` + `:"db"` makes psql quote the identifier, so even if the guard above
+# were ever loosened the value could not break out of the statement.
+#
+# THE STATEMENTS GO ON STDIN, NOT `-c`. psql runs its own lexer over stdin and
+# `-f` only; `-c` sends the string straight to the server, so `:"db"` arrives
+# uninterpolated and the server answers `syntax error at or near ":"`. Measured
+# against this repo's own client (psql 17.11): `-c` errors, stdin yields
+# `SELECT "zzz_probe"`. The first version of this fix used `-c` and would have
+# aborted the drill on every single run under `set -euo pipefail`.
+psql "$MAINTENANCE_URL" -v ON_ERROR_STOP=1 -v db="$DRILL_DB" <<'DROP_SQL'
+DROP DATABASE IF EXISTS :"db" WITH (FORCE);
+DROP_SQL
+psql "$MAINTENANCE_URL" -v ON_ERROR_STOP=1 -v db="$DRILL_DB" <<'CREATE_SQL'
+CREATE DATABASE :"db";
+CREATE_SQL
+
+
+echo "[drill] decrypting and restoring"
+gpg --batch --yes --decrypt --passphrase-file "$BACKUP_PASSPHRASE_FILE" "$BACKUP_FILE" \
+  | gunzip \
+  | pg_restore --dbname="$TARGET_URL" --no-owner --no-privileges --exit-on-error
+
+# ---------------------------------------------------------------------------
+# THE ACTUAL CHECK. A restore that produces empty tables "succeeds" at the
+# pg_restore level — every command runs, nothing errors, and the money is gone.
+# So the drill asserts the representative rows the audit named: workspaces,
+# subscriptions, the credit ledger, and the webhook event log.
+# ---------------------------------------------------------------------------
+echo "[drill] verifying representative rows"
+psql "$TARGET_URL" -v ON_ERROR_STOP=1 --quiet --tuples-only --no-align <<'SQL'
+\set ON_ERROR_STOP on
+DO $$
+DECLARE
+  n_ws bigint; n_sub bigint; n_led bigint; n_evt bigint; n_cfg bigint;
+  ledger_sum bigint;
+BEGIN
+  SELECT count(*) INTO n_ws  FROM workspaces;
+  SELECT count(*) INTO n_sub FROM subscriptions;
+  SELECT count(*) INTO n_led FROM credit_ledger;
+  SELECT count(*) INTO n_evt FROM stripe_events;
+  SELECT count(*) INTO n_cfg FROM config_versions;
+
+  RAISE NOTICE 'workspaces=% subscriptions=% credit_ledger=% stripe_events=% config_versions=%',
+    n_ws, n_sub, n_led, n_evt, n_cfg;
+
+  -- config_versions is the one table that can never legitimately be empty in a
+  -- restored production database: without an active config the app fails closed
+  -- and no price, allowance or credit cost can be read at all.
+  IF n_cfg = 0 THEN
+    RAISE EXCEPTION 'RESTORE INCOMPLETE: config_versions is empty. The app fails closed without an active config, so this restore would not boot.';
+  END IF;
+
+  -- The money invariant, re-derived on the RESTORED data: the ledger is
+  -- append-only and balance is the sum of deltas, so a workspace can never sum
+  -- negative. Checking it here proves the restore preserved the ledger's
+  -- integrity, not merely its row count.
+  SELECT coalesce(min(total), 0) INTO ledger_sum FROM (
+    SELECT sum(delta) AS total FROM credit_ledger GROUP BY workspace_id
+  ) per_workspace;
+  IF ledger_sum < 0 THEN
+    RAISE EXCEPTION 'RESTORE SUSPECT: a workspace''s restored ledger sums to % (negative). The ledger cannot go negative; this restore is not trustworthy.', ledger_sum;
+  END IF;
+
+  RAISE NOTICE 'money-path checks passed on the restored dataset';
+END $$;
+SQL
+
+# --- STEP 4 (plan C4): is the restored schema compatible with the migrations?
+#
+# `db:check` is deliberately NOT used here. It is `drizzle-kit check`, which is
+# OFFLINE (CLAUDE.md Commands: "db:check below is offline") -- it compares the
+# committed migration files with each other and never opens a connection. The
+# first version of this step ran it with DATABASE_URL set and printed "the
+# schema matches the committed migrations", which was a claim the check could
+# not make: a six-month-old dump twenty migrations behind would have passed
+# (round-1 code BLOCK 4).
+#
+# What CAN be observed is the migration ledger inside the restored database.
+echo "[drill] comparing the restored migration ledger with the committed migrations"
+APPLIED="$(psql "$TARGET_URL" --quiet --tuples-only --no-align -c "
+  SELECT CASE WHEN to_regclass('drizzle.__drizzle_migrations') IS NULL THEN 'NONE'
+         ELSE coalesce((SELECT count(*)::text FROM drizzle.__drizzle_migrations), '0')
+         END;" 2>/dev/null || echo "UNREADABLE")"
+COMMITTED="$(ls -1 "$(dirname "$0")/../packages/db/migrations"/*.sql 2>/dev/null | wc -l | tr -d ' ')"
+echo "[drill]   migrations applied in the restored database: ${APPLIED}"
+echo "[drill]   migration files committed in this checkout:  ${COMMITTED}"
+case "$APPLIED" in
+  ''|*[!0-9]*)
+    # Covers NONE, UNREADABLE and any psql noise. Without this the `[ -gt ]`
+    # comparisons below print "integer expression expected", `set -e` does NOT
+    # fire (they are inside `if`), and the drill goes on to announce "migration
+    # ledger matches" — a vacuous pass in the check that replaced a vacuous
+    # check (round-2 code CHANGE).
+    echo "FATAL: the restored database has no readable drizzle migration ledger (got \"${APPLIED}\"), so its schema cannot be compared with this checkout." >&2
+    exit 1
+    ;;
+esac
+case "$COMMITTED" in
+  ''|*[!0-9]*|0)
+    echo "FATAL: found no committed migration files at $(dirname "$0")/../packages/db/migrations — this checkout cannot be compared against anything. Run the drill from a complete checkout." >&2
+    exit 1
+    ;;
+esac
+if [ "$APPLIED" -gt "$COMMITTED" ]; then
+  echo "FATAL: the restored database has ${APPLIED} migrations applied but this checkout only carries ${COMMITTED}. The dump is NEWER than the code; replaying deletion state onto it would run this code against a schema it does not know." >&2
+  exit 1
+fi
+if [ "$APPLIED" -lt "$COMMITTED" ]; then
+  echo "[drill]   the dump predates $((COMMITTED - APPLIED)) committed migration(s); run \`DATABASE_URL=${TARGET_URL_SAFE} pnpm db:migrate\` before replay, then re-run this drill." >&2
+  exit 1
+fi
+# Cardinality only. Two branches with the same COUNT of migrations compare
+# equal here, so this says what it observed and no more.
+echo "[drill]   migration COUNT matches (${APPLIED}); this is a cardinality check, not schema identity"
+
+# --- STEPS 3 and 5 (plan C4): verify the EXTERNAL journal, then plan the replay.
+# The restored database is the record a deletion has to survive, so it is not
+# its own witness. `restore-verify.ts` reads the S3 journal -- which lives
+# outside this backup -- and refuses on a duplicate version, a delete marker, a
+# gap, a digest or checksum conflict, a wrong retention, an unreadable object,
+# or a database claiming a transition the journal never recorded.
+echo "[drill] extracting the restored deletion state for journal comparison"
+OPERATIONS_JSON="$(mktemp)"
+trap 'rm -f "$OPERATIONS_JSON"' EXIT
+psql "$TARGET_URL" --quiet --tuples-only --no-align -c "
+  SELECT CASE WHEN to_regclass('public.deletion_operations') IS NULL THEN '[]'
+         ELSE coalesce((SELECT json_agg(json_build_object(
+                'id', id, 'state', state, 'journalVersion', journal_version,
+                'requestedAt', to_char(requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+              ) ORDER BY id)::text FROM deletion_operations), '[]')
+         END;
+" > "$OPERATIONS_JSON"
+
+echo "[drill] verifying the external deletion journal (R-124)"
+if ( cd "$(dirname "$0")/.." && pnpm exec tsx scripts/restore-verify.ts --operations "$OPERATIONS_JSON" ); then
+  JOURNAL_VERDICT="verified"
+else
+  echo "" >&2
+  echo "FATAL: the external deletion journal did not verify against this restore." >&2
+  echo "Do NOT enable workers or traffic on ${DRILL_DB}." >&2
+  exit 1
+fi
+
+# --- STEP 7 (plan C4): traffic is enabled ONLY on a clean report, and this
+# script never enables it. Saying "PASSED" and stopping is how a drill gets
+# mistaken for a green light.
+cat <<EOF
+
+[drill] RESTORE DRILL PASSED (data restored, schema verified, journal ${JOURNAL_VERDICT}, migration count matched)
+  backup:   ${BACKUP_FILE}
+  restored: ${DRILL_DB}
+  date:     $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+THIS IS NOT PERMISSION TO SERVE. The replay plan printed above has not been
+executed, and restore-verify refuses outright if any planned step names an
+operation the restored database has no row for (the worker claims work from
+that table, so it could never execute such a step). Before any worker or
+traffic touches ${DRILL_DB}:
+  1. run the deletion worker against it with the journal configured, so every
+     reapply_tombstone / replay_erasure step is executed;
+  2. confirm each erasure transaction committed -- a non-zero residue rolls it
+     back and leaves the operation blocked, which is the intended outcome;
+  3. only then enable workers, and only then traffic.
+
+RECORD THIS RUN in RUNBOOK.md (Backups) and in the progress artifact — an
+undocumented drill is a drill nobody can point at when it matters. Then drop the
+drill database:
+  psql "<your maintenance url>" -c 'DROP DATABASE ${DRILL_DB} WITH (FORCE);'
+EOF

@@ -1,5 +1,5 @@
 ---
-description: Technical-writer mode. Make the project's documentation match what the code actually is now. Reads the doc set, diffs it against what changed, auto-fixes mechanical drift (paths, command lists, counts, file trees, version strings), and asks before any subjective rewrite. Gives CLAUDE.md a deeper truth-bloat-and-lessons check, since a wrong line there misleads every agent. Only ever makes docs match reality — it never invents capabilities. Run it after shipping, or any time the docs feel stale. Do NOT use to pull a newer pack version into the project — that's /sync-pack.
+description: Technical-writer mode. Make the project's documentation match what the code actually is now. Reads the doc set, diffs it against what changed, auto-fixes mechanical drift (paths, command lists, counts, file trees, version strings), and asks before any subjective rewrite. Gives CLAUDE.md a deeper truth-bloat-and-lessons check, since a wrong line there misleads every agent. Only ever makes docs match reality — it never invents capabilities. Run it after shipping, or any time the docs feel stale. Do NOT use to pull a newer pack version into the project — that's /sync-pack. Do NOT use for the customer-facing help under docs/help/ — that's /user-docs, which owns that voice.
 argument-hint: [optional: feature name or "since main" — defaults to recent changes]
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite
 ---
@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite
 
 Documentation drifts the moment code changes: a renamed file, a new command, a count that's now wrong, a tree that's missing a folder. Drift is invisible until it bites someone — and it bites a beginner hardest, because they trust the docs. `/sync-docs` is the technical-writer pass that closes that gap automatically, so the person doesn't have to notice.
 
-> The one rule above all others: **docs are made to match reality, never the other way around.** This command never invents a capability, never documents something the code doesn't do, and never inflates. If a doc claims something the code lacks, it flags the contradiction — it does not "make it true".
+> The one rule above all others: **docs are made to match reality, never the other way around.** This command never invents a capability, never documents something the code doesn't do, and never inflates. If a doc claims something the code lacks, it flags the contradiction — it does not "make it true". This rule is the per-edit application of the pack-wide **outbound-truth** discipline (canon: the `outbound-truth` skill — the same trace rule the `outbound-truth-critic` audits and `/release` applies to changelogs).
 
 ## Usage
 ```
@@ -24,7 +24,7 @@ Documentation drifts the moment code changes: a renamed file, a new command, a c
 Determine the change set: `git diff` against the base branch, the working tree, the last commit, or the named feature's diff. List the concrete deltas that docs care about: files added/removed/renamed, new or removed commands/scripts, new modules or directories, changed counts, changed version strings, moved files that docs link to. If there is no detectable change, say so and stop — nothing to sync.
 
 ### Step 2 — Find the doc set
-Discover the project's documentation; don't assume a fixed list. Typically: `README.md`, `CLAUDE.md`, `NORTH_STAR.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `.claude/project-context.md`, and anything under `docs/`. Read each one that the change set could affect.
+Discover the project's documentation; don't assume a fixed list. Typically: `README.md`, `CLAUDE.md`, `NORTH_STAR.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `.claude/project-context.md`, and anything under `docs/`. Read each one that the change set could affect. **One carve-out:** `docs/help/**` is customer-facing and `/user-docs` owns its voice — flag drift you notice there (one line, pointing at `/user-docs`), don't rewrite it.
 
 ### Step 3 — Classify every needed edit
 For each doc, cross-reference it against the change set and sort each required edit into one of two buckets:
@@ -37,7 +37,7 @@ For each doc, cross-reference it against the change set and sort each required e
 `CLAUDE.md` is loaded into every session, so drift there is worse than drift in a README — a wrong line actively misleads every agent. Whenever the doc set includes a `CLAUDE.md`, run three extra checks on it:
 
 - **Truth.** Every command in its Commands section exists in the project's real scripts (manifest / Makefile / task runner); every reviewer skill and agent in its Critical-Paths table exists under `.claude/skills/` and `.claude/agents/`; every path in "Where things live" exists on disk. Each mismatch is a mechanical fix (or, if the code side is the wrong one, a flagged contradiction per Step 4).
-- **Diet.** If the file has grown well past ~100 lines, states the same rule twice, or inlines explanation a skill already carries, flag it as a *subjective* item: propose the trim, ask first. Bloat is drift too — it dilutes the rules agents must obey.
+- **Diet.** If the file has grown well past its stated line budget (this project's `CLAUDE.md` sets its own target in its header note — currently ~200 lines), states the same rule twice, or inlines explanation a skill already carries, flag it as a *subjective* item: propose the trim, ask first. Bloat is drift too — it dilutes the rules agents must obey.
 - **Lessons hygiene.** If it has a Lessons section: entries stay one line each; if the list is over its ~10 cap, propose which to merge or retire; and if a lesson has proven itself, offer to promote it — to a Non-negotiable rule in `CLAUDE.md`, or (when a diff pattern can catch it) to a guardrail rule in `.claude/guardrails.rules.json` (ask first — promotion changes enforcement, never do it silently).
 
 ### Step 4 — Apply and ask

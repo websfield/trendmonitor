@@ -8,7 +8,7 @@ namespace UgcIntelligence.Architecture.Tests;
 /// <em>"A test asserts that adding any of them fails validation. This is the check that survives a
 /// well-meaning engineer who wants to 'just add a confidence score.'"</em>
 ///
-/// <para>These assertions read the real contract at <c>docs/initial/schemas/mechanisms-v1.json</c>.
+/// <para>These assertions read the real contract at <c>docs/initial.past/schemas/mechanisms-v1.json</c>.
 /// If that file stops forbidding a field, this test goes red — which is the point.</para>
 /// </summary>
 public sealed class MechanismSchemaTests
@@ -21,7 +21,7 @@ public sealed class MechanismSchemaTests
     }
 
     private static JsonElement Schema() => JsonDocument
-        .Parse(File.ReadAllText(Path.Combine(RepoRoot(), "docs", "initial", "schemas", "mechanisms-v1.json")))
+        .Parse(File.ReadAllText(Path.Combine(RepoRoot(), "docs", "initial.past", "schemas", "mechanisms-v1.json")))
         .RootElement;
 
     /// <summary>Every key through which a laundered number, or the amplification arm, could arrive.</summary>
@@ -164,7 +164,7 @@ public sealed class ContractSchemaParseTests
     [InlineData("mechanisms-v1.json")]
     public void ContractSchema_Parses(string file)
     {
-        var path = Path.Combine(RepoRoot(), "docs", "initial", "schemas", file);
+        var path = Path.Combine(RepoRoot(), "docs", "initial.past", "schemas", file);
         Assert.True(File.Exists(path), $"missing contract schema: {path}");
         _ = JsonDocument.Parse(File.ReadAllText(path));
     }
@@ -176,7 +176,7 @@ public sealed class ContractSchemaParseTests
     [InlineData("mechanism_statement")]
     public void Rubric_RecordsForbiddenScoringInput(string key)
     {
-        var path = Path.Combine(RepoRoot(), "docs", "initial", "schemas", "rubric-v1.json");
+        var path = Path.Combine(RepoRoot(), "docs", "initial.past", "schemas", "rubric-v1.json");
         var forbidden = JsonDocument.Parse(File.ReadAllText(path)).RootElement
             .GetProperty("scoring_inputs_forbidden");
         Assert.True(forbidden.TryGetProperty(key, out _));
@@ -192,7 +192,7 @@ public sealed class ContractSchemaParseTests
     [InlineData("ratify a mechanism")]
     public void Rubric_ForbidsTheModel(string prohibition)
     {
-        var path = Path.Combine(RepoRoot(), "docs", "initial", "schemas", "rubric-v1.json");
+        var path = Path.Combine(RepoRoot(), "docs", "initial.past", "schemas", "rubric-v1.json");
         var mayNever = JsonDocument.Parse(File.ReadAllText(path)).RootElement
             .GetProperty("model_authority").GetProperty("may_never")
             .EnumerateArray().Select(x => x.GetString()).ToArray();

@@ -1,0 +1,9 @@
+{
+  "_README": "Codex-owned pre-edit policy. Invalid or missing policy fails closed; shared Claude policy is read-only and remains fail-open for compatibility.",
+  "rules": [{
+    "id": "claude-ownership",
+    "severity": "block",
+    "filePattern": "(^|/)(\\.claude(/|$)|CLAUDE\\.md$)",
+    "message": "Claude owns CLAUDE.md and .claude/**. Codex may read them as shared canon but must not modify them; use AGENTS.md, .codex/**, or .agents/** for Codex workflow changes."
+  }]
+}

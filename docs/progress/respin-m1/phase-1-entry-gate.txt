@@ -1,0 +1,8 @@
+=== entry gate run Fri, Aug 14, 2026 11:26:39 PM ===
+packages/auth typecheck$ tsc --noEmit
+packages/auth typecheck: Done
+
+[2m Test Files [22m [1m[32m8 passed[39m[22m[2m | [22m[33m1 skipped[39m[90m (9)[39m
+[2m      Tests [22m [1m[32m70 passed[39m[22m[2m | [22m[33m1 skipped[39m[90m (71)[39m
+Everything's fine 🐶🔥
+build: exit 0

@@ -1,0 +1,71 @@
+{
+  "name": "respin",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.28.2",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ],
+    "auditConfig": {
+      "//": "EVERY id here must have a dated entry in respin/SECURITY-EXCEPTIONS.md naming the reason, the blast radius and the owner. An id without one is an unreviewed exception — delete it.",
+      "ignoreGhsas": [
+        "GHSA-gpj5-g38j-94v9",
+        "GHSA-f88m-g3jw-g9cj",
+        "GHSA-6g55-p6wh-862q",
+        "GHSA-r28c-9q8g-f849"
+      ]
+    }
+  },
+  "scripts": {
+    "dev": "next dev -p 8000",
+    "build": "next build",
+    "typecheck": "tsc --noEmit && pnpm --filter=!respin -r run typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "db:generate": "pnpm --filter @respin/db db:generate",
+    "db:migrate": "pnpm --filter @respin/db db:migrate",
+    "db:check": "pnpm --filter @respin/db db:check",
+    "db:seed": "pnpm --filter @respin/db db:seed",
+    "config:migrate": "pnpm --filter @respin/config config:migrate",
+    "stripe:setup": "pnpm --filter @respin/credits stripe:setup",
+    "stripe:auto-topup:rollout": "pnpm --filter @respin/credits stripe:auto-topup:rollout",
+    "stripe:auto-topup:reconcile-v1": "pnpm --filter @respin/credits stripe:auto-topup:reconcile-v1",
+    "worker:start": "tsx worker/main.ts",
+    "worker:typecheck": "tsc -p worker/tsconfig.json --pretty false",
+    "journal:forecast": "tsx scripts/journal-forecast.ts",
+    "journal:purge": "tsx scripts/journal-purge.ts",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@respin/auth": "workspace:*",
+    "@respin/config": "workspace:*",
+    "@respin/credits": "workspace:*",
+    "@respin/db": "workspace:*",
+    "@respin/llm": "workspace:*",
+    "@respin/trends": "workspace:*",
+    "better-auth": "^1.6.28",
+    "geist": "^1.7.2",
+    "next": "^15.4.0",
+    "pg-boss": "12.29.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "stripe": "^22.5.0",
+    "tsx": "4.23.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.33.0",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.17.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "eslint": "^9.33.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.39.0",
+    "vitest": "^3.2.0"
+  }
+}

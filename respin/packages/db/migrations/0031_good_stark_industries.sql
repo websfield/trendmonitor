@@ -1,0 +1,56 @@
+-- Slice 9a fix pass (2026-09-04). EVERY LEVER FIGURE IS A REAL NUMBER.
+--
+-- One drizzle-generated statement from `results-schema.ts`; this header is the
+-- hand-written part. No column, no table, no index, no data change.
+--
+-- THE DEFECT, MEASURED RATHER THAN ARGUED. `results_denominators_positive`
+-- (migration 0029) says `denominator IS NULL OR denominator > 0`, and the
+-- phase-9a contract lists that under "Invariants the database enforces, not the
+-- application". It is false for one value:
+--
+--   select ('NaN'::numeric > 0), ('NaN'::numeric is null);
+--    t | f
+--
+-- so a NaN denominator satisfied the predicate, and the invariant was enforced
+-- only by `decimalOrThrow` at the single writer -- one layer where the contract
+-- claimed two. Reproduced against this database by INSERTing the row: NaN
+-- denominator, NaN value, and both, were all ACCEPTED before this migration.
+--
+-- ALL FOUR LEVER COLUMNS, not just the two denominators, and the scope was
+-- decided by measurement rather than by symmetry:
+--
+--   select ('NaN'::numeric / 1000 * 1000)::text;   -- NaN
+--   select (1000::numeric / 'NaN'::numeric * 1000)::text;  -- NaN
+--
+-- A NaN VALUE poisons a per-1k exactly as thoroughly as a NaN denominator.
+--
+-- WHAT IT WOULD ACTUALLY HAVE DONE, checked rather than dramatised: NOT a wrong
+-- median. `@respin/brain`'s `per1k` already refuses a non-finite figure
+-- (`Number.isFinite`) and THROWS, so one stored NaN would have taken out that
+-- creator's whole comparison screen, permanently, with no way for them to
+-- delete the row -- `results` is append-only. An unrecoverable refusal rather
+-- than a quiet lie, which is still exactly what a constraint on an append-only
+-- table exists to prevent.
+--
+-- WHY `<> 'NaN'` AND NOT `x = x`: `numeric` NaN EQUALS ITSELF, unlike an IEEE
+-- float. `'NaN' = 'NaN'` is true, so the usual self-equality idiom detects
+-- nothing. `'NaN' <> 'NaN'` is false and `NULL <> 'NaN'` is NULL, which is
+-- exactly the shape a CHECK needs: refuse NaN, pass on absent.
+--
+-- INFINITY IS NOT MENTIONED because it is already unreachable: the columns are
+-- `numeric(24, 8)` and `'Infinity'::numeric(24,8)` is refused by the TYPE with
+-- "numeric field overflow" (measured, both signs). A clause that can never fire
+-- is a dead control; `results-schema.test.ts` pins the type's refusal instead,
+-- so removing the precision/scale is a red test rather than a silent reopening.
+--
+-- ADDITIVE: `results_denominators_positive` is UNCHANGED and not recreated.
+-- The two constraints together are what make "any denominator present => a real
+-- number greater than zero" true; neither says it alone.
+--
+-- EXISTING ROWS: none can violate it. The only writer is `recordResult`, whose
+-- `decimalOrThrow` regex has always refused a non-numeric literal, so no stored
+-- row carries NaN and this ALTER cannot fail on validation.
+ALTER TABLE "results" ADD CONSTRAINT "results_lever_figures_are_numbers" CHECK (("results"."reach_value" IS NULL OR "results"."reach_value" <> 'NaN'::numeric)
+          AND ("results"."reach_denominator" IS NULL OR "results"."reach_denominator" <> 'NaN'::numeric)
+          AND ("results"."conversion_value" IS NULL OR "results"."conversion_value" <> 'NaN'::numeric)
+          AND ("results"."conversion_denominator" IS NULL OR "results"."conversion_denominator" <> 'NaN'::numeric));

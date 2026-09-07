@@ -1,0 +1,35 @@
+=== TYPECHECK ===
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== LINT ===
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+=== DB:GENERATE ===
+
+No schema changes, nothing to migrate 😴
+=== TEST ===
+    [90m222| [39m  [34mit[39m(
+    [90m   | [39m  [31m^[39m
+    [90m223| [39m    "with NEITHER env var set: exit 1, a typed message naming BOTH, an…
+    [90m224| [39m    { timeout[33m:[39m [34m60_000[39m }[33m,[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m103 passed[39m[22m[90m (104)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m2419 passed[39m[22m[90m (2420)[39m
+[2m   Start at [22m 11:05:17
+[2m   Duration [22m 335.58s[2m (transform 335.41s, setup 0ms, collect 1746.42s, tests 4117.22s, environment 75ms, prepare 198.28s)[22m
+
+ ELIFECYCLE  Test failed. See above for more details.
+TEST_EXIT=0
+=== BUILD ===
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+=== GATE DONE ===

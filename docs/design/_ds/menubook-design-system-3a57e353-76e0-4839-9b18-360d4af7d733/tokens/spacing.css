@@ -1,0 +1,49 @@
+/* ============================================================================
+ * Menubook — Spacing, radius & sizing tokens
+ * 8px base grid. Mesa enforces a 44px minimum touch target on primary actions.
+ * ========================================================================== */
+
+:root {
+  /* Spacing scale (8px base, with 4px half-steps) */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+  --space-11: 80px;
+  --space-12: 96px;
+
+  /* Radii — buttons ~12, cards ~16, chips/pills full */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-full: 999px;
+
+  --radius-button: 12px;
+  --radius-card: 16px;
+  --radius-input: 12px;
+  --radius-chip: 999px;
+
+  /* Sizing */
+  --size-tap: 44px;          /* minimum primary touch target */
+  --size-tap-sm: 36px;       /* secondary/tertiary only */
+  --size-icon: 24px;
+  --size-icon-sm: 20px;
+  --size-icon-lg: 28px;
+  --size-avatar: 40px;
+  --size-avatar-sm: 28px;
+  --size-avatar-lg: 56px;
+
+  /* Layout */
+  --container-max: 1200px;
+  --container-prose: 680px;
+  --phone-width: 390px;       /* diner app reference frame */
+}

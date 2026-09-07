@@ -3,7 +3,7 @@
 Test names carry the acceptance-criterion identifier from the phase plan so a reviewer can map a
 green line to a criterion. No network, no model, no DB: the drafting client is a deterministic
 offline fake and every corpus is in-memory (the Phase 0/2 convention). Mechanism dicts are validated
-against ``docs/initial/schemas/mechanisms-v1.json`` — the contract is the barrier.
+against ``docs/initial.past/schemas/mechanisms-v1.json`` — the contract is the barrier.
 """
 
 from __future__ import annotations

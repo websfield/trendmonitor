@@ -1,5 +1,5 @@
 ---
-description: Merge the good parts of a newer pack version into THIS project's already-customized commands, skills, and agents — AND prospect the repo for new project-specific coverage it now warrants (skills, guardrail rules, post-edit checks, audit critics). Fills the gaps the installer and the bootstrap generators leave: install never updates files you already have, and the generators run once while repos keep growing new Critical Paths, surfaces, and packages. Additive only; your project-specific content is never replaced. Do NOT use to update the project's own documentation to match the code — that's /sync-docs.
+description: Merge the good parts of a newer pack version into THIS project's already-customized commands, skills, and agents (any installed module's files included) — AND prospect the repo for new project-specific coverage it now warrants (skills, guardrail rules, post-edit checks, audit critics). Fills the gaps the installer and the bootstrap generators leave: install never updates files you already have, and the generators run once while repos keep growing new Critical Paths, surfaces, and packages. Additive only; your project-specific content is never replaced. Do NOT use to update the project's own documentation to match the code — that's /sync-docs.
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite, Agent
 ---
 
@@ -11,7 +11,7 @@ That leaves a real gap: when the pack ships an improved `create-plan`, `implemen
 
 There is a **second gap** this command closes: the bootstrap generators run **once**. `/bootstrap-claude-pack` generates a project's Critical-Path skills, reviewer agents, guardrail rules, and post-edit checks at setup, and `/bootstrap-critics` generates its audit critic panel — all from the repo as it was *then*. But repos grow — a new module, a new integration, a new surface, a new package, a rule people keep breaking. The newly-warranted coverage was never written. So this command also **prospects the repo for new project-specific coverage** — across every dimension those generators produce (skills, guardrail rules, post-edit checks, critics) — and offers to scaffold it. Each sync makes the installed pack more capable, not just more current.
 
-> Run this after pulling a newer version of the pack repo. It compares the pack's `template/.claude/**` against this project's `.claude/**` (plus the golden-rules block in `CLAUDE.md.template`), reconciles what diverged, and prospects for new coverage the repo now warrants. Nothing is written without your confirmation.
+> Run this after pulling a newer version of the pack repo. It compares the pack's `template/.claude/**` — plus any installed module's `template/modules/<name>/.claude/**` and the golden-rules block in `CLAUDE.md.template` — against this project's `.claude/**`, reconciles what diverged, and prospects for new coverage the repo now warrants. Nothing is written without your confirmation.
 
 ## Usage
 ```
@@ -35,19 +35,51 @@ Use `TodoWrite` to track these phases.
 
    Use `diff -q` (or equivalent) per file. Present the divergence report as a table: path · bucket · pack lines / target lines.
 
-4. **Golden-rules currency check (the one file outside the walk).** The walk covers `.claude/**` only, but the pack's canonical *Golden rules* block lives in `<pack>/template/CLAUDE.md.template` and occasionally gains a rule. Compare it against the same block in this project's `CLAUDE.md`: if the pack's block has rules the project's lacks, add one row to the harvest plan offering to **append the missing rules verbatim** — never reword or renumber the rules already there, and touch nothing else in `CLAUDE.md`. If the project's `CLAUDE.md` has no golden-rules section at all, offer to insert the pack's canonical block as-is (heading included) — or leave it to a `/bootstrap-claude-pack` run, which inserts it per its Phase 3.
+4. **Module walk (so installed modules receive improvements too).** If `<pack>/template/modules/` exists (older pack checkouts lack it — skip this step silently then), walk each `<pack>/template/modules/<name>/.claude/` and check the target's **footprint**: do any of that module's files already exist in this project's `.claude/`? (Installed module files merge indistinguishably into `.claude/`, so footprint is the detection.) A module **with** footprint is synced exactly like core — its files classify into the same four buckets above (a customized module file is DIVERGENT and harvests additively; a missing one is TARGET-MISSING and is offered). A module with **zero** footprint is skipped, with a one-line mention that it's available via the installer's `--with <name>` / `-With <name>`. One honest limit: detection is by the *current* pack's filenames — if a later pack version renames a module's files, its footprint reads zero and it drops out of sync coverage; note that in the report if a name mismatch is suspected.
+5. **Golden-rules currency check (the one file outside the walk).** The walk covers the `.claude/`-shaped trees only, but the pack's canonical *Golden rules* block lives in `<pack>/template/CLAUDE.md.template` and occasionally gains a rule. Compare it against the same block in this project's `CLAUDE.md`: if the pack's block has rules the project's lacks, add one row to the harvest plan offering to **append the missing rules verbatim** — never reword or renumber the rules already there, and touch nothing else in `CLAUDE.md`. If the project's `CLAUDE.md` has no golden-rules section at all, offer to insert the pack's canonical block as-is (heading included) — or leave it to a `/bootstrap-claude-pack` run, which inserts it per its Phase 3.
+6. **Controls currency check (presence, not diff — the one check a superset cannot dodge).** A handful of load-bearing controls are worth detecting by **presence** rather than by file comparison, because the files that most need them are exactly the ones the TARGET-SUPERSET bucket skips. For each of the fourteen controls below, grep the target's counterpart file for the marker phrase; a miss is one row in the harvest plan offering to insert that control **verbatim from the pack**, at the natural seam, preserving everything around it. Run this for every file the two tables name — the five gate-running commands and the project's `CLAUDE.md` — **regardless of its bucket**, including IDENTICAL and TARGET-SUPERSET: a file byte-equal to an *older* pack version passes the diff test trivially while missing every newer control.
+
+   **Match case-insensitively and as fixed strings (`grep -iF`)** — a project that adopted a control by hand may have capitalised a word for emphasis, and one marker carries parentheses that a regex would swallow. Two rows are anchored instead (their exact grep is in the row, and it reads the same under BRE, ERE, or `rg`), because their bare phrase also occurs in nearby prose. If your `grep` rejects `-i` and `-F` together (some Windows builds do), plain `grep -i` matches every marker under default grep — the one parenthesised marker is literal there.
+
+   **In `.claude/commands/`:**
+
+   | Control | What it does (plain words) | Marker phrase | Target files |
+   |---|---|---|---|
+   | Round definition + cap | defines a review round and stops at two | `any reviewer spawn after the first verdict` | `go`, `create-plan`, `implement`, `start-teams`, `review-phase` |
+   | Severity filter | only serious findings earn a reviewer re-run; small fixes ship without one | `fixed without re-review` | `go`, `create-plan`, `implement`, `start-teams`, `review-phase` |
+   | Spend announcement | says how many reviewer agents will run, before they do | `Announce the spend` | `go`, `create-plan`, `implement`, `start-teams`, `review-phase` |
+   | Convergence stop-rule | stops a fix loop that is breeding its own findings | `not converging` | `create-plan`, `implement`, `start-teams`, `review-phase` |
+   | Lean gate | reads the project's lean-or-full dial | `Gate intensity` | `go`, `create-plan`, `implement`, `start-teams`, `review-phase` |
+   | Auto-escalate under lean | auth/money-class paths keep separate reviewers even under lean | `Auto-escalate` | `create-plan`, `implement`, `start-teams`, `review-phase` |
+   | Reachability field | every phase plan says which user can do what, via which caller | `Reachability (one line)` | `create-plan` |
+   | Reachability finding order | findings on code no user reaches yet are parked, not blockers | `Order findings by reachability` | `review-phase` |
+   | Deferred-findings read-back | parked findings come back when their slice goes live | `deferred-findings.md` | `create-plan`, `review-phase` |
+   | Session-model attribution | the card and the ledger's `started` line name the model the phase was built and reviewed on | `session model` | `implement`, `start-teams`, `review-phase` |
+
+   **In the project's `CLAUDE.md`** — the walk covers `.claude/**` only, so without this second table four shipped controls could never reach an installed project. Offer each missing one as its own harvest row, inserted into the section named, touching nothing else in the file (the same narrow discipline the golden-rules currency check above uses):
+
+   | Control | What it does (plain words) | Marker phrase | Section it belongs to |
+   |---|---|---|---|
+   | Counterweighted ratchet | "too small to check" is the signal to check once — not to re-review a typo | `to check at all` | Critical Paths → reviewer mapping |
+   | Declared gate intensity | the lean-or-full choice, written down | `Gate intensity:` **at line start** — `grep -i '^[* ]*Gate intensity:'` (the bare phrase also sits inside the ratchet paragraph's pointer; the bracket tolerates a bolded line) | after the Critical-Path table |
+   | Full-gates marker | the table column that marks which paths never run lean | `Full gates?` **on the table's header row** — `grep -i 'Reviewer agent.*Full gates?'` (the header row also names the reviewer-agent column; the note and prose below the table do not) | the Critical-Path table's header row |
+   | Reachability in the DoD | unreachable work is not done | `it is inventory` | Definition of Done |
+
+   *(The golden-rule-1 claim-verification clause needs no row — it lives inside the Golden rules block, which step 5 already harvests.)* One honesty clause for the **Declared gate intensity** row only: its marker also matches the template's unresolved `Gate intensity: ⟨lean | full⟩` placeholder, so a hand-copied line would read as "present" for a choice nobody made. Report that case as **`present (undeclared)`** — legend: *the line is there but still says `⟨lean | full⟩`; no choice was made, so every gate runs at full until you pick* — and fold one question into the Phase 3 prompt: *"Gates run at full right now. Lean is one merged reviewer per gate, roughly half the agents, same checklists; full is one reviewer per touched path. Lean or full?"* The behaviour is already safe (every gate reads an unresolved value as full); this keeps the *report* honest too.
+
+   Report the result as one matrix per table — control × file (for `CLAUDE.md`, control × section), present / missing / present (undeclared), each row carrying its plain-words line — **before** the harvest plan, so the user sees the coverage gap in one glance. A file missing several controls is the strongest harvest candidate in the whole run, whatever its diff bucket says. Control rows join the Phase 3 multi-select as their own options; when a target file lacks a control because the project deliberately removed it, the user deselects that row like any other — presence detection informs the offer, it never forces the edit.
 
 ### Phase 2: Gap-analyze each DIVERGENT file (pack-only good parts)
 
-For each DIVERGENT (and any uncertain TARGET-SUPERSET) file, identify **only what the pack version has that this project's version lacks** — additive value, never a list of things to replace.
+For each DIVERGENT (and any uncertain TARGET-SUPERSET) file, identify **only what the pack version has that this project's version lacks** — additive value, never a list of things to replace. A TARGET-SUPERSET file still goes through Phase 1's controls currency check (step 6) whatever this gap-analysis concludes — a superset is where a missing control hides.
 
-- Read both versions. For large files (commands/skills over ~150 lines), delegate the read to **one read-only `Agent`** per file with the brief: *"Compare PACK vs TARGET; report only what the PACK has that the TARGET lacks (concept, pack location, value HIGH/MEDIUM/LOW, one-line integration note). The target is project-customized — do not suggest replacing anything. Be honest if the pack offers nothing."* Keep its conclusions, not the file dumps.
+- Read both versions. For large files (commands/skills over ~150 lines), delegate the read to **one read-only `Agent`** per file with the brief: *"Compare PACK vs TARGET; report only what the PACK has that the TARGET lacks (concept, pack location, value HIGH/MEDIUM/LOW, one-line integration note). The target is project-customized — do not suggest replacing anything. Be honest if the pack offers nothing."* Keep its conclusions, not the file dumps. The compare agents may run **one model tier cheaper than the session** when the account exposes one — never a more expensive one; unsure → inherit (canon: the `using-the-pack` skill's token-economy dials).
 - Be ruthless about honesty: if the target is already a superset, say "nothing to harvest" and skip it. Do not manufacture value to justify an edit.
 - Produce a per-file harvest list ranked by value. Drop LOW items unless they're cheap one-liners.
 
 ### Phase 3: Confirm scope with the user
 
-Present the consolidated harvest plan via `AskUserQuestion` (multi-select): one option per file that has HIGH/MEDIUM additive value, each summarizing what would be added. Let the user deselect anything. Ask **once**. Skip files with nothing to harvest without asking.
+Present the consolidated harvest plan via `AskUserQuestion` (multi-select): one option per file that has HIGH/MEDIUM additive value, each summarizing what would be added, **plus one option per missing control × file from the step 6 matrices** (in plain words; these never count as "nothing to harvest", whatever the file's bucket), and — only when a matrix reported `present (undeclared)` — the one-line lean-or-full question from step 6, folded into this same prompt (as its own single-choice question in the same call). Let the user deselect anything. Ask **once** — never a second prompt for the controls. Skip files with nothing to harvest without asking.
 
 ### Phase 4: Integrate additively (the merge, not a copy)
 
@@ -75,7 +107,9 @@ Run **one evidence sweep** of the repo's own knowledge and feed every dimension 
 - **recurring-mistake signal** — a guardrail that fires often, a convention stated in docs but enforced
   nowhere, TODO/FIXME clusters, or anything the user names as a pain point.
 
-For a large repo, delegate the sweep to **one read-only `Agent`** and keep its ranked conclusions.
+For a large repo, delegate the sweep to **one read-only `Agent`** and keep its ranked conclusions. The
+sweep may run one model tier cheaper than the session when the account exposes one — never a more
+expensive one; unsure → inherit (canon: the `using-the-pack` skill's token-economy dials).
 Consolidate every proposal into **one `AskUserQuestion`** (multi-select), one option per item tagged by
 dimension with its evidence, so the user confirms the whole coverage plan in a single pass. Ask
 **once**; skip entirely if nothing is warranted. Hold **one honesty bar across all dimensions:
@@ -95,7 +129,7 @@ Per-dimension specifics:
 - **Guardrail rules** — `block` only unambiguous, expensive violations; `warn` for heuristic ones; keep every `filePattern` absolute-path-safe (`(^|/)foo`, never bare `^foo`). Append to `guardrails.rules.json`; keep every project-specific rule.
 - **Post-edit checks** — start conservative: a failing check blocks the edit loop, so only wire fast, reliable commands for a newly-appeared workspace.
 - **Audit critics** — two cases:
-  - **(a) No panel yet** — the repo has `audit.md` / `bootstrap-critics.md` and only the generic `architecture-critic` / `accessibility-critic` / `correctness-critic` / `operability-critic`. → **Recommend the user run `/bootstrap-critics`**; don't silently write a roster — its roster-confirmation is the required interaction. This is the case that makes the audit framework actually *usable* in a repo that predates it.
+  - **(a) No panel yet** — the repo has `audit.md` / `bootstrap-critics.md` and only the generic `architecture-critic` / `accessibility-critic` / `correctness-critic` / `operability-critic` / `outbound-truth-critic` / `supply-chain-critic`. → **Recommend the user run `/bootstrap-critics`**; don't silently write a roster — its roster-confirmation is the required interaction. This is the case that makes the audit framework actually *usable* in a repo that predates it.
   - **(b) Panel exists but a new track has no lens** — author the missing critic from `_critic-template.md` per `auditing-with-critics` (one lens, read-only `Read, Grep, Glob`, a `Track:` marker, real reading-list paths, and the archetype's `effort: max`), or point the user at `/bootstrap-critics <track>`. Never duplicate a generic critic's lens.
 - **Production surfaces** — only if `project-context.md` has a *Production surfaces* block whose facts have drifted (a test/coverage tool, CI gate, migration tool, or observability stack the block doesn't name). Refresh it additively — same "cite the evidence, or 'none found'" honesty as bootstrap Phase 7; never invent a surface, and skip the dimension entirely if the block is absent or already current. This is what keeps the on-demand `production-reviewer` citing the repo's *current* commands, not the setup-day snapshot.
 
@@ -111,12 +145,13 @@ Also **flag, but don't auto-create**: a **specialist implementer agent** if a su
 - Every newly-scaffolded reviewer agent carries `effort: max`, and every scaffolded implementer agent `effort: high`.
 - Every new guardrail rule's `filePattern`/`bodyPattern` compiles and is absolute-path-safe; every new `workspaces.json` command is one that actually runs green on the current tree.
 - Every newly-authored critic is read-only (`tools: Read, Grep, Glob`), carries a `Track:` marker and `effort: max`, and its reading-list paths all exist (no invented paths). `/audit` will discover it by track.
+- Every control offered by the Phase 1 controls currency check and accepted in Phase 3 is verifiably present in the target file afterwards — re-grep its marker phrase (`grep -iF`, or the anchored grep the row names).
 - Markdown structure intact (headings balanced, code fences closed).
 - If this project wires guardrails, optionally smoke-test that the rule JSON still loads.
 
 ### Phase 7: Summary
 
-Report: the divergence buckets, which files were harvested and the specific parts added to each, which were skipped and why (superset / nothing to harvest / user-deselected), any TARGET-MISSING files copied in, **any new coverage prospected and scaffolded — skills, guardrail rules, post-edit checks, and critics — each with its evidence (or a plain "already covered" per dimension), and a clear "run `/bootstrap-critics` to set up the audit panel" if this repo has the machinery but no panel yet**, and the validation results. Note the pack version synced from so the next run can diff against it. Do **not** stage or commit — leave the changes for the user to review with `git diff`.
+Report: the divergence buckets, **both controls matrices** (commands and `CLAUDE.md` — which controls were missing, present (undeclared), or installed), which files were harvested and the specific parts added to each, which were skipped and why (superset / nothing to harvest / user-deselected), any TARGET-MISSING files copied in, **any new coverage prospected and scaffolded — skills, guardrail rules, post-edit checks, and critics — each with its evidence (or a plain "already covered" per dimension), and a clear "run `/bootstrap-critics` to set up the audit panel" if this repo has the machinery but no panel yet**, and the validation results. Note the pack version synced from so the next run can diff against it. Do **not** stage or commit — leave the changes for the user to review with `git diff`.
 
 ## Rules
 - **Additive only.** This command never replaces a project's customized file. The whole point is to keep project-specific content and graft pack improvements (and net-new coverage: skills, guardrail rules, post-edit checks, critics) onto it.

@@ -1,0 +1,1 @@
+ALTER TABLE "model_usage" ADD COLUMN "consumed_included_build" boolean DEFAULT true NOT NULL;

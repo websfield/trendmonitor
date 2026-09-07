@@ -1,5 +1,5 @@
 // Schema -> TypeScript codegen. The ONLY source of the contract types.
-// Reads docs/initial/schemas/{rubric,events,mechanisms}-v1.json and emits
+// Reads docs/initial.past/schemas/{rubric,events,mechanisms}-v1.json and emits
 // src/types/generated/*.ts.
 //
 // This is a small, dependency-free JSON-Schema walker (draft 2020-12 subset used
@@ -13,7 +13,7 @@ import { dirname, resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
-const schemaDir = resolve(repoRoot, 'docs', 'initial', 'schemas');
+const schemaDir = resolve(repoRoot, 'docs', 'initial.past', 'schemas');
 const outDir = resolve(here, '..', 'src', 'types', 'generated');
 mkdirSync(outDir, { recursive: true });
 
@@ -23,7 +23,7 @@ const events = read('events-v1.json');
 const mechanisms = read('mechanisms-v1.json');
 
 const BANNER =
-  '// GENERATED FILE — do not edit. Source: docs/initial/schemas/*.json\n' +
+  '// GENERATED FILE — do not edit. Source: docs/initial.past/schemas/*.json\n' +
   '// Regenerate with `npm run gen:types`. Widening a type here by hand is a contract breach.\n\n';
 
 const lit = (v) => (v === null ? 'null' : JSON.stringify(v));

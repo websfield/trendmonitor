@@ -1,0 +1,31 @@
+=== entry gate, slice-3 close FINAL (after round-3 fix pass) (2026-08-29T03:38Z) ===
+--- typecheck ---
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+typecheck exit: 0
+--- lint ---
+> eslint .
+
+lint exit: 0
+--- db:check ---
+Everything's fine 🐶🔥
+db:check exit: 0
+--- test (CI shape, Docker live) ---
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m59 passed[39m[22m[90m (60)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1274 passed[39m[22m[90m (1275)[39m
+[2m   Start at [22m 13:39:26
+[2m   Duration [22m 205.28s[2m (transform 97.30s, setup 0ms, collect 578.59s, tests 2045.33s, environment 48ms, prepare 95.61s)[22m
+
+test exit: 1
+--- build ---
+ƒ Middleware                             34.9 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+build exit: 0

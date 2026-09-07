@@ -1,0 +1,32 @@
+-- Slice 9a fix pass (2026-09-04). PLATFORM JOINS THE DUPLICATE KEY.
+--
+-- Two drizzle-generated statements from `results-schema.ts` (drop + recreate of
+-- one unique index); this header is the hand-written part. No column, no table,
+-- no constraint, no data change.
+--
+-- THE DEFECT, AND ITS PRINTED REMEDY IS THE SERIOUS HALF.
+-- `results_generation_metric_window_uq` was
+--   (generation_id, metric_key, audience_class, observed_from, observed_to)
+-- so ONE draft posted to TikTok AND to Reels, logged over the same window and
+-- audience class, was refused as a duplicate. `platform` is a comparability
+-- predicate -- "a follows/1k on Shorts and on Reels are different populations
+-- wearing one name" -- so those are two results, not one logged twice.
+--
+-- What made it worse than a false refusal: `ResultDuplicateError` told the
+-- creator to "log a DIFFERENT observation window if you are reporting how it
+-- did later". `results` is APPEND-ONLY with no delete path, so a creator who
+-- followed that instruction wrote a window they had not measured into their own
+-- baseline, permanently, and every later comparison drew on it. A remedy that
+-- is usable and WRONG is the class `billing-errors.ts` names.
+--
+-- WHICH HALF WAS WRONG: the index. The copy is corrected too (it now names the
+-- whole key rather than three fifths of it), but the index is the fix -- the
+-- alternative, keeping the index and telling creators they may log only one
+-- platform per post, would make the product refuse a thing it explicitly
+-- supports, since `platform` is a required field on the log form.
+--
+-- SAFE ON EXISTING ROWS: the new key is a SUPERSET of the old one, so any set
+-- of rows that satisfied the old index satisfies this one. A drop-then-create
+-- cannot fail on validation here.
+DROP INDEX "results_generation_metric_window_uq";--> statement-breakpoint
+CREATE UNIQUE INDEX "results_generation_metric_window_uq" ON "results" USING btree ("generation_id","metric_key","platform","audience_class","observed_from","observed_to") WHERE "results"."generation_id" IS NOT NULL;

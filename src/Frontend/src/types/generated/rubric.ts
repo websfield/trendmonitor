@@ -1,4 +1,4 @@
-// GENERATED FILE — do not edit. Source: docs/initial/schemas/*.json
+// GENERATED FILE — do not edit. Source: docs/initial.past/schemas/*.json
 // Regenerate with `npm run gen:types`. Widening a type here by hand is a contract breach.
 
 /** rubric-v1.json provenance_labels. Every VPS and AWS value is labelled Estimated. */

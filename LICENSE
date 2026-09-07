@@ -1,0 +1,36 @@
+Copyright (c) 2026. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL
+
+This repository and its contents are proprietary. No licence, express or
+implied, is granted to any person to use, copy, modify, merge, publish,
+distribute, sublicense, or sell any part of this software, except under a
+separate written agreement signed by the copyright holder.
+
+Absent such an agreement, all rights are reserved under applicable copyright
+law.
+
+---
+
+WHY THIS AND NOT AN OPEN-SOURCE LICENCE
+
+Recorded as decision D-AUDIT-4 in `docs/initial/decisions.md` (R-25), answering
+audit finding #19 (`docs/progress/audit/2026-08-17.md`): the repository had no
+LICENSE file at all, which means default copyright applied and nobody —
+including a future collaborator or contractor — had any recorded grant.
+
+This notice matches the actual distribution posture: Respin is a hosted
+subscription product, not a distributable library, and no part of this
+repository is published to a package registry. An OSI licence was deliberately
+NOT adopted, because adopting one by default would be a real grant of rights
+made by assumption rather than by choice.
+
+SCOPE
+
+This notice covers this repository's own source. It makes no claim about the
+third-party dependencies vendored or referenced by it — `respin/pnpm-lock.yaml`,
+`uv.lock`, and the NuGet package graph each carry their own licences, which are
+their own.
+
+This is a checklist posture recorded so the question has an answer. It is NOT
+legal advice.

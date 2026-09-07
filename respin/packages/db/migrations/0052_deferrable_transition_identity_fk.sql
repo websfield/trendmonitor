@@ -1,0 +1,2 @@
+ALTER TABLE "deletion_operation_transitions" DROP CONSTRAINT "deletion_operation_transitions_operation_identity_fk";--> statement-breakpoint
+ALTER TABLE "deletion_operation_transitions" ADD CONSTRAINT "deletion_operation_transitions_operation_identity_fk" FOREIGN KEY ("operation_id","scope","target_key","requester_digest","payload_hash") REFERENCES "public"."deletion_operations"("id","scope","target_key","requester_digest","payload_hash") ON DELETE restrict ON UPDATE no action DEFERRABLE INITIALLY IMMEDIATE;

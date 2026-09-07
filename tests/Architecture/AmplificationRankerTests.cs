@@ -64,7 +64,7 @@ public sealed class AwsTests
     {
         var d = new DirectoryInfo(AppContext.BaseDirectory);
         while (d is not null && !File.Exists(Path.Combine(d.FullName, "CLAUDE.md"))) d = d.Parent;
-        var rubric = JsonDocument.Parse(File.ReadAllText(Path.Combine(d!.FullName, "docs", "initial", "schemas", "rubric-v1.json"))).RootElement;
+        var rubric = JsonDocument.Parse(File.ReadAllText(Path.Combine(d!.FullName, "docs", "initial.past", "schemas", "rubric-v1.json"))).RootElement;
 
         var fromSchema = rubric.GetProperty("aws").GetProperty("terms").EnumerateArray()
             .ToDictionary(t => t.GetProperty("key").GetString()!, t => t.GetProperty("weight").GetDecimal());

@@ -1,0 +1,53 @@
+=== 2026-08-27T21:12:56+10:00 entry gate: slice 2a baseline ===
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+--- typecheck exit: 0 ---
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+--- lint exit: 0 ---
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 2 (the direction that must NOT change): inside ONE episode a second failure still never extends the deadline [33m 563[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 3: a STALE snapshot cannot close a pause the owner opened after it was created [33m 606[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 3 (non-vacuity): a CONTEMPORANEOUS snapshot without pause_collection still resumes [33m 590[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mCHANGE 3: the monthly band is CONFIG — widening `monthlyPeriodDays` self-heals the refused invoice with no deploy [33m 609[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 4: a grant-bearing invoice with NO id is REFUSED, never granted against the event id [33m 558[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 regression pins (billing NOTE 3: the pause bound is SYMMETRIC)[2m > [22ma pause-era snapshot arriving AFTER the owner resumed cannot RE-OPEN the pause [33m 598[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 regression pins (billing NOTE 3: the pause bound is SYMMETRIC)[2m > [22mNON-VACUITY: a CONTEMPORANEOUS pause snapshot still opens a pause (the bound is not a blanket refusal) [33m 578[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mmirrors cancel_at and surfaces it as a scheduled end — with the boolean FALSE [33m 624[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mthe scheduled end DIES with the subscription (DEAD_SUBSCRIPTION_FIELDS clears it) [33m 560[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mNON-VACUITY: an ordinary active subscription carries no scheduled end [33m 563[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma STALE invoice.paid does NOT end a newer, still-live dunning grace period [33m 608[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22mNON-VACUITY: a CURRENT invoice.paid still clears the grace and lifts the status [33m 660[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma TERMINAL mirror is still tidied by a CURRENT paid invoice — cleared, and never revived [33m 576[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma stale invoice on a terminal mirror leaves the deadline, and it STILL cannot surface as grace [33m 614[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma GENUINE during-pause invoice is refused: outcome `ignored`, and ZERO credits minted [33m 577[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe refusal is idempotent — a redelivery of the same event does not sneak a grant through [33m 608[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mBOUNDARY: inside the tolerance grants, outside it refuses — the rule is the clock, not the pause flag [33m 1134[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe direction that must NOT change: an UNPAUSED workspace still gets its allowance [33m 578[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma RESUMED workspace grants again — the refusal is tied to the OPEN pause, not to having ever paused [33m 604[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m46 passed[39m[22m[90m (46)[39m
+[2m      Tests [22m [1m[32m914 passed[39m[22m[90m (914)[39m
+[2m   Start at [22m 21:13:20
+[2m   Duration [22m 117.35s[2m (transform 25.74s, setup 0ms, collect 202.92s, tests 894.67s, environment 19ms, prepare 50.83s)[22m
+
+--- test exit: 0 ---
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+--- db:check exit: 0 ---
+  └ other shared chunks (total)          1.97 kB
+
+
+ƒ Middleware                             34.6 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+--- build exit: 0 ---

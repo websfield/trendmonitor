@@ -1,0 +1,31 @@
+Entry gate — slice 2a remediation, AFTER gate round 2's fix round (2026-08-28)
+CI shape: TEST_DATABASE_URL set, Docker Postgres live, zero skips.
+
+typecheck  exit 0
+lint       exit 0  (eslint .)
+test       52 files / 1092 tests / 0 failed / 0 skipped
+             (1052 after fix round 1 -> 1071 after the bound -> 1092 after round 2's fixes)
+db:check   Everything's fine  — still no migration; an advisory lock needs no table
+build      next build clean; /onboarding first-load JS 1.38 kB (no pg in the client bundle)
+
+ONE UNEXPLAINED SINGLE-RUN FAILURE, recorded rather than dismissed:
+  the first full run after bounding the query pool's connectionTimeoutMillis
+  failed once in tests/action-gate.test.ts. It did NOT reproduce in three
+  subsequent runs (one isolated, three full). Cause not established. The bound
+  is a real behaviour change (that pool previously queued forever), so the
+  value was raised 5s -> 10s rather than the failure being called unrelated.
+
+New coverage since the bound landed:
+  packages/credits/tests/inference.test.ts              38 cases
+  packages/credits/tests/inference-race.docker.test.ts  10 cases
+  packages/db/tests/run-slot-key.test.ts                new — key injectivity as a property
+  tests/onboarding-ui.test.tsx                         119 cases
+  tests/import-boundary.test.ts                         81 cases (+P6b workspace-brand scan)
+
+Mutations planted and reddened in this fix round:
+  the compliance BLOCK reinstated (codes removed from ONBOARDING_ERROR_CODES)  RED x3
+  the second pg-pool connect-timeout message removed                          RED
+  the capacity branch removed entirely                                        RED
+  the deadline race removed (return await work)                               RED x3
+  role=status removed from the success branch                                 RED
+  a planted 'as VerifiedWorkspaceId' cast                                     RED

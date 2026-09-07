@@ -52,7 +52,7 @@ __all__ = [
 _PUBLISHABLE = frozenset({Warrant.RECURRENT, Warrant.CONTRASTED, Warrant.FALSIFIED})
 
 _SCHEMA_PATH = (
-    Path(__file__).resolve().parents[4] / "docs" / "initial" / "schemas" / "mechanisms-v1.json"
+    Path(__file__).resolve().parents[4] / "docs" / "initial.past" / "schemas" / "mechanisms-v1.json"
 )
 
 

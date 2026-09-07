@@ -1,0 +1,95 @@
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90mC:/projects/ai.playground/trendMonitor/respin[39m
+
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m tests/pg-boss.docker.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 63233[2mms[22m[39m
+   [33m[2m✓[22m[39m R-52 verify-first: the installed pg-boss on real Postgres[2m > [22ma cron schedule fires: schedule row → timekeeper → queue → handler [33m 4141[2mms[22m[39m
+   [33m[2m✓[22m[39m R-52 verify-first: the installed pg-boss on real Postgres[2m > [22ma failing job retries exactly retryLimit times with exponential backoff, then fails terminally [33m 9556[2mms[22m[39m
+   [33m[2m✓[22m[39m R-52 verify-first: the installed pg-boss on real Postgres[2m > [22mlocalConcurrency bounds in-process parallelism and `max` bounds the pool [33m 2853[2mms[22m[39m
+   [33m[2m✓[22m[39m R-52 verify-first: the installed pg-boss on real Postgres[2m > [22mgraceful stop finishes in-flight work, closes every session, then emits `stopped` [33m 2443[2mms[22m[39m
+   [33m[2m✓[22m[39m the production runtime against the installed pg-boss (start twice)[2m > [22mstarts, stops, and starts AGAIN: existing queues are updated, schedules re-upserted, sessions bounded [33m 3766[2mms[22m[39m
+   [33m[2m✓[22m[39m the production worker's config resolution and attempt binding on real Postgres[2m > [22mCHANGE 1: a stored deadline one millisecond over the lease ceiling is refused by every production read, before any claim; the ceiling itself is admitted [33m 552[2mms[22m[39m
+   [33m[2m✓[22m[39m the production worker's config resolution and attempt binding on real Postgres[2m > [22mCHANGE 2: a document refused AFTER the claim prices nothing of that attempt — four measured calls, zero unknown, and the NEXT tick is what refuses [33m 911[2mms[22m[39m
+ [32m✓[39m packages/config/tests/migrate-config.docker.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 19040[2mms[22m[39m
+   [33m[2m✓[22m[39m migrate-config CAS on real Postgres[2m > [22man UNCOMMITTED concurrent append is not sailed past — the operator edit survives [33m 909[2mms[22m[39m
+   [33m[2m✓[22m[39m migrate-config CAS on real Postgres[2m > [22mthe ADMIN-APPEND side of the lock is load-bearing too — appendConfigVersion's own takeConfigLock call, not just applyConfigMigration's [33m 404[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/auto-topup-race.docker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 17658[2mms[22m[39m
+   [33m[2m✓[22m[39m auto-top-up lifecycle and billing races on REAL Postgres[2m > [22mnon-vacuity: an armed control workspace reaches PaymentIntent creation [33m 672[2mms[22m[39m
+   [33m[2m✓[22m[39m auto-top-up lifecycle and billing races on REAL Postgres[2m > [22ma winning owner disable commits before the charge decision and creates no PaymentIntent [33m 584[2mms[22m[39m
+   [33m[2m✓[22m[39m auto-top-up lifecycle and billing races on REAL Postgres[2m > [22ma winning owner lower-cap commits before the charge decision and creates no PaymentIntent [33m 509[2mms[22m[39m
+   [33m[2m✓[22m[39m auto-top-up lifecycle and billing races on REAL Postgres[2m > [22ma webhook-shaped pause which wins only the billing lock prevents the PaymentIntent [33m 341[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/concurrency.docker.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 22161[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22m20 concurrent debits of 10 against a 100 balance: exactly 10 succeed, final balance 0, never negative [33m 3816[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mROUND 7 (B1/B3): a debit CANNOT ignore a debit that committed after its own transaction began — `now()` is the transaction's start, not the clock [33m 353[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mROUND 10 (write clock): a GRANT that commits while a debit's transaction is open must sort BEFORE that debit — deriveBalance keeps folding forever after [33m 305[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mN=8 concurrent deriveBalance over an expired lot: exactly ONE expiry row, all callers agree [33m 406[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mMIXED lock composition: a debit transaction racing bare-db derivations over the same expired lot — no hang, one expiry row, consistent results [33m 409[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mPHASE 3: the same Stripe event id delivered concurrently x8 yields exactly ONE grant (D-M1-1 single-tx + PK race) [33m 810[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mPHASE 3 / round-5 finding 2: one PaymentIntent under EIGHT DISTINCT event ids concurrently mints exactly ONE auto-top-up pack [33m 1153[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mPHASE 3 code-review: owner Pause racing its own reconciling webhook — one open pause, and a lost race NEVER becomes a silent acknowledged-and-discarded event [33m 438[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mAUDIT #3: two subscription snapshots with DIFFERENT payloads — the NEWER one survives, whichever wins the scheduler [33m 1667[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mAUDIT #3: a stale invoice racing a NEWER dunning snapshot cannot end the grace period it opens [33m 459[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/free-mint.docker.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 15341[2mms[22m[39m
+   [33m[2m✓[22m[39m the Free mint under REAL concurrency[2m > [22mEIGHT concurrent first reads mint exactly ONE grant, and every one of them reports the same balance [33m 1568[2mms[22m[39m
+   [33m[2m✓[22m[39m the Free mint under REAL concurrency[2m > [22mthe constraint that makes it one is `credit_ledger_free_allowance_uq`, BY NAME [33m 516[2mms[22m[39m
+   [33m[2m✓[22m[39m the Free mint under REAL concurrency[2m > [22mthe index is WORKSPACE-KEYED: another workspace's grant for the SAME month is not blocked [33m 1468[2mms[22m[39m
+   [33m[2m✓[22m[39m the Free mint under REAL concurrency[2m > [22mM5 under contention: a PAID workspace mints NOTHING however many reads race [33m 353[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/generate-race.docker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 23327[2mms[22m[39m
+   [33m[2m✓[22m[39m generate under REAL concurrency[2m > [22mtwo CONCURRENT submissions of one attempt id: one vendor sequence, one generation, one debit [33m 4069[2mms[22m[39m
+   [33m[2m✓[22m[39m generate under REAL concurrency[2m > [22ma SEQUENTIAL retry after settlement replays the stored record, with no second vendor call and no second debit [33m 1878[2mms[22m[39m
+   [33m[2m✓[22m[39m generate under REAL concurrency[2m > [22ma balance spent by ANOTHER CONNECTION mid-flight makes the settlement refuse ATOMICALLY [33m 2219[2mms[22m[39m
+   [33m[2m✓[22m[39m generate under REAL concurrency[2m > [22mR14c: TWO CONCURRENT retries of one `vendor_complete` attempt — one settles, the other is handed the record, and no vendor is called [33m 2145[2mms[22m[39m
+   [33m[2m✓[22m[39m generate under REAL concurrency[2m > [22mR-63: the generation debit's uniqueness is `credit_ledger_inference_debit_uq`, BY NAME [33m 1121[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/inference-race.docker.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 19121[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mtwo concurrent FIRST-EVER attempts: exactly one is included, one is charged [33m 1001[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mNON-VACUITY: the racers really can overlap (an unwarmed pool made this shape vacuous once) [33m 597[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22man uncommitted usage writer serializes the next run: exactly one included build [33m 878[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22ma pause still UNCOMMITTED when the debit begins is not sailed past [33m 652[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mthe same attempt id cannot be debited twice, even from two connections [33m 1313[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mthe SERVER_CAPACITY valve works against a real exhausted pool [33m 4442[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mrunInference REFUSES a real second concurrent run while the first holds the vendor [33m 741[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/pasted-reference.docker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 18559[2mms[22m[39m
+   [33m[2m✓[22m[39m pasted reference money under real concurrency (R-98)[2m > [22m8 simultaneous IDENTICAL pastes → one claim, ONE debit, the price charged once [33m 3173[2mms[22m[39m
+   [33m[2m✓[22m[39m pasted reference money under real concurrency (R-98)[2m > [22m8 simultaneous settlements of one PARKED claim → ONE refund, the balance restored once [33m 918[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/profiles.docker.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 17234[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile under real concurrency[2m > [22mreal Postgres keeps per-member selections isolated and rejects a foreign-workspace profile [33m 995[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile under real concurrency[2m > [22meight PARALLEL creates at a cap of 1 leave exactly one profile [33m 1304[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile under real concurrency[2m > [22mNON-VACUITY: raising the cap lets exactly that many through, concurrently [33m 595[2mms[22m[39m
+ [32m✓[39m packages/db/tests/activate.docker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 16892[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-63 on real Postgres[2m > [22mAC-63: an input that STARTS before and COMMITS after the write does not brick activation [33m 944[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-63 on real Postgres[2m > [22mG-14: two concurrent brain writes SERIALISE on the per-profile advisory lock [33m 326[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-63 on real Postgres[2m > [22mconfirm and activate SERIALISE on the same per-profile lock (slice 3) [33m 479[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-63 on real Postgres[2m > [22mactivateBrainDocCoherent: two concurrent activations of DIFFERENT kinds SERIALISE on the same per-profile lock, and the LATER one observes the EARLIER's committed snapshot (slice 3b, R8) [33m 865[2mms[22m[39m
+ [32m✓[39m packages/db/tests/promotion-migration.docker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 36354[2mms[22m[39m
+   [33m[2m✓[22m[39m 0032→0033 and fresh install on real Postgres[2m > [22mupgrades a populated 0032 schema by applying only additive 0033 [33m 5269[2mms[22m[39m
+ [32m✓[39m packages/db/tests/deletion-executor.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 9235[2mms[22m[39m
+   [33m[2m✓[22m[39m deletion executor lease on real PostgreSQL[2m > [22mlets exactly one of four simultaneous workers advance a due operation [33m 464[2mms[22m[39m
+ [32m✓[39m packages/db/tests/auth-mail-quota.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 3073[2mms[22m[39m
+   [33m[2m✓[22m[39m auth-mail quota admission on real PostgreSQL[2m > [22madmits exactly the ceiling under 40 concurrent security sends and 40 concurrent invites [33m 627[2mms[22m[39m
+ [32m✓[39m packages/db/tests/brain-concurrency.docker.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 4117[2mms[22m[39m
+   [33m[2m✓[22m[39m M2a on real Postgres[2m > [22mparallel sanctioned brain writes leave exactly one proposed version [33m 430[2mms[22m[39m
+   [33m[2m✓[22m[39m M2a on real Postgres[2m > [22mconcurrent direct input capabilities enforce the exact immutable row ceiling [33m 361[2mms[22m[39m
+   [33m[2m✓[22m[39m M2a on real Postgres[2m > [22mstreams one repeatable-read snapshot across a page-boundary append [33m 380[2mms[22m[39m
+ [32m✓[39m packages/db/tests/concurrency.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2576[2mms[22m[39m
+ [32m✓[39m packages/db/tests/deletion-recovery-concurrency.docker.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 4116[2mms[22m[39m
+   [33m[2m✓[22m[39m identity cancellation recovery rate key on real Postgres[2m > [22msix invalid-secret racers sharing one rate key durably consume exactly five attempts [33m 1116[2mms[22m[39m
+   [33m[2m✓[22m[39m identity cancellation recovery rate key on real Postgres[2m > [22mrechecks last-owner status in the reserved request's final transaction [33m 347[2mms[22m[39m
+ [32m✓[39m packages/db/tests/frameworks-concurrency.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2730[2mms[22m[39m
+ [32m✓[39m packages/db/tests/generation-schema.docker.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 2819[2mms[22m[39m
+ [32m✓[39m packages/db/tests/included-build-backfill.docker.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 2505[2mms[22m[39m
+ [32m✓[39m packages/db/tests/interview-ops.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 2555[2mms[22m[39m
+ [32m✓[39m packages/db/tests/promotion-concurrency.docker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 3702[2mms[22m[39m
+   [33m[2m✓[22m[39m promotion decisions on real Postgres[2m > [22msimultaneous refreshes converge on one proposal with one exact evidence set [33m 778[2mms[22m[39m
+   [33m[2m✓[22m[39m promotion decisions on real Postgres[2m > [22msimultaneous accepts write once and the loser observes the same terminal result [33m 479[2mms[22m[39m
+ [32m✓[39m packages/db/tests/spend-rollup.docker.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 2760[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m22 passed[39m[22m[90m (22)[39m
+[2m      Tests [22m [1m[32m98 passed[39m[22m[90m (98)[39m
+[2m   Start at [22m 12:24:27
+[2m   Duration [22m 457.64s[2m (transform 19.50s, setup 0ms, collect 104.77s, tests 309.11s, environment 11ms, prepare 13.87s)[22m
+
+exit=0

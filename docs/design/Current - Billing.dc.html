@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    .ua { font-family: 'Times New Roman', Times, serif; font-size: 16px; line-height: normal; color: #000000; background: #ffffff; }
+    .ua h1 { font-size: 2em; font-weight: bold; margin: 0.67em 0; }
+    .ua h2 { font-size: 1.5em; font-weight: bold; margin: 0.83em 0; }
+    .ua h3 { font-size: 1.17em; font-weight: bold; margin: 1em 0; }
+    .ua p { margin: 1em 0; }
+    .ua a { color: #0000ee; text-decoration: underline; }
+    .ua a:hover { color: #0000ee; }
+    .ua label { display: inline; }
+    .ua button { font: 400 13.3333px Arial, sans-serif; background: #efefef; color: #000; border: 1px solid #767676; border-radius: 2px; padding: 1px 6px; }
+    .ua input, .ua select { font: 400 13.3333px Arial, sans-serif; color: #000; background: #fff; border: 1px solid #767676; border-radius: 2px; padding: 1px 2px; }
+    .ua hr { border: none; border-top: 1px inset #bbb; margin: 1rem 0; }
+    .caption { font: 600 11px/1 'Segoe UI', -apple-system, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; color: #8a8a8a; background: #f3f3f3; padding: 10px 16px; border-top: 1px solid #e2e2e2; border-bottom: 1px solid #e2e2e2; }
+  </style>
+</helmet>
+<div class="caption">State: creator plan, active subscription</div>
+<div class="ua" data-screen-label="Billing (as-is)" style="background: #ffffff; padding: 8px;">
+  <header style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.75rem 1.5rem; border-bottom: 1px solid #ddd;">
+    <strong>Maya's workspace</strong>
+    <nav style="display: flex; gap: 1rem; font-size: 0.9rem;">
+      <a href="#">Onboarding</a>
+      <a href="#">Studio</a>
+      <a href="#">Usage</a>
+      <a href="#">Billing</a>
+    </nav>
+    <button type="button">Sign out</button>
+  </header>
+  <main style="padding: 1.5rem;">
+    <section>
+      <h1>Billing</h1>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Current plan</h2>
+        <p><strong>creator</strong> &mdash; <span>active</span></p>
+        <p style="color: #555; font-size: 0.9rem;">Credit balance and history are on the <a href="#">usage page</a>.</p>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Change your plan</h2>
+        <p style="color: #555; font-size: 0.9rem;">You already have a subscription. Upgrades, downgrades and payment details are handled in Stripe's Customer Portal &mdash; starting a new checkout here would create a SECOND subscription and bill you twice.</p>
+        <form>
+          <button type="button">Manage plan and payment method in the Customer Portal</button>
+        </form>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Credit pack</h2>
+        <form>
+          <button type="button">Buy 1000 credits for $40</button>
+        </form>
+        <p style="color: #555; font-size: 0.9rem;">A one-off pack. Packs are valid for longer than a monthly allowance, and monthly credits are always spent first so a pack is not burned while an allowance expires unused.</p>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Auto-top-up</h2>
+        <p style="color: #555; font-size: 0.9rem;">Currently <strong>off</strong>.</p>
+        <form>
+          <p style="color: #555; font-size: 0.9rem;">This starts buying a pack when a run needs more credits than you have. That run is still refused either way &mdash; auto-top-up buys the credits, it does not let the attempt through. Retry once they land. Nothing is charged until a top-up is actually needed.</p>
+          <label style="display: block; margin-bottom: 0.5rem;"><input type="checkbox" name="enabled"></input> Buy a pack automatically when a run needs more credits than I have</label>
+          <label style="display: block; margin-bottom: 0.5rem;">Monthly cap (US$) <input type="number" name="capUsd"></input></label>
+          <button type="button">Save auto-top-up</button>
+          <p style="color: #555; font-size: 0.9rem;">Nothing is charged beyond the cap within one calendar month.</p>
+        </form>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Pause</h2>
+        <p style="color: #555; font-size: 0.9rem;">No charges while paused. Credits are frozen and their expiry clocks stop, so nothing you already paid for is lost.</p>
+        <form>
+          <label>Pause for <select name="months"><option>1 month</option><option>2 months</option><option>3 months</option></select></label>
+          <button type="button">Pause subscription</button>
+        </form>
+      </div>
+      <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-top: 0;">Cancel</h2>
+        <p style="color: #555; font-size: 0.9rem;"><a href="#">Cancel subscription</a> &mdash; we will show you the pause option first.</p>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="caption">State: cancel interstitial (?cancel=1) &mdash; pause offered first</div>
+<div class="ua" data-screen-label="Billing - cancel interstitial (as-is)" style="background: #ffffff; padding: 8px 8px 24px;">
+  <main style="padding: 1.5rem;">
+    <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem;">
+      <h2 style="margin-top: 0;">Before you cancel: pause instead?</h2>
+      <p>A pause stops charges and freezes your credits &mdash; they are not spent, not granted, and their expiry clocks stop until you come back. A cancellation ends the subscription and your remaining credits expire on their own schedule.</p>
+      <form>
+        <label>Pause for <select name="months"><option>1 month</option><option>2 months</option><option>3 months</option></select></label>
+        <button type="button">Pause instead of cancelling</button>
+      </form>
+      <hr></hr>
+      <h3>Still want to cancel?</h3>
+      <p style="color: #555; font-size: 0.9rem;">Cancellation happens in Stripe's Customer Portal. Your plan runs to the end of the period you have already paid for.</p>
+      <form>
+        <button type="button">Continue to the Customer Portal to cancel</button>
+      </form>
+    </div>
+  </main>
+</div>
+<div class="caption">State fragments: subscribe (free tier) &middot; unconfigured server</div>
+<div class="ua" style="background: #ffffff; padding: 8px 8px 24px;">
+  <main style="padding: 1.5rem;">
+    <div style="border: 1px solid #c00; background: #fff5f5; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+      <strong>Billing is not configured on this server</strong>
+      <p style="color: #555; font-size: 0.9rem;">Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET, then restart the server. Until then every billing control on this page is disabled.</p>
+    </div>
+    <div style="border: 1px solid #ddd; border-radius: 6px; padding: 1rem;">
+      <h2 style="margin-top: 0;">Start a plan</h2>
+      <div style="margin-bottom: 0.75rem;">
+        <form><button type="button">Subscribe &mdash; Creator</button></form>
+        <p style="color: #555; font-size: 0.9rem;">250 credits per month (from config v3). The price is shown on Stripe's checkout page &mdash; it lives in Stripe, and this page will not print a number it cannot verify.</p>
+      </div>
+      <div style="margin-bottom: 0.75rem;">
+        <form><button type="button">Subscribe &mdash; Pro</button></form>
+        <p style="color: #555; font-size: 0.9rem;">1800 credits per month (from config v3). The price is shown on Stripe's checkout page &mdash; it lives in Stripe, and this page will not print a number it cannot verify.</p>
+      </div>
+      <div style="margin-bottom: 0.75rem;">
+        <form><button type="button">Subscribe &mdash; Studio</button></form>
+        <p style="color: #555; font-size: 0.9rem;">7000 credits per month (from config v3). The price is shown on Stripe's checkout page &mdash; it lives in Stripe, and this page will not print a number it cannot verify.</p>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1280, &quot;height&quot;: 1600}}"></script>
+</body>
+</html>

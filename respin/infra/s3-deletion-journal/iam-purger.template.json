@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "R-124 PURGE principal: delete an EXACT version, and only after Object Lock",
+    "has expired. COMPLIANCE mode is what actually enforces the timing \u2014 no",
+    "principal, including the account root, can delete a locked version \u2014 so",
+    "this policy grants the verb and the lock supplies the clock.",
+    "s3:BypassGovernanceRetention is deliberately absent and is denied again by",
+    "the bucket policy. Mirrored by `JournalPurgeTransport`, whose only method",
+    "is deleteObjectVersion and which refuses an empty version id (a delete",
+    "without one writes a delete marker instead of removing anything).",
+    "The purge job READS before it deletes: journal-purge.ts verifies each chain and refuses to purge one that does not verify, because a damaged chain is evidence and evidence is not garbage-collected. That requires s3:GetObjectVersion. Granting it here keeps the verb split that matters -- this principal still cannot CREATE, and the writer still cannot DELETE (round-1 security M2 / tenancy C3)."
+  ],
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListToFindExpiredVersions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": "arn:aws:s3:::<BUCKET>",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "<ENVIRONMENT>/deletion-journal/*"
+        }
+      }
+    },
+    {
+      "Sid": "DeleteExactExpiredVersionOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:DeleteObjectVersion",
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:GetObjectRetention"
+      ],
+      "Resource": "arn:aws:s3:::<BUCKET>/<ENVIRONMENT>/deletion-journal/*"
+    }
+  ]
+}

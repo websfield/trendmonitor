@@ -1,0 +1,137 @@
+-- C11 (slice 8c fix round 1, learning gate CHANGE 5): SATURATION'S ABSENCE
+-- NAMES ITS OWN CAUSE — `no_population`, not `incomplete_provenance`.
+--
+-- Both statements below are drizzle-generated from `trends-schema.ts`; the
+-- backfill between them and this header are the hand-written parts.
+--
+-- WHAT IT ADDS.
+--   One reason value, `no_population`, to the vocabulary
+--     `trend_items_saturation_measurement_nonempty` admits — and it admits it
+--     ONLY on a row with `baseline_state = 'unavailable'`, by a CASE inside the
+--     predicate rather than an `IN (...)` list. The measured-baseline branch
+--     still admits `incomplete_provenance` and nothing else, exactly as before.
+--   One backfill of existing `unavailable` rows to the new reason.
+--   Nothing else: no column, no index, no table, no FK. `saturation_unmeasured_reason`
+--     is unchanged text, and the CHECK is the whole vocabulary OF NON-NULL
+--     VALUES — no more than that (tenancy round-2 NOTE 5-prime; the earlier
+--     wording claimed the whole vocabulary). It ADMITS A NULL REASON on an
+--     unmeasured row of either `baseline_state`, because `NULL = CASE ... END`
+--     is NULL, `NULL OR FALSE` is NULL, and a CHECK passes on NULL. Measured,
+--     not reasoned: `UPDATE trend_items SET saturation_unmeasured_reason = NULL
+--     WHERE saturation = 'unmeasured'` succeeds under this constraint. The hole
+--     is 0025's — its `= 'incomplete_provenance'` is NULL for the same reason —
+--     and is NOT widened here. No writer can reach it: exactly two functions
+--     write these columns (`trends-storage.ts` — the two other
+--     `update(trendItems)` sites set `transcript_state` alone).
+--     `recordSharedTrendItem` validates through `assertTrendItemInput`, which
+--     refuses anything but `incomplete_provenance` on the unmeasured branch;
+--     `recordPrivateTrendItem` hardcodes `no_population` on the unavailable
+--     branch and validates the same way on the measured one.
+--
+-- WHY. 0026 gave a creator-pasted reference `baseline_state = 'unavailable'`:
+--   no channel, no views, no window, no ratio. Its SATURATION is unmeasured for
+--   a reason 0026 had no word for, so `recordPrivateTrendItem` stamped the only
+--   value this CHECK admitted, `incomplete_provenance` — and its own comment
+--   conceded it ("the one reason the CHECK admits"). That is false about a
+--   paste: the creator gave the URL and the transcript, so the PROVENANCE IS
+--   COMPLETE; what is missing is a POPULATION to measure prevalence against.
+--   The wrong reason was not merely internal — the learning gate printed it out
+--   of a real REQ-A04 creator export. An absence attributed to the wrong cause
+--   is slice 5's finding recurring, so the fix is at the database and the
+--   writer together, and the CASE makes a WRONG reason impossible rather than
+--   merely unwritten: an `unavailable` row cannot carry
+--   `incomplete_provenance`, and a `measured` row cannot carry
+--   `no_population` — each refused by name, and NULL is the one value the CHECK
+--   still admits (see WHAT IT ADDS). Both directions are witnessed in
+--   `packages/db/tests/pasted-reference.test.ts`.
+--
+-- FORWARD / BACKWARD COMPATIBILITY (not expand-only — read this).
+--   New code against the new schema: `recordPrivateTrendItem` stamps
+--     `no_population` on the unavailable branch and `incomplete_provenance` is
+--     still the only unmeasured reason `assertTrendItemInput` accepts on the
+--     measured branch.
+--   OLD code against the NEW schema: an old writer stamping
+--     `incomplete_provenance` on an `unavailable` row is REFUSED — a
+--     transaction abort naming this constraint, never a silently mislabelled
+--     row. That is the intended direction of failure, and it makes DEPLOY ORDER
+--     MATTER: apply this migration WITH or AFTER the application build that
+--     stamps `no_population`, never before it. Today the only writer of an
+--     `unavailable` row is `recordPrivateTrendItem` (slice 8c's paste intake),
+--     so the exposure is one code path.
+--   NEW code against the OLD schema: a writer stamping `no_population` is
+--     refused by the pre-0028 CHECK, for the mirror-image reason. Rolling the
+--     application back past this migration means rolling the migration back
+--     too (see ROLLBACK).
+--
+-- ORDER: expand -> migrate -> contract, all three in this file and therefore in
+--   ONE transaction (the drizzle migrator wraps each file).
+--   EXPAND   = the DROP. For the duration of the transaction no reason
+--              vocabulary is enforced; nothing else writes `trend_items` inside
+--              it, and a failure at any point rolls the drop back with the rest.
+--   MIGRATE  = the UPDATE. It touches only `unavailable` + `unmeasured` rows
+--              that do not already carry the new reason, so it is idempotent
+--              and a no-op on a database that has none. Every environment today
+--              is in that state: the live dev database holds ZERO `trend_items`
+--              rows (checked before writing this), and test databases are
+--              created per run. On a populated database that has run 8c it
+--              relabels every pasted reference, which is the point.
+--   CONTRACT = the ADD, which VALIDATES every existing row on the way in — and
+--              on a database that conformed to the PRE-0028 constraint, that
+--              validation CANNOT FAIL once the backfill above has run. The
+--              earlier text here named an example failure that does not exist
+--              ("an `unavailable` row whose `saturation` is `measured`"): such a
+--              row satisfies the MEASURED branch, which does not mention
+--              `baseline_state` at all, and it survives the ADD untouched
+--              (tenancy round-2 NOTE 4-prime, reproduced here before this
+--              sentence was written).
+--              MEASURED, NOT ARGUED, and over the whole space rather than an
+--              example: all 12 (baseline_state x saturation x reason)
+--              combinations were inserted one at a time under 0025's constraint
+--              on a scratch database; SIX are pre-0028-conforming — including
+--              `unavailable`/`measured`/NULL and both NULL-reason unmeasured
+--              rows — the backfill relabels the two `unavailable`+`unmeasured`
+--              ones (`UPDATE 2`), and the ADD accepts all six. The reason
+--              vocabulary is the only thing this migration changes, so that
+--              enumeration is the whole space: an inconsistent MEASURED row is
+--              refused identically before and after.
+--              A failure here therefore means a row NO conforming database can
+--              hold — one written while this constraint was absent, or a
+--              database whose constraint was dropped by hand — and is to be
+--              investigated, not forced through. B-4's lesson (0012 set NOT
+--              NULL + a CHECK on a populated table) is why the ADD was RUN on a
+--              populated table rather than assumed to be safe on one.
+--
+-- ROLLBACK (no automated down; hand SQL, in this order):
+--   ALTER TABLE trend_items DROP CONSTRAINT trend_items_saturation_measurement_nonempty;
+--   UPDATE trend_items SET saturation_unmeasured_reason = 'incomplete_provenance'
+--     WHERE baseline_state = 'unavailable' AND saturation = 'unmeasured'
+--       AND saturation_unmeasured_reason = 'no_population';
+--   ALTER TABLE trend_items ADD CONSTRAINT trend_items_saturation_measurement_nonempty
+--     CHECK ((saturation = 'unmeasured' AND saturation_unmeasured_reason = 'incomplete_provenance')
+--       OR (saturation = 'measured' AND saturation_matching_items >= 0
+--       AND saturation_population_size > 0
+--       AND saturation_matching_items <= saturation_population_size
+--       AND saturation_prevalence = ROUND(saturation_matching_items::numeric / saturation_population_size::numeric, 12)
+--       AND saturation_window_starts_at < saturation_window_ends_at
+--       AND saturation_method_version ~ '[^[:space:]]'
+--       AND saturation_unmeasured_reason IS NULL));
+--   NOT loss-free in the strict sense: the second statement puts the WRONG
+--   reason back on those rows, because the old CHECK admits no other value.
+--   No row is deleted and no column is dropped; what is lost is the
+--   distinction this migration exists to record.
+--
+-- RESTORE IMPLICATIONS. A pre-0028 dump restored onto the new schema fails the
+--   CHECK for every `unavailable` row it carries (they all say
+--   `incomplete_provenance`); restore with the constraint dropped, run the
+--   MIGRATE statement, then re-add it — i.e. run this file's three statements
+--   after the load. A post-0028 dump restored onto the old schema fails for the
+--   mirror reason and needs the ROLLBACK update first.
+--
+-- DELETION-REGISTRY IMPACT: none. No table, column or FK is added or removed,
+--   so `creator-data-registry.ts`, the export tables and the cascade tests are
+--   unchanged; `trend_items` already cascades from `creator_profiles` on the
+--   composite pair.
+
+ALTER TABLE "trend_items" DROP CONSTRAINT "trend_items_saturation_measurement_nonempty";--> statement-breakpoint
+UPDATE "trend_items" SET "saturation_unmeasured_reason" = 'no_population' WHERE "baseline_state" = 'unavailable' AND "saturation" = 'unmeasured' AND "saturation_unmeasured_reason" IS DISTINCT FROM 'no_population';--> statement-breakpoint
+ALTER TABLE "trend_items" ADD CONSTRAINT "trend_items_saturation_measurement_nonempty" CHECK (("trend_items"."saturation" = 'unmeasured' AND "trend_items"."saturation_unmeasured_reason" = CASE WHEN "trend_items"."baseline_state" = 'unavailable' THEN 'no_population' ELSE 'incomplete_provenance' END) OR ("trend_items"."saturation" = 'measured' AND "trend_items"."saturation_matching_items" >= 0 AND "trend_items"."saturation_population_size" > 0 AND "trend_items"."saturation_matching_items" <= "trend_items"."saturation_population_size" AND "trend_items"."saturation_prevalence" = ROUND("trend_items"."saturation_matching_items"::numeric / "trend_items"."saturation_population_size"::numeric, 12) AND "trend_items"."saturation_window_starts_at" < "trend_items"."saturation_window_ends_at" AND "trend_items"."saturation_method_version" ~ '[^[:space:]]' AND "trend_items"."saturation_unmeasured_reason" IS NULL));

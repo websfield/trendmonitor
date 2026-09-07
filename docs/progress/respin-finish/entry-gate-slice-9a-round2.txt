@@ -1,0 +1,25 @@
+=== TYPECHECK ===
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== WORKER ===
+> tsc -p worker/tsconfig.json --pretty false
+
+=== LINT ===
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+=== DBCHECK ===
+Everything's fine 🐶🔥
+=== TESTS ===
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mBOUNDARY: inside the tolerance grants, outside it refuses — the rule is the clock, not the pause flag [33m 1952[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe direction that must NOT change: an UNPAUSED workspace still gets its allowance [33m 1387[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma RESUMED workspace grants again — the refusal is tied to the OPEN pause, not to having ever paused [33m 1045[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m159 passed[39m[22m[90m (159)[39m
+[2m      Tests [22m [1m[32m4206 passed[39m[22m[90m (4206)[39m
+[2m   Start at [22m 21:40:13
+[2m   Duration [22m 246.27s[2m (transform 56.87s, setup 0ms, collect 545.16s, tests 3881.25s, environment 142ms, prepare 99.03s)[22m
+
+TEST_EXIT=0
+=== BUILD ===
+ ✓ Compiled successfully in 7.3s

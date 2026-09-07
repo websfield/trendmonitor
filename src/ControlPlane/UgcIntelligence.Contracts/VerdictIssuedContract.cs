@@ -2,7 +2,7 @@ namespace UgcIntelligence.Contracts;
 
 /// <summary>
 /// Contract B, the recordable values of <c>VerdictIssued.verdict</c> as defined by
-/// <c>docs/initial/schemas/events-v1.json</c>. This C# mirror is generated-by-hand from the schema and
+/// <c>docs/initial.past/schemas/events-v1.json</c>. This C# mirror is generated-by-hand from the schema and
 /// must not drift from it; <c>VerdictIssuedContractTests</c> asserts the two agree, member for member.
 ///
 /// <para>Includes <see cref="EXCLUDED_FROM_AI_SCORING"/> as of contract 1.1.0: without it, a
@@ -33,7 +33,7 @@ public static class OutcomeEventContract
 
 /// <summary>
 /// Contract B, the fields <c>AmplificationAllocated</c> must carry, mirrored from
-/// <c>docs/initial/schemas/events-v1.json</c>. <c>AmplificationAllocatedContractTests</c> asserts this list
+/// <c>docs/initial.past/schemas/events-v1.json</c>. <c>AmplificationAllocatedContractTests</c> asserts this list
 /// equals the schema's <c>required</c> array, so the two cannot drift.
 ///
 /// <para>As of contract 1.2.0, <see cref="RngSeed"/> and <see cref="SamplerVersion"/> are required: a

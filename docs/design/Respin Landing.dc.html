@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="respin-tokens.css">
+  <style>
+    body { margin: 0; background: #0F1013; }
+    a { color: var(--accent-text, #94A6EE); text-decoration: none; }
+    a:hover { color: var(--accent-text-strong, #B8C4F4); }
+    ::selection { background: #2A3350; }
+    @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  </style>
+</helmet>
+<div data-screen-label="Marketing landing" style="font-family: var(--font-sans); background: var(--bg); color: var(--text-1); min-height: 100vh;">
+  <div style="height: 3px; background: var(--accent);"></div>
+  <header style="display: flex; align-items: center; gap: 28px; padding: 18px 48px; border-bottom: 1px solid var(--border);">
+    <span style="font: 700 19px/1 var(--font-sans); letter-spacing: -0.02em;">Respin</span>
+    <nav style="display: flex; gap: 22px; margin-left: 12px; font: 500 13.5px/1 var(--font-sans);">
+      <a href="#pricing" style="color: var(--text-3);">Pricing</a>
+      <a href="#" style="color: var(--text-3);">How it learns</a>
+    </nav>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 14px;">
+      <a href="#" style="font: 500 13.5px/1 var(--font-sans); color: var(--text-2);">Sign in</a>
+      <a href="#" style="font: 600 13.5px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border-radius: var(--radius); padding: 11px 18px;" style-hover="background: var(--accent-hover);">Start free</a>
+    </div>
+  </header>
+
+  <section style="padding: 76px 48px 44px; text-align: center; background-image: repeating-linear-gradient(0deg, rgba(148, 166, 238, 0.05) 0 1px, transparent 1px 44px), repeating-linear-gradient(90deg, rgba(148, 166, 238, 0.05) 0 1px, transparent 1px 44px); border-bottom: 1px solid var(--border);">
+    <h1 style="font: 700 52px/1.15 var(--font-sans); letter-spacing: -0.03em; margin: 0 auto; max-width: 21ch; animation: rise 0.5s var(--ease) both;">Leave with a script you can film, <span style="color: var(--accent-text);">not a chat transcript.</span></h1>
+    <p style="font: 400 17px/1.55 var(--font-sans); color: var(--text-3); margin: 18px auto 0; max-width: 52ch; animation: rise 0.5s var(--ease) 0.08s both;">Respin turns your idea into a shot-mapped script in your voice, built on mechanisms proven by posted results.</p>
+    <div style="display: flex; justify-content: center; gap: 12px; margin-top: 26px; animation: rise 0.5s var(--ease) 0.16s both;">
+      <a href="#" style="font: 600 15px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border-radius: var(--radius); padding: 15px 26px;" style-hover="background: var(--accent-hover);">Start free, no card</a>
+      <a href="#pricing" style="font: 500 15px/1 var(--font-sans); color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 15px 26px;" style-hover="background: var(--surface-2);">See pricing</a>
+    </div>
+    <div style="margin: 48px -48px 0; overflow: hidden; border-top: 1px solid var(--border); background: var(--surface-1); animation: rise 0.5s var(--ease) 0.24s both;">
+      <div style="display: flex; gap: 10px; width: max-content; padding: 12px 0; animation: marquee 28s linear infinite;">
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[consensus break] 2.4x watch-through</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--text-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[receipt flash] 3.2 follows per 1k</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[dead-start contradiction] 7.2x baseline</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--text-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[hard cut ending] rewatch trigger</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[comment keyword] follow gate</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--text-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[part-two tease] series pull</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[consensus break] 2.4x watch-through</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--text-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[receipt flash] 3.2 follows per 1k</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[dead-start contradiction] 7.2x baseline</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--text-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[hard cut ending] rewatch trigger</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[comment keyword] follow gate</span>
+        <span style="font: 500 12px/1 var(--font-mono); color: var(--text-3); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap;">[part-two tease] series pull</span>
+      </div>
+    </div>
+  </section>
+
+  <section style="max-width: 1180px; margin: 0 auto; padding: 48px 48px 72px;">
+    <div style="background: var(--surface-1); border: 1px solid var(--accent-border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); animation: rise 0.6s var(--ease) 0.32s both;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr;">
+        <div style="padding: 26px 28px; border-right: 1px solid var(--border);">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.16em; color: var(--text-4);">THE SAME IDEA, ANY CHAT MODEL</span>
+          <div style="margin-top: 16px; display: grid; gap: 12px; font: 400 14px/1.65 var(--font-sans); color: var(--text-4);">
+            <p style="margin: 0;">&ldquo;Hey guys! Today we&rsquo;re going to talk about a game-changing training secret that will take your gains to the next level&hellip;&rdquo;</p>
+            <p style="margin: 0;">&ldquo;Make sure you like and follow for more amazing fitness content! Let&rsquo;s dive in&hellip;&rdquo;</p>
+            <p style="margin: 0; color: var(--text-4);">No timestamps. No shots. Sounds like everyone. Audiences punish it.</p>
+          </div>
+        </div>
+        <div style="padding: 26px 28px; background: var(--accent-surface);">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.16em; color: var(--accent-text);">THE SAME IDEA, THROUGH YOUR BRAIN</span>
+          <div style="margin-top: 16px; display: grid; grid-template-columns: 48px 1fr; row-gap: 12px;">
+            <span style="font: 500 12px/1.6 var(--font-mono); color: var(--text-3);">00:00</span>
+            <p style="font: 400 14.5px/1.6 var(--font-sans); color: var(--text-1); margin: 0;">Every program you have ever bought is wrong about training to failure.</p>
+            <span style="font: 600 12px/1.6 var(--font-mono); color: var(--accent-text);">00:14</span>
+            <div style="border-left: 2px solid var(--accent); padding-left: 12px;">
+              <span style="font: 700 9px/1 var(--font-mono); letter-spacing: 0.18em; color: var(--accent-text);">THE TURN</span>
+              <p style="font: 600 14.5px/1.55 var(--font-sans); margin: 4px 0 0;">Failure was never the stimulus. Volume you can recover from is.</p>
+            </div>
+            <span style="font: 500 12px/1.6 var(--font-mono); color: var(--text-3);">SHOT</span>
+            <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 0;">Your March clip 0451: the 315 for three set, phone angle. Receipt on screen at 00:22.</p>
+          </div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 18px; padding: 13px 28px; border-top: 1px solid var(--accent-border); background: var(--accent-surface-2);">
+        <span style="font: 400 12px/1.5 var(--font-mono); color: var(--accent-text-strong);">REAL OUTPUT SHAPE: THESIS &middot; HOOKS &middot; TIMED SCRIPT &middot; SHOT MAP &middot; CAPTION &middot; WEAKEST POINT, ALWAYS DISCLOSED</span>
+      </div>
+    </div>
+  </section>
+
+  <section style="max-width: 1180px; margin: 0 auto; padding: 0 48px 72px;">
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; border-top: 1px solid var(--border);">
+      <div style="padding: 28px 28px 0 0; border-right: 1px solid var(--border);">
+        <span style="display: inline-grid; place-items: center; width: 30px; height: 30px; background: var(--accent); color: var(--on-accent); border-radius: var(--radius-sm); font: 600 12px/1 var(--font-mono);">01</span>
+        <h3 style="font: 600 18px/1.35 var(--font-sans); margin: 10px 0 0;">Build your brain in 20 minutes</h3>
+        <p style="font: 400 14px/1.6 var(--font-sans); color: var(--text-3); margin: 8px 0 0; max-width: 40ch;">A short interview plus 5 to 10 of your own posts. You confirm every inferred field before it activates; nothing is assumed silently.</p>
+      </div>
+      <div style="padding: 28px 28px 0 28px; border-right: 1px solid var(--border);">
+        <span style="display: inline-grid; place-items: center; width: 30px; height: 30px; background: var(--accent); color: var(--on-accent); border-radius: var(--radius-sm); font: 600 12px/1 var(--font-mono);">02</span>
+        <h3 style="font: 600 18px/1.35 var(--font-sans); margin: 10px 0 0;">Generate, kill-test, film</h3>
+        <p style="font: 400 14px/1.6 var(--font-sans); color: var(--text-3); margin: 8px 0 0; max-width: 40ch;">Seven modes, one output shape: hooks, a timed script with the turn marked, and every beat mapped to a clip you have or a shot to film.</p>
+      </div>
+      <div style="padding: 28px 0 0 28px;">
+        <span style="display: inline-grid; place-items: center; width: 30px; height: 30px; background: var(--accent); color: var(--on-accent); border-radius: var(--radius-sm); font: 600 12px/1 var(--font-mono);">03</span>
+        <h3 style="font: 600 18px/1.35 var(--font-sans); margin: 10px 0 0;">Log results. It learns you.</h3>
+        <p style="font: 400 14px/1.6 var(--font-sans); color: var(--text-3); margin: 8px 0 0; max-width: 40ch;">Post, log the numbers, and approve or reject what the data proposes. The brain never updates behind your back.</p>
+      </div>
+    </div>
+  </section>
+
+  <section style="max-width: 1180px; margin: 0 auto; padding: 0 48px 72px;">
+    <div style="background: var(--accent-hover); border-radius: var(--radius); padding: 30px 34px; box-shadow: var(--shadow);">
+      <h2 style="font: 600 24px/1.3 var(--font-sans); letter-spacing: -0.01em; margin: 0; color: var(--on-accent);">What Respin refuses to do</h2>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px 40px; margin-top: 18px; font: 400 14.5px/1.6 var(--font-sans); color: #DDE3F9;">
+        <span>It never promises virality. Every concept ships with its weakest point disclosed.</span>
+        <span>It never pads. If all candidates die your kill-test, it says so and digs again.</span>
+        <span>It never fakes a number. Unverifiable specifics render as [check] tokens for you to fill.</span>
+        <span>It never scores you against other creators. Every baseline is your own history.</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing" style="max-width: 1180px; margin: 0 auto; padding: 0 48px 88px;">
+    <div style="display: flex; align-items: baseline; gap: 16px;">
+      <h2 style="font: 600 26px/1.2 var(--font-sans); letter-spacing: -0.02em; margin: 0;">Pricing</h2>
+      <span style="font: 400 13px/1 var(--font-mono); color: var(--text-4);">CREDITS ARE THE ONLY METER. EVERY RUN STATES ITS PRICE BEFORE IT SPENDS.</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 22px;">
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; display: flex; flex-direction: column; transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);" style-hover="transform: translateY(-3px); box-shadow: var(--shadow-soft);">
+        <span style="font: 600 14px/1 var(--font-sans);">Free</span>
+        <div style="font: 600 30px/1 var(--font-mono); margin-top: 14px;">$0</div>
+        <div style="display: grid; gap: 7px; margin-top: 16px; font: 400 13px/1.5 var(--font-sans); color: var(--text-3);">
+          <span>25 credits each month</span>
+          <span>1 creator profile</span>
+          <span>Trends feed, read-only</span>
+          <span>Your data stays readable, always</span>
+        </div>
+        <a href="#" style="margin-top: 20px; font: 500 13px/1 var(--font-sans); color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px 0; text-align: center;" style-hover="background: var(--surface-2);">Start free</a>
+      </div>
+      <div style="background: var(--accent-surface); border: 1px solid var(--accent-border); border-radius: var(--radius); padding: 22px; display: flex; flex-direction: column; box-shadow: var(--shadow-soft); transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);" style-hover="transform: translateY(-3px); box-shadow: var(--shadow);">
+        <div style="display: flex; align-items: center;"><span style="font: 600 14px/1 var(--font-sans);">Creator</span><span style="margin-left: auto; white-space: nowrap; font: 600 9px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 4px 6px;">MOST CREATORS</span></div>
+        <div style="font: 600 30px/1 var(--font-mono); margin-top: 14px;">$10<span style="font: 400 13px/1 var(--font-mono); color: var(--text-4);"> /mo</span></div>
+        <div style="display: grid; gap: 7px; margin-top: 16px; font: 400 13px/1.5 var(--font-sans); color: var(--text-3);">
+          <span>250 credits each month</span>
+          <span>1 creator profile</span>
+          <span>Spin from the Trends feed</span>
+          <span>Results loop and brain proposals</span>
+        </div>
+        <a href="#" style="margin-top: 20px; font: 600 13px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border-radius: var(--radius); padding: 12px 0; text-align: center;" style-hover="background: var(--accent-hover);">Start Creator</a>
+      </div>
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; display: flex; flex-direction: column; transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);" style-hover="transform: translateY(-3px); box-shadow: var(--shadow-soft);">
+        <span style="font: 600 14px/1 var(--font-sans);">Pro</span>
+        <div style="font: 600 30px/1 var(--font-mono); margin-top: 14px;">$60<span style="font: 400 13px/1 var(--font-mono); color: var(--text-4);"> /mo</span></div>
+        <div style="display: grid; gap: 7px; margin-top: 16px; font: 400 13px/1.5 var(--font-sans); color: var(--text-3);">
+          <span>1,800 credits each month</span>
+          <span>3 creator profiles</span>
+          <span>Footage-to-thesis on daily uploads</span>
+          <span>Auto-top-up with a spend cap</span>
+        </div>
+        <a href="#" style="margin-top: 20px; font: 500 13px/1 var(--font-sans); color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px 0; text-align: center;" style-hover="background: var(--surface-2);">Start Pro</a>
+      </div>
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; display: flex; flex-direction: column; transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);" style-hover="transform: translateY(-3px); box-shadow: var(--shadow-soft);">
+        <span style="font: 600 14px/1 var(--font-sans);">Studio</span>
+        <div style="font: 600 30px/1 var(--font-mono); margin-top: 14px;">$200<span style="font: 400 13px/1 var(--font-mono); color: var(--text-4);"> /mo</span></div>
+        <div style="display: grid; gap: 7px; margin-top: 16px; font: 400 13px/1.5 var(--font-sans); color: var(--text-3);">
+          <span>7,000 credits each month</span>
+          <span>10 creator profiles</span>
+          <span>For teams running several accounts</span>
+          <span>Priority generation queue</span>
+        </div>
+        <a href="#" style="margin-top: 20px; font: 500 13px/1 var(--font-sans); color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px 0; text-align: center;" style-hover="background: var(--surface-2);">Start Studio</a>
+      </div>
+    </div>
+    <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-4); margin: 18px 0 0; max-width: 70ch;">Cancelling always offers a pause first: 1 to 3 months, no charges, everything frozen and readable. Unused monthly credits expire; packs last 12 months. No plan promises reach, and none of them ever will.</p>
+  </section>
+
+  <footer style="border-top: 1px solid var(--border); padding: 24px 48px; display: flex; align-items: center; gap: 20px;">
+    <span style="font: 700 15px/1 var(--font-sans);">Respin</span>
+    <span style="font: 400 12.5px/1 var(--font-sans); color: var(--text-4);">Scripts in your voice, built on mechanisms that perform.</span>
+    <nav style="margin-left: auto; display: flex; gap: 18px; font: 500 12.5px/1 var(--font-sans);">
+      <a href="#" style="color: var(--text-3);">Pricing</a>
+      <a href="#" style="color: var(--text-3);">Terms</a>
+      <a href="#" style="color: var(--text-3);">Privacy</a>
+    </nav>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1440, &quot;height&quot;: 960}}"></script>
+</body>
+</html>

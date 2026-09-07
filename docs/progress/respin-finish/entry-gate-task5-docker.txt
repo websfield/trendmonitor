@@ -1,0 +1,54 @@
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90mC:/projects/ai.playground/trendMonitor/respin[39m
+
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m tests/pg-boss.docker.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 22549[2mms[22m[39m
+   [33m[2m✓[22m[39m R-52 verify-first: the installed pg-boss on real Postgres[2m > [22ma cron schedule fires: schedule row → timekeeper → queue → handler [33m 3141[2mms[22m[39m
+   [33m[2m✓[22m[39m R-52 verify-first: the installed pg-boss on real Postgres[2m > [22ma failing job retries exactly retryLimit times with exponential backoff, then fails terminally [33m 9788[2mms[22m[39m
+   [33m[2m✓[22m[39m R-52 verify-first: the installed pg-boss on real Postgres[2m > [22mlocalConcurrency bounds in-process parallelism and `max` bounds the pool [33m 1721[2mms[22m[39m
+   [33m[2m✓[22m[39m R-52 verify-first: the installed pg-boss on real Postgres[2m > [22mgraceful stop finishes in-flight work, closes every session, then emits `stopped` [33m 2106[2mms[22m[39m
+   [33m[2m✓[22m[39m the production runtime against the installed pg-boss (start twice)[2m > [22mstarts, stops, and starts AGAIN: existing queues are updated, schedules re-upserted, sessions bounded [33m 1270[2mms[22m[39m
+ [32m✓[39m packages/config/tests/migrate-config.docker.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 2574[2mms[22m[39m
+   [33m[2m✓[22m[39m migrate-config CAS on real Postgres[2m > [22man UNCOMMITTED concurrent append is not sailed past — the operator edit survives [33m 785[2mms[22m[39m
+   [33m[2m✓[22m[39m migrate-config CAS on real Postgres[2m > [22mthe ADMIN-APPEND side of the lock is load-bearing too — appendConfigVersion's own takeConfigLock call, not just applyConfigMigration's [33m 320[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/auto-topup-race.docker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 1572[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/concurrency.docker.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 2729[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22m20 concurrent debits of 10 against a 100 balance: exactly 10 succeed, final balance 0, never negative [33m 470[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/free-mint.docker.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 1657[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/generate-race.docker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 2488[2mms[22m[39m
+   [33m[2m✓[22m[39m generate under REAL concurrency[2m > [22mtwo CONCURRENT submissions of one attempt id: one vendor sequence, one generation, one debit [33m 327[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/inference-race.docker.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 6632[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mthe SERVER_CAPACITY valve works against a real exhausted pool [33m 4084[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/pasted-reference.docker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 2250[2mms[22m[39m
+   [33m[2m✓[22m[39m pasted reference money under real concurrency (R-98)[2m > [22m8 simultaneous IDENTICAL pastes → one claim, ONE debit, the price charged once [33m 587[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/profiles.docker.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 2072[2mms[22m[39m
+ [32m✓[39m packages/db/tests/activate.docker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 2729[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-63 on real Postgres[2m > [22mAC-63: an input that STARTS before and COMMITS after the write does not brick activation [33m 381[2mms[22m[39m
+ [32m✓[39m packages/db/tests/auth-mail-quota.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1709[2mms[22m[39m
+   [33m[2m✓[22m[39m auth-mail quota admission on real PostgreSQL[2m > [22madmits exactly the ceiling under 40 concurrent security sends and 40 concurrent invites [33m 375[2mms[22m[39m
+ [32m✓[39m packages/db/tests/brain-concurrency.docker.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 2040[2mms[22m[39m
+ [32m✓[39m packages/db/tests/concurrency.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1611[2mms[22m[39m
+ [32m✓[39m packages/db/tests/deletion-executor.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1727[2mms[22m[39m
+ [32m✓[39m packages/db/tests/deletion-recovery-concurrency.docker.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 2288[2mms[22m[39m
+   [33m[2m✓[22m[39m identity cancellation recovery rate key on real Postgres[2m > [22msix invalid-secret racers sharing one rate key durably consume exactly five attempts [33m 580[2mms[22m[39m
+ [32m✓[39m packages/db/tests/frameworks-concurrency.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1435[2mms[22m[39m
+ [32m✓[39m packages/db/tests/generation-schema.docker.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 1456[2mms[22m[39m
+ [32m✓[39m packages/db/tests/included-build-backfill.docker.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 1452[2mms[22m[39m
+ [32m✓[39m packages/db/tests/interview-ops.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1452[2mms[22m[39m
+ [32m✓[39m packages/db/tests/promotion-concurrency.docker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 2848[2mms[22m[39m
+   [33m[2m✓[22m[39m promotion decisions on real Postgres[2m > [22msimultaneous refreshes converge on one proposal with one exact evidence set [33m 731[2mms[22m[39m
+   [33m[2m✓[22m[39m promotion decisions on real Postgres[2m > [22msimultaneous accepts write once and the loser observes the same terminal result [33m 623[2mms[22m[39m
+ [32m✓[39m packages/db/tests/promotion-migration.docker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 9779[2mms[22m[39m
+   [33m[2m✓[22m[39m 0032→0033 and fresh install on real Postgres[2m > [22mupgrades a populated 0032 schema by applying only additive 0033 [33m 422[2mms[22m[39m
+ [32m✓[39m packages/db/tests/spend-rollup.docker.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 1430[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m22 passed[39m[22m[90m (22)[39m
+[2m      Tests [22m [1m[32m98 passed[39m[22m[90m (98)[39m
+[2m   Start at [22m 22:58:34
+[2m   Duration [22m 103.44s[2m (transform 1.50s, setup 0ms, collect 20.35s, tests 76.48s, environment 4ms, prepare 2.64s)[22m
+
+DOCKER_EXIT=0

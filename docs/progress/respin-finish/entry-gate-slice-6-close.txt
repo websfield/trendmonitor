@@ -1,0 +1,64 @@
+=== TYPECHECK ===
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/modes typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== LINT ===
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+=== DB:CHECK (folder consistency only - R-63) ===
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+=== DB:GENERATE (the REAL drift check - R-63) ===
+workspace_spend_monthly 9 columns 1 indexes 0 fks
+generation_attempts 18 columns 1 indexes 1 fks
+generations 19 columns 1 indexes 2 fks
+
+No schema changes, nothing to migrate 😴
+=== TEST (CI shape, Docker live) ===
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 2 (the direction that must NOT change): inside ONE episode a second failure still never extends the deadline [33m 822[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 3: a STALE snapshot cannot close a pause the owner opened after it was created [33m 1049[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 3 (non-vacuity): a CONTEMPORANEOUS snapshot without pause_collection still resumes [33m 1465[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mCHANGE 3: the monthly band is CONFIG — widening `monthlyPeriodDays` self-heals the refused invoice with no deploy [33m 1195[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 4: a grant-bearing invoice with NO id is REFUSED, never granted against the event id [33m 1065[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 regression pins (billing NOTE 3: the pause bound is SYMMETRIC)[2m > [22ma pause-era snapshot arriving AFTER the owner resumed cannot RE-OPEN the pause [33m 1129[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 regression pins (billing NOTE 3: the pause bound is SYMMETRIC)[2m > [22mNON-VACUITY: a CONTEMPORANEOUS pause snapshot still opens a pause (the bound is not a blanket refusal) [33m 1231[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mmirrors cancel_at and surfaces it as a scheduled end — with the boolean FALSE [33m 969[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mthe scheduled end DIES with the subscription (DEAD_SUBSCRIPTION_FIELDS clears it) [33m 960[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mNON-VACUITY: an ordinary active subscription carries no scheduled end [33m 1089[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma STALE invoice.paid does NOT end a newer, still-live dunning grace period [33m 1297[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22mNON-VACUITY: a CURRENT invoice.paid still clears the grace and lifts the status [33m 1221[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma TERMINAL mirror is still tidied by a CURRENT paid invoice — cleared, and never revived [33m 1325[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma stale invoice on a terminal mirror leaves the deadline, and it STILL cannot surface as grace [33m 1195[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma GENUINE during-pause invoice is refused: outcome `ignored`, and ZERO credits minted [33m 1391[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe refusal is idempotent — a redelivery of the same event does not sneak a grant through [33m 1309[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mBOUNDARY: inside the tolerance grants, outside it refuses — the rule is the clock, not the pause flag [33m 2535[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe direction that must NOT change: an UNPAUSED workspace still gets its allowance [33m 1426[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma RESUMED workspace grants again — the refusal is tied to the OPEN pause, not to having ever paused [33m 1317[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m101 passed[39m[22m[90m (101)[39m
+[2m      Tests [22m [1m[32m2199 passed[39m[22m[90m (2199)[39m
+[2m   Start at [22m 04:57:18
+[2m   Duration [22m 347.60s[2m (transform 130.89s, setup 0ms, collect 982.01s, tests 4458.80s, environment 174ms, prepare 193.83s)[22m
+
+=== BUILD ===
++ First Load JS shared by all             102 kB
+  ├ chunks/3466f3f1-c96f853f58dc03ee.js  54.2 kB
+  ├ chunks/706-669b7b2d1b550351.js       46.1 kB
+  └ other shared chunks (total)          1.99 kB
+
+
+ƒ Middleware                             34.9 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+=== GATE DONE ===

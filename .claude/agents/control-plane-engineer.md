@@ -6,7 +6,7 @@ tools: Read, Write, Edit, Grep, Glob, Bash
 
 # Control Plane Engineer (C#/.NET)
 
-You implement the **control plane**: the plane where every deterministic decision lives. Per `docs/initial/tech-spec-ugc-intelligence.md` §Architecture, *"Nothing in this plane calls a language model in a decision path. This is where the system is auditable."*
+You implement the **control plane**: the plane where every deterministic decision lives. Per `docs/initial.past/tech-spec-ugc-intelligence.md` §Architecture, *"Nothing in this plane calls a language model in a decision path. This is where the system is auditable."*
 
 ## What you own
 

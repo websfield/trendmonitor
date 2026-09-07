@@ -1,0 +1,78 @@
+{
+  "_comment": [
+    "R-124 deletion-journal bucket policy TEMPLATE. Replace every <PLACEHOLDER>.",
+    "Applied by an operator with `aws s3api put-bucket-policy`; the application",
+    "never creates, reads or applies this. Record the sha256 of the RENDERED",
+    "policy in RUNBOOK.md at provisioning, per R-124's evidence list.",
+    "Condition keys verified 2026-09-07 against",
+    "https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html",
+    "s3:if-none-match with the Null operator; s3:ObjectCreationOperation exempts",
+    "the multipart APIs, which cannot carry conditional headers."
+  ],
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyInsecureTransport",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::<BUCKET>",
+        "arn:aws:s3:::<BUCKET>/*"
+      ],
+      "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+    },
+    {
+      "Sid": "DenyNonConditionalCreate",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::<BUCKET>/*",
+      "Condition": {
+        "Null": { "s3:if-none-match": "true" },
+        "Bool": { "s3:ObjectCreationOperation": "true" }
+      }
+    },
+    {
+      "Sid": "DenyUnencryptedUpload",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::<BUCKET>/*",
+      "Condition": {
+        "StringNotEquals": { "s3:x-amz-server-side-encryption": "AES256" }
+      }
+    },
+    {
+      "Sid": "DenyWeakOrAbsentObjectLock",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::<BUCKET>/*",
+      "Condition": {
+        "StringNotEquals": { "s3:x-amz-object-lock-mode": "COMPLIANCE" }
+      }
+    },
+    {
+      "Sid": "DenyRetentionAndVersioningTampering",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutBucketVersioning",
+        "s3:PutObjectLegalHold",
+        "s3:PutObjectRetention",
+        "s3:BypassGovernanceRetention",
+        "s3:PutBucketPolicy",
+        "s3:DeleteBucketPolicy",
+        "s3:PutBucketPublicAccessBlock"
+      ],
+      "Resource": [
+        "arn:aws:s3:::<BUCKET>",
+        "arn:aws:s3:::<BUCKET>/*"
+      ],
+      "Condition": {
+        "StringNotEquals": { "aws:PrincipalArn": "<BREAK_GLASS_ADMIN_ROLE_ARN>" }
+      }
+    }
+  ]
+}

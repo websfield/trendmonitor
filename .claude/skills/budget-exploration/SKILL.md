@@ -21,10 +21,10 @@ This path allocates real client money and simultaneously generates the training 
 
 ## Where the canon lives
 
-- ADR-0003 (`docs/initial/adr/0003-exploration-budget.md`) — the whole argument
-- `docs/initial/rubric-vps-v1.md` §Budget · `docs/initial/schemas/rubric-v1.json` (`aws`, epsilon bounds)
-- `docs/initial/component-2-scoring-amplification.md` §2.10 (ranker), §2.11 (allocator)
-- `docs/initial/schemas/events-v1.json` (`AmplificationAllocated`, `AmplificationSignedOff`, arm invariant)
+- ADR-0003 (`docs/initial.past/adr/0003-exploration-budget.md`) — the whole argument
+- `docs/initial.past/rubric-vps-v1.md` §Budget · `docs/initial.past/schemas/rubric-v1.json` (`aws`, epsilon bounds)
+- `docs/initial.past/component-2-scoring-amplification.md` §2.10 (ranker), §2.11 (allocator)
+- `docs/initial.past/schemas/events-v1.json` (`AmplificationAllocated`, `AmplificationSignedOff`, arm invariant)
 
 ## Anti-patterns
 

@@ -17,6 +17,17 @@ dist/
 *.tsbuildinfo
 # ---- Trend monitor durable state (may hold tenant-scoped signals — never commit) ----
 .trend-monitor/
+# ---- Browser-walk artefacts (Playwright MCP) ----
+# Every acceptance walk writes accessibility snapshots and console logs here.
+# They are DIAGNOSIS, not evidence: a snapshot can contain a creator's own draft
+# text and a console log can contain a request URL, and the vendor-acceptance
+# runbook's rule 6 keeps both out of the evidence pack. What a walk PROVED
+# belongs in its report card, in the operator's own words.
+# Added 2026-09-04 by slice 8c's walk, alongside `respin/.tmp/` — the same class
+# the round-1 code review raised as C14: this slice is entirely uncommitted, so
+# a `git add -A` is the hazard, and an artefact directory nobody ignored is one
+# the next walk recreates.
+.playwright-mcp/
 # ---- Cutdown job working directories (real creator footage + campaign data — never commit) ----
 # `work/` holds ingested source media, proxies, renders and campaign exports for real
 # jobs. Two independent reasons it can never be tracked: the media is licensed creator
@@ -39,3 +50,6 @@ Thumbs.db
 *.key
 # ---- Codebase map (generated, not tracked) ----
 .codebase-map/
+# ---- Playwright MCP (generated browser session artifacts, not tracked) ----
+.playwright-mcp/
+.gstack/

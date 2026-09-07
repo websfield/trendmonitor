@@ -1,0 +1,12 @@
+=== 2026-08-28T00:50:24+10:00 entry gate: slice 2a, button + races (CI shape, Docker live) ===
+typecheck exit=0
+lint exit=0
+test exit=0
+ Test Files  50 passed (50)
+      Tests  1004 passed (1004)
+db:check exit=0
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+build exit=0
+ ✓ Compiled successfully in 3.9s
+├ ƒ /onboarding                          1.24 kB         104 kB

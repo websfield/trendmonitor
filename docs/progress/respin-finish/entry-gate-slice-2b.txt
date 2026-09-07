@@ -1,0 +1,755 @@
+=== entry gate, slice 2b (2026-08-29, post-build) ===
+--- typecheck ---
+
+> respin@0.0.0 typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc --noEmit && pnpm --filter=!respin -r run typecheck
+
+Scope: 5 of 6 workspace projects
+packages/db typecheck$ tsc --noEmit
+packages/llm typecheck$ tsc --noEmit
+packages/llm typecheck: Done
+packages/db typecheck: Done
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+typecheck exit: 0
+--- lint ---
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+lint exit: 0
+--- test (CI shape, Docker live) ---
+
+> respin@0.0.0 test C:\projects\ai.playground\trendMonitor\respin
+> vitest run
+
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90mC:/projects/ai.playground/trendMonitor/respin[39m
+
+ [31m❯[39m tests/gate-completeness.test.ts [2m([22m[2m33 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 626[2mms[22m[39m
+   [32m✓[39m the entrypoint definition is DERIVED (round-3 meta-finding)[2m > [22mPAGE_EXTENSIONS comes from the installed Next, and matches the set this repo was written against[32m 2[2mms[22m[39m
+   [32m✓[39m the entrypoint definition is DERIVED (round-3 meta-finding)[2m > [22mclassifies by PROPERTY: page.ts / route.js are entrypoints, a `use server` module by ANY name is one, a layout is not[32m 67[2mms[22m[39m
+   [32m✓[39m the entrypoint definition is DERIVED (round-3 meta-finding)[2m > [22m`use server` is the FIRST DIRECTIVE, not a substring — the two prose mentions in this tree are the non-vacuity cases[32m 2[2mms[22m[39m
+   [32m✓[39m gate completeness (derived from PROTECTED_PREFIXES)[2m > [22mevery protected entrypoint imports a gate helper (AC-10)[32m 53[2mms[22m[39m
+   [32m✓[39m gate completeness (derived from PROTECTED_PREFIXES)[2m > [22mfails when a protected page lacks the gate helper (fixture proof)[32m 27[2mms[22m[39m
+   [32m✓[39m gate completeness (derived from PROTECTED_PREFIXES)[2m > [22mdoes not flag public files (auth API route, marketing, sign-in)[32m 0[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(product)/onboarding/page.tsx' is under a protected prefix and carries 'requireUser'[32m 1[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(product)/onboarding/actions.ts' is under a protected prefix and carries 'requireUser'[32m 1[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(product)/brain/page.tsx' is under a protected prefix and carries 'requireUser'[32m 3[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(product)/brain/actions.ts' is under a protected prefix and carries 'requireUser'[32m 1[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(product)/studio/page.tsx' is under a protected prefix and carries 'requireUser'[32m 1[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(product)/usage/page.tsx' is under a protected prefix and carries 'requireUser'[32m 0[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(product)/settings/billing/page.tsx' is under a protected prefix and carries 'requireUser'[32m 1[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(product)/settings/billing/actions.ts' is under a protected prefix and carries 'requireUser'[32m 0[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(admin)/admin/page.tsx' is under a protected prefix and carries 'requireAdmin'[32m 1[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(admin)/admin/config/page.tsx' is under a protected prefix and carries 'requireAdmin'[32m 0[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(admin)/admin/config/actions.ts' is under a protected prefix and carries 'requireAdmin'[32m 0[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22m'(admin)/admin/margin/page.tsx' is under a protected prefix and carries 'requireAdmin'[32m 1[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22mthe fixture is EXHAUSTIVE: every protected entrypoint on disk is named above[32m 21[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22mDEFAULT-DENY: every entrypoint in (product)/(admin) maps to a PROTECTED url[32m 22[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22mfails when a product page is added at an UNLISTED url — INCLUDING as page.ts (fixture proof)[32m 55[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22mfails when an UNGATED server-action module is added under a protected prefix, WHATEVER it is called (fixture proof)[32m 18[2mms[22m[39m
+   [32m✓[39m named gate fixture (M1 phase 4, AC-1)[2m > [22mthe URLs this phase adds really are protected (and look-alikes are not)[32m 0[2mms[22m[39m
+   [32m✓[39m app/api default-deny (round-3 NOTE: the walk excluded it entirely)[2m > [22mevery API entrypoint is either session-gated or on the explicit session-free allowlist[32m 19[2mms[22m[39m
+   [32m✓[39m app/api default-deny (round-3 NOTE: the walk excluded it entirely)[2m > [22mthe allowlist is not stale: every file it names exists and really carries no gate[32m 1[2mms[22m[39m
+   [32m✓[39m app/api default-deny (round-3 NOTE: the walk excluded it entirely)[2m > [22mfails when a NEW api route is added with no gate and no allowlist entry (fixture proof)[32m 28[2mms[22m[39m
+   [32m✓[39m app/api default-deny (round-3 NOTE: the walk excluded it entirely)[2m > [22m...and a GATED api route is NOT reported (the deny is default-deny, not a blanket ban)[32m 14[2mms[22m[39m
+   [32m✓[39m app/api default-deny (round-3 NOTE: the walk excluded it entirely)[2m > [22mthe gate must REFUSE: getSessionUser returns null, so importing (or even calling) it is not a gate[32m 67[2mms[22m[39m
+   [32m✓[39m app/api default-deny (round-3 NOTE: the walk excluded it entirely)[2m > [22mresolves the IMPORT BINDING, not the name: an aliased non-gate is caught, an aliased real gate is not[32m 78[2mms[22m[39m
+[31m   [31m×[31m ALL of app/ is default-deny (phase-4 round-3 CHANGE 1)[2m > [22mevery entrypoint under app/ is protected, session-free-by-allowlist, or explicitly public[39m[32m 42[2mms[22m[39m
+[31m     → an entrypoint under app/ belongs to no list: it is not under a PROTECTED_PREFIX, not an allowlisted session-free API route, and not on PUBLIC_ENTRYPOINTS. Add its URL to lib/routes.ts (and gate it), or record it as public WITH a reason.: expected [ Array(1) ] to deeply equal [][39m
+   [32m✓[39m ALL of app/ is default-deny (phase-4 round-3 CHANGE 1)[2m > [22mthe public allowlist is not stale: every file it names exists, and none of them is secretly gated[32m 1[2mms[22m[39m
+   [32m✓[39m ALL of app/ is default-deny (phase-4 round-3 CHANGE 1)[2m > [22mcatches a page at a NEW TOP-LEVEL URL outside every route group — the M2 `app/brain/page.tsx` shape[32m 35[2mms[22m[39m
+   [32m✓[39m ALL of app/ is default-deny (phase-4 round-3 CHANGE 1)[2m > [22ma metadata route under a PROTECTED prefix is an entrypoint — INCLUDING Next's numeric variants[32m 57[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/db/tests/bootstrap.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 15745[2mms[22m[39m
+   [33m[2m✓[22m[39m ensureUserWorkspace bootstrap[2m > [22mcreates user + personal workspace + owner membership on first call [33m 3429[2mms[22m[39m
+   [33m[2m✓[22m[39m ensureUserWorkspace bootstrap[2m > [22mis idempotent: two sequential calls yield exactly one workspace (AC-2) [33m 2349[2mms[22m[39m
+   [33m[2m✓[22m[39m ensureUserWorkspace bootstrap[2m > [22mserialized-conflict: a pre-seeded existing user resolves, creates nothing (AC-2) [33m 2808[2mms[22m[39m
+   [33m[2m✓[22m[39m ensureUserWorkspace bootstrap[2m > [22mconflict with user-but-no-membership repairs within the same transaction [33m 2516[2mms[22m[39m
+   [33m[2m✓[22m[39m ensureUserWorkspace bootstrap[2m > [22mrolls back cleanly: a forced failure leaves zero partial rows (AC-2) [33m 2083[2mms[22m[39m
+   [33m[2m✓[22m[39m ensureUserWorkspace bootstrap[2m > [22mstores the auth identity it was given (and nothing else — no email copy, D-M1-5) [33m 2557[2mms[22m[39m
+ [32m✓[39m packages/config/tests/config.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 30288[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mPARITY: the Phase-1 seeded row parses under RespinConfigV1 (driven from the real seed) [33m 3472[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mFAIL CLOSED: empty config_versions table → ConfigUnavailableError (never a default price) [33m 2306[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mFAIL CLOSED: malformed active content → ConfigUnavailableError [33m 2339[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mappendConfigVersion appends (never mutates) and the new version becomes active [33m 2580[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mappendConfigVersion rejects invalid content (Zod, strict) [33m 2104[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mREFUSES an inverted range: pauseMonths/monthlyPeriodDays min > max (round-2 NOTE 5) [33m 2616[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mAC-4: an edit adds exactly ONE row, and every earlier row is byte-identical afterwards [33m 2247[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mAC-4: content REJECTED by validation appends NOTHING (the editor's error path writes no version) [33m 6934[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mlistConfigVersions returns metadata newest-first, with the author, and clamps its limit [33m 5680[2mms[22m[39m
+ [32m✓[39m packages/db/tests/spend-rollup.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 41045[2mms[22m[39m
+   [33m[2m✓[22m[39m the rollup upsert, composed inside recordModelUsage (R1, R3, R4, R5's onConflictDoUpdate)[2m > [22ma single billed attempt creates the grain row with call_count 1 and its own cost [33m 3448[2mms[22m[39m
+   [33m[2m✓[22m[39m the rollup upsert, composed inside recordModelUsage (R1, R3, R4, R5's onConflictDoUpdate)[2m > [22mtwo attempts in the same grain — TWO rows in model_usage, and the rollup increments TWICE (question 1's whole point; M2's onConflictDoNothing mutation target) [33m 2540[2mms[22m[39m
+   [33m[2m✓[22m[39m the rollup upsert, composed inside recordModelUsage (R1, R3, R4, R5's onConflictDoUpdate)[2m > [22man unknown-cost attempt increments call_count and NOT cost_micro_usd, and does not corrupt a prior known cost (R4; M3's mutation target) [33m 2154[2mms[22m[39m
+   [33m[2m✓[22m[39m the rollup upsert, composed inside recordModelUsage (R1, R3, R4, R5's onConflictDoUpdate)[2m > [22mdifferent tiers on the same workspace/month are DIFFERENT grains (the unique index's third column) [33m 2561[2mms[22m[39m
+   [33m[2m✓[22m[39m monthlySpend (R7): a scoped query with its own period predicate[2m > [22ma workspace with no debits at all: totalDebit 0, hasAnyDebit false (R8 — the caller renders text, not this number, but the number itself is an honest zero here because the query is unclamped) [33m 2398[2mms[22m[39m
+   [33m[2m✓[22m[39m monthlySpend (R7): a scoped query with its own period predicate[2m > [22mdebits inside the period are summed as a positive number; a grant is not counted; a debit BEFORE periodStart is excluded [33m 2305[2mms[22m[39m
+   [33m[2m✓[22m[39m pseudonymiseWorkspaceSpend (R-30.5/R-54): one fresh id per workspace, every row of it moves together[2m > [22mmoves every row of the workspace to the SAME new id, and the old id has none left [33m 2767[2mms[22m[39m
+   [33m[2m✓[22m[39m reconcileSpend (R11-R13, R-41): three classes plus unbilled, while model_usage still exists (R12)[2m > [22ma grain the rollup and model_usage agree on is RECONCILED (M1/M8's own-work target) [33m 6034[2mms[22m[39m
+   [33m[2m✓[22m[39m reconcileSpend (R11-R13, R-41): three classes plus unbilled, while model_usage still exists (R12)[2m > [22ma rollup row surviving a deleted profile tree is ORPHANED, never DRIFT (question 3 — an alarm that fires on correctness is not a defect; M7's target) [33m 5707[2mms[22m[39m
+   [33m[2m✓[22m[39m reconcileSpend (R11-R13, R-41): three classes plus unbilled, while model_usage still exists (R12)[2m > [22mthe rollup disagreeing with model_usage while the profile still exists is DRIFT — the only class that is a defect [33m 4087[2mms[22m[39m
+   [33m[2m✓[22m[39m reconcileSpend (R11-R13, R-41): three classes plus unbilled, while model_usage still exists (R12)[2m > [22ma billable, paid attempt with no matching debit is UNBILLED (R-41); the free included build is NOT (it owes no debit) [33m 3470[2mms[22m[39m
+   [33m[2m✓[22m[39m reconcileSpend (R11-R13, R-41): three classes plus unbilled, while model_usage still exists (R12)[2m > [22ma paid attempt WITH a matching debit is not unbilled [33m 3542[2mms[22m[39m
+ [32m✓[39m packages/config/tests/migrate-config.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 45168[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-14 — migrate-config merges into the ACTIVE version, by appending[2m > [22madds exactly one row, merges only the ADDED key, and leaves v2 byte-identical [33m 4016[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-14 — migrate-config merges into the ACTIVE version, by appending[2m > [22mis a NO-OP on re-run (the key is already present) [33m 2374[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-14 — migrate-config merges into the ACTIVE version, by appending[2m > [22mREFUSES a non-parsing source loudly, and writes nothing [33m 2787[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-14 — migrate-config merges into the ACTIVE version, by appending[2m > [22mCOMPARE-AND-SET: a concurrent append makes it fail rather than revert it [33m 2607[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-14 — the three wrong implementations are RED[2m > [22mWRONG 1: reading version 1 instead of the active version un-maps every Stripe price [33m 2828[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-14 — the three wrong implementations are RED[2m > [22mWRONG 2: appending CONFIG_V1_SEED throws the operator's document away [33m 2467[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-14 — the three wrong implementations are RED[2m > [22mWRONG 3: an in-place UPDATE passes every other assertion and is still wrong [33m 6969[2mms[22m[39m
+   [33m[2m✓[22m[39m a CORRECTION reaches a database that already has the wrong value[2m > [22mraises 1024 to 4000, and leaves every other key byte-identical [33m 5593[2mms[22m[39m
+   [33m[2m✓[22m[39m a CORRECTION reaches a database that already has the wrong value[2m > [22mREFUSES an OPERATOR-AUTHORED document even when it holds the exact wrong value [33m 3700[2mms[22m[39m
+   [33m[2m✓[22m[39m a CORRECTION reaches a database that already has the wrong value[2m > [22mREFUSES to touch a value an operator chose — the value half of the guard [33m 4199[2mms[22m[39m
+   [33m[2m✓[22m[39m a CORRECTION reaches a database that already has the wrong value[2m > [22mis IDEMPOTENT: a second run corrects nothing [33m 3713[2mms[22m[39m
+   [33m[2m✓[22m[39m A-9 deploy order: code first, then migrate-config[2m > [22ma database seeded AFTER M2a needs no migration at all [33m 3892[2mms[22m[39m
+ [32m✓[39m packages/db/tests/with-workspace.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 50307[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mcovers every scoped accessor (AC-7 completeness assertion) [33m 4384[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mevery accessor returns only the scope's own workspace rows (AC-1) [33m 2855[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mand the SAME loop run as workspace B sees only B (the breach is attempted from both sides) [33m 2077[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mcreatorProfiles() returns ACTIVE profiles only — the page's count and the server's must agree [33m 1831[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mledger() CLAMPS the page size — an unbounded caller cannot read the whole table [33m 2007[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mledger() clamps NaN and Infinity — the shapes a URL actually produces (round-2 CHANGE 4) [33m 2001[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mledger() pages newest-first and the offset does not re-serve the same row [33m 1688[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mrefuses an explicit request for a workspace the user is not a member of (AC-1 breach attempt) [33m 3700[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mhonors an explicit request for the user's own workspace (verify-then-scope) [33m 5932[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mrefuses an unknown user [33m 8592[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mrefuses a user with no workspace (bootstrap-first) [33m 5827[2mms[22m[39m
+   [33m[2m✓[22m[39m withWorkspace tenancy scope[2m > [22mrequires explicit selection when the user belongs to multiple workspaces [33m 9409[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/state.test.ts [2m([22m[2m18 tests[22m[2m)[22m[33m 53564[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mno subscriptions row → free/free (B6: Free is absence) [33m 4801[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mactive with a MAPPED price → tier from config at read time; a config fix self-heals with no event replay [33m 2478[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mpast_due inside grace → grace with deadline; past the deadline → free (lazy, no cron) [33m 1932[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mpaused mirror → state paused with resumesAt [33m 2354[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mAUDIT #5: canceled + a stale pausedAt derives to FREE, never to a paid paused tier [33m 1888[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mAUDIT #5: incomplete_expired + a stale pausedAt is free too (the guard is on liveness, not on one status) [33m 1999[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mAUDIT #5 (the direction that must NOT change): a paused past_due subscription is still paused [33m 1667[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mcanceled → free [33m 6426[2mms[22m[39m
+   [33m[2m✓[22m[39m scheduledCancelAt (the ONE reader of Stripe's two cancellation fields)[2m > [22mgetWorkspaceBillingState surfaces it on every LIVE state (active, paused, grace) [33m 5639[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #8: the INCOMPLETE branch of the billing-state authority[2m > [22mderives {tier: free, state: incomplete, pendingTier} — Free ENTITLEMENT, named pending plan [33m 7092[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #8: the INCOMPLETE branch of the billing-state authority[2m > [22man UNMAPPED price on an incomplete subscription names no pending tier and says why [33m 6570[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #8: the INCOMPLETE branch of the billing-state authority[2m > [22mNON-VACUITY: incomplete_EXPIRED is not incomplete — it is dead, and derives to free [33m 5375[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #8: the INCOMPLETE branch of the billing-state authority[2m > [22ma PAUSED incomplete subscription is still reported as paused — branch order is preserved [33m 5270[2mms[22m[39m
+ [32m✓[39m packages/auth/tests/rate-limit.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 50793[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #20: the sign-in limiter is CONFIGURED and it actually fires[2m > [22mrefuses the 6th sign-in attempt inside the window with 429 [33m 5491[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #20: the sign-in limiter is CONFIGURED and it actually fires[2m > [22mlimits PER CLIENT — a second IP is not punished for the first one's spray [33m 3134[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #20: the sign-in limiter is CONFIGURED and it actually fires[2m > [22mthe counter survives rebuilding the auth instance against the same database [33m 3079[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #20: the sign-in limiter is CONFIGURED and it actually fires[2m > [22mwrites its counters to the rate_limit TABLE, not to process memory [33m 1974[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #20: the sign-in limiter is CONFIGURED and it actually fires[2m > [22mNON-VACUITY: under NODE_ENV=test the limiter is off, deliberately and by name [33m 9317[2mms[22m[39m
+   [33m[2m✓[22m[39m R-26: behind a TWO-HOP proxy the limiter still keys per client[2m > [22mtwo clients behind one trusted proxy do NOT share a bucket [33m 9304[2mms[22m[39m
+   [33m[2m✓[22m[39m R-26: behind a TWO-HOP proxy the limiter still keys per client[2m > [22mMUTATION GUARD: with no trusted proxies the same two clients DO share one bucket [33m 11521[2mms[22m[39m
+   [33m[2m✓[22m[39m R-26: behind a TWO-HOP proxy the limiter still keys per client[2m > [22mnames the key it actually shares, rather than the one production would [33m 6861[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/profiles.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 56526[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the cap (R2)[2m > [22mcreates the first profile, stamping the scope's workspace and state=active [33m 3783[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the cap (R2)[2m > [22mrefuses the second on Free, and the error names the tier and the cap [33m 2396[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the cap (R2)[2m > [22mTHE CAP IS THE STORED CONFIG DOCUMENT: changing it moves the cap, with no deploy [33m 3225[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the cap (R2)[2m > [22mreads the tier from the ONE tier authority — a mapped paid price lifts the cap [33m 2909[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the cap (R2)[2m > [22man INCOMPLETE subscription is Free here too — no cap for a payment never collected [33m 2381[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the gates in front of the cap[2m > [22mREFUSES a viewer, and does NOT refuse an editor (REQ-A02, both directions) [33m 9582[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the gates in front of the cap[2m > [22mREFUSES under an open pause, and creates again once it is closed (REQ-G08) [33m 6173[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the gates in front of the cap[2m > [22mREFUSES a forged scope before reading a single field of it (R1) [33m 4685[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the gates in front of the cap[2m > [22m...and the cage runs BEFORE the role read — a forged VIEWER is a forgery, not a role refusal [33m 5075[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the gates in front of the cap[2m > [22ma display name cannot be blank, over-length, or carry a line break [33m 4840[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the gates in front of the cap[2m > [22mnormalises the name (NFC + trim) rather than storing what the textarea sent [33m 7835[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile — the gates in front of the cap[2m > [22mREFUSES a stale `at` — the instant decides the TIER, so it is clock-guarded [33m 3617[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/balance.test.ts [2m([22m[2m25 tests[22m[2m)[22m[33m 58052[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-8 consumption order[2m > [22mbullet: January pack (12-mo) + February grant (1-mo) → the GRANT is consumed first despite being newer (the REQ-G03 case) [33m 3971[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-8 consumption order[2m > [22mbullet: equal expiry → older first; then grants before packs [33m 5352[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-8 consumption order[2m > [22mbullet: never-expiring adjust lots are consumed LAST [33m 2644[2mms[22m[39m
+   [33m[2m✓[22m[39m lazy expiry materialization (D-M1-7)[2m > [22mbullet: lot expires with remainder → ONE expiry row materialized; fully-consumed lot gets none [33m 2671[2mms[22m[39m
+   [33m[2m✓[22m[39m lazy expiry materialization (D-M1-7)[2m > [22mbullet: fold REPLAYS existing expiry rows — refund after materialization keeps the invariant [33m 3270[2mms[22m[39m
+   [33m[2m✓[22m[39m pause-aware effective expiry (D-M1-3)[2m > [22mbullet: an OPEN pause freezes the clock — the lot cannot expire and is NOT materialized [33m 6729[2mms[22m[39m
+   [33m[2m✓[22m[39m billing round-1 CHANGE 2: a refund created after a pause is NOT re-shifted by that pause (no double-shift) [33m 5876[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-3 completion: a positive adjust WITH an expiry participates in the D-M1-8 order by that expiry [33m 4072[2mms[22m[39m
+   [33m[2m✓[22m[39m fold integrity[2m > [22mthrows LedgerIntegrityError on an over-consuming history (a debit written past available balance) [33m 4018[2mms[22m[39m
+   [33m[2m✓[22m[39m fold integrity[2m > [22mhistorical `at` is a PURE read: the view at Jan-20 shows the pre-expiry balance, and no extra write happens [33m 4733[2mms[22m[39m
+   [33m[2m✓[22m[39m fold metrics: the escape hatch R-20/D-M1-7 named can now actually fire[2m > [22memits BOTH named metrics, per workspace, on every fold [33m 3881[2mms[22m[39m
+   [33m[2m✓[22m[39m fold metrics: the escape hatch R-20/D-M1-7 named can now actually fire[2m > [22mcounts rows AFTER materialization — the history the NEXT fold will replay [33m 3765[2mms[22m[39m
+   [33m[2m✓[22m[39m fold metrics: the escape hatch R-20/D-M1-7 named can now actually fire[2m > [22ma THROWING sink never takes the money path down [33m 3493[2mms[22m[39m
+   [33m[2m✓[22m[39m fold metrics: the escape hatch R-20/D-M1-7 named can now actually fire[2m > [22meach workspace is measured separately (no cross-workspace total) [33m 3520[2mms[22m[39m
+ [32m✓[39m packages/db/tests/brain-ops.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 64265[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mhands the screen EVERY claim position, grounded ones with their quote [33m 4550[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22ma PLACEHOLDER position carries no quote and no source — together, never one [33m 2611[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mthe quote is RE-SLICED from the post, not read out of the evidence column [33m 2324[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mREFUSES when the recorded span no longer holds the recorded quote [33m 2256[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mREFUSES a STATED claim with no evidence entry at all (R10's fail-open) [33m 1956[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22m...but a PLACEHOLDER with no evidence is fine — that is the legitimate case [33m 1663[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mREFUSES when the post an entry names is not among this profile's posts [33m 1771[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mreports NOTHING for a profile with no voice document (not an error) [33m 5387[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mcarries the CONFIRMED flag per position, so the screen can pre-tick [33m 5435[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mB-3: the confirmation sha covers CONTENT AND EVIDENCE[2m > [22mNON-VACUITY FIRST: an untouched confirmed version still activates [33m 7158[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mB-3: the confirmation sha covers CONTENT AND EVIDENCE[2m > [22man EVIDENCE-ONLY edit after confirmation REFUSES activation [33m 8083[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mB-3: the confirmation sha covers CONTENT AND EVIDENCE[2m > [22m...and the refusal NAMES the quotes, not only the content [33m 6828[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mB-3: the confirmation sha covers CONTENT AND EVIDENCE[2m > [22ma CONTENT-only edit still refuses — the older half is not lost [33m 6737[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mR7/G-12: a REFERENCE input cannot be provenance for a voice document [33m 3871[2mms[22m[39m
+   [33m[2m✓[22m[39m readVoiceBrain / claimsFor — what the confirm screen is handed[2m > [22mR3: a quote the model INVENTED is refused by the existing gate [33m 3627[2mms[22m[39m
+ [32m✓[39m packages/db/tests/brain-schema.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 30642[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-10: the composite FKs and CHECKs refuse what they exist to refuse[2m > [22mthe fixture is real: the honest row lands in all three child tables [33m 7818[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-10: the composite FKs and CHECKs refuse what they exist to refuse[2m > [22ma CROSS-PARENTED row is refused by every composite FK [33m 4386[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-10: the composite FKs and CHECKs refuse what they exist to refuse[2m > [22ma row naming a NONEXISTENT profile is refused by every composite FK [33m 3537[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-10: the composite FKs and CHECKs refuse what they exist to refuse[2m > [22mframeworks: shared must have NO owner, private must have one, in both directions [33m 4218[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-10: the composite FKs and CHECKs refuse what they exist to refuse[2m > [22mmodel_usage: a cost is present exactly when cost_state is not unknown [33m 3188[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-10: the composite FKs and CHECKs refuse what they exist to refuse[2m > [22mdeleting the workspace cascades the whole profile tree away — REQ-A04 is POSSIBLE [33m 3884[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-10: the composite FKs and CHECKs refuse what they exist to refuse[2m > [22mworkspace_spend_monthly SURVIVES the workspace it names being deleted [33m 3606[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/setup.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 74971[2mms[22m[39m
+   [33m[2m✓[22m[39m stripe:setup pack price authority[2m > [22mcreates the pack price at the ACTIVE CONFIG amount, not at a literal [33m 5541[2mms[22m[39m
+   [33m[2m✓[22m[39m stripe:setup pack price authority[2m > [22mREFUSES when the existing Stripe pack price disagrees with config, and changes nothing in Stripe [33m 2394[2mms[22m[39m
+   [33m[2m✓[22m[39m stripe:setup pack price authority[2m > [22mis quiet and idempotent when Stripe and config AGREE (the check must not cry wolf) [33m 2169[2mms[22m[39m
+   [33m[2m✓[22m[39m stripe:setup pack price authority[2m > [22ma TIER price whose Stripe amount disagrees with the R-7 default WARNS (and never refuses — one charger, unlike the pack) [33m 1790[2mms[22m[39m
+   [33m[2m✓[22m[39m stripe:setup pack price authority[2m > [22mNON-VACUITY: agreeing tier prices produce NO warning (the check must not cry wolf) [33m 1962[2mms[22m[39m
+   [33m[2m✓[22m[39m stripe:setup pack price authority[2m > [22mreads config BEFORE writing anything to Stripe (an unseeded database creates no products) [33m 1679[2mms[22m[39m
+   [33m[2m✓[22m[39m stripe:setup CLI degraded path (Verification Step 6 — by running it)[2m > [22mwith NEITHER env var set: exit 1, a typed message naming BOTH, and no stack trace [33m 28710[2mms[22m[39m
+   [33m[2m✓[22m[39m stripe:setup CLI degraded path (Verification Step 6 — by running it)[2m > [22mNON-VACUITY: with only DATABASE_URL missing it says so, and names only that one [33m 15576[2mms[22m[39m
+   [33m[2m✓[22m[39m stripe:setup CLI degraded path (Verification Step 6 — by running it)[2m > [22mREADS the env file: a variable present ONLY in the file is not reported missing [33m 15144[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/isolation.test.ts [2m([22m[2m25 tests[22m[2m)[22m[33m 77083[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mderiveBalance/deriveBalanceInTx: A's balance ignores B's rows entirely [33m 4175[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mdebitCredits: A's debit consumes only A's lots; B's balance untouched; A cannot spend B's credits [33m 2801[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mgrant/pack/adjust/refund on A write rows carrying ONLY A's workspace id [33m 2613[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mrefundCredits on A refuses a debit id belonging to B (no cross-workspace reach) [33m 2667[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mB's OPEN PAUSE does not shift A's effective expiries, block A's debits, or freeze A's materialization [33m 7333[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mrecordPauseStart/End on A touch only A's rows and A's mirror [33m 6108[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mworkspaceForCustomer: the sole identity authority maps each customer to ITS OWN workspace, against a real second workspace [33m 4158[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mgetOrCreateCustomer returns A's OWN stored customer and never B's (no Stripe call when the mapping exists) [33m 4269[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mhandleStripeEvent: an event for B's customer writes ONLY B's rows — A is untouched [33m 5368[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mmaybeAutoTopup: B's auto-top-up spend does NOT consume A's monthly cap [33m 4227[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mcreatePortalUrl: A with no Stripe customer refuses even though B has one (no cross-workspace read) [33m 3612[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mcreateInvoiceRecoveryUrl: B's incomplete subscription is invisible to A, and a wrong-status A is refused before any Stripe call (audit #8) [33m 3469[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mA-vs-B live subscription: B's active subscription never satisfies or blocks A's tier-checkout, pause or resume [33m 4436[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mhandleStripeEvent pack checkout: a session settling for B mints ONLY in B, and A's identical-id history cannot mask it [33m 3710[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22msetAutoTopup on A leaves B's auto-top-up settings alone [33m 3765[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mensurePauseStarted/Ended on A converge without touching B's pause state [33m 3108[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mcreateProfile: A's profile lands only in A, and B's cap is untouched by it [33m 3237[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mrunInference: A's attempt is priced off A's OWN history, and never reaches B [33m 3598[2mms[22m[39m
+   [33m[2m✓[22m[39m cross-workspace isolation (A must never see or be moved by B)[2m > [22mgetWorkspaceBillingState reads only the given workspace's subscription [33m 4359[2mms[22m[39m
+ [32m✓[39m packages/db/tests/onboarding-ops.test.ts [2m([22m[2m23 tests[22m[2m)[22m[33m 82229[2mms[22m[39m
+   [33m[2m✓[22m[39m appendOwnPost (R9, R11)[2m > [22mstores through the EXISTING write path — one normalisation, one hash (R9) [33m 3533[2mms[22m[39m
+   [33m[2m✓[22m[39m appendOwnPost (R9, R11)[2m > [22mR8: REFUSES without the creator's attestation, and writes nothing [33m 2389[2mms[22m[39m
+   [33m[2m✓[22m[39m appendOwnPost (R9, R11)[2m > [22mR8: the attestation is checked BEFORE the content, so the message is useful [33m 2900[2mms[22m[39m
+   [33m[2m✓[22m[39m appendOwnPost (R9, R11)[2m > [22mR8: it does NOT claim to verify authorship — the message says what it is [33m 2677[2mms[22m[39m
+   [33m[2m✓[22m[39m appendOwnPost (R9, R11)[2m > [22mcan only ever produce `own_post` — the class is not a parameter (R11) [33m 2585[2mms[22m[39m
+   [33m[2m✓[22m[39m appendOwnPost (R9, R11)[2m > [22mstamps the SCOPE's ids, never the caller's [33m 2418[2mms[22m[39m
+   [33m[2m✓[22m[39m appendOwnPost (R9, R11)[2m > [22mREFUSES another workspace's profile id — foreign, nonexistent and malformed alike [33m 2800[2mms[22m[39m
+   [33m[2m✓[22m[39m appendOwnPost (R9, R11)[2m > [22mREFUSES a forged scope [33m 6915[2mms[22m[39m
+   [33m[2m✓[22m[39m appendOwnPost (R9, R11)[2m > [22mREFUSES blank and over-length content, and accepts the boundary [33m 4719[2mms[22m[39m
+   [33m[2m✓[22m[39m listOnboardingInputs (R10)[2m > [22mlists NEWEST FIRST [33m 4289[2mms[22m[39m
+   [33m[2m✓[22m[39m listOnboardingInputs (R10)[2m > [22mis scoped to the signed-in workspace — B's posts are invisible to A, and the reverse [33m 3780[2mms[22m[39m
+   [33m[2m✓[22m[39m listOnboardingInputs (R10)[2m > [22mrefuses to list another workspace's profile [33m 3846[2mms[22m[39m
+   [33m[2m✓[22m[39m listOnboardingInputs (R10)[2m > [22mreturns an empty list for a profile with no posts (not an error) [33m 4562[2mms[22m[39m
+   [33m[2m✓[22m[39m workspaceWriteCapabilities — the capability under the decision[2m > [22mREFUSES a forged scope, and refuses a genuinely minted PROFILE scope (wrong grain) [33m 3880[2mms[22m[39m
+   [33m[2m✓[22m[39m workspaceWriteCapabilities — the capability under the decision[2m > [22mSTRIPS a smuggled workspaceId, id and state at RUNTIME — not merely at the type level [33m 3429[2mms[22m[39m
+   [33m[2m✓[22m[39m workspaceWriteCapabilities — the capability under the decision[2m > [22mcountActiveProfiles counts ACTIVE rows in THIS workspace only [33m 3053[2mms[22m[39m
+   [33m[2m✓[22m[39m REQ-A02 / G-13 — a viewer cannot write a creator's record[2m > [22mREFUSES appendOnboardingInput — the write this slice made browser-reachable [33m 3259[2mms[22m[39m
+   [33m[2m✓[22m[39m REQ-A02 / G-13 — a viewer cannot write a creator's record[2m > [22mREFUSES writeBrainDoc too — the class, not the field [33m 3799[2mms[22m[39m
+   [33m[2m✓[22m[39m REQ-A02 / G-13 — a viewer cannot write a creator's record[2m > [22mdoes NOT refuse recordModelUsage — the settlement tail must never refuse [33m 3321[2mms[22m[39m
+   [33m[2m✓[22m[39m REQ-A02 / G-13 — a viewer cannot write a creator's record[2m > [22mREFUSES createProfile at the CAPABILITY, not only at its caller [33m 3124[2mms[22m[39m
+   [33m[2m✓[22m[39m REQ-A02 / G-13 — a viewer cannot write a creator's record[2m > [22mNON-VACUITY: an EDITOR may do all of them [33m 2868[2mms[22m[39m
+   [33m[2m✓[22m[39m the per-profile row ceiling (production gate: the unbounded write half)[2m > [22mREFUSES past POST_COUNT_MAX, counting THIS profile only [33m 3852[2mms[22m[39m
+   [33m[2m✓[22m[39m the per-profile row ceiling (production gate: the unbounded write half)[2m > [22mNON-VACUITY: one BELOW the ceiling still stores [33m 4222[2mms[22m[39m
+ [32m✓[39m tests/table-writers.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 6403[2mms[22m[39m
+   [33m[2m✓[22m[39m P8 — every M2a table's writers are enumerated[2m > [22mthe scan is non-empty against the real repo (it is reading something) [33m 1607[2mms[22m[39m
+   [33m[2m✓[22m[39m P8 — every M2a table's writers are enumerated[2m > [22mbrain_docs has exactly its expected writers [33m 919[2mms[22m[39m
+   [33m[2m✓[22m[39m P8 — every M2a table's writers are enumerated[2m > [22monboarding_inputs has exactly its expected writers [33m 782[2mms[22m[39m
+   [33m[2m✓[22m[39m P8 — every M2a table's writers are enumerated[2m > [22mmodel_usage has exactly its expected writers [33m 719[2mms[22m[39m
+   [33m[2m✓[22m[39m P8 — every M2a table's writers are enumerated[2m > [22mcreator_profiles has exactly its expected writers [33m 745[2mms[22m[39m
+   [33m[2m✓[22m[39m P8 — every M2a table's writers are enumerated[2m > [22mworkspace_spend_monthly has exactly its expected writers [33m 762[2mms[22m[39m
+   [33m[2m✓[22m[39m P8 — every M2a table's writers are enumerated[2m > [22mframeworks has exactly its expected writers [33m 742[2mms[22m[39m
+ [32m✓[39m tests/import-boundary.test.ts [2m([22m[2m81 tests[22m[2m)[22m[33m 90682[2mms[22m[39m
+   [33m[2m✓[22m[39m the scan's own failure mode is discriminated, not swallowed[2m > [22ma git failure that is NOT 'no matches' THROWS — it never reports a clean scan [33m 816[2mms[22m[39m
+   [33m[2m✓[22m[39m the scan's own failure mode is discriminated, not swallowed[2m > [22mNON-VACUITY: a well-formed pattern with zero matches still returns [] (exit 1 is the pass) [33m 971[2mms[22m[39m
+   [33m[2m✓[22m[39m import-direction boundary (tech-spec §1)[2m > [22mrejects an app/ import from inside packages/ [33m 3653[2mms[22m[39m
+   [33m[2m✓[22m[39m trustWorkspaceId allowlist cage (tenancy T1, M1 phase 2 AC-8)[2m > [22mno live import site exists outside the allowlist (grep assertion; Phase 3 tightens to exact-match) [33m 1038[2mms[22m[39m
+   [33m[2m✓[22m[39m package facades from app/** (tenancy T1, M1 phase 3)[2m > [22mNO dynamic import() of a package exists in app/, lib/ or middleware — by package NAME or by PATH (the hole no-restricted-imports cannot see) [33m 4064[2mms[22m[39m
+   [33m[2m✓[22m[39m package facades from app/** (tenancy T1, M1 phase 3)[2m > [22mthe dynamic-import scan is NOT vacuous: it finds a planted violation spelled as a package name [33m 2519[2mms[22m[39m
+   [33m[2m✓[22m[39m package facades from app/** (tenancy T1, M1 phase 3)[2m > [22mthe dynamic-import scan is NOT vacuous: it finds a planted violation spelled as a @/-aliased path [33m 1030[2mms[22m[39m
+   [33m[2m✓[22m[39m package facades from app/** (tenancy T1, M1 phase 3)[2m > [22mthe dynamic-import scan is NOT vacuous: it finds a planted violation spelled as a relative path [33m 1064[2mms[22m[39m
+   [33m[2m✓[22m[39m package facades from app/** (tenancy T1, M1 phase 3)[2m > [22mthe Stripe SDK is denied in app/** except the webhook signature check[2m > [22ma DYNAMIC import of the SDK is caught too (no-restricted-imports has no ImportExpression handler) [33m 5465[2mms[22m[39m
+   [33m[2m✓[22m[39m package facades from app/** (tenancy T1, M1 phase 3)[2m > [22ma CommonJS require() of a package is denied in app/** and lib/** (no-require-imports — the third mechanism) [33m 547[2mms[22m[39m
+   [33m[2m✓[22m[39m P6 — there is no trustProfileId, under any name[2m > [22mno product source outside with-workspace.ts casts to VerifiedProfileId [33m 17930[2mms[22m[39m
+   [33m[2m✓[22m[39m P6 — there is no trustProfileId, under any name[2m > [22mno export named like a profile-id trust mint exists anywhere [33m 4971[2mms[22m[39m
+   [33m[2m✓[22m[39m P6 — there is no trustProfileId, under any name[2m > [22mthe cage registries are never re-exported (only this module may register) [33m 7189[2mms[22m[39m
+   [33m[2m✓[22m[39m P6 — there is no trustProfileId, under any name[2m > [22mNON-VACUITY: the scan finds a planted cast [33m 6649[2mms[22m[39m
+   [33m[2m✓[22m[39m P6b — the WORKSPACE brand has the scan its profile twin already had[2m > [22mno product source outside with-workspace.ts casts to VerifiedWorkspaceId [33m 9752[2mms[22m[39m
+   [33m[2m✓[22m[39m P6b — the WORKSPACE brand has the scan its profile twin already had[2m > [22mno export named like a SECOND workspace-id trust mint exists [33m 4279[2mms[22m[39m
+   [33m[2m✓[22m[39m P6b — the WORKSPACE brand has the scan its profile twin already had[2m > [22mNON-VACUITY: the scan finds a planted workspace-brand cast [33m 3136[2mms[22m[39m
+   [33m[2m✓[22m[39m the cage registries are unreachable from product code (tenancy gate BLOCK, 2026-08-23)[2m > [22mno product source outside with-workspace.ts names a cage registry key [33m 6204[2mms[22m[39m
+   [33m[2m✓[22m[39m the cage registries are unreachable from product code (tenancy gate BLOCK, 2026-08-23)[2m > [22mNON-VACUITY: the scan finds a planted registration, in app/** and in packages/** [33m 6918[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/ledger.test.ts [2m([22m[2m24 tests[22m[2m)[22m[33m 90191[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mgrant → debit spanning lots (partial consumption across grant then pack) [33m 3898[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mbullet: debit larger than balance refused, NO row written; debit exactly equal succeeds [33m 2555[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mbullet: zero/negative-cost debit rejected by API validation [33m 2685[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mbullet: debit while paused → WorkspacePausedError (distinct from insufficient) [33m 2662[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mbullet: clock discipline — future `at` (beyond 60s skew) and retroactive `at` rejected on allocating writes [33m 3205[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mbullet: negative adjust allocates like a debit (guards + balance check); positive adjust may be never-expiring [33m 3578[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mrefund: expiry inherited from the consumed lot; over-refund refused; never-expiring source → typed error [33m 12210[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mpause ops: start/end write the period + mirror; end validates the interval; double-start refused [33m 4508[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mcode-review CHANGE: a re-pause converges WITHOUT losing the new resume date [33m 4181[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-11 NOTE: a STALE snapshot cannot rewrite the CURRENT pause's resume date (the knownAt bound now precedes the already-open branch) [33m 4151[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-11 NOTE (non-vacuity): a CONTEMPORANEOUS snapshot still reconciles the open pause's resume date [33m 3628[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-2 NOTE 3: a LATE-processed resume does not make a REAL later pause look stale [33m 4217[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-2 NOTE 3 (the protection is UNCHANGED): a snapshot older than the resume it precedes is still refused [33m 3452[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-2 NOTE 3: ensurePauseEnded RECORDS its knownAt, so the next open-side check compares like with like [33m 4103[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-3 CHANGE 1: a LATE-processed PAUSE does not make a REAL later resume look stale [33m 3447[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-3 CHANGE 1 (non-vacuity twin): the SAME open pause closes for a caller whose knowledge is NOW [33m 4226[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-3 CHANGE 1 (the protection is UNCHANGED): a genuinely stale snapshot still cannot close a fresh pause [33m 3303[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-3 CHANGE 1: recordPauseStart STORES its knownAt, so the close-side check compares like with like [33m 3091[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-3 NOTE: lastPauseCloseKnownAt orders on the SAME expression it returns (coalesce) [33m 2657[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-2 NOTE 4: clearPauseMirror converges a mirror that says paused with no open period [33m 3696[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mround-2 NOTE 4 (the direction that must NOT change): clearPauseMirror refuses while a pause is genuinely OPEN [33m 3957[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mAC-3 completion: negative adjust while paused -> WorkspacePausedError; paused debit refusal writes NO row [33m 3498[2mms[22m[39m
+   [33m[2m✓[22m[39m write clock: no credit_ledger row is dated at its transaction's START[2m > [22mevery writer (grant, pack, adjust ±, refund, debit, expiry materialization) postdates transaction_timestamp() [33m 3230[2mms[22m[39m
+ [32m✓[39m packages/db/tests/db.test.ts [2m([22m[2m36 tests[22m[2m)[22m[33m 92873[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/db[2m > [22mapplies the committed migration to a fresh PGlite and accepts inserts [33m 3239[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/db[2m > [22mrejects a duplicate auth_user_id (AC-2) [33m 2423[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/db[2m > [22mrejects a duplicate (user, workspace) membership (AC-2) [33m 2222[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/db[2m > [22mcascades membership deletes from both user and workspace (AC-7) [33m 2542[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/db[2m > [22mseed is idempotent: running twice changes no counts (AC-3) [33m 2235[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: delta ≠ 0 CHECK [33m 2093[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: delta sign per kind CHECK (negative grant, positive debit) [33m 2516[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: adjust requires a reason code CHECK [33m 5217[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: stripe_event_id unique [33m 6581[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: one expiry row per lot (partial unique index) [33m 4754[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: one pack per checkout session, and one grant per invoice (partial uniques, global by design) [33m 3793[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: one pack per PaymentIntent (the third partial unique, global by design) [33m 4587[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22msubscriptions: workspace 1:1, customer id, and subscription id uniques [33m 3732[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mpause_periods: one open pause per workspace (partial unique index) [33m 3815[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcascades: workspace delete removes ledger, subscription, pauses, and ATTRIBUTED stripe_events; null-workspace events survive (teardown enumeration) [33m 2913[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22musers.auth_user_id FK: unknown auth id rejected; auth-user delete RESTRICTED while a domain row exists [33m 3533[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mconfig_versions: identity versions ascend; append-only usage shape [33m 3326[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mseed writes config v1 exactly once (idempotent, AC-6) [33m 3195[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: delta sign per kind CHECK — remaining kinds (pack, refund, expiry) [33m 3565[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: an expiry row must name its lot (ref_id NOT NULL CHECK — the NULL-bypass probe) [33m 3128[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mcredit_ledger: grant/pack/refund lots must carry an expiry (lot_expiry CHECK) [33m 2856[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mpause_periods: a closed pause must have ended_at > started_at (interval CHECK — the inverted-interval probe) [33m 2991[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mpause_periods: ended_known_at cannot exist without ended_at (ended_known CHECK) [33m 2793[2mms[22m[39m
+   [33m[2m✓[22m[39m M1 billing schema constraints (AC-4)[2m > [22mstripe_events: outcome vocabulary CHECK [33m 3332[2mms[22m[39m
+   [33m[2m✓[22m[39m db:migrate CLI[2m > [22mprints the underlying database error instead of only the spinner failure [33m 11439[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/inference-race.docker.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 11114[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mtwo concurrent FIRST-EVER attempts: exactly one is included, one is charged [33m 792[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mNON-VACUITY: the racers really can overlap (an unwarmed pool made this shape vacuous once) [33m 529[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22ma pause still UNCOMMITTED when the debit begins is not sailed past [33m 602[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mthe same attempt id cannot be debited twice, even from two connections [33m 647[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mthe SERVER_CAPACITY valve works against a real exhausted pool [33m 4251[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22man UNRECOGNISED connect error is rethrown, never treated as capacity [33m 325[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mrelease DROPS THE LOCK, not just the connection [33m 332[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference under REAL concurrency[2m > [22mrunInference REFUSES a real second concurrent run while the first holds the vendor [33m 661[2mms[22m[39m
+ [32m✓[39m packages/db/tests/profile-scope.test.ts [2m([22m[2m31 tests[22m[2m)[22m[33m 95046[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP1: a profile in another workspace is refused (ProfileAccessError) [33m 4457[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP2: foreign and nonexistent are byte-identical — no enumeration oracle [33m 2701[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP3: accessor keys, validator keys, arg keys and capability keys agree [33m 2089[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP4 same-workspace axis: every accessor returns only P1's rows, non-vacuously [33m 2009[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP4 same-workspace axis, run as the SIBLING profile (attempted from both sides) [33m 2233[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mcountBillableAttempts counts THIS profile's billed attempts only [33m 2085[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mcountOnboardingInputs counts THIS profile's inputs only [33m 1844[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP4 cross-workspace axis: a cross-parented row is invisible to the accessor [33m 5847[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP4 write side: a write carries the SCOPE's ids, never the caller's [33m 5659[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP4 write side: writeBrainDoc derives status and version server-side [33m 6807[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP4 write side: a cast-in status and version are STRIPPED at runtime, not merely untypeable [33m 6125[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP4 write side: writeBrainDoc PARSES — the strip, the schema and the writable-kind set all run HERE [33m 5487[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP4 write side: every field of the params is read ONCE — a getter cannot swap the content after it is checked [33m 4437[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mP4 write side: the stored `reason` is SERVER-RENDERED — caller prose never reaches the column [33m 5947[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mwriteBrainDoc validates every source-evidence quote against THIS profile's inputs [33m 4307[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mAC-11: no server-derived column is caller-settable (compile-level) [33m 4714[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mAC-11: a duplicate (profile, kind, version) is refused by the index [33m 3049[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mAC-12: writeBrainDoc refuses under an open pause; the other two do not [33m 2907[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mAC-12 drift fixture: an open pause with a CLEAN mirror is still a pause [33m 3023[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mA-8: content is NFC/LF-normalised, hashed over the normalised bytes, offsets are UTF-16 [33m 4524[2mms[22m[39m
+   [33m[2m✓[22m[39m ProfileScope — the profile tenancy cage[2m > [22mcost_micro_usd round-trips as a bigint (PGlite half of AC-17) [33m 4195[2mms[22m[39m
+   [33m[2m✓[22m[39m the input_class and usage_raw rules are ENFORCED, not commented[2m > [22mC-41: the reference-quote budget spans RETAINED VERSIONS, and a rebuild citing the same spans still writes [33m 3793[2mms[22m[39m
+   [33m[2m✓[22m[39m the input_class and usage_raw rules are ENFORCED, not commented[2m > [22mD-M2-10: a `reference` input cannot be provenance for a `voice` brain doc [33m 3403[2mms[22m[39m
+   [33m[2m✓[22m[39m the input_class and usage_raw rules are ENFORCED, not commented[2m > [22musage_raw accepts metering values and REFUSES anything that can carry text [33m 3384[2mms[22m[39m
+ [32m✓[39m packages/db/tests/concurrency.docker.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 7273[2mms[22m[39m
+   [33m[2m✓[22m[39m ensureUserWorkspace under REAL concurrency (Docker Postgres)[2m > [22mN=8 genuinely parallel first-login bootstraps yield exactly one user/workspace/membership [33m 329[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/infer-voice.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 22516[2mms[22m[39m
+   [33m[2m✓[22m[39m inferVoice — R4: only the creator's OWN posts reach a vendor[2m > [22ma REFERENCE post reaches neither the prompt nor the vendor at all [33m 7688[2mms[22m[39m
+   [33m[2m✓[22m[39m inferVoice — R4: only the creator's OWN posts reach a vendor[2m > [22mREFERENCE posts do not count toward the minimum, and refuse BEFORE the vendor [33m 4060[2mms[22m[39m
+   [33m[2m✓[22m[39m inferVoice — R4: only the creator's OWN posts reach a vendor[2m > [22mreports the corpus bound it USED and what the creator has (compliance gate) [33m 3969[2mms[22m[39m
+   [33m[2m✓[22m[39m inferVoice — R4: only the creator's OWN posts reach a vendor[2m > [22mthe three 50s are ONE ceiling — schema max, accessor bound, constant — enforced, not narrated [33m 3485[2mms[22m[39m
+   [33m[2m✓[22m[39m inferVoice — R4: only the creator's OWN posts reach a vendor[2m > [22ma reply that is not JSON writes NO brain document, and the spend record stands [33m 3308[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/concurrency.docker.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 8284[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22m20 concurrent debits of 10 against a 100 balance: exactly 10 succeed, final balance 0, never negative [33m 1677[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mPHASE 3: the same Stripe event id delivered concurrently x8 yields exactly ONE grant (D-M1-1 single-tx + PK race) [33m 471[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mPHASE 3 / round-5 finding 2: one PaymentIntent under EIGHT DISTINCT event ids concurrently mints exactly ONE auto-top-up pack [33m 339[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mAUDIT #3: two subscription snapshots with DIFFERENT payloads — the NEWER one survives, whichever wins the scheduler [33m 966[2mms[22m[39m
+   [33m[2m✓[22m[39m credit ledger under REAL concurrency[2m > [22mAUDIT #3: a stale invoice racing a NEWER dunning snapshot cannot end the grace period it opens [33m 413[2mms[22m[39m
+ [32m✓[39m tests/scope-cage-duplication.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 10316[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-19: the globalThis-keyed cage survives module re-evaluation[2m > [22ma scope minted before resetModules still passes the RE-IMPORTED assertions [33m 10310[2mms[22m[39m
+ [32m✓[39m packages/db/tests/spend-rollup.docker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 4158[2mms[22m[39m
+ [32m✓[39m tests/action-gate.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 24539[2mms[22m[39m
+   [33m[2m✓[22m[39m the billing server actions propagate their gate's refusal[2m > [22mevery billing action re-throws requireUser()'s NEXT_REDIRECT — never `?e=unknown` [33m 20170[2mms[22m[39m
+   [33m[2m✓[22m[39m the billing server actions propagate their gate's refusal[2m > [22mappendConfigAction re-throws requireAdmin()'s 404 — never 'the configuration could not be saved' [33m 3843[2mms[22m[39m
+ [32m✓[39m packages/db/tests/brain-content.test.ts [2m([22m[2m45 tests[22m[2m)[22m[33m 5351[2mms[22m[39m
+   [33m[2m✓[22m[39m assertClosedSchema[2m > [22mREACHES A DEPLOYED PROCESS: the guard runs when @respin/db is imported [33m 5089[2mms[22m[39m
+ [32m✓[39m tests/stale-disclosure.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 422[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/auth/tests/auth.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 7643[2mms[22m[39m
+   [33m[2m✓[22m[39m Better Auth on PGlite (the real flow)[2m > [22msigns up with email/password and getSessionUser sees the session (AC-1) [33m 415[2mms[22m[39m
+   [33m[2m✓[22m[39m middleware behavior with the real session cookie[2m > [22mredirects a cookieless request on a protected prefix to /sign-in [33m 1008[2mms[22m[39m
+ [32m✓[39m tests/retention.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 176[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/db/tests/echo.test.ts [2m([22m[2m50 tests[22m[2m)[22m[32m 289[2mms[22m[39m
+ [32m✓[39m tests/retention-pseudonymisation.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 439[2mms[22m[39m
+ [32m✓[39m packages/db/tests/brain-concurrency.docker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 3861[2mms[22m[39m
+ [32m✓[39m tests/client-bundle-boundary.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 184[2mms[22m[39m
+ [32m✓[39m tests/margin-ui.test.tsx [2m([22m[2m18 tests[22m[2m)[22m[32m 80[2mms[22m[39m
+ [32m✓[39m tests/profile-cage.test.ts [2m([22m[2m25 tests[22m[2m)[22m[33m 23933[2mms[22m[39m
+   [33m[2m✓[22m[39m P7 — the fifteen forgeries[2m > [22mcompile-red 1-7: seven forges that do not typecheck [33m 6406[2mms[22m[39m
+   [33m[2m✓[22m[39m P7 — the fifteen forgeries[2m > [22mruntime-red 10-12: Object.assign, a bare cast, and a Proxy are all refused [33m 4247[2mms[22m[39m
+   [33m[2m✓[22m[39m P7 — the fifteen forgeries[2m > [22mruntime-red 13-15: Reflect.construct, `new (X as any)`, and a subclass are all refused [33m 3281[2mms[22m[39m
+   [33m[2m✓[22m[39m P7 — the fifteen forgeries[2m > [22mnon-vacuity: a REAL scope passes every check the forgeries fail [33m 3030[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-13 — assertScoped blocks the viewer→owner escalation[2m > [22mObject.assign({role:'owner'}) over a viewer scope is refused at assertOwner [33m 5181[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-13 (completeness): every scope-taking entry in packages/** reaches assertScoped[2m > [22mpins the WorkspaceScope-taking surface by NAME, and every entry is covered [33m 1112[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-13 (completeness): every scope-taking entry in packages/** reaches assertScoped[2m > [22mthe transitive walk is doing real work, not matching a literal everywhere [33m 534[2mms[22m[39m
+ [32m✓[39m packages/db/tests/activate.docker.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 5173[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-63 on real Postgres[2m > [22mAC-63: an input that STARTS before and COMMITS after the write does not brick activation [33m 686[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/profiles.docker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 3431[2mms[22m[39m
+   [33m[2m✓[22m[39m createProfile under real concurrency[2m > [22meight PARALLEL creates at a cap of 1 leave exactly one profile [33m 726[2mms[22m[39m
+ [32m✓[39m tests/safe-log.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 4799[2mms[22m[39m
+   [33m[2m✓[22m[39m safeLogFields — a message is logged iff we wrote it[2m > [22ma real DrizzleQueryError leaks NOTHING, though its message carries the payload [33m 4745[2mms[22m[39m
+ [32m✓[39m packages/config/tests/migrate-config.docker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 3040[2mms[22m[39m
+   [33m[2m✓[22m[39m migrate-config CAS on real Postgres[2m > [22man UNCOMMITTED concurrent append is not sailed past — the operator edit survives [33m 845[2mms[22m[39m
+   [33m[2m✓[22m[39m migrate-config CAS on real Postgres[2m > [22mthe ADMIN-APPEND side of the lock is load-bearing too — appendConfigVersion's own takeConfigLock call, not just applyConfigMigration's [33m 359[2mms[22m[39m
+ [32m✓[39m packages/db/tests/activate.test.ts [2m([22m[2m29 tests[22m[2m)[22m[33m 109899[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mA-3: the write RECORDS the corpus id set on the row [33m 4484[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mA-3: an empty corpus is RECORDED as empty, not as absent [33m 2351[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mA-3: the corpus id set is SERVER-DERIVED — a cast-in value is stripped [33m 2341[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22man EMPTY evidence list is refused BY NAME, not by a raw constraint violation [33m 1864[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mC-28: a claim stated as fact with nothing cited for it is REFUSED [33m 2243[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mC-28: an evidence entry pointing at a position the document does not declare is REFUSED [33m 2355[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mthe evidence key space is CLOSED — a smuggled key is refused, not stored [33m 1834[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22ma GETTER on an evidence entry cannot swap the quote after it is validated [33m 6674[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mthe reason's numerator counts DISTINCT inputs, not evidence entries [33m 5484[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mAC-26: activation refuses while ANY claim position is unconfirmed [33m 5356[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22ma GETTER on the confirmedFields ARRAY cannot swap the record after validation [33m 4830[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22ma GETTER on a confirmedFields ELEMENT cannot swap it either [33m 8533[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mthe confirmation key space is CLOSED — a smuggled key is refused [33m 5757[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mconfirming the same position twice is refused [33m 4736[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mconfirmation refuses a pointer the document does not declare [33m 3201[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mconfirmation refuses a placeholder flag that disagrees with the value [33m 4154[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation refuses when the recorded corpus cannot be read back whole [33m 3032[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mAC-62: BOTH bars take the same corpus accessor, and activation re-reads THE RECORDED SET [33m 3582[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mAC-62 non-vacuity: the bar DOES still refuse an echo of a corpus the write recorded [33m 2999[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation refuses a version that is not PROPOSED (re-activation and rollback) [33m 5314[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation refuses an UNCONFIRMED version [33m 3501[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation refuses when the content CHANGED since confirmation (round-2 V3) [33m 3521[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22m`confirmed_by` is SERVER-DERIVED from the session (round-1 T3) [33m 4034[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation SUPERSEDES the incumbent, leaving exactly one active version [33m 3250[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mC-12: a VIEWER can neither confirm nor activate [33m 3198[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mC-12 non-vacuity: an EDITOR can do both [33m 2816[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mthe pause gate on BOTH new capabilities is real (REQ-G08) [33m 2751[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mBOTH cage predicates are load-bearing on the confirm/activate read [33m 3098[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mP2: a brain doc in another profile is refused with the SAME message as a nonexistent one [33m 2597[2mms[22m[39m
+ [32m✓[39m tests/usage-burn-by-mode.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 129[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m tests/shell-rail.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[32m 34[2mms[22m[39m
+ [32m✓[39m packages/db/tests/migration-shape.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/months.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m packages/llm/tests/assemble.test.ts [2m([22m[2m35 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m packages/llm/tests/adapter.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 70[2mms[22m[39m
+ [32m✓[39m tests/auth-form.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[32m 64[2mms[22m[39m
+ [32m✓[39m packages/db/tests/brain-reason.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m tests/creator-data-registry.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m tests/smoke.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/burn-period.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m tests/landing-pricing.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 110[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m tests/onboarding-ui.test.tsx [2m([22m[2m153 tests[22m[2m)[22m[33m 488[2mms[22m[39m
+ [32m✓[39m tests/billing-ui.test.tsx [2m([22m[2m87 tests[22m[2m)[22m[33m 492[2mms[22m[39m
+ [32m✓[39m tests/brain-ui.test.tsx [2m([22m[2m45 tests[22m[2m)[22m[32m 133[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/facade-errors.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 132[2mms[22m[39m
+ [32m✓[39m tests/page-wiring.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[32m 86[2mms[22m[39m
+ [32m✓[39m packages/db/tests/run-slot-key.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/check-marker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+ [32m✓[39m packages/credits/tests/voice-fields.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m tests/routes.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/inference.test.ts [2m([22m[2m41 tests[22m[2m)[22m[33m 127535[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR17: refuses an ARCHIVED profile, reading the state AT OPERATION TIME [33m 4175[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR8: refuses under an OPEN PAUSE — and this gate cannot live in debitCredits [33m 2966[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mREQ-A02: a VIEWER cannot spend the workspace's credits [33m 3031[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mrefuses ANOTHER workspace's profile id, before the vendor [33m 3105[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mappendConfigVersion CANNOT produce the pre-deploy state — the default is applied on write [33m 2102[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR19: refuses when the STORED config lacks the key that would price it [33m 5528[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR19: the check is NARROW — a missing price for ANOTHER model does not refuse [33m 6752[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR6: an unpriced ACTIVE model is refused BEFORE the vendor is paid [33m 3218[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR9/R10: a zero balance on a REBUILD refuses BEFORE the call, and promises nothing [33m 4674[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mD-M2-2: the FIRST attempt is free, the SECOND is debited at the config price [33m 4512[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mTHE PRICE IS THE STORED CONFIG: changing it moves the charge, with no deploy [33m 4452[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR11/R13: a vendor 500 STILL writes the spend record, with no debit [33m 4108[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR14: a 429 does NOT consume the included build — the next attempt is still free [33m 3934[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR14 (the other direction): a REFUSAL is billable and DOES consume it [33m 3523[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22ma TRUNCATION is billable but does NOT consume the included build [33m 3876[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mREFUSES past the uncharged-attempt cap, BEFORE the vendor [33m 4134[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe cap is READ FROM CONFIG, not a literal that happens to agree with it [33m 3721[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR13: every outcome value is classified, and the enum and the adapter agree [33m 3015[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR15/R7: the row is built field by field — tier, cost state and cost are server-derived [33m 3028[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mD-M2-13: a model the vendor SERVED but config does not price records cost_state=unknown, never zero [33m 4190[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe row records what the vendor SERVED, not what was asked for [33m 3933[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22ma text-less response is schema_invalid and IS billable [33m 3328[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mR12: re-running the SAME attemptId cannot debit twice [33m 3252[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe attempt id reaches the provider, so a retry inside it shares one id (R5) [33m 3605[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe max output tokens come from CONFIG, not from a constant [33m 3094[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mtakes a slot with the limit CONFIG gives for the tier, and gives it back [33m 2772[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe limit is READ FROM CONFIG, not a literal that happens to agree with it [33m 2470[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mREFUSES with RunSlotBusyError at the workspace limit, and the vendor is never called [33m 2671[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22ma server_capacity refusal is a DIFFERENT reason, and never blames the creator's own runs [33m 2917[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mRELEASES the slot when the VENDOR throws, so a failed run does not shrink the limit [33m 2489[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mRELEASES the slot when the tail throws AFTER the vendor answered [33m 2661[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe slot is taken AFTER the cheap refusals, so a paused workspace does not burn one [33m 2461[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe (n+1)th run is refused while the first n are held, and allowed once one frees [33m 2335[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22ma failed attempt that reported NO usage is cost_state 'unknown', never an estimated 0 [33m 2041[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22m...but a SUCCESSFUL run still prices normally, so this is not just 'always unknown' [33m 1502[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22ma FAILED model_usage write must not replace the vendor error that caused it [33m 1470[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mhands the provider a signal, so the bound spans the RETRY LOOP not one attempt [33m 1348[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe deadline is SHORTER than timeoutMs x (maxRetries + 1), or it bounds nothing new [33m 1384[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe OPERATION is bounded even when the provider IGNORES the signal [33m 1239[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe slot is RELEASED when the deadline fires, not held by the abandoned call [33m 1150[2mms[22m[39m
+   [33m[2m✓[22m[39m runInference[2m > [22mthe signal really ABORTS, at the deadline the stored config names [33m 1358[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/actions.test.ts [2m([22m[2m48 tests[22m[2m)[22m[33m 136919[2mms[22m[39m
+   [33m[2m✓[22m[39m owner-only billing actions (REQ-A02, AC-6 matrix)[2m > [22mall six actions throw BillingRoleError for editor and viewer [33m 5613[2mms[22m[39m
+   [33m[2m✓[22m[39m owner-only billing actions (REQ-A02, AC-6 matrix)[2m > [22mround-2 NOTE 4: resume CONVERGES a mirror that says paused with no open pause period [33m 2493[2mms[22m[39m
+   [33m[2m✓[22m[39m owner-only billing actions (REQ-A02, AC-6 matrix)[2m > [22msecond tier checkout while a live subscription exists → AlreadySubscribedError, no Stripe call (plan-review F1) [33m 2204[2mms[22m[39m
+   [33m[2m✓[22m[39m owner-only billing actions (REQ-A02, AC-6 matrix)[2m > [22munmapped tier price → UnknownTierPriceError naming the remedy [33m 2141[2mms[22m[39m
+   [33m[2m✓[22m[39m owner-only billing actions (REQ-A02, AC-6 matrix)[2m > [22mpause bounds come from CONFIG (never a type-level 1|2|3) [33m 1928[2mms[22m[39m
+   [33m[2m✓[22m[39m owner-only billing actions (REQ-A02, AC-6 matrix)[2m > [22mauto-top-up opt-in requires a positive integer cap; disable clears it [33m 1959[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 3 + 4)[2m > [22mFINDING 3: two checkouts racing the same mirror state send the SAME Stripe idempotency key — so Stripe can only ever return ONE session [33m 5812[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 3 + 4)[2m > [22mFINDING 3: two racers picking DIFFERENT tiers ALSO collapse to one key — the cross-tier race is the one the single-row mirror cannot even represent [33m 5628[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 3 + 4)[2m > [22mFINDING 3: a checkout on different terms while one is open is a TYPED refusal, not a raw Stripe 400 [33m 6946[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 3 + 4)[2m > [22mFINDING 3: the key CHANGES once a subscription id exists, so subscribe → cancel → re-subscribe is not stuck replaying the completed session [33m 7269[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 3 + 4)[2m > [22mFINDING 4: a pause started on 31 January resumes on 28 February — never 3 March, which would outrun pauseMonths.max [33m 6259[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 pins (billing round-7 CHANGE 1 + CHANGE 7)[2m > [22mCHANGE 1: a CANCELED workspace never gets an off-session charge, however armed the flags are [33m 6039[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 pins (billing round-7 CHANGE 1 + CHANGE 7)[2m > [22mCHANGE 1: a workspace that never subscribed (pack-only customer) is refused too — there is no saved payment method to charge [33m 5047[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 pins (billing round-7 CHANGE 1 + CHANGE 7)[2m > [22mCHANGE 1 (not a blanket ban): dunning and cancel-at-period-end subscriptions STILL top up [33m 7466[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 pins (billing round-7 CHANGE 1 + CHANGE 7)[2m > [22mCHANGE 7: an INCOMPLETE subscription is refused with the remedy that state actually permits — never 'manage it in the Portal' [33m 3476[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 pins (billing round-7 CHANGE 1 + CHANGE 7)[2m > [22mCHANGE 7: an ACTIVE subscription still gets the portal message (the branch is on STATE, not a rewrite) [33m 3705[2mms[22m[39m
+   [33m[2m✓[22m[39m maybeAutoTopup refusal paths (keyless — every refusal precedes Stripe)[2m > [22mdisabled / paused / no_customer refuse without any Stripe call [33m 5384[2mms[22m[39m
+   [33m[2m✓[22m[39m maybeAutoTopup refusal paths (keyless — every refusal precedes Stripe)[2m > [22mAC-7: the monthly cap is computed in CENTS from this-calendar-month auto-top-up rows and respects the month boundary [33m 4231[2mms[22m[39m
+   [33m[2m✓[22m[39m maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)[2m > [22mtriggers ONE PaymentIntent for the pack price, and writes NO ledger row (credits land via the webhook) [33m 3456[2mms[22m[39m
+   [33m[2m✓[22m[39m maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)[2m > [22mthe idempotency key advances with the month's row count (n=2 → :3) [33m 4268[2mms[22m[39m
+   [33m[2m✓[22m[39m maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)[2m > [22mthe cap boundary ALLOWS exactly-at-cap and refuses one cent over (the direction no test covered) [33m 6587[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 pins (billing CHANGE 4: one liveness definition, three readers)[2m > [22mCHANGE 4: setAutoTopup REFUSES to arm on a canceled subscription — the state DEAD_SUBSCRIPTION_FIELDS exists to make impossible [33m 2816[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 pins (billing CHANGE 4: one liveness definition, three readers)[2m > [22mCHANGE 4: a workspace that NEVER subscribed (pack-only customer) cannot arm it either [33m 2670[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 pins (billing CHANGE 4: one liveness definition, three readers)[2m > [22mCHANGE 4 (the direction that must NOT change): DISABLING is always allowed, even on a dead mirror [33m 3188[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 pins (billing CHANGE 4: one liveness definition, three readers)[2m > [22mCHANGE 4 (not a blanket ban): a live subscription in dunning or cancel-at-period-end can still arm it [33m 5240[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 pins (billing CHANGE 4: one liveness definition, three readers)[2m > [22mAUDIT #6: `unpaid` cannot ARM auto-top-up — liveness is not chargeability [33m 2572[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 pins (billing CHANGE 4: one liveness definition, three readers)[2m > [22mAUDIT #6 (the direction that must NOT change): an `unpaid` owner can still DISARM it [33m 2591[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 pins (billing CHANGE 4: one liveness definition, three readers)[2m > [22mAUDIT #6: maybeAutoTopup refuses an `unpaid` subscription — no PaymentIntent, even when fully armed [33m 1977[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #1 (package half): the AUTHORITATIVE pause refusal on the pack path[2m > [22ma paused workspace's pack checkout throws SubscriptionPausedError and reaches NO Stripe call [33m 1467[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #1 (package half): the AUTHORITATIVE pause refusal on the pack path[2m > [22mNON-VACUITY: the same workspace UNPAUSED reaches Stripe and gets a URL [33m 1561[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #5 drift: the pack path and the billing page agree on 'paused'[2m > [22ma drifted row does NOT permanently block the pack purchase [33m 1271[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #5 drift: the pack path and the billing page agree on 'paused'[2m > [22mSYMMETRY: the page shows no pause for that row, and the server does not refuse one [33m 1382[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #5 drift: the pack path and the billing page agree on 'paused'[2m > [22mAUTHORITY: an OPEN pause_periods row refuses the charge even when the mirror says canceled [33m 1171[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #5 drift: the pack path and the billing page agree on 'paused'[2m > [22mAUTHORITY: the charge and the SPEND now refuse on the same table [33m 1055[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #5 drift: the pack path and the billing page agree on 'paused'[2m > [22mINERT: the stale pausedAt changes no reader's answer [33m 1116[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #5 drift: the pack path and the billing page agree on 'paused'[2m > [22mSYMMETRY, the direction that must NOT change: a LIVE paused row is paused to both [33m 1067[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #7: ONE pack-price authority — the auto-top-up half[2m > [22mcharges the amount STRIPE holds, read through the shared resolver [33m 973[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #7: ONE pack-price authority — the auto-top-up half[2m > [22mDIVERGENCE: config and Stripe disagreeing REFUSES before any PaymentIntent [33m 753[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #7: ONE pack-price authority — the auto-top-up half[2m > [22man ARCHIVED Stripe pack price refuses too — no charge built on a dead price [33m 741[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #7: ONE pack-price authority — the auto-top-up half[2m > [22mno mapped pack price refuses — there is nothing to charge [33m 735[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #8: createInvoiceRecoveryUrl's STRIPE half[2m > [22man OPEN latest invoice yields its hosted URL [33m 922[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #8: createInvoiceRecoveryUrl's STRIPE half[2m > [22ma PAID latest invoice refuses — there is nothing left to pay [33m 1092[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #8: createInvoiceRecoveryUrl's STRIPE half[2m > [22man OPEN invoice with NO hosted page refuses (Stripe returns null until finalized) [33m 957[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #8: createInvoiceRecoveryUrl's STRIPE half[2m > [22mNO latest invoice at all refuses [33m 895[2mms[22m[39m
+   [33m[2m✓[22m[39m audit #8: createInvoiceRecoveryUrl's STRIPE half[2m > [22mthe UN-EXPANDED shape is handled: a string id triggers a second retrieve [33m 776[2mms[22m[39m
+ [32m✓[39m packages/credits/tests/stripe.test.ts [2m([22m[2m83 tests[22m[2m)[22m[33m 158828[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: subscribe → grant[2m > [22msubscription.created mirrors state; invoice.paid (subscription_create) grants the tier allowance expiring the SERVICE period end + 1 month [33m 4281[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: double-delivered webhook (no double grant)[2m > [22mthe same event id delivered twice grants once; second delivery reports duplicate [33m 2720[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: double-delivered webhook (no double grant)[2m > [22mEVERY handled event type is double-delivery safe (re-dispatch reports duplicate, zero extra writes) [33m 2996[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: cancel → downgrade & payment-failed → grace → downgrade[2m > [22msubscription.deleted → effective free [33m 2820[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: cancel → downgrade & payment-failed → grace → downgrade[2m > [22mpayment_failed → grace for config graceDays; past deadline → free; a second failure never EXTENDS; recovery invoice clears grace [33m 2885[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: pack purchase[2m > [22mcheckout.session.completed (payment + pack metadata) → pack row with amountCents and 12-month expiry [33m 5281[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: pack purchase[2m > [22mrecords what STRIPE charged, and warns loudly if it ever has to substitute [33m 7256[2mms[22m[39m
+   [33m[2m✓[22m[39m R-28: a PACK settling during a pause still mints — decided, not incidental[2m > [22mmints the pack, and the credits are frozen rather than lost [33m 4652[2mms[22m[39m
+   [33m[2m✓[22m[39m R-28: a PACK settling during a pause still mints — decided, not incidental[2m > [22ma RE-SUBSCRIBE clears a drifted pausedAt instead of reviving it [33m 4555[2mms[22m[39m
+   [33m[2m✓[22m[39m R-28: a PACK settling during a pause still mints — decided, not incidental[2m > [22mCONTRAST with D-AUDIT-1: a monthly GRANT in the same pause is refused [33m 4251[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-6 identity: sole-authority mapping[2m > [22munknown customer → refused_unknown_customer, 0 ledger writes, event row recorded null-workspace [33m 4333[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-6 identity: sole-authority mapping[2m > [22mmetadata/mapping MISMATCH → refused_identity_mismatch, 0 ledger writes [33m 3295[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-6 identity: sole-authority mapping[2m > [22mAC-4: pack checkout with NO workspace_id metadata → processed for the MAPPED workspace (metadata is a cross-check, not the authority) [33m 4174[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-6 identity: sole-authority mapping[2m > [22mnull/absent customer field on a handled type → refusal, never a metadata fallback [33m 3384[2mms[22m[39m
+   [33m[2m✓[22m[39m edge bullets[2m > [22mout-of-order: subscription.updated BEFORE created converges to the same mirror state [33m 3100[2mms[22m[39m
+   [33m[2m✓[22m[39m edge bullets[2m > [22mproration/non-cycle invoice.paid → ignored, ZERO ledger writes (plan-review F2) [33m 3567[2mms[22m[39m
+   [33m[2m✓[22m[39m edge bullets[2m > [22munmapped price on a GRANT-BEARING invoice THROWS (tx rolls back incl. event row) and self-heals after a config fix [33m 4331[2mms[22m[39m
+   [33m[2m✓[22m[39m edge bullets[2m > [22mpause_collection appearing on subscription.updated records a pause; clearing it resumes; deleted-while-paused closes the pause [33m 3508[2mms[22m[39m
+   [33m[2m✓[22m[39m edge bullets[2m > [22ma PRE-PAUSE invoice delivered late still grants — the ONE accepted exception (D-AUDIT-1), not a general rule [33m 3207[2mms[22m[39m
+   [33m[2m✓[22m[39m edge bullets[2m > [22mpayment_intent.succeeded WITHOUT auto-top-up metadata (the pack-Checkout PI) → ignored, zero ledger writes [33m 3983[2mms[22m[39m
+   [33m[2m✓[22m[39m edge bullets[2m > [22mauto-top-up payment_intent.succeeded → pack-kind row with refType auto_topup + amountCents [33m 3610[2mms[22m[39m
+   [33m[2m✓[22m[39m edge bullets[2m > [22minjected handler failure rolls the event row back; redelivery succeeds with ONE grant total (D-M1-1 discriminator) [33m 3636[2mms[22m[39m
+   [33m[2m✓[22m[39m edge bullets[2m > [22munhandled event types → ignored, recorded, attributed when the customer maps [33m 2928[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 1: customer.* events — where the object IS the customer — are attributed, keeping resolvable creator PII inside the REQ-A04 deletion cascade [33m 3855[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 5: a grant-bearing invoice whose FIRST line is a proration grants from the SUBSCRIPTION line — right tier, right expiry [33m 2892[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 5b: a grant-bearing invoice carrying ONLY prorations fails closed (never prices the allowance off a proration or the mirror) [33m 2864[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 5c: an AMBIGUOUS invoice — two recurring subscription lines — fails closed rather than guessing which one is the allowance [33m 2697[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 3: an ANNUAL service period is REFUSED, not silently granted one month's credits [33m 2459[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 6: a LATE invoice.paid after cancellation never resurrects the paid tier [33m 2979[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 6b: the TWO-event resurrection — deleted → payment_failed → paid — cannot revive a canceled workspace [33m 2660[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22ma failed ONE-OFF invoice never puts the SUBSCRIPTION into dunning [33m 2459[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mrecovery still works: a paid invoice while PAST_DUE (not terminal) lifts the tier back [33m 2460[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 8: the subscription-mode checkout branch binds the subscription id — for BOTH the id and expanded-object shapes [33m 4385[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 8c: a checkout event with a LATER timestamp never suppresses the subscription snapshot that follows it [33m 1616[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 8b: a STALE subscription-mode checkout never repoints the mirror at a dead subscription [33m 1408[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 2: a NON-idempotency unique violation propagates (never a silent 200-with-no-row) [33m 1388[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 4: a pack Checkout that completed UNPAID mints nothing; the later async_payment_succeeded settles it [33m 1382[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 7: ONE session mints ONE pack even when BOTH settlement events arrive under different event ids [33m 1222[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 7b: the per-session guarantee is STRUCTURAL — a second pack row for one session is refused by the database [33m 1080[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 9: ONE invoice mints ONE allowance, even under two different event ids [33m 1112[2mms[22m[39m
+   [33m[2m✓[22m[39m code-review blockers (regression pins)[2m > [22mBLOCKER 9b: the per-invoice guarantee is STRUCTURAL — a second grant row for one invoice is refused by the database [33m 1147[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 1: the grace deadline does NOT depend on delivery order — the dunning subscription event opens it when payment_failed is ordered out [33m 1035[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 1: the OPPOSITE order still yields exactly one deadline (the fix did not double-open it) [33m 807[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 5: a subscription event sharing the deleted event's SECOND cannot resurrect a canceled subscription [33m 788[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 5: a genuine RE-subscribe (a different subscription id) is still mirrored — the guard refuses resurrection, not new business [33m 740[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 6: a MULTI-ITEM subscription fails closed rather than mirroring one of its prices (symmetric with the invoice rule) [33m 857[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 2: ONE PaymentIntent mints ONE auto-top-up pack, even under two different event ids [33m 1122[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 2: the per-PaymentIntent guarantee is STRUCTURAL — a second auto-top-up row for one PI is refused by the database [33m 935[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 4: a service period ending 31 January expires the allowance on 28 February — never 3 March [33m 862[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 8: a grant-bearing invoice whose line carries NO service period is refused, never priced off the mirror [33m 828[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mFINDING 8: a line missing only period.START is refused — it must not skip the monthly-interval guard [33m 747[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE BLOCK: a re-subscribe whose CHECKOUT arrives before the subscription snapshot still activates — the terminal guard must not eat the new subscription's own first event [33m 715[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE CHANGE: `unpaid` is recoverable — an active snapshot after unpaid is applied, unlike canceled [33m 747[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE CHANGE: an EXPIRED deadline is not a live one — a later dunning episode opens a fresh window [33m 722[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE CHANGE: an OLDER active snapshot cannot wipe a LIVE grace deadline (payment_failed never stamps the watermark, so the order guard cannot protect it) [33m 663[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE BLOCK 2: an ordinary cancel-at-period-end does NOT lock the workspace out of re-subscribing [33m 648[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE BLOCK 2 (sibling): an `unpaid` subscription still counts as LIVE, so no second one can be started [33m 728[2mms[22m[39m
+   [33m[2m✓[22m[39m round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)[2m > [22mGATE (mirror image): a late `deleted` for an OLD subscription never cancels the current one [33m 690[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mCHANGE 1: `customer.subscription.deleted` DISARMS auto-top-up — no off-session charging authority survives a cancellation [33m 751[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 1: a trailing `updated` carrying status canceled cannot RE-ARM what `deleted` just cleared [33m 788[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 2: a recovery seen ONLY as `updated → active` does not shorten the NEXT dunning episode's window [33m 785[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 2: the same holds when the new episode arrives as the dunning `subscription.updated` instead [33m 605[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 2 (the direction that must NOT change): inside ONE episode a second failure still never extends the deadline [33m 595[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 3: a STALE snapshot cannot close a pause the owner opened after it was created [33m 567[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 3 (non-vacuity): a CONTEMPORANEOUS snapshot without pause_collection still resumes [33m 706[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mCHANGE 3: the monthly band is CONFIG — widening `monthlyPeriodDays` self-heals the refused invoice with no deploy [33m 626[2mms[22m[39m
+   [33m[2m✓[22m[39m round-7 regression pins (billing round-7 CHANGE 1 + NOTEs)[2m > [22mNOTE 4: a grant-bearing invoice with NO id is REFUSED, never granted against the event id [33m 676[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 regression pins (billing NOTE 3: the pause bound is SYMMETRIC)[2m > [22ma pause-era snapshot arriving AFTER the owner resumed cannot RE-OPEN the pause [33m 745[2mms[22m[39m
+   [33m[2m✓[22m[39m round-10 regression pins (billing NOTE 3: the pause bound is SYMMETRIC)[2m > [22mNON-VACUITY: a CONTEMPORANEOUS pause snapshot still opens a pause (the bound is not a blanket refusal) [33m 598[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mmirrors cancel_at and surfaces it as a scheduled end — with the boolean FALSE [33m 582[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mthe scheduled end DIES with the subscription (DEAD_SUBSCRIPTION_FIELDS clears it) [33m 694[2mms[22m[39m
+   [33m[2m✓[22m[39m evidence-run finding 1: the PORTAL sets cancel_at, not the legacy boolean[2m > [22mNON-VACUITY: an ordinary active subscription carries no scheduled end [33m 554[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma STALE invoice.paid does NOT end a newer, still-live dunning grace period [33m 578[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22mNON-VACUITY: a CURRENT invoice.paid still clears the grace and lifts the status [33m 645[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma TERMINAL mirror is still tidied by a CURRENT paid invoice — cleared, and never revived [33m 817[2mms[22m[39m
+   [33m[2m✓[22m[39m audit 2026-08-17 #3 — the STALENESS half of the mirror-race finding[2m > [22ma stale invoice on a terminal mirror leaves the deadline, and it STILL cannot surface as grace [33m 701[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma GENUINE during-pause invoice is refused: outcome `ignored`, and ZERO credits minted [33m 680[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe refusal is idempotent — a redelivery of the same event does not sneak a grant through [33m 815[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mBOUNDARY: inside the tolerance grants, outside it refuses — the rule is the clock, not the pause flag [33m 1472[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22mthe direction that must NOT change: an UNPAUSED workspace still gets its allowance [33m 677[2mms[22m[39m
+   [33m[2m✓[22m[39m D-AUDIT-1 (audit #2): the REFUSAL branch — REQ-G08's 'no monthly grants while paused'[2m > [22ma RESUMED workspace grants again — the refusal is tied to the OPEN pause, not to having ever paused [33m 676[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/gate-completeness.test.ts[2m > [22mALL of app/ is default-deny (phase-4 round-3 CHANGE 1)[2m > [22mevery entrypoint under app/ is protected, session-free-by-allowlist, or explicitly public
+[31m[1mAssertionError[22m: an entrypoint under app/ belongs to no list: it is not under a PROTECTED_PREFIX, not an allowlisted session-free API route, and not on PUBLIC_ENTRYPOINTS. Add its URL to lib/routes.ts (and gate it), or record it as public WITH a reason.: expected [ Array(1) ] to deeply equal [][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   "(marketing)/for/[audience]/page.tsx",[39m
+[31m+ ][39m
+
+[36m [2m❯[22m tests/gate-completeness.test.ts:[2m632:7[22m[39m
+
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m65 passed[39m[22m[90m (66)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1324 passed[39m[22m[90m (1325)[39m
+[2m   Start at [22m 18:28:25
+[2m   Duration [22m 163.97s[2m (transform 48.96s, setup 0ms, collect 400.37s, tests 1788.67s, environment 54ms, prepare 82.69s)[22m
+
+ ELIFECYCLE  Test failed. See above for more details.
+test exit: 1
+--- db:check ---
+
+> respin@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin
+> pnpm --filter @respin/db db:check
+
+
+> @respin/db@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin\packages\db
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+db:check exit: 0
+--- build ---
+
+> respin@0.0.0 build C:\projects\ai.playground\trendMonitor\respin
+> next build
+
+   ▲ Next.js 15.5.23
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 4.6s
+   Linting and checking validity of types ...
+
+ ⚠ The Next.js plugin was not detected in your ESLint configuration. See https://nextjs.org/docs/app/api-reference/config/eslint#migrating-existing-config
+   Collecting page data ...
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+   Generating static pages (0/10) ...
+<claude-code-hint v="1" type="plugin" value="stripe@claude-plugins-official" />
+   Generating static pages (2/10) 
+   Generating static pages (4/10) 
+   Generating static pages (7/10) 
+ ✓ Generating static pages (10/10)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                 Size  First Load JS
+┌ ○ /                                      166 B         108 kB
+├ ○ /_not-found                            986 B         103 kB
+├ ƒ /admin                                 143 B         103 kB
+├ ƒ /admin/config                        1.59 kB         104 kB
+├ ƒ /admin/margin                          143 B         103 kB
+├ ƒ /api/auth/[...all]                     143 B         103 kB
+├ ƒ /api/stripe/webhook                    143 B         103 kB
+├ ƒ /brain                                 489 B         103 kB
+├ ● /for/[audience]                        166 B         108 kB
+├   ├ /for/women
+├   ├ /for/business
+├   └ /for/coaches
+├ ƒ /onboarding                          1.78 kB         104 kB
+├ ƒ /settings/billing                      143 B         103 kB
+├ ○ /sign-in                             1.25 kB         114 kB
+├ ○ /sign-up                             1.25 kB         114 kB
+├ ƒ /studio                                143 B         103 kB
+└ ƒ /usage                                 143 B         103 kB
++ First Load JS shared by all             102 kB
+  ├ chunks/3466f3f1-c96f853f58dc03ee.js  54.2 kB
+  ├ chunks/706-669b7b2d1b550351.js       46.1 kB
+  └ other shared chunks (total)          1.99 kB
+
+
+ƒ Middleware                             34.9 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+build exit: 0

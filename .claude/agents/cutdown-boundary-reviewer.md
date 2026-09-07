@@ -13,7 +13,7 @@ You gate the **Cutdown tenancy & boundaries** Critical Path. The rule canon is
 D-24, D-33, D-52, D-55 are load-bearing here), and `docs/video-editing/PRD.md` §15. You have
 **read-only tools**.
 
-Scope is Cutdown. `src/`, `tests/`, `config/`, `docs/initial/` are the UGC Intelligence
+Scope is Cutdown. `src/`, `tests/`, `config/`, `docs/initial.past/` are the UGC Intelligence
 product and are **out of scope** (`tech-spec.md` §14) — a Cutdown diff that touches them is
 itself a B5 finding.
 
@@ -63,7 +63,7 @@ Prefer **execution over reading**: run the build, the contract validators, `skil
    `packages/skill-runtime/tests/artefact-path-discipline.test.ts` and grep the diff for
    **sibling** ids the fix did not cover — the siblings are the recurrence.
 8. **Workspace containment (B5).** No import from, call into, or write to `src/`, `tests/`,
-   `config/`, `docs/initial/`. Every write inside `cutdown/` except the D-55 mirror. No
+   `config/`, `docs/initial.past/`. Every write inside `cutdown/` except the D-55 mirror. No
    hand-written `.claude/skills/cutdown-*` directory (`orphanMirrors`,
    `apps/cli/src/commands/skills-sync.ts:464`, fails `--check` on one). Tests must not write
    the real mirror root or the real `skills/registry.json` — both are injectable.

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="respin-tokens.css">
+  <style>
+    body { margin: 0; background: #0F1013; }
+    a { color: var(--accent-text, #94A6EE); text-decoration: none; }
+    a:hover { color: var(--accent-text-strong, #B8C4F4); }
+    ::selection { background: #2A3350; }
+    @keyframes skeleton { 0% { opacity: 0.45; } 50% { opacity: 1; } 100% { opacity: 0.45; } }
+  </style>
+</helmet>
+<div data-screen-label="Design system - Signal" style="font-family: var(--font-sans); background: var(--bg); color: var(--text-1); min-height: 100vh; padding: 40px 48px 80px;">
+  <div style="max-width: 1180px; margin: 0 auto;">
+    <div style="display: flex; align-items: baseline; gap: 16px;">
+      <h1 style="font: 700 30px/1.2 var(--font-sans); letter-spacing: -0.02em; margin: 0;">Respin &middot; Signal</h1>
+      <span style="font: 400 12px/1 var(--font-mono); color: var(--text-4);">DESIGN SYSTEM &middot; DARK-FIRST &middot; TOKENS IN respin-tokens.css &middot; DECISIONS IN DESIGN.md</span>
+    </div>
+    <p style="font: 400 14.5px/1.6 var(--font-sans); color: var(--text-3); margin: 10px 0 0; max-width: 74ch;">A working tool for creators: graphite surfaces, one cobalt accent, Geist for words and Geist Mono for numbers. Honesty states are first-class components, refusals are never red, and every comparison is against the creator&rsquo;s own baseline.</p>
+
+    <h2 style="font: 600 12px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-4); margin: 44px 0 0; border-top: 1px solid var(--border); padding-top: 16px;">COLOR &middot; DARK (DEFAULT)</h2>
+    <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 14px;">
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #0F1013; border: 1px solid var(--border);"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--bg</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#0F1013</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #14161B; border: 1px solid var(--border);"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--surface-1</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#14161B panels</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #181B22; border: 1px solid var(--border);"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--surface-2</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#181B22 rows</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #1E222A; border: 1px solid var(--border);"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--surface-3</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#1E222A pressed</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #23272F;"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--border</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#23272F seams</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #3A3F4B;"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--border-strong</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#3A3F4B emphasis</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #E8E9ED;"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--text-1</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#E8E9ED ink</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #C6CAD3;"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--text-2</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#C6CAD3 body</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #9AA0AC;"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--text-3</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#9AA0AC secondary</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #6B7280;"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--text-4</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#6B7280 meta</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #4066E0;"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--accent</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#4066E0 the one</span></div>
+      <div><span style="display: block; height: 56px; border-radius: var(--radius); background: #171C2B; border: 1px solid #34406B;"></span><span style="font: 500 11px/1.6 var(--font-mono); color: var(--text-2); display: block; margin-top: 6px;">--accent-surface</span><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">#171C2B + #34406B</span></div>
+    </div>
+    <p style="font: 400 12.5px/1.6 var(--font-sans); color: var(--text-4); margin: 12px 0 0; max-width: 74ch;">One accent, everywhere or nowhere. Saturation stays under 80%. No pure black or white anywhere; shadows are tinted to the background hue. Refusals and warnings use --border-strong and words, never a second hue.</p>
+
+    <h2 style="font: 600 12px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-4); margin: 44px 0 0; border-top: 1px solid var(--border); padding-top: 16px;">TYPE &middot; GEIST + GEIST MONO</h2>
+    <div style="display: grid; gap: 14px; margin-top: 16px;">
+      <div style="display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: baseline;"><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">DISPLAY &middot; 44-52 &middot; 700 &middot; -0.03em</span><span style="font: 700 44px/1.15 var(--font-sans); letter-spacing: -0.03em;">A script you can film</span></div>
+      <div style="display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: baseline;"><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">H1 &middot; 28 &middot; 600 &middot; -0.02em</span><span style="font: 600 28px/1.25 var(--font-sans); letter-spacing: -0.02em;">Confirm what we read from your posts</span></div>
+      <div style="display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: baseline;"><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">H2 &middot; 20 &middot; 600</span><span style="font: 600 20px/1.3 var(--font-sans);">Hooks feel like headlines</span></div>
+      <div style="display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: baseline;"><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">BODY / SCRIPT &middot; 15.5 &middot; 400 &middot; 1.6 &middot; MAX 66CH</span><span style="font: 400 15.5px/1.6 var(--font-sans); color: var(--text-2);">Script text is the product. It reads at arm&rsquo;s length on a phone propped against a water bottle.</span></div>
+      <div style="display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: baseline;"><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">UI &middot; 13.5 &middot; 500</span><span style="font: 500 13.5px/1.4 var(--font-sans); color: var(--text-2);">Buttons, chips, nav and dense controls</span></div>
+      <div style="display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: baseline;"><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">MONO META &middot; 12 &middot; 400-500</span><span style="font: 500 12px/1.5 var(--font-mono); color: var(--text-3);">00:14 &middot; 2 CR &middot; BRAIN V7 &middot; 2.3x BASELINE</span></div>
+      <div style="display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: baseline;"><span style="font: 400 11px/1.4 var(--font-mono); color: var(--text-4);">MONO LABEL &middot; 10-11 &middot; 600 &middot; +0.12em</span><span style="font: 600 11px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">VOICE-OVER SCRIPT</span></div>
+    </div>
+    <p style="font: 400 12.5px/1.6 var(--font-sans); color: var(--text-4); margin: 14px 0 0;">Mono carries every number: timestamps, credits, multipliers, ledger values. If it counts something, it is mono.</p>
+
+    <h2 style="font: 600 12px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-4); margin: 44px 0 0; border-top: 1px solid var(--border); padding-top: 16px;">SPACING &middot; RADIUS &middot; ELEVATION &middot; MOTION</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 16px;">
+      <div>
+        <div style="display: flex; align-items: flex-end; gap: 8px;">
+          <span style="width: 4px; height: 4px; background: var(--accent);"></span><span style="width: 8px; height: 8px; background: var(--accent);"></span><span style="width: 12px; height: 12px; background: var(--accent);"></span><span style="width: 16px; height: 16px; background: var(--accent);"></span><span style="width: 20px; height: 20px; background: var(--accent);"></span><span style="width: 24px; height: 24px; background: var(--accent);"></span><span style="width: 32px; height: 32px; background: var(--accent);"></span><span style="width: 40px; height: 40px; background: var(--accent);"></span><span style="width: 48px; height: 48px; background: var(--accent);"></span>
+        </div>
+        <p style="font: 400 12px/1.6 var(--font-mono); color: var(--text-4); margin: 10px 0 0;">4 8 12 16 20 24 32 40 48 64 &middot; PANEL PADDING 20 &middot; PAGE GUTTER 36</p>
+        <div style="display: flex; gap: 12px; margin-top: 18px; align-items: center;">
+          <span style="width: 72px; height: 44px; border: 1px solid var(--border-strong); border-radius: var(--radius); display: grid; place-items: center; font: 500 11px/1 var(--font-mono); color: var(--text-3);">6px</span>
+          <span style="width: 72px; height: 44px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); display: grid; place-items: center; font: 500 11px/1 var(--font-mono); color: var(--text-3);">4px</span>
+          <span style="font: 400 12px/1.5 var(--font-sans); color: var(--text-4); max-width: 30ch;">One radius system: 6 for panels, buttons, inputs; 4 for chips. Nothing else.</span>
+        </div>
+      </div>
+      <div style="display: grid; gap: 10px;">
+        <div style="display: flex; gap: 12px;">
+          <span style="flex: 1; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; font: 400 11.5px/1.5 var(--font-sans); color: var(--text-3);">Level 0: border only. Almost everything.</span>
+          <span style="flex: 1; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow-soft); font: 400 11.5px/1.5 var(--font-sans); color: var(--text-3);">Level 1: soft tinted shadow. Proposals, spin results.</span>
+          <span style="flex: 1; background: var(--surface-1); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); font: 400 11.5px/1.5 var(--font-sans); color: var(--text-3);">Level 2: floating. Modals and the cancel interstitial only.</span>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">MOTION</span>
+          <p style="font: 400 12.5px/1.6 var(--font-sans); color: var(--text-3); margin: 6px 0 0;">120ms hovers, 200ms state changes, 360ms result entrances, one ease: cubic-bezier(0.2, 0, 0, 1). Motion only states something: a run in flight pulses, a result rises once, a hover lifts. Nothing loops decoratively, and everything stops under prefers-reduced-motion.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2 style="font: 600 12px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-4); margin: 44px 0 0; border-top: 1px solid var(--border); padding-top: 16px;">COMPONENTS</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;">
+        <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">BUTTONS &middot; 44PX TARGETS ON TOUCH</span>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; align-items: center;">
+          <button style="font: 600 13.5px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 12px 18px; cursor: pointer;" style-hover="background: var(--accent-hover);">Spin a variant</button>
+          <button style="font: 500 13.5px/1 var(--font-sans); background: transparent; color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px 18px; cursor: pointer;" style-hover="background: var(--surface-2);">Copy script</button>
+          <button style="font: 500 13.5px/1 var(--font-sans); background: transparent; color: var(--text-3); border: none; border-radius: var(--radius); padding: 12px 14px; cursor: pointer;" style-hover="background: var(--surface-2);">Quiet action</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px;">
+          <button disabled style="font: 600 13.5px/1 var(--font-sans); background: var(--surface-3); color: var(--text-4); border: none; border-radius: var(--radius); padding: 12px 18px;">Run one call</button>
+          <span style="font: 400 12px/1.5 var(--font-sans); color: var(--text-4);">Disabled always carries its reason beside it, linked for screen readers.</span>
+        </div>
+      </div>
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;">
+        <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">INPUTS</span>
+        <div style="display: grid; gap: 10px; margin-top: 12px;">
+          <div style="display: grid; gap: 6px;">
+            <span style="font: 500 12.5px/1 var(--font-sans); color: var(--text-2);">Creator name</span>
+            <span style="display: block; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px 14px; font: 400 14px/1 var(--font-sans); color: var(--text-1);">Dana Rios</span>
+            <span style="font: 400 12px/1.4 var(--font-sans); color: var(--text-4);">One line, up to 120 characters. Longer pastes are refused, never shortened.</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="width: 36px; height: 20px; border-radius: 999px; background: var(--accent); position: relative;"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--on-accent);"></span></span>
+            <span style="width: 36px; height: 20px; border-radius: 999px; background: var(--surface-3); border: 1px solid var(--border-strong); position: relative;"><span style="position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-4);"></span></span>
+            <span style="font: 400 12px/1.5 var(--font-sans); color: var(--text-4);">Toggle: the only pill-shaped control in the system.</span>
+          </div>
+        </div>
+      </div>
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;">
+        <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">BADGES &middot; STATUS IS NEVER COLOR-ONLY</span>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 5px 8px;">VERIFIED</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-3); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px;">UNVERIFIED</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 5px 8px;">EMERGING</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px;">ESTABLISHED</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px;">SATURATED</span>
+          <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-4); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px;">STALE &middot; KEPT</span>
+          <span style="font: 500 11px/1 var(--font-mono); color: var(--accent-text);">[consensus break]</span>
+          <span style="font: 600 12px/1 var(--font-mono); color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px dashed var(--accent-border); border-radius: var(--radius-sm); padding: 3px 6px;">[check]</span>
+        </div>
+        <p style="font: 400 12px/1.6 var(--font-sans); color: var(--text-4); margin: 12px 0 0;">Cobalt fill = confirmed or outperforming. Solid border = neutral fact. Dashed border = incomplete or unverifiable. Words do the rest.</p>
+      </div>
+      <div style="background: var(--surface-1); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 18px;">
+        <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">REFUSAL BANNER &middot; RIGOR, NOT ERROR</span>
+        <p style="font: 600 15px/1.4 var(--font-sans); margin: 12px 0 0;">All six candidates died your kill-test.</p>
+        <p style="font: 400 13px/1.6 var(--font-sans); color: var(--text-3); margin: 6px 0 0;">Strong border, plain words, a way forward. No red, no exclamation marks, no shame.</p>
+        <div style="display: flex; gap: 10px; margin-top: 12px;">
+          <button style="font: 600 13px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 11px 16px; cursor: pointer;" style-hover="background: var(--accent-hover);">Dig for a sharper angle</button>
+        </div>
+      </div>
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;">
+        <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">METER &middot; ALWAYS AGAINST YOUR OWN BASELINE</span>
+        <div style="margin-top: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline;"><span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">CONVERSION</span><span style="font: 500 12px/1 var(--font-mono); color: var(--accent-text-strong);">3.2 PER 1K &middot; 2.3x</span></div>
+          <div style="position: relative; height: 8px; background: var(--surface-3); border-radius: var(--radius-sm); margin-top: 8px;"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 76%; background: var(--accent); border-radius: var(--radius-sm);"></span><span style="position: absolute; left: 33%; top: -3px; bottom: -3px; width: 2px; background: var(--text-3);"></span></div>
+          <span style="font: 400 11px/1.6 var(--font-mono); color: var(--text-4);">THE TICK IS THE BASELINE. REACH AND CONVERSION NEVER MERGE.</span>
+        </div>
+      </div>
+      <div style="background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;">
+        <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">SKELETON &middot; EMPTY STATE</span>
+        <div style="display: grid; gap: 8px; margin-top: 12px;">
+          <span style="display: block; height: 12px; width: 78%; border-radius: var(--radius-sm); background: var(--surface-3); animation: skeleton 1.6s ease-in-out infinite;"></span>
+          <span style="display: block; height: 12px; width: 56%; border-radius: var(--radius-sm); background: var(--surface-3); animation: skeleton 1.6s ease-in-out 0.15s infinite;"></span>
+        </div>
+        <div style="border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 12px 14px; margin-top: 12px;">
+          <span style="font: 400 12.5px/1.6 var(--font-sans); color: var(--text-3);">Empty states always say why they are empty and what fills them. No decorative illustrations.</span>
+        </div>
+      </div>
+    </div>
+
+    <h2 style="font: 600 12px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-4); margin: 44px 0 0; border-top: 1px solid var(--border); padding-top: 16px;">LIGHT THEME &middot; data-theme="light"</h2>
+  </div>
+  <div class="theme-light" style="max-width: 1180px; margin: 16px auto 0; background: var(--bg); border: 1px solid #2A2E37; border-radius: var(--radius); padding: 24px; color: var(--text-1);">
+    <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px;">
+      <div><span style="display: block; height: 40px; border-radius: var(--radius); background: var(--bg); border: 1px solid var(--border);"></span><span style="font: 400 10.5px/1.6 var(--font-mono); color: var(--text-3);">--bg #F3F4F6</span></div>
+      <div><span style="display: block; height: 40px; border-radius: var(--radius); background: var(--surface-1); border: 1px solid var(--border);"></span><span style="font: 400 10.5px/1.6 var(--font-mono); color: var(--text-3);">--surface-1 #FBFBFC</span></div>
+      <div><span style="display: block; height: 40px; border-radius: var(--radius); background: var(--text-1);"></span><span style="font: 400 10.5px/1.6 var(--font-mono); color: var(--text-3);">--text-1 #1B1D22</span></div>
+      <div><span style="display: block; height: 40px; border-radius: var(--radius); background: var(--text-3);"></span><span style="font: 400 10.5px/1.6 var(--font-mono); color: var(--text-3);">--text-3 #666C78</span></div>
+      <div><span style="display: block; height: 40px; border-radius: var(--radius); background: var(--accent);"></span><span style="font: 400 10.5px/1.6 var(--font-mono); color: var(--text-3);">--accent #3556C4</span></div>
+      <div><span style="display: block; height: 40px; border-radius: var(--radius); background: var(--accent-surface); border: 1px solid var(--accent-border);"></span><span style="font: 400 10.5px/1.6 var(--font-mono); color: var(--text-3);">--accent-surface</span></div>
+    </div>
+    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; align-items: center;">
+      <button style="font: 600 13.5px/1 var(--font-sans); background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 12px 18px; cursor: pointer;" style-hover="background: var(--accent-hover);">Spin a variant</button>
+      <button style="font: 500 13.5px/1 var(--font-sans); background: transparent; color: var(--text-2); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 12px 18px; cursor: pointer;" style-hover="background: var(--surface-2);">Copy script</button>
+      <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px solid var(--accent-border); border-radius: var(--radius-sm); padding: 5px 8px;">VERIFIED</span>
+      <span style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; color: var(--text-3); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 5px 8px;">UNVERIFIED</span>
+      <span style="font: 600 12px/1 var(--font-mono); color: var(--accent-text-strong); background: var(--accent-surface-2); border: 1px dashed var(--accent-border); border-radius: var(--radius-sm); padding: 3px 6px;">[check]</span>
+    </div>
+    <div style="margin-top: 16px; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow-soft); max-width: 560px;">
+      <div style="font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-4);">SAME COMPONENTS, SAME TOKENS</div>
+      <p style="font: 400 14px/1.6 var(--font-sans); color: var(--text-2); margin: 8px 0 0;">Every screen ships in both themes by swapping the variable set. Shadows tint to the light background hue; contrast holds AA in both.</p>
+    </div>
+  </div>
+
+  <div style="max-width: 1180px; margin: 0 auto;">
+    <h2 style="font: 600 12px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-4); margin: 44px 0 0; border-top: 1px solid var(--border); padding-top: 16px;">VOICE &middot; COPY RULES</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px 40px; margin-top: 14px; font: 400 13.5px/1.65 var(--font-sans); color: var(--text-2); max-width: 1000px;">
+      <span>Sentence case everywhere. Mono uppercase is for labels and meta only.</span>
+      <span>No em-dashes in UI copy. Colons, periods and commas do the work.</span>
+      <span>Numbers are mono and exact: 2.3x, 3.2 per 1k, never rounded theater.</span>
+      <span>No promises of reach. The weakest point of every concept is disclosed.</span>
+      <span>Refusals name a way forward. Empty states say why and what fills them.</span>
+      <span>Unknown numbers say unavailable and why. A fake zero is a lie.</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1440, &quot;height&quot;: 960}}"></script>
+</body>
+</html>

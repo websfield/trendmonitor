@@ -22,9 +22,9 @@ Vetoes implement Australian regulatory controls (ACL disclosure, AANA §2.7, Pri
 
 ## Where the canon lives
 
-- `docs/initial/rubric-vps-v1.md` (Lane 1 vetoes, verdict logic) · `docs/initial/schemas/rubric-v1.json` (`vetoes`, `model_authority.may_never`, `untrusted_inputs`)
-- `docs/initial/component-2-scoring-amplification.md` §2.2 (compliance gate), §2.4 (model orchestration), §2.5 (verdict engine)
-- `docs/initial/compliance-notes.md` · ADR-0002 · PRD REQ-010/011/012/013/015/021/034
+- `docs/initial.past/rubric-vps-v1.md` (Lane 1 vetoes, verdict logic) · `docs/initial.past/schemas/rubric-v1.json` (`vetoes`, `model_authority.may_never`, `untrusted_inputs`)
+- `docs/initial.past/component-2-scoring-amplification.md` §2.2 (compliance gate), §2.4 (model orchestration), §2.5 (verdict engine)
+- `docs/initial.past/compliance-notes.md` · ADR-0002 · PRD REQ-010/011/012/013/015/021/034
 
 ## Anti-patterns
 
@@ -33,4 +33,4 @@ Vetoes implement Australian regulatory controls (ACL disclosure, AANA §2.7, Pri
 - Inferring age, rights, or disclosure from video/caption content instead of stored records → violates invariants 3 and 7.
 - Any veto check that degrades open (skipped when extraction is down) — extraction down ⇒ NEEDS_REVIEW; compliance still runs on caption/metadata.
 
-While code doesn't exist yet, these invariants gate **doc edits**: a change to `docs/initial/` that weakens any of them must update the owning ADR and be flagged loudly — see CLAUDE.md rule 8.
+While code doesn't exist yet, these invariants gate **doc edits**: a change to `docs/initial.past/` that weakens any of them must update the owning ADR and be flagged loudly — see CLAUDE.md rule 8.

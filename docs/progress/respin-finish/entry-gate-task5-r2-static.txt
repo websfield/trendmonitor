@@ -1,0 +1,40 @@
+
+> respin@0.0.0 typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc --noEmit && pnpm --filter=!respin -r run typecheck
+
+Scope: 8 of 9 workspace projects
+packages/brain typecheck$ tsc --noEmit
+packages/trends typecheck$ tsc --noEmit
+packages/llm typecheck$ tsc --noEmit
+packages/trends typecheck: Done
+packages/brain typecheck: Done
+packages/llm typecheck: Done
+packages/modes typecheck$ tsc --noEmit
+packages/db typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/db typecheck: Done
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+
+> respin@0.0.0 worker:typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc -p worker/tsconfig.json --pretty false
+
+
+> respin@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin
+> pnpm --filter @respin/db db:check
+
+
+> @respin/db@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin\packages\db
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥

@@ -19,7 +19,7 @@ Cite `status.ts` by **criterion id**
 (`approved-real-outputs`, `no-breaking-contract-change`, `rights-and-qa-evidence`), never
 by line number: Stage 0B rewrote that file. You have **read-only tools**.
 
-Scope is Cutdown. `src/`, `tests/`, `config/`, `docs/initial/` are the UGC Intelligence
+Scope is Cutdown. `src/`, `tests/`, `config/`, `docs/initial.past/` are the UGC Intelligence
 product and are **out of scope** (`tech-spec.md` §14) — if the diff touches them, say so
 and review only the Cutdown side.
 
