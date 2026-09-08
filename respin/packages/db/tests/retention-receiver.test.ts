@@ -7,11 +7,16 @@
 //
 //   * "Redact Stripe payload before finance extraction" must be impossible.
 //   * "Ignore null/deleted-workspace retention rows" must be impossible.
+import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 import { stripeEvents } from "../src/billing-schema";
+import { workspaces } from "../src/schema";
+import { ensureUserWorkspace } from "../src/bootstrap";
+import { creatorProfiles } from "../src/brain-schema";
+import { generationAttempts } from "../src/generation-schema";
 import { session, verification, rateLimit } from "../src/auth-schema";
 import {
   runRetentionTick,
@@ -230,6 +235,281 @@ describe("retention receiver", () => {
       expect(event!.payload).not.toEqual({});
       expect((await financeRows(db)).rows).toHaveLength(0);
     });
+  });
+
+  describe("the row class is part of the predicate, not just part of the key", () => {
+    // Round 1 of the Tasks 6-9 gate: `overduePredicate` built only
+    // "precondition AND clock". A measure registered for ONE row class of a
+    // mixed table therefore swept ALL of them -- so the 90-day
+    // `customer_attributed` sweep stripped `workspace_id` and
+    // `tier_invoice_authority` off `workspace_attributed` rows that R-122
+    // retains for seven years, on LIVE workspaces, reporting no failure.
+    const overdue = ago(91 * DAY);
+
+    it("KEEPS the workspace link and the tier authority on a workspace-attributed event", async () => {
+      const [ws] = await db.insert(workspaces).values({ name: "Live workspace" }).returning();
+      await db.insert(stripeEvents).values({
+        id: "evt_ws",
+        type: "invoice.paid",
+        payload: paidInvoice(2500),
+        receiptAttribution: "workspace_attributed",
+        workspaceId: ws!.id,
+        stripeCustomerId: "cus_live",
+        tierInvoiceAuthority: { tier: "pro" },
+        outcome: "processed",
+        receivedAt: overdue,
+      });
+
+      const summary = await runRetentionTick(db, now);
+      expect(summary.tables.filter((t) => t.failureCode !== null)).toEqual([]);
+
+      const [event] = await db.select().from(stripeEvents).where(eq(stripeEvents.id, "evt_ws"));
+      // The 90-day PAYLOAD clock still applies to every class...
+      expect(event!.payload).toEqual({});
+      // ...but the seven-year financial-chain columns are NOT the payload.
+      expect(event!.workspaceId).toBe(ws!.id);
+      expect(event!.tierInvoiceAuthority).toEqual({ tier: "pro" });
+      expect(event!.stripeCustomerId).toBe("cus_live");
+    });
+
+    it("gives that event's finance extract a REAL pseudonymous chain key", async () => {
+      const [ws] = await db.insert(workspaces).values({ name: "Live workspace" }).returning();
+      await db.insert(stripeEvents).values({
+        id: "evt_ws_key",
+        type: "invoice.paid",
+        payload: paidInvoice(2500),
+        receiptAttribution: "workspace_attributed",
+        workspaceId: ws!.id,
+        stripeCustomerId: "cus_live",
+        outcome: "processed",
+        receivedAt: overdue,
+      });
+
+      await runRetentionTick(db, now);
+
+      // C5's "linked pseudonymous financial chain". A null here is what the
+      // link sweep produced when it ran first and nulled workspace_id: every
+      // extract unattributed, and 10b-2 unable to group a workspace's periods.
+      const extracts = await financeRows(db);
+      expect(extracts.rows).toHaveLength(1);
+      expect(extracts.rows[0]!.workspace_key).toBe(pseudonymousWorkspaceKey(ws!.id));
+      // Pseudonymous, not the id itself.
+      expect(extracts.rows[0]!.workspace_key).not.toBe(ws!.id);
+    });
+
+    it("still redacts the customer-attributed class its measure DOES name", async () => {
+      await db.insert(stripeEvents).values({
+        id: "evt_cus",
+        type: "invoice.paid",
+        payload: paidInvoice(700),
+        receiptAttribution: "customer_attributed",
+        stripeCustomerId: "cus_person",
+        outcome: "processed",
+        receivedAt: overdue,
+      });
+
+      await runRetentionTick(db, now);
+
+      const [event] = await db.select().from(stripeEvents).where(eq(stripeEvents.id, "evt_cus"));
+      // The narrowing must not turn the sweep off for the class it governs.
+      expect(event!.stripeCustomerId).toMatch(/^redacted_/);
+      expect(event!.payload).toEqual({});
+    });
+
+    it("gives each row in ONE batch its OWN redaction token", async () => {
+      await db.insert(stripeEvents).values([
+        { id: "evt_a", type: "invoice.paid", payload: paidInvoice(100), receiptAttribution: "customer_attributed", stripeCustomerId: "cus_a", outcome: "processed", receivedAt: overdue },
+        { id: "evt_b", type: "invoice.paid", payload: paidInvoice(100), receiptAttribution: "customer_attributed", stripeCustomerId: "cus_b", outcome: "processed", receivedAt: overdue },
+      ]);
+
+      await runRetentionTick(db, now);
+
+      const rows = await db.select().from(stripeEvents);
+      const tokens = rows.map((row) => row.stripeCustomerId);
+      expect(tokens.every((token) => token?.startsWith("redacted_"))).toBe(true);
+      // Minting one uuid per STATEMENT makes two formerly-distinct customers
+      // joinable by their placeholder -- the property the code claims to hold.
+      expect(new Set(tokens).size).toBe(2);
+    });
+  });
+
+  describe("terminal generation attempts — C5 splits settled from the rest", () => {
+    // Round 1: this table's retention rule was `generation_recovery_24_hours`,
+    // the RECOVERY receiver's hard-clear boundary borrowed as a retention
+    // clock. A settled generation was therefore deleted 24 h after it
+    // succeeded, and `generations_attempt_fk` cascaded the generation, its
+    // feedback and its results with it -- leaving the credit_ledger debit
+    // pointing at nothing. The measure's own `why` said "one year".
+    const YEAR = 365 * DAY;
+
+    const seed = async () => {
+      await seedAuthUser(db, "ga_user");
+      const workspaceId = (await ensureUserWorkspace(db, { authUserId: "ga_user", name: "GA" })).workspace.id;
+      const profileId = (
+        await db.insert(creatorProfiles).values({ workspaceId, displayName: "P" }).returning()
+      )[0]!.id;
+      return { workspaceId, profileId };
+    };
+
+    const attempt = async (over: Partial<typeof generationAttempts.$inferInsert>) => {
+      const { workspaceId, profileId } = await seed();
+      return (
+        await db.insert(generationAttempts).values({
+          profileId, workspaceId,
+          attemptId: `att_${Math.random().toString(36).slice(2)}`,
+          purpose: "generation", mode: "hook", payloadSha256: "a".repeat(64),
+          ...over,
+        }).returning()
+      )[0]!;
+    };
+
+    it("KEEPS a settled attempt long past 24 hours — it follows its financial chain", async () => {
+      const settled = await attempt({
+        state: "settled",
+        claimedAt: ago(2 * DAY),
+        vendorStartedAt: ago(2 * DAY),
+        vendorCompletedAt: ago(2 * DAY),
+        terminalAt: ago(2 * DAY),
+        generationId: randomUUID(),
+      });
+
+      await runRetentionTick(db, now);
+
+      const left = await db.select().from(generationAttempts).where(eq(generationAttempts.id, settled.id));
+      expect(left).toHaveLength(1);
+    });
+
+    it("KEEPS a settled attempt even past a year — the one-year clock is for the OTHERS", async () => {
+      const settled = await attempt({
+        state: "settled",
+        claimedAt: ago(2 * YEAR),
+        vendorStartedAt: ago(2 * YEAR),
+        vendorCompletedAt: ago(2 * YEAR),
+        terminalAt: ago(2 * YEAR),
+        generationId: randomUUID(),
+      });
+
+      await runRetentionTick(db, now);
+
+      expect(await db.select().from(generationAttempts).where(eq(generationAttempts.id, settled.id))).toHaveLength(1);
+    });
+
+    it("sweeps a REFUSED attempt one year after its terminal time, and not before", async () => {
+      const old = await attempt({ state: "refused", refusalCode: "abandoned_before_vendor", claimedAt: ago(YEAR + DAY), terminalAt: ago(YEAR + DAY) });
+      const young = await attempt({ state: "refused", refusalCode: "abandoned_before_vendor", claimedAt: ago(YEAR - DAY), terminalAt: ago(YEAR - DAY) });
+
+      await runRetentionTick(db, now);
+
+      const ids = (await db.select().from(generationAttempts)).map((row) => row.id);
+      expect(ids).toContain(young.id);
+      expect(ids).not.toContain(old.id);
+    });
+  });
+
+  it("EXTRACTS EVERY ROW IT REDACTS, past the batch boundary (round 1: two different 500-row sets)", async () => {
+    // The extract selected `ORDER BY received_at LIMIT 500`; the redaction
+    // selected `ORDER BY ctid LIMIT 500`. Above 500 overdue rows those are
+    // different sets, so a row in the second and not the first was redacted
+    // with its finance facts never extracted -- and `extractBeforeRedaction`
+    // skips `payload = '{}'`, so the fact is unrecoverable. The physical order
+    // here is deliberately the REVERSE of `received_at` -- row 1 is inserted
+    // first and is the NEWEST -- which is what makes the two orderings
+    // disagree. With them in agreement this test passes either way.
+    const total = RETENTION_BATCH_SIZE + 100;
+    await db.execute(sql`
+      INSERT INTO "stripe_events" (id, type, payload, receipt_attribution, outcome, received_at)
+      SELECT
+        'evt_bulk_' || g,
+        'invoice.paid',
+        jsonb_build_object('data', jsonb_build_object('object', jsonb_build_object(
+          'object', 'invoice', 'id', 'in_' || g, 'currency', 'usd',
+          'lines', jsonb_build_object('data', jsonb_build_array(jsonb_build_object(
+            'id', 'il_' || g, 'currency', 'usd', 'amount_excluding_tax', 1900,
+            'period', jsonb_build_object('start', 1760000000, 'end', 1762592000))))))),
+        'unattributed', 'processed',
+        ${ago(91 * DAY)}::timestamptz - g * interval '1 second'
+      FROM generate_series(1, ${total}) AS g
+    `);
+
+    await runRetentionTick(db, now);
+
+    const redacted = (await db.execute(sql`
+      SELECT count(*)::int AS n FROM "stripe_events" WHERE payload::text = '{}'
+    `)) as unknown as { rows: { n: number }[] };
+    const extracted = (await db.execute(sql`
+      SELECT count(DISTINCT source_stripe_event_id)::int AS n FROM "stripe_finance_extracts"
+    `)) as unknown as { rows: { n: number }[] };
+
+    expect(redacted.rows[0]!.n).toBe(total);
+    // The property: NOT "some were extracted", but "every redacted row was".
+    expect(extracted.rows[0]!.n).toBe(redacted.rows[0]!.n);
+  });
+
+  it("REPORTS NO BACKLOG once a REDACTION sweep is done — the alarm must not be permanently critical", async () => {
+    // Round 2. `oldestOverdueMs` and `countOverdue` used the sweep's clock
+    // predicate WITHOUT `NOT (redactionDonePredicate)`. Redaction blanks columns;
+    // it does not move `received_at` -- so a correctly redacted row stayed
+    // "overdue" forever and the age grew daily. `OVERDUE_BACKLOG_MS` is 24 h at
+    // `critical`, so 25 hours after the first Stripe payload was redacted a
+    // fully caught-up receiver would page forever, and the one signal that
+    // separates "keeping up" from "losing the race" is the first thing muted.
+    // The existing health test seeds a `session` row -- a DELETE measure, where
+    // the row is gone and the assertion cannot fail. This one uses a REDACTION.
+    await db.insert(stripeEvents).values({
+      id: "evt_backlog",
+      type: "invoice.paid",
+      payload: paidInvoice(1900),
+      receiptAttribution: "unattributed",
+      outcome: "processed",
+      receivedAt: ago(200 * DAY),
+    });
+
+    const first = await runRetentionTick(db, now);
+    expect(first.redacted).toBeGreaterThan(0);
+    const second = await runRetentionTick(db, now);
+
+    expect(second.redacted).toBe(0);
+    const payloadSpecs = second.tables.filter((table) => table.key.endsWith("::provider_payload"));
+    expect(payloadSpecs.length).toBeGreaterThan(0);
+    for (const table of payloadSpecs) {
+      expect(table.scanned).toBe(0);
+      expect(table.oldestOverdueMs).toBeNull();
+    }
+    expect(second.oldestOverdueMs).toBeNull();
+  });
+
+  it("KEEPS an INCOMPLETE finance extract past the 30-day complete-row clock", async () => {
+    // The third face of the row-class defect, and the one with no witness until
+    // now: `finance_extract_complete` carries a 30-day clock,
+    // `finance_extract_incomplete` carries financial_chain_seven_years, and the
+    // discriminator is `status`. A reviewer exempted just this table from the
+    // class filter and the whole suite stayed green while the incomplete row --
+    // C5's "permanent authority for withholding that period" -- was deleted.
+    const ingested = ago(31 * DAY);
+    await db.execute(sql`
+      INSERT INTO "stripe_events" (id, type, payload, receipt_attribution, outcome, received_at)
+      VALUES ('evt_src', 'invoice.paid', '{}'::jsonb, 'unattributed', 'processed', ${ago(200 * DAY)})
+    `);
+    await db.execute(sql`
+      INSERT INTO "stripe_finance_extracts"
+        (id, source_stripe_event_id, object_type, object_id, status, incomplete_reason,
+         currency, amount_excluding_tax_cents, extraction_version, ingested_at)
+      VALUES
+        (gen_random_uuid(), 'evt_src', 'invoice_line', 'il_done', 'complete', NULL,
+         'USD', 1900, 1, ${ingested}),
+        (gen_random_uuid(), 'evt_src', 'invoice_line', 'il_open', 'incomplete', 'missing_amount',
+         'USD', NULL, 1, ${ingested})
+    `);
+
+    await runRetentionTick(db, now);
+
+    const left = (await db.execute(sql`
+      SELECT object_id, status FROM "stripe_finance_extracts" ORDER BY object_id
+    `)) as unknown as { rows: { object_id: string; status: string }[] };
+    // The complete row is spent once the projector has ingested it; the
+    // incomplete row is the seven-year authority and must survive.
+    expect(left.rows.map((row) => row.object_id)).toEqual(["il_open"]);
+    expect(left.rows[0]!.status).toBe("incomplete");
   });
 
   it("never sweeps a financial-chain table — R-122's destructive receiver stays disabled", () => {

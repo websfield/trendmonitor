@@ -56,7 +56,14 @@ export const RETENTION_CLOCKS = {
   verification_expiry: { kind: "scheduled", durationMs: 24 * HOUR_MS },
   rate_limit_window: { kind: "scheduled", durationMs: 24 * HOUR_MS },
   identity_recovery_7_days: { kind: "scheduled", durationMs: 7 * DAY_MS },
-  generation_recovery_24_hours: { kind: "scheduled", durationMs: 24 * HOUR_MS },
+  // C5: "Settled/debited rows follow their linked financial chain; other
+  // content-free terminal attempt metadata expires ONE YEAR after terminal
+  // time." The 5 m / 15 m / deadline+5 m / 24 h boundaries belong to the
+  // generation receiver in `generation-recovery.ts`; they are that receiver's
+  // transitions, never a retention clock. Naming this rule for the recovery
+  // receiver's 24 h hard clear is what made the retention sweep delete a paid
+  // generation one day after it succeeded.
+  generation_attempt_terminal_one_year: { kind: "scheduled", durationMs: 365 * DAY_MS },
   stripe_payload_90_days: { kind: "scheduled", durationMs: 90 * DAY_MS },
   // C5: "a complete row expires 30 days after verified projector ingestion" —
   // measured from `ingested_at`, so an unconsumed extract never expires.
@@ -107,7 +114,7 @@ export type RetentionPrecondition =
  * `stripe_events.payload` is NOT NULL: redaction must not depend on being
  * allowed to drop the column's constraint.
  */
-export type RedactionValue = "null" | "empty_jsonb" | "random_token";
+export type RedactionValue = "null" | "empty_jsonb" | "random_token" | "now_if_null";
 
 /**
  * What expiry does. `delete_row` removes the row; `redact_columns` clears the
@@ -227,11 +234,27 @@ export const RETENTION_MEASURES = [
     measuredFrom: "recovery_expires_at", measuredAs: "timestamptz",
     precondition: { kind: "column_not_null", column: "recovery_expires_at" },
     effect: redact(
-      { column: "request_session_digest", to: "null" },
       { column: "recovery_secret_digest", to: "null" },
       { column: "recovery_secret_prefix", to: "null" },
+      // REQUIRED, not decoration. `deletion_operations_recovery_shape` admits an
+      // identity row in exactly two shapes: LIVE (consumed_at NULL, digest and
+      // prefix present) or SPENT (consumed_at set, both NULL). Nulling the digest
+      // without stamping consumed_at lands between them, so the UPDATE violated
+      // the CHECK and the whole batch aborted on EVERY tick -- this measure had
+      // never once redacted a row, and the worker would have raised a permanent
+      // critical alert from the first expired recovery link in production.
+      // An expired secret IS spent: `auth-lifecycle.ts` and `deletion-lifecycle.ts`
+      // both read a non-null consumed_at as "recovery no longer available", which
+      // is what expiry means. Same COALESCE the erasure path already uses.
+      { column: "recovery_consumed_at", to: "now_if_null" },
     ),
-    why: "C5: the identity recovery digest erases on use/cancel, erasure start, or seven-day expiry. The column already carries request + 7 days, so this sweep is the LAST of those four, not an extra window on top.",
+    // `request_session_digest` is deliberately NOT swept here.
+    // `deletion_operations_request_session_digest_shape` requires it NULL when
+    // the state is complete/cancelled and NON-NULL otherwise, so no clock can
+    // null it: pre-terminal the UPDATE is refused, post-terminal it is already
+    // null. That column is governed by the STATE MACHINE, and the row itself
+    // goes on the one-year `receipt_facts` delete.
+    why: "C5: the identity recovery digest erases on use/cancel, erasure start, or seven-day expiry. The column already carries request + 7 days, so this sweep is the LAST of those four, not an extra window on top. Stamping recovery_consumed_at is what makes the redaction legal under deletion_operations_recovery_shape.",
   },
   {
     table: "deletion_operations", rowClass: "profile_row", fieldSet: "receipt_facts",
@@ -279,9 +302,16 @@ export const RETENTION_MEASURES = [
   {
     table: "generation_attempts", rowClass: "profile_row", fieldSet: "complete_row",
     measuredFrom: "terminal_at", measuredAs: "timestamptz",
-    precondition: { kind: "column_not_null", column: "terminal_at" },
+    // C5 splits the terminal attempts in two, and this precondition IS that
+    // split: `settled` is the state that carries `generation_id` and
+    // `debit_ledger_id` (generation-schema CHECKs `..._settled_shape` and
+    // `..._debit_iff_settled`), so a settled row follows its linked financial
+    // chain and is NOT swept here. Only `refused` and `recovery_required`
+    // are — neither can carry a generation or a debit, so nothing cascades
+    // through `generations_attempt_fk` and no ledger row is orphaned.
+    precondition: { kind: "state_in", column: "state", values: ["refused", "recovery_required"] },
     effect: del(),
-    why: "C5: other content-free terminal attempt metadata expires one year after terminal time. The 5 m/15 m/deadline/24 h transitions belong to the generation receiver, not to this clock; a non-terminal attempt has no terminal_at and is never swept here.",
+    why: "C5: other content-free terminal attempt metadata expires one year after terminal time, while settled/debited rows follow their linked financial chain and are excluded by the precondition. The 5 m/15 m/deadline/24 h transitions belong to the generation receiver, not to this clock; a non-terminal attempt has no terminal_at and is never swept here.",
   },
   {
     table: "rate_limit", rowClass: "system_row", fieldSet: "complete_row",

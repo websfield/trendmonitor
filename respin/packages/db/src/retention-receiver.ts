@@ -8,9 +8,12 @@
 //     A session row expires whether or not anyone logs in again.
 //   * REGISTRY-DRIVEN. The population is `retentionSweepSpecs()`, a derivation
 //     of the shipped registry — never a hand-kept list of tables here.
-//   * NULL/DELETED-WORKSPACE ROWS INCLUDED. Nothing in the generated predicate
+//   * NULL/DELETED-WORKSPACE ROWS INCLUDED. The generated predicate never
 //     mentions a workspace, so a `stripe_events` row with `workspace_id IS
-//     NULL` is swept exactly like an attributed one.
+//     NULL` is swept exactly like an attributed one. It DOES restrict to the
+//     measure's row class: a measure is keyed by (table, row class, field set)
+//     and `stripe_events` carries three classes with three different
+//     retentions, one of them `financial_chain_seven_years`.
 //   * FINANCE BEFORE REDACTION. For `stripe_events.payload` the extract runs
 //     in the SAME transaction, immediately before the redaction, and a failed
 //     extraction aborts the redaction rather than losing the fact.
@@ -18,9 +21,10 @@
 // It never touches a financial-chain row: `retentionSweepSpecs` only emits
 // scheduled clocks, and R-122 keeps `financial_chain_seven_years` off that list
 // until jurisdiction and ledger-chain review approve a destructive receiver.
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 
+import { ROW_CLASS_INVENTORY } from "./creator-data-registry";
 import type { DbLike, TxLike } from "./db-like";
 import {
   extractFinanceFacts,
@@ -90,9 +94,49 @@ function preconditionSql(measure: RetentionMeasure): SQL {
   return sql`${ident(precondition.column)}::text IN (${sql.join(values, sql`, `)})`;
 }
 
-/** The whole predicate: the clock has expired AND the precondition holds. */
+/**
+ * The row-class filter, from the registry's own discriminator inventory.
+ *
+ * A measure is keyed by (table, ROW CLASS, field set) — `stripe_events` alone
+ * carries three classes with three different retentions, one of which is
+ * `financial_chain_seven_years`. Without this clause the generated statement
+ * says only "clock AND precondition", so a 90-day sweep registered for the
+ * `customer_attributed` class also strips the `workspace_attributed` rows that
+ * R-122 keeps for seven years — on LIVE workspaces, with an empty failure list.
+ *
+ * A mixed table with no inventory entry, or a discriminator kind this function
+ * cannot render, THROWS rather than returning TRUE: over-selecting is how the
+ * sweep destroys retained data, so the safe direction is to refuse to sweep.
+ */
+const ROW_CLASS_FILTERS = new Map<string, (typeof ROW_CLASS_INVENTORY)[number]["discriminator"]>(
+  ROW_CLASS_INVENTORY.map((entry) => [`${entry.table}::${entry.rowClass}`, entry.discriminator]),
+);
+
+function rowClassSql(measure: RetentionMeasure): SQL {
+  const key = `${measure.table}::${measure.rowClass}`;
+  if (!ROW_CLASS_FILTERS.has(key)) {
+    throw new Error(`retention receiver: ${key} is not in the row-class inventory`);
+  }
+  const discriminator = ROW_CLASS_FILTERS.get(key);
+  // A single-class table has no discriminator and needs no filter: every row
+  // in it belongs to the one class the measure names.
+  if (!discriminator) return sql`TRUE`;
+  if (discriminator.kind === "enum_value") {
+    return sql`${ident(discriminator.column)}::text = ${discriminator.value}`;
+  }
+  throw new Error(
+    `retention receiver: ${key} has a '${discriminator.kind}' discriminator with no sweep predicate. ` +
+      `Add one here in the same change that adds the discriminator.`,
+  );
+}
+
+/**
+ * The whole predicate: the row is of this measure's CLASS, its clock has
+ * expired, and its precondition holds. All three, or the statement reaches
+ * rows the measure was never registered to govern.
+ */
 function overduePredicate(measure: RetentionMeasure, cutoff: Date): SQL {
-  return sql`(${preconditionSql(measure)}) AND (${dueBefore(measure, cutoff)})`;
+  return sql`(${rowClassSql(measure)}) AND (${preconditionSql(measure)}) AND (${dueBefore(measure, cutoff)})`;
 }
 
 function redactionAssignments(measure: RetentionMeasure): SQL {
@@ -105,10 +149,20 @@ function redactionAssignments(measure: RetentionMeasure): SQL {
         return sql`${ident(target.column)} = NULL`;
       case "empty_jsonb":
         return sql`${ident(target.column)} = '{}'::jsonb`;
+      case "now_if_null":
+        // Stamps a companion column the table's CHECK requires alongside the
+        // nulled ones. COALESCE so a re-run cannot move an existing stamp,
+        // and redactionDonePredicate filters an already-stamped row out
+        // before it is ever claimed, so the redaction stays idempotent.
+        return sql`${ident(target.column)} = COALESCE(${ident(target.column)}, clock_timestamp())`;
       case "random_token":
-        // A fresh opaque value, never a reused constant: two redacted rows
-        // must not become joinable to each other by their placeholder.
-        return sql`${ident(target.column)} = ${`redacted_${randomUUID()}`}`;
+        // A fresh opaque value PER ROW, never a reused constant: two redacted
+        // rows must not become joinable to each other by their placeholder.
+        // `gen_random_uuid()` is evaluated by the database once per row --
+        // minting one `randomUUID()` in JavaScript here would bind a single
+        // literal into the statement and give all 500 rows in the batch the
+        // same placeholder, which is the joinability this exists to prevent.
+        return sql`${ident(target.column)} = 'redacted_' || gen_random_uuid()::text`;
     }
   });
   return sql.join(parts, sql`, `);
@@ -117,10 +171,27 @@ function redactionAssignments(measure: RetentionMeasure): SQL {
 type CountRow = { rows: { count: string | number }[] };
 type AgeRow = { rows: { oldest_ms: string | number | null }[] };
 
+/**
+ * Rows this sweep still has WORK to do on.
+ *
+ * `NOT (redactionDonePredicate)` is load-bearing, not tidiness. The clock
+ * predicate alone stays true for a redacted row forever -- redaction blanks the
+ * columns, it does not move `received_at` -- so counting without it means every
+ * redaction measure reports a backlog that only grows. `OVERDUE_BACKLOG_MS` is
+ * 24 h at `critical`, so 25 hours after the first Stripe payload is correctly
+ * redacted a fully caught-up receiver pages forever, and the one signal that
+ * distinguishes "keeping up" from "losing the race" is the first thing muted.
+ * The sweep itself has always excluded these rows (that is what makes it
+ * idempotent); the health signal simply did not ask the same question.
+ */
+function outstandingPredicate(measure: RetentionMeasure, cutoff: Date): SQL {
+  return sql`${overduePredicate(measure, cutoff)} AND NOT (${redactionDonePredicate(measure)})`;
+}
+
 async function countOverdue(tx: TxLike, spec: RetentionSweepSpec, cutoff: Date): Promise<number> {
   const result = (await tx.execute(sql`
     SELECT count(*)::bigint AS count FROM ${ident(spec.measure.table)}
-    WHERE ${overduePredicate(spec.measure, cutoff)}
+    WHERE ${outstandingPredicate(spec.measure, cutoff)}
   `)) as unknown as CountRow;
   return Number(result.rows[0]?.count ?? 0);
 }
@@ -142,7 +213,7 @@ async function oldestOverdueMs(
     : sql`(EXTRACT(EPOCH FROM max(${sql`${cutoff}`}::timestamptz - ${ident(measure.measuredFrom)})) * 1000)::bigint`;
   const result = (await tx.execute(sql`
     SELECT ${age} AS oldest_ms FROM ${ident(measure.table)}
-    WHERE ${overduePredicate(measure, cutoff)}
+    WHERE ${outstandingPredicate(measure, cutoff)}
   `)) as unknown as AgeRow;
   const raw = result.rows[0]?.oldest_ms;
   return raw === null || raw === undefined ? null : Number(raw);
@@ -161,20 +232,12 @@ const affected = (result: unknown): number => {
  * transaction rolls back and the payload survives to be tried again: losing
  * the fact is worse than redacting late, and C5 forbids losing it.
  */
-async function extractBeforeRedaction(
-  tx: TxLike,
-  cutoff: Date,
-  measure: RetentionMeasure,
-  limit: number,
-): Promise<number> {
+async function extractBeforeRedaction(tx: TxLike, idList: SQL): Promise<number> {
   const result = (await tx.execute(sql`
     SELECT id, type, payload, workspace_id
     FROM "stripe_events"
-    WHERE ${overduePredicate(measure, cutoff)}
+    WHERE id IN (${idList})
       AND payload::text <> '{}'
-    ORDER BY received_at
-    LIMIT ${limit}
-    FOR UPDATE SKIP LOCKED
   `)) as unknown as {
     rows: { id: string; type: string; payload: unknown; workspace_id: string | null }[];
   };
@@ -233,12 +296,6 @@ async function sweepOne(
         if (batch === 0) {
           scanned = await countOverdue(tx, spec, cutoff);
         }
-        // The payload redaction's finance extract, in the SAME transaction and
-        // BEFORE the UPDATE. The ordering is the whole point of C5's first
-        // paragraph, and it is expressed here rather than in a comment.
-        if (spec.key.endsWith("::provider_payload")) {
-          financeExtracts += await extractBeforeRedaction(tx, cutoff, spec.measure, RETENTION_BATCH_SIZE);
-        }
         const table = ident(spec.measure.table);
         const predicate = overduePredicate(spec.measure, cutoff);
         if (spec.measure.effect.kind === "delete_row") {
@@ -258,13 +315,30 @@ async function sweepOne(
         // column is already at its redacted value. Without that the sweep
         // would rewrite the same rows every tick and never terminate.
         const alreadyDone = redactionDonePredicate(spec.measure);
+        // ONE row set, claimed once, used by BOTH the extract and the
+        // redaction. Selecting them separately -- the extract ordered by
+        // `received_at`, the redaction by `ctid` -- yields two different
+        // 500-row sets the moment more than 500 rows are overdue, and a row in
+        // the second set but not the first is redacted with its finance facts
+        // never extracted. C5 forbids losing that fact and nothing can recover
+        // it: `extractBeforeRedaction` skips `payload = '{}'`, so the row is
+        // permanently unextractable the instant it is redacted.
+        const claimed = (await tx.execute(sql`
+          SELECT id FROM ${table}
+          WHERE ${predicate} AND NOT (${alreadyDone})
+          ORDER BY ctid LIMIT ${RETENTION_BATCH_SIZE} FOR UPDATE SKIP LOCKED
+        `)) as unknown as { rows: { id: string }[] };
+        const ids = claimed.rows.map((row) => row.id);
+        if (ids.length === 0) return 0;
+        const idList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
+        // The finance extract, in the SAME transaction and BEFORE the UPDATE,
+        // over exactly the rows this batch is about to redact.
+        if (spec.key.endsWith("::provider_payload")) {
+          financeExtracts += await extractBeforeRedaction(tx, idList);
+        }
         const result = await tx.execute(sql`
           UPDATE ${table} SET ${redactionAssignments(spec.measure)}
-          WHERE ctid IN (
-            SELECT ctid FROM ${table}
-            WHERE ${predicate} AND NOT (${alreadyDone})
-            ORDER BY ctid LIMIT ${RETENTION_BATCH_SIZE} FOR UPDATE SKIP LOCKED
-          )
+          WHERE id IN (${idList})
         `);
         const rows = affected(result);
         redacted += rows;
@@ -308,6 +382,8 @@ function redactionDonePredicate(measure: RetentionMeasure): SQL {
         return sql`${ident(target.column)} IS NULL`;
       case "empty_jsonb":
         return sql`${ident(target.column)}::text = '{}'`;
+      case "now_if_null":
+        return sql`${ident(target.column)} IS NOT NULL`;
       case "random_token":
         return sql`${ident(target.column)} LIKE 'redacted\\_%'`;
     }
@@ -321,8 +397,19 @@ function redactionDonePredicate(measure: RetentionMeasure): SQL {
  * them.
  */
 function failureCodeOf(error: unknown): string {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && code.length > 0 ? `sqlstate_${code}` : "receiver_error";
+  // The driver puts the SQLSTATE on the CAUSE, not on the error drizzle throws,
+  // so reading only `error.code` made this branch dead for every real database
+  // failure: a CHECK violation that aborted the sweep on every tick surfaced as
+  // the generic `receiver_error`, and the one diagnostic bit a content-free
+  // code is allowed to carry was thrown away. Both are read now, cause first.
+  const candidates = [
+    (error as { cause?: { code?: unknown } } | null)?.cause?.code,
+    (error as { code?: unknown } | null)?.code,
+  ];
+  for (const code of candidates) {
+    if (typeof code === "string" && code.length > 0) return `sqlstate_${code}`;
+  }
+  return "receiver_error";
 }
 
 /**

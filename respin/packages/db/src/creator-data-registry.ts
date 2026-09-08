@@ -100,7 +100,7 @@ export type RowClassFor<T extends AppTable> =
 export type LifecycleAction = "cascade" | "delete_explicit" | "pseudonymise" | "retain_financial" | "external_delete" | "not_applicable";
 export type ExportDisposition = "included" | "excluded_secret" | "excluded_system";
 export type ExportProjector = "identity_self" | "profile_creator" | "workspace_owner" | "none";
-export type RetentionRule = "identity_lifetime" | "profile_lifetime" | "workspace_lifetime" | "session_expiry" | "verification_expiry" | "rate_limit_window" | "identity_recovery_7_days" | "generation_recovery_24_hours" | "stripe_payload_90_days" | "finance_extract_30_days" | "cohort_two_years" | "operational_90_days" | "security_audit_one_year" | "deletion_receipt_one_year" | "financial_chain_seven_years" | "library_lifetime" | "installation_lifetime";
+export type RetentionRule = "identity_lifetime" | "profile_lifetime" | "workspace_lifetime" | "session_expiry" | "verification_expiry" | "rate_limit_window" | "identity_recovery_7_days" | "generation_attempt_terminal_one_year" | "stripe_payload_90_days" | "finance_extract_30_days" | "cohort_two_years" | "operational_90_days" | "security_audit_one_year" | "deletion_receipt_one_year" | "financial_chain_seven_years" | "library_lifetime" | "installation_lifetime";
 export type ExecutorId = "identity_cascade" | "profile_cascade" | "workspace_cascade" | "explicit_row_delete" | "workspace_pseudonymiser" | "identifier_scrubber" | "financial_retention_receiver" | "stripe_payload_receiver" | "expiry_receiver" | "external_deletion_receiver" | "library_retention" | "system_retention";
 export type ProbeId = "identity_residue" | "profile_residue" | "workspace_residue" | "retained_financial_residue" | "stripe_payload_residue" | "expiry_residue" | "shared_library_residue" | "system_residue";
 export type ExternalWriterAuthority = Readonly<{
@@ -242,7 +242,7 @@ const identity = <T extends TableWithRowClass<"identity_row">>(table: T, owner: 
 const profile = <T extends TableWithRowClass<"profile_row">>(table: T, owner: string, included: boolean, governedJsonPaths: readonly string[] = []) => row(table, "profile_row" as RowClassFor<T>, {
   scope: "profile", writerOwner: owner, export: included ? "included" : "excluded_system", exportProjector: included ? "profile_creator" : "none",
   action: table === "generation_attempts" ? "delete_explicit" : "cascade",
-  retention: table === "generation_attempts" ? "generation_recovery_24_hours" : "profile_lifetime",
+  retention: table === "generation_attempts" ? "generation_attempt_terminal_one_year" : "profile_lifetime",
   executor: table === "generation_attempts" ? "expiry_receiver" : "profile_cascade",
   residueProbe: table === "generation_attempts" ? "expiry_residue" : "profile_residue",
 } satisfies Defaults, all<T>(), governedJsonPaths);

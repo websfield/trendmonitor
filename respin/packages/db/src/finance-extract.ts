@@ -245,9 +245,14 @@ export function extractFinanceFacts(input: FinanceExtractInput): readonly Financ
       return [
         extractSimpleAmount(input, object, objectType, objectId, {
           creditNoteId: objectId,
-          // A credit note's amount field is `total`, not `amount`.
           chargeId: asLinkId(object.charge),
-        }, asInteger(object.total)),
+          // `total_excluding_tax`, NOT `total`: the column this lands in is
+          // `amount_excluding_tax_cents`, and Stripe's `total` INCLUDES tax.
+          // The invoice-line branch refuses exactly this substitution ("falling
+          // back to it silently would mix tax into revenue"); a credit note is
+          // the same quantity on the other side of the ledger. Absent -> an
+          // `incomplete` row with a reason, never a tax-inflated number.
+        }, asInteger(object.total_excluding_tax)),
       ];
     case "dispute":
       return [extractDispute(input, object, objectId)];

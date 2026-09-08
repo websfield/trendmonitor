@@ -57,6 +57,7 @@ import {
   requestWorkspaceDeletion,
   transitionDeletionOperation,
 } from "../src/deletion-lifecycle";
+import { NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
 import type { DeletionJournalPort, JournalTransitionRequest } from "../src/deletion-ports";
 import { journalReceiptDigest, journalRequestChecksum } from "../src/deletion-ports";
 import { generationAttempts, generations } from "../src/generation-schema";
@@ -410,7 +411,7 @@ async function backdateGrace(db: TestDb, operationId: string) {
 async function tickUntilTerminal(db: TestDb, ports: DeletionExecutorPorts, operationId: string, max = 8) {
   const codes: string[] = [];
   for (let index = 0; index < max; index += 1) {
-    const summary = await advanceDeletionOperations(db, ports, { workerName: "test-worker", migrations });
+    const summary = await advanceDeletionOperations(db, ports, { workerName: "test-worker", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     codes.push(...summary.outcomes.map((item) => `${item.from}->${item.to ?? "wait"}:${item.code}`));
     const [current] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, operationId));
     if (current!.state === "complete" || current!.state === "blocked") return { state: current!.state, codes, operation: current! };
@@ -431,7 +432,7 @@ describe("deletion executor — populated erasure", () => {
   it("reports zeros when nothing is due and never claims an unacknowledged request", async () => {
     const { port: journalPort } = journal();
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: ERASURE_DISABLED };
-    expect(await advanceDeletionOperations(db, ports, { workerName: "w", migrations })).toEqual({
+    expect(await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS })).toEqual({
       claimed: 0, advanced: 0, waiting: 0, blocked: 0, erased: 0, outcomes: [],
     });
   });
@@ -456,13 +457,13 @@ describe("deletion executor — populated erasure", () => {
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
 
     // Tick 1: pre-grace fences enqueued. Tick 2: dispatched → grace.
-    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => o.to)).toEqual(["external_actions_pending"]);
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => o.to)).toEqual(["grace"]);
     expect(commands.executed).toEqual(["stripe_subscription_cancel_at_period_end", "auto_topup_disable"]);
     // Grace window open: nothing irreversible.
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => o.code)).toEqual(["grace_window_open"]);
     expect(commands.executed).toHaveLength(2);
 
@@ -475,6 +476,23 @@ describe("deletion executor — populated erasure", () => {
     // for a financial table that still cascades" below plants one.
     expect(unretainedFinancialChainTables("workspace")).toEqual([]);
     expect(erasureHold("workspace")).toBeNull();
+    // ...and the refusal it replaced is NOT dead code. Both branches are
+    // planted here, because a null return that can never be anything else is
+    // indistinguishable from a deleted function body.
+    // A financial chain still registered as `workspace_lifetime` -- i.e. one
+    // that would cascade away with the root instead of being retained -- holds
+    // the scope. `workspaces` is the one table carrying that retention today,
+    // so it is what a not-yet-retained financial table would look like.
+    expect(
+      erasureHold("workspace", LIFECYCLE_REGISTRY, [{ table: "workspaces", scope: "workspace" }]),
+    ).toBe("financial_chain_unretained:workspaces");
+    expect(erasureHold("workspace", LIFECYCLE_REGISTRY, [], false)).toBe("stripe_payload_receiver_unwired");
+    // The filter is on RETENTION, not on the table name: `credit_ledger` is
+    // listed but now retained (`financial_chain_seven_years`), so naming it
+    // must NOT hold the scope. This is the half that proves Task 6 landed.
+    expect(
+      erasureHold("workspace", LIFECYCLE_REGISTRY, [{ table: "credit_ledger", scope: "workspace" }]),
+    ).toBeNull();
     expect(commands.executed).toHaveLength(2);
     const result = await tickUntilTerminal(db, ports, requested.id);
     expect(result.state, result.codes.join("\n")).toBe("complete");
@@ -597,7 +615,7 @@ describe("deletion executor — populated erasure", () => {
     const requested = await requestIdentityDeletion(
       db,
       { sessionId: "session-owner-auth", idempotencyKey: "identity-delete-1" },
-      { recoveryDelivery, journal: journalPort }
+      { recoveryDelivery, journal: journalPort, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
     );
     expect(requested.acknowledged).toBe(true);
     expect(requested.operation.state).toBe("tombstoned");
@@ -679,6 +697,23 @@ describe("deletion executor — populated erasure", () => {
     expect(mails.find((row) => row.purpose === "identity_deletion_recovery")!.operationId).toBe(requested.operation.id);
     expect(JSON.stringify([operation, snapshots, mails, identityTransitions])).not.toContain(ownerUserId);
     expect(JSON.stringify([operation, snapshots, mails, identityTransitions])).not.toContain("owner-auth");
+
+    // THE RELINK VECTOR, asserted rather than assumed (matrix: "a known-id
+    // dictionary/relink mutation must fail to associate the retained receipt
+    // with the deleted identity"). The keyed payload hash is
+    // sha256(...|operationId|userId|cohortDate|...) and EVERY other input
+    // survives erasure as a receipt fact -- so if the hash survived, one hash
+    // per candidate user id relinks this receipt to the erased person.
+    // `not.toContain(ownerUserId)` above cannot see a SHA-256, and the residue
+    // probe only counts rows still matching the subject predicate: with both
+    // the `linkable_identifiers` scrub rule AND the explicit null removed, the
+    // whole suite stayed green. This is the assertion that goes red.
+    expect(operation!.activationPayloadHash).toBeNull();
+    // ...while the non-identifying contribution it authorised is still there,
+    // or "erased" would just mean "lost".
+    expect(operation!.activationContributionState).toBe("applied");
+    expect(operation!.activationReceiptDigest).not.toBeNull();
+    expect(operation!.activationCohortDate).not.toBeNull();
   });
 
   it("erases a profile: the profile tree and its system links go, the workspace, co-owner and shared rows stay", async () => {
@@ -753,15 +788,15 @@ describe("deletion executor — populated erasure", () => {
     );
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: { erasureEnabled: () => true } };
     await backdateGrace(db, requested.id);
-    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations }); // → external_actions_pending
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations }); // → grace
+    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS }); // → external_actions_pending
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS }); // → grace
     // Straight to `erasing` on purpose: this case is about what the residue
     // probe does once there, not about how grace was left.
     await transitionDeletionOperation(db, requested.id, "erasing", journalPort);
     // Plant one unit of residue through the probe seam: the erasure rolls back.
     const planted = vi.spyOn(LIFECYCLE_PROBES.profile_residue, "execute").mockResolvedValueOnce(1);
     try {
-      summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+      summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     } finally {
       planted.mockRestore();
     }
@@ -778,9 +813,9 @@ describe("deletion executor — populated erasure", () => {
     expect(requests.filter((request) => request.toState === "verifying")).toHaveLength(0);
     expect(await db.select().from(deletionOperationTransitions).where(and(eq(deletionOperationTransitions.operationId, requested.id), eq(deletionOperationTransitions.toState, "verifying")))).toHaveLength(0);
     // Blocked → erasing (nothing failed to retry) → one clean erasure.
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => [o.to, o.code])).toEqual([["erasing", "resumed_after_retry"]]);
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => o.to)).toEqual(["complete"]);
     [current] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, requested.id));
     expect(current!.lastFailureCode).toBeNull();
@@ -807,14 +842,14 @@ describe("deletion executor — populated erasure", () => {
     const commands = commandPort();
     let enabled = true;
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => enabled } };
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     await backdateGrace(db, requested.id);
     // Straight to `erasing` on purpose: the case is the enablement flip below.
     await transitionDeletionOperation(db, requested.id, "erasing", journalPort);
     // Switched off while in `erasing`: nothing irreversible dispatches, nothing changes.
     enabled = false;
-    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => [o.to, o.code])).toEqual([[null, "erasure_disabled"]]);
     expect(commands.executed).toHaveLength(2);
     let [current] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, requested.id));
@@ -823,23 +858,23 @@ describe("deletion executor — populated erasure", () => {
     enabled = true;
     const planted = vi.spyOn(LIFECYCLE_PROBES.workspace_residue, "execute").mockResolvedValueOnce(1);
     try {
-      summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+      summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     } finally {
       planted.mockRestore();
     }
     expect(summary.outcomes.map((o) => o.to)).toEqual(["blocked"]);
     // Off again while blocked: the resume is refused, state unchanged.
     enabled = false;
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => [o.to, o.code])).toEqual([[null, "erasure_disabled"]]);
     [current] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, requested.id));
     expect(current!.state).toBe("blocked");
     expect(await db.select().from(workspaces).where(eq(workspaces.id, fixture.workspaceId))).toHaveLength(1);
     // On: resumed and completed; no command was enqueued or dispatched twice.
     enabled = true;
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => o.to)).toEqual(["erasing"]);
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => o.to)).toEqual(["complete"]);
     const rows = await db.select().from(deletionExternalCommands).where(eq(deletionExternalCommands.operationId, requested.id));
     expect(rows.map((row) => [row.kind, row.attempt, row.status]).sort()).toEqual([
@@ -863,8 +898,8 @@ describe("deletion executor — populated erasure", () => {
     );
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: { erasureEnabled: () => true } };
     await backdateGrace(db, requested.id);
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     // Straight to `erasing` on purpose: the case is the repeated residue below.
     await transitionDeletionOperation(db, requested.id, "erasing", journalPort);
     // Residue on every attempt (exactly one unit, on the root probe): a real
@@ -875,7 +910,7 @@ describe("deletion executor — populated erasure", () => {
     const codes: string[] = [];
     try {
       for (let tick = 0; tick < DELETION_EXECUTOR_MAX_ERASURE_FAILURES * 2; tick += 1) {
-        const summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+        const summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
         codes.push(...summary.outcomes.map((o) => o.code));
       }
     } finally {
@@ -898,7 +933,7 @@ describe("deletion executor — populated erasure", () => {
     });
     expect(await db.select().from(creatorProfiles).where(eq(creatorProfiles.id, fixture.profileId))).toHaveLength(1);
     // Still exhausted on the next tick: no erasure re-run, the row untouched.
-    expect((await advanceDeletionOperations(db, ports, { workerName: "w", migrations })).outcomes.map((o) => o.code)).toEqual(["blocked_awaiting_operator:erasure_failures_exhausted"]);
+    expect((await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS })).outcomes.map((o) => o.code)).toEqual(["blocked_awaiting_operator:erasure_failures_exhausted"]);
     expect((await db.select().from(deletionOperations).where(eq(deletionOperations.id, requested.id)))[0]!.lastFailureCode).toBe("erasure_failures_exhausted:residue_detected:1");
     // The operator's decision, simulated: reset the count.
     await db.update(deletionOperations).set({ retryCount: 0 }).where(eq(deletionOperations.id, requested.id));
@@ -919,7 +954,7 @@ describe("deletion executor — populated erasure", () => {
     );
     const commands = commandPort();
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations }); // fences enqueued, undispatched
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS }); // fences enqueued, undispatched
     // The executor marks a row dispatched BEFORE the provider call; mark the
     // period-end fence that way (in flight, outcome unknown to everyone).
     const [fence] = await db
@@ -941,7 +976,7 @@ describe("deletion executor — populated erasure", () => {
     expect(late.executed).toEqual([]);
     expect(summary.pending).toBe(1);
     // …while the owed reversal does dispatch.
-    const tick = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    const tick = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(tick.outcomes.map((o) => o.code)).toEqual(["cancellation_reversal_succeeded"]);
     expect(commands.executed).toEqual(["stripe_subscription_reopen"]);
   });
@@ -954,7 +989,7 @@ describe("deletion executor — populated erasure", () => {
     const identity = await requestIdentityDeletion(
       db,
       { sessionId: "session-owner-auth", idempotencyKey: "identity-delete-then-workspace" },
-      { recoveryDelivery, journal: journalPort }
+      { recoveryDelivery, journal: journalPort, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
     );
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: { erasureEnabled: () => true } };
     await backdateGrace(db, identity.operation.id);
@@ -971,8 +1006,8 @@ describe("deletion executor — populated erasure", () => {
       { sessionId: "session-survivor-auth", idempotencyKey: "ws-delete-after-identity", typedName: fixture.workspaceName },
       journalPort
     );
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     await backdateGrace(db, requested.id);
     const result = await tickUntilTerminal(db, ports, requested.id);
     expect(result.state, result.codes.join("\n")).toBe("complete");
@@ -1091,26 +1126,26 @@ describe("deletion executor — populated erasure", () => {
       auto_topup_disable: [{ outcome: "failed", failureCode: "mirror_locked" }],
     });
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
-    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes[0]!.code).toBe("external_command_unknown");
     let [current] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, requested.id));
     expect(current!.state).toBe("external_actions_pending");
     // Next tick reconciles the unknown one; the failed one blocks the operation.
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(commands.reconciled).toEqual(["stripe_subscription_cancel_at_period_end"]);
     expect(summary.outcomes[0]!.to).toBe("blocked");
     [current] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, requested.id));
     expect(current!.blockedResumeState).toBe("external_actions_pending");
     // The blocked tick retries the failed command (attempt 2) and resumes.
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes[0]!.code).toBe("resumed_after_retry");
     const attempts = await db
       .select()
       .from(deletionExternalCommands)
       .where(and(eq(deletionExternalCommands.operationId, requested.id), eq(deletionExternalCommands.kind, "auto_topup_disable")));
     expect(attempts.map((row) => [row.attempt, row.status]).sort()).toEqual([[1, "failed"], [2, "succeeded"]]);
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes[0]!.to).toBe("grace");
   });
 
@@ -1127,14 +1162,14 @@ describe("deletion executor — populated erasure", () => {
       stripe_subscription_cancel_at_period_end: [{ outcome: "unknown", reconciliationDigest: sha("timeout") }],
     });
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
-    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes[0]!.code).toBe("external_command_unknown");
     // Plan C2: an unknown pre-grace outcome blocks cancellation until reconciled.
     await expect(
       cancelScopedDeletion(db, requested.id, { sessionId: "session-owner-auth" }, journalPort)
     ).rejects.toThrow("external_command_refused:unknown_outcome_pending");
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes[0]!.to).toBe("grace");
     expect(commands.reconciled).toEqual(["stripe_subscription_cancel_at_period_end"]);
 
@@ -1148,10 +1183,10 @@ describe("deletion executor — populated erasure", () => {
       .where(and(eq(deletionExternalCommands.operationId, requested.id), eq(deletionExternalCommands.kind, "stripe_subscription_reopen")));
     expect(reopen.map((row) => [row.phase, row.status])).toEqual([["cancellation", "pending"]]);
     // …dispatched by the next tick, after which the cancelled operation is no longer due.
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     expect(summary.outcomes.map((o) => [o.to, o.code])).toEqual([["cancelled", "cancellation_reversal_succeeded"]]);
     expect(commands.executed).toEqual(["stripe_subscription_cancel_at_period_end", "auto_topup_disable", "stripe_subscription_reopen"]);
-    expect((await advanceDeletionOperations(db, ports, { workerName: "w", migrations })).claimed).toBe(0);
+    expect((await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS })).claimed).toBe(0);
   });
 
   it("does not reopen a subscription the owner had already scheduled to end before requesting deletion", async () => {
@@ -1166,14 +1201,14 @@ describe("deletion executor — populated erasure", () => {
     );
     const commands = commandPort();
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     // Only the auto-top-up fence: the period-end cancellation was the owner's, not ours.
     expect(commands.executed).toEqual(["auto_topup_disable"]);
     await cancelScopedDeletion(db, requested.id, { sessionId: "session-owner-auth" }, journalPort);
     const kinds = (await db.select().from(deletionExternalCommands).where(eq(deletionExternalCommands.operationId, requested.id))).map((row) => row.kind);
     expect(kinds).not.toContain("stripe_subscription_reopen");
-    expect((await advanceDeletionOperations(db, ports, { workerName: "w", migrations })).claimed).toBe(0);
+    expect((await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS })).claimed).toBe(0);
   });
 
   it("retries a failed reversal under the attempt bound, then stops claiming the cancelled operation with the failure on the row", async () => {
@@ -1188,12 +1223,12 @@ describe("deletion executor — populated erasure", () => {
     const failed = { outcome: "failed" as const, failureCode: "provider_rate_limited" };
     const commands = commandPort({ stripe_subscription_reopen: [failed, failed, failed] });
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
-    await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
     await cancelScopedDeletion(db, requested.id, { sessionId: "session-owner-auth" }, journalPort);
     const codes: string[] = [];
     for (let tick = 0; tick < 3; tick += 1) {
-      const summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
+      const summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
       codes.push(...summary.outcomes.map((o) => o.code));
     }
     expect(codes).toEqual(["external_command_failed", "external_command_failed", "external_command_failed"]);
@@ -1203,7 +1238,7 @@ describe("deletion executor — populated erasure", () => {
       .where(and(eq(deletionExternalCommands.operationId, requested.id), eq(deletionExternalCommands.kind, "stripe_subscription_reopen")));
     expect(attempts.map((row) => [row.attempt, row.status]).sort()).toEqual([[1, "failed"], [2, "failed"], [3, "failed"]]);
     // Exhausted: not due any more; the row says why; the workspace stayed active.
-    expect((await advanceDeletionOperations(db, ports, { workerName: "w", migrations })).claimed).toBe(0);
+    expect((await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS })).claimed).toBe(0);
     const [current] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, requested.id));
     expect(current).toMatchObject({ state: "cancelled", lastFailureCode: "external_command_failed" });
     expect((await db.select().from(workspaces).where(eq(workspaces.id, fixture.workspaceId)))[0]!.lifecycleState).toBe("active");

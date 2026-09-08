@@ -15,6 +15,7 @@ import {
 } from "@respin/auth";
 import { respinDb } from "@respin/db";
 import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
+import { recoverDeletionUrl } from "../../../../lib/routes";
 import { logRefusal } from "../../safe-log";
 
 const ACCOUNT_PATH = "/settings/account";
@@ -100,7 +101,7 @@ export async function requestIdentityDeletionAction(formData: FormData): Promise
       {
         port: mailPort,
         actionUrl: (operationId, secret) =>
-          `${base}${ACCOUNT_PATH}/recover?op=${encodeURIComponent(operationId)}&s=${encodeURIComponent(secret)}`,
+          recoverDeletionUrl(base, operationId, secret),
       },
     );
   } catch (err) {

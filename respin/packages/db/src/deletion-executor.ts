@@ -19,7 +19,7 @@
 //   blocked                   → retry failed commands (bounded); resume when clean
 //   cancelled                 → terminal, but due while the reversal of ITS
 //                               period-end cancellation is still owed
-import { ActivationContributionRefusal, applyActivationContributionInTx, NO_ACTIVATION_EXCLUSIONS, type ActivationExclusions } from "./activation";
+import { ActivationContributionRefusal, applyActivationContributionInTx, type ActivationExclusions } from "./activation";
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { subscriptions } from "./billing-schema";
 import {
@@ -144,8 +144,11 @@ function dueOperation(): SQL | undefined {
  * destroyed seven years of retained money records, so the executor refused the
  * scope outright. Task 6 re-registered all four under
  * `retain_financial`/`financial_chain_seven_years` with a pseudonymised link
- * and dropped their cascade foreign keys (migration 0053), so erasing the root
- * no longer touches them and there is nothing left to hold.
+ * and moved their foreign keys from CASCADE to RESTRICT (migration 0053) --
+ * the keys STAY, because dropping `model_usage_profile_workspace_fk` would
+ * also drop the composite key that structurally refuses a cross-parented row.
+ * Erasure repoints each link to a per-operation stub before the root row goes,
+ * so erasing the root no longer touches them and there is nothing left to hold.
  *
  * A list, not a producer (CLAUDE.md Respin rule 7): a NEW financial table that
  * still cascades with its scope is an edit here, and `unretainedFinancialChainTables`
@@ -173,19 +176,33 @@ export const STRIPE_PAYLOAD_RECEIVER_WIRED = true;
  * checked by the executor at admission to `erasing` and by the worker at
  * startup for every scope the environment names.
  */
-export function erasureHold(scope: DeletionScope, registry: readonly LifecycleClassEntry[] = LIFECYCLE_REGISTRY): string | null {
-  const unretained = unretainedFinancialChainTables(scope, registry);
+export function erasureHold(
+  scope: DeletionScope,
+  registry: readonly LifecycleClassEntry[] = LIFECYCLE_REGISTRY,
+  // The two module constants above, as SEAMS. Production always takes the
+  // defaults -- they are compile-time facts, not configuration (R-119 keeps
+  // configuration out of this decision). They are parameters so a test can
+  // PLANT a hold: with both hard-wired, `FINANCIAL_CHAIN_TABLES` being empty
+  // made `unretainedFinancialChainTables` filter an empty array and
+  // `STRIPE_PAYLOAD_RECEIVER_WIRED` being true made the second branch
+  // unreachable, so deleting this whole function body and returning `null`
+  // left 4,819 tests green. A refusal with no witness is not a refusal.
+  chains: readonly Readonly<{ table: string; scope: DeletionScope }>[] = FINANCIAL_CHAIN_TABLES,
+  payloadReceiverWired: boolean = STRIPE_PAYLOAD_RECEIVER_WIRED,
+): string | null {
+  const unretained = unretainedFinancialChainTables(scope, registry, chains);
   if (unretained.length > 0) return `financial_chain_unretained:${unretained.join(",")}`;
-  if (!STRIPE_PAYLOAD_RECEIVER_WIRED) return "stripe_payload_receiver_unwired";
+  if (!payloadReceiverWired) return "stripe_payload_receiver_unwired";
   return null;
 }
 
 export function unretainedFinancialChainTables(
   scope: DeletionScope,
-  registry: readonly LifecycleClassEntry[] = LIFECYCLE_REGISTRY
+  registry: readonly LifecycleClassEntry[] = LIFECYCLE_REGISTRY,
+  chains: readonly Readonly<{ table: string; scope: DeletionScope }>[] = FINANCIAL_CHAIN_TABLES,
 ): readonly string[] {
   const admitted: readonly DeletionScope[] = scope === "workspace" ? ["workspace", "profile"] : [scope];
-  return FINANCIAL_CHAIN_TABLES.filter(
+  return chains.filter(
     (chain) =>
       admitted.includes(chain.scope) &&
       registry.some(
@@ -214,7 +231,17 @@ export type DeletionExecutorOptions = Readonly<{
   workerName: string;
   migrations: MigrationInventory;
   /** Task 7: the resolved deployment id sets; erasure refuses while the target is still in either. */
-  activationExclusions?: ActivationExclusions;
+  /**
+   * REQUIRED, with no default. R-121's `operator_config_removal_required`
+   * refusal is the C4 guarantee that erasure never completes while the target's
+   * id is still a re-linkable copy in `ADMIN_USER_IDS` /
+   * `ACTIVATION_EXCLUDED_USER_IDS`. Defaulting this to the EMPTY set made that
+   * refusal vacuously satisfied: every test call site omitted it, one optional
+   * line in `worker/production.ts` was the only real supplier, and deleting
+   * that line left the whole suite green while erasure completed with the id
+   * still in deployment config. CLAUDE.md's 2026-08-26 lesson, exactly.
+   */
+  activationExclusions: ActivationExclusions;
   leaseMs?: number;
   limit?: number;
 }>;
@@ -507,7 +534,7 @@ export async function eraseOperation(
     // deployment id set, blocks the erasure (plan C5/C4).
     if (operation.scope === "identity") {
       try {
-        await applyActivationContributionInTx(tx, operation, options.activationExclusions ?? NO_ACTIVATION_EXCLUSIONS, now);
+        await applyActivationContributionInTx(tx, operation, options.activationExclusions, now);
       } catch (error) {
         if (error instanceof ActivationContributionRefusal) throw new LifecycleExecutorRefusal(error.code);
         throw error;

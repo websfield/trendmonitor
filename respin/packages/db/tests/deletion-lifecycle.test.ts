@@ -33,6 +33,8 @@ import {
   transitionDeletionOperation,
   readIdentityCancellationStatus,
 } from "../src/deletion-lifecycle";
+import { NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
+import { runRetentionTick } from "../src/retention-receiver";
 import type {
   DeletionJournalPort,
   JournalTransitionRequest,
@@ -397,6 +399,97 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     expect(owner.workspace.id).toBe(scope.workspaceId);
   });
 
+  it("THE SEVEN-DAY RECOVERY-SECRET SWEEP ACTUALLY RUNS — against a row the real request path produced", async () => {
+    // Round 2 of the Tasks 6-9 gate. This measure had NEVER redacted a row:
+    // `deletion_operations_recovery_shape` admits an identity row only as LIVE
+    // (consumed_at NULL, digest + prefix present) or SPENT (consumed_at set,
+    // both NULL). Nulling the digest without stamping consumed_at lands between
+    // them, so the UPDATE violated the CHECK and the batch aborted every tick --
+    // the single-use recovery credential was retained indefinitely and the
+    // worker would have paged `critical` forever. Nothing caught it because no
+    // test had ever put a real row in front of this spec.
+    const target = await bootstrap(db, "target-auth", "Target Auth");
+    await db
+      .delete(memberships)
+      .where(and(eq(memberships.userId, target.user.id), eq(memberships.workspaceId, target.workspace.id)));
+    const recoveryDelivery: RecoveryDeliveryPort = {
+      deliverIdentityRecovery: vi.fn(async (request) => confirmedDeliveryResult(request)),
+      reconcileIdentityRecovery: vi.fn(),
+    };
+    const requested = await requestIdentityDeletion(
+      db,
+      { sessionId: "session-target-auth", idempotencyKey: "identity-recovery-sweep" },
+      { recoveryDelivery, journal: confirmedJournal().port, activationExclusions: NO_ACTIVATION_EXCLUSIONS },
+    );
+    const [before] = await db
+      .select()
+      .from(deletionOperations)
+      .where(eq(deletionOperations.id, requested.operation.id));
+    // The producer really did mint a live secret, or the sweep below is vacuous.
+    expect(before!.recoverySecretDigest).not.toBeNull();
+    expect(before!.recoverySecretPrefix).not.toBeNull();
+    expect(before!.recoveryConsumedAt).toBeNull();
+
+    // Advance the TICK's clock rather than backdating the row: the delivery
+    // shape CHECK requires `recovery_delivered_at <= recovery_expires_at`, so
+    // moving the expiry backwards would be refused. `recovery_expires_at` is
+    // request + 7 days and the clock is another 7, so day 15 is past due.
+    const wellPastExpiry = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
+    const summary = await runRetentionTick(db, wellPastExpiry);
+
+    // No table may fail: a CHECK violation here aborts the whole batch.
+    expect(summary.tables.filter((table) => table.failureCode !== null)).toEqual([]);
+    const [after] = await db
+      .select()
+      .from(deletionOperations)
+      .where(eq(deletionOperations.id, requested.operation.id));
+    expect(after!.recoverySecretDigest).toBeNull();
+    expect(after!.recoverySecretPrefix).toBeNull();
+    // The companion the CHECK requires — and what makes the expired secret
+    // unusable, since both cancel paths read a non-null consumed_at as "gone".
+    expect(after!.recoveryConsumedAt).not.toBeNull();
+    // The state machine owns this one; a clock may not null it (its own CHECK
+    // forbids nulling before the operation is terminal).
+    expect(after!.requestSessionDigest).not.toBeNull();
+  });
+
+  it("THE EXCLUSION SET REACHES THE CAPTURE — an audited id is captured excluded, through the real request seam", async () => {
+    // R-121 / C4. `activationExclusions` used to be optional with an EMPTY
+    // default: every test omitted it and one optional line in
+    // worker/production.ts was the only supplier, so nothing witnessed that a
+    // real set ever arrives. It is required now, and this is the witness that
+    // a NON-empty one is honoured at the seam rather than merely accepted.
+    const target = await bootstrap(db, "target-auth", "Target Auth");
+    // Sole ownership refuses identity deletion (last_owner); this test is about
+    // the exclusion capture, not that rule, which has its own tests.
+    await db
+      .delete(memberships)
+      .where(and(eq(memberships.userId, target.user.id), eq(memberships.workspaceId, target.workspace.id)));
+    const recoveryDelivery: RecoveryDeliveryPort = {
+      deliverIdentityRecovery: vi.fn(async (request) => confirmedDeliveryResult(request)),
+      reconcileIdentityRecovery: vi.fn(),
+    };
+    const requested = await requestIdentityDeletion(
+      db,
+      { sessionId: "session-target-auth", idempotencyKey: "identity-excluded-capture" },
+      {
+        recoveryDelivery,
+        journal: confirmedJournal().port,
+        activationExclusions: { adminUserIds: new Set([target.user.id]), excludedUserIds: new Set<string>() },
+      },
+    );
+
+    const [row] = await db
+      .select()
+      .from(deletionOperations)
+      .where(eq(deletionOperations.id, requested.operation.id));
+    // Membership in either audited set yields exactly (true, 0, 0).
+    expect(row!.activationExcluded).toBe(true);
+    expect(row!.activationDenominator).toBe(0);
+    expect(row!.activationNumerator).toBe(0);
+    expect(row!.activationExclusionSource).toBe("admin_user_ids");
+  });
+
   it("counts well-formed invalid recovery credentials before comparing the secret", async () => {
     await identityFixture(db);
     let recoverySecret = "";
@@ -413,7 +506,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
         sessionId: "session-target-auth",
         idempotencyKey: "identity-invalid-recovery-budget",
       },
-      { recoveryDelivery, journal: confirmedJournal().port }
+      { recoveryDelivery, journal: confirmedJournal().port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
     );
     const rateLimitKeyDigest = sha("invalid-recovery-client");
     const wrongSecret = Buffer.alloc(32, 0x5a).toString("base64url");
@@ -460,7 +553,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
           sessionId: "session-last-owner-auth",
           idempotencyKey: "identity-last-owner",
         },
-        { recoveryDelivery: delivery, journal: journal.port }
+        { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
       )
     ).rejects.toThrow("deletion_refused:last_owner");
     expect(delivery.deliverIdentityRecovery).not.toHaveBeenCalled();
@@ -511,7 +604,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
           sessionId: "session-workspace-remedy-auth",
           idempotencyKey: "identity-after-workspace-remedy",
         },
-        { recoveryDelivery, journal: journal.port }
+        { recoveryDelivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
       )
     ).rejects.toThrow("deletion_refused:last_owner");
     expect(recoveryDelivery.deliverIdentityRecovery).not.toHaveBeenCalled();
@@ -534,7 +627,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
           sessionId: "session-workspace-remedy-auth",
           idempotencyKey: "identity-after-workspace-remedy",
         },
-        { recoveryDelivery, journal: journal.port }
+        { recoveryDelivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
       )
     ).resolves.toMatchObject({ acknowledged: true, operation: { state: "tombstoned" } });
   });
@@ -559,10 +652,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
         sessionId: "session-target-auth",
         idempotencyKey: "identity-delivery-failure",
       },
-      {
-        recoveryDelivery: delivery,
-        journal: journal.port,
-      }
+      { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
     );
 
     expect(result.acknowledged).toBe(false);
@@ -572,10 +662,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     expect(result.operation.recoverySecretDigest).toBe(sha(deliveredSecret));
     expect(JSON.stringify(result.operation)).not.toContain(deliveredSecret);
     expect(journal.requests).toHaveLength(0);
-    const replay = await resumeIdentityDeletionRequest(db, result.operation.id, {
-      recoveryDelivery: delivery,
-      journal: journal.port,
-    });
+    const replay = await resumeIdentityDeletionRequest(db, result.operation.id, { recoveryDelivery: delivery, journal: journal.port });
     expect(replay).toMatchObject({
       acknowledged: false,
       delivery: "failed",
@@ -598,7 +685,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
         sessionId: "session-target-auth-rebound",
         idempotencyKey: "identity-delivery-failure",
       },
-      { recoveryDelivery: delivery, journal: journal.port }
+      { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
     );
     expect(rebound.operation.id).toBe(result.operation.id);
     expect(rebound.delivery).toBe("failed");
@@ -622,16 +709,10 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     } as const;
 
     await expect(
-      requestIdentityDeletion(db, params, {
-        recoveryDelivery: delivery,
-        journal: journal.port,
-      })
+      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
     ).rejects.toThrow("deletion_refused:delivery_receipt_mismatch");
     await expect(
-      requestIdentityDeletion(db, params, {
-        recoveryDelivery: delivery,
-        journal: journal.port,
-      })
+      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
     ).rejects.toThrow("deletion_refused:delivery_receipt_mismatch");
 
     expect(delivery.deliverIdentityRecovery).toHaveBeenCalledTimes(1);
@@ -699,6 +780,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
       requestIdentityDeletion(db, params, {
         recoveryDelivery: delivery,
         journal,
+        activationExclusions: NO_ACTIVATION_EXCLUSIONS,
       })
     ).rejects.toThrow("deletion_refused:journal_unknown");
     const [afterTimeout] = await db
@@ -719,7 +801,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
       requestIdentityDeletion(
         db,
         { ...params, sessionId: "session-target-auth-second" },
-        { recoveryDelivery: delivery, journal }
+        { recoveryDelivery: delivery, journal, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
       )
     ).rejects.toThrow("deletion_refused:request_session_mismatch");
     expect(delivery.deliverIdentityRecovery).toHaveBeenCalledTimes(1);
@@ -799,10 +881,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     } as const;
 
     await expect(
-      requestIdentityDeletion(db, params, {
-        recoveryDelivery: delivery,
-        journal: confirmedJournal().port,
-      })
+      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal: confirmedJournal().port, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
     ).rejects.toThrow("simulated process loss after provider acceptance");
     const [pending] = await db
       .select()
@@ -815,10 +894,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     });
     await db.delete(session).where(eq(session.id, params.sessionId));
 
-    const resumed = await resumeIdentityDeletionRequest(db, pending.id, {
-      recoveryDelivery: delivery,
-      journal: confirmedJournal().port,
-    });
+    const resumed = await resumeIdentityDeletionRequest(db, pending.id, { recoveryDelivery: delivery, journal: confirmedJournal().port });
     expect(resumed).toMatchObject({
       acknowledged: true,
       delivery: "confirmed",
@@ -868,6 +944,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     const pending = await requestIdentityDeletion(db, params, {
       recoveryDelivery: delivery,
       journal,
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(pending).toMatchObject({ acknowledged: false, delivery: "unknown" });
     const expiredRecoveryAt = new Date(Date.now() - 1);
@@ -877,7 +954,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
       .where(eq(deletionOperations.idempotencyKey, params.idempotencyKey));
 
     await expect(
-      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal })
+      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
     ).rejects.toThrow("deletion_refused:journal_unknown");
     // A late reconciliation response may land after the expired-abandonment
     // plan is durable. Its receipt must not change those already-authorised
@@ -941,7 +1018,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
         sessionId: "session-target-auth-fresh",
         idempotencyKey: "identity-after-expired-reservation",
       },
-      { recoveryDelivery: delivery, journal: confirmed.port }
+      { recoveryDelivery: delivery, journal: confirmed.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
     );
     expect(fresh).toMatchObject({ acknowledged: true, operation: { state: "tombstoned" } });
     expect(delivery.deliverIdentityRecovery).toHaveBeenCalledTimes(2);
@@ -969,17 +1046,11 @@ describe("Phase 10b-1 deletion lifecycle", () => {
       } as const;
       if (status === "pending") {
         await expect(
-          requestIdentityDeletion(caseDb, params, {
-            recoveryDelivery: delivery,
-            journal: confirmedJournal().port,
-          })
+          requestIdentityDeletion(caseDb, params, { recoveryDelivery: delivery, journal: confirmedJournal().port, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
         ).rejects.toThrow("simulated process loss before delivery");
       } else {
         await expect(
-          requestIdentityDeletion(caseDb, params, {
-            recoveryDelivery: delivery,
-            journal: confirmedJournal().port,
-          })
+          requestIdentityDeletion(caseDb, params, { recoveryDelivery: delivery, journal: confirmedJournal().port, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
         ).resolves.toMatchObject({ acknowledged: false, delivery: status });
       }
       await caseDb
@@ -997,10 +1068,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
           );
       }
 
-      const abandoned = await requestIdentityDeletion(caseDb, params, {
-        recoveryDelivery: delivery,
-        journal: confirmedJournal().port,
-      });
+      const abandoned = await requestIdentityDeletion(caseDb, params, { recoveryDelivery: delivery, journal: confirmedJournal().port, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
       expect(abandoned).toMatchObject({
         acknowledged: false,
         delivery: status,
@@ -1043,7 +1111,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     } as const;
 
     await expect(
-      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal })
+      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
     ).rejects.toThrow("deletion_refused:journal_unknown");
     await db
       .delete(memberships)
@@ -1055,7 +1123,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
       );
 
     await expect(
-      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal })
+      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
     ).rejects.toThrow("deletion_refused:last_owner");
     expect(attempted).toHaveLength(1);
     expect(
@@ -1078,6 +1146,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     const recovered = await requestIdentityDeletion(db, params, {
       recoveryDelivery: delivery,
       journal,
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(recovered).toMatchObject({ acknowledged: true, operation: { state: "tombstoned" } });
     expect(delivery.deliverIdentityRecovery).toHaveBeenCalledTimes(1);
@@ -1552,10 +1621,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
         sessionId: "session-target-auth",
         idempotencyKey: "identity-cancel",
       },
-      {
-        recoveryDelivery: delivery,
-        journal: journal.port,
-      }
+      { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
     );
     const snapshots = await db
       .select()

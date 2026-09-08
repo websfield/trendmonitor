@@ -99,11 +99,23 @@ describe("finance extract — the complete path", () => {
     expect(rows[0]!.amountExcludingTaxCents).toBeNull();
   });
 
-  it("reads a credit note's amount from `total`, not `amount`", () => {
+  it("reads a credit note's amount from `total_excluding_tax` — never `total`, which includes tax", () => {
     const rows = extractFinanceFacts(
-      input({ object: "credit_note", id: "cn_1", currency: "usd", total: 700, amount: 999_999, charge: "ch_1" }),
+      input({
+        object: "credit_note", id: "cn_1", currency: "usd",
+        total_excluding_tax: 700, total: 770, amount: 999_999, charge: "ch_1",
+      }),
     );
     expect(rows[0]).toMatchObject({ status: "complete", amountExcludingTaxCents: 700, creditNoteId: "cn_1" });
+  });
+
+  it("refuses a credit note with no `total_excluding_tax` rather than mixing tax into revenue", () => {
+    const rows = extractFinanceFacts(
+      input({ object: "credit_note", id: "cn_2", currency: "usd", total: 770, charge: "ch_1" }),
+    );
+    // The tax-inclusive `total` is RIGHT THERE and must not be used.
+    expect(rows[0]).toMatchObject({ status: "incomplete", amountExcludingTaxCents: null });
+    expect(rows[0]!.incompleteReason).toBe("missing_amount");
   });
 });
 

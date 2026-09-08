@@ -1,4 +1,4 @@
-import { captureActivationContributionInTx, NO_ACTIVATION_EXCLUSIONS, type ActivationExclusions } from "./activation";
+import { captureActivationContributionInTx, type ActivationExclusions } from "./activation";
 import {
   createHash,
   randomBytes,
@@ -1270,13 +1270,17 @@ export async function requestIdentityDeletion(
     /**
      * Task 7 / R-121: the two audited deployment id sets, captured INTO the
      * request so the contribution is final before memberships suspend or the
-     * config changes. Defaults to "nobody excluded"; production (Task 8's
-     * owner action) passes `resolveActivationExclusions(process.env)`.
+     * config changes. Production (Task 8's owner action) passes
+     * `resolveActivationExclusions(process.env)`.
+     *
+     * REQUIRED, with no default -- see the note on
+     * `DeletionExecutorOptions.activationExclusions` for why an empty default
+     * made the C4 refusal vacuously satisfied.
      */
-    activationExclusions?: ActivationExclusions;
+    activationExclusions: ActivationExclusions;
   }>
 ): Promise<IdentityDeletionRequestResult> {
-  const activationExclusions = ports.activationExclusions ?? NO_ACTIVATION_EXCLUSIONS;
+  const activationExclusions = ports.activationExclusions;
   if (!validKey(params.idempotencyKey)) refuse("invalid_idempotency_key");
   let plaintext: string | null = null;
   let actingAuthUserId: string | null = null;

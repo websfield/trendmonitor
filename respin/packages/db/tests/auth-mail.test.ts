@@ -24,6 +24,7 @@ import {
   type AuthMailSendResult,
 } from "../src/auth-mail";
 import { authMailOutbox, type AuthMailPurpose } from "../src/auth-mail-schema";
+import { NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
 import { session } from "../src/auth-schema";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import {
@@ -373,6 +374,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const result = await requestIdentityDeletion(db, params("identity-mail-1"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(result.acknowledged).toBe(true);
     expect(result.delivery).toBe("confirmed");
@@ -416,6 +418,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const first = await requestIdentityDeletion(db, params("identity-mail-2"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(first.acknowledged).toBe(false);
     expect(first.delivery).toBe("failed");
@@ -425,6 +428,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const second = await requestIdentityDeletion(db, params("identity-mail-2"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(second.operation.id).toBe(first.operation.id);
     expect(second.acknowledged).toBe(true);
@@ -457,6 +461,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const first = await requestIdentityDeletion(db, params("identity-mail-race"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(first.acknowledged).toBe(false);
     expect(first.delivery).toBe("failed");
@@ -474,6 +479,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const first = await requestIdentityDeletion(db, params("identity-mail-3"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(first.delivery).toBe("unknown");
     expect(first.operation.recoveryDeliveryStatus).toBe("unknown");
@@ -492,6 +498,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const redelivered = await requestIdentityDeletion(db, params("identity-mail-3"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(redelivered.acknowledged).toBe(true);
     expect(redelivered.operation.recoveryDeliveryAttempt).toBe(2);
@@ -520,6 +527,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const result = await requestIdentityDeletion(db, params("identity-mail-4"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(result.delivery).toBe("failed");
     expect(result.acknowledged).toBe(false);

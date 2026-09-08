@@ -1191,7 +1191,19 @@ describe("P8 — every M2a table's writers are enumerated", () => {
 
   it(
     "reddens for a second app-table or pg-boss capability writer without requiring a direct import",
-    { timeout: 180_000 },
+    // SEVEN planted shapes, each re-running the FULL AST closure scan over
+    // every production source -- that is what makes this a witness rather
+    // than an assertion about the scanner's own filter, so the cost is
+    // inherent and fewer plants would be a weaker guard, not a faster one.
+    //
+    // Measured, because this budget was already near its limit: 156.8 s on
+    // the Tasks 6-9 build tree (87% of the old 180 s) and 173.2 s once the
+    // gate fixes added sources for it to walk (96%), then a timeout on the
+    // next full-suite run under contention. The old budget was a latent red
+    // before this change touched it. Raised with headroom rather than
+    // trimmed; the real fix is to memoise the parse across plants instead of
+    // re-parsing the whole tree seven times, recorded as a gate residual.
+    { timeout: 420_000 },
     async () => {
     const yieldToWorkerRpc = () =>
       new Promise<void>((resolve) => setImmediate(resolve));

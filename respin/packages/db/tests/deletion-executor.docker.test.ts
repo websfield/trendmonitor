@@ -10,6 +10,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { session } from "../src/auth-schema";
+import { NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import { advanceDeletionOperations, type DeletionExecutorPorts } from "../src/deletion-executor";
 import { requestWorkspaceDeletion } from "../src/deletion-lifecycle";
@@ -94,7 +95,7 @@ describeLive("deletion executor lease on real PostgreSQL", () => {
     const ports: DeletionExecutorPorts = { journal: log.port, commands, enablement: { erasureEnabled: () => false } };
     const summaries = await Promise.all(
       ["w1", "w2", "w3", "w4"].map((workerName) =>
-        advanceDeletionOperations(db, ports, { workerName, migrations })
+        advanceDeletionOperations(db, ports, { workerName, migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
       )
     );
     expect(summaries.reduce((total, summary) => total + summary.claimed, 0)).toBe(1);
