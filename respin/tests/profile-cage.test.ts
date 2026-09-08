@@ -1359,6 +1359,13 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // that is exactly the property this list exists to pin.
         "packages/db/src/trends-storage.ts:parkedAutopsyClaimsForProfile",
         "packages/db/src/app-server.ts:pastedReferences",
+        // Phase 10b-1 Task 8: the owner-facing deletion surface. The two
+        // request facades delegate to deletion-lifecycle.ts, whose scoped
+        // request path asserts the scope before minting anything;
+        // `pendingDeletions` reads by the scope's ids and asserts it first.
+        "packages/db/src/app-server.ts:pendingDeletions",
+        "packages/db/src/app-server.ts:requestProfileDeletion",
+        "packages/db/src/app-server.ts:requestWorkspaceDeletion",
         // (`app-server.ts:intakePastedReference` was here for one stage: the
         // unmetered bind was deleted by slice 8c stage B once R-98's metered
         // door existed — `respinCredits.submitPastedReference` below.)

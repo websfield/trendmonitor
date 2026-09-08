@@ -467,17 +467,15 @@ describe("deletion executor — populated erasure", () => {
     expect(commands.executed).toHaveLength(2);
 
     await backdateGrace(db, requested.id);
-    // R-122 / round-1 billing CHANGE: the ledger, subscription and pause rows
-    // still cascade with the workspace, so the executor refuses workspace
-    // erasure even with enablement on. Task 6 re-registers those tables under
-    // the seven-year receiver; until then this hold is the production truth.
-    summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
-    expect(unretainedFinancialChainTables("workspace")).toEqual(["credit_ledger", "subscriptions", "pause_periods", "model_usage"]);
-    expect(summary.outcomes.map((o) => o.code)).toEqual(["erasure_disabled:financial_chain_unretained:credit_ledger,subscriptions,pause_periods,model_usage"]);
+    // TASK 6: the hold is GONE, and the executor advances through grace on its
+    // own. All four finance tables are registered retained — a pseudonymised
+    // link plus seven-year facts — and their foreign keys are RESTRICT rather
+    // than CASCADE, so erasing the workspace no longer destroys a money record.
+    // The hold MACHINERY is still live and still has a witness: "the hold fires
+    // for a financial table that still cascades" below plants one.
+    expect(unretainedFinancialChainTables("workspace")).toEqual([]);
+    expect(erasureHold("workspace")).toBeNull();
     expect(commands.executed).toHaveLength(2);
-    // What erasure DOES once that gate opens is still proven end to end: the
-    // worker transition below is exactly the step handleGrace would take.
-    await transitionDeletionOperation(db, requested.id, "erasing", journalPort);
     const result = await tickUntilTerminal(db, ports, requested.id);
     expect(result.state, result.codes.join("\n")).toBe("complete");
     expect(commands.executed.slice(2)).toEqual(["stripe_subscription_cancel_now", "stripe_customer_personal_fields_clear"]);
@@ -489,12 +487,24 @@ describe("deletion executor — populated erasure", () => {
     expect(await db.select().from(onboardingInputs)).toHaveLength(0);
     expect(await db.select().from(generations)).toHaveLength(0);
     expect(await db.select().from(trendItems).where(eq(trendItems.id, fixture.privateItemId))).toHaveLength(0);
-    // TASK-6 FLIP POINT, not desired behaviour: today's physical truth is that
-    // the ledger cascades with the workspace. R-122 keeps the financial chain
-    // seven years; Task 6's receiver replaces this line with a retained,
-    // pseudonymised ledger (round-1 billing CHANGE).
-    expect(await db.select().from(creditLedger)).toHaveLength(0);
-    expect(await db.select().from(modelUsage)).toHaveLength(0); // TASK-6 FLIP POINT as above (R-122 model-usage facts)
+    // TASK 6, FLIPPED. R-122 keeps the financial chain seven years, so the
+    // ledger and the model-usage cost facts SURVIVE the workspace — and they
+    // survive REPOINTED, at a stub workspace whose id is not the erased one.
+    // Both halves are asserted: surviving alone would be retention without
+    // erasure, repointed alone would be erasure without retention.
+    const retainedLedger = await db.select().from(creditLedger);
+    expect(retainedLedger.length).toBeGreaterThan(0);
+    for (const row of retainedLedger) expect(row.workspaceId).not.toBe(fixture.workspaceId);
+    const retainedUsage = await db.select().from(modelUsage);
+    expect(retainedUsage.length).toBeGreaterThan(0);
+    for (const row of retainedUsage) expect(row.workspaceId).not.toBe(fixture.workspaceId);
+    // The stub the links now point at is a real row, so the RESTRICT keys hold:
+    // a retained money record with a dangling parent would be the integrity
+    // loss this task's first attempt actually caused.
+    const stubIds = new Set(retainedLedger.map((row) => row.workspaceId));
+    for (const stubId of stubIds) {
+      expect(await db.select().from(workspaces).where(eq(workspaces.id, stubId))).toHaveLength(1);
+    }
     expect(await db.select().from(workspaces).where(eq(workspaces.id, fixture.survivor.workspace.id))).toHaveLength(1);
     // Shared rows survive with content intact — the licensed one and the
     // consent-only one (its basis is the owner's identity, not the workspace).
@@ -596,13 +606,11 @@ describe("deletion executor — populated erasure", () => {
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
 
     await backdateGrace(db, requested.operation.id);
-    // Identity erasure is held too (round-2 lean S-R2-1): the workspace's raw
-    // Stripe payload carries this contact's email until Task 6's receiver.
-    expect(erasureHold("identity")).toBe("stripe_payload_receiver_unwired");
-    const held = await tickUntilTerminal(db, ports, requested.operation.id, 4);
-    expect(held.state).toBe("grace");
-    expect(held.codes.at(-1)).toBe("grace->wait:erasure_disabled:stripe_payload_receiver_unwired");
-    await transitionDeletionOperation(db, requested.operation.id, "erasing", journalPort); // Task-6 flip point
+    // TASK 6: the round-2 lean S-R2-1 hold is lifted. The raw Stripe payload
+    // that carried this contact's email is now swept by the retention receiver
+    // on its 90-day clock, after the finance extract has lifted the money facts
+    // out of it in the same transaction.
+    expect(erasureHold("identity")).toBeNull();
     const result = await tickUntilTerminal(db, ports, requested.operation.id);
     expect(result.state, result.codes.join("\n")).toBe("complete");
     // No workspace-level external commands exist for an identity deletion.
@@ -686,19 +694,21 @@ describe("deletion executor — populated erasure", () => {
     const commands = commandPort();
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
     await backdateGrace(db, requested.id);
-    // R-122 (round-2 billing CHANGE): `model_usage` carries seven-year cost
-    // facts and still cascades with the profile, so profile erasure holds at
-    // grace too until Task 6 re-registers it.
-    expect(unretainedFinancialChainTables("profile")).toEqual(["model_usage"]);
+    // TASK 6: `model_usage` is registered retained (pseudonymised profile and
+    // workspace link, seven-year cost facts) and its composite key is RESTRICT,
+    // so profile erasure no longer has to choose between the cage and the clock.
+    expect(unretainedFinancialChainTables("profile")).toEqual([]);
     expect(unretainedFinancialChainTables("identity")).toEqual([]);
-    const held = await tickUntilTerminal(db, ports, requested.id, 4);
-    expect(held.state).toBe("grace");
-    expect(held.codes.at(-1)).toContain("erasure_disabled:financial_chain_unretained:model_usage");
-    await transitionDeletionOperation(db, requested.id, "erasing", journalPort); // Task-6 flip point
+    expect(erasureHold("profile")).toBeNull();
     const result = await tickUntilTerminal(db, ports, requested.id);
     expect(result.state, result.codes.join("\n")).toBe("complete");
     expect(commands.executed).toEqual([]);
-    expect(await db.select().from(modelUsage)).toHaveLength(0); // TASK-6 FLIP POINT (R-122 model-usage facts)
+    // TASK 6, FLIPPED (R-122 model-usage facts): the cost rows survive the
+    // profile and carry a repointed link, so the seven-year chain is intact and
+    // nothing points back at the erased profile.
+    const retainedProfileUsage = await db.select().from(modelUsage);
+    expect(retainedProfileUsage.length).toBeGreaterThan(0);
+    for (const row of retainedProfileUsage) expect(row.profileId).not.toBe(fixture.profileId);
 
     expect(await db.select().from(creatorProfiles).where(eq(creatorProfiles.id, fixture.profileId))).toHaveLength(0);
     expect(await db.select().from(brainDocs)).toHaveLength(0);
@@ -745,7 +755,9 @@ describe("deletion executor — populated erasure", () => {
     await backdateGrace(db, requested.id);
     let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations }); // → external_actions_pending
     summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations }); // → grace
-    await transitionDeletionOperation(db, requested.id, "erasing", journalPort); // Task-6 flip point (financial-chain hold)
+    // Straight to `erasing` on purpose: this case is about what the residue
+    // probe does once there, not about how grace was left.
+    await transitionDeletionOperation(db, requested.id, "erasing", journalPort);
     // Plant one unit of residue through the probe seam: the erasure rolls back.
     const planted = vi.spyOn(LIFECYCLE_PROBES.profile_residue, "execute").mockResolvedValueOnce(1);
     try {
@@ -798,7 +810,8 @@ describe("deletion executor — populated erasure", () => {
     await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
     await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
     await backdateGrace(db, requested.id);
-    await transitionDeletionOperation(db, requested.id, "erasing", journalPort); // Task-6 flip point
+    // Straight to `erasing` on purpose: the case is the enablement flip below.
+    await transitionDeletionOperation(db, requested.id, "erasing", journalPort);
     // Switched off while in `erasing`: nothing irreversible dispatches, nothing changes.
     enabled = false;
     let summary = await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
@@ -852,7 +865,8 @@ describe("deletion executor — populated erasure", () => {
     await backdateGrace(db, requested.id);
     await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
     await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
-    await transitionDeletionOperation(db, requested.id, "erasing", journalPort); // Task-6 flip point
+    // Straight to `erasing` on purpose: the case is the repeated residue below.
+    await transitionDeletionOperation(db, requested.id, "erasing", journalPort);
     // Residue on every attempt (exactly one unit, on the root probe): a real
     // executor/probe disagreement that no retry can clear.
     const planted = vi
@@ -944,8 +958,7 @@ describe("deletion executor — populated erasure", () => {
     );
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: { erasureEnabled: () => true } };
     await backdateGrace(db, identity.operation.id);
-    await tickUntilTerminal(db, ports, identity.operation.id, 4); // → grace (held: payload receiver unwired)
-    await transitionDeletionOperation(db, identity.operation.id, "erasing", journalPort); // Task-6 flip point
+    // TASK 6: no hold to step over — the tick carries grace → erasing → complete.
     const identityResult = await tickUntilTerminal(db, ports, identity.operation.id);
     expect(identityResult.state, identityResult.codes.join("\n")).toBe("complete");
     expect(await db.select().from(deletionMembershipSnapshots)).toHaveLength(1);
@@ -961,7 +974,6 @@ describe("deletion executor — populated erasure", () => {
     await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
     await advanceDeletionOperations(db, ports, { workerName: "w", migrations });
     await backdateGrace(db, requested.id);
-    await transitionDeletionOperation(db, requested.id, "erasing", journalPort); // Task-6 flip point (see the workspace walk)
     const result = await tickUntilTerminal(db, ports, requested.id);
     expect(result.state, result.codes.join("\n")).toBe("complete");
     expect(await db.select().from(workspaces).where(eq(workspaces.id, fixture.workspaceId))).toHaveLength(0);

@@ -372,11 +372,17 @@ export const modelUsage = pgTable(
       .default(sql`clock_timestamp()`),
   },
   (t) => [
+    // R-122 / Task 6: cascade -> restrict, for the reason credit_ledger's
+    // workspace link changed. This COMPOSITE key is the profile cage's own
+    // refusal of a cross-parented row (M2a; `brain-schema.test.ts` and
+    // `profile-scope.test.ts` both prove it), so it must not be dropped — only
+    // its delete action moves, so a retained REQ-G05 margin input can outlive
+    // the profile by being repointed to the "Deleted profile" stub.
     foreignKey({
       columns: [t.profileId, t.workspaceId],
       foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
       name: "model_usage_profile_workspace_fk",
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
     check(
       "model_usage_cost_present_unless_unknown",
       sql`(${t.costState} = 'unknown') = (${t.costMicroUsd} IS NULL)`

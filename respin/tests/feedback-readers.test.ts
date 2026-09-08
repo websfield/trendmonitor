@@ -78,6 +78,16 @@ const RAW_FEEDBACK_READER_FILES: readonly string[] = [
   // registry table by identifier under the operation's subject predicate —
   // it erases and counts residue, it never reads content for a product path.
   "packages/db/src/lifecycle-sql-port.ts",
+  // Phase 10b-1 Task 6: the retention receiver renders `FROM ${ident(table)}`,
+  // so the scanner's `unresolvedFrom` rule flags it — correctly, because the
+  // table name is computed. What bounds it is not this list: the population is
+  // `RETENTION_MEASURES`, compile-closed and proven in bijection with the
+  // lifecycle registry by `assertRetentionClockClosure`, and
+  // `generation_feedback` is `profile_lifetime`/cascade — never
+  // receiver-executed, so no sweep can name it. That claim has its own witness
+  // in `retention-clocks.test.ts` ("never sweeps a cascade-erased table"),
+  // rather than resting on this comment.
+  "packages/db/src/retention-receiver.ts",
 ];
 
 /**

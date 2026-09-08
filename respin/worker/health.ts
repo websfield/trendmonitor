@@ -208,6 +208,22 @@ export interface SafeWorkerEventInput {
   readonly deletionWaiting?: number;
   readonly deletionBlocked?: number;
   readonly deletionErased?: number;
+  // Phase 10b-1 Task 6: retention receiver counts. Same discipline — counts and
+  // one content-safe key, never a row. `retentionKey` is a registry key
+  // (`table::row_class::field_set`), which SAFE_TOKEN admits; it names WHICH
+  // sweep a count belongs to without naming anything in it.
+  readonly retentionKey?: string;
+  readonly retentionScanned?: number;
+  readonly retentionRedacted?: number;
+  readonly retentionDeleted?: number;
+  readonly retentionFinanceExtracts?: number;
+  readonly retentionOldestOverdueMs?: number;
+  readonly retentionFailures?: number;
+  readonly retentionTruncated?: number;
+  readonly generationAbandoned?: number;
+  readonly generationPastDeadline?: number;
+  readonly generationSettleable?: number;
+  readonly generationHardCleared?: number;
 }
 
 export type SafeWorkerEvent = Readonly<Record<string, string | number>>;
@@ -219,6 +235,7 @@ const STRING_FIELDS = [
   "itemId",
   "attemptId",
   "reasonCode",
+  "retentionKey",
 ] as const;
 const NUMBER_FIELDS = [
   "activeJobs",
@@ -234,6 +251,17 @@ const NUMBER_FIELDS = [
   "deletionWaiting",
   "deletionBlocked",
   "deletionErased",
+  "retentionScanned",
+  "retentionRedacted",
+  "retentionDeleted",
+  "retentionFinanceExtracts",
+  "retentionOldestOverdueMs",
+  "retentionFailures",
+  "retentionTruncated",
+  "generationAbandoned",
+  "generationPastDeadline",
+  "generationSettleable",
+  "generationHardCleared",
 ] as const;
 
 const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;

@@ -22,6 +22,8 @@ export {
   deletionExternalCommandStatus,
   deletionMembershipSnapshots,
   deletionOperations,
+  activationCohortDaily,
+  activationContributionState,
   deletionOperationTransitions,
   deletionRecoverySessions,
   deletionOperationState,
@@ -91,6 +93,83 @@ export {
   type ErasureEnablementPort,
   type ErasureResult,
 } from "./deletion-executor";
+export {
+  assertRetentionClockClosure,
+  isReceiverExecutor,
+  measureKey,
+  RETENTION_CLOCKS,
+  RETENTION_MEASURES,
+  retentionMeasureFor,
+  retentionSweepSpecs,
+  type RetentionClock,
+  type RetentionEffect,
+  type RetentionMeasure,
+  type RetentionMeasureKey,
+  type RetentionPrecondition,
+  type RetentionSweepSpec,
+} from "./retention-clocks";
+export {
+  ACTIVATION_EXCLUDED_USER_IDS_ENV,
+  ACTIVATION_FULL_SCRIPT_MODES,
+  ACTIVATION_METRIC_VERSION,
+  ACTIVATION_WINDOW_MS,
+  ADMIN_USER_IDS_ENV,
+  applyActivationContributionInTx,
+  captureActivationContributionInTx,
+  classifyActivation,
+  deriveActivationCohorts,
+  loadActivationSignals,
+  NO_ACTIVATION_EXCLUSIONS,
+  queryActivation,
+  resolveActivationExclusions,
+  type ActivationCohort,
+  type ActivationContribution,
+  type ActivationExclusions,
+  type ActivationSignals,
+} from "./activation";
+export {
+  composeDeletionJournal,
+  DELETION_JOURNAL_ENV,
+  JOURNAL_UNAVAILABLE_CODE,
+  parseDeletionJournalEnv,
+  resolveAppDeletionJournal,
+  unavailableDeletionJournal,
+  type DeletionJournalEnv,
+  type JournalTransportFactory,
+} from "./deletion-journal-compose";
+export {
+  assertLifecycleRegistration,
+  REGISTRATION_SUBJECTS,
+  type LifecycleRegistrationInput,
+} from "./lifecycle-registration";
+export {
+  pseudonymousWorkspaceKey,
+  runRetentionTick,
+  RETENTION_BATCH_SIZE,
+  RETENTION_MAX_BATCHES,
+  type RetentionTableOutcome,
+  type RetentionTickSummary,
+} from "./retention-receiver";
+export {
+  extractFinanceFacts,
+  persistFinanceExtractsInTx,
+  EXTRACTABLE_OBJECT_TYPES,
+  FINANCE_EXTRACTION_VERSION,
+  type FinanceExtractInput,
+  type FinanceExtractRow,
+  type IncompleteReason,
+} from "./finance-extract";
+export {
+  runGenerationRecoveryTick,
+  ABANDONED_BEFORE_VENDOR,
+  CLAIMED_ABANDON_MS,
+  GENERATION_RECOVERY_BATCH,
+  VENDOR_COMPLETE_HARD_CLEAR_MS,
+  VENDOR_COMPLETE_SETTLE_MS,
+  VENDOR_STARTED_GRACE_MS,
+  type GenerationRecoveryOptions,
+  type GenerationRecoveryOutcome,
+} from "./generation-recovery";
 export {
   createSqlLifecycleMutationPort,
   createSqlResidueProbePort,

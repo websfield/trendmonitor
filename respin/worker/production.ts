@@ -1,3 +1,4 @@
+import { runRetentionAndRecovery } from "./retention";
 import { randomUUID } from "node:crypto";
 import {
   assertAutopsyDeadlineWithinLease,
@@ -302,6 +303,7 @@ export async function createProductionWorker(input: {
     await activeSystemConfig(db);
     const deletionLifecycle = createDeletionLifecycleTick({
       db,
+      env: process.env,
       workerName: input.runtime.workerName,
       migrations: loadMigrationInventory(),
       ports: {
@@ -355,6 +357,18 @@ export async function createProductionWorker(input: {
           snapshot,
         ).then(() => undefined),
         advanceDeletionLifecycle: deletionLifecycle,
+        // Task 6: the retention receiver and the attempt-recovery boundaries.
+        // The deadline is resolved ONCE per tick from the active config, before
+        // any row moves, for the reason the autopsy dispatcher resolves its
+        // vendor before the claim: a config change mid-sweep must not move the
+        // boundary under half the attempts.
+        runRetention: async (scheduledAt) => {
+          const active = await activeSystemConfig(db);
+          return runRetentionAndRecovery(
+            { db, overallDeadlineMs: active.content.llm.overallDeadlineMs },
+            scheduledAt,
+          );
+        },
       },
       events: input.events ?? consoleWorkerEventSink(),
     });

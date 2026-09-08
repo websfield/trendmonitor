@@ -6,6 +6,37 @@
 // imports; the dynamic-import source scan in respin/tests/import-boundary.test.ts
 // covers `await import(...)`, which no-restricted-imports does not see.
 import {
+  cancelIdentityDeletion,
+  cancelScopedDeletion,
+  readIdentityCancellationStatus,
+  requestIdentityDeletion,
+  requestProfileDeletion,
+  requestWorkspaceDeletion,
+  type IdentityDeletionRequestResult,
+  type ScopedRequestParams,
+} from "./deletion-lifecycle";
+import { deletionOperations, type DeletionOperation } from "./lifecycle-schema";
+import { resolveAppDeletionJournal } from "./deletion-journal-compose";
+import { createAuthMailRecoveryDelivery, type AuthMailPort } from "./auth-mail";
+import { resolveActivationExclusions } from "./activation";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
+import {
+  beginIdentityCancellationRecoverySession,
+  createIdentityCancellationProofWithPassword,
+} from "./auth-lifecycle";
+import type { MembershipRestorePolicyPort } from "./deletion-ports";
+
+/**
+ * Phase 10b-1 Task 8: until 10b-2 introduces seat caps there is no capacity to
+ * refuse, so an unchanged suspended membership is always restorable. 10b-2
+ * replaces this constant with the real seat policy — "cancellation never
+ * assumes capacity" (deletion-ports.ts) is why it is a named port, not an
+ * inline `true`.
+ */
+export const NO_SEAT_CAP_RESTORE_POLICY: MembershipRestorePolicyPort = {
+  mayRestore: async () => ({ allowed: true, refusal: null }),
+};
+import {
   createDb,
   createRunSlotPool,
   DEFAULT_RUN_SLOT_POOL_MAX,
@@ -14,6 +45,7 @@ import {
 import { ensureUserWorkspace, type BootstrapParams } from "./bootstrap";
 import {
   withWorkspace,
+  assertScoped,
   monthlySpend,
   burnByMode,
   brainAssetSummary,
@@ -639,4 +671,74 @@ export const respinDb = {
     const caps = writeCapabilities(profileScope);
     return getServerDb().transaction((tx) => caps.decidePromotionProposal(params, entitlement, tx));
   },
+
+  // ---- Phase 10b-1 Task 8: owner-facing deletion (plan C2) -------------------
+  // Every rule lives in deletion-lifecycle.ts and was gated in Tasks 3–5; these
+  // are thin compositions. The journal is the SAME composition the worker uses:
+  // unprovisioned, every request stops at `journal_pending` and says so.
+  deletionJournalStatus: async (): Promise<{ configured: boolean }> => {
+    const { configured } = await resolveAppDeletionJournal(process.env);
+    return { configured };
+  },
+  pendingDeletions: async (scope: WorkspaceScope): Promise<readonly DeletionOperation[]> => {
+    // The cage (AC-13): a forged scope must be refused before its ids are read.
+    assertScoped(scope);
+    return getServerDb()
+      .select()
+      .from(deletionOperations)
+      .where(
+        and(
+          or(eq(deletionOperations.workspaceId, scope.workspaceId), eq(deletionOperations.userId, scope.userId)),
+          inArray(deletionOperations.state, ["requested", "journal_pending", "tombstoned", "external_actions_pending", "grace", "erasing", "verifying", "blocked"]),
+        ),
+      )
+      .orderBy(desc(deletionOperations.requestedAt));
+  },
+  requestWorkspaceDeletion: async (scope: WorkspaceScope, params: ScopedRequestParams): Promise<DeletionOperation> => {
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return requestWorkspaceDeletion(getServerDb(), scope, params, journal);
+  },
+  requestProfileDeletion: async (scope: WorkspaceScope, profileId: string, params: ScopedRequestParams): Promise<DeletionOperation> => {
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return requestProfileDeletion(getServerDb(), scope, profileId, params, journal);
+  },
+  cancelScopedDeletion: async (
+    operationId: string,
+    params: Omit<ScopedRequestParams, "idempotencyKey" | "typedName">,
+  ): Promise<DeletionOperation> => {
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return cancelScopedDeletion(getServerDb(), operationId, params, journal);
+  },
+  requestIdentityDeletion: async (
+    params: Readonly<{ sessionId: string; idempotencyKey: string; reauthMaxAgeMs?: number }>,
+    mail: Readonly<{ port: AuthMailPort; actionUrl: (operationId: string, secret: string) => string }>,
+  ): Promise<IdentityDeletionRequestResult> => {
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return requestIdentityDeletion(getServerDb(), params, {
+      journal,
+      recoveryDelivery: createAuthMailRecoveryDelivery(getServerDb(), mail.port, { actionUrl: mail.actionUrl }),
+      activationExclusions: resolveActivationExclusions(process.env),
+    });
+  },
+  cancelIdentityDeletion: async (
+    operationId: string,
+    recoverySecret: string,
+    params: Readonly<{ proofId: string; cancellationReceipt: string; reauthMaxAgeMs?: number }>,
+  ) => {
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return cancelIdentityDeletion(getServerDb(), operationId, recoverySecret, params, {
+      journal,
+      membershipRestore: NO_SEAT_CAP_RESTORE_POLICY,
+    });
+  },
+  beginIdentityCancellationRecoverySession: (operationId: string, recoverySecret: string, rateLimitKeyDigest: string) =>
+    beginIdentityCancellationRecoverySession(getServerDb(), operationId, recoverySecret, rateLimitKeyDigest),
+  createIdentityCancellationProofWithPassword: (
+    operationId: string,
+    recoverySession: string,
+    password: string,
+    rateLimitKeyDigest: string,
+  ) => createIdentityCancellationProofWithPassword(getServerDb(), operationId, recoverySession, password, rateLimitKeyDigest),
+  readIdentityCancellationStatus: (operationId: string, cancellationReceipt: string) =>
+    readIdentityCancellationStatus(getServerDb(), operationId, cancellationReceipt),
 };

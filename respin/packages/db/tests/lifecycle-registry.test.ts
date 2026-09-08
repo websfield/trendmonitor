@@ -611,15 +611,20 @@ describe("compile-closed lifecycle registry", () => {
   });
 
   it("validates exact lifecycle owner edges rather than accepting any cascade FK", () => {
-    const creditConstraint = "credit_ledger_workspace_id_workspaces_id_fk";
-    const creditSetNull = mutateForeignKey(
+    // `credit_ledger` used to be the example here, but Task 6 made it a
+    // RESTRICT retention edge rather than a cascade owner, so mutating it now
+    // trips the classified-key rule first and proves nothing about the cascade
+    // rule. `generations` is a workspace-scoped cascade owner and still is.
+    const cascadeOwner = "generations";
+    const cascadeConstraint = "generations_profile_workspace_fk";
+    const cascadeSetNull = mutateForeignKey(
       migrations,
-      "credit_ledger",
-      creditConstraint,
+      cascadeOwner,
+      cascadeConstraint,
       (foreignKey) => ({ ...foreignKey, onDelete: "set_null" })
     );
-    expect(() => validateLifecycleClosure({ ...base(), migrations: creditSetNull })).toThrow(
-      /cascade ownership edge mismatch: credit_ledger/
+    expect(() => validateLifecycleClosure({ ...base(), migrations: cascadeSetNull })).toThrow(
+      /cascade ownership edge mismatch: generations/
     );
 
     const profileConstraint = "brain_docs_profile_workspace_fk";
@@ -679,17 +684,38 @@ describe("compile-closed lifecycle registry", () => {
     );
   });
 
-  it("pins current finance rows to physical workspace cascades until Task 6 replaces them", () => {
-    for (const table of ["credit_ledger", "subscriptions"] as const) {
+  it("pins the finance rows to the seven-year chain: a pseudonymised link plus retained facts", () => {
+    // Task 6 replaced the physical workspace cascade these tables used to
+    // carry. Each is now TWO entries, and both halves are asserted because
+    // either one alone is a defect: the link entry without the facts entry
+    // would erase the money, the facts entry without the link entry would
+    // retain a re-linkable workspace id.
+    for (const table of ["credit_ledger", "subscriptions", "pause_periods"] as const) {
       const entries = LIFECYCLE_REGISTRY.filter((entry) => entry.table === table);
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({
+      expect(entries, table).toHaveLength(2);
+      expect(entries.find((entry) => entry.fieldSet.name === "workspace_link"), table).toMatchObject({
         scope: "workspace",
-        retention: "workspace_lifetime",
-        action: "cascade",
-        executor: "workspace_cascade",
+        retention: "financial_chain_seven_years",
+        action: "pseudonymise",
+        executor: "workspace_pseudonymiser",
+      });
+      expect(entries.find((entry) => entry.fieldSet.name === "financial_facts"), table).toMatchObject({
+        scope: "workspace",
+        retention: "financial_chain_seven_years",
+        action: "retain_financial",
+        executor: "financial_retention_receiver",
       });
     }
+    // `model_usage` is the profile-scoped member of the same chain (REQ-G05's
+    // margin input), so its link scrubs through the identifier scrubber.
+    const usage = LIFECYCLE_REGISTRY.filter((entry) => entry.table === "model_usage");
+    expect(usage).toHaveLength(2);
+    expect(usage.find((entry) => entry.fieldSet.name === "profile_workspace_link")).toMatchObject({
+      scope: "profile",
+      retention: "financial_chain_seven_years",
+      action: "pseudonymise",
+      executor: "identifier_scrubber",
+    });
   });
 
   it("derives JSON-column population from migrations and reddens on an unclassified column", () => {

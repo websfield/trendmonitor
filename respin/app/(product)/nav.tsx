@@ -16,6 +16,8 @@ const ITEMS = [
   { href: "/results", label: "Results" },
   { href: "/usage", label: "Usage" },
   { href: "/settings/billing", label: "Billing" },
+  // Phase 10b-1 Task 8: deletion status/request/cancel and the truthful data copy.
+  { href: "/settings/account", label: "Account" },
 ] as const;
 
 export function ProductNav() {

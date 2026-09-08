@@ -63,9 +63,18 @@ export const subscriptions = pgTable(
   "subscriptions",
   {
     id: id(),
+    // R-122 / Task 6: the foreign key STAYS, and only its delete action moves
+    // (cascade -> restrict). Dropping it entirely was the first attempt and it
+    // was wrong: this key is not only a cascade, it is the structural refusal
+    // of a cross-parented row, and `brain-schema.test.ts` proved the leak the
+    // moment it went (Respin non-negotiable 5). A seven-year clock and a
+    // CASCADE are what contradict each other; a seven-year clock and RESTRICT
+    // do not. At erasure the `link` scrub rule repoints this column to the
+    // "Deleted workspace" stub `lifecycle-sql-port.ts` already mints, so the
+    // money row survives with referential integrity and no re-linkable id.
     workspaceId: uuid("workspace_id")
       .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
+      .references(() => workspaces.id, { onDelete: "restrict" }),
     stripeCustomerId: text("stripe_customer_id").notNull(),
     stripeSubscriptionId: text("stripe_subscription_id"),
     stripePriceId: text("stripe_price_id"),
@@ -573,9 +582,18 @@ export const creditLedger = pgTable(
   "credit_ledger",
   {
     id: id(),
+    // R-122 / Task 6: the foreign key STAYS, and only its delete action moves
+    // (cascade -> restrict). Dropping it entirely was the first attempt and it
+    // was wrong: this key is not only a cascade, it is the structural refusal
+    // of a cross-parented row, and `brain-schema.test.ts` proved the leak the
+    // moment it went (Respin non-negotiable 5). A seven-year clock and a
+    // CASCADE are what contradict each other; a seven-year clock and RESTRICT
+    // do not. At erasure the `link` scrub rule repoints this column to the
+    // "Deleted workspace" stub `lifecycle-sql-port.ts` already mints, so the
+    // money row survives with referential integrity and no re-linkable id.
     workspaceId: uuid("workspace_id")
       .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
+      .references(() => workspaces.id, { onDelete: "restrict" }),
     delta: integer("delta").notNull(),
     kind: creditKind("kind").notNull(),
     refType: text("ref_type"),
@@ -911,9 +929,18 @@ export const pausePeriods = pgTable(
   "pause_periods",
   {
     id: id(),
+    // R-122 / Task 6: the foreign key STAYS, and only its delete action moves
+    // (cascade -> restrict). Dropping it entirely was the first attempt and it
+    // was wrong: this key is not only a cascade, it is the structural refusal
+    // of a cross-parented row, and `brain-schema.test.ts` proved the leak the
+    // moment it went (Respin non-negotiable 5). A seven-year clock and a
+    // CASCADE are what contradict each other; a seven-year clock and RESTRICT
+    // do not. At erasure the `link` scrub rule repoints this column to the
+    // "Deleted workspace" stub `lifecycle-sql-port.ts` already mints, so the
+    // money row survives with referential integrity and no re-linkable id.
     workspaceId: uuid("workspace_id")
       .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
+      .references(() => workspaces.id, { onDelete: "restrict" }),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
     // The KNOWLEDGE time of the OPEN, symmetric with ended_known_at below
@@ -982,6 +1009,90 @@ export const pausePeriods = pgTable(
     ),
   ]
 );
+
+// Phase 10b-1 Task 6 / C5 — the pre-redaction Stripe finance extract.
+//
+// `stripe_events.payload` is redacted at 90 days. Everything 10b-2's revenue
+// projector needs must therefore be lifted out of the payload BEFORE that, in
+// the SAME transaction, or the fact is gone. This table is that lift, and it
+// is content-free by construction: ids, amounts, currency, periods, states.
+// No email, no name, no address, no raw payload.
+//
+// `workspace_key` is TEXT, not a `workspaces` reference: it is the pseudonymous
+// financial-chain key (C3), so it survives the workspace it came from and can
+// never be re-linked to it.
+export const stripeFinanceExtractStatus = pgEnum("stripe_finance_extract_status", [
+  "complete",
+  "incomplete",
+]);
+
+export const stripeFinanceExtracts = pgTable(
+  "stripe_finance_extracts",
+  {
+    id: id(),
+    sourceStripeEventId: text("source_stripe_event_id")
+      .notNull()
+      .references(() => stripeEvents.id, { onDelete: "restrict" }),
+    objectType: text("object_type").notNull(),
+    objectId: text("object_id").notNull(),
+    invoiceLineId: text("invoice_line_id"),
+    paymentIntentId: text("payment_intent_id"),
+    refundId: text("refund_id"),
+    creditNoteId: text("credit_note_id"),
+    disputeId: text("dispute_id"),
+    chargeId: text("charge_id"),
+    workspaceKey: text("workspace_key"),
+    currency: text("currency").notNull().default("USD"),
+    // Excluding tax, in cents — the same integer-cents precedent
+    // `credit_ledger.amount_cents` sets.
+    amountExcludingTaxCents: integer("amount_excluding_tax_cents"),
+    disputedAmountCents: integer("disputed_amount_cents"),
+    servicePeriodStart: timestamp("service_period_start", { withTimezone: true }),
+    servicePeriodEnd: timestamp("service_period_end", { withTimezone: true }),
+    disputeStatus: text("dispute_status"),
+    disputeEffectiveAt: timestamp("dispute_effective_at", { withTimezone: true }),
+    extractionVersion: integer("extraction_version").notNull(),
+    status: stripeFinanceExtractStatus("status").notNull(),
+    // Non-null exactly when the status is `incomplete`. C5: an unparseable or
+    // historically absent field becomes an incomplete row rather than a zero,
+    // and that row is the permanent authority for withholding the period.
+    incompleteReason: text("incomplete_reason"),
+    extractedAt: timestamp("extracted_at", { withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+    // Stamped by 10b-2's projector when it has verifiably ingested the row.
+    // The 30-day expiry clock measures from HERE, so a row nothing has
+    // consumed is never swept.
+    ingestedAt: timestamp("ingested_at", { withTimezone: true }),
+  },
+  (t) => [
+    // One extract per (event, object). Re-running the receiver over an
+    // already-extracted event is a no-op rather than a duplicate revenue row.
+    uniqueIndex("stripe_finance_extracts_event_object_uq").on(
+      t.sourceStripeEventId,
+      t.objectId
+    ),
+    index("stripe_finance_extracts_sweep_idx").on(t.status, t.ingestedAt),
+    check(
+      "stripe_finance_extracts_incomplete_reason",
+      sql`(${t.status} = 'incomplete') = (${t.incompleteReason} IS NOT NULL)`
+    ),
+    // R-122's clocks are stated in USD; a non-USD row would be a silent
+    // currency mix in the margin dashboard 10b-2 builds on this.
+    check("stripe_finance_extracts_currency_usd", sql`${t.currency} = 'USD'`),
+    check(
+      "stripe_finance_extracts_amounts_nonnegative",
+      sql`(${t.amountExcludingTaxCents} IS NULL OR ${t.amountExcludingTaxCents} >= 0)
+          AND (${t.disputedAmountCents} IS NULL OR ${t.disputedAmountCents} >= 0)`
+    ),
+    check(
+      "stripe_finance_extracts_service_period_order",
+      sql`${t.servicePeriodStart} IS NULL OR ${t.servicePeriodEnd} IS NULL OR ${t.servicePeriodEnd} >= ${t.servicePeriodStart}`
+    ),
+  ]
+);
+
+export type StripeFinanceExtract = typeof stripeFinanceExtracts.$inferSelect;
 
 export type Subscription = typeof subscriptions.$inferSelect;
 export type AutoTopupProtocolRollout = typeof autoTopupProtocolRollouts.$inferSelect;

@@ -19,6 +19,7 @@
 //   blocked                   → retry failed commands (bounded); resume when clean
 //   cancelled                 → terminal, but due while the reversal of ITS
 //                               period-end cancellation is still owed
+import { ActivationContributionRefusal, applyActivationContributionInTx, NO_ACTIVATION_EXCLUSIONS, type ActivationExclusions } from "./activation";
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { subscriptions } from "./billing-schema";
 import {
@@ -135,32 +136,36 @@ function dueOperation(): SQL | undefined {
 }
 
 /**
- * R-122's financial chain: the ledger, subscription and pause rows (workspace
- * scope) and the per-attempt model-usage cost facts (profile scope; R-122
- * "model-usage … facts", REQ-G05's margin input — round-2 billing CHANGE).
- * While any still cascades with its root (`<scope>_lifetime`), erasing that
- * root would destroy records the decision keeps for seven years, so the
- * executor refuses regardless of enablement and the worker refuses the scope
- * at startup. A workspace operation erases the profile-scope rows too, so it
- * is held by both lists. Task 6 re-registers them under the finance
- * extract/receiver, which empties this list. A list, not a producer (CLAUDE.md
- * Respin rule 7): a further financial table is an edit here.
+ * R-122's financial chain. EMPTY since Task 6, and empty is the point.
+ *
+ * The four tables that were here — `credit_ledger`, `subscriptions`,
+ * `pause_periods` (workspace scope) and `model_usage` (profile scope, REQ-G05's
+ * margin input) — each still cascaded with the root whose erasure would have
+ * destroyed seven years of retained money records, so the executor refused the
+ * scope outright. Task 6 re-registered all four under
+ * `retain_financial`/`financial_chain_seven_years` with a pseudonymised link
+ * and dropped their cascade foreign keys (migration 0053), so erasing the root
+ * no longer touches them and there is nothing left to hold.
+ *
+ * A list, not a producer (CLAUDE.md Respin rule 7): a NEW financial table that
+ * still cascades with its scope is an edit here, and `unretainedFinancialChainTables`
+ * will then hold that scope again.
  */
-export const FINANCIAL_CHAIN_TABLES = [
-  { table: "credit_ledger", scope: "workspace" },
-  { table: "subscriptions", scope: "workspace" },
-  { table: "pause_periods", scope: "workspace" },
-  { table: "model_usage", scope: "profile" },
-] as const satisfies readonly Readonly<{ table: string; scope: DeletionScope }>[];
+export const FINANCIAL_CHAIN_TABLES: readonly Readonly<{ table: string; scope: DeletionScope }>[] = [];
 
 /**
- * Task 6 wires the retention receivers; until then the raw Stripe payload
- * (`stripe_events.payload`, 90-day clock, the finance extract's input) survives
- * EVERY subject erasure — including an identity erasure of the workspace's
- * Stripe contact (round-2 lean S-R2-1). A list of one (CLAUDE.md Respin rule
- * 7): Task 6 flips it in the same change that wires the receiver.
+ * TRUE since Task 6: `runRetentionTick` sweeps `stripe_events.payload` on its
+ * 90-day clock, after lifting the finance facts out in the same transaction
+ * (`retention-receiver.ts` → `finance-extract.ts`). Before that, the raw
+ * payload survived EVERY subject erasure — including an identity erasure of
+ * the workspace's own Stripe contact (round-2 lean S-R2-1), which is the
+ * finding this flag was created to hold.
+ *
+ * It stays a named constant rather than becoming implicit: the receiver being
+ * WRITTEN is not the receiver being SCHEDULED, and `worker/retention.ts` is
+ * what makes it run. Unscheduling it must fail loudly here.
  */
-export const STRIPE_PAYLOAD_RECEIVER_WIRED = false;
+export const STRIPE_PAYLOAD_RECEIVER_WIRED = true;
 
 /**
  * Why irreversible erasure of this scope may not run today, or null. Derived
@@ -208,6 +213,8 @@ export type DeletionExecutorPorts = Readonly<{
 export type DeletionExecutorOptions = Readonly<{
   workerName: string;
   migrations: MigrationInventory;
+  /** Task 7: the resolved deployment id sets; erasure refuses while the target is still in either. */
+  activationExclusions?: ActivationExclusions;
   leaseMs?: number;
   limit?: number;
 }>;
@@ -473,7 +480,7 @@ export async function eraseOperation(
   db: DbLike,
   operationId: string,
   ports: Pick<DeletionExecutorPorts, "journal">,
-  options: Pick<DeletionExecutorOptions, "migrations">
+  options: Pick<DeletionExecutorOptions, "migrations" | "activationExclusions">
 ): Promise<ErasureResult> {
   const planDigest = await prepareJournalPlan(db, operationId, ERASURE_STEPS, {
     validateOperation: (operation) => {
@@ -494,6 +501,18 @@ export async function eraseOperation(
       .where(and(eq(deletionExternalCommands.operationId, operation.id), eq(deletionExternalCommands.status, "unknown")));
     if (unknown.length > 0) throw new LifecycleExecutorRefusal("unknown_outcome_pending");
     const now = await databaseNow(tx);
+    // Task 7 / R-121: the captured contribution lands on the aggregate HERE,
+    // exactly once, in the transaction whose rollback would also undo it. A
+    // missing or mismatched contribution, or a target still present in a
+    // deployment id set, blocks the erasure (plan C5/C4).
+    if (operation.scope === "identity") {
+      try {
+        await applyActivationContributionInTx(tx, operation, options.activationExclusions ?? NO_ACTIVATION_EXCLUSIONS, now);
+      } catch (error) {
+        if (error instanceof ActivationContributionRefusal) throw new LifecycleExecutorRefusal(error.code);
+        throw error;
+      }
+    }
     const subjects = await captureLifecycleSubjectsInTx(tx, operation);
     const meta = await loadTableMetaInTx(tx);
     const targets = orderTargetsForExecution(
@@ -565,6 +584,9 @@ export async function eraseOperation(
         // in the SAME transaction — not only in the statement after grace.
         ...(completed.scope === "identity"
           ? {
+              // Task 7: the identifier-bearing hash goes with the target; the
+              // receipt digest written at apply time names no user.
+              activationPayloadHash: null,
               recoverySecretDigest: null,
               recoverySecretPrefix: null,
               recoveryConsumedAt: sql`COALESCE(${deletionOperations.recoveryConsumedAt}, clock_timestamp())`,

@@ -6,6 +6,9 @@ import {
   integer,
   pgEnum,
   pgTable,
+  boolean,
+  date,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -75,6 +78,32 @@ export const membershipRecoveryOutcome = pgEnum(
  * journal is the transition authority; this row is deliberately only a
  * projection and carries the last verified receipt/version used to advance it.
  */
+export const activationContributionState = pgEnum("activation_contribution_state", [
+  "pending",
+  "applied",
+]);
+
+/**
+ * Task 7 / R-121: the identifier-free cohort aggregate. Cohort date, counts and
+ * the metric version — no request, user, workspace, profile, email or content
+ * id, so nothing here can be relinked to the account that contributed it.
+ */
+export const activationCohortDaily = pgTable(
+  "activation_cohort_daily",
+  {
+    cohortDate: date("cohort_date").notNull(),
+    metricVersion: integer("metric_version").notNull(),
+    signups: integer("signups").default(0).notNull(),
+    activated: integer("activated").default(0).notNull(),
+    excluded: integer("excluded").default(0).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`clock_timestamp()`).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.cohortDate, t.metricVersion] }),
+    check("activation_cohort_daily_counts", sql`${t.signups} >= 0 AND ${t.activated} >= 0 AND ${t.excluded} >= 0 AND ${t.activated} <= ${t.signups}`),
+  ]
+);
+
 export const deletionOperations = pgTable(
   "deletion_operations",
   {
@@ -151,10 +180,37 @@ export const deletionOperations = pgTable(
     heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
     retryCount: integer("retry_count").default(0).notNull(),
     lastFailureCode: text("last_failure_code"),
+    // Task 7 / R-121: the activation contribution captured at REQUEST time,
+    // before memberships suspend. Applied exactly once before erasure; the
+    // keyed hash is erased with the target and only the receipt digest stays.
+    activationCohortDate: date("activation_cohort_date"),
+    activationExcluded: boolean("activation_excluded"),
+    activationExclusionSource: text("activation_exclusion_source"),
+    activationDenominator: integer("activation_denominator"),
+    activationNumerator: integer("activation_numerator"),
+    activationMetricVersion: integer("activation_metric_version"),
+    activationMembershipVersion: integer("activation_membership_version"),
+    activationPayloadHash: text("activation_payload_hash"),
+    activationContributionState: activationContributionState("activation_contribution_state"),
+    activationAppliedAt: timestamp("activation_applied_at", { withTimezone: true }),
+    activationReceiptDigest: text("activation_receipt_digest"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
+    check(
+      "deletion_operations_activation_shape",
+      sql`(${t.scope} <> 'identity' AND ${t.activationContributionState} IS NULL)
+          OR (${t.scope} = 'identity' AND (${t.activationContributionState} IS NULL OR (
+            ${t.activationCohortDate} IS NOT NULL AND ${t.activationExcluded} IS NOT NULL
+            AND ${t.activationDenominator} IN (0, 1) AND ${t.activationNumerator} IN (0, 1)
+            AND ${t.activationNumerator} <= ${t.activationDenominator}
+            AND (${t.activationExcluded} = (${t.activationDenominator} = 0))
+            AND ${t.activationMetricVersion} IS NOT NULL
+            AND ((${t.activationContributionState} = 'applied') = (${t.activationAppliedAt} IS NOT NULL))
+            AND ((${t.activationContributionState} = 'applied') = (${t.activationReceiptDigest} IS NOT NULL))
+          )))`
+    ),
     uniqueIndex("deletion_operations_requester_scope_idempotency_uq").on(
       t.requesterUserId,
       t.scope,

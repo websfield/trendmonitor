@@ -91,6 +91,10 @@ const SESSION_FREE_API_ROUTES: { file: string; why: string }[] = [
     file: "api/stripe/webhook/route.ts",
     why: "authenticated by Stripe's signature (Stripe.webhooks.constructEvent), not by a session; the caller is Stripe, never a browser.",
   },
+  {
+    file: "api/deletion/recover/route.ts",
+    why: "Phase 10b-1 Task 8: cancels an identity deletion from the emailed recovery link, AFTER every session was revoked, so no session can exist. Authenticated by the single-use recovery secret exchanged for a bounded recovery session plus a fresh password proof (packages/db auth-lifecycle), each rate-limited by client-IP digest; link possession alone reaches nothing.",
+  },
 ];
 
 /**
@@ -199,6 +203,10 @@ const PUBLIC_ENTRYPOINTS: { file: string; why: string }[] = [
   {
     file: "(auth)/sign-up/page.tsx",
     why: "sign-up cannot require a session; it is how an account is created.",
+  },
+  {
+    file: "(auth)/recover-deletion/page.tsx",
+    why: "Phase 10b-1 Task 8: the identity-deletion recovery link lands here AFTER every session was revoked, so it cannot require one; the single-use recovery secret plus a fresh password proof gate the action instead (plan C2).",
   },
 ];
 
@@ -454,6 +462,18 @@ const NAMED_PROTECTED_PAGES: {
   {
     file: "(product)/settings/billing/actions.ts",
     url: "/settings/billing",
+    gate: "requireUser",
+  },
+  // Phase 10b-1 Task 8: deletion status/request/cancel. The page and its
+  // action module each gate above their own try, as the billing pair does.
+  {
+    file: "(product)/settings/account/page.tsx",
+    url: "/settings/account",
+    gate: "requireUser",
+  },
+  {
+    file: "(product)/settings/account/actions.ts",
+    url: "/settings/account",
     gate: "requireUser",
   },
   { file: "(admin)/admin/page.tsx", url: "/admin", gate: "requireAdmin" },

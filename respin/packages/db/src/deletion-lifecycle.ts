@@ -1,3 +1,4 @@
+import { captureActivationContributionInTx, NO_ACTIVATION_EXCLUSIONS, type ActivationExclusions } from "./activation";
 import {
   createHash,
   randomBytes,
@@ -1266,8 +1267,16 @@ export async function requestIdentityDeletion(
   ports: Readonly<{
     recoveryDelivery: RecoveryDeliveryPort;
     journal: DeletionJournalPort;
+    /**
+     * Task 7 / R-121: the two audited deployment id sets, captured INTO the
+     * request so the contribution is final before memberships suspend or the
+     * config changes. Defaults to "nobody excluded"; production (Task 8's
+     * owner action) passes `resolveActivationExclusions(process.env)`.
+     */
+    activationExclusions?: ActivationExclusions;
   }>
 ): Promise<IdentityDeletionRequestResult> {
+  const activationExclusions = ports.activationExclusions ?? NO_ACTIVATION_EXCLUSIONS;
   if (!validKey(params.idempotencyKey)) refuse("invalid_idempotency_key");
   let plaintext: string | null = null;
   let actingAuthUserId: string | null = null;
@@ -1444,9 +1453,16 @@ export async function requestIdentityDeletion(
       if (!rotated) refuse("concurrent_transition");
       return rotated;
     }
+    // Task 7: capture the activation contribution NOW — memberships are still
+    // active and no config set has changed — keyed to the operation id we are
+    // about to mint, so the hash cannot be replayed under another operation.
+    const operationId = randomUUID();
+    const activation = await captureActivationContributionInTx(tx, operationId, identity.id, activationExclusions);
     const [created] = await tx
       .insert(deletionOperations)
       .values({
+        id: operationId,
+        ...activation,
         scope: "identity",
         targetKey: targetKey("identity", { userId: identity.id }),
         userId: identity.id,

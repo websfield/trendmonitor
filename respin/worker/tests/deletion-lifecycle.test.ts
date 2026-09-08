@@ -107,18 +107,38 @@ describe("erasure enablement from the environment", () => {
     );
   });
 
-  it("refuses EVERY scope today with the executor's own hold reason (R-122 financial chain; the unwired payload receiver)", () => {
-    expect(() => resolveErasureEnablement({ [DELETION_ERASURE_SCOPES_ENV]: "workspace" })).toThrow(
-      /names workspace, but its erasure is held: financial_chain_unretained:credit_ledger,subscriptions,pause_periods,model_usage/
+  it("admits every scope since Task 6 — no hold is left to refuse", () => {
+    // The pre-Task-6 truth was that all three scopes were held: the financial
+    // chain still cascaded, and the raw Stripe payload (carrying the billing
+    // contact's email) had no receiver. Task 6 registered the finance tables
+    // retained and wired the payload sweep, so the holds are gone and naming a
+    // scope now ENABLES it.
+    for (const scope of ["identity", "profile", "workspace"] as const) {
+      const enablement = resolveErasureEnablement({ [DELETION_ERASURE_SCOPES_ENV]: scope });
+      expect(enablement.erasureEnabled(scope)).toBe(true);
+    }
+  });
+
+  it("still refuses a scope whose hold has come back — the refusal is not dead code", () => {
+    // NON-VACUITY. With every real hold lifted, "refuses a held scope" would
+    // otherwise have no witness at all, and a refusal with no witness is the
+    // 2026-08-26 lesson: deleting it would leave the suite green. The hold is
+    // injected here rather than faked in the environment, because `erasureHold`
+    // is exactly the seam the worker consults.
+    expect(() =>
+      resolveErasureEnablement(
+        { [DELETION_ERASURE_SCOPES_ENV]: "workspace" },
+        (scope) => (scope === "workspace" ? "financial_chain_unretained:some_new_money_table" : null)
+      )
+    ).toThrow(/names workspace, but its erasure is held: financial_chain_unretained:some_new_money_table/);
+
+    // ...and a scope the injected hold does NOT name is still admitted, so the
+    // refusal is per-scope rather than a blanket one.
+    const partial = resolveErasureEnablement(
+      { [DELETION_ERASURE_SCOPES_ENV]: "profile" },
+      (scope) => (scope === "workspace" ? "financial_chain_unretained:some_new_money_table" : null)
     );
-    expect(() => resolveErasureEnablement({ [DELETION_ERASURE_SCOPES_ENV]: "profile" })).toThrow(
-      /names profile, but its erasure is held: financial_chain_unretained:model_usage/
-    );
-    // Identity erasure leaves the workspace's raw Stripe payload (the contact's
-    // email) until Task 6's receiver exists (round-2 lean S-R2-1).
-    expect(() => resolveErasureEnablement({ [DELETION_ERASURE_SCOPES_ENV]: "identity" })).toThrow(
-      /names identity, but its erasure is held: stripe_payload_receiver_unwired/
-    );
+    expect(partial.erasureEnabled("profile")).toBe(true);
   });
 });
 

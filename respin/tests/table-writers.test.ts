@@ -42,6 +42,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * unpoliced write surface, and the green suite is the dangerous half.
  */
 const TABLES: Record<string, string> = {
+  activationCohortDaily: "activation_cohort_daily",
   account: "account",
   // Phase 10b-1 Task 4 (closed auth-delivery outbox).
   authMailOutbox: "auth_mail_outbox",
@@ -98,6 +99,7 @@ const TABLES: Record<string, string> = {
   systemWorkerHealth: "system_worker_health",
   session: "session",
   stripeEvents: "stripe_events",
+  stripeFinanceExtracts: "stripe_finance_extracts",
   subscriptions: "subscriptions",
   tierCheckoutProtocolRollouts: "tier_checkout_protocol_rollouts",
   user: "user",
@@ -739,6 +741,10 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/credits/src/stripe/webhooks.ts::insert":
       "The verified Stripe webhook transaction records the provider event exactly once.",
   },
+  stripe_finance_extracts: {
+    "packages/db/src/finance-extract.ts::insert":
+      "Phase 10b-1 Task 6: the pre-redaction finance extract. The ONLY writer, and it writes in the same transaction as — and strictly before — the 90-day payload redaction, so no money fact is lost to a redaction that ran first. Idempotent on (source event, object id), so a resumed sweep re-extracting an event books nothing twice.",
+  },
   subscriptions: {
     "packages/credits/src/stripe/deletion-commands.ts::update":
       "The deletion executor's auto-top-up fence disables the mirror flag for a tombstoned workspace; this package still owns every subscriptions write (Phase 10b-1 Task 4).",
@@ -822,7 +828,15 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/db/src/deletion-external-commands.ts::update":
       "The dispatch mark and the single outcome writer advance a command through pending → succeeded | failed | unknown; terminal rows accept only an identical replay.",
   },
+  activation_cohort_daily: {
+    "packages/db/src/activation.ts::onConflictDoUpdate":
+      "Phase 10b-1 Task 7: the same upsert's ON CONFLICT arm — the per-cohort counters increment in place, and the row carries no id to conflict on but (cohort_date, metric_version).",
+    "packages/db/src/activation.ts::insert":
+      "Phase 10b-1 Task 7 / R-121: the identifier-free cohort aggregate. Upserted exactly once per identity erasure, in the erasure transaction, from a contribution captured at request time; carries dates, counts and the metric version and no id of any kind.",
+  },
   deletion_operations: {
+    "packages/db/src/activation.ts::update":
+      "Phase 10b-1 Task 7: the pending -> applied transition of the captured activation contribution, in the erasure transaction. Guarded by the pending state in the WHERE, so a replay updates zero rows and applies nothing twice.",
     "packages/db/src/deletion-executor.ts::update":
       "The worker executor claims and releases the operation lease, erases the recovery digest at erasure start, and clears the lease on completion; state transitions still go through the deletion authority's journal append.",
     "packages/db/src/deletion-lifecycle.ts::insert":
@@ -980,6 +994,8 @@ const EXPECTED: Record<string, Record<string, string>> = {
   generation_attempts: {
     "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().claimGenerationAttempt — the durable claim committed BEFORE outbound HTTP (R14). Insert-or-observe via onConflictDoNothing, so two concurrent presses of one attempt id produce one row and one winner; `state`, the timestamps and both terminal ids are written here, never taken from a caller.",
+    "packages/db/src/generation-recovery.ts::update":
+      "Phase 10b-1 Task 6 / C5: the one-minute attempt receiver, which is a WORKER path and deliberately not a writeCapabilities one — it moves rows no session owns (a claim abandoned before the vendor at 15 minutes, a started attempt past its deadline, an unsettled candidate at 24 hours). It NEVER settles and never calls a provider: settlement stays with `settleGeneration` in with-workspace.ts, because a second author on the debit would be a second chance to charge for one build.",
     "packages/db/src/with-workspace.ts::update":
       "writeCapabilities().advanceGenerationAttempt (claimed -> vendor_started -> vendor_complete, and the two non-settled terminals) and .settleGeneration (the `settled` transition, which is deliberately unreachable from the first). BOTH put the legal FROM-states in the WHERE, so a skipped or replayed transition updates zero rows and refuses — the half of `forward only` application code owns, since Postgres cannot compare a row to its own previous value without a trigger. R14c: advanceGenerationAttempt is ALSO the writer that stores the durable `candidate` on the move to `vendor_complete` and CLEARS it on every other transition, and settleGeneration clears it on the way to `settled` — `generation_attempts_candidate_iff_vendor_complete` is an EQUALITY, so no terminal row may retain output text and no `vendor_complete` row may exist that a retry cannot settle. The candidate is server-derived here and is never taken from a caller.",
   },

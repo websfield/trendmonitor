@@ -32,6 +32,8 @@ function appRestrictedImports({
           name: "@respin/db",
           allowImportNames: [
             "respinDb",
+            // Phase 10b-1 Task 8: the account copy quotes the executor's grace period.
+            "DELETION_GRACE_MS",
             "WorkspaceAccessError",
             // Phase 10b-1 Task 5: operator scripts (scripts/**) get the PURE
             // projections and nothing else — the cost forecast, the enablement
@@ -120,6 +122,30 @@ function appRestrictedImports({
                   "assertJournalConfig",
                   "createDeletionJournalStore",
                   "DeletionJournalConfig",
+                  // Phase 10b-1 Task 8: the env parsing moved into the package
+                  // so the app's request path composes the SAME journal.
+                  "composeDeletionJournal",
+                  "parseDeletionJournalEnv",
+                  "DELETION_JOURNAL_ENV",
+                  "JOURNAL_UNAVAILABLE_CODE",
+                  "unavailableDeletionJournal",
+                  // Phase 10b-1 Task 6: the retention receiver and the
+                  // generation-attempt boundaries run ONLY in this worker, for
+                  // the reason the deletion executor does (plan C2: never
+                  // inside an HTTP request). Two tick functions and their
+                  // summary types. The clock authority, the finance extractor
+                  // and `pseudonymousWorkspaceKey` stay OUT deliberately: they
+                  // are the receiver's internals, and a worker that could call
+                  // the extractor directly could redact a payload without one.
+                  // Phase 10b-1 Task 7: the worker resolves the two audited id
+                  // sets once per process and hands them to the executor.
+                  "resolveActivationExclusions",
+                  "runRetentionTick",
+                  "runGenerationRecoveryTick",
+                  "RetentionTickSummary",
+                  "RetentionTableOutcome",
+                  "GenerationRecoveryOutcome",
+                  "GenerationRecoveryOptions",
                 ]
               : []),
             // types only below
@@ -508,6 +534,12 @@ function appRestrictedImports({
           allowImportNames: [
             "getSessionUser",
             "reauthenticateCurrentSessionWithPassword",
+            // Phase 10b-1 Task 8: the account page composes the recovery mail port,
+            // and the public recovery page exchanges the emailed secret for a
+            // bounded session and a fresh password proof.
+            "resendMailPortFromEnv",
+            "beginIdentityCancellationRecoverySession",
+            "createIdentityCancellationProofWithPassword",
             "requireUser",
             "requireAdmin",
             "authHandlers",
