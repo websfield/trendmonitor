@@ -618,7 +618,7 @@ export async function createTierCheckoutUrl(
       throw new AlreadySubscribedError(existing.status);
     }
     await requireReauthenticatedOwnerInTx(tx, scope, authority);
-    const customer = await getOrCreateCustomer(tx, scope.workspaceId, email);
+    const customer = await getOrCreateCustomer(tx, scope.workspaceId, email, scope.userId);
     return { customer };
   });
 
@@ -995,7 +995,7 @@ export async function createPackCheckoutUrl(
     // `UnknownTierPriceError("pack")` — same condition, a name that says which
     // price is missing.
     await requireReauthenticatedOwnerInTx(tx, scope, authority);
-    return getOrCreateCustomer(tx, scope.workspaceId, email);
+    return getOrCreateCustomer(tx, scope.workspaceId, email, scope.userId);
   });
   return db.transaction(async (tx) => {
     await requireReauthenticatedOwnerInTx(tx, scope, authority);

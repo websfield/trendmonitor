@@ -20,6 +20,7 @@ import {
   AutoTopupCapError,
   AutoTopupAuthorityKeyError,
   AutoTopupAuthoritySignatureError,
+  BillingContactProviderError,
   BillingReauthenticationError,
   BillingRoleError,
   CheckoutInFlightError,
@@ -233,6 +234,7 @@ export const BILLING_ERROR_CODES = [
   "tier_checkout_rollout",
   "not_owner",
   "no_stripe_customer",
+  "billing_contact_provider",
   "no_live_subscription",
   "not_paused",
   "pause_length",
@@ -499,6 +501,7 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: TierCheckoutRolloutError, code: "tier_checkout_rollout" },
   { cls: BillingRoleError, code: "not_owner" },
   { cls: NoStripeCustomerError, code: "no_stripe_customer" },
+  { cls: BillingContactProviderError, code: "billing_contact_provider" },
   { cls: NoLiveSubscriptionError, code: "no_live_subscription" },
   { cls: NotPausedError, code: "not_paused" },
   { cls: PauseLengthError, code: "pause_length" },
@@ -822,6 +825,11 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "This workspace has no billing account yet",
     detail:
       "A billing account is created the first time you subscribe or buy a credit pack. Start there, then the Customer Portal becomes available.",
+  },
+  billing_contact_provider: {
+    title: "The billing contact could not be moved",
+    detail:
+      "The payment provider did not confirm the handover, so nothing was changed here. Try again; if it keeps failing, an operator can check the customer record in Stripe.",
   },
   no_live_subscription: {
     title: "No live subscription",

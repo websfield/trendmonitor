@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   admitAuthMail,
@@ -23,7 +23,7 @@ import { authMailOutbox } from "../src/auth-mail-schema";
 import { rateLimit, session, user as authUser, verification } from "../src/auth-schema";
 import { creditLedger, stripeEvents, subscriptions } from "../src/billing-schema";
 import { ensureUserWorkspace } from "../src/bootstrap";
-import { brainDocs, creatorProfiles } from "../src/brain-schema";
+import { brainDocs, creatorProfiles, frameworks } from "../src/brain-schema";
 import { brainActivationSnapshots } from "../src/onboarding-schema";
 import {
   advanceDeletionOperations,
@@ -57,7 +57,7 @@ import {
   requestWorkspaceDeletion,
   transitionDeletionOperation,
 } from "../src/deletion-lifecycle";
-import { NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
+import { deriveActivationCohorts, NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
 import type { DeletionJournalPort, JournalTransitionRequest } from "../src/deletion-ports";
 import { journalReceiptDigest, journalRequestChecksum } from "../src/deletion-ports";
 import { generationAttempts, generations } from "../src/generation-schema";
@@ -277,6 +277,36 @@ async function populate(db: TestDb) {
     provenance: { consentEvidenceId: "consent-1" },
   });
 
+  // EVERY rights class of the three shared-capable tables (phase-review fix
+  // round: `frameworks` had no rows of any class, `autopsies` and
+  // `autopsy_cache_claims` only private ones). The consent-only shared rows
+  // name the OWNER as subject and must go with the identity; the licensed and
+  // seed rows must survive every scope; the private rows go with the profile.
+  const shared = (marker: string) => ({ contentDigest: `digest_${marker}`, analysisVersion: "v1", status: "completed" as const, analysis: { marker } });
+  // Consent rows for BOTH people, so the identity case proves "only the
+  // subject's consent rows go" rather than "the consent class goes" (lean C-1).
+  await db.insert(autopsies).values([
+    { trendItemId: sharedItem!.id, rightsScope: "shared_analysis", rightsBasis: "creator_consent", rightsSubjectUserId: owner.user.id, rightsEvidenceId: "consent-1", ...shared("CONSENT-AUTOPSY") },
+    { trendItemId: sharedItem!.id, rightsScope: "shared_analysis", rightsBasis: "creator_consent", rightsSubjectUserId: survivor.user.id, rightsEvidenceId: "consent-2", ...shared("SURVIVOR-CONSENT-AUTOPSY") },
+    { trendItemId: sharedItem!.id, rightsScope: "shared_analysis", rightsBasis: "independently_licensed", rightsEvidenceId: "licence-1", ...shared("LICENSED-AUTOPSY") },
+  ]);
+  await db.insert(autopsyCacheClaims).values([
+    { trendItemId: sharedItem!.id, contentDigest: "claim_consent", analysisVersion: "v1", rightsScope: "shared_analysis", rightsBasis: "creator_consent", rightsSubjectUserId: owner.user.id, rightsEvidenceId: "consent-1", cacheScopeKey: "shared", status: "pending" },
+    { trendItemId: sharedItem!.id, contentDigest: "claim_consent_survivor", analysisVersion: "v1", rightsScope: "shared_analysis", rightsBasis: "creator_consent", rightsSubjectUserId: survivor.user.id, rightsEvidenceId: "consent-2", cacheScopeKey: "shared", status: "pending" },
+    { trendItemId: sharedItem!.id, contentDigest: "claim_licensed", analysisVersion: "v1", rightsScope: "shared_analysis", rightsBasis: "independently_licensed", rightsEvidenceId: "licence-1", cacheScopeKey: "shared", status: "pending" },
+  ]);
+  const framework = (slug: string, rest: Record<string, unknown>) => ({
+    slug, name: slug, beats: [], whyItConverts: "fixture", applicability: [], sourceReferences: [], evidenceEntries: [], testedCaveats: [],
+    confidence: "unsupported", saturation: "observed" as const, ...rest,
+  });
+  await db.insert(frameworks).values([
+    framework("fw-private", { visibility: "private", rightsBasis: "profile_private", ownerProfileId: profile!.id, workspaceId }),
+    framework("fw-consent", { visibility: "shared", rightsBasis: "creator_consent", rightsSubjectUserId: owner.user.id, rightsEvidenceId: "consent-fw" }),
+    framework("fw-consent-survivor", { visibility: "shared", rightsBasis: "creator_consent", rightsSubjectUserId: survivor.user.id, rightsEvidenceId: "consent-fw-2" }),
+    framework("fw-licensed", { visibility: "shared", rightsBasis: "independently_licensed", rightsEvidenceId: "licence-fw" }),
+    framework("fw-seed", { visibility: "shared", rightsBasis: "product_seed", curatedBy: "seed:respin-library-v1" }),
+  ] as never);
+
   const businessDate = new Date().toISOString().slice(0, 10);
   await db.insert(systemSpendDaily).values({ businessDate, capMicroUsd: 1_000_000n, reservedMicroUsd: 10n });
   await db.insert(systemSpendClaims).values({
@@ -346,6 +376,9 @@ async function populate(db: TestDb) {
     stripeCustomerId: "cus_owner",
     stripeSubscriptionId: "sub_owner",
     status: "active",
+    // Plan C3: the survivor holds the billing contact, so the owner's identity
+    // deletion below is admitted. The re-bind test flips this during grace.
+    billingContactUserId: survivor.user.id,
   });
   // v1-armed: the only armed shape production holds under the durable
   // protocol (the legacy bit is fenced off by migration 0048 and stays
@@ -359,7 +392,18 @@ async function populate(db: TestDb) {
   await db.insert(stripeEvents).values({
     id: "evt_owner_1",
     type: "invoice.paid",
-    payload: { customer: "cus_owner", email: "owner@example.test" },
+    // A REAL invoice payload, so the purge's extract-before-redaction has a
+    // fact to lift and the erasure cases can assert it survived (billing gate,
+    // independent round 2: the purge at erasure had no witness).
+    payload: {
+      data: {
+        object: {
+          object: "invoice", id: "in_owner_1", currency: "usd", payment_intent: "pi_owner_1",
+          lines: { data: [{ id: "il_owner_1", currency: "usd", amount_excluding_tax: 1900, period: { start: 1_760_000_000, end: 1_762_592_000 } }] },
+          customer_email: "owner@example.test",
+        },
+      },
+    },
     workspaceId,
     stripeCustomerId: "cus_owner",
     receiptAttribution: "workspace_attributed",
@@ -389,6 +433,55 @@ async function populate(db: TestDb) {
     workspaceName: owner.workspace.name,
   };
 }
+
+/**
+ * The seven-year finance fact the erasure-time purge must lift out BEFORE it
+ * blanks the payload: one COMPLETE invoice-line extract, keyed to the
+ * workspace's pseudonymous chain key, carrying the line amount. Deleting the
+ * extract call in `purgeSubjectStripePayloadsInTx` reddens this.
+ */
+async function expectFinanceFactSurvived(db: TestDb, fixtureWorkspaceIdForExtract: string): Promise<void> {
+  const rows = (await db.execute(sql`
+    SELECT object_type, object_id, status, amount_excluding_tax_cents, workspace_key
+    FROM "stripe_finance_extracts" WHERE source_stripe_event_id = 'evt_owner_1'
+  `)) as unknown as { rows: { object_type: string; object_id: string; status: string; amount_excluding_tax_cents: number; workspace_key: string | null }[] };
+  // The extractor books the invoice (and its lines) as it does for the 90-day
+  // sweep; the fact that must survive is: at least one COMPLETE row carrying
+  // the amount, keyed to a pseudonymous chain key, never to the workspace id.
+  expect(rows.rows.length).toBeGreaterThan(0);
+  const complete = rows.rows.filter((row) => row.status === "complete" && row.amount_excluding_tax_cents === 1900);
+  expect(complete.length, JSON.stringify(rows.rows)).toBeGreaterThan(0);
+  for (const row of rows.rows) {
+    expect(row.workspace_key, row.object_id).toMatch(/^wk_[0-9a-f]{32}$/);
+    expect(row.workspace_key).not.toContain(fixtureWorkspaceIdForExtract);
+  }
+}
+
+/** Consent rows per subject, per shared-capable table: who the surviving consent rows belong to. */
+async function consentSubjectsLeft(db: TestDb): Promise<Record<string, string[]>> {
+  const subjects = (rows: { subject: string | null }[]) => rows.map((r) => r.subject ?? "none").sort();
+  return {
+    frameworks: subjects(await db.select({ subject: frameworks.rightsSubjectUserId }).from(frameworks).where(eq(frameworks.rightsBasis, "creator_consent"))),
+    autopsies: subjects(await db.select({ subject: autopsies.rightsSubjectUserId }).from(autopsies).where(eq(autopsies.rightsBasis, "creator_consent"))),
+    autopsy_cache_claims: subjects(await db.select({ subject: autopsyCacheClaims.rightsSubjectUserId }).from(autopsyCacheClaims).where(eq(autopsyCacheClaims.rightsBasis, "creator_consent"))),
+  };
+}
+
+/** Which rights classes still hold rows, per shared-capable table. The fixture seeds every class. */
+async function rightsClassesLeft(db: TestDb): Promise<Record<string, string[]>> {
+  const sortU = (rows: { rightsBasis: string }[]) => [...new Set(rows.map((r) => r.rightsBasis))].sort();
+  return {
+    frameworks: sortU(await db.select({ rightsBasis: frameworks.rightsBasis }).from(frameworks)),
+    autopsies: sortU(await db.select({ rightsBasis: autopsies.rightsBasis }).from(autopsies)),
+    autopsy_cache_claims: sortU(await db.select({ rightsBasis: autopsyCacheClaims.rightsBasis }).from(autopsyCacheClaims)),
+  };
+}
+
+const EVERY_RIGHTS_CLASS = {
+  frameworks: ["creator_consent", "independently_licensed", "product_seed", "profile_private"],
+  autopsies: ["creator_consent", "independently_licensed", "profile_private"],
+  autopsy_cache_claims: ["creator_consent", "independently_licensed", "profile_private"],
+};
 
 async function backdateGrace(db: TestDb, operationId: string) {
   const past = new Date(Date.now() - DAY);
@@ -497,6 +590,14 @@ describe("deletion executor — populated erasure", () => {
     const result = await tickUntilTerminal(db, ports, requested.id);
     expect(result.state, result.codes.join("\n")).toBe("complete");
     expect(commands.executed.slice(2)).toEqual(["stripe_subscription_cancel_now", "stripe_customer_personal_fields_clear"]);
+    await expectFinanceFactSurvived(db, fixture.workspaceId);
+    // Plan C3: the retained seven-year subscriptions row keeps NO person's id.
+    // The residue probe matches only `workspace_id`, so this is the one read
+    // that proves the `workspace_link` scrub nulled the contact (billing gate).
+    const [retained] = await db.select().from(subscriptions).where(eq(subscriptions.stripeCustomerId, "cus_owner"));
+    expect(retained).toBeDefined();
+    expect(retained!.billingContactUserId).toBeNull();
+    expect(retained!.workspaceId).not.toBe(fixture.workspaceId);
 
     // The workspace and its whole tree are gone; the survivor's own workspace is untouched.
     expect(await db.select().from(workspaces).where(eq(workspaces.id, fixture.workspaceId))).toHaveLength(0);
@@ -557,14 +658,13 @@ describe("deletion executor — populated erasure", () => {
     expect(event!.receiptAttribution).toBe("workspace_attributed");
     expect(event!.tierInvoiceAuthority).toBeNull();
     // RECEIVER CLOCK, stated not hidden (round-1 lean S1 / tenancy): the raw
-    // provider payload still carries the subject's email. It is classified
-    // `delete_explicit` under `stripe_payload_90_days` because it is Task 6's
-    // finance-extract INPUT; subject erasure does not touch it and Task 6's
-    // receiver purges it. EVERY scope's erasure is refused in production until
-    // Task 6 lands (`erasureHold`: the financial chain for workspace and
-    // profile, the unwired payload receiver for identity), so no completed
-    // erasure can hold this residue before the receiver exists.
-    expect(event!.payload).toEqual({ customer: "cus_owner", email: "owner@example.test" });
+    // THE PROVIDER PAYLOAD IS GONE. It used to survive — this assertion pinned
+    // that it did — on the reasoning that `stripe_payload_90_days` would clear
+    // it later. A clock measured from `received_at` is not an erasure step: a
+    // COMPLETED workspace erasure held up to 90 days of webhook JSON carrying
+    // the creator's email, name and billing address. The erasure transaction
+    // now purges it directly, after lifting the finance facts out.
+    expect(event!.payload).toEqual({});
     // Monthly spend outlives the workspace under a fresh random id.
     const [spend] = await db.select().from(workspaceSpendMonthly);
     expect(spend!.workspaceId).not.toBe(fixture.workspaceId);
@@ -607,11 +707,38 @@ describe("deletion executor — populated erasure", () => {
     expect(JSON.stringify([operation, transitions, commandRows])).not.toContain(fixture.workspaceId);
   });
 
+  it("workspace erasure: the PRIVATE rights class goes from every shared-capable table; consent, licensed and seed rows all stay", async () => {
+    expect(await rightsClassesLeft(db)).toEqual(EVERY_RIGHTS_CLASS);
+    const scope = await withWorkspace(db, { authUserId: "owner-auth" });
+    const { port: journalPort } = journal();
+    const requested = await requestWorkspaceDeletion(db, scope, { sessionId: "session-owner-auth", idempotencyKey: "ws-rights", typedName: fixture.workspaceName }, journalPort);
+    const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: { erasureEnabled: () => true } };
+    await backdateGrace(db, requested.id);
+    const result = await tickUntilTerminal(db, ports, requested.id);
+    expect(result.state, result.codes.join("\n")).toBe("complete");
+    expect(await rightsClassesLeft(db)).toEqual({
+      frameworks: ["creator_consent", "independently_licensed", "product_seed"],
+      autopsies: ["creator_consent", "independently_licensed"],
+      autopsy_cache_claims: ["creator_consent", "independently_licensed"],
+    });
+  });
+
   it("erases an identity: the target's rows go, shared workspace work and the co-owner stay, the receipt points at a stub member", async () => {
     const { port: journalPort } = journal();
     const recoveryDelivery = createAuthMailRecoveryDelivery(db, mailer, {
       actionUrl: (operationId, secret) => `https://app.example/deletion/${operationId}#${secret}`,
     });
+    // THE DENOMINATOR THROUGH THE REAL WALK (learning gate, round-2 BLOCK): the
+    // signup count must be the same before the request, while the deletion is
+    // PENDING (the person is tombstoned at request time), and after erasure
+    // (the capture has been applied to the aggregate).
+    const signupsAt = async (label: string) => {
+      const asOf = new Date(Date.now() + 2 * DAY); // past the 24 h maturity window for the fixture's accounts
+      const rows = await deriveActivationCohorts(db, NO_ACTIVATION_EXCLUSIONS, asOf);
+      return { label, signups: rows.reduce((n, r) => n + r.signups, 0) };
+    };
+    const before = await signupsAt("before");
+    expect(before.signups).toBeGreaterThan(0);
     const requested = await requestIdentityDeletion(
       db,
       { sessionId: "session-owner-auth", idempotencyKey: "identity-delete-1" },
@@ -623,6 +750,7 @@ describe("deletion executor — populated erasure", () => {
     const commands = commandPort();
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
 
+    expect((await signupsAt("pending")).signups, "a pending deletion is still a signup").toBe(before.signups);
     await backdateGrace(db, requested.operation.id);
     // TASK 6: the round-2 lean S-R2-1 hold is lifted. The raw Stripe payload
     // that carried this contact's email is now swept by the retention receiver
@@ -631,13 +759,15 @@ describe("deletion executor — populated erasure", () => {
     expect(erasureHold("identity")).toBeNull();
     const result = await tickUntilTerminal(db, ports, requested.operation.id);
     expect(result.state, result.codes.join("\n")).toBe("complete");
+    expect((await signupsAt("erased")).signups, "the applied capture keeps the signup counted").toBe(before.signups);
     // No workspace-level external commands exist for an identity deletion.
     expect(commands.executed).toEqual([]);
-    // RECEIVER CLOCK, pinned for the identity scope as well: the raw payload of
-    // the workspace's receipt still names this contact. Task 6 purges it (or
-    // plan C3's billing-contact binding refuses the deletion) before any scope
-    // is enabled.
-    expect((await db.select().from(stripeEvents))[0]!.payload).toEqual({ customer: "cus_owner", email: "owner@example.test" });
+    // AND FOR THE IDENTITY SCOPE. This is the assertion that made the defect
+    // visible: a completed identity erasure left the deleted person's email in
+    // the database while `/settings/account` showed them a closed "what
+    // survives erasure" list that never mentioned it.
+    expect((await db.select().from(stripeEvents))[0]!.payload).toEqual({});
+    await expectFinanceFactSurvived(db, fixture.workspaceId);
 
     expect(await db.select().from(users).where(eq(users.id, ownerUserId))).toHaveLength(0);
     expect(await db.select().from(authUser).where(eq(authUser.id, "owner-auth"))).toHaveLength(0);
@@ -716,6 +846,52 @@ describe("deletion executor — populated erasure", () => {
     expect(operation!.activationCohortDate).not.toBeNull();
   });
 
+  it("identity erasure: ONLY the consent-only shared rows whose subject is the identity go; licensed, seed and the surviving workspace's private rows stay", async () => {
+    expect(await rightsClassesLeft(db)).toEqual(EVERY_RIGHTS_CLASS);
+    const { port: journalPort } = journal();
+    const recoveryDelivery = createAuthMailRecoveryDelivery(db, mailer, { actionUrl: (operationId, secret) => `https://app.example/deletion/${operationId}#${secret}` });
+    const requested = await requestIdentityDeletion(db, { sessionId: "session-owner-auth", idempotencyKey: "identity-rights" }, { recoveryDelivery, journal: journalPort, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: { erasureEnabled: () => true } };
+    await backdateGrace(db, requested.operation.id);
+    const result = await tickUntilTerminal(db, ports, requested.operation.id);
+    expect(result.state, result.codes.join("\n")).toBe("complete");
+    // The consent CLASS survives (the survivor's rows); the OWNER's consent
+    // rows are the ones that went — per subject, not per class.
+    expect(await rightsClassesLeft(db)).toEqual(EVERY_RIGHTS_CLASS);
+    const survivorId = fixture.survivor.user.id;
+    expect(await consentSubjectsLeft(db)).toEqual({
+      frameworks: [survivorId],
+      autopsies: [survivorId],
+      autopsy_cache_claims: [survivorId],
+    });
+  });
+
+  it("C3 at the LAST moment: an identity re-bound as billing contact during grace is held at erasure, nothing erased", async () => {
+    const { port: journalPort } = journal();
+    const recoveryDelivery = createAuthMailRecoveryDelivery(db, mailer, {
+      actionUrl: (operationId, secret) => `https://app.example/deletion/${operationId}#${secret}`,
+    });
+    const requested = await requestIdentityDeletion(
+      db,
+      { sessionId: "session-owner-auth", idempotencyKey: "identity-rebound-contact" },
+      { recoveryDelivery, journal: journalPort, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
+    );
+    expect(requested.operation.state).toBe("tombstoned");
+    const ownerUserId = fixture.owner.user.id;
+    // During grace the contact lands back on the deleting person — a new
+    // Checkout by them, or a handover the other way. The request-time check
+    // has already passed; only the executor's own re-check can catch it.
+    await db.update(subscriptions).set({ billingContactUserId: ownerUserId }).where(eq(subscriptions.workspaceId, fixture.workspaceId));
+    await backdateGrace(db, requested.operation.id);
+    const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: { erasureEnabled: () => true } };
+    const result = await tickUntilTerminal(db, ports, requested.operation.id);
+    expect(result.state, result.codes.join("\n")).toBe("blocked");
+    expect(result.operation.lastFailureCode).toBe("billing_contact_handover_required");
+    // Held means HELD: the person, their auth row and their email are all still here.
+    expect(await db.select().from(users).where(eq(users.id, ownerUserId))).toHaveLength(1);
+    expect(await db.select().from(authUser).where(eq(authUser.id, "owner-auth"))).toHaveLength(1);
+  });
+
   it("erases a profile: the profile tree and its system links go, the workspace, co-owner and shared rows stay", async () => {
     const scope = await withWorkspace(db, { authUserId: "owner-auth" });
     const { port: journalPort } = journal();
@@ -771,6 +947,22 @@ describe("deletion executor — populated erasure", () => {
     const profileCommands = await db.select().from(deletionExternalCommands).where(eq(deletionExternalCommands.operationId, requested.id));
     expect(profileTransitions.length).toBeGreaterThanOrEqual(6);
     expect(JSON.stringify([operation, profileTransitions, profileCommands])).not.toContain(fixture.profileId);
+  });
+
+  it("profile erasure: the profile's PRIVATE rows go from every shared-capable table; every shared class stays", async () => {
+    expect(await rightsClassesLeft(db)).toEqual(EVERY_RIGHTS_CLASS);
+    const scope = await withWorkspace(db, { authUserId: "owner-auth" });
+    const { port: journalPort } = journal();
+    const requested = await requestProfileDeletion(db, scope, fixture.profileId, { sessionId: "session-owner-auth", idempotencyKey: "profile-rights", typedName: "Owner Creator" }, journalPort);
+    const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: { erasureEnabled: () => true } };
+    await backdateGrace(db, requested.id);
+    const result = await tickUntilTerminal(db, ports, requested.id);
+    expect(result.state, result.codes.join("\n")).toBe("complete");
+    expect(await rightsClassesLeft(db)).toEqual({
+      frameworks: ["creator_consent", "independently_licensed", "product_seed"],
+      autopsies: ["creator_consent", "independently_licensed"],
+      autopsy_cache_claims: ["creator_consent", "independently_licensed"],
+    });
   });
 
   it("blocks on residue with the code on the row, releases the abandoned journal reservation, and resumes to complete once clean", async () => {

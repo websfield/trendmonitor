@@ -1383,6 +1383,21 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/credits/src/pasted-reference.ts:submitPastedReference",
         "packages/credits/src/pasted-reference.ts:settleParkedAutopsies",
         "packages/credits/src/pasted-reference.ts:pastedReferenceIntakePort",
+
+        // ---- Phase 10b-1 phase-review fix round (C3 billing contact, and the
+        // pending read moved out of the facade). `pendingDeletionsForScope`
+        // is the raw read that used to live inline in app-server.ts: its FIRST
+        // statement is `assertScoped(scope)`, and the facade forwards the same
+        // `scope`. The two billing-contact functions assert the cage first
+        // (`billingContactStatus`) or assert it and then re-prove the owner
+        // role under `assertReauthenticatedWorkspaceScopeInTx` in the
+        // transaction (`acceptBillingContact`); the two facade binds are thin
+        // forwards of the same `scope` argument.
+        "packages/db/src/deletion-lifecycle.ts:pendingDeletionsForScope",
+        "packages/credits/src/stripe/billing-contact.ts:billingContactStatus",
+        "packages/credits/src/stripe/billing-contact.ts:acceptBillingContact",
+        "packages/credits/src/app-server.ts:billingContactStatus",
+        "packages/credits/src/app-server.ts:acceptBillingContact",
         "packages/credits/src/app-server.ts:submitPastedReference",
         "packages/credits/src/app-server.ts:settleParkedAutopsies",
       ].sort();

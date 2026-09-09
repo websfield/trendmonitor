@@ -65,6 +65,12 @@ import {
   type CheckoutUrls,
 } from "./stripe/actions";
 import {
+  acceptBillingContact,
+  billingContactStatus,
+  BillingContactProviderError,
+  type BillingContactStatus,
+} from "./stripe/billing-contact";
+import {
   PackPriceMismatchError,
   PackPriceNotMappedError,
   PackPriceUnavailableError,
@@ -307,6 +313,8 @@ export {
   StripeAccountBindingError,
   StripeSessionUrlMissingError,
   UnknownTierPriceError,
+  // Phase 10b-1 C3: reachable from `respinCredits.acceptBillingContact`.
+  BillingContactProviderError,
   // Audit 2026-08-17 remediation (R1). Each is reachable from a facade method,
   // so the walk in facade-errors.test.ts demands them here — and each has a
   // rendered `?e=` code in app/(product)/billing-errors.ts, because a typed
@@ -685,4 +693,14 @@ export const respinCredits = {
     opts: { enabled: boolean; monthlyCapCents?: number },
     authority: ReauthenticatedSessionRef
   ) => setAutoTopup(getServerDb(), scope, opts, authority),
+  // Plan C3 (Phase 10b-1): the billing-contact handover that lifts identity
+  // deletion's `billing_contact_*` refusals. Provider write first, then the
+  // binding (billing-contact.ts).
+  billingContactStatus: (scope: WorkspaceScope): Promise<BillingContactStatus> =>
+    billingContactStatus(getServerDb(), scope),
+  acceptBillingContact: (
+    scope: WorkspaceScope,
+    email: string,
+    authority: ReauthenticatedSessionRef
+  ): Promise<BillingContactStatus> => acceptBillingContact(getServerDb(), scope, email, authority),
 };

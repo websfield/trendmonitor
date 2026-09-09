@@ -837,6 +837,21 @@ const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "migrations", "cover
  * parallel. A scan that swallowed read failures would report "no unsanctioned
  * readers" because it could not read the files.
  */
+/**
+ * The product source trees these scans cover.
+ *
+ * A LIST, and `worker/` is on it (CLAUDE.md Respin rule 7). Both real-repo
+ * scans below hard-coded `packages` and `app` only, while Phase 10b-1 made
+ * `worker/` a substantial product-logic tree — `worker/retention.ts`,
+ * `worker/deletion-lifecycle.ts`, `worker/production.ts`. No violation lives
+ * there today, but a scheduled proposal job is the most natural next home for
+ * learning work, and it would have been invisible to BOTH the promotion
+ * sole-emitter boundary and the raw-feedback-reader boundary. A guard whose
+ * population is two hard-coded directories is a guard that silently stops
+ * covering the codebase as the codebase grows.
+ */
+const PRODUCT_SOURCE_TREES = ["packages", "app", "worker", "lib"] as const;
+
 function productSources(dir: string, acc: Map<string, string> = new Map()) {
   let entries: string[];
   try {
@@ -1096,7 +1111,7 @@ describe("R11 (verification 7): a SECOND raw reader anywhere else fails", () => 
 
   it("THE REAL REPO: exactly the permitted files read the table", () => {
     const files = productSources(join(ROOT, "packages"));
-    productSources(join(ROOT, "app"), files);
+    for (const tree of PRODUCT_SOURCE_TREES.slice(1)) productSources(join(ROOT, tree), files);
     expect(files.size, "the scan read nothing").toBeGreaterThan(20);
     const findings = scanFeedbackReaders(files);
     // Non-vacuity against the repo itself: the permitted reader really is
@@ -1156,7 +1171,7 @@ describe("R10: promotion proposal construction is structurally restricted to pac
 
   it("THE REAL REPO: nothing outside packages/brain constructs one", () => {
     const files = productSources(join(ROOT, "packages"));
-    productSources(join(ROOT, "app"), files);
+    for (const tree of PRODUCT_SOURCE_TREES.slice(1)) productSources(join(ROOT, tree), files);
     expect(files.size).toBeGreaterThan(20);
     expect(
       scanPromotionConstructorBoundary(files),

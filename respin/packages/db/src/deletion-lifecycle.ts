@@ -5,8 +5,9 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import { and, count, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { user as authUser, session } from "./auth-schema";
+import { subscriptions } from "./billing-schema";
 import { creatorProfiles } from "./brain-schema";
 import type { DbLike, TxLike } from "./db-like";
 import {
@@ -52,6 +53,29 @@ import {
 } from "./with-workspace";
 
 export const DELETION_REAUTH_MAX_AGE_MS = 10 * 60 * 1_000;
+
+/**
+ * Tolerance for comparing a timestamp produced on ONE machine against `now`
+ * read from the DATABASE.
+ *
+ * THE CLASS, not one instance. `reauthenticatedAt`, `factorVerifiedAt` and a
+ * delivery receipt's `deliveredAt` are all stamped by an application process
+ * (in production, a different host from Postgres; for a mail receipt, the
+ * provider's own clock). Every "is this in the future?" check against
+ * `databaseNow()` therefore compares two clocks, and with ZERO tolerance a few
+ * milliseconds of ordinary skew becomes a refusal.
+ *
+ * Measured on this machine 2026-09-08 while the full suite ran: the database
+ * clock landed up to 38 ms outside the JS read window — enough to refuse a
+ * user who had just re-authenticated, with `reauthentication_missing_or_stale`,
+ * on the path that deletes their account. On separate hosts it is worse.
+ *
+ * ONE DIRECTION ONLY. This pads the FUTURE side, which is a pure clock artifact
+ * and never a security property. The STALENESS side keeps its exact window:
+ * `now - at > windowMs` is the ten-minute reauthentication boundary and padding
+ * it would widen a security control.
+ */
+export const CROSS_CLOCK_TOLERANCE_MS = 60_000;
 export const DELETION_GRACE_MS = 7 * 24 * 60 * 60 * 1_000;
 export const DELETION_JOURNAL_RETAIN_MS = 28 * 24 * 60 * 60 * 1_000;
 const UUID_RE =
@@ -164,7 +188,10 @@ async function requireReauthenticatedSession(
   const at = proof.reauthenticatedAt?.getTime();
   if (
     at === undefined ||
-    at > now.getTime() ||
+    // Future side: tolerated, because `reauthenticatedAt` is stamped by the
+    // application and `now` by the database. Staleness side: exact, because
+    // that is the security window.
+    at > now.getTime() + CROSS_CLOCK_TOLERANCE_MS ||
     now.getTime() - at > windowMs
   ) {
     refuse("reauthentication_missing_or_stale");
@@ -808,6 +835,56 @@ async function lockIdentityWorkspaces(
   return workspaceIds;
 }
 
+/**
+ * Plan C3: the person may not leave while a workspace's Stripe customer still
+ * carries their personal details. `billing_contact_user_id` names the owner
+ * whose email the customer was created with; NULL is "unknown" (a mapping
+ * from before C3), which is refused the same way, because an unknown contact
+ * might be this person. The remedy in both cases is one owner action —
+ * `acceptBillingContact` — which rewrites the provider copy before it moves
+ * the binding. Executed at request AND at every re-read the owner walk makes,
+ * beside the last-owner rule, and again by the executor at erasure.
+ */
+export async function assertBillingContactReleased(
+  tx: TxLike,
+  userId: string,
+  workspaceIds: readonly string[]
+): Promise<void> {
+  // Two populations, because membership and contact can diverge: a contact
+  // who was demoted or who left the workspace is still on the customer object,
+  // so the binding is matched by USER regardless of membership; an unknown
+  // contact is matched by the workspaces this person is a MEMBER of, in any
+  // role — an editor or viewer of a pre-C3 workspace is refused too, because
+  // the unknown contact may be a demoted ex-owner, and only an owner can
+  // accept (T-R2-5 records the population and the operator remedy).
+  const bound = eq(subscriptions.billingContactUserId, userId);
+  const unknownInMembership =
+    workspaceIds.length === 0
+      ? null
+      : and(inArray(subscriptions.workspaceId, [...workspaceIds]), isNull(subscriptions.billingContactUserId));
+  const rows = await tx
+    .select({
+      workspaceId: subscriptions.workspaceId,
+      billingContactUserId: subscriptions.billingContactUserId,
+    })
+    .from(subscriptions)
+    .where(unknownInMembership === null ? bound : or(bound, unknownInMembership));
+  for (const row of rows) {
+    if (row.billingContactUserId === null) refuse("billing_contact_unknown");
+    if (row.billingContactUserId === userId) refuse("billing_contact_handover_required");
+  }
+}
+
+/** The two release rules every identity path asserts together. */
+async function assertWorkspacesReleasable(
+  tx: TxLike,
+  userId: string,
+  workspaceIds: readonly string[]
+): Promise<void> {
+  await assertNotLastOwner(tx, userId, workspaceIds);
+  await assertBillingContactReleased(tx, userId, workspaceIds);
+}
+
 async function assertNotLastOwner(
   tx: TxLike,
   userId: string,
@@ -839,6 +916,47 @@ async function assertNotLastOwner(
     if (owners <= 1) refuse("last_owner");
   }
 }
+
+/**
+ * The operations an owner page may list for a scope: every non-terminal
+ * operation on this workspace or on this user. Lives HERE, beside the rules
+ * that write those rows, rather than as a raw read in the app facade, so the
+ * one module that owns `deletion_operations` semantics also owns what
+ * "pending" means (10b-1 phase review, tenancy item). The cage (AC-13) runs
+ * first: a forged scope is refused before its ids are read.
+ */
+export async function pendingDeletionsForScope(
+  db: DbLike,
+  scope: WorkspaceScope
+): Promise<readonly DeletionOperation[]> {
+  // Deliberately visible to EVERY member of the workspace, not only owners: a
+  // pending workspace or profile deletion changes what every member can do,
+  // and the page renders only id, scope, state and dates — no profile name,
+  // no requester.
+  assertScoped(scope);
+  return db
+    .select()
+    .from(deletionOperations)
+    .where(
+      and(
+        or(eq(deletionOperations.workspaceId, scope.workspaceId), eq(deletionOperations.userId, scope.userId)),
+        inArray(deletionOperations.state, PENDING_DELETION_STATES)
+      )
+    )
+    .orderBy(desc(deletionOperations.requestedAt));
+}
+
+/** Every state a listed operation can still be in; terminal states are not "pending". */
+export const PENDING_DELETION_STATES = [
+  "requested",
+  "journal_pending",
+  "tombstoned",
+  "external_actions_pending",
+  "grace",
+  "erasing",
+  "verifying",
+  "blocked",
+] as const satisfies readonly DeletionOperationState[];
 
 export type RequestIdentityDeletionParams = Readonly<{
   sessionId: string;
@@ -911,7 +1029,7 @@ async function finalizeIdentityDeletionRequest(
       refuse("request_reservation_changed");
     }
     if (!recoveryExpired) {
-      await assertNotLastOwner(tx, userId, workspaceIds);
+      await assertWorkspacesReleasable(tx, userId, workspaceIds);
     }
     const activeForTarget = await activeOperationForTarget(tx, "identity", userId);
     if (!activeForTarget || activeForTarget.id !== current.id) {
@@ -1116,7 +1234,7 @@ async function reserveIdentityDeletionRequest(
         ) {
           refuse("recovery_not_confirmed");
         }
-        await assertNotLastOwner(tx, snapshot.userId!, workspaceIds);
+        await assertWorkspacesReleasable(tx, snapshot.userId!, workspaceIds);
       }
       const activeForTarget = await activeOperationForTarget(
         tx,
@@ -1175,23 +1293,14 @@ async function persistReconciledIdentityRecovery(
     }
     if (delivery.outcome === "confirmed") {
       const now = await databaseNow(tx);
-      if (
-        delivery.operationId !== request.operationId ||
-        delivery.commandId !== request.commandId ||
-        delivery.attempt !== request.attempt ||
-        delivery.secretDigest !== request.secretDigest ||
-        delivery.recipientDigest !== request.recipientDigest ||
-        !(delivery.expiresAt instanceof Date) ||
-        !(delivery.deliveredAt instanceof Date) ||
-        delivery.expiresAt.getTime() !== request.expiresAt.getTime() ||
-        !/^[0-9a-f]{64}$/.test(delivery.deliveryReceiptDigest) ||
-        !current.recoveryDeliveryAttemptedAt ||
-        delivery.deliveredAt.getTime() < current.recoveryDeliveryAttemptedAt.getTime() ||
-        delivery.deliveredAt.getTime() > now.getTime() ||
-        delivery.deliveredAt.getTime() > request.expiresAt.getTime()
-      ) {
-        refuse("delivery_receipt_mismatch");
-      }
+      // ONE CODE PER CONDITION. This was a single `delivery_receipt_mismatch`
+      // covering eleven distinct checks, so a refusal said nothing about which
+      // invariant failed -- and when the Docker suites first ran together and
+      // this started refusing under load, the code could not tell an identity
+      // mismatch from a clock ordering problem. Every code below is
+      // content-free: a condition name, never a value.
+      const mismatch = deliveryReceiptMismatchCode(delivery, request, current, now);
+      if (mismatch !== null) refuse(mismatch);
       if (current.recoveryDeliveryStatus === "confirmed") {
         if (current.recoveryDeliveryReceiptDigest !== delivery.deliveryReceiptDigest) {
           refuse("concurrent_delivery_attempt");
@@ -1420,11 +1529,11 @@ export async function requestIdentityDeletion(
         existing.recoveryDeliveryStatus === "pending" ||
         existing.recoveryDeliveryStatus === "unknown"
       ) {
-        await assertNotLastOwner(tx, identity.id, workspaceIds);
+        await assertWorkspacesReleasable(tx, identity.id, workspaceIds);
         return existing;
       }
     }
-    await assertNotLastOwner(tx, identity.id, workspaceIds);
+    await assertWorkspacesReleasable(tx, identity.id, workspaceIds);
     plaintext = randomBytes(32).toString("base64url");
     if (!validRecoverySecret(plaintext)) refuse("recovery_secret_invalid_format");
     const attempt = (existing?.recoveryDeliveryAttempt ?? 0) + 1;
@@ -1594,23 +1703,11 @@ export async function requestIdentityDeletion(
       return { operation, acknowledged: false, delivery: delivery.outcome };
     }
     const receiptNow = await db.transaction((tx) => databaseNow(tx));
-    if (
-      delivery.operationId !== deliveryRequest.operationId ||
-      delivery.commandId !== deliveryRequest.commandId ||
-      delivery.attempt !== deliveryRequest.attempt ||
-      delivery.secretDigest !== deliveryRequest.secretDigest ||
-      delivery.recipientDigest !== deliveryRequest.recipientDigest ||
-      !(delivery.expiresAt instanceof Date) ||
-      !(delivery.deliveredAt instanceof Date) ||
-      delivery.expiresAt.getTime() !== deliveryRequest.expiresAt.getTime() ||
-      !/^[0-9a-f]{64}$/.test(delivery.deliveryReceiptDigest) ||
-      !prepared.recoveryDeliveryAttemptedAt ||
-      delivery.deliveredAt.getTime() < prepared.recoveryDeliveryAttemptedAt.getTime() ||
-      delivery.deliveredAt.getTime() > receiptNow.getTime() ||
-      delivery.deliveredAt.getTime() > deliveryRequest.expiresAt.getTime()
-    ) {
-      refuse("delivery_receipt_mismatch");
-    }
+    // The SAME authority as the request path. This was a second hand-written
+    // copy of the same eleven conditions; two copies of a rule are two rules,
+    // and only one of them gets fixed.
+    const reconcileMismatch = deliveryReceiptMismatchCode(delivery, deliveryRequest, prepared, receiptNow);
+    if (reconcileMismatch !== null) refuse(reconcileMismatch);
     let [confirmed] = await db
       .update(deletionOperations)
       .set({
@@ -1751,7 +1848,7 @@ export async function resumeIdentityDeletionRequest(
       current.recoveryDeliveryStatus === "confirmed" &&
       current.recoveryDeliveryReceiptDigest
     ) {
-      await assertNotLastOwner(tx, current.userId, workspaceIds);
+      await assertWorkspacesReleasable(tx, current.userId, workspaceIds);
       return { operation: current, recoveryExpired: false, reconciliation: null };
     }
     if (current.recoveryDeliveryStatus === "failed") {
@@ -1768,7 +1865,7 @@ export async function resumeIdentityDeletionRequest(
     ) {
       refuse("recovery_delivery_attempt_incomplete");
     }
-    await assertNotLastOwner(tx, current.userId, workspaceIds);
+    await assertWorkspacesReleasable(tx, current.userId, workspaceIds);
     return {
       operation: current,
       recoveryExpired: false,
@@ -2810,6 +2907,76 @@ type IdentityCancellationAuthority = Readonly<{
   snapshots: readonly (typeof deletionMembershipSnapshots.$inferSelect)[];
 }>;
 
+/**
+ * Which delivery-receipt invariant the provider's confirmation failed, or null.
+ *
+ * The three CLOCK checks carry a bounded tolerance. `deliveredAt` is produced
+ * by the delivery side (in production, a mail provider's own clock on another
+ * machine); `recoveryDeliveryAttemptedAt` and `now` come from the database. A
+ * zero-tolerance comparison between two machines' clocks refuses correct
+ * deliveries whenever they disagree by a millisecond, which is a liveness bug
+ * on the path that carries someone's only way to cancel an irreversible
+ * deletion. The tolerance is deliberately small and one-directional: it admits
+ * ordinary skew and still refuses a receipt claiming a delivery days early or
+ * after the credential expired, which is what the check is actually for.
+ */
+const DELIVERY_CLOCK_TOLERANCE_MS = CROSS_CLOCK_TOLERANCE_MS;
+
+function deliveryReceiptMismatchCode(
+  delivery: {
+    operationId: string;
+    commandId: string;
+    attempt: number;
+    secretDigest: string;
+    recipientDigest: string;
+    expiresAt: unknown;
+    deliveredAt: unknown;
+    deliveryReceiptDigest: string;
+  },
+  request: { operationId: string; commandId: string; attempt: number; secretDigest: string; recipientDigest: string; expiresAt: Date },
+  current: { recoveryDeliveryAttemptedAt: Date | null },
+  now: Date
+): string | null {
+  if (delivery.operationId !== request.operationId) return "delivery_receipt_operation";
+  if (delivery.commandId !== request.commandId) return "delivery_receipt_command";
+  if (delivery.attempt !== request.attempt) return "delivery_receipt_attempt";
+  if (delivery.secretDigest !== request.secretDigest) return "delivery_receipt_secret_digest";
+  if (delivery.recipientDigest !== request.recipientDigest) return "delivery_receipt_recipient_digest";
+  if (!(delivery.expiresAt instanceof Date)) return "delivery_receipt_expiry_shape";
+  if (!(delivery.deliveredAt instanceof Date)) return "delivery_receipt_delivered_shape";
+  if (delivery.expiresAt.getTime() !== request.expiresAt.getTime()) return "delivery_receipt_expiry_value";
+  if (!/^[0-9a-f]{64}$/.test(delivery.deliveryReceiptDigest)) return "delivery_receipt_digest_shape";
+  if (!current.recoveryDeliveryAttemptedAt) return "delivery_receipt_no_attempt";
+  const delivered = delivery.deliveredAt.getTime();
+  if (delivered < current.recoveryDeliveryAttemptedAt.getTime() - DELIVERY_CLOCK_TOLERANCE_MS) {
+    return "delivery_receipt_before_attempt";
+  }
+  if (delivered > now.getTime() + DELIVERY_CLOCK_TOLERANCE_MS) return "delivery_receipt_in_future";
+  // NO tolerance on expiry: that is a real deadline, not a clock comparison.
+  if (delivered > request.expiresAt.getTime()) return "delivery_receipt_after_expiry";
+  return null;
+}
+
+/**
+ * Constant-time hex-digest comparison.
+ *
+ * This file establishes the rule twice by hand (`timingSafeEqual` on the
+ * recovery secret, and again on the status-receipt read path) and then broke it
+ * once, with a plain `!==` on the cancellation-receipt digest. Not exploitable
+ * — the leak would be over a digest whose PREIMAGE is what an attacker needs,
+ * and a valid `proofId` already gates the row — but a rule a file follows twice
+ * and breaks once is a rule no reader can rely on.
+ */
+function digestEquals(left: string | null, right: string): left is string {
+  // A TYPE GUARD, because the `!==` this replaces was doing double duty: it
+  // also narrowed `statusReceiptDigest` from `string | null`. A null digest is
+  // never equal, and the caller still gets its narrowing.
+  if (left === null) return false;
+  const a = Buffer.from(left, "hex");
+  const b = Buffer.from(right, "hex");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 async function requireIdentityCancellationAuthorityInTx(
   tx: TxLike,
   operationId: string,
@@ -2880,7 +3047,7 @@ async function requireIdentityCancellationAuthorityInTx(
     operation.scope !== "identity" ||
     operation.state === "cancelled" ||
     locked.proofConsumedAt ||
-    locked.statusReceiptDigest !== digest(params.cancellationReceipt) ||
+    !digestEquals(locked.statusReceiptDigest, digest(params.cancellationReceipt)) ||
     locked.proofAuthUserId !== locked.domainAuthUserId ||
     locked.proofExpiresAt.getTime() <= now.getTime() ||
     locked.recoverySessionOperationId !== operation.id ||
@@ -2893,7 +3060,7 @@ async function requireIdentityCancellationAuthorityInTx(
   }
   const proofWindowMs = resolveReauthWindow(params.reauthMaxAgeMs);
   if (
-    locked.factorVerifiedAt.getTime() > now.getTime() ||
+    locked.factorVerifiedAt.getTime() > now.getTime() + CROSS_CLOCK_TOLERANCE_MS ||
     now.getTime() - locked.factorVerifiedAt.getTime() > proofWindowMs
   ) {
     refuse("reauthentication_missing_or_stale");

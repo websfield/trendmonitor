@@ -138,6 +138,15 @@ export {
   type JournalTransportFactory,
 } from "./deletion-journal-compose";
 export {
+  assertDeletionRequestsEnabled,
+  DELETION_REQUEST_SCOPES_ENV,
+  DELETION_SCOPES,
+  parseDeletionScopeList,
+  REQUESTS_DISABLED_CODE,
+  resolveDeletionRequestEnablement,
+  type DeletionRequestEnablement,
+} from "./deletion-request-enablement";
+export {
   assertLifecycleRegistration,
   REGISTRATION_SUBJECTS,
   type LifecycleRegistrationInput,
@@ -1227,3 +1236,16 @@ export {
   type FakeS3Options,
   type FakeS3Tamper,
 } from "./testing-s3";
+
+// Plan C4's external-copy registry: the holders of a subject's data outside
+// this database. `/settings/account` derives its "what survives erasure"
+// sentence from this list, so a new processor cannot be added without the
+// public copy changing in the same change.
+export {
+  EXTERNAL_COPIES,
+  BACKUP_MAX_RETENTION_DAYS,
+  COHORT_RETENTION_YEARS,
+  lastCapableCopyDay,
+  type ExternalCopy,
+  type ExternalCopyClass,
+} from "./external-copies";

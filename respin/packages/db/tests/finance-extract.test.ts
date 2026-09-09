@@ -207,3 +207,120 @@ describe("finance extract — incomplete is a reason, never a zero", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round-3 regression pins. Each of these red-drives a defect that shipped and
+// was invisible to the 16 tests above, which is the point worth keeping: the
+// suite was green while a plan downgrade could wedge the receiver forever.
+// ---------------------------------------------------------------------------
+describe("finance extract — signed amounts and the tax basis", () => {
+  it("BLOCK: a proration CREDIT line is a complete, NEGATIVE fact, not a refusal", () => {
+    // A mid-cycle plan downgrade. Stripe emits the unused-time credit as a
+    // negative `amount_excluding_tax`. The column CHECK used to be `>= 0`, so
+    // this row raised 23514, rolled back the whole redaction batch, and the
+    // next tick re-claimed the identical `ORDER BY ctid LIMIT 500` set and
+    // failed identically — forever, with the backlog alarm reading null.
+    const rows = extractFinanceFacts(
+      input(
+        invoice({}, { id: "il_proration", amount_excluding_tax: -1900 }),
+        { eventType: "invoice.created" },
+      ),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: "complete",
+      incompleteReason: null,
+      amountExcludingTaxCents: -1900,
+      invoiceLineId: "il_proration",
+    });
+  });
+
+  it("T69-R14: charge / payment_intent / refund amounts are tax-INCLUSIVE and never book to the excluding-tax column", () => {
+    // Stripe exposes no tax-excluding sibling on these three objects. Booking
+    // `amount` into `amount_excluding_tax_cents` mixed tax into revenue in the
+    // one module that refuses exactly that substitution for invoice lines and
+    // credit notes. Nothing asserted the column, so the defect was invisible.
+    for (const object of [
+      { object: "charge", id: "ch_1", currency: "usd", amount: 2280 },
+      { object: "payment_intent", id: "pi_9", currency: "usd", amount: 2280 },
+      { object: "refund", id: "re_1", currency: "usd", amount: 2280, charge: "ch_1" },
+    ]) {
+      const row = extractFinanceFacts(input(object))[0]!;
+      expect(row.status).toBe("complete");
+      expect(row.amountIncludingTaxCents).toBe(2280);
+      expect(row.amountExcludingTaxCents).toBeNull();
+    }
+  });
+
+  it("an invoice line and a credit note still book to the EXCLUDING-tax column", () => {
+    expect(extractFinanceFacts(input(invoice()))[0]).toMatchObject({
+      amountExcludingTaxCents: 1900,
+      amountIncludingTaxCents: null,
+    });
+    expect(
+      extractFinanceFacts(
+        input({ object: "credit_note", id: "cn_3", currency: "usd", total_excluding_tax: 700, total: 770, charge: "ch_1" }),
+      )[0],
+    ).toMatchObject({ amountExcludingTaxCents: 700, amountIncludingTaxCents: null });
+  });
+
+  it("no row ever carries BOTH amount columns — the CHECK that stops a projector double-booking", () => {
+    const every = [
+      ...extractFinanceFacts(input(invoice())),
+      ...extractFinanceFacts(input({ object: "charge", id: "ch_2", currency: "usd", amount: 10 })),
+      ...extractFinanceFacts(input({ object: "credit_note", id: "cn_4", currency: "usd", total_excluding_tax: 5, charge: "ch_1" })),
+      ...extractFinanceFacts(input({ object: "dispute", id: "dp_9", currency: "usd", amount: 1, charge: "ch_1", status: "lost", created: 1_760_000_000 })),
+    ];
+    expect(every.length).toBeGreaterThan(0);
+    for (const row of every) {
+      expect(row.amountExcludingTaxCents === null || row.amountIncludingTaxCents === null).toBe(true);
+    }
+  });
+});
+
+describe("finance extract — a withheld row states the currency it actually saw", () => {
+  it("a non-USD refusal stores the OBSERVED currency, not the literal 'USD'", () => {
+    // The row is C5's permanent authority for withholding that period. Storing
+    // 'USD' on it made the row contradict its own `non_usd_currency` reason.
+    const row = extractFinanceFacts(input({ object: "payment_intent", id: "pi_eur", currency: "eur", amount: 1000 }))[0]!;
+    expect(row).toMatchObject({
+      status: "incomplete",
+      incompleteReason: "non_usd_currency",
+      currency: "EUR",
+      amountExcludingTaxCents: null,
+      amountIncludingTaxCents: null,
+    });
+  });
+
+  it("a complete row carries USD, and a currency that was never readable stays null", () => {
+    expect(extractFinanceFacts(input(invoice()))[0]!.currency).toBe("USD");
+    const row = extractFinanceFacts(input({ object: "charge", id: "ch_nocur", amount: 10 }))[0]!;
+    expect(row).toMatchObject({ status: "incomplete", incompleteReason: "missing_currency", currency: null });
+  });
+});
+
+describe("finance extract — the dispute effective timestamp", () => {
+  it("a dispute with no `created` is INCOMPLETE, not a complete row with a null timestamp", () => {
+    // C5 names the dispute's effective timestamp among the facts that must
+    // survive. Every other absent field on this path became `incomplete`; this
+    // one produced `complete`, telling 10b-2 the timestamp was trustworthy.
+    const row = extractFinanceFacts(
+      input({ object: "dispute", id: "dp_nocreated", currency: "usd", amount: 2500, charge: "ch_1", status: "lost" }),
+    )[0]!;
+    expect(row).toMatchObject({
+      status: "incomplete",
+      incompleteReason: "missing_dispute_effective_at",
+      disputedAmountCents: 2500,
+      disputeStatus: "lost",
+    });
+    expect(row.disputeEffectiveAt).toBeNull();
+  });
+
+  it("a dispute WITH `created` is complete and carries the timestamp", () => {
+    const row = extractFinanceFacts(
+      input({ object: "dispute", id: "dp_ok", currency: "usd", amount: 2500, charge: "ch_1", status: "lost", created: 1_760_000_000 }),
+    )[0]!;
+    expect(row.status).toBe("complete");
+    expect(row.disputeEffectiveAt).toEqual(new Date(1_760_000_000 * 1000));
+  });
+});

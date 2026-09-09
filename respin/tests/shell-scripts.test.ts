@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { BACKUP_MAX_RETENTION_DAYS } from "@respin/db";
 
 const scriptsDir = resolve(__dirname, "../scripts");
 
@@ -119,6 +120,19 @@ describe("backup.sh — the R-119 retention refusal (round-1 code CHANGE 7)", ()
       BACKUP_PASSPHRASE_FILE: join(scriptsDir, "..", "package.json"),
       RETENTION_DAYS: retention,
     });
+
+  it("the shell's BACKUP_MAX_RETENTION_DAYS is the SAME number the account page quotes (compliance gate, independent round 2)", () => {
+    // `external-copies.ts` quotes the day-28 window from BACKUP_MAX_RETENTION_DAYS
+    // and this script enforces its own literal; the two never met, so an
+    // R-119 change to one alone left the page wrong. A non-comment assignment
+    // line must carry the TypeScript constant's value.
+    const source = readFileSync(join(scriptsDir, "backup.sh"), "utf8");
+    const assignments = source
+      .split(/\r?\n/)
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .filter((line) => /^BACKUP_MAX_RETENTION_DAYS=/.test(line));
+    expect(assignments).toEqual([`BACKUP_MAX_RETENTION_DAYS=${BACKUP_MAX_RETENTION_DAYS}`]);
+  });
 
   it("REFUSES a retention above 21 days rather than clamping it", async () => {
     const result = await run("22");

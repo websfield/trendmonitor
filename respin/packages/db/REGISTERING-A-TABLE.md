@@ -28,13 +28,15 @@ test is that one line plus its table's specific behaviour.
 | 5 | `SPLIT_TABLE_FIELD_SETS` | only if columns have different lifecycles (a link that pseudonymises vs facts that are retained); each set is explicit columns or `remaining_columns` | *overlapping/missing fields* |
 | 6 | `LIFECYCLE_REGISTRY` | one `row(...)` per (row class × field set) with scope, owner, export, action, **retention rule**, executor, probe | closure + `retention-clocks` bijection |
 | 7 | `RetentionRule` / `RETENTION_CLOCKS` | a new rule only if no existing clock fits; every rule has exactly one clock (compile-closed) | typecheck |
-| 8 | `RETENTION_MEASURES` | one measure per receiver-executed entry: the column the clock measures from, precondition, effect | `assertRetentionClockClosure` |
+| 8 | `RETENTION_MEASURES` | one measure per receiver-executed entry: the column the clock measures from, precondition, effect. Sweep ORDER is not yours to choose: `retentionSweepSpecs()` orders children before parents over site 9's foreign keys | `assertRetentionClockClosure`, `retention-clocks.test.ts` (children-first) |
 | 9 | `FINAL_SCHEMA_FOREIGN_KEYS` | every FK with its lifecycle role; a **retained** table's link is `restrict` + `retention_restrict`, never `cascade` (a cascade to the row being erased contradicts a retention clock — Task 6) | *classified final-schema foreign key mismatch* |
 | 10 | `LIFECYCLE_WRITER_INVENTORY` | owner file + every physical writer file | `tests/table-writers.test.ts`, `validatePhysicalWriterClosure` |
 | 11 | `tests/table-writers.test.ts` `TABLES` + `EXPECTED` | the table and each `file::verb` writer with its reason (an upsert is `insert` **and** `onConflictDoUpdate`) | that test |
 | 12 | `JSON_PATH_INVENTORY` / `JSON_COLUMN_INVENTORY` | any jsonb column, classified | *unclassified migration JSON column* |
 | 13 | executor / probe | usually the existing `expiry_receiver` / `expiry_residue`; a new executor needs an implementation in `LIFECYCLE_EXECUTORS` and a probe in `LIFECYCLE_PROBES` | `assertProbeClosure`, `assertExecutorProbeAgreement` |
 | 14 | populated fixture | a row of every class in `deletion-executor.test.ts`'s populated erasure, so the scope walk proves it erases / survives / pseudonymises as registered | that suite |
+| 15 | `lifecycle-column-census.ts` | **every column**, sorted — the field-set partition is complete by construction, so this census is what makes an `ADD COLUMN` red (`validateLifecycleClosure`: *column not in census*); a new column on an EXISTING table lands here too | `lifecycle-registry.test.ts`, `lifecycle-registration.test.ts` |
+| 16 | `retention-sweep-fixtures.test.ts` `FIXTURES` | one entry per receiver-executed spec, naming the real producer (or an `unproducible` reason that is asserted) — the one-tick sweep over the whole family is what proves a RESTRICT child sweeps before its parent | that suite (bijection with `retentionSweepSpecs()`) |
 
 If the table is reached by `app/**`, the same change also updates the
 `@respin/db` allowlist in `eslint.config.mjs` (for a new facade name), and any

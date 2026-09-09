@@ -1,0 +1,30 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListToFindExpiredVersions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "prod/deletion-journal/*"
+        }
+      }
+    },
+    {
+      "Sid": "DeleteExactExpiredVersionOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:DeleteObjectVersion",
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:GetObjectRetention"
+      ],
+      "Resource": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/*"
+    }
+  ]
+}

@@ -8,6 +8,7 @@
 import {
   cancelIdentityDeletion,
   cancelScopedDeletion,
+  pendingDeletionsForScope,
   readIdentityCancellationStatus,
   requestIdentityDeletion,
   requestProfileDeletion,
@@ -15,11 +16,15 @@ import {
   type IdentityDeletionRequestResult,
   type ScopedRequestParams,
 } from "./deletion-lifecycle";
-import { deletionOperations, type DeletionOperation } from "./lifecycle-schema";
+import type { DeletionOperation, DeletionScope } from "./lifecycle-schema";
 import { resolveAppDeletionJournal } from "./deletion-journal-compose";
+import {
+  assertDeletionRequestsEnabled,
+  DELETION_SCOPES,
+  resolveDeletionRequestEnablement,
+} from "./deletion-request-enablement";
 import { createAuthMailRecoveryDelivery, type AuthMailPort } from "./auth-mail";
 import { resolveActivationExclusions } from "./activation";
-import { and, desc, eq, inArray, or } from "drizzle-orm";
 import {
   beginIdentityCancellationRecoverySession,
   createIdentityCancellationProofWithPassword,
@@ -45,7 +50,6 @@ import {
 import { ensureUserWorkspace, type BootstrapParams } from "./bootstrap";
 import {
   withWorkspace,
-  assertScoped,
   monthlySpend,
   burnByMode,
   brainAssetSummary,
@@ -680,25 +684,28 @@ export const respinDb = {
     const { configured } = await resolveAppDeletionJournal(process.env);
     return { configured };
   },
-  pendingDeletions: async (scope: WorkspaceScope): Promise<readonly DeletionOperation[]> => {
-    // The cage (AC-13): a forged scope must be refused before its ids are read.
-    assertScoped(scope);
-    return getServerDb()
-      .select()
-      .from(deletionOperations)
-      .where(
-        and(
-          or(eq(deletionOperations.workspaceId, scope.workspaceId), eq(deletionOperations.userId, scope.userId)),
-          inArray(deletionOperations.state, ["requested", "journal_pending", "tombstoned", "external_actions_pending", "grace", "erasing", "verifying", "blocked"]),
-        ),
-      )
-      .orderBy(desc(deletionOperations.requestedAt));
+  /**
+   * Which scopes this deployment lets a person REQUEST (`RESPIN_DELETION_REQUEST_SCOPES`).
+   * Read by the page so a closed scope renders as closed rather than as a
+   * button that refuses. Cancellation is never gated.
+   */
+  deletionRequestStatus: (): Readonly<Record<DeletionScope, boolean>> => {
+    const enablement = resolveDeletionRequestEnablement(process.env);
+    return Object.fromEntries(
+      DELETION_SCOPES.map((scope) => [scope, enablement.requestsEnabled(scope)])
+    ) as Record<DeletionScope, boolean>;
   },
+  // The read asserts the cage itself (deletion-lifecycle.ts); the facade is a
+  // thin forward of the same `scope`.
+  pendingDeletions: (scope: WorkspaceScope): Promise<readonly DeletionOperation[]> =>
+    pendingDeletionsForScope(getServerDb(), scope),
   requestWorkspaceDeletion: async (scope: WorkspaceScope, params: ScopedRequestParams): Promise<DeletionOperation> => {
+    assertDeletionRequestsEnabled(resolveDeletionRequestEnablement(process.env), "workspace");
     const { journal } = await resolveAppDeletionJournal(process.env);
     return requestWorkspaceDeletion(getServerDb(), scope, params, journal);
   },
   requestProfileDeletion: async (scope: WorkspaceScope, profileId: string, params: ScopedRequestParams): Promise<DeletionOperation> => {
+    assertDeletionRequestsEnabled(resolveDeletionRequestEnablement(process.env), "profile");
     const { journal } = await resolveAppDeletionJournal(process.env);
     return requestProfileDeletion(getServerDb(), scope, profileId, params, journal);
   },
@@ -713,6 +720,7 @@ export const respinDb = {
     params: Readonly<{ sessionId: string; idempotencyKey: string; reauthMaxAgeMs?: number }>,
     mail: Readonly<{ port: AuthMailPort; actionUrl: (operationId: string, secret: string) => string }>,
   ): Promise<IdentityDeletionRequestResult> => {
+    assertDeletionRequestsEnabled(resolveDeletionRequestEnablement(process.env), "identity");
     const { journal } = await resolveAppDeletionJournal(process.env);
     return requestIdentityDeletion(getServerDb(), params, {
       journal,

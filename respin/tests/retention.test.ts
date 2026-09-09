@@ -8,6 +8,18 @@
 //   "no new product surface may read `stripe_events.payload` until the
 //    redaction receiver exists."
 //
+// THE RECEIVER NOW EXISTS (Phase 10b-1 Task 6), so the constraint is no longer
+// "until" anything: the column still holds unredacted webhook JSON for up to 90
+// days, so a new reader is still a new exposure and still needs a stated reason
+// on the allowlist below.
+//
+// AND THE SCAN HAD A HOLE THIS SLICE DROVE THROUGH. Every pattern below keyed
+// on a drizzle identifier (`stripeEvents.payload`, `.from(stripeEvents)`,
+// `db.query.stripeEvents`). Task 6 introduced a RAW-SQL reader --
+// `SELECT id, type, payload ... FROM "stripe_events"` -- which matched none of
+// them, so the guard permitted an entire class it was written to police, and
+// reported green while doing it.
+//
 // That column holds complete, unredacted Stripe webhook JSON — customer email,
 // name and billing address — indefinitely. It is not exploitable while nothing
 // reads it, and it becomes exploitable the moment something does. A constraint
@@ -40,6 +52,14 @@ const ALLOWED = new Map<string, string>([
   [
     "packages/db/src/lifecycle-subjects.ts",
     "the deletion executor's subject capture selects ONLY the event id for a workspace, so the receipt ids survive the FK being nulled; it names the table and never the payload column (Phase 10b-1 Task 4).",
+  ],
+  [
+    "packages/db/src/retention-receiver.ts",
+    "THE REDACTION RECEIVER ITSELF (Phase 10b-1 Task 6). It reads the payload for exactly one purpose - lifting the finance facts out in the same transaction, immediately BEFORE blanking the column - and for the subject-erasure purge that does the same at erasure time. It is the one reader this constraint exists to allow, and it was invisible to this scan until the raw-SQL shapes above were added.",
+  ],
+  [
+    "packages/db/src/finance-extract.ts",
+    "the pure extractor the receiver hands a parsed payload to. It never queries the table; it appears here because it names the payload's own fields.",
   ],
 ]);
 
@@ -138,6 +158,14 @@ describe("audit #21: nothing new reads stripe_events.payload before the M6 redac
         // the relational query builder, which also returns whole rows
         /db\s*\.\s*query\s*\.\s*stripeEvents/,
         /\bquery\.stripeEvents\b/,
+        // RAW SQL against the table. The drizzle-identifier patterns above are
+        // blind to it, which is how the Task 6 receiver's
+        // `SELECT ... payload ... FROM "stripe_events"` slipped past a green
+        // guard. Matching the table alone would flag every id-only select, so
+        // these require the payload column nearby in the same statement.
+        /FROM\s+"?stripe_events"?[\s\S]{0,400}?\bpayload\b/i,
+        /\bpayload\b[\s\S]{0,400}?FROM\s+"?stripe_events"?/i,
+        /UPDATE\s+"?stripe_events"?[\s\S]{0,200}?\bpayload\b/i,
       ];
       if (READS.some((re) => re.test(src))) {
         offenders.push(rel);

@@ -1982,3 +1982,31 @@ describe("slice 9a: every name on the results surface crossed after a measured d
     ).toBeGreaterThan(0);
   });
 });
+
+describe("deletion request flag (Phase 10b-1 rollout)", () => {
+  it("every request facade asserts RESPIN_DELETION_REQUEST_SCOPES for ITS scope, cancellation asserts nothing, and the flag is documented", async () => {
+    const source = await readFile(resolve(respinRoot, "packages/db/src/app-server.ts"), "utf8");
+    for (const scope of ["workspace", "profile", "identity"]) {
+      expect(source, scope).toContain(`assertDeletionRequestsEnabled(resolveDeletionRequestEnablement(process.env), "${scope}")`);
+    }
+    // Exactly three call sites: one per request facade, none on cancellation.
+    expect(source.match(/assertDeletionRequestsEnabled\(/g)).toHaveLength(3);
+    // Each cancellation facade body, from its key to the next facade key.
+    const body = (from: string, to: string) => {
+      // Both anchors must EXIST: a missing one made `slice` return a wrong,
+      // non-empty window that satisfied the assertion (lean gate R-3).
+      expect(source.indexOf(from), from).toBeGreaterThanOrEqual(0);
+      expect(source.indexOf(to), to).toBeGreaterThanOrEqual(0);
+      return source.slice(source.indexOf(from), source.indexOf(to));
+    };
+    for (const facade of [
+      body("cancelScopedDeletion: async", "requestIdentityDeletion: async"),
+      body("cancelIdentityDeletion: async", "beginIdentityCancellationRecoverySession:"),
+    ]) {
+      expect(facade.length).toBeGreaterThan(0);
+      expect(facade).not.toContain("assertDeletionRequestsEnabled");
+    }
+    const envExample = await readFile(resolve(respinRoot, "env.example"), "utf8");
+    expect(envExample).toContain("RESPIN_DELETION_REQUEST_SCOPES=");
+  });
+});

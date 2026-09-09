@@ -1,0 +1,50 @@
+{
+  "writer": {
+    "Arn": "arn:aws:iam::770371751912:policy/respin-journal-writer-prod",
+    "AttachmentCount": 1,
+    "PolicyUsers": [
+      {
+        "UserName": "respin-journal-writer-prod",
+        "UserId": "AIDA3GXN4B7UFMUMZT7RD"
+      }
+    ],
+    "PolicyRoles": [],
+    "PolicyGroups": []
+  },
+  "verifier": {
+    "Arn": "arn:aws:iam::770371751912:policy/respin-journal-verifier-prod",
+    "AttachmentCount": 1,
+    "PolicyUsers": [
+      {
+        "UserName": "respin-journal-verifier-prod",
+        "UserId": "AIDA3GXN4B7UMULVHNYB3"
+      }
+    ],
+    "PolicyRoles": [],
+    "PolicyGroups": []
+  },
+  "purger": {
+    "Arn": "arn:aws:iam::770371751912:policy/respin-journal-purger-prod",
+    "AttachmentCount": 1,
+    "PolicyUsers": [
+      {
+        "UserName": "respin-journal-purger-prod",
+        "UserId": "AIDA3GXN4B7UMS24EHMPR"
+      }
+    ],
+    "PolicyRoles": [],
+    "PolicyGroups": []
+  },
+  "break-glass": {
+    "Arn": "arn:aws:iam::770371751912:policy/respin-journal-break-glass-prod",
+    "AttachmentCount": 1,
+    "PolicyUsers": [],
+    "PolicyRoles": [
+      {
+        "RoleName": "respin-journal-break-glass-prod",
+        "RoleId": "AROA3GXN4B7UFFOKXLRE2"
+      }
+    ],
+    "PolicyGroups": []
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "Bucket": "respin-deletion-journal-prod-770371751912",
+  "ARN": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+  "Region": "ap-southeast-2",
+  "Versioning": "Enabled",
+  "ObjectLock": {
+    "ObjectLockEnabled": "Enabled",
+    "Rule": {
+      "DefaultRetention": {
+        "Mode": "COMPLIANCE",
+        "Days": 28
+      }
+    }
+  },
+  "Encryption": {
+    "Rules": [
+      {
+        "ApplyServerSideEncryptionByDefault": {
+          "SSEAlgorithm": "AES256"
+        },
+        "BucketKeyEnabled": false,
+        "BlockedEncryptionTypes": {
+          "EncryptionType": [
+            "SSE-C"
+          ]
+        }
+      }
+    ]
+  },
+  "PublicAccessBlock": {
+    "BlockPublicAcls": true,
+    "IgnorePublicAcls": true,
+    "BlockPublicPolicy": true,
+    "RestrictPublicBuckets": true
+  },
+  "Ownership": {
+    "Rules": [
+      {
+        "ObjectOwnership": "BucketOwnerEnforced"
+      }
+    ]
+  }
+}

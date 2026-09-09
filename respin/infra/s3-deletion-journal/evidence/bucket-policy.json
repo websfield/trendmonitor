@@ -1,0 +1,101 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyInsecureTransport",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+        "arn:aws:s3:::respin-deletion-journal-prod-770371751912/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyNonConditionalCreate",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/*",
+      "Condition": {
+        "Null": {
+          "s3:if-none-match": "true"
+        },
+        "Bool": {
+          "s3:ObjectCreationOperation": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyUnencryptedUpload",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:x-amz-server-side-encryption": "AES256"
+        }
+      }
+    },
+    {
+      "Sid": "DenyWeakOrAbsentObjectLock",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectRetention"
+      ],
+      "Resource": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:object-lock-mode": "COMPLIANCE"
+        }
+      }
+    },
+    {
+      "Sid": "DenyRetentionShorterThanDay28",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectRetention"
+      ],
+      "Resource": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/*",
+      "Condition": {
+        "NumericLessThan": {
+          "s3:object-lock-remaining-retention-days": "28"
+        }
+      }
+    },
+    {
+      "Sid": "DenyRetentionAndVersioningTampering",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutBucketVersioning",
+        "s3:PutObjectLegalHold",
+        "s3:BypassGovernanceRetention",
+        "s3:PutBucketPolicy",
+        "s3:DeleteBucketPolicy",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketObjectLockConfiguration",
+        "s3:PutEncryptionConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+        "arn:aws:s3:::respin-deletion-journal-prod-770371751912/*"
+      ],
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalArn": "arn:aws:iam::770371751912:role/respin-journal-break-glass-prod"
+        }
+      }
+    }
+  ]
+}

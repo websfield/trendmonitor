@@ -693,7 +693,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/db/src/auth-mail.ts::insert":
       "Quota admission inserts one outbox row per admitted transactional mail under the global advisory lock, before any provider call.",
     "packages/db/src/auth-mail.ts::update":
-      "The dispatch mark and the single outcome writer are the only application mutations; terminal outcomes accept only an identical replay. The identity-erasure recipient scrub is NOT here: it is the registry-driven SQL port (lifecycle-sql-port.ts, DYNAMIC_LIFECYCLE_WRITER), which this scanner cannot see and which registry closure plus the independent probe cover instead (round-1 tenancy CHANGE).",
+      "The dispatch mark and the single outcome writer are the only application mutations; terminal outcomes accept only an identical replay. The identity-erasure recipient scrub is NOT here: it is the registry-driven SQL port (lifecycle-sql-port.ts, DYNAMIC_LIFECYCLE_WRITERS), which this scanner cannot see and which registry closure plus the independent probe cover instead (round-1 tenancy CHANGE).",
     "packages/db/src/auth-mail.ts::delete":
       "The 90-day retention receiver deletes content-free delivery outcomes by admission time.",
   },
@@ -740,12 +740,16 @@ const EXPECTED: Record<string, Record<string, string>> = {
   stripe_events: {
     "packages/credits/src/stripe/webhooks.ts::insert":
       "The verified Stripe webhook transaction records the provider event exactly once.",
+    "packages/db/src/retention-receiver.ts::update":
+      "The subject-erasure payload purge (Phase 10b-1 round 3). A COMPLETED identity or workspace erasure used to leave the deleted person's email, name and billing address in `payload` for up to 90 days, because `erasureHold` was satisfied by the RECEIVER existing and that receiver is a clock measured from `received_at`, not an erasure step. The purge lifts the finance facts out first, in the same transaction, then blanks the payload for every workspace the subject belonged to. It names the table in source (unlike the dynamic sweep in the same file), so it is a scannable physical writer and is enumerated here rather than left to registry closure.",
   },
   stripe_finance_extracts: {
     "packages/db/src/finance-extract.ts::insert":
       "Phase 10b-1 Task 6: the pre-redaction finance extract. The ONLY writer, and it writes in the same transaction as — and strictly before — the 90-day payload redaction, so no money fact is lost to a redaction that ran first. Idempotent on (source event, object id), so a resumed sweep re-extracting an event books nothing twice.",
   },
   subscriptions: {
+    "packages/credits/src/stripe/billing-contact.ts::update":
+      "Plan C3 (Phase 10b-1): the billing-contact handover moves `billing_contact_user_id` to the accepting owner, only after the provider copy has been rewritten and verified.",
     "packages/credits/src/stripe/deletion-commands.ts::update":
       "The deletion executor's auto-top-up fence disables the mirror flag for a tombstoned workspace; this package still owns every subscriptions write (Phase 10b-1 Task 4).",
     "packages/credits/src/pause.ts::update":

@@ -212,7 +212,9 @@ public).
    `RESEND_API_KEY`/`RESEND_FROM` with real delivery evidence (T-16) still
    deferred. The worker also runs the deletion-lifecycle tick, whose
    irreversible erasure needs `RESPIN_DELETION_ERASURE_SCOPES` and the Task 5
-   journal store before anything can advance. Installation, health, recovery and rollback are documented
+   journal store before anything can advance; the app accepts deletion
+   REQUESTS only for the scopes named in `RESPIN_DELETION_REQUEST_SCOPES`
+   (unset = none, the launch state), and cancellation is never gated. Installation, health, recovery and rollback are documented
    in [`../docs/runbooks/respin-worker-operations.md`](../docs/runbooks/respin-worker-operations.md).
    The deferred real-vendor, target-host, YouTube and Resend acceptance walks
    are specified in [`../docs/runbooks/respin-vendor-acceptance-walks.md`](../docs/runbooks/respin-vendor-acceptance-walks.md).

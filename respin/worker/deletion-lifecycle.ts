@@ -17,6 +17,7 @@ import {
   advanceDeletionOperations,
   composeDeletionJournal,
   parseDeletionJournalEnv,
+  parseDeletionScopeList,
   resolveActivationExclusions,
   ERASURE_DISABLED,
   erasureHold,
@@ -35,7 +36,6 @@ import {
 import { createS3JournalClient, s3JournalWriter } from "@respin/db/deletion-journal-s3";
 
 export const DELETION_ERASURE_SCOPES_ENV = "RESPIN_DELETION_ERASURE_SCOPES";
-const SCOPES: readonly DeletionScope[] = ["identity", "profile", "workspace"];
 
 /**
  * Comma-separated closed scope list. An unknown token refuses startup rather
@@ -45,20 +45,21 @@ export function resolveErasureEnablement(
   env: Readonly<Record<string, string | undefined>>,
   hold: (scope: DeletionScope) => string | null = erasureHold
 ): ErasureEnablementPort {
-  const raw = env[DELETION_ERASURE_SCOPES_ENV]?.trim();
-  if (!raw) return ERASURE_DISABLED;
-  const enabled = new Set<DeletionScope>();
-  for (const token of raw.split(",").map((part) => part.trim()).filter(Boolean)) {
-    if (!(SCOPES as readonly string[]).includes(token)) {
-      throw new Error(`${DELETION_ERASURE_SCOPES_ENV} names an unknown scope; allowed: ${SCOPES.join(",")}`);
-    }
-    enabled.add(token as DeletionScope);
-  }
+  // The same closed parser the app's request flag uses (@respin/db), so the
+  // two flags cannot drift in what they accept.
+  const enabled = parseDeletionScopeList(env[DELETION_ERASURE_SCOPES_ENV], DELETION_ERASURE_SCOPES_ENV);
+  if (enabled.size === 0) return ERASURE_DISABLED;
   for (const scope of enabled) {
     // The executor's own hold derivation (R-122 financial chain, the unwired
     // payload receiver). Naming a held scope is a misconfiguration — refused
-    // loudly at startup rather than held silently at grace. Until Task 6
-    // every scope is held, and this refuses every value.
+    // loudly at startup rather than held silently at grace.
+    //
+    // It refuses NOTHING today: Task 6 emptied `FINANCIAL_CHAIN_TABLES` and
+    // wired the payload receiver, so `erasureHold` returns null for every
+    // scope. The check stays because it is the seam a future retained financial
+    // table re-arms, and the executor's tests plant a hold through its
+    // parameters to prove it still refuses. The previous comment claimed
+    // "until Task 6 every scope is held", which stopped being true in Task 6.
     const reason = hold(scope);
     if (reason !== null) {
       throw new Error(

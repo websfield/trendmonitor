@@ -126,6 +126,7 @@ function appRestrictedImports({
                   // so the app's request path composes the SAME journal.
                   "composeDeletionJournal",
                   "parseDeletionJournalEnv",
+                  "parseDeletionScopeList",
                   "DELETION_JOURNAL_ENV",
                   "JOURNAL_UNAVAILABLE_CODE",
                   "unavailableDeletionJournal",
@@ -510,6 +511,20 @@ function appRestrictedImports({
             "RESULT_AUDIENCE_CLASSES",
             "RESULT_CONFOUNDER_CODES",
             "RESULT_LEVERS",
+            // Plan C4's external-copy registry and its two derived constants.
+            // Read-only data and a pure function — no query, no write
+            // capability — and the account page's "what survives erasure"
+            // sentence is DERIVED from them, so a new processor cannot be added
+            // without the public copy changing in the same commit.
+            "EXTERNAL_COPIES",
+            "BACKUP_MAX_RETENTION_DAYS",
+            "COHORT_RETENTION_YEARS",
+            "lastCapableCopyDay",
+            // Phase 10b-1 rollout: the request-flag refusal prefix, so the account
+            // page can map `deletion_refused:requests_disabled:<scope>` to copy.
+            "REQUESTS_DISABLED_CODE",
+            "ExternalCopy",
+            "ExternalCopyClass",
           ],
           message:
             "app/** may import only the sanctioned @respin/db surface (respinDb, WorkspaceAccessError, the typed refusals, types) — every query goes through withWorkspace, and the write capabilities are package-only (tenancy T1, M2a A-2b)",

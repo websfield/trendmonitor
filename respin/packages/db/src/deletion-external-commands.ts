@@ -10,7 +10,7 @@
 //
 // This module is the sole APPLICATION writer of `deletion_external_commands`
 // (`LIFECYCLE_WRITER_INVENTORY`); at erasure the registry-driven SQL port
-// (`lifecycle-sql-port.ts`, `DYNAMIC_LIFECYCLE_WRITER`) rewrites the row's
+// (`lifecycle-sql-port.ts`, `DYNAMIC_LIFECYCLE_WRITERS`) rewrites the row's
 // link columns, covered by registry closure and the independent probe rather
 // than by the writer scanner. The lifecycle executor (Task 4.3) holds the
 // operation lease while it calls these functions; nothing here takes the
@@ -102,7 +102,7 @@ export function autoTopupChargeAuthorityArmed(row: AutoTopupChargeAuthority): bo
  * customer clear as a superset backstop (round-1 lean NOTE C11 narrowed the
  * list here rather than republishing 0050).
  */
-const EXTERNAL_COMMAND_SCOPES_BY_KIND = {
+export const EXTERNAL_COMMAND_SCOPES_BY_KIND = {
   stripe_subscription_cancel_at_period_end: ["workspace"],
   auto_topup_disable: ["workspace"],
   stripe_subscription_reopen: ["workspace"],

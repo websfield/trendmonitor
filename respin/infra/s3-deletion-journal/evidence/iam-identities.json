@@ -1,0 +1,90 @@
+{
+  "Account": "770371751912",
+  "CreatedAt": "2026-09-08T12:32:26.670247+00:00",
+  "Users": {
+    "writer": {
+      "UserName": "respin-journal-writer-prod",
+      "Arn": "arn:aws:iam::770371751912:user/respin-journal-writer-prod",
+      "UserId": "AIDA3GXN4B7UFMUMZT7RD",
+      "PolicyArn": "arn:aws:iam::770371751912:policy/respin-journal-writer-prod",
+      "AttachedPolicies": [
+        {
+          "PolicyName": "respin-journal-writer-prod",
+          "PolicyArn": "arn:aws:iam::770371751912:policy/respin-journal-writer-prod"
+        }
+      ],
+      "Groups": [],
+      "InlinePolicies": [],
+      "AccessKeyCount": 0,
+      "ConsoleLoginEnabled": false
+    },
+    "verifier": {
+      "UserName": "respin-journal-verifier-prod",
+      "Arn": "arn:aws:iam::770371751912:user/respin-journal-verifier-prod",
+      "UserId": "AIDA3GXN4B7UMULVHNYB3",
+      "PolicyArn": "arn:aws:iam::770371751912:policy/respin-journal-verifier-prod",
+      "AttachedPolicies": [
+        {
+          "PolicyName": "respin-journal-verifier-prod",
+          "PolicyArn": "arn:aws:iam::770371751912:policy/respin-journal-verifier-prod"
+        }
+      ],
+      "Groups": [],
+      "InlinePolicies": [],
+      "AccessKeyCount": 0,
+      "ConsoleLoginEnabled": false
+    },
+    "purger": {
+      "UserName": "respin-journal-purger-prod",
+      "Arn": "arn:aws:iam::770371751912:user/respin-journal-purger-prod",
+      "UserId": "AIDA3GXN4B7UMS24EHMPR",
+      "PolicyArn": "arn:aws:iam::770371751912:policy/respin-journal-purger-prod",
+      "AttachedPolicies": [
+        {
+          "PolicyName": "respin-journal-purger-prod",
+          "PolicyArn": "arn:aws:iam::770371751912:policy/respin-journal-purger-prod"
+        }
+      ],
+      "Groups": [],
+      "InlinePolicies": [],
+      "AccessKeyCount": 0,
+      "ConsoleLoginEnabled": false
+    }
+  },
+  "BreakGlassRole": {
+    "RoleName": "respin-journal-break-glass-prod",
+    "Arn": "arn:aws:iam::770371751912:role/respin-journal-break-glass-prod",
+    "RoleId": "AROA3GXN4B7UFFOKXLRE2",
+    "PolicyArn": "arn:aws:iam::770371751912:policy/respin-journal-break-glass-prod",
+    "TrustPolicy": {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Sid": "RequireSameAccountIAMOperatorWithMFA",
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": "arn:aws:iam::770371751912:root"
+          },
+          "Action": "sts:AssumeRole",
+          "Condition": {
+            "Bool": {
+              "aws:MultiFactorAuthPresent": "true"
+            },
+            "ArnLike": {
+              "aws:PrincipalArn": "arn:aws:iam::770371751912:user/*"
+            }
+          }
+        }
+      ]
+    },
+    "AttachedPolicies": [
+      {
+        "PolicyName": "respin-journal-break-glass-prod",
+        "PolicyArn": "arn:aws:iam::770371751912:policy/respin-journal-break-glass-prod"
+      }
+    ],
+    "MaxSessionDuration": 3600
+  },
+  "CredentialsCreated": false,
+  "IdentitySeparationVerified": true
+}

@@ -8,6 +8,9 @@
 //   * "Redact Stripe payload before finance extraction" must be impossible.
 //   * "Ignore null/deleted-workspace retention rows" must be impossible.
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 
@@ -22,6 +25,7 @@ import {
   runRetentionTick,
   RETENTION_BATCH_SIZE,
   pseudonymousWorkspaceKey,
+  assertFinanceExtractSpecClosure,
 } from "../src/retention-receiver";
 import { retentionSweepSpecs } from "../src/retention-clocks";
 
@@ -555,5 +559,226 @@ describe("pseudonymousWorkspaceKey", () => {
     const id = "019b0d7a-86df-7000-8000-000000000001";
     expect(pseudonymousWorkspaceKey(id)).not.toContain(id);
     expect(pseudonymousWorkspaceKey(id)).not.toContain(id.replace(/-/g, ""));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round-3 regression pins: the wedge, and the alarm that was muted while it ran.
+// ---------------------------------------------------------------------------
+describe("retention receiver — a row that cannot be written must not stop the table", () => {
+  let db: TestDb;
+  beforeEach(async () => {
+    db = await createTestDb();
+  });
+
+  const overdue = ago(91 * DAY);
+
+  it("BLOCK: a proration CREDIT event redacts and books a NEGATIVE fact, and does not wedge the sweep", async () => {
+    // The shipped defect: this event's extract row raised 23514 against a
+    // `>= 0` CHECK, rolling back the batch. The healthy event in the same
+    // batch never redacted either, and the next tick re-claimed the identical
+    // set. Permanently. This asserts the whole batch now completes.
+    await db.insert(stripeEvents).values([
+      { id: "evt_ok", type: "invoice.paid", payload: paidInvoice(1900), receiptAttribution: "unattributed", receivedAt: overdue, outcome: "processed" },
+      { id: "evt_proration", type: "invoice.created", payload: paidInvoice(-1900), receiptAttribution: "unattributed", receivedAt: overdue, outcome: "processed" },
+    ]);
+
+    const summary = await runRetentionTick(db, now);
+
+    const events = await db.select().from(stripeEvents);
+    expect(events.every((row) => JSON.stringify(row.payload) === "{}")).toBe(true);
+    const extracts = (await financeRows(db)).rows;
+    expect(extracts.map((row) => row.amount_excluding_tax_cents).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([-1900, 1900]);
+    expect(extracts.every((row) => row.status === "complete")).toBe(true);
+    expect(summary.poisoned).toBe(0);
+    expect(summary.failures).toEqual([]);
+  });
+
+  it("isolates a genuinely unwritable row: the other rows still redact, and the bad one is COUNTED", async () => {
+    // A constraint that refuses exactly one row's redaction. The mechanism
+    // under test is the receiver's, not this constraint's: before the fix, ANY
+    // such row rolled its whole batch back and the table never advanced again.
+    await db.insert(stripeEvents).values([
+      { id: "evt_a", type: "invoice.paid", payload: paidInvoice(100), receiptAttribution: "unattributed", receivedAt: overdue, outcome: "processed" },
+      { id: "evt_poison", type: "invoice.paid", payload: paidInvoice(200), receiptAttribution: "unattributed", receivedAt: overdue, outcome: "processed" },
+      { id: "evt_b", type: "invoice.paid", payload: paidInvoice(300), receiptAttribution: "unattributed", receivedAt: overdue, outcome: "processed" },
+    ]);
+    await db.execute(sql`
+      ALTER TABLE "stripe_events"
+      ADD CONSTRAINT "tmp_poison_evt" CHECK (NOT (id = 'evt_poison' AND payload::text = '{}'))
+    `);
+
+    const summary = await runRetentionTick(db, now);
+
+    const byId = new Map((await db.select().from(stripeEvents)).map((row) => [row.id, JSON.stringify(row.payload)]));
+    // Forward progress for every row but the bad one.
+    expect(byId.get("evt_a")).toBe("{}");
+    expect(byId.get("evt_b")).toBe("{}");
+    expect(byId.get("evt_poison")).not.toBe("{}");
+    expect(summary.poisoned).toBe(1);
+    // And the failure is NAMED rather than swallowed.
+    expect(summary.failures.length).toBeGreaterThan(0);
+  });
+
+  it("a wedged sweep still reports oldestOverdueMs — the alarm must not go quiet", async () => {
+    // The muted-alarm defect: `oldestOverdueMs` was computed ONLY on the
+    // success path, so a table that failed reported null and
+    // `retention_overdue_backlog` — the one signal measuring the compliance
+    // deadline — read clean at exactly the moment it was needed.
+    await db.insert(stripeEvents).values({
+      id: "evt_poison", type: "invoice.paid", payload: paidInvoice(100),
+      receiptAttribution: "unattributed", receivedAt: overdue, outcome: "processed",
+    });
+    await db.execute(sql`
+      ALTER TABLE "stripe_events"
+      ADD CONSTRAINT "tmp_poison_all" CHECK (payload::text <> '{}')
+    `);
+
+    const summary = await runRetentionTick(db, now);
+
+    expect(summary.poisoned).toBeGreaterThan(0);
+    const payloadTable = summary.tables.find((table) => table.key.endsWith("::provider_payload") && table.poisoned > 0);
+    expect(payloadTable).toBeDefined();
+    expect(payloadTable!.oldestOverdueMs).not.toBeNull();
+    expect(payloadTable!.oldestOverdueMs!).toBeGreaterThan(0);
+    expect(summary.oldestOverdueMs).not.toBeNull();
+  });
+});
+
+describe("retention receiver — the finance-extract population is a LIST", () => {
+  it("refuses a provider_payload spec that is not in FINANCE_EXTRACT_SPEC_KEYS", () => {
+    // Was `spec.key.endsWith("::provider_payload")`, while the extractor
+    // hard-codes `FROM "stripe_events"` — so the same field set on another
+    // table would have run the extract against the wrong table.
+    const specs = retentionSweepSpecs();
+    expect(() => assertFinanceExtractSpecClosure(specs)).not.toThrow();
+
+    const planted = [
+      ...specs,
+      { ...specs.find((spec) => spec.measure.fieldSet === "provider_payload")!, key: "some_other_table::a_row_class::provider_payload" },
+    ] as typeof specs;
+    expect(() => assertFinanceExtractSpecClosure(planted)).toThrow(/not in FINANCE_EXTRACT_SPEC_KEYS/);
+  });
+
+  it("refuses a listed key that no longer exists as a spec", () => {
+    const specs = retentionSweepSpecs().filter((spec) => spec.key !== "stripe_events::stripe_unattributed::provider_payload");
+    expect(() => assertFinanceExtractSpecClosure(specs)).toThrow(/no longer exist/);
+  });
+});
+
+describe("the unattributed class carries no linkable id — by CHECK, not by clock", () => {
+  it("refuses an unattributed event with a customer id, so its `linkable_source_ids` set can never hold a value", async () => {
+    const db = await createTestDb();
+    let refusal: { code?: string; constraint?: string } | null = null;
+    try {
+      await db.insert(stripeEvents).values({
+        id: "evt_unattributed_with_customer",
+        type: "invoice.paid",
+        payload: paidInvoice(100),
+        receiptAttribution: "unattributed",
+        stripeCustomerId: "cus_should_not_be_here",
+        outcome: "refused_unknown_customer",
+        receivedAt: new Date(),
+      });
+    } catch (error) {
+      // The driver wraps the refusal; the SQLSTATE and constraint ride on `.cause`.
+      const cause = (error as { cause?: { code?: string; constraint?: string } }).cause ?? (error as { code?: string; constraint?: string });
+      refusal = { code: cause.code, constraint: cause.constraint };
+    }
+    expect(refusal).toEqual({ code: "23514", constraint: "stripe_events_receipt_attribution_shape" });
+  });
+});
+
+describe("retention receiver — the DELETE fallback (consolidating review of the 10b-1 fix rounds)", () => {
+  it("a row whose DELETE is refused is counted, the others are deleted in the same tick, and the pass cannot spin on it", async () => {
+    // The redaction fallback had three witnesses; the destructive one had
+    // none, and the first version deleted by a ctid claimed in an earlier,
+    // committed transaction. A BEFORE DELETE trigger refuses exactly one row,
+    // the way a RESTRICT child would.
+    const db = await createTestDb();
+    await seedAuthUser(db, "u-poison", "poison@example.test");
+    const overdue = ago(400 * DAY);
+    await db.insert(session).values([
+      { id: "s-a", token: "t-a", userId: "u-poison", expiresAt: overdue, updatedAt: overdue },
+      { id: "s-poison", token: "t-p", userId: "u-poison", expiresAt: overdue, updatedAt: overdue },
+      { id: "s-b", token: "t-b", userId: "u-poison", expiresAt: overdue, updatedAt: overdue },
+    ]);
+    await db.execute(sql`
+      CREATE FUNCTION refuse_poison_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF OLD.id = 's-poison' THEN RAISE EXCEPTION 'poisoned row' USING ERRCODE = '23503'; END IF;
+        RETURN OLD;
+      END $$
+    `);
+    await db.execute(sql`CREATE TRIGGER tmp_poison_delete BEFORE DELETE ON "session" FOR EACH ROW EXECUTE FUNCTION refuse_poison_delete()`);
+
+    const summary = await runRetentionTick(db, now);
+
+    const left = (await db.select({ id: session.id }).from(session)).map((row) => row.id);
+    expect(left).toEqual(["s-poison"]);
+    const outcome = summary.tables.find((table) => table.key === "session::identity_row::complete_row")!;
+    expect(outcome.deleted).toBe(2);
+    expect(outcome.poisoned).toBe(1);
+    expect(outcome.failureCode).toBe("sqlstate_23503");
+    expect(summary.failures).toContain("session::identity_row::complete_row:sqlstate_23503");
+    // A second tick finds the same one row unwritable and nothing else — no
+    // spin, no false "fully poisoned", no lost count.
+    const again = await runRetentionTick(db, now);
+    const outcome2 = again.tables.find((table) => table.key === "session::identity_row::complete_row")!;
+    expect(outcome2.deleted).toBe(0);
+    expect(outcome2.poisoned).toBe(1);
+  });
+
+  it("a batch failure every row then survives alone is NOT a failed table", async () => {
+    // Only the batch as a whole is refused (a statement-level condition), every
+    // row alone succeeds: `failures` must stay empty and no poison is counted.
+    const db = await createTestDb();
+    await seedAuthUser(db, "u-batch", "batch@example.test");
+    const overdue = ago(400 * DAY);
+    await db.insert(session).values([
+      { id: "s-1", token: "t-1", userId: "u-batch", expiresAt: overdue, updatedAt: overdue },
+      { id: "s-2", token: "t-2", userId: "u-batch", expiresAt: overdue, updatedAt: overdue },
+    ]);
+    await db.execute(sql`
+      CREATE FUNCTION refuse_multi_row_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+      DECLARE n integer;
+      BEGIN
+        SELECT count(*) INTO n FROM old_table;
+        IF n > 1 THEN RAISE EXCEPTION 'batch refused' USING ERRCODE = '40001'; END IF;
+        RETURN NULL;
+      END $$
+    `);
+    await db.execute(sql`CREATE TRIGGER tmp_batch_refuse AFTER DELETE ON "session" REFERENCING OLD TABLE AS old_table FOR EACH STATEMENT EXECUTE FUNCTION refuse_multi_row_delete()`);
+
+    const summary = await runRetentionTick(db, now);
+
+    expect(await db.select().from(session)).toHaveLength(0);
+    const outcome = summary.tables.find((table) => table.key === "session::identity_row::complete_row")!;
+    expect(outcome.deleted).toBe(2);
+    expect(outcome.poisoned).toBe(0);
+    expect(outcome.failureCode).toBeNull();
+    expect(summary.failures).toEqual([]);
+  });
+});
+
+describe("the DELETE fallback's SHAPE is pinned at the source (lean gate R-2 on fix pass 3)", () => {
+  // The two behavioural witnesses above stay green under the old two-transaction
+  // shape (claim in one committed transaction, delete by ctid in another, no
+  // predicate), because PGlite's single connection cannot interleave a
+  // relocation between them. The property that closed the consolidating
+  // review's BLOCK is therefore pinned where it lives: the per-row pass claims
+  // and applies inside ONE `db.transaction`, and every destructive statement
+  // re-states the overdue predicate. Golden rule 1: the claim is verified against
+  // the file that carries it.
+  it("claim and apply share one transaction, and DELETE/UPDATE re-state the predicate", () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/retention-receiver.ts"), "utf8");
+    const perRow = source.slice(source.indexOf("for (let row = 0; row < RETENTION_BATCH_SIZE"), source.indexOf("if (progressed === 0) break;"));
+    expect(perRow.match(/db\.transaction\(/g)).toHaveLength(1);
+    expect(perRow).toMatch(/\[ref\] = await claim\(tx, 1, unwritable\);[\s\S]*apply\(tx, \[ref\]\)/);
+    // No claim outside that transaction in the per-row pass.
+    expect(perRow).not.toMatch(/await db\.transaction\(\(tx\) => claim\(/);
+    // Every destructive statement carries the predicate.
+    expect(source).toMatch(/DELETE FROM \$\{table\} WHERE ctid IN \(\$\{list\}\) AND \(\$\{predicate\}\)/);
+    expect(source).toMatch(/WHERE id IN \(\$\{list\}\) AND \(\$\{predicate\}\) AND NOT \(\$\{alreadyDone\}\)/);
   });
 });

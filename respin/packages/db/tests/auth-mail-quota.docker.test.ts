@@ -4,7 +4,7 @@
 // M must admit exactly M rows and refuse exactly N - M, with the invite
 // ceiling holding independently inside the total.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { admitAuthMail, AuthMailRefusedError } from "../src/auth-mail";
+import { AUTH_MAIL_RECOVERY_RESERVE, admitAuthMail, AuthMailRefusedError } from "../src/auth-mail";
 import { authMailOutbox } from "../src/auth-mail-schema";
 import { createDockerTestDb, seedAuthUser } from "../src/testing";
 
@@ -25,7 +25,15 @@ describeLive("auth-mail quota admission on real PostgreSQL", () => {
 
   beforeAll(async () => {
     harness = await createDockerTestDb(MAINTENANCE_URL as string, "respin_test_authmail");
-    await seedAuthUser(harness.db, "quota-user", "quota@example.test");
+    // ONE SUBJECT PER ATTEMPT. This case is about the GLOBAL ceiling under real
+    // concurrency; driving 80 concurrent admissions from a single user
+    // conflated it with the per-subject bucket added in round 3, which exists
+    // precisely because password reset and email verification are reachable
+    // before authentication and a single global bucket was therefore a
+    // month-long denial of service for one unauthenticated attacker.
+    for (let index = 0; index < 80; index += 1) {
+      await seedAuthUser(harness.db, `quota-user-${index}`, `quota-${index}@example.test`);
+    }
   }, 60_000);
 
   afterAll(async () => {
@@ -36,19 +44,19 @@ describeLive("auth-mail quota admission on real PostgreSQL", () => {
     "admits exactly the ceiling under 40 concurrent security sends and 40 concurrent invites",
     async () => {
       const db = harness!.db;
-      // 30 total with 10 invites keeps the compiled 20/day security reserve
+      // 40 total with 10 invites keeps the compiled 30/day security reserve
       // (a tighter total would be refused by resolveAuthMailCeilings).
-      const ceilings = { totalPerDay: 30, invitesPerDay: 10 };
+      const ceilings = { totalPerDay: 40, invitesPerDay: 10 };
       const expiresAt = () => new Date(Date.now() + 10 * 60_000);
       const attempts = [
         ...Array.from({ length: 40 }, () => "password_reset" as const),
         ...Array.from({ length: 40 }, () => "workspace_invite" as const),
       ];
       const outcomes = await Promise.all(
-        attempts.map((purpose) =>
+        attempts.map((purpose, index) =>
           admitAuthMail(db, {
             purpose,
-            authUserId: "quota-user",
+            authUserId: `quota-user-${index}`,
             actionExpiresAt: expiresAt(),
             ceilings,
           }).then(
@@ -61,10 +69,15 @@ describeLive("auth-mail quota admission on real PostgreSQL", () => {
         )
       );
       const rows = await db.select().from(authMailOutbox);
-      expect(rows).toHaveLength(ceilings.totalPerDay);
+      // The effective total for every purpose EXCEPT identity-deletion recovery
+      // is the ceiling minus the recovery floor: a reset or invite flood must
+      // not be able to deny someone their single-use deletion-recovery
+      // credential (REQ-A04's erasure right).
+      expect(rows).toHaveLength(ceilings.totalPerDay - AUTH_MAIL_RECOVERY_RESERVE.perDay);
       const invitesAdmitted = rows.filter((row) => row.purpose === "workspace_invite").length;
       expect(invitesAdmitted).toBeLessThanOrEqual(ceilings.invitesPerDay);
-      expect(outcomes.filter((o) => o.admitted)).toHaveLength(ceilings.totalPerDay);
+      const effectiveTotal = ceilings.totalPerDay - AUTH_MAIL_RECOVERY_RESERVE.perDay;
+      expect(outcomes.filter((o) => o.admitted)).toHaveLength(effectiveTotal);
       const refusalCodes = new Set(outcomes.filter((o) => !o.admitted).map((o) => o.code));
       expect([...refusalCodes].sort()).toEqual(
         [...new Set([
@@ -72,13 +85,16 @@ describeLive("auth-mail quota admission on real PostgreSQL", () => {
           ...(invitesAdmitted === ceilings.invitesPerDay ? ["invite_quota_day_exhausted"] : []),
         ])].sort()
       );
-      // The security reserve was never consumable by invites.
+      // The security reserve was never consumable by invites. It is measured
+      // against the EFFECTIVE total, since the recovery floor is carved out of
+      // the ceiling before any non-recovery purpose sees it.
       expect(rows.filter((row) => row.purpose === "password_reset").length).toBeGreaterThanOrEqual(
-        ceilings.totalPerDay - ceilings.invitesPerDay
+        effectiveTotal - ceilings.invitesPerDay
       );
       // Every admitted row has a unique id and no address.
       expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
-      expect(JSON.stringify(rows)).not.toContain("quota@example.test");
+      expect(JSON.stringify(rows)).not.toContain("quota-0@example.test");
+      expect(JSON.stringify(rows)).not.toMatch(/@example\.test/);
     },
     60_000
   );

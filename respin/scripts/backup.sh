@@ -83,7 +83,38 @@ echo "[backup] dumping → ${DUMP}"
 # LEAST PRIVILEGE: run this as a role with SELECT on the application schema and
 # nothing more. `pg_dump` does not need superuser, and a backup job holding
 # write credentials is a backup job that can destroy what it is protecting.
-pg_dump --dbname="$DATABASE_URL" \
+# The password is lifted out ONCE, here, because the FIRST thing that needs
+# it is the pg_dump below -- not the tombstone query further down. Deriving it
+# after pg_dump left the main backup command passing the full credentialed URI
+# on argv while this comment block sat below it explaining why that must never
+# happen. tests/shell-credentials.test.ts is the witness.
+# KEEP THE PASSWORD OUT OF argv. On Linux /proc/<pid>/cmdline is world-readable,
+# so `psql "postgres://user:pass@host/db"` publishes the credential for the
+# database holding customer email, name and billing address to every local
+# account (CLAUDE.md golden rule 2). libpq reads the password from PGPASSWORD,
+# so the URI on the command line carries no secret.
+#
+# `node -e` receives the URI on ITS argv, which has the same exposure — so it
+# gets the value through the environment instead and prints the two parts.
+DB_PASSWORD="$(RESPIN_DB_URI="$DATABASE_URL" node -e '
+  const u = new URL(process.env.RESPIN_DB_URI);
+  // libpq also accepts `?password=` on the URI; lift that form too.
+  const raw = u.password || u.searchParams.get("password") || "";
+  // A password containing a stray "%" (e.g. `100%pass`) makes
+  // decodeURIComponent throw. The first version swallowed that and substituted
+  // an EMPTY password, so the tombstone query failed auth, its error was
+  // discarded, and the manifest silently recorded activeTombstones: null --
+  // which permanently FATALs every restore from that backup. Fall back to the
+  // raw value instead of to nothing.
+  try { console.log(decodeURIComponent(raw)); } catch { console.log(raw); }
+')"
+DB_URI_NO_PASSWORD="$(RESPIN_DB_URI="$DATABASE_URL" node -e '
+  try { const u = new URL(process.env.RESPIN_DB_URI); u.password = ""; u.searchParams.delete("password"); u.searchParams.delete("sslpassword"); console.log(u.toString()); }
+  catch { console.log("(unparseable database url)"); }
+')"
+export PGPASSWORD="$DB_PASSWORD"
+
+pg_dump --dbname="$DB_URI_NO_PASSWORD" \
         --format=custom \
         --no-owner --no-privileges \
   | gzip -9 \
@@ -135,30 +166,7 @@ DUMP_SHA="$(cut -d" " -f1 < "$SUMS")"
 # Content-free: operation id, scope, state. `to_regclass` keeps this working
 # against a database predating the lifecycle migrations rather than failing the
 # whole backup on a missing table.
-# KEEP THE PASSWORD OUT OF argv. On Linux /proc/<pid>/cmdline is world-readable,
-# so `psql "postgres://user:pass@host/db"` publishes the credential for the
-# database holding customer email, name and billing address to every local
-# account (CLAUDE.md golden rule 2). libpq reads the password from PGPASSWORD,
-# so the URI on the command line carries no secret.
-#
-# `node -e` receives the URI on ITS argv, which has the same exposure — so it
-# gets the value through the environment instead and prints the two parts.
-DB_PASSWORD="$(RESPIN_DB_URI="$DATABASE_URL" node -e '
-  const u = new URL(process.env.RESPIN_DB_URI);
-  const raw = u.password || "";
-  // A password containing a stray "%" (e.g. `100%pass`) makes
-  // decodeURIComponent throw. The first version swallowed that and substituted
-  // an EMPTY password, so the tombstone query failed auth, its error was
-  // discarded, and the manifest silently recorded activeTombstones: null --
-  // which permanently FATALs every restore from that backup. Fall back to the
-  // raw value instead of to nothing.
-  try { console.log(decodeURIComponent(raw)); } catch { console.log(raw); }
-')"
-DB_URI_NO_PASSWORD="$(RESPIN_DB_URI="$DATABASE_URL" node -e '
-  try { const u = new URL(process.env.RESPIN_DB_URI); u.password = ""; console.log(u.toString()); }
-  catch { console.log(process.env.RESPIN_DB_URI); }
-')"
-TOMBSTONES="$(PGPASSWORD="$DB_PASSWORD" psql "$DB_URI_NO_PASSWORD" --quiet --tuples-only --no-align -c "
+TOMBSTONES="$(psql "$DB_URI_NO_PASSWORD" --quiet --tuples-only --no-align -c "
   SELECT CASE WHEN to_regclass('public.deletion_operations') IS NULL THEN '[]'
          ELSE coalesce((SELECT json_agg(json_build_object(
                 'operationId', id, 'scope', scope, 'state', state

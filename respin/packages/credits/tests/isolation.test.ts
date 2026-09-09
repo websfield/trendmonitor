@@ -25,6 +25,7 @@ import {
   withWorkspace,
   CONFIG_V1_SEED,
   type TestDb,
+  type VerifiedUserId,
   type VerifiedWorkspaceId,
   type WorkspaceScope,
 } from "@respin/db";
@@ -36,6 +37,7 @@ import * as appServer from "../src/app-server";
 import * as webhookServer from "../src/webhook-server";
 import * as deletionServer from "../src/deletion-server";
 import * as stripeActions from "../src/stripe/actions";
+import * as billingContactMod from "../src/stripe/billing-contact";
 import * as stripeCustomers from "../src/stripe/customers";
 import * as stripeWebhooks from "../src/stripe/webhooks";
 import * as stripeAutoTopup from "../src/stripe/auto-topup";
@@ -159,6 +161,7 @@ const NOT_DB_FACING: Record<string, string> = {
   CheckoutInFlightError: "error class",
   CheckoutReconciliationRequiredError: "error class",
   NoStripeCustomerError: "error class",
+  BillingContactProviderError: "error class",
   NoLiveSubscriptionError: "error class",
   NotPausedError: "error class",
   TierCheckoutRolloutError: "error class",
@@ -368,6 +371,12 @@ const COVERED = new Set([
   "bindPendingAutoTopupPaymentIntent",
   "createPortalUrl",
   "setAutoTopup",
+  // Plan C3 (Phase 10b-1): the billing-contact handover and its status read.
+  // Both take a WorkspaceScope, read ONE subscriptions row by the scope's
+  // workspace id, and the handover writes that same row — covered by the
+  // A-vs-B billing-contact case below, with the provider driven by a fake.
+  "billingContactStatus",
+  "acceptBillingContact",
   // Audit 2026-08-17 remediation (R2, #8). Genuinely COVERED rather than
   // STRIPE_BOUND: its owner gate, its workspace-scoped mirror read and its
   // status narrowing all run BEFORE the first Stripe call, so the keyless case
@@ -422,6 +431,7 @@ const ENUMERATED: Record<string, object> = {
   // Phase 10b-1 Task 4: the dedicated worker's one door into this package.
   "deletion-server.ts": deletionServer,
   "stripe/actions.ts": stripeActions,
+  "stripe/billing-contact.ts": billingContactMod,
   "stripe/customers.ts": stripeCustomers,
   "stripe/webhooks.ts": stripeWebhooks,
   "stripe/auto-topup.ts": stripeAutoTopup,
@@ -679,7 +689,13 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   "stripe/deletion-commands.ts": {
     reason:
       "the Stripe/local adapter behind the deletion executor's ExternalCommandPort (Phase 10b-1 Task 4) — reached only through the enumerated deletion-server entrypoint, never through index.ts",
-    internalOnly: ["createStripeExternalCommandPort"],
+    internalOnly: [
+      "createStripeExternalCommandPort",
+      // Plan C3: the personal-field predicate shared with billing-contact.ts,
+      // so the erasure command and the handover cannot disagree about what
+      // "clear" means. Pure, no query.
+      "customerPersonalFieldsClear",
+    ],
   },
   "stripe/adapter.ts": {
     reason:
@@ -1465,8 +1481,11 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       { workspaceId: B, stripeCustomerId: "cus_B", status: "none" },
     ]);
     // Keyless: reaching Stripe here would throw StripeNotConfiguredError.
-    expect(await getOrCreateCustomer(db, A, "a@example.com")).toBe("cus_A");
-    expect(await getOrCreateCustomer(db, B, "b@example.com")).toBe("cus_B");
+    // The contact id is only WRITTEN on a fresh mapping; both exist here, so
+    // a placeholder brand is enough to prove the early return.
+    const contact = "00000000-0000-4000-8000-000000000001" as VerifiedUserId;
+    expect(await getOrCreateCustomer(db, A, "a@example.com", contact)).toBe("cus_A");
+    expect(await getOrCreateCustomer(db, B, "b@example.com", contact)).toBe("cus_B");
   });
 
   it("handleStripeEvent: an event for B's customer writes ONLY B's rows — A is untouched", async () => {
@@ -1789,6 +1808,37 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     const rows = await db.select().from(subscriptions);
     expect(rows.find((r) => r.workspaceId === A)?.autoTopupMonthlyCapCents).toBe(1000);
     expect(rows.find((r) => r.workspaceId === B)?.autoTopupMonthlyCapCents).toBe(5000);
+  });
+
+  it("acceptBillingContact on A rewrites A's customer and A's binding only; billingContactStatus reads A's row only", async () => {
+    const db = await createTestDb();
+    const { A, B } = await twoWorkspaces(db);
+    const ownerA = await mintScope(db, A, "owner");
+    const ownerB = await mintScope(db, B, "owner");
+    await db.insert(subscriptions).values([
+      { workspaceId: A, stripeCustomerId: "cus_A", status: "active", billingContactUserId: ownerB.userId },
+      { workspaceId: B, stripeCustomerId: "cus_B", status: "active", billingContactUserId: ownerB.userId },
+    ]);
+    const updated: string[] = [];
+    const client = () => ({
+      customers: {
+        update: async (id: string, params: unknown) => {
+          updated.push(id);
+          return { id, ...(params as object), address: null, shipping: null, metadata: {} } as never;
+        },
+        retrieve: async () => {
+          throw new Error("not used");
+        },
+      },
+    });
+    expect(await billingContactMod.billingContactStatus(db, ownerA)).toMatchObject({ hasCustomer: true, isCurrentUser: false });
+    await billingContactMod.acceptBillingContact(db, ownerA, "owner-a@example.test", reauthenticationFor(ownerA), client);
+    // ONE provider write, on A's customer; B's customer and B's binding untouched.
+    expect(updated).toEqual(["cus_A"]);
+    const rows = await db.select().from(subscriptions);
+    expect(rows.find((r) => r.workspaceId === A)?.billingContactUserId).toBe(ownerA.userId);
+    expect(rows.find((r) => r.workspaceId === B)?.billingContactUserId).toBe(ownerB.userId);
+    expect(await billingContactMod.billingContactStatus(db, ownerB)).toEqual({ hasCustomer: true, contactUserId: ownerB.userId, isCurrentUser: true });
   });
 
   it("ensurePauseStarted/Ended on A converge without touching B's pause state", async () => {

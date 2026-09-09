@@ -36,6 +36,16 @@ describe("assertLifecycleRegistration", () => {
     expect(() => assertLifecycleRegistration({ migrations: planted })).toThrow(/unregistered migration table: planted_launch_table/);
   });
 
+  it("reddens on a NEW COLUMN on a registered table, naming it (T-H1: the field partition is complete by construction, so the census is the only thing that can see it)", () => {
+    // 10a is the first slice to add columns under this API; this is the plant
+    // the 2026-09-08 ledger described and the suite never carried.
+    const planted = migrationInventory([
+      ...sources,
+      { name: "9999_planted_column.sql", sql: 'ALTER TABLE "subscriptions" ADD COLUMN "planted_col" text;' },
+    ]);
+    expect(() => assertLifecycleRegistration({ migrations: planted })).toThrow(/uncensused column: subscriptions\.planted_col/);
+  });
+
   it("reddens on a registered entry whose retention rule has no receiver measure", () => {
     // A slice that registers the row but forgets `RETENTION_MEASURES`: the
     // registry closure passes and the retention bijection is what catches it.

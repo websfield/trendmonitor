@@ -63,6 +63,7 @@ export type RetentionAlertCode =
   | "retention_sweep_failed"
   | "retention_overdue_backlog"
   | "retention_batch_truncated"
+  | "retention_poisoned_rows"
   | "generation_recovery_failed"
   | "generation_candidates_cleared";
 
@@ -105,6 +106,19 @@ export function evaluateRetentionAlerts(summary: RetentionRunSummary): readonly 
         detail: { retentionKey: table.key, retentionScanned: table.scanned },
       });
     }
+  }
+  // A row that cannot be written EVEN ALONE. Before the batch-isolation fix
+  // one such row rolled its whole batch back and the table never advanced
+  // again, on any tick, while the per-table catch reported a single failure
+  // code and `oldestOverdueMs` read null. It now makes progress around the bad
+  // row -- which means the bad row would otherwise sit there silently forever,
+  // so it has to page.
+  if (summary.retention.poisoned > 0) {
+    alerts.push({
+      code: "retention_poisoned_rows",
+      severity: "critical",
+      detail: { retentionPoisoned: summary.retention.poisoned },
+    });
   }
   const oldest = summary.retention.oldestOverdueMs;
   if (oldest !== null && oldest > OVERDUE_BACKLOG_MS) {
@@ -156,6 +170,7 @@ export function retentionTickEvent(summary: RetentionRunSummary): RetentionAlert
     generationPastDeadline: number;
     generationSettleable: number;
     generationHardCleared: number;
+    retentionPoisoned: number;
     retentionOldestOverdueMs?: number;
   } = {
     retentionScanned: summary.retention.scanned,
@@ -164,6 +179,9 @@ export function retentionTickEvent(summary: RetentionRunSummary): RetentionAlert
     retentionFinanceExtracts: summary.retention.financeExtractsWritten,
     retentionFailures: summary.retention.failures.length,
     retentionTruncated: summary.retention.tables.filter((table) => table.truncated).length,
+    // Declared in health.ts's allowlist since the fix round but never sent —
+    // the "declared and unbuilt" shape (consolidating review, round 2).
+    retentionPoisoned: summary.retention.poisoned,
     generationAbandoned: summary.generation.abandonedBeforeVendor,
     generationPastDeadline: summary.generation.startedPastDeadline,
     generationSettleable: summary.generation.settlementAttempted,

@@ -10,7 +10,13 @@ export default async function RecoverDeletionPage(props: {
   const search = await props.searchParams;
   const op = typeof search.op === "string" ? search.op : "";
   const s = typeof search.s === "string" ? search.s : "";
-  const ok = typeof search.ok === "string" ? search.ok : null;
+  // VALIDATED, not reflected. `ok` is rendered as free text under a green
+  // "Deletion cancelled" banner, so `?ok=<anything>` was content spoofing on
+  // the one public page whose whole job is to be trusted immediately after an
+  // email link. React escapes it, so this was never XSS — it was a lie the
+  // attacker got to write on our page. Only a plain count renders.
+  const okRaw = typeof search.ok === "string" ? search.ok : null;
+  const ok = okRaw !== null && /^\d{1,4}$/.test(okRaw) ? okRaw : null;
   const e = typeof search.e === "string" ? search.e : null;
   return (
     <section>

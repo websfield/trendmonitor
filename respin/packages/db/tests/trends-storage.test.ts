@@ -515,22 +515,31 @@ describe("REQ-A03: the `or(shared, and(private, pair))` readers under a cross-pr
     await expect(trackedNichesForProfile(db, scope, a.id)).resolves.toEqual([{ id: A.niche.id, niche: "home cooking" }]);
   });
 
-  it("the ITEM predicate stands on its own: an autopsy mis-parented onto a sibling's item does not pull that item into the feed", async () => {
+  it("an autopsy mis-parented onto a sibling's item is REFUSED by the schema, so the feed's item predicate no longer has to catch it", async () => {
     // MEASURED 2026-09-03: with the profile pair DELETED from the private
     // branch of `feedItemsForProfile`'s item predicate, the test above stayed
-    // GREEN, because the autopsy join two lines later re-checks the pair and
-    // dropped the sibling's item anyway. Defence in depth is fine; a witness
-    // that cannot tell the two layers apart is not (CLAUDE.md 2026-08-26).
-    // `autopsies` carries no constraint tying its own pair to its item's pair,
-    // so a row whose autopsy says "A" over an item that says "B" is
-    // representable — and with the item predicate gone, A would see B's item.
+    // GREEN, because the autopsy join re-checked the pair and dropped the
+    // sibling's item anyway — and `autopsies` then carried no constraint tying
+    // its own pair to its item's, so a row whose autopsy said "A" over an
+    // item that said "B" was representable. Since migration 0057 (Phase 10b-1
+    // fix round 2) the composite `(trend_item_id, profile_id)` key refuses
+    // that row at the database, which is the structural form of the witness
+    // this case used to be. Pinned by constraint name; the feed is then read
+    // with only legitimate rows and must still show exactly A's and the shared item.
     const { db, workspace, scope, a, A, B, shared } = await crossProfileFixture();
-    await db.insert(autopsies).values({
-      trendItemId: B.item.id, contentDigest: `${B.transcript.contentDigest}-misparented`, analysisVersion: "v1",
-      rightsScope: "profile_private", profileId: a.id, workspaceId: workspace.id,
-      rightsBasis: "profile_private",
-      status: "completed", analysis: { ...CANONICAL_ANALYSIS, hook: "mis-parented hook" },
-    });
+    let refusal: { code?: string; constraint?: string } | null = null;
+    try {
+      await db.insert(autopsies).values({
+        trendItemId: B.item.id, contentDigest: `${B.transcript.contentDigest}-misparented`, analysisVersion: "v1",
+        rightsScope: "profile_private", profileId: a.id, workspaceId: workspace.id,
+        rightsBasis: "profile_private",
+        status: "completed", analysis: { ...CANONICAL_ANALYSIS, hook: "mis-parented hook" },
+      });
+    } catch (error) {
+      const cause = (error as { cause?: { code?: string; constraint?: string } }).cause ?? (error as { code?: string; constraint?: string });
+      refusal = { code: cause.code, constraint: cause.constraint };
+    }
+    expect(refusal).toEqual({ code: "23503", constraint: "autopsies_trend_item_profile_fk" });
     const feedA = (await feedItemsForProfile(db, scope, a.id)).map((row) => row.id).sort();
     expect(feedA).toEqual([A.item.id, shared.item.id].sort());
     expect(feedA).not.toContain(B.item.id);

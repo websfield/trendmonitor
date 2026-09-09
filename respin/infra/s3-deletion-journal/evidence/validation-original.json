@@ -1,0 +1,86 @@
+{
+  "bucket-policy": [
+    {
+      "findingDetails": "The condition key s3:x-amz-object-lock-mode does not exist in the service s3. Use a valid condition key.",
+      "findingType": "ERROR",
+      "issueCode": "INVALID_SERVICE_CONDITION_KEY",
+      "learnMoreLink": "https://docs.aws.amazon.com/IAM/latest/UserGuide/access-analyzer-reference-policy-checks.html#access-analyzer-reference-policy-checks-error-invalid-service-condition-key",
+      "locations": [
+        {
+          "path": [
+            {
+              "value": "Statement"
+            },
+            {
+              "index": 3
+            },
+            {
+              "value": "Condition"
+            },
+            {
+              "value": "StringNotEquals"
+            },
+            {
+              "key": "s3:x-amz-object-lock-mode"
+            }
+          ],
+          "span": {
+            "start": {
+              "line": 1,
+              "column": 1044,
+              "offset": 1044
+            },
+            "end": {
+              "line": 1,
+              "column": 1071,
+              "offset": 1071
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "iam-purger": [],
+  "iam-verifier": [],
+  "iam-writer": [
+    {
+      "findingDetails": "The condition key s3:x-amz-object-lock-mode does not exist in the service s3. Use a valid condition key.",
+      "findingType": "ERROR",
+      "issueCode": "INVALID_SERVICE_CONDITION_KEY",
+      "learnMoreLink": "https://docs.aws.amazon.com/IAM/latest/UserGuide/access-analyzer-reference-policy-checks.html#access-analyzer-reference-policy-checks-error-invalid-service-condition-key",
+      "locations": [
+        {
+          "path": [
+            {
+              "value": "Statement"
+            },
+            {
+              "index": 0
+            },
+            {
+              "value": "Condition"
+            },
+            {
+              "value": "StringEquals"
+            },
+            {
+              "key": "s3:x-amz-object-lock-mode"
+            }
+          ],
+          "span": {
+            "start": {
+              "line": 1,
+              "column": 327,
+              "offset": 327
+            },
+            "end": {
+              "line": 1,
+              "column": 354,
+              "offset": 354
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

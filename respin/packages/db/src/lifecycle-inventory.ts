@@ -204,8 +204,13 @@ export function migrationInventory(
       knownConstraints.set(table, constraints);
     }
 
+    // SET/DROP DEFAULT is listed because it is INERT for this inventory: it
+    // changes neither the column set, the column types, nor the constraint
+    // names, which are the only things derived here. It is enumerated rather
+    // than admitted by loosening the pattern, so the next unfamiliar action
+    // still fails closed — which is exactly how this parser caught 0055.
     for (const statement of sql.matchAll(/ALTER\s+TABLE\b[\s\S]*?;/gi)) {
-      const supported = /^ALTER\s+TABLE\s+(?:"public"\.)?"[a-z_][a-z0-9_]*"\s+(?:ADD\s+COLUMN\s+"[a-z_][a-z0-9_]*"\s+(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*)(?:\.(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*))?(?:[\s\S]*?)|DROP\s+COLUMN\s+"[a-z_][a-z0-9_]*"(?:\s+(?:CASCADE|RESTRICT))?|ALTER\s+COLUMN\s+"[a-z_][a-z0-9_]*"\s+(?:SET|DROP)\s+NOT\s+NULL|ADD\s+CONSTRAINT\s+"[^"]+"\s+(?:CHECK\b|UNIQUE\b|FOREIGN\s+KEY\b)[\s\S]*|DROP\s+CONSTRAINT\s+"[^"]+"(?:\s+(?:CASCADE|RESTRICT))?)\s*;$/i.test(statement[0]);
+      const supported = /^ALTER\s+TABLE\s+(?:"public"\.)?"[a-z_][a-z0-9_]*"\s+(?:ADD\s+COLUMN\s+"[a-z_][a-z0-9_]*"\s+(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*)(?:\.(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*))?(?:[\s\S]*?)|DROP\s+COLUMN\s+"[a-z_][a-z0-9_]*"(?:\s+(?:CASCADE|RESTRICT))?|ALTER\s+COLUMN\s+"[a-z_][a-z0-9_]*"\s+(?:(?:SET|DROP)\s+NOT\s+NULL|DROP\s+DEFAULT|SET\s+DEFAULT\s+[\s\S]*?)|ADD\s+CONSTRAINT\s+"[^"]+"\s+(?:CHECK\b|UNIQUE\b|FOREIGN\s+KEY\b)[\s\S]*|DROP\s+CONSTRAINT\s+"[^"]+"(?:\s+(?:CASCADE|RESTRICT))?)\s*;$/i.test(statement[0]);
       if (!supported) throw new Error(`unsupported ALTER TABLE action in '${source.name}': ${statement[0].trim()}`);
     }
 

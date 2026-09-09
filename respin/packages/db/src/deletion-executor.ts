@@ -22,6 +22,7 @@
 import { ActivationContributionRefusal, applyActivationContributionInTx, type ActivationExclusions } from "./activation";
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { subscriptions } from "./billing-schema";
+import { purgeSubjectStripePayloadsInTx } from "./retention-receiver";
 import {
   JSON_PATH_INVENTORY,
   LIFECYCLE_REGISTRY,
@@ -31,6 +32,7 @@ import {
 } from "./creator-data-registry";
 import type { DbLike, TxLike } from "./db-like";
 import {
+  assertNoUnknownExternalCommands,
   autoTopupChargeAuthorityArmed,
   dispatchExternalCommands,
   enqueueExternalCommandInTx,
@@ -43,6 +45,7 @@ import {
 import {
   abandonJournalPlan,
   appendJournalTransitionInTx,
+  assertBillingContactReleased,
   databaseNow,
   prepareJournalPlan,
   transitionDeletionOperation,
@@ -159,14 +162,20 @@ export const FINANCIAL_CHAIN_TABLES: readonly Readonly<{ table: string; scope: D
 /**
  * TRUE since Task 6: `runRetentionTick` sweeps `stripe_events.payload` on its
  * 90-day clock, after lifting the finance facts out in the same transaction
- * (`retention-receiver.ts` → `finance-extract.ts`). Before that, the raw
- * payload survived EVERY subject erasure — including an identity erasure of
- * the workspace's own Stripe contact (round-2 lean S-R2-1), which is the
- * finding this flag was created to hold.
+ * (`retention-receiver.ts` → `finance-extract.ts`).
  *
- * It stays a named constant rather than becoming implicit: the receiver being
- * WRITTEN is not the receiver being SCHEDULED, and `worker/retention.ts` is
- * what makes it run. Unscheduling it must fail loudly here.
+ * IT IS NOT, BY ITSELF, WHAT MAKES AN IDENTITY ERASURE SAFE. A clock measured
+ * from `received_at` is not an erasure step: with only this flag, a COMPLETED
+ * identity erasure left up to 90 days of unredacted webhook JSON carrying the
+ * deleted person's email, name and billing address, while the account page
+ * showed a closed "what survives erasure" list that omitted it. The erasure
+ * transaction now calls `purgeSubjectStripePayloadsInTx` directly, and
+ * `deletion-executor.test.ts` asserts the payload is GONE at `complete`.
+ *
+ * This flag still holds the OTHER half — that the clock exists at all for rows
+ * no erasure reaches — and stays a named constant rather than becoming
+ * implicit: the receiver being WRITTEN is not the receiver being SCHEDULED, and
+ * `worker/retention.ts` is what makes it run. Unscheduling it must fail here.
  */
 export const STRIPE_PAYLOAD_RECEIVER_WIRED = true;
 
@@ -522,17 +531,50 @@ export async function eraseOperation(
     const operation = await currentOperation(tx, operationId);
     if (operation.state !== "erasing") throw new LifecycleExecutorRefusal(`not_erasing:${operation.state}`);
     await lockScopeInTx(tx, operation);
-    const unknown = await tx
-      .select({ id: deletionExternalCommands.id })
-      .from(deletionExternalCommands)
-      .where(and(eq(deletionExternalCommands.operationId, operation.id), eq(deletionExternalCommands.status, "unknown")));
-    if (unknown.length > 0) throw new LifecycleExecutorRefusal("unknown_outcome_pending");
+    // THE EXPORTED AUTHORITY, not a second copy of its query. This site used to
+    // re-implement the check inline while `assertNoUnknownExternalCommands` sat
+    // exported and tested with no caller — so the tests proved a function
+    // nothing ran, and the production path was one edit away from drifting from
+    // the rule it enforces. An unknown external outcome must never permit
+    // erasure (plan C3).
+    try {
+      await assertNoUnknownExternalCommands(tx, operation.id);
+    } catch (error) {
+      // The module refuses with a coded message rather than a typed class, so
+      // the prefix is the contract. Anything else rethrows untouched: a driver
+      // error must not be laundered into a lifecycle refusal.
+      const message = error instanceof Error ? error.message : "";
+      const refusal = message.startsWith("external_command_refused:")
+        ? message.slice("external_command_refused:".length)
+        : null;
+      if (refusal !== null) throw new LifecycleExecutorRefusal(refusal);
+      throw error;
+    }
     const now = await databaseNow(tx);
     // Task 7 / R-121: the captured contribution lands on the aggregate HERE,
     // exactly once, in the transaction whose rollback would also undo it. A
     // missing or mismatched contribution, or a target still present in a
     // deployment id set, blocks the erasure (plan C5/C4).
     if (operation.scope === "identity") {
+      // Plan C3, asserted at the last possible moment: the contact may have
+      // been re-bound to this person during grace (a handover the other way,
+      // or a new Checkout by them). Refusing here (content-free code, operation
+      // held) beats completing an erasure whose subject's email is still on a
+      // provider object. Only the BY-USER population is re-checked (no
+      // workspace ids): an UNKNOWN contact cannot arise during grace, because
+      // `customers.ts` is the sole `subscriptions` inserter and always sets
+      // the contact, and `ON DELETE SET NULL` fires only on an identity
+      // erasure this very rule refuses.
+      if (!operation.userId) throw new LifecycleExecutorRefusal("identity_target_missing");
+      try {
+        await assertBillingContactReleased(tx, operation.userId, []);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (message.startsWith("deletion_refused:")) {
+          throw new LifecycleExecutorRefusal(message.slice("deletion_refused:".length));
+        }
+        throw error;
+      }
       try {
         await applyActivationContributionInTx(tx, operation, options.activationExclusions, now);
       } catch (error) {
@@ -572,6 +614,23 @@ export async function eraseOperation(
         ? { profileStubWorkspaceId: operation.workspaceId }
         : {}),
     });
+    // BEFORE the executors, not after: the purge derives its population from
+    // the subject's memberships (live and snapshotted), and the executors are
+    // what delete those. Running it afterwards looked correct and quietly
+    // purged nothing, because by then the subject belonged to no workspace.
+    //
+    // An identity or workspace erasure ERASES the subject's Stripe payloads
+    // rather than waiting for the 90-day clock. The registry cannot express
+    // this target: `stripe_events` rows carry no user link, only a workspace
+    // and a customer. Finance facts are lifted out first, in this same
+    // transaction, by the same extractor the retention sweep uses.
+    if (operation.scope === "identity" && operation.userId) {
+      await purgeSubjectStripePayloadsInTx(tx, { userId: operation.userId });
+    } else if (operation.scope === "workspace" && operation.workspaceId) {
+      // The workspace's Stripe customer was created with its creator's email,
+      // so the payload carries a person even though the scope is a workspace.
+      await purgeSubjectStripePayloadsInTx(tx, { workspaceId: operation.workspaceId });
+    }
     for (const target of targets) {
       await LIFECYCLE_EXECUTORS[target.executor].execute(port, target);
     }

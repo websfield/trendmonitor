@@ -1,4 +1,5 @@
 import type { JsonColumnInventoryEntry, JsonPathInventoryEntry, LifecycleWriterInventoryEntry, MigrationForeignKey, MigrationInventory, RowClassInventoryEntry } from "./lifecycle-inventory";
+import { LIFECYCLE_COLUMN_CENSUS } from "./lifecycle-column-census";
 import type { LifecycleExecutorImplementations } from "./lifecycle-executors";
 import type { ResidueProbeImplementations } from "./lifecycle-probes";
 
@@ -179,8 +180,12 @@ export const SPLIT_TABLE_FIELD_SETS = {
     { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id"] },
   ],
   subscriptions: [
-    { name: "workspace_link", kind: "columns", columns: ["workspace_id"] },
-    { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id"] },
+    // `billing_contact_user_id` (plan C3) rides the LINK set, not the facts:
+    // it names a person, so a retained seven-year row must not keep it. The
+    // workspace pseudonymiser nulls it (nullable uuid -> `uuid_null`); identity
+    // erasure clears it structurally through ON DELETE SET NULL.
+    { name: "workspace_link", kind: "columns", columns: ["workspace_id", "billing_contact_user_id"] },
+    { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id", "billing_contact_user_id"] },
   ],
   pause_periods: [
     { name: "workspace_link", kind: "columns", columns: ["workspace_id"] },
@@ -232,8 +237,14 @@ type TableWithRowClass<R extends DataRowClass> = {
 }[AppTable];
 const row = <T extends AppTable>(table: T, rowClass: RowClassFor<T>, defaults: Defaults, fieldSet: LifecycleFieldSetFor<T> = all<T>(), governedJsonPaths: readonly string[] = []): LifecycleClassEntryFor<T> => ({ table, rowClass, fieldSet, governedJsonPaths, ...defaults });
 const identity = <T extends TableWithRowClass<"identity_row">>(table: T, owner: string) => row(table, "identity_row" as RowClassFor<T>, {
-  scope: "identity", writerOwner: owner, export: table === "account" || table === "session" || table === "verification" ? "excluded_secret" : "included",
-  exportProjector: table === "account" || table === "session" || table === "verification" ? "none" : "identity_self",
+  // NOT `included` UNDER `identity_self`. That projector is declared in the type
+  // and NOT BUILT — `export.ts` keys `exportPlan` off `profile_creator` alone —
+  // so marking these rows "included" was a creator-facing export claim no code
+  // could honour. They are excluded until the slice that builds the
+  // identity-self projector, and `validateLifecycleClosure` refuses any
+  // `included` disposition under an unbuilt projector so this cannot drift back.
+  scope: "identity", writerOwner: owner, export: table === "account" || table === "session" || table === "verification" ? "excluded_secret" : "excluded_system",
+  exportProjector: "none",
   action: table === "session" || table === "verification" ? "delete_explicit" : "cascade",
   retention: table === "session" ? "session_expiry" : table === "verification" ? "verification_expiry" : "identity_lifetime",
   executor: table === "session" || table === "verification" ? "expiry_receiver" : "identity_cascade",
@@ -247,7 +258,11 @@ const profile = <T extends TableWithRowClass<"profile_row">>(table: T, owner: st
   residueProbe: table === "generation_attempts" ? "expiry_residue" : "profile_residue",
 } satisfies Defaults, all<T>(), governedJsonPaths);
 const workspace = <T extends TableWithRowClass<"workspace_row">>(table: T, owner: string, disposition: ExportDisposition = "excluded_system", governedJsonPaths: readonly string[] = []) => row(table, "workspace_row" as RowClassFor<T>, {
-  scope: "workspace", writerOwner: owner, export: disposition, exportProjector: disposition === "included" ? "workspace_owner" : "none",
+  // Same as `identity` above: `workspace_owner` is declared and NOT BUILT, so an
+  // `included` disposition here would be an export claim nothing can honour.
+  // The disposition is preserved in the type for the slice that builds the
+  // projector; until then it is downgraded rather than promised.
+  scope: "workspace", writerOwner: owner, export: disposition === "included" ? "excluded_system" : disposition, exportProjector: "none",
   action: "cascade", retention: "workspace_lifetime", executor: "workspace_cascade", residueProbe: "workspace_residue",
 } satisfies Defaults, all<T>(), governedJsonPaths);
 const system = <T extends TableWithRowClass<"system_row">>(table: T, owner: string, retention: RetentionRule = "installation_lifetime") => row(table, "system_row" as RowClassFor<T>, {
@@ -351,7 +366,7 @@ export const LIFECYCLE_REGISTRY = [
   // pseudonymised money facts survive, and the destructive receiver that
   // would finally purge them stays disabled until jurisdiction/ledger review.
   row("credit_ledger", "workspace_row", { scope: "workspace", writerOwner: "packages/credits", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "workspace_pseudonymiser", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.credit_ledger[0]),
-  row("credit_ledger", "workspace_row", { scope: "workspace", writerOwner: "packages/credits", export: "included", exportProjector: "workspace_owner", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.credit_ledger[1]),
+  row("credit_ledger", "workspace_row", { scope: "workspace", writerOwner: "packages/credits", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.credit_ledger[1]),
   row("pause_periods", "workspace_row", { scope: "workspace", writerOwner: "packages/credits/src/pause.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "workspace_pseudonymiser", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.pause_periods[0]),
   row("pause_periods", "workspace_row", { scope: "workspace", writerOwner: "packages/credits/src/pause.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.pause_periods[1]),
   row("subscriptions", "workspace_row", { scope: "workspace", writerOwner: "packages/credits/src/stripe", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "workspace_pseudonymiser", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.subscriptions[0]),
@@ -403,6 +418,13 @@ export const LIFECYCLE_REGISTRY = [
   row("stripe_events", "stripe_customer_attributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[2], ["tier_invoice_authority$.respin_tier_invoice_id", "tier_invoice_authority$.respin_tier_subscription_id", "tier_invoice_authority$.respin_tier_workspace_id", "tier_invoice_authority$.respin_tier_customer_id", "tier_invoice_authority$.respin_tier_checkout_attempt_id", "tier_invoice_authority$.respin_tier_price_id", "tier_invoice_authority$.respin_tier_stripe_account_id"]),
   row("stripe_events", "stripe_customer_attributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[3]),
   row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, { name: "provider_payload", kind: "columns", columns: ["payload"] }),
+  // The unattributed class's link columns are BOTH NULL BY CHECK
+  // (`stripe_events_receipt_attribution_shape`: unattributed <=> workspace_id
+  // IS NULL AND stripe_customer_id IS NULL), so this set never holds a value
+  // for any clock to scrub — the "no effective clock" the 10b-1 phase review
+  // named is structurally empty, and retention-receiver.test.ts proves the
+  // CHECK refuses a row that would give it one. The entry stays so the field
+  // partition is exhaustive.
   row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "stripe_payload_90_days", executor: "identifier_scrubber", residueProbe: "stripe_payload_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["workspace_id", "stripe_customer_id"] }),
   row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[2], ["tier_invoice_authority$.respin_tier_invoice_id", "tier_invoice_authority$.respin_tier_subscription_id", "tier_invoice_authority$.respin_tier_workspace_id", "tier_invoice_authority$.respin_tier_customer_id", "tier_invoice_authority$.respin_tier_checkout_attempt_id", "tier_invoice_authority$.respin_tier_price_id", "tier_invoice_authority$.respin_tier_stripe_account_id"]),
   row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[3]),
@@ -712,12 +734,16 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
     ["autopsies_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
     ["autopsies_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
     ["autopsies_trend_item_id_trend_items_id_fk", ["trend_item_id"], "trend_items", ["id"], "cascade", "related_cascade"],
+    ["autopsies_trend_item_rights_scope_fk", ["trend_item_id", "rights_scope"], "trend_items", ["id", "rights_scope"], "cascade", "related_cascade"],
+    ["autopsies_trend_item_profile_fk", ["trend_item_id", "profile_id"], "trend_items", ["id", "profile_id"], "cascade", "related_cascade"],
   ],
   autopsy_cache_claims: [
     ["autopsy_cache_claims_autopsy_id_autopsies_id_fk", ["autopsy_id"], "autopsies", ["id"], "restrict", "retention_restrict"],
     ["autopsy_cache_claims_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
     ["autopsy_cache_claims_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
     ["autopsy_cache_claims_trend_item_id_trend_items_id_fk", ["trend_item_id"], "trend_items", ["id"], "cascade", "related_cascade"],
+    ["autopsy_cache_claims_trend_item_rights_scope_fk", ["trend_item_id", "rights_scope"], "trend_items", ["id", "rights_scope"], "cascade", "related_cascade"],
+    ["autopsy_cache_claims_trend_item_profile_fk", ["trend_item_id", "profile_id"], "trend_items", ["id", "profile_id"], "cascade", "related_cascade"],
   ],
   brain_activation_snapshots: [["brain_activation_snapshots_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
   brain_docs: [
@@ -825,7 +851,10 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
   // Task 6 / R-122: RESTRICT, not dropped. The key still refuses a
   // cross-parented row; only the delete action moved, so the retained
   // seven-year row is repointed to a stub instead of cascading away.
-  subscriptions: [["subscriptions_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"]],
+  subscriptions: [
+    ["subscriptions_billing_contact_user_id_users_id_fk", ["billing_contact_user_id"], "users", ["id"], "set_null", "reference_set_null"],
+    ["subscriptions_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"],
+  ],
   system_model_usage: [["system_model_usage_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
   system_model_usage_reconciliations: [["system_model_usage_reconciliations_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
   system_spend_claims: [["system_spend_claims_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
@@ -842,6 +871,8 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
     ["trend_transcripts_reference_input_id_onboarding_inputs_id_fk", ["reference_input_id"], "onboarding_inputs", ["id"], "cascade", "related_cascade"],
     ["trend_transcripts_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
     ["trend_transcripts_trend_item_id_trend_items_id_fk", ["trend_item_id"], "trend_items", ["id"], "cascade", "related_cascade"],
+    ["trend_transcripts_trend_item_rights_scope_fk", ["trend_item_id", "rights_scope"], "trend_items", ["id", "rights_scope"], "cascade", "related_cascade"],
+    ["trend_transcripts_trend_item_profile_fk", ["trend_item_id", "profile_id"], "trend_items", ["id", "profile_id"], "cascade", "related_cascade"],
   ],
   user: [],
   users: [["users_auth_user_id_user_id_fk", ["auth_user_id"], "user", ["id"], "restrict", "retention_restrict"]],
@@ -852,6 +883,24 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
   ],
   workspace_spend_monthly: [],
 } as const satisfies Readonly<Record<AppTable, readonly FinalSchemaForeignKeySpec[]>>;
+
+/**
+ * Every final-schema foreign key as a plain edge (child table -> referenced
+ * table), derived from the classified inventory above so it cannot drift from
+ * it. The retention receiver orders its sweeps children-first over these
+ * edges: a parent row deleted before its RESTRICT children fails the batch,
+ * is counted as poisoned, and (until the next tick) leaves the parent
+ * overdue. Found by the populated one-tick sweep fixture, where
+ * `deletion_recovery_sessions` sorted alphabetically AFTER its parent
+ * `deletion_operations` and the parent could never be deleted in the tick.
+ */
+export const LIFECYCLE_FOREIGN_KEY_EDGES: readonly Readonly<{
+  table: AppTable;
+  referencedTable: AppTable;
+  onDelete: MigrationForeignKey["onDelete"];
+}>[] = (Object.entries(FINAL_SCHEMA_FOREIGN_KEYS) as [AppTable, readonly FinalSchemaForeignKeySpec[]][]).flatMap(
+  ([table, keys]) => keys.map(([, , referencedTable, , onDelete]) => ({ table, referencedTable, onDelete }))
+);
 
 type ExpectedOwnershipEdge = Readonly<{
   constraintName: string;
@@ -1165,6 +1214,51 @@ export function validateLifecycleClosure(input: LifecycleClosureInput): void {
     }
     for (const column of table.columns) if (!covered.has(column)) failures.push(`missing field: ${item.table}.${item.rowClass}.${column}`);
   }
+  // THE COLUMN CENSUS. The loop above can never report a missing field for a
+  // COMPUTED field set (`remaining_columns` / `all_columns`), because such a set
+  // is defined as the table's own columns minus an exclusion list — so it
+  // absorbs any newly added column and `covered` already contains it. That made
+  // `ALTER TABLE ... ADD COLUMN` invisible to this gate, which C1 requires it to
+  // fail. The census is the declared LIST the migrations are compared against.
+  for (const [table, declared] of Object.entries(LIFECYCLE_COLUMN_CENSUS)) {
+    const actual = migrationTables.get(table);
+    if (!actual) { failures.push(`census names a table absent from migrations: ${table}`); continue; }
+    const declaredSet = new Set(declared);
+    const actualSet = new Set(actual.columns);
+    for (const column of actualSet) {
+      if (!declaredSet.has(column)) {
+        failures.push(
+          `uncensused column: ${table}.${column} — a computed field set would absorb it silently. ` +
+            `Add it to LIFECYCLE_COLUMN_CENSUS and decide which field set governs it.`
+        );
+      }
+    }
+    for (const column of declaredSet) {
+      if (!actualSet.has(column)) failures.push(`census names a column absent from migrations: ${table}.${column}`);
+    }
+  }
+  // EXPORT CLAIMS MUST BE HONOURABLE. `exportProjector` names three projectors
+  // and only `profile_creator` is built (`export.ts` keys `exportPlan` off it).
+  // This entry marked `credit_ledger` `included` under the unbuilt
+  // `workspace_owner`, which is a creator-facing export claim no code can
+  // honour — a table declared into an export it never joins. An unbuilt
+  // projector may exist in the type, but nothing may be `included` under it.
+  for (const entry of input.registry) {
+    if (entry.export !== "included") continue;
+    if (!(BUILT_EXPORT_PROJECTORS as readonly string[]).includes(entry.exportProjector)) {
+      failures.push(
+        `export claim with no projector: ${registryKey(entry)} is "included" under "${entry.exportProjector}", ` +
+          `which is declared but not built. Build the projector, or mark the entry excluded until the slice that does.`
+      );
+    }
+  }
+  // And every table that USES a computed field set must be censused at all.
+  for (const entry of input.registry) {
+    if (entry.fieldSet.kind === "columns") continue;
+    if (!(entry.table in LIFECYCLE_COLUMN_CENSUS)) {
+      failures.push(`table uses a computed field set but is absent from LIFECYCLE_COLUMN_CENSUS: ${entry.table}`);
+    }
+  }
   for (const jsonPath of input.jsonPaths) {
     const table = migrationTables.get(jsonPath.table);
     if (!table?.columns.includes(jsonPath.column)) failures.push(`missing JSON column/path: ${jsonPath.table}.${jsonPath.column}${jsonPath.path}`);
@@ -1192,19 +1286,43 @@ export function validateLifecycleClosure(input: LifecycleClosureInput): void {
   if (failures.length) throw new Error(failures.sort().join("\n"));
 }
 /**
- * The ONE dynamic writer the AST writer scanner cannot see: the registry-driven
- * SQL port renders DELETE/UPDATE for every executable target through
- * `sql.identifier`, naming no table in source. It is listed as a physical
- * writer only for the roots it INSERTs stubs into (scannable literals). Its
- * coverage is registry closure (`validateLifecycleClosure`) plus the
- * independent residue probes, exercised on a populated fixture in
- * `deletion-executor.test.ts` — stated here so no reader takes the scanner's
- * silence for absence (round-1 tenancy CHANGE).
+ * The dynamic writers the AST writer scanner cannot see: modules that render
+ * DELETE/UPDATE against table names computed at runtime, naming no table in
+ * source. Their coverage is registry closure (`validateLifecycleClosure`) and
+ * the retention-clock closure, plus the independent residue probes, exercised
+ * on populated fixtures — stated here so no reader takes the scanner's silence
+ * for absence.
+ *
+ * A LIST, AND IT HAS TWO ENTRIES. This was a single record called "the ONE
+ * dynamic writer" while `retention-receiver.ts` had become a second one:
+ * `sql.raw` table names driving `DELETE FROM ${table}` and
+ * `UPDATE ${table} SET ...` across roughly fifteen governed tables, present in
+ * no `physicalWriters` list of any table it destroys. The second producer was
+ * absorbed by adding a line to a DIFFERENT allowlist instead of to this
+ * population — precisely the shape CLAUDE.md Respin rule 7 forbids, and the
+ * reason that rule says a population is a list rather than a producer. A
+ * singular constant cannot hold two, so the type is what changed.
  */
-export const DYNAMIC_LIFECYCLE_WRITER = {
-  file: "packages/db/src/lifecycle-sql-port.ts",
-  actions: ["cascade", "delete_explicit", "pseudonymise"],
-} as const satisfies Readonly<{ file: string; actions: readonly LifecycleAction[] }>;
+/**
+ * The export projectors that actually EXIST. `exportProjector` declares three;
+ * `export.ts` builds one. Listing the built ones separately is what lets
+ * `validateLifecycleClosure` refuse an `included` disposition that no code can
+ * honour, instead of the type quietly implying all three work.
+ */
+export const BUILT_EXPORT_PROJECTORS = ["profile_creator"] as const;
+
+export const DYNAMIC_LIFECYCLE_WRITERS = [
+  {
+    file: "packages/db/src/lifecycle-sql-port.ts",
+    actions: ["cascade", "delete_explicit", "pseudonymise"],
+    why: "the registry-driven erasure port; listed as a physical writer only for the roots it INSERTs stubs into (scannable literals)",
+  },
+  {
+    file: "packages/db/src/retention-receiver.ts",
+    actions: ["delete_explicit", "pseudonymise"],
+    why: "the retention sweep; renders DELETE/UPDATE for every governed table through sql.raw, covered by assertRetentionClockClosure rather than by the AST scanner",
+  },
+] as const satisfies readonly Readonly<{ file: string; actions: readonly LifecycleAction[]; why: string }>[];
 
 /**
  * Independent logical-writer inventory. Keep this separate from the registry:
@@ -1252,9 +1370,13 @@ export const LIFECYCLE_WRITER_INVENTORY = [
   { table: "rate_limit", owner: "packages/auth", physicalWriters: ["packages/db/src/auth-lifecycle.ts"] },
   { table: "results", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
   { table: "session", owner: "packages/auth", physicalWriters: ["packages/db/src/auth-lifecycle.ts", "packages/db/src/deletion-lifecycle.ts"] },
-  { table: "stripe_events", owner: "packages/credits/src/stripe/webhooks.ts", physicalWriters: ["packages/credits/src/stripe/webhooks.ts"] },
+  // `retention-receiver.ts` is here because its subject-erasure payload purge
+  // names the table in SOURCE (the dynamic sweep in the same file does not, and
+  // is covered by DYNAMIC_LIFECYCLE_WRITERS instead). The tenancy review found
+  // this file in NO physicalWriters list of any table it writes.
+  { table: "stripe_events", owner: "packages/credits/src/stripe/webhooks.ts", physicalWriters: ["packages/credits/src/stripe/webhooks.ts", "packages/db/src/retention-receiver.ts"] },
   { table: "stripe_finance_extracts", owner: "packages/db/src/finance-extract.ts", physicalWriters: ["packages/db/src/finance-extract.ts"] },
-  { table: "subscriptions", owner: "packages/credits/src/stripe", physicalWriters: ["packages/credits/src/pause.ts", "packages/credits/src/stripe/actions.ts", "packages/credits/src/stripe/auto-topup-rollout.ts", "packages/credits/src/stripe/auto-topup-v1-reconcile.ts", "packages/credits/src/stripe/auto-topup.ts", "packages/credits/src/stripe/customers.ts", "packages/credits/src/stripe/deletion-commands.ts", "packages/credits/src/stripe/tier-checkout-rollout.ts", "packages/credits/src/stripe/tier-checkout-v1-reconcile.ts", "packages/credits/src/stripe/webhooks.ts"] },
+  { table: "subscriptions", owner: "packages/credits/src/stripe", physicalWriters: ["packages/credits/src/pause.ts", "packages/credits/src/stripe/actions.ts", "packages/credits/src/stripe/auto-topup-rollout.ts", "packages/credits/src/stripe/billing-contact.ts", "packages/credits/src/stripe/auto-topup-v1-reconcile.ts", "packages/credits/src/stripe/auto-topup.ts", "packages/credits/src/stripe/customers.ts", "packages/credits/src/stripe/deletion-commands.ts", "packages/credits/src/stripe/tier-checkout-rollout.ts", "packages/credits/src/stripe/tier-checkout-v1-reconcile.ts", "packages/credits/src/stripe/webhooks.ts"] },
   { table: "system_model_usage", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
   { table: "system_model_usage_reconciliations", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
   { table: "system_spend_claims", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },

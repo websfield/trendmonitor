@@ -6,7 +6,7 @@
 // public launch would have been authorised by a file of zeroes that no human
 // ever priced. So the template is excluded BY NAME, and that exclusion is
 // asserted here against the real file on disk rather than against a fixture.
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,20 +26,26 @@ describe("price snapshot loading", () => {
     }
   });
 
-  it("today the repository ships NO priced region, so enablement is blocked", () => {
-    // This is a statement about the repository as it stands: no AWS account is
-    // provisioned and no price list has been reviewed, so there is nothing to
-    // price with. When an operator records a real snapshot this assertion is
-    // expected to change, and changing it is the deliberate act of saying "a
-    // human read the price list".
-    const loaded = loadPriceSnapshots(join(respinRoot, "infra/s3-deletion-journal"));
-    expect(loaded).toEqual([]);
-
-    const forecast = forecastDeletionJournalCost({
-      region: "eu-west-2",
-      snapshots: loaded,
-      now: NOW,
+  it("ships exactly ONE priced region, ap-southeast-2, pinned number-for-number to the operator's price evidence", () => {
+    // The deliberate act the previous version of this case named: a human
+    // read the price list (R-124 provisioning, 2026-09-08) and recorded it as
+    // `price-evidence.ap-southeast-2.json`. The snapshot the loader reads is
+    // DERIVED from that evidence and pinned here, so the forecast can never
+    // price off a number the evidence file does not carry.
+    const loaded = loadPriceSnapshots(join(respinRoot, "infra/s3-deletion-journal")) as Record<string, string>[];
+    expect(loaded.map((s) => s.region)).toEqual(["ap-southeast-2"]);
+    const evidence = JSON.parse(readFileSync(join(respinRoot, "infra/s3-deletion-journal/price-evidence.ap-southeast-2.json"), "utf8")) as Record<string, string>;
+    expect(loaded[0]).toMatchObject({
+      currency: evidence.currency,
+      sourceUrl: evidence.source,
+      reviewedAt: evidence.reviewedAt,
+      storagePerGibMonth: evidence.standardStorageUsdPerGbMonthFirst50TiB,
+      putPer1000Requests: evidence.putCopyPostListUsdPer1000Requests,
+      getPer1000Requests: evidence.getOtherUsdPer1000Requests,
+      listPer1000Requests: evidence.putCopyPostListUsdPer1000Requests,
     });
+    // An UNPRICED region is still withheld, and withheld still blocks.
+    const forecast = forecastDeletionJournalCost({ region: "eu-west-2", snapshots: loaded, now: NOW });
     expect(forecast.outcome).toBe("withheld");
     expect(journalEnablementDecision(forecast).allowed).toBe(false);
   });
@@ -100,6 +106,79 @@ describe("forecast CLI exit codes — what a deployment checklist gates on", () 
     expect(() => main(["--measured-bytes", "-1", "--measured-puts", "1", "--measured-reads", "1"], {}, NOW)).toThrow(
       /non-negative integer/
     );
+  });
+
+  // A reviewed sheet, injected: this is what lets the three PRICED exit codes
+  // run through `main` itself rather than only through the pure module.
+  const priced = [{
+    region: "ap-southeast-2", currency: "USD", sourceUrl: "https://example.test/prices",
+    effectiveAt: "2026-08-01", reviewedAt: "2026-09-01",
+    storagePerGibMonth: "0.025", putPer1000Requests: "0.0055", getPer1000Requests: "0.00044",
+  }];
+  const measured = (bytes: number) => ["--region", "ap-southeast-2", "--measured-bytes", String(bytes), "--measured-puts", "10", "--measured-reads", "10"];
+
+  it("exit 0 ALLOWED on a small priced forecast, with no alert", () => {
+    const out = silence();
+    let code: number;
+    try {
+      code = main(measured(1_000), {}, NOW, priced);
+    } finally {
+      out.restore();
+    }
+    const text = out.written.join("");
+    expect(code).toBe(0);
+    expect(text).toContain("ALLOWED");
+    expect(text).not.toContain("ALERT");
+  });
+
+  it("exit 0 with the ALERT printed once the forecast reaches USD 0.50", () => {
+    const out = silence();
+    let code: number;
+    try {
+      // ~25 GiB-months at 0.025 = USD 0.63: over the alert line, under the ceiling.
+      code = main(measured(25 * 1024 ** 3), {}, NOW, priced);
+    } finally {
+      out.restore();
+    }
+    expect(code).toBe(0);
+    expect(out.written.join("")).toContain("ALERT");
+  });
+
+  it("exit 2 BLOCKED over the USD 1 ceiling, and a RECORDED owner ceiling can raise it (never lower it)", () => {
+    const heavy = measured(60 * 1024 ** 3); // ~USD 1.50
+    let out = silence();
+    let code: number;
+    try {
+      code = main(heavy, {}, NOW, priced);
+    } finally {
+      out.restore();
+    }
+    expect(code).toBe(2);
+    expect(out.written.join("")).toContain("BLOCKED");
+
+    out = silence();
+    try {
+      code = main([...heavy, "--owner-ceiling-cents", "250"], {}, NOW, priced);
+    } finally {
+      out.restore();
+    }
+    expect(code).toBe(0);
+    expect(out.written.join("")).toContain("ALERT");
+
+    // Lowering is refused by the module's clamp: a 63-cent forecast under a
+    // "10 cent" owner ceiling is still ALLOWED, because a recorded decision can
+    // only raise the USD 1 ceiling. (A 1-cent forecast would pass either way —
+    // billing gate, fix round 2 — so the witness uses one that is over the
+    // lowered figure and under the real one.)
+    out = silence();
+    try {
+      code = main([...measured(25 * 1024 ** 3), "--owner-ceiling-cents", "10"], {}, NOW, priced);
+    } finally {
+      out.restore();
+    }
+    expect(code).toBe(0);
+    expect(out.written.join("")).not.toContain("BLOCKED");
+    expect(() => main(["--owner-ceiling-cents", "-5"], {}, NOW, priced)).toThrow(/non-negative integer/);
   });
 
   it("takes the region from the flag, then the environment", () => {

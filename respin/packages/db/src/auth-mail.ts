@@ -8,7 +8,7 @@
 //
 // This module is the sole APPLICATION writer of `auth_mail_outbox`; at
 // identity erasure the registry-driven SQL port (`lifecycle-sql-port.ts`,
-// `DYNAMIC_LIFECYCLE_WRITER`) nulls the recipient link, covered by registry
+// `DYNAMIC_LIFECYCLE_WRITERS`) nulls the recipient link, covered by registry
 // closure and the independent probe rather than by the writer scanner. The
 // Resend HTTP adapter lives in `packages/auth/src/resend-mail.ts` and
 // implements the `AuthMailPort` below; this package never sees an API key.
@@ -80,8 +80,13 @@ export type AuthMailCeilings = Readonly<{
 export const AUTH_MAIL_COMPILED_CEILINGS: AuthMailCeilings = {
   totalPerDay: 80,
   totalPerMonth: 2_400,
-  invitesPerDay: 60,
-  invitesPerMonth: 1_800,
+  // 50, not 60 (fix pass 3, lean gate S-1): the password-reset floor
+  // (`AUTH_MAIL_RESET_RESERVE`) is PAID FOR BY THE INVITE SHARE at the compiled
+  // level, so the derived security reserve below is recovery (10) + reset (10)
+  // + verification headroom (10) and a tighten-only override cannot express a
+  // day in which a full invite day leaves verification nothing.
+  invitesPerDay: 50,
+  invitesPerMonth: 1_500,
 };
 
 export const AUTH_MAIL_SECURITY_RESERVE = {
@@ -89,6 +94,50 @@ export const AUTH_MAIL_SECURITY_RESERVE = {
   perMonth:
     AUTH_MAIL_COMPILED_CEILINGS.totalPerMonth - AUTH_MAIL_COMPILED_CEILINGS.invitesPerMonth,
 } as const;
+
+/**
+ * Per (auth user, purpose), per UTC day.
+ *
+ * WHY. The ceilings above are a single GLOBAL bucket. `password_reset` and
+ * `email_verification` are both reachable BEFORE authentication, so an
+ * unauthenticated attacker behind a modest proxy pool could burn the whole
+ * monthly allowance in about a day and take password reset and email
+ * verification down product-wide for a calendar month -- and because a deletion
+ * request correctly fails closed when recovery mail is unavailable, that also
+ * made the erasure right unexercisable for the duration.
+ *
+ * A per-subject bucket is what makes the global one expensive to reach: an
+ * attacker now needs many distinct victim accounts rather than one, on top of
+ * the existing per-IP limits. Five is above any honest use (a person who really
+ * did lose a password does not need a sixth mail in one day) and far below the
+ * global ceiling.
+ */
+export const AUTH_MAIL_PER_USER_PER_DAY = 5;
+
+/**
+ * Capacity no purpose except identity-deletion recovery may consume.
+ *
+ * The invite reserve above protects account/security mail from invites. It did
+ * nothing for the case that matters most: a reset/verification flood starving
+ * the ONE mail that carries a person's single-use deletion-recovery credential.
+ * REQ-A04's erasure right must not be deniable by filling a shared bucket, so
+ * recovery draws on a floor the other purposes cannot touch -- the same
+ * FLOOR-not-ratio shape as `AUTH_MAIL_SECURITY_RESERVE`.
+ */
+export const AUTH_MAIL_RECOVERY_RESERVE = { perDay: 10, perMonth: 300 } as const;
+
+/**
+ * The same shape for PASSWORD RESET (security review of 10b-1, round 2, MEDIUM):
+ * every signup sends a verification mail under a fresh account, so a flood of
+ * free signups could exhaust the shared day and month totals and deny every
+ * honest user their password reset until the next UTC day or month. Reset now
+ * has its own floor that verification and invite traffic cannot consume; the
+ * recovery reserve stays above both. What this does NOT do: protect reset from
+ * a flood of RESET requests themselves (five per account per day, accounts
+ * being free) — that is the endpoint's per-IP limit's job, and the operator
+ * ceiling raise a month-long outage would need is recorded as T-R2-9.
+ */
+export const AUTH_MAIL_RESET_RESERVE = { perDay: 10, perMonth: 300 } as const;
 
 /**
  * Runtime configuration may only TIGHTEN. Any value that is not a positive
@@ -269,16 +318,50 @@ export async function admitAuthMail(
       countWhere(and(eq(authMailOutbox.admittedDayUtc, day))),
       countWhere(and(eq(authMailOutbox.admittedMonthUtc, month))),
     ]);
-    if (totalDay >= ceilings.totalPerDay) refuse("quota_day_exhausted");
-    if (totalMonth >= ceilings.totalPerMonth) refuse("quota_month_exhausted");
+    // The recovery floor. Every purpose EXCEPT identity-deletion recovery sees a
+    // total reduced by the reserve, so a reset/verification flood cannot deny
+    // someone their single-use deletion-recovery credential (REQ-A04).
+    // Two floors under the shared totals: recovery keeps the top slice for
+    // itself; reset keeps the next slice; everything else sees what is left.
+    const reserved =
+      params.purpose === "identity_deletion_recovery"
+        ? { perDay: 0, perMonth: 0 }
+        : params.purpose === "password_reset"
+          ? AUTH_MAIL_RECOVERY_RESERVE
+          : {
+              perDay: AUTH_MAIL_RECOVERY_RESERVE.perDay + AUTH_MAIL_RESET_RESERVE.perDay,
+              perMonth: AUTH_MAIL_RECOVERY_RESERVE.perMonth + AUTH_MAIL_RESET_RESERVE.perMonth,
+            };
+    const effectiveTotalPerDay = ceilings.totalPerDay - reserved.perDay;
+    const effectiveTotalPerMonth = ceilings.totalPerMonth - reserved.perMonth;
+    // The purpose-specific invite ceiling is checked BEFORE the shared totals:
+    // with the reset floor carved out, the non-reserved share of the day
+    // equals the invite ceiling exactly, and the more specific refusal must
+    // be the one an invite flood sees.
     if (params.purpose === "workspace_invite") {
       const [inviteDay, inviteMonth] = await Promise.all([
         countWhere(and(eq(authMailOutbox.admittedDayUtc, day), eq(authMailOutbox.purpose, "workspace_invite"))),
         countWhere(and(eq(authMailOutbox.admittedMonthUtc, month), eq(authMailOutbox.purpose, "workspace_invite"))),
       ]);
+      // The reset floor is paid for by the invite share at the COMPILED level
+      // (`invitesPerDay` is 50, not 60), so this check needs no arithmetic of
+      // its own: after a full invite day the non-reserved total still holds
+      // the reset reserve's worth for verification.
       if (inviteDay >= ceilings.invitesPerDay) refuse("invite_quota_day_exhausted");
       if (inviteMonth >= ceilings.invitesPerMonth) refuse("invite_quota_month_exhausted");
     }
+    if (totalDay >= effectiveTotalPerDay) refuse("quota_day_exhausted");
+    if (totalMonth >= effectiveTotalPerMonth) refuse("quota_month_exhausted");
+    // The per-subject bucket, counted under the SAME advisory lock as the
+    // global one so two concurrent requests for one user cannot both pass.
+    const perUserDay = await countWhere(
+      and(
+        eq(authMailOutbox.admittedDayUtc, day),
+        eq(authMailOutbox.authUserId, params.authUserId),
+        eq(authMailOutbox.purpose, params.purpose)
+      )
+    );
+    if (perUserDay >= AUTH_MAIL_PER_USER_PER_DAY) refuse("quota_user_day_exhausted");
     const [row] = await tx
       .insert(authMailOutbox)
       .values({

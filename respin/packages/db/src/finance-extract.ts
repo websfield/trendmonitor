@@ -58,7 +58,8 @@ export type IncompleteReason =
   | "missing_service_period"
   | "missing_charge_link"
   | "legacy_dispute_link_absent"
-  | "legacy_dispute_status_absent";
+  | "legacy_dispute_status_absent"
+  | "missing_dispute_effective_at";
 
 export type FinanceExtractRow = Readonly<{
   sourceStripeEventId: string;
@@ -71,7 +72,20 @@ export type FinanceExtractRow = Readonly<{
   disputeId: string | null;
   chargeId: string | null;
   workspaceKey: string | null;
+  /**
+   * The currency Stripe reported, or null when none was readable. NEVER a
+   * constant: a row withheld for `non_usd_currency` that stored 'USD' anyway
+   * stated a fact its own reason code contradicted.
+   */
+  currency: string | null;
+  /** Excluding tax. SIGNED — a proration credit line is legitimately negative. */
   amountExcludingTaxCents: number | null;
+  /**
+   * Tax-INCLUSIVE, for the three object types (`charge`, `payment_intent`,
+   * `refund`) whose Stripe amount has no tax-excluding sibling. Never populated
+   * together with the column above; the CHECK enforces that.
+   */
+  amountIncludingTaxCents: number | null;
   disputedAmountCents: number | null;
   servicePeriodStart: Date | null;
   servicePeriodEnd: Date | null;
@@ -104,6 +118,14 @@ const asRecord = (value: unknown): Readonly<Record<string, unknown>> | null =>
 
 const asString = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;
+
+/**
+ * Currency codes are ISO 4217 and stored UPPERCASE; Stripe reports them
+ * lowercase (`"usd"`). Normalising here rather than at each call site keeps the
+ * stored value comparable with the `= 'USD'` CHECK on a complete row, and keeps
+ * a withheld row's currency (`"EUR"`) readable next to its reason code.
+ */
+const asCurrency = (value: unknown): string | null => asString(value)?.toUpperCase() ?? null;
 
 /**
  * Stripe expresses a linked object either as an id string or as an expanded
@@ -144,7 +166,9 @@ const incomplete = (
   disputeId: null,
   chargeId: null,
   workspaceKey: input.workspaceKey,
+  currency: null,
   amountExcludingTaxCents: null,
+  amountIncludingTaxCents: null,
   disputedAmountCents: null,
   servicePeriodStart: null,
   servicePeriodEnd: null,
@@ -172,7 +196,9 @@ const complete = (
   disputeId: null,
   chargeId: null,
   workspaceKey: input.workspaceKey,
+  currency: null,
   amountExcludingTaxCents: null,
+  amountIncludingTaxCents: null,
   disputedAmountCents: null,
   servicePeriodStart: null,
   servicePeriodEnd: null,
@@ -210,7 +236,7 @@ export function extractFinanceFacts(input: FinanceExtractInput): readonly Financ
     return [incomplete(input, objectType ?? input.eventType, objectId, "unknown_object_type")];
   }
 
-  const currency = asString(object.currency);
+  const currency = asCurrency(object.currency);
   // A dispute's currency lives on the dispute itself; an invoice's on the
   // invoice. Either way an absent or non-USD currency is a withheld period,
   // never a converted number.
@@ -218,20 +244,29 @@ export function extractFinanceFacts(input: FinanceExtractInput): readonly Financ
     return [incomplete(input, objectType, objectId, "missing_currency")];
   }
   if (currency !== null && currency.toLowerCase() !== "usd") {
-    return [incomplete(input, objectType, objectId, "non_usd_currency")];
+    // The withheld row stores the currency it actually saw, so the reason code
+    // and the stored fact agree.
+    return [incomplete(input, objectType, objectId, "non_usd_currency", { currency })];
   }
 
   switch (objectType) {
     case "invoice":
       return extractInvoice(input, object, objectId);
+    // `payment_intent.amount`, `charge.amount` and `refund.amount` are all
+    // tax-INCLUSIVE and Stripe exposes no tax-excluding sibling on these
+    // objects, so they book to `amountIncludingTaxCents`. Putting them in the
+    // excluding-tax column was T69-R14: it mixed tax into revenue in the very
+    // module that refuses that substitution for invoice lines and credit notes.
     case "payment_intent":
-      return [extractSimpleAmount(input, object, objectType, objectId, { paymentIntentId: objectId })];
+      return [
+        extractSimpleAmount(input, object, objectType, objectId, { paymentIntentId: objectId }, undefined, "including"),
+      ];
     case "charge":
       return [
         extractSimpleAmount(input, object, objectType, objectId, {
           chargeId: objectId,
           paymentIntentId: asLinkId(object.payment_intent),
-        }),
+        }, undefined, "including"),
       ];
     case "refund":
       return [
@@ -239,7 +274,7 @@ export function extractFinanceFacts(input: FinanceExtractInput): readonly Financ
           refundId: objectId,
           chargeId: asLinkId(object.charge),
           paymentIntentId: asLinkId(object.payment_intent),
-        }),
+        }, undefined, "including"),
       ];
     case "credit_note":
       return [
@@ -252,7 +287,7 @@ export function extractFinanceFacts(input: FinanceExtractInput): readonly Financ
           // back to it silently would mix tax into revenue"); a credit note is
           // the same quantity on the other side of the ledger. Absent -> an
           // `incomplete` row with a reason, never a tax-inflated number.
-        }, asInteger(object.total_excluding_tax)),
+        }, asInteger(object.total_excluding_tax), "excluding"),
       ];
     case "dispute":
       return [extractDispute(input, object, objectId)];
@@ -284,19 +319,19 @@ function extractInvoice(
     }
     const lineId = asString(line.id) ?? `${invoiceId}:${index}`;
     const rowId = lineId;
-    const currency = asString(line.currency) ?? asString(invoice.currency);
+    const currency = asCurrency(line.currency) ?? asCurrency(invoice.currency);
     if (currency === null) {
       return incomplete(input, "invoice", rowId, "missing_currency", { invoiceLineId: lineId });
     }
     if (currency.toLowerCase() !== "usd") {
-      return incomplete(input, "invoice", rowId, "non_usd_currency", { invoiceLineId: lineId });
+      return incomplete(input, "invoice", rowId, "non_usd_currency", { invoiceLineId: lineId, currency });
     }
     // `amount_excluding_tax` is the field C5 names. Older API versions emit
     // only `amount`; falling back to it silently would mix tax into revenue,
     // so its absence is recorded rather than papered over.
     const amount = asInteger(line.amount_excluding_tax);
     if (amount === null) {
-      return incomplete(input, "invoice", rowId, "missing_amount", { invoiceLineId: lineId });
+      return incomplete(input, "invoice", rowId, "missing_amount", { invoiceLineId: lineId, currency });
     }
     const period = asRecord(line.period);
     const start = period ? asEpochSeconds(period.start) : null;
@@ -304,13 +339,16 @@ function extractInvoice(
     if (start === null || end === null) {
       return incomplete(input, "invoice", rowId, "missing_service_period", {
         invoiceLineId: lineId,
+        currency,
         amountExcludingTaxCents: amount,
       });
     }
     return complete(input, "invoice", rowId, {
       invoiceLineId: lineId,
+      currency,
       paymentIntentId: asLinkId(invoice.payment_intent),
       chargeId: asLinkId(invoice.charge),
+      // Signed: a proration credit on a mid-cycle downgrade is negative here.
       amountExcludingTaxCents: amount,
       servicePeriodStart: start,
       servicePeriodEnd: end,
@@ -324,13 +362,26 @@ function extractSimpleAmount(
   objectType: string,
   objectId: string,
   links: Partial<FinanceExtractRow>,
-  amountOverride?: number | null,
+  amountOverride: number | null | undefined,
+  /**
+   * Which column the amount is TRUE of. Required and un-defaulted on purpose: a
+   * default here would let a future object type inherit "excluding tax" by
+   * omission, which is the exact silent mislabelling T69-R14 recorded.
+   */
+  taxBasis: "excluding" | "including",
 ): FinanceExtractRow {
+  const currency = asCurrency(object.currency);
   const amount = amountOverride === undefined ? asInteger(object.amount) : amountOverride;
   if (amount === null) {
-    return incomplete(input, objectType, objectId, "missing_amount", links);
+    return incomplete(input, objectType, objectId, "missing_amount", { ...links, currency });
   }
-  return complete(input, objectType, objectId, { ...links, amountExcludingTaxCents: amount });
+  return complete(input, objectType, objectId, {
+    ...links,
+    currency,
+    ...(taxBasis === "excluding"
+      ? { amountExcludingTaxCents: amount }
+      : { amountIncludingTaxCents: amount }),
+  });
 }
 
 function extractDispute(
@@ -341,7 +392,12 @@ function extractDispute(
   const amount = asInteger(dispute.amount);
   const chargeId = asLinkId(dispute.charge);
   const status = asString(dispute.status);
-  const links: Partial<FinanceExtractRow> = { disputeId, chargeId, paymentIntentId: asLinkId(dispute.payment_intent) };
+  const links: Partial<FinanceExtractRow> = {
+    disputeId,
+    chargeId,
+    currency: asCurrency(dispute.currency),
+    paymentIntentId: asLinkId(dispute.payment_intent),
+  };
   if (amount === null) {
     return incomplete(input, "dispute", disputeId, "missing_amount", links);
   }
@@ -360,11 +416,23 @@ function extractDispute(
       disputedAmountCents: amount,
     });
   }
+  // C5 names the dispute's EFFECTIVE TIMESTAMP among the facts that must
+  // survive. Every other absent field on this path becomes `incomplete`; this
+  // one silently produced a `complete` row with a null effective time, which
+  // tells 10b-2 the timestamp is trustworthy when it was never read.
+  const effectiveAt = asEpochSeconds(dispute.created);
+  if (effectiveAt === null) {
+    return incomplete(input, "dispute", disputeId, "missing_dispute_effective_at", {
+      ...links,
+      disputedAmountCents: amount,
+      disputeStatus: status,
+    });
+  }
   return complete(input, "dispute", disputeId, {
     ...links,
     disputedAmountCents: amount,
     disputeStatus: status,
-    disputeEffectiveAt: asEpochSeconds(dispute.created),
+    disputeEffectiveAt: effectiveAt,
   });
 }
 
@@ -394,14 +462,15 @@ export async function persistFinanceExtractsInTx(
         id,
         source_stripe_event_id, object_type, object_id, invoice_line_id, payment_intent_id,
         refund_id, credit_note_id, dispute_id, charge_id, workspace_key, currency,
-        amount_excluding_tax_cents, disputed_amount_cents, service_period_start, service_period_end,
+        amount_excluding_tax_cents, amount_including_tax_cents, disputed_amount_cents,
+        service_period_start, service_period_end,
         dispute_status, dispute_effective_at, extraction_version, status, incomplete_reason
       ) VALUES (
         ${uuidv7()},
         ${row.sourceStripeEventId}, ${row.objectType}, ${row.objectId}, ${row.invoiceLineId},
         ${row.paymentIntentId}, ${row.refundId}, ${row.creditNoteId}, ${row.disputeId},
-        ${row.chargeId}, ${row.workspaceKey}, 'USD',
-        ${row.amountExcludingTaxCents}, ${row.disputedAmountCents},
+        ${row.chargeId}, ${row.workspaceKey}, ${row.currency},
+        ${row.amountExcludingTaxCents}, ${row.amountIncludingTaxCents}, ${row.disputedAmountCents},
         ${row.servicePeriodStart}, ${row.servicePeriodEnd},
         ${row.disputeStatus}, ${row.disputeEffectiveAt},
         ${row.extractionVersion}, ${row.status}, ${row.incompleteReason}

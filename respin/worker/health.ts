@@ -218,6 +218,8 @@ export interface SafeWorkerEventInput {
   readonly retentionDeleted?: number;
   readonly retentionFinanceExtracts?: number;
   readonly retentionOldestOverdueMs?: number;
+  /** Rows this tick could not write EVEN ALONE. Non-zero is always actionable. */
+  readonly retentionPoisoned?: number;
   readonly retentionFailures?: number;
   readonly retentionTruncated?: number;
   readonly generationAbandoned?: number;
@@ -256,6 +258,7 @@ const NUMBER_FIELDS = [
   "retentionDeleted",
   "retentionFinanceExtracts",
   "retentionOldestOverdueMs",
+  "retentionPoisoned",
   "retentionFailures",
   "retentionTruncated",
   "generationAbandoned",

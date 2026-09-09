@@ -9,6 +9,8 @@ import { ensureUserWorkspace } from "../src/bootstrap";
 import { users } from "../src/schema";
 import { activationCohortDaily, deletionOperations } from "../src/lifecycle-schema";
 import {
+  ACTIVATION_METRIC_VERSION,
+  ACTIVATION_VERIFICATION_LIMITATION,
   ACTIVATION_WINDOW_MS,
   activationPayloadHash,
   applyActivationContributionInTx,
@@ -195,5 +197,110 @@ describe("contribution capture, apply, receipt", () => {
     const after = await deriveActivationCohorts(db, NO_ACTIVATION_EXCLUSIONS, new Date());
     expect(after.reduce((n, c) => n + c.signups, 0)).toBe(1);
     expect(after[0]!.smallCell).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round-3 regression pins for the metric this slice makes authoritative.
+// ---------------------------------------------------------------------------
+describe("activation cohorts — an erasure stub is not a signup", () => {
+  let db: TestDb;
+  beforeEach(async () => {
+    db = await createTestDb();
+  });
+
+  it("a TOMBSTONED stub contributes nothing, even once its deletion receipt is swept", async () => {
+    // The time bomb. Erasure inserts a stub `users` row with `created_at`
+    // defaulted to the erasure instant. It was kept out of the live pass only
+    // because its id appeared in the `applied` set built from
+    // `deletion_operations` -- and `deletion_receipt_one_year` DELETES that row
+    // after a year. So one year after every identity erasure, each deleted
+    // account began contributing one invented, never-activated signup, dated
+    // the day it was erased, for ever. This seeds the state that exists AFTER
+    // that sweep: a tombstoned stub with no operation row anywhere.
+    await seedAuthUser(db, "stub-auth");
+    const stubId = randomUUID();
+    await db.insert(users).values({
+      id: stubId,
+      authUserId: "stub-auth",
+      createdAt: new Date("2026-09-02T00:00:00.000Z"),
+      lifecycleState: "tombstoned",
+    });
+    // Precisely the post-sweep condition: nothing in deletion_operations.
+    expect(await db.select().from(deletionOperations)).toHaveLength(0);
+
+    const cohorts = await deriveActivationCohorts(db, NO_ACTIVATION_EXCLUSIONS, new Date("2026-09-10T00:00:00.000Z"));
+
+    expect(cohorts).toEqual([]);
+  });
+
+  it("an ACTIVE account on the same day still counts — the filter is not a blanket off-switch", async () => {
+    // Non-vacuity for the test above: if the live pass counted nobody, the
+    // assertion there would hold for the wrong reason.
+    await seedAuthUser(db, "live-auth");
+    const liveId = randomUUID();
+    await db.insert(users).values({
+      id: liveId,
+      authUserId: "live-auth",
+      createdAt: new Date("2026-09-02T00:00:00.000Z"),
+      lifecycleState: "active",
+    });
+
+    const cohorts = await deriveActivationCohorts(db, NO_ACTIVATION_EXCLUSIONS, new Date("2026-09-10T00:00:00.000Z"));
+
+    expect(cohorts).toHaveLength(1);
+    expect(cohorts[0]).toMatchObject({ cohortDate: "2026-09-02", signups: 1 });
+  });
+});
+
+describe("activation cohorts — the two halves and their horizons", () => {
+  let db: TestDb;
+  beforeEach(async () => {
+    db = await createTestDb();
+  });
+
+  it("carries its metric version and the verification limitation on every row", () => {
+    // T69-R1/R15: the limitation lived in a review manifest and the shape
+    // carried nothing, so a reporting surface could not caveat a number it was
+    // never handed.
+    expect(ACTIVATION_VERIFICATION_LIMITATION).toMatch(/verification timestamp/);
+  });
+
+  it("keeps retained rows of an OLDER metric version instead of dropping them", async () => {
+    // The aggregate used to be read `WHERE metric_version = current`, so a bump
+    // to v2 silently discarded every deleted account's retained v1
+    // contribution while the live pass re-judged the same cohorts under v2.
+    await db.insert(activationCohortDaily).values([
+      { cohortDate: "2026-09-03", metricVersion: ACTIVATION_METRIC_VERSION, signups: 4, activated: 2, excluded: 0, updatedAt: new Date() },
+      { cohortDate: "2026-09-03", metricVersion: ACTIVATION_METRIC_VERSION + 1, signups: 5, activated: 1, excluded: 0, updatedAt: new Date() },
+    ]);
+
+    const cohorts = await deriveActivationCohorts(db, NO_ACTIVATION_EXCLUSIONS, new Date("2026-09-10T00:00:00.000Z"));
+
+    // Both survive, and they are NEVER summed into one bucket.
+    expect(cohorts).toHaveLength(2);
+    expect(cohorts.map((c) => [c.metricVersion, c.signups])).toEqual([
+      [ACTIVATION_METRIC_VERSION, 4],
+      [ACTIVATION_METRIC_VERSION + 1, 5],
+    ]);
+    for (const cohort of cohorts) {
+      expect(cohort.limitation).toBe(ACTIVATION_VERIFICATION_LIMITATION);
+    }
+  });
+
+  it("flags a cohort older than the aggregate's own retention as expired", async () => {
+    // Past two years the deleted half of the denominator has been swept while
+    // the live pass has no lower bound, so only survivors remain and the rate
+    // is biased upward. Nothing on the row used to say so.
+    await db.insert(activationCohortDaily).values([
+      { cohortDate: "2023-01-01", metricVersion: ACTIVATION_METRIC_VERSION, signups: 40, activated: 20, excluded: 0, updatedAt: new Date() },
+      { cohortDate: "2026-09-03", metricVersion: ACTIVATION_METRIC_VERSION, signups: 40, activated: 20, excluded: 0, updatedAt: new Date() },
+    ]);
+
+    const cohorts = await deriveActivationCohorts(db, NO_ACTIVATION_EXCLUSIONS, new Date("2026-09-10T00:00:00.000Z"));
+
+    const byDate = new Map(cohorts.map((c) => [c.cohortDate, c]));
+    expect(byDate.get("2023-01-01")!.aggregateExpired).toBe(true);
+    expect(byDate.get("2026-09-03")!.aggregateExpired).toBe(false);
   });
 });

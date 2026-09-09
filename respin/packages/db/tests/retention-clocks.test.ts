@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { readdirSync, readFileSync } from "node:fs";
 
 import {
+  LIFECYCLE_FOREIGN_KEY_EDGES,
   LIFECYCLE_REGISTRY,
   type LifecycleClassEntry,
 } from "../src/creator-data-registry";
@@ -21,6 +22,7 @@ import {
   RETENTION_MEASURES,
   retentionSweepSpecs,
   type RetentionMeasure,
+  orderChildrenFirst,
 } from "../src/retention-clocks";
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
@@ -133,5 +135,44 @@ describe("retention clock closure", () => {
       effect: { kind: "redact_columns", columns: [{ column: "not_a_column", to: "null" }] },
     })) as readonly RetentionMeasure[];
     expect(planted([entry], bad)).toThrow(/redacts unknown column 'not_a_column'/);
+  });
+});
+
+describe("sweep order is children-first over the registry's foreign keys", () => {
+  it("every swept child table precedes every swept table it references, and KEY order alone would not (non-vacuity)", () => {
+    const specs = retentionSweepSpecs();
+    const position = new Map(specs.map((spec, index) => [spec.key, index]));
+    const firstOf = (table: string) => Math.min(...specs.filter((s) => s.measure.table === table).map((s) => position.get(s.key)!));
+    const lastOf = (table: string) => Math.max(...specs.filter((s) => s.measure.table === table).map((s) => position.get(s.key)!));
+    const swept = new Set(specs.map((s) => s.measure.table));
+    let checked = 0;
+    for (const edge of LIFECYCLE_FOREIGN_KEY_EDGES) {
+      if (edge.table === edge.referencedTable || !swept.has(edge.table) || !swept.has(edge.referencedTable)) continue;
+      checked += 1;
+      expect(lastOf(edge.table), `${edge.table} must be swept before ${edge.referencedTable}`).toBeLessThan(firstOf(edge.referencedTable));
+    }
+    expect(checked).toBeGreaterThan(0);
+    // The defect the populated fixture found: alphabetical order put the
+    // RESTRICT child `deletion_recovery_sessions` AFTER its parent.
+    const byKey = [...specs].sort((l, r) => l.key.localeCompare(r.key));
+    const keyPos = new Map(byKey.map((spec, index) => [spec.key, index]));
+    expect(keyPos.get("deletion_recovery_sessions::identity_row::complete_row")!).toBeGreaterThan(
+      keyPos.get("deletion_operations::identity_row::receipt_facts")!
+    );
+    expect(position.get("deletion_recovery_sessions::identity_row::complete_row")!).toBeLessThan(
+      position.get("deletion_operations::identity_row::receipt_facts")!
+    );
+  });
+
+  it("refuses a foreign-key cycle rather than picking a side", () => {
+    const specs = retentionSweepSpecs();
+    const a = specs.find((s) => s.measure.table === "session")!;
+    const b = specs.find((s) => s.measure.table === "verification")!;
+    expect(() =>
+      orderChildrenFirst([a, b], [
+        { table: "session", referencedTable: "verification" },
+        { table: "verification", referencedTable: "session" },
+      ])
+    ).toThrow(/foreign-key cycle/);
   });
 });

@@ -16,6 +16,7 @@
 // registry, never a grep. Adding a receiver-executed entry without a measure
 // below is red in `retention-clocks.test.ts`.
 import {
+  LIFECYCLE_FOREIGN_KEY_EDGES,
   LIFECYCLE_REGISTRY,
   type AppTable,
   type ExecutorId,
@@ -231,7 +232,12 @@ export const RETENTION_MEASURES = [
   },
   {
     table: "deletion_operations", rowClass: "identity_row", fieldSet: "recovery_secret",
-    measuredFrom: "recovery_expires_at", measuredAs: "timestamptz",
+    // MEASURED FROM `requested_at`, NOT `recovery_expires_at`. The clock is
+    // seven days, and `recovery_expires_at` is ALREADY request + 7 days, so
+    // measuring from it fired at request + FOURTEEN days — while the `why`
+    // below asserted in terms that this was "not an extra window on top". The
+    // sweep now lands exactly at expiry, which is what C5 says.
+    measuredFrom: "requested_at", measuredAs: "timestamptz",
     precondition: { kind: "column_not_null", column: "recovery_expires_at" },
     effect: redact(
       { column: "recovery_secret_digest", to: "null" },
@@ -254,7 +260,7 @@ export const RETENTION_MEASURES = [
     // null it: pre-terminal the UPDATE is refused, post-terminal it is already
     // null. That column is governed by the STATE MACHINE, and the row itself
     // goes on the one-year `receipt_facts` delete.
-    why: "C5: the identity recovery digest erases on use/cancel, erasure start, or seven-day expiry. The column already carries request + 7 days, so this sweep is the LAST of those four, not an extra window on top. Stamping recovery_consumed_at is what makes the redaction legal under deletion_operations_recovery_shape.",
+    why: "C5: the identity recovery digest erases on use/cancel, erasure start, or seven-day expiry. Measured from `requested_at` so the sweep lands AT the seven-day expiry rather than seven days after it — the previous version measured from `recovery_expires_at`, which is itself request + 7 days, giving a fourteen-day window under a comment claiming the opposite. Stamping recovery_consumed_at is what makes the redaction legal under deletion_operations_recovery_shape.",
   },
   {
     table: "deletion_operations", rowClass: "profile_row", fieldSet: "receipt_facts",
@@ -268,11 +274,22 @@ export const RETENTION_MEASURES = [
     measuredFrom: "recovery_expires_at", measuredAs: "timestamptz",
     precondition: { kind: "column_not_null", column: "recovery_expires_at" },
     effect: redact(
-      { column: "request_session_digest", to: "null" },
+      // `request_session_digest` is NOT swept, matching the identity measure.
+      // `deletion_operations_request_session_digest_shape` requires it NULL when
+      // terminal and NON-NULL otherwise, so no clock can null it: pre-terminal
+      // the UPDATE is refused and the whole batch aborts, post-terminal it is
+      // already null.
       { column: "recovery_secret_digest", to: "null" },
       { column: "recovery_secret_prefix", to: "null" },
+      // NOT `recovery_consumed_at`. `deletion_operations_recovery_shape` requires
+      // it NULL for every non-identity scope, so the identity measure's
+      // `now_if_null` stamp is ILLEGAL here — the previous copy of this measure
+      // carried it and its "kept in the LEGAL shape" claim was false (tenancy
+      // gate, fix round 2, round 2: the CHECK evaluated to true before that
+      // UPDATE and false after it). Digest and prefix are NULL by the same
+      // CHECK for these scopes, so this effect is a legal no-op.
     ),
-    why: "C5: the identity recovery digest erases on use/cancel, erasure start, or seven-day expiry. The column already carries request + 7 days, so this sweep is the LAST of those four, not an extra window on top.",
+    why: "C5's recovery-digest clock for a row class that can never hold a secret: deletion_operations_recovery_shape forces recovery_expires_at, the digest, the prefix AND recovery_consumed_at NULL for every non-identity scope, so the precondition is unsatisfiable and the effect is a no-op. Retained so the field-set partition stays exhaustive. `retention-sweep-fixtures.test.ts` asserts both halves on the REAL workspace and profile operations: the database refuses giving them a recovery expiry, and this measure's UPDATE (run for real, not behind a false predicate) is legal on them while the identity measure's stamp is not.",
   },
   {
     table: "deletion_operations", rowClass: "workspace_row", fieldSet: "receipt_facts",
@@ -286,11 +303,22 @@ export const RETENTION_MEASURES = [
     measuredFrom: "recovery_expires_at", measuredAs: "timestamptz",
     precondition: { kind: "column_not_null", column: "recovery_expires_at" },
     effect: redact(
-      { column: "request_session_digest", to: "null" },
+      // `request_session_digest` is NOT swept, matching the identity measure.
+      // `deletion_operations_request_session_digest_shape` requires it NULL when
+      // terminal and NON-NULL otherwise, so no clock can null it: pre-terminal
+      // the UPDATE is refused and the whole batch aborts, post-terminal it is
+      // already null.
       { column: "recovery_secret_digest", to: "null" },
       { column: "recovery_secret_prefix", to: "null" },
+      // NOT `recovery_consumed_at`. `deletion_operations_recovery_shape` requires
+      // it NULL for every non-identity scope, so the identity measure's
+      // `now_if_null` stamp is ILLEGAL here — the previous copy of this measure
+      // carried it and its "kept in the LEGAL shape" claim was false (tenancy
+      // gate, fix round 2, round 2: the CHECK evaluated to true before that
+      // UPDATE and false after it). Digest and prefix are NULL by the same
+      // CHECK for these scopes, so this effect is a legal no-op.
     ),
-    why: "C5: the identity recovery digest erases on use/cancel, erasure start, or seven-day expiry. The column already carries request + 7 days, so this sweep is the LAST of those four, not an extra window on top.",
+    why: "C5's recovery-digest clock for a row class that can never hold a secret: deletion_operations_recovery_shape forces recovery_expires_at, the digest, the prefix AND recovery_consumed_at NULL for every non-identity scope, so the precondition is unsatisfiable and the effect is a no-op. Retained so the field-set partition stays exhaustive. `retention-sweep-fixtures.test.ts` asserts both halves on the REAL workspace and profile operations: the database refuses giving them a recovery expiry, and this measure's UPDATE (run for real, not behind a false predicate) is legal on them while the identity measure's stamp is not.",
   },
   {
     table: "deletion_recovery_sessions", rowClass: "identity_row", fieldSet: "complete_row",
@@ -497,6 +525,7 @@ export function retentionSweepSpecs(
   registry: readonly LifecycleClassEntry[] = LIFECYCLE_REGISTRY,
   clocks: Readonly<Record<RetentionRule, RetentionClock>> = RETENTION_CLOCKS,
   measures: readonly RetentionMeasure[] = RETENTION_MEASURES,
+  edges: readonly Readonly<{ table: AppTable; referencedTable: AppTable }>[] = LIFECYCLE_FOREIGN_KEY_EDGES,
 ): readonly RetentionSweepSpec[] {
   const specs = new Map<RetentionMeasureKey, RetentionSweepSpec>();
   for (const entry of registry) {
@@ -512,5 +541,50 @@ export function retentionSweepSpecs(
     }
     specs.set(key, { key, rule: entry.retention, durationMs: clock.durationMs, measure });
   }
-  return [...specs.values()].sort((left, right) => left.key.localeCompare(right.key));
+  return orderChildrenFirst([...specs.values()].sort((left, right) => left.key.localeCompare(right.key)), edges);
+}
+
+/**
+ * Children before parents. A sweep that DELETES a parent row before the same
+ * tick has deleted its RESTRICT children fails the batch (23503), is counted
+ * as poisoned, and leaves the parent overdue until the next tick — which the
+ * populated one-tick fixture (`retention-sweep-fixtures.test.ts`) turned red on
+ * the very first run: `deletion_recovery_sessions` sorts alphabetically AFTER
+ * `deletion_operations`. So the order is a topological sort over the
+ * registry's own foreign-key edges (any delete action: a CASCADE child is
+ * ordered too, harmlessly), stable on the key order within a rank. A cycle
+ * cannot be ordered and refuses, loudly, rather than silently picking a side.
+ */
+export function orderChildrenFirst(
+  specs: readonly RetentionSweepSpec[],
+  edges: readonly Readonly<{ table: AppTable; referencedTable: AppTable }>[] = LIFECYCLE_FOREIGN_KEY_EDGES,
+): readonly RetentionSweepSpec[] {
+  const tables = new Set(specs.map((spec) => spec.measure.table));
+  // rank(table) = 1 + max rank of every swept table that references it, so a
+  // referenced (parent) table always ranks ABOVE its children; children with
+  // no swept dependants rank 0. Only edges between SWEPT tables matter.
+  const dependants = new Map<AppTable, AppTable[]>();
+  for (const edge of edges) {
+    if (edge.table === edge.referencedTable) continue;
+    if (!tables.has(edge.table) || !tables.has(edge.referencedTable)) continue;
+    dependants.set(edge.referencedTable, [...(dependants.get(edge.referencedTable) ?? []), edge.table]);
+  }
+  const rank = new Map<AppTable, number>();
+  const visiting = new Set<AppTable>();
+  const rankOf = (table: AppTable): number => {
+    const known = rank.get(table);
+    if (known !== undefined) return known;
+    if (visiting.has(table)) throw new Error(`retention sweep: foreign-key cycle through ${table}; sweeps cannot be ordered`);
+    visiting.add(table);
+    const children = dependants.get(table) ?? [];
+    const value = children.length === 0 ? 0 : 1 + Math.max(...children.map(rankOf));
+    visiting.delete(table);
+    rank.set(table, value);
+    return value;
+  };
+  for (const table of tables) rankOf(table);
+  return [...specs].sort((left, right) => {
+    const byRank = rankOf(left.measure.table) - rankOf(right.measure.table);
+    return byRank !== 0 ? byRank : left.key.localeCompare(right.key);
+  });
 }

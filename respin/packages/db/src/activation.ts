@@ -14,7 +14,7 @@
 // before erasure, in the erasure transaction; then the identifier-bearing hash
 // is erased and only a receipt digest that names no user survives.
 import { createHash } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 
 import { user as authUser } from "./auth-schema";
 import { creatorProfiles } from "./brain-schema";
@@ -22,6 +22,7 @@ import type { DbLike, TxLike } from "./db-like";
 import { generations } from "./generation-schema";
 import { activationCohortDaily, deletionOperations, type DeletionOperation } from "./lifecycle-schema";
 import { lockIdentityMembershipGraph } from "./membership-lifecycle";
+import { RETENTION_CLOCKS } from "./retention-clocks";
 import { brainActivationSnapshots } from "./onboarding-schema";
 import { memberships, users } from "./schema";
 
@@ -321,13 +322,43 @@ export async function applyActivationContributionInTx(
   return { applied: true, receiptDigest };
 }
 
+/**
+ * The limitation every consumer of this metric must carry, attached to the
+ * returned shape rather than left in a review manifest (T69-R1). Better Auth
+ * stores no email-verification TIMESTAMP, so the classifier reads
+ * `emailVerified` as of capture -- not "verified within 24 hours of signup". A
+ * cohort therefore over-counts anyone who verified late, and no consumer can
+ * caveat a fact it was never handed.
+ */
+export const ACTIVATION_VERIFICATION_LIMITATION =
+  "emailVerified is read as of capture; Better Auth stores no verification timestamp, so late verifiers are counted as activated";
+
 export type ActivationCohort = Readonly<{
   cohortDate: string;
+  /**
+   * The rules this row was judged under. Rows of different versions are NEVER
+   * summed: the aggregate used to be read `WHERE metric_version = current`, so
+   * bumping the version silently dropped every deleted account's retained
+   * contribution while the live pass re-judged the same cohorts under the new
+   * rules -- a metric that changed shape and lost history in one step.
+   */
+  metricVersion: number;
   signups: number;
   activated: number;
   excluded: number;
   /** Denominator < 10 must be suppressed at any external sink (R-121); shown internally, never treated as zero. */
   smallCell: boolean;
+  /**
+   * TRUE when this cohort is older than the aggregate's own retention, so the
+   * deleted-account half of its denominator has already been swept and only
+   * survivors remain. Publishing a rate from such a cohort is survivorship bias
+   * in the direction that flatters activation, so it must be withheld rather
+   * than shown -- the two halves used to expire on different clocks with
+   * nothing on the row to say so.
+   */
+  aggregateExpired: boolean;
+  /** Always present, so a consumer cannot render the number without it. */
+  limitation: string;
 }>;
 
 /**
@@ -341,19 +372,43 @@ export async function deriveActivationCohorts(
   exclusions: ActivationExclusions,
   asOf: Date,
 ): Promise<readonly ActivationCohort[]> {
-  const totals = new Map<string, { signups: number; activated: number; excluded: number }>();
-  const bump = (date: string, c: ActivationContribution) => {
-    const row = totals.get(date) ?? { signups: 0, activated: 0, excluded: 0 };
+  // Keyed by (cohort date, metric version). Mixing versions in one bucket is
+  // what the old `WHERE metric_version = current` filter avoided by DELETING
+  // history; keying by both keeps it instead.
+  const totals = new Map<
+    string,
+    { cohortDate: string; metricVersion: number; signups: number; activated: number; excluded: number }
+  >();
+  const keyOf = (date: string, version: number) => date + "|" + String(version);
+  const bump = (date: string, version: number, c: ActivationContribution) => {
+    const key = keyOf(date, version);
+    const row = totals.get(key) ?? {
+      cohortDate: date,
+      metricVersion: version,
+      signups: 0,
+      activated: 0,
+      excluded: 0,
+    };
     row.signups += c.denominator;
     row.activated += c.numerator;
     row.excluded += c.excluded ? 1 : 0;
-    totals.set(date, row);
+    totals.set(key, row);
   };
   await db.transaction(async (tx) => {
-    for (const row of await tx.select().from(activationCohortDaily).where(eq(activationCohortDaily.metricVersion, ACTIVATION_METRIC_VERSION))) {
-      const t = totals.get(row.cohortDate) ?? { signups: 0, activated: 0, excluded: 0 };
+    // EVERY version, not just the current one. Reading only the current version
+    // meant a bump to v2 silently discarded every deleted account's retained v1
+    // contribution from the public metric.
+    for (const row of await tx.select().from(activationCohortDaily)) {
+      const key = keyOf(row.cohortDate, row.metricVersion);
+      const t = totals.get(key) ?? {
+        cohortDate: row.cohortDate,
+        metricVersion: row.metricVersion,
+        signups: 0,
+        activated: 0,
+        excluded: 0,
+      };
       t.signups += row.signups; t.activated += row.activated; t.excluded += row.excluded;
-      totals.set(row.cohortDate, t);
+      totals.set(key, t);
     }
     const applied = new Set(
       (await tx
@@ -363,16 +418,88 @@ export async function deriveActivationCohorts(
         .map((r) => r.userId)
         .filter((id): id is string => id !== null),
     );
+    // A PENDING identity deletion is still a signup. `requestIdentityDeletion`
+    // tombstones the person's own `users` row at REQUEST time, so the live
+    // pass below (which skips tombstoned rows, see there) would drop them from
+    // the denominator for the whole request -> erasure window — seven days at
+    // least, forever for a blocked operation — in the direction that flatters
+    // the rate (the learning gate's round-2 BLOCK, reproduced). Their
+    // contribution was CAPTURED at request, keyed to the operation and final
+    // (plan C5), so it is counted from the capture while it is pending and from
+    // the aggregate once applied. A CANCELLED operation keeps its capture at
+    // `pending` (cancellation clears only the recovery fields) and its person
+    // may request again — so the query filters on the OPERATION's state, never
+    // on the user's tombstone alone: the first version joined only on the
+    // tombstoned user and counted a cancel-and-retry person twice while the
+    // second request was pending (tenancy gate on fix pass 3, reproduced), and
+    // would have kept counting the cancelled row after erasure repointed its
+    // user id to the stub. Terminal operations are excluded here; a complete
+    // one is already in the aggregate.
+    const pending = await tx
+      .select({
+        cohortDate: deletionOperations.activationCohortDate,
+        metricVersion: deletionOperations.activationMetricVersion,
+        numerator: deletionOperations.activationNumerator,
+        denominator: deletionOperations.activationDenominator,
+        excluded: deletionOperations.activationExcluded,
+      })
+      .from(deletionOperations)
+      .innerJoin(users, eq(users.id, deletionOperations.userId))
+      .where(
+        and(
+          eq(deletionOperations.scope, "identity"),
+          eq(deletionOperations.activationContributionState, "pending"),
+          notInArray(deletionOperations.state, ["cancelled", "complete"]),
+          eq(users.lifecycleState, "tombstoned"),
+        ),
+      );
+    for (const row of pending) {
+      if (row.cohortDate === null || row.metricVersion === null || row.numerator === null || row.denominator === null || row.excluded === null) continue;
+      bump(row.cohortDate, row.metricVersion, {
+        cohortDate: row.cohortDate,
+        metricVersion: row.metricVersion,
+        numerator: row.numerator as 0 | 1,
+        denominator: row.denominator as 0 | 1,
+        excluded: row.excluded,
+        exclusionSource: null,
+      });
+    }
     const matureBefore = new Date(asOf.getTime() - ACTIVATION_WINDOW_MS);
-    for (const live of await tx.select({ id: users.id, createdAt: users.createdAt }).from(users)) {
+    const liveRows = await tx
+      .select({ id: users.id, createdAt: users.createdAt })
+      .from(users)
+      // TOMBSTONED ROWS ARE NOT SIGNUPS. Erasure inserts a stub `users` row
+      // whose `created_at` defaults to the erasure instant. It was excluded
+      // only by ACCIDENT -- its id happened to appear in the `applied` set
+      // above -- and `deletion_receipt_one_year` DELETES that operation row
+      // after a year. One year after every identity erasure, each deleted
+      // account would then have begun contributing one invented, never-activated
+      // signup to the denominator, dated the day it was erased, permanently.
+      .where(ne(users.lifecycleState, "tombstoned"));
+    for (const live of liveRows) {
       if (applied.has(live.id)) continue;
       // Report only matured cohorts (R-121): a signup inside its 24 h window is not yet a data point.
       if (live.createdAt.getTime() > matureBefore.getTime()) continue;
       const signals = await loadActivationSignals(tx, live.id);
-      if (signals) bump(utcDay(signals.signupAt), classifyActivation(live.id, signals, exclusions));
+      if (signals) {
+        bump(utcDay(signals.signupAt), ACTIVATION_METRIC_VERSION, classifyActivation(live.id, signals, exclusions));
+      }
     }
   });
-  return [...totals.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([cohortDate, t]) => ({ cohortDate, ...t, smallCell: t.signups < 10 }));
+  // The aggregate's own retention horizon. Past it, the deleted half of a
+  // cohort's denominator has been swept while the live pass has no lower bound,
+  // so only survivors remain and the rate is biased upward.
+  const aggregateHorizon = asOf.getTime() - RETENTION_CLOCKS.cohort_two_years.durationMs;
+  return [...totals.values()]
+    .sort((a, b) => a.cohortDate.localeCompare(b.cohortDate) || a.metricVersion - b.metricVersion)
+    .map((t) => ({
+      cohortDate: t.cohortDate,
+      metricVersion: t.metricVersion,
+      signups: t.signups,
+      activated: t.activated,
+      excluded: t.excluded,
+      smallCell: t.signups < 10,
+      aggregateExpired: Date.parse(t.cohortDate + "T00:00:00.000Z") < aggregateHorizon,
+      limitation: ACTIVATION_VERIFICATION_LIMITATION,
+    }));
 }

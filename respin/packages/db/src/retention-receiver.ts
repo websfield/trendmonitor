@@ -53,6 +53,13 @@ export type RetentionTableOutcome = Readonly<{
   oldestOverdueMs: number | null;
   /** True when the tick's batch ceiling stopped it before the table was clear. */
   truncated: boolean;
+  /**
+   * Rows this tick could not write EVEN ALONE — a row whose redaction or delete
+   * violates a constraint. Counted rather than swallowed, because a batch that
+   * rolls back on one bad row used to re-claim the identical `ORDER BY ctid`
+   * set on every future tick and never make progress, silently.
+   */
+  poisoned: number;
   /** Set when this table's sweep failed; the others still ran. */
   failureCode: string | null;
 }>;
@@ -66,11 +73,58 @@ export type RetentionTickSummary = Readonly<{
   financeExtractsWritten: number;
   /** The largest `oldestOverdueMs` across tables — the health signal. */
   oldestOverdueMs: number | null;
+  /** Total rows no batch could write alone. Non-zero is always actionable. */
+  poisoned: number;
   failures: readonly string[];
 }>;
 
 /** A quoted identifier. The column names come from the closed measure list. */
 const ident = (name: string): SQL => sql.raw(`"${name}"`);
+
+/**
+ * The sweep specs whose redaction must be preceded by a finance extract.
+ *
+ * An explicit LIST, not the `spec.key.endsWith("::provider_payload")` test this
+ * replaces (CLAUDE.md Respin rule 7: a derived guard's population is a list, not
+ * a producer). `extractBeforeRedaction` hard-codes `FROM "stripe_events"`, so a
+ * field set named `provider_payload` on any OTHER table would have silently run
+ * the extractor against the wrong table. Adding a table here is a deliberate
+ * edit; `assertFinanceExtractSpecClosure` below refuses a spec that looks like
+ * one of these and is not listed.
+ */
+export const FINANCE_EXTRACT_SPEC_KEYS = [
+  "stripe_events::stripe_customer_attributed::provider_payload",
+  "stripe_events::stripe_unattributed::provider_payload",
+  "stripe_events::stripe_workspace_attributed::provider_payload",
+] as const;
+
+const FINANCE_EXTRACT_SPEC_KEY_SET: ReadonlySet<string> = new Set(FINANCE_EXTRACT_SPEC_KEYS);
+
+/**
+ * Refuses a sweep spec that carries a provider payload but is not in the list
+ * above. This is the witness that keeps the list a LIST: adding a
+ * `provider_payload` field set to a new table, or renaming a stripe row class,
+ * fails here instead of silently skipping the extract (losing the finance fact
+ * forever, since a redacted payload can never be re-extracted) or silently
+ * running `FROM "stripe_events"` against the wrong table.
+ */
+export function assertFinanceExtractSpecClosure(specs: readonly RetentionSweepSpec[]): void {
+  const listed = new Set(FINANCE_EXTRACT_SPEC_KEYS as readonly string[]);
+  const looksLikeOne = specs
+    .filter((spec) => spec.measure.fieldSet === "provider_payload")
+    .map((spec) => spec.key);
+  const unlisted = looksLikeOne.filter((key) => !listed.has(key));
+  if (unlisted.length > 0) {
+    throw new Error(
+      `retention: provider_payload spec(s) not in FINANCE_EXTRACT_SPEC_KEYS: ${unlisted.join(", ")}. ` +
+        `Add them there (and confirm extractBeforeRedaction can read that table) rather than relying on the key's shape.`
+    );
+  }
+  const missing = [...listed].filter((key) => !specs.some((spec) => spec.key === key));
+  if (missing.length > 0) {
+    throw new Error(`retention: FINANCE_EXTRACT_SPEC_KEYS names spec(s) that no longer exist: ${missing.join(", ")}`);
+  }
+}
 
 /**
  * The instant a row's clock expired, as SQL. `epoch_millis` is the one numeric
@@ -272,6 +326,77 @@ export function pseudonymousWorkspaceKey(workspaceId: string): string {
   return `wk_${createHash("sha256").update(`respin-finance-chain:${workspaceId}`).digest("hex").slice(0, 32)}`;
 }
 
+/**
+ * Erase the raw Stripe payloads an identity erasure would otherwise leave
+ * behind, in the erasure's own transaction.
+ *
+ * WHY THIS EXISTS. `stripe_events.payload` is swept on a 90-day clock measured
+ * from `received_at`, and `erasureHold("identity")` returns null because that
+ * receiver is wired. But a clock is not an erasure step: a completed identity
+ * erasure left up to 90 days of unredacted webhook JSON — carrying the deleted
+ * person's email, name and billing address, since the Stripe customer is
+ * created with the acting user's email — while `/settings/account` showed them
+ * a CLOSED "what survives erasure" list that did not mention it.
+ *
+ * The population is deliberately OVER-inclusive: every workspace the subject
+ * currently belongs to (any role) plus every workspace this operation's
+ * membership snapshot names, rather than an attempt to decide which customer
+ * object carries whose email. It is NOT "every workspace the subject ever
+ * belonged to": a former contact who was removed from a workspace before
+ * deleting (no removal surface exists today; 10b-2 seats will add one) is in
+ * neither set and falls back to the 90-day clock — recorded on T-R2-4.
+ *
+ * WHAT OVER-INCLUSION COSTS, stated rather than waved away: a viewer's identity
+ * deletion redacts the workspace's whole unredacted Stripe window. The finance
+ * facts are lifted out first, by the same extractor the 90-day sweep uses, so a
+ * COMPLETE fact survives — but an INCOMPLETE extract (a withheld amount, a
+ * non-USD currency) loses its payload early, and with it the operator's only
+ * window to reconcile it. The extract here runs in ONE statement inside the
+ * erasure transaction: one unwritable row fails the whole erasure, holding a
+ * deletion the subject cannot influence — a rarer outcome since 0055 admitted
+ * signed amounts, and the fail-closed direction. Redacting too few leaves a
+ * person's email behind, which is the only direction that cannot be undone.
+ */
+export async function purgeSubjectStripePayloadsInTx(
+  tx: TxLike,
+  subject: Readonly<{ userId: string; workspaceId?: undefined } | { workspaceId: string; userId?: undefined }>,
+): Promise<{ extracted: number; redacted: number }> {
+  // The workspaces whose Stripe traffic this subject's erasure must clear. For
+  // an identity: every workspace it belonged to, live memberships and deletion
+  // snapshots alike, because the snapshot is where a suspended membership lives
+  // during erasure. For a workspace: itself.
+  const workspaceIds =
+    subject.userId === undefined
+      ? sql`SELECT ${subject.workspaceId}::uuid AS workspace_id`
+      : sql`
+          SELECT workspace_id FROM "memberships" WHERE user_id = ${subject.userId}
+          UNION
+          SELECT workspace_id FROM "deletion_membership_snapshots" WHERE user_id = ${subject.userId}
+        `;
+  const claimed = (await tx.execute(sql`
+    SELECT id FROM "stripe_events"
+    WHERE payload::text <> '{}'
+      AND (
+        workspace_id IN (${workspaceIds})
+        OR stripe_customer_id IN (
+          SELECT stripe_customer_id FROM "subscriptions" WHERE workspace_id IN (${workspaceIds})
+        )
+      )
+    ORDER BY id
+    FOR UPDATE
+  `)) as unknown as { rows: { id: string }[] };
+  const ids = claimed.rows.map((row) => row.id);
+  if (ids.length === 0) return { extracted: 0, redacted: 0 };
+  const idList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
+  // EXTRACT FIRST, in this transaction. Redacting before extracting loses the
+  // finance fact permanently: the extractor skips `payload = '{}'`.
+  const extracted = await extractBeforeRedaction(tx, idList);
+  const result = await tx.execute(sql`
+    UPDATE "stripe_events" SET payload = '{}'::jsonb WHERE id IN (${idList})
+  `);
+  return { extracted, redacted: affected(result) };
+}
+
 async function sweepOne(
   db: DbLike,
   spec: RetentionSweepSpec,
@@ -283,91 +408,171 @@ async function sweepOne(
     table: spec.measure.table,
     rule: spec.rule,
   };
+  const table = ident(spec.measure.table);
+  const isDelete = spec.measure.effect.kind === "delete_row";
   let scanned = 0;
   let redacted = 0;
   let deleted = 0;
   let financeExtracts = 0;
   let truncated = false;
+  let poisoned = 0;
   let oldest: number | null = null;
+  let failureCode: string | null = null;
+
+  /**
+   * Claim up to `limit` overdue rows. Returns their ids (redaction) or ctids
+   * (deletion) — the same claim the batch and the per-row fallback both use, so
+   * the fallback cannot drift from what the batch attempted.
+   */
+  const predicate = overduePredicate(spec.measure, cutoff);
+  const alreadyDone = isDelete ? null : redactionDonePredicate(spec.measure);
+  /**
+   * Claim up to `limit` overdue rows, skipping `exclude` (the refs the per-row
+   * pass has already found unwritable this tick, so it cannot spin on them).
+   */
+  const claim = async (tx: TxLike, limit: number, exclude: readonly string[] = []): Promise<string[]> => {
+    if (isDelete) {
+      const skip = exclude.length === 0 ? sql`` : sql` AND ctid NOT IN (${sql.join(exclude.map((ref) => sql`${ref}::tid`), sql`, `)})`;
+      const rows = (await tx.execute(sql`
+        SELECT ctid::text AS ref FROM ${table} WHERE ${predicate}${skip}
+        ORDER BY ctid LIMIT ${limit} FOR UPDATE SKIP LOCKED
+      `)) as unknown as { rows: { ref: string }[] };
+      return rows.rows.map((row) => row.ref);
+    }
+    // A redaction is idempotent only if an already-redacted row stops matching,
+    // so every redaction claim excludes rows already at their redacted value.
+    // Without that the sweep rewrites the same rows every tick and never ends.
+    const skip = exclude.length === 0 ? sql`` : sql` AND id NOT IN (${sql.join(exclude.map((ref) => sql`${ref}`), sql`, `)})`;
+    const rows = (await tx.execute(sql`
+      SELECT id::text AS ref FROM ${table}
+      WHERE ${predicate} AND NOT (${alreadyDone})${skip}
+      ORDER BY ctid LIMIT ${limit} FOR UPDATE SKIP LOCKED
+    `)) as unknown as { rows: { ref: string }[] };
+    return rows.rows.map((row) => row.ref);
+  };
+
+  /**
+   * Apply the measure to exactly `refs`, in the SAME transaction that claimed
+   * them. The write re-states the overdue predicate: a ctid is a physical
+   * slot, not an identity, so even under the claim's lock the statement must
+   * not be able to touch a row that is no longer the one the predicate chose.
+   * Throws if any one of them cannot be written.
+   */
+  const apply = async (tx: TxLike, refs: readonly string[]): Promise<number> => {
+    if (refs.length === 0) return 0;
+    if (isDelete) {
+      const list = sql.join(refs.map((ref) => sql`${ref}::tid`), sql`, `);
+      const result = await tx.execute(sql`DELETE FROM ${table} WHERE ctid IN (${list}) AND (${predicate})`);
+      const rows = affected(result);
+      deleted += rows;
+      return rows;
+    }
+    // NO cast: `id` is text on `stripe_events` (Stripe's own ids) and uuid
+    // elsewhere. Binding the value plainly lets Postgres infer from the column,
+    // which is what the pre-isolation code did.
+    const list = sql.join(refs.map((ref) => sql`${ref}`), sql`, `);
+    // The finance extract runs in the SAME transaction and BEFORE the UPDATE,
+    // over exactly the rows this write is about to redact. Gated on an explicit
+    // spec list, never on the shape of the key.
+    if (FINANCE_EXTRACT_SPEC_KEY_SET.has(spec.key)) {
+      financeExtracts += await extractBeforeRedaction(tx, list);
+    }
+    const result = await tx.execute(sql`
+      UPDATE ${table} SET ${redactionAssignments(spec.measure)}
+      WHERE id IN (${list}) AND (${predicate}) AND NOT (${alreadyDone})
+    `);
+    const rows = affected(result);
+    redacted += rows;
+    return rows;
+  };
 
   try {
     for (let batch = 0; batch < RETENTION_MAX_BATCHES; batch += 1) {
-      const touched = await db.transaction(async (tx) => {
-        if (batch === 0) {
-          scanned = await countOverdue(tx, spec, cutoff);
+      if (batch === 0) {
+        scanned = await db.transaction((tx) => countOverdue(tx, spec, cutoff));
+      }
+      let touched: number;
+      try {
+        touched = await db.transaction(async (tx) => apply(tx, await claim(tx, RETENTION_BATCH_SIZE)));
+      } catch (error) {
+        // THE WEDGE THIS EXISTS TO PREVENT. One row whose write violates a
+        // constraint rolls the whole batch back, and the next claim is the same
+        // `ORDER BY ctid` set — so the table never advances again, on any tick,
+        // forever, while the per-table catch below reports it as one failure.
+        // Re-attempt ONE ROW AT A TIME, each row CLAIMED AND WRITTEN IN ONE
+        // TRANSACTION. The first version of this fallback claimed a whole
+        // batch of ctids in one committed transaction and then deleted by ctid
+        // in another, with no predicate: a ctid is a physical slot, so a row
+        // updated in between made the ref match nothing (and the table read
+        // "fully poisoned"), and a slot reused after VACUUM made it delete an
+        // unrelated, live row — reproduced by the consolidating review of the
+        // 10b-1 fix rounds. Now the claim's lock is still held when the write
+        // runs, the write re-states the predicate, and a ref that failed is
+        // excluded from the next claim so the pass cannot spin on it.
+        const batchCode = failureCodeOf(error);
+        const unwritable: string[] = [];
+        let progressed = 0;
+        for (let row = 0; row < RETENTION_BATCH_SIZE; row += 1) {
+          let ref: string | undefined;
+          try {
+            const written = await db.transaction(async (tx) => {
+              [ref] = await claim(tx, 1, unwritable);
+              return ref === undefined ? null : apply(tx, [ref]);
+            });
+            if (written === null) break;
+            progressed += written;
+          } catch (rowError) {
+            failureCode ??= failureCodeOf(rowError);
+            // The CLAIM itself failed (a lost connection, a lock timeout):
+            // nothing was chosen, so nothing can be excluded and retrying the
+            // same claim up to the batch size would inflate `poisoned`. Stop
+            // this table's pass; the failure code and the backlog age report it.
+            if (ref === undefined) break;
+            poisoned += 1;
+            unwritable.push(ref);
+          }
         }
-        const table = ident(spec.measure.table);
-        const predicate = overduePredicate(spec.measure, cutoff);
-        if (spec.measure.effect.kind === "delete_row") {
-          const result = await tx.execute(sql`
-            DELETE FROM ${table}
-            WHERE ctid IN (
-              SELECT ctid FROM ${table} WHERE ${predicate}
-              ORDER BY ctid LIMIT ${RETENTION_BATCH_SIZE} FOR UPDATE SKIP LOCKED
-            )
-          `);
-          const rows = affected(result);
-          deleted += rows;
-          return rows;
-        }
-        // A redaction is idempotent only if an already-redacted row stops
-        // matching, so every redaction batch excludes rows whose first target
-        // column is already at its redacted value. Without that the sweep
-        // would rewrite the same rows every tick and never terminate.
-        const alreadyDone = redactionDonePredicate(spec.measure);
-        // ONE row set, claimed once, used by BOTH the extract and the
-        // redaction. Selecting them separately -- the extract ordered by
-        // `received_at`, the redaction by `ctid` -- yields two different
-        // 500-row sets the moment more than 500 rows are overdue, and a row in
-        // the second set but not the first is redacted with its finance facts
-        // never extracted. C5 forbids losing that fact and nothing can recover
-        // it: `extractBeforeRedaction` skips `payload = '{}'`, so the row is
-        // permanently unextractable the instant it is redacted.
-        const claimed = (await tx.execute(sql`
-          SELECT id FROM ${table}
-          WHERE ${predicate} AND NOT (${alreadyDone})
-          ORDER BY ctid LIMIT ${RETENTION_BATCH_SIZE} FOR UPDATE SKIP LOCKED
-        `)) as unknown as { rows: { id: string }[] };
-        const ids = claimed.rows.map((row) => row.id);
-        if (ids.length === 0) return 0;
-        const idList = sql.join(ids.map((id) => sql`${id}`), sql`, `);
-        // The finance extract, in the SAME transaction and BEFORE the UPDATE,
-        // over exactly the rows this batch is about to redact.
-        if (spec.key.endsWith("::provider_payload")) {
-          financeExtracts += await extractBeforeRedaction(tx, idList);
-        }
-        const result = await tx.execute(sql`
-          UPDATE ${table} SET ${redactionAssignments(spec.measure)}
-          WHERE id IN (${idList})
-        `);
-        const rows = affected(result);
-        redacted += rows;
-        return rows;
-      });
+        // The batch's own failure code is NOT reported on its own: a transient
+        // batch error (a deadlock, a serialization failure) that every row then
+        // survives alone is a recovered hiccup, not a failed table, and must not
+        // page `retention_sweep_failed`. When a row IS unwritable, its own
+        // SQLSTATE (set above) is the more useful code and already stands, so
+        // `batchCode` is deliberately unused here.
+        void batchCode;
+        // Nothing could be written even alone: the table is fully poisoned and
+        // retrying the same rows in this tick would spin. Stop, loudly.
+        if (progressed === 0) break;
+        // A tick that fell into the per-row pass advances at most one batch
+        // (499 rows beside a poisoned one) rather than up to RETENTION_MAX_BATCHES
+        // batches — at the one-minute cron that is still hundreds of thousands
+        // of rows a day, so the slower tick is accepted rather than looped.
+        touched = progressed;
+      }
       if (touched < RETENTION_BATCH_SIZE) break;
       if (batch === RETENTION_MAX_BATCHES - 1) truncated = true;
     }
-    oldest = await db.transaction((tx) => oldestOverdueMs(tx, spec, cutoff));
-    return {
-      outcome: { ...base, scanned, redacted, deleted, oldestOverdueMs: oldest, truncated, failureCode: null },
-      financeExtracts,
-    };
   } catch (error) {
     // One table's failure must not stop the others: a receiver that aborts the
     // whole tick on one bad table leaves every OTHER governed row overdue.
-    return {
-      outcome: {
-        ...base,
-        scanned,
-        redacted,
-        deleted,
-        oldestOverdueMs: oldest,
-        truncated,
-        failureCode: failureCodeOf(error),
-      },
-      financeExtracts,
-    };
+    failureCode ??= failureCodeOf(error);
   }
+
+  // ALWAYS measured, success or failure, and never allowed to mask the real
+  // failure code. Computing this only on the success path made a wedged sweep
+  // report `oldestOverdueMs: null` — muting `retention_overdue_backlog`, the
+  // one signal that measures the compliance deadline, at exactly the moment it
+  // was needed. That is why the previous round's answer to "a blind sweep would
+  // show up in the backlog metric" was wrong.
+  try {
+    oldest = await db.transaction((tx) => oldestOverdueMs(tx, spec, cutoff));
+  } catch (error) {
+    failureCode ??= failureCodeOf(error);
+  }
+
+  return {
+    outcome: { ...base, scanned, redacted, deleted, oldestOverdueMs: oldest, truncated, poisoned, failureCode },
+    financeExtracts,
+  };
 }
 
 /**
@@ -422,6 +627,9 @@ export async function runRetentionTick(
   now: Date,
   specs: readonly RetentionSweepSpec[] = retentionSweepSpecs(),
 ): Promise<RetentionTickSummary> {
+  // Fail the tick before it writes anything if the finance-extract population
+  // has drifted from the specs. A missed extract is unrecoverable.
+  assertFinanceExtractSpecClosure(specs);
   const tables: RetentionTableOutcome[] = [];
   let financeExtractsWritten = 0;
   for (const spec of specs) {
@@ -438,6 +646,7 @@ export async function runRetentionTick(
     deleted: tables.reduce((total, table) => total + table.deleted, 0),
     financeExtractsWritten,
     oldestOverdueMs: overdue.length > 0 ? Math.max(...overdue) : null,
+    poisoned: tables.reduce((total, table) => total + table.poisoned, 0),
     failures: tables.filter((table) => table.failureCode !== null).map((table) => `${table.key}:${table.failureCode}`),
   };
 }

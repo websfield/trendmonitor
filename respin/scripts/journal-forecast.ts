@@ -4,6 +4,7 @@
 //   pnpm -C respin journal:forecast
 //   pnpm -C respin journal:forecast --region eu-west-2
 //   pnpm -C respin journal:forecast --measured-bytes 1234 --measured-puts 50 --measured-reads 900
+//   pnpm -C respin journal:forecast --owner-ceiling-cents 250   # a RECORDED owner decision raising the USD 1 ceiling
 //
 // Exit codes are the point of this script, because they are what a deployment
 // checklist can actually gate on:
@@ -73,9 +74,21 @@ function integerFlag(argv: readonly string[], name: string): number | undefined 
 export function main(
   argv: readonly string[],
   env: Readonly<Record<string, string | undefined>>,
-  now: Date
+  now: Date,
+  /**
+   * The price sheets the forecast reads. Defaults to the ones on disk; a test
+   * injects a reviewed sheet so the three priced exit codes (allowed, alert,
+   * blocked-over-ceiling) are executed THROUGH this artefact rather than only
+   * in the pure module — the 10b-1 phase review found every CLI case took the
+   * `withheld` branch because nothing could inject a price.
+   */
+  snapshots: readonly unknown[] = loadPriceSnapshots()
 ): number {
   const region = flag(argv, "region") ?? env.RESPIN_DELETION_JOURNAL_REGION ?? null;
+  // The ONE producer of `ownerCostCeilingCents`: an operator citing a recorded
+  // owner decision. It can only RAISE the ceiling (the module clamps at the
+  // USD 1 default), never lower it, and it never touches the alert line.
+  const ownerCeiling = integerFlag(argv, "owner-ceiling-cents");
 
   const bytes = integerFlag(argv, "measured-bytes");
   const puts = integerFlag(argv, "measured-puts");
@@ -102,9 +115,10 @@ export function main(
 
   const forecast = forecastDeletionJournalCost({
     region,
-    snapshots: loadPriceSnapshots(),
+    snapshots,
     now,
     ...(usage === undefined ? {} : { usage }),
+    ...(ownerCeiling === undefined ? {} : { ownerCostCeilingCents: BigInt(ownerCeiling) }),
   });
   const decision = journalEnablementDecision(forecast);
 

@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  DYNAMIC_LIFECYCLE_WRITER,
+  DYNAMIC_LIFECYCLE_WRITERS,
   APP_TABLES,
   EXTERNAL_WRITER_AUTHORITIES,
   JSON_COLUMN_INVENTORY,
@@ -122,19 +122,104 @@ describe("compile-closed lifecycle registry", () => {
     expect(() => validateLifecycleClosure(base())).not.toThrow();
   });
 
-  it("declares the one dynamic writer the scanner cannot see, and that declaration matches the tree", () => {
-    const file = join(RESPIN, DYNAMIC_LIFECYCLE_WRITER.file);
-    expect(existsSync(file)).toBe(true);
-    const source = readFileSync(file, "utf8");
-    expect(source).toContain("DELETE FROM ${relation(");
-    expect(source).toContain("UPDATE ${relation(");
-    expect([...DYNAMIC_LIFECYCLE_WRITER.actions].sort()).toEqual(["cascade", "delete_explicit", "pseudonymise"]);
-    // It is a physical writer only where it INSERTs stub roots (scannable literals).
-    const listedFor = LIFECYCLE_WRITER_INVENTORY.filter((writer) =>
-      (writer.physicalWriters as readonly string[]).includes(DYNAMIC_LIFECYCLE_WRITER.file)
-    ).map((writer) => writer.table).sort();
-    expect(listedFor).toEqual(["creator_profiles", "user", "users", "workspaces"]);
+  it("declares EVERY dynamic writer the scanner cannot see, and each declaration matches the tree", () => {
+    // Was "the ONE dynamic writer" while retention-receiver.ts had become a
+    // second one, absent from every physicalWriters list of the ~15 governed
+    // tables it deletes from and updates.
+    expect(DYNAMIC_LIFECYCLE_WRITERS.length).toBeGreaterThan(1);
+    for (const writer of DYNAMIC_LIFECYCLE_WRITERS) {
+      const file = join(RESPIN, writer.file);
+      expect(existsSync(file), `${writer.file} is declared but absent`).toBe(true);
+      const source = readFileSync(file, "utf8");
+      // Each one really does render a table name it does not spell in source.
+      expect(source, `${writer.file} renders no dynamic DELETE/UPDATE`).toMatch(
+        /(DELETE FROM \$\{(relation\(|table)|UPDATE \$\{(relation\(|table))/
+      );
+      expect(writer.actions.length).toBeGreaterThan(0);
+    }
   });
+
+  /**
+   * Does a module render a dynamic table name into a destructive statement?
+   * The two idioms that defeat the AST scanner: an interpolated identifier
+   * (`${...}`, quoted or not) after DELETE FROM / UPDATE / TRUNCATE, together
+   * with one of the render helpers. Comments are stripped first: the scan once
+   * matched the PROSE in creator-data-registry.ts describing this very pattern.
+   * A function, so the planted case below can try to break it (the tenancy
+   * gate's independent round 2 planted six shapes against the inline predicate
+   * and three got through: quoted interpolations and TRUNCATE).
+   */
+  const rendersDynamicTable = (source: string): boolean => {
+    const stripped = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    // Case-insensitive; admits ONLY / TABLE; admits a schema qualifier
+    // (`"public".${...}`, `public.${...}`); the render-helper conjunct is
+    // dropped for TRUNCATE and DROP, which carry no other purpose than a table.
+    const destructive = /(DELETE\s+FROM|UPDATE)(\s+ONLY)?\s+("?\w+"?\.)?"?\$\{(?!sql`)/i.test(stripped);
+    const wholesale = /(TRUNCATE|DROP)(\s+TABLE)?(\s+ONLY)?\s+("?\w+"?\.)?"?\$\{(?!sql`)/i.test(stripped);
+    return wholesale || (destructive && /(sql\.raw|sql\.identifier|relation\(|ident\()/.test(stripped));
+  };
+  const walkTs = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory()
+        ? entry.name === "node_modules" ? [] : walkTs(join(dir, entry.name))
+        : entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts") ? [join(dir, entry.name)] : []
+    );
+
+  it("every module whose source matches a dynamic destructive statement shape is declared (the shapes are the planted list below; a shape not in it is not proven caught)", () => {
+    // The population half. Without this, adding a third dynamic writer would
+    // once again be absorbed silently — which is exactly how the second one
+    // arrived.
+    const declared = new Set<string>(DYNAMIC_LIFECYCLE_WRITERS.map((writer) => writer.file));
+    const undeclared: string[] = [];
+    for (const pkg of readdirSync(join(RESPIN, "packages"))) {
+      const src = join(RESPIN, "packages", pkg, "src");
+      let files: string[];
+      try {
+        files = walkTs(src);
+      } catch {
+        continue;
+      }
+      for (const file of files) {
+        const rel = file.slice(RESPIN.length + 1).replace(/\\/g, "/");
+        if (rendersDynamicTable(readFileSync(file, "utf8")) && !declared.has(rel)) undeclared.push(rel);
+      }
+    }
+    expect(undeclared, "undeclared dynamic lifecycle writer(s)").toEqual([]);
+  });
+
+  it("the dynamic-writer predicate catches every planted shape (thirteen, including the round the tenancy gate found missing) and ignores the safe ones", () => {
+    const helper = "\nconst t = sql.identifier(name);\n";
+    const planted = [
+      "sql`DELETE FROM ${sql.identifier(table)} WHERE x`",
+      "sql`UPDATE ${sql.identifier(table)} SET a = 1`",
+      "sql.raw(`DELETE FROM \"${name}\"`)",
+      "sql.raw(`UPDATE \"${table}\" SET a = 1`)",
+      "sql`TRUNCATE ${sql.identifier(t)}`",
+      "sql.raw(`TRUNCATE \"${name}\"`)",
+      // The tenancy gate's second round of plants:
+      "sql.raw(`TRUNCATE TABLE \"${name}\"`)",
+      "sql.raw(`DELETE FROM \"public\".\"${name}\"`)",
+      "sql.raw(`DELETE FROM public.${name}`)",
+      "sql.raw(`DELETE FROM ONLY \"${name}\"`)",
+      "sql.raw(`update only \"${name}\" set a = 1`)",
+      "sql.raw(`DROP TABLE \"${name}\"`)",
+      // ...and a helper imported from a sibling rather than called inline.
+      "sql`DELETE FROM ${ident(table)} WHERE x`\nimport { ident } from './ident';",
+    ];
+    for (const shape of planted) {
+      expect(rendersDynamicTable(shape + helper), shape).toBe(true);
+    }
+    // A comment describing the pattern, a static table, and the sql`` tag
+    // nesting the registry uses are NOT dynamic writers.
+    for (const safe of [
+      "// DELETE FROM ${sql.identifier(table)} — prose only" + helper,
+      'sql`DELETE FROM "session" WHERE id = ${id}`' + helper,
+      "sql`DELETE FROM ${sql`\"session\"`} WHERE id = 1`" + helper,
+    ]) {
+      expect(rendersDynamicTable(safe), safe).toBe(false);
+    }
+  });
+
 
   it("reddens for an unregistered migration table and a fake writer", () => {
     const fakeMigration = migrationInventory([

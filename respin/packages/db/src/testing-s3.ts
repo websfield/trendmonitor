@@ -161,7 +161,8 @@ export function createFakeS3(options: FakeS3Options): FakeS3 {
       if (!objectLockEnabled) return { outcome: "refused", code: "ObjectLockNotEnabled" };
 
       // The bucket policy, enforced. Each of these is a `Deny` statement in
-      // infra/s3-deletion-journal/bucket-policy.json.
+      // infra/s3-deletion-journal/bucket-policy.template.json, whose statement
+      // inventory is asserted by tests/s3-journal-policy.test.ts.
       if (request.ifNoneMatch !== "*") {
         return { outcome: "refused", code: "AccessDenied:ConditionalCreateRequired" };
       }
