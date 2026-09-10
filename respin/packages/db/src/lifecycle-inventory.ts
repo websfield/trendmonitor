@@ -210,7 +210,7 @@ export function migrationInventory(
     // than admitted by loosening the pattern, so the next unfamiliar action
     // still fails closed — which is exactly how this parser caught 0055.
     for (const statement of sql.matchAll(/ALTER\s+TABLE\b[\s\S]*?;/gi)) {
-      const supported = /^ALTER\s+TABLE\s+(?:"public"\.)?"[a-z_][a-z0-9_]*"\s+(?:ADD\s+COLUMN\s+"[a-z_][a-z0-9_]*"\s+(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*)(?:\.(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*))?(?:[\s\S]*?)|DROP\s+COLUMN\s+"[a-z_][a-z0-9_]*"(?:\s+(?:CASCADE|RESTRICT))?|ALTER\s+COLUMN\s+"[a-z_][a-z0-9_]*"\s+(?:(?:SET|DROP)\s+NOT\s+NULL|DROP\s+DEFAULT|SET\s+DEFAULT\s+[\s\S]*?)|ADD\s+CONSTRAINT\s+"[^"]+"\s+(?:CHECK\b|UNIQUE\b|FOREIGN\s+KEY\b)[\s\S]*|DROP\s+CONSTRAINT\s+"[^"]+"(?:\s+(?:CASCADE|RESTRICT))?)\s*;$/i.test(statement[0]);
+      const supported = /^ALTER\s+TABLE\s+(?:"public"\.)?"[a-z_][a-z0-9_]*"\s+(?:ADD\s+COLUMN\s+"[a-z_][a-z0-9_]*"\s+(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*)(?:\.(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*))?(?:[\s\S]*?)|DROP\s+COLUMN\s+"[a-z_][a-z0-9_]*"(?:\s+(?:CASCADE|RESTRICT))?|ALTER\s+COLUMN\s+"[a-z_][a-z0-9_]*"\s+(?:(?:SET|DROP)\s+NOT\s+NULL|DROP\s+DEFAULT|SET\s+DEFAULT\s+[\s\S]*?|SET\s+DATA\s+TYPE\s+(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*)(?:\.(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*))?(?:\s+USING\s+[\s\S]*?)?)|ADD\s+CONSTRAINT\s+"[^"]+"\s+(?:CHECK\b|UNIQUE\b|FOREIGN\s+KEY\b)[\s\S]*|DROP\s+CONSTRAINT\s+"[^"]+"(?:\s+(?:CASCADE|RESTRICT))?)\s*;$/i.test(statement[0]);
       if (!supported) throw new Error(`unsupported ALTER TABLE action in '${source.name}': ${statement[0].trim()}`);
     }
 
@@ -252,6 +252,19 @@ export function migrationInventory(
         table.add(match[2]);
         columnTypes.get(match[1])?.set(match[2], normalizedType(match[3]));
       }
+    }
+    // Phase 10a (migration 0058): a column's TYPE may change — `purpose`
+    // moved from text to the `system_spend_purpose` enum — and the registry's
+    // discriminator check reads `columnTypes`, so the change is applied here
+    // rather than admitted and ignored. The column must already exist.
+    for (const match of sql.matchAll(
+      /ALTER\s+TABLE\s+(?:"public"\.)?"([a-z_][a-z0-9_]*)"\s+ALTER\s+COLUMN\s+"([a-z_][a-z0-9_]*)"\s+SET\s+DATA\s+TYPE\s+((?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*)(?:\.(?:"[a-z_][a-z0-9_]*"|[a-z_][a-z0-9_]*))?)/gi
+    )) {
+      const table = tables.get(match[1]);
+      if (!table || !table.has(match[2])) throw new Error(`SET DATA TYPE targets unknown column '${match[1]}.${match[2]}'`);
+      // CREATE TABLE names an enum bare (`"purpose" "system_spend_purpose"`);
+      // SET DATA TYPE names it schema-qualified. One spelling in the inventory.
+      columnTypes.get(match[1])?.set(match[2], normalizedType(match[3].replace(/^"?public"?\./i, "")));
     }
     const addForeignKeyTokens = [...sql.matchAll(
       /ALTER\s+TABLE\s+(?:"public"\.)?"[a-z_][a-z0-9_]*"\s+ADD\s+CONSTRAINT\s+"[^"]+"\s+FOREIGN\s+KEY\b/gi

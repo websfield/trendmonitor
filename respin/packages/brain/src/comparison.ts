@@ -283,19 +283,24 @@ function improvementOf(
 const LEVERS: readonly Lever[] = ["reach", "conversion"];
 
 /**
- * WHICH EVIDENCE STATES ARE NUMERICAL — an ALLOWLIST, never `!== "unquantified"`.
+ * WHICH EVIDENCE STATES ARE NUMERICAL — an ALLOWLIST of exactly ONE state,
+ * never `!== "unquantified"`.
  *
- * R16 says `unquantified` never enters a numerical cohort. Written as a
- * negation, a fourth evidence state added in a later slice would enter every
- * cohort in this file by default, silently, and the first thing anyone would
- * learn about it is a median that moved. Written as an allowlist, it does not
- * compile.
+ * VERIFIED ONLY (R-115, Phase 10a C1; CLAUDE.md rule 4 "unverified never
+ * learns"). `quantified_self_reported` used to be numerical here, which put a
+ * creator's own typed numbers into every median, effect, window, group head,
+ * evidence digest and result proposal. It is now stored and displayed with its
+ * label and enters NONE of those: adding, deleting or changing a self-reported
+ * row leaves every verified derivative byte-identical, and
+ * `comparison.test.ts` pins that with a planted row on both populations.
+ *
+ * Written as an allowlist so a fourth evidence state added later does not
+ * enter every cohort by default, silently, with a moved median as the first
+ * sign; written as ONE state so the day a real connector mints
+ * `connector_verified` this module is not the thing that has to change.
  */
 function isNumerical(result: ComparisonResultInput): boolean {
-  return (
-    result.evidenceState === "quantified_self_reported" ||
-    result.evidenceState === "connector_verified"
-  );
+  return result.evidenceState === "connector_verified";
 }
 
 /**

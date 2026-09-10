@@ -359,9 +359,10 @@ describe("independent lifecycle residue probes", () => {
       target.registryKey === "system_model_usage::system_row::linkable_source_ids"
     )!;
     expect(lifecycleTargetMatchesRow(spend, {
+      purpose: "trend_autopsy",
       trend_item_id: SUBJECTS.profile.sourceIds.trendItemIds[0],
     })).toBe(true);
-    expect(lifecycleTargetMatchesRow(spend, { trend_item_id: "trend_deleted_elsewhere" })).toBe(false);
+    expect(lifecycleTargetMatchesRow(spend, { purpose: "trend_autopsy", trend_item_id: "trend_deleted_elsewhere" })).toBe(false);
 
     const pgBoss = targets.find((target) => target.registryKey === "supporting::pgboss.job")!;
     expect(lifecycleTargetMatchesRow(pgBoss, {
@@ -397,13 +398,13 @@ describe("independent lifecycle residue probes", () => {
       const jobExecutor = executor.find((target) => target.registryKey === jobKey)!;
       const jobProbe = probes.find((target) => target.registryKey === jobKey)!;
 
-      expect(lifecycleTargetMatchesRow(spendExecutor, { trend_item_id: acceptedId })).toBe(true);
-      expect(residueProbeMatchesRow(spendProbe, { trend_item_id: acceptedId })).toBe(true);
+      expect(lifecycleTargetMatchesRow(spendExecutor, { purpose: "trend_autopsy", trend_item_id: acceptedId })).toBe(true);
+      expect(residueProbeMatchesRow(spendProbe, { purpose: "trend_autopsy", trend_item_id: acceptedId })).toBe(true);
       expect(lifecycleTargetMatchesRow(jobExecutor, { data: { itemId: acceptedId } })).toBe(true);
       expect(residueProbeMatchesRow(jobProbe, { data: { itemId: acceptedId } })).toBe(true);
       for (const refusedId of refusedIds) {
-        expect(lifecycleTargetMatchesRow(spendExecutor, { trend_item_id: refusedId })).toBe(false);
-        expect(residueProbeMatchesRow(spendProbe, { trend_item_id: refusedId })).toBe(false);
+        expect(lifecycleTargetMatchesRow(spendExecutor, { purpose: "trend_autopsy", trend_item_id: refusedId })).toBe(false);
+        expect(residueProbeMatchesRow(spendProbe, { purpose: "trend_autopsy", trend_item_id: refusedId })).toBe(false);
         expect(lifecycleTargetMatchesRow(jobExecutor, { data: { itemId: refusedId } })).toBe(false);
         expect(residueProbeMatchesRow(jobProbe, { data: { itemId: refusedId } })).toBe(false);
       }
@@ -632,6 +633,27 @@ describe("independent lifecycle residue probes", () => {
       observed.length = 0;
       await implementation.execute(port, { ...target, executor: id });
       expect(observed, `${id} calls the wrong mutation port`).toEqual([expectedMethods[id]]);
+    }
+  });
+});
+
+describe("the public Sample Spin's metering row class (Phase 10a; lean gate round 1 R-6, tenancy gate round 1 CHANGE 2)", () => {
+  it("is ONE whole-row financial target per spend table with no scrub, and the autopsy scrub never selects a public row", () => {
+    for (const table of ["system_model_usage", "system_spend_claims"] as const) {
+      const key = `${table}::public_sample_spin_row::complete_row`;
+      const executor = executorTargets().find((target) => target.registryKey === key);
+      const probe = expectedTargets().find((target) => target.registryKey === key);
+      expect(executor, `${key} must compile to an executor target`).toBeDefined();
+      expect(probe, `${key} must compile to a residue probe`).toBeDefined();
+      expect(executor).toMatchObject({ action: "retain_financial", executor: "financial_retention_receiver" });
+      // No other target names the class: the 90-day scrub is not promised.
+      expect(executorTargets().filter((target) => target.table === table && target.rowClass === "public_sample_spin_row")).toHaveLength(1);
+      // The autopsy scrub's discriminator keeps it off public rows, even one
+      // carrying the profile's own trend item.
+      const autopsy = executorTargets().find((target) => target.registryKey === `${table}::system_row::linkable_source_ids`)!;
+      expect(lifecycleTargetMatchesRow(autopsy, { purpose: "trend_autopsy", trend_item_id: SUBJECTS.profile.sourceIds.trendItemIds[0] })).toBe(true);
+      expect(lifecycleTargetMatchesRow(autopsy, { purpose: "public_sample_spin", trend_item_id: SUBJECTS.profile.sourceIds.trendItemIds[0] })).toBe(false);
+      void residueProbeMatchesRow;
     }
   });
 });

@@ -12,6 +12,15 @@ export type PromotionReview = {
   };
   resultEvidence: readonly { id: string; role: string }[];
   feedbackEvidence: readonly { feedbackId: string; generationId: string }[];
+  /**
+   * Derived server-side from the JOINED evidence rows and both population
+   * sizes (R-115) — the reading the panel renders; the stored strength enum
+   * is history and is never the source of a sentence here.
+   */
+  learningEligibility:
+    | { kind: "verified_results"; treatmentN: number; baselineN: number }
+    | { kind: "legacy_unverified" }
+    | { kind: "structured_feedback"; occurrences: number };
   mergedContent: unknown;
   claims: readonly {
     pointer: string;

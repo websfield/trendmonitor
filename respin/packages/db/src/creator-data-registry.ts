@@ -8,7 +8,7 @@ export const APP_TABLES = [
   "config_versions", "creator_profiles", "credit_ledger", "deletion_cancellation_proofs", "deletion_external_commands", "deletion_membership_snapshots", "deletion_operation_transitions", "deletion_operations", "deletion_recovery_sessions", "first_billable_attempts", "frameworks",
   "generation_attempts", "generation_feedback", "generations", "membership_profile_selections", "memberships",
   "model_usage", "onboarding_inputs", "onboarding_interview_drafts", "pause_periods", "promotion_proposals",
-  "proposal_evidence_feedback", "proposal_evidence_results", "rate_limit", "results", "session", "stripe_events",
+  "proposal_evidence_feedback", "proposal_evidence_results", "public_sample_spin_buckets", "rate_limit", "results", "session", "stripe_events",
   "stripe_finance_extracts", "subscriptions", "system_model_usage", "system_model_usage_reconciliations", "system_spend_claims",
   "system_spend_daily", "system_worker_health", "tracked_niches", "trend_items", "trend_sources",
   "tier_checkout_protocol_rollouts", "trend_transcripts", "user", "users", "verification", "workspaces", "workspace_spend_monthly",
@@ -34,7 +34,15 @@ export type DataRowClass =
   | "creator_consent"
   | "independently_licensed"
   | "product_seed"
-  | "shared_library";
+  | "shared_library"
+  // Phase 10a plan C4: the public Sample Spin's system-metering rows on the
+  // two spend tables, discriminated by `purpose`. Content-free, tenant-free,
+  // IP-free by the schema's own CHECK. The WHOLE row is a financial fact kept
+  // seven years (R-122): its `job_id` is a browser-random request id that no
+  // erasure subject can name and no bucket links to once the window expires,
+  // so there is no 90-day scrub to promise (tenancy gate round 1, CHANGE 2 —
+  // the first registration promised one that no executor could ever run).
+  | "public_sample_spin_row";
 
 /**
  * Every application table names its permitted row classes explicitly. There
@@ -73,15 +81,16 @@ export const ROW_CLASSES_BY_TABLE = {
   promotion_proposals: ["profile_row"],
   proposal_evidence_feedback: ["profile_row"],
   proposal_evidence_results: ["profile_row"],
+  public_sample_spin_buckets: ["system_row"],
   rate_limit: ["system_row"],
   results: ["profile_row"],
   session: ["identity_row"],
   stripe_events: ["stripe_workspace_attributed", "stripe_customer_attributed", "stripe_unattributed"],
   stripe_finance_extracts: ["finance_extract_complete", "finance_extract_incomplete"],
   subscriptions: ["workspace_row"],
-  system_model_usage: ["system_row"],
+  system_model_usage: ["system_row", "public_sample_spin_row"],
   system_model_usage_reconciliations: ["system_row"],
-  system_spend_claims: ["system_row"],
+  system_spend_claims: ["system_row", "public_sample_spin_row"],
   system_spend_daily: ["system_row"],
   system_worker_health: ["system_row"],
   tier_checkout_protocol_rollouts: ["system_row"],
@@ -403,6 +412,11 @@ export const LIFECYCLE_REGISTRY = [
   row("activation_cohort_daily", "system_row", { scope: "system", writerOwner: "packages/db/src/activation.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "cohort_two_years", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
   system("auto_topup_protocol_rollouts", "packages/credits/src/stripe/auto-topup-rollout.ts"),
   system("tier_checkout_protocol_rollouts", "packages/credits/src/stripe/tier-checkout-rollout.ts"),
+  // Phase 10a plan C4 (R-117): the public Sample Spin's abuse buckets. An IP
+  // HMAC under a versioned dedicated key, a window start, an expiry at most 24 h
+  // later, counters — deleted by the traffic-independent receiver on the same
+  // 24-hour clock the auth limiter uses.
+  row("public_sample_spin_buckets", "system_row", { scope: "system", writerOwner: "packages/db/src/public-sample-spin.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "rate_limit_window", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
   row("rate_limit", "system_row", { scope: "system", writerOwner: "packages/auth", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "rate_limit_window", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
   row("stripe_events", "stripe_workspace_attributed", { scope: "workspace", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, { name: "provider_payload", kind: "columns", columns: ["payload"] }),
   row("stripe_events", "stripe_workspace_attributed", { scope: "workspace", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "identifier_scrubber", residueProbe: "retained_financial_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["workspace_id", "stripe_customer_id"] }),
@@ -440,10 +454,15 @@ export const LIFECYCLE_REGISTRY = [
   row("workspace_spend_monthly", "financial_row", { scope: "workspace", writerOwner: "packages/db/src/spend-rollup.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id"] }),
   row("system_model_usage", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "system_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["job_attempt_id", "job_id", "trend_item_id"] }),
   row("system_model_usage", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "cost_and_outcome_facts", kind: "remaining_columns", excluding: ["job_attempt_id", "job_id", "trend_item_id"] }),
+  // Phase 10a plan C4: the public Sample Spin's metering rows on the same two
+  // tables, discriminated by purpose. The whole row is a content-free
+  // financial fact (see the row class above): no scrub, no erasure subject.
+  row("system_model_usage", "public_sample_spin_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }),
   row("system_model_usage_reconciliations", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "system_residue" }, { name: "linkable_attempt_id", kind: "columns", columns: ["job_attempt_id"] }),
   row("system_model_usage_reconciliations", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "cost_facts", kind: "remaining_columns", excluding: ["job_attempt_id"] }),
   row("system_spend_claims", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "system_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["job_attempt_id", "job_id", "trend_item_id", "autopsy_cache_claim_id"] }),
   row("system_spend_claims", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "reservation_facts", kind: "remaining_columns", excluding: ["job_attempt_id", "job_id", "trend_item_id", "autopsy_cache_claim_id"] }),
+  row("system_spend_claims", "public_sample_spin_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }),
   row("system_spend_daily", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }),
   row("system_worker_health", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "operational_90_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
 ] as const satisfies readonly LifecycleClassEntry[];
@@ -473,6 +492,22 @@ const ROW_CLASS_DISCRIMINATORS: Readonly<
       finance_extract_complete: "complete",
       finance_extract_incomplete: "incomplete",
     },
+  },
+  system_model_usage: {
+    kind: "enum_value",
+    column: "purpose",
+    enumName: "system_spend_purpose",
+    sourceFile: "packages/db/src/system-spend-schema.ts",
+    sourceToken: "purpose",
+    values: { system_row: "trend_autopsy", public_sample_spin_row: "public_sample_spin" },
+  },
+  system_spend_claims: {
+    kind: "enum_value",
+    column: "purpose",
+    enumName: "system_spend_purpose",
+    sourceFile: "packages/db/src/system-spend-schema.ts",
+    sourceToken: "purpose",
+    values: { system_row: "trend_autopsy", public_sample_spin_row: "public_sample_spin" },
   },
   deletion_operations: {
     kind: "enum_value",
@@ -860,6 +895,7 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
   system_spend_claims: [["system_spend_claims_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
   system_spend_daily: [],
   system_worker_health: [],
+  public_sample_spin_buckets: [],
   tracked_niches: [["tracked_niches_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
   trend_items: [
     ["trend_items_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
@@ -1364,9 +1400,10 @@ export const LIFECYCLE_WRITER_INVENTORY = [
   { table: "onboarding_inputs", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/promotion-ops.ts", "packages/db/src/with-workspace.ts"] },
   { table: "onboarding_interview_drafts", owner: "packages/db/src/interview-ops.ts", physicalWriters: ["packages/db/src/interview-ops.ts"] },
   { table: "pause_periods", owner: "packages/credits/src/pause.ts", physicalWriters: ["packages/credits/src/pause.ts"] },
-  { table: "promotion_proposals", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts"] },
+  { table: "promotion_proposals", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts", "packages/db/src/promotion-audit.ts"] },
   { table: "proposal_evidence_feedback", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts"] },
   { table: "proposal_evidence_results", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts"] },
+  { table: "public_sample_spin_buckets", owner: "packages/db/src/public-sample-spin.ts", physicalWriters: ["packages/db/src/public-sample-spin.ts"] },
   { table: "rate_limit", owner: "packages/auth", physicalWriters: ["packages/db/src/auth-lifecycle.ts"] },
   { table: "results", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
   { table: "session", owner: "packages/auth", physicalWriters: ["packages/db/src/auth-lifecycle.ts", "packages/db/src/deletion-lifecycle.ts"] },

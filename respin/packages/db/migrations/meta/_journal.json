@@ -407,6 +407,34 @@
       "when": 1788885131827,
       "tag": "0057_sparkling_jasper_sitwell",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1788920761082,
+      "tag": "0058_simple_captain_cross",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1788920953243,
+      "tag": "0059_yellow_agent_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1788926603509,
+      "tag": "0060_square_cassandra_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1788929988898,
+      "tag": "0061_vengeful_eternity",
+      "breakpoints": true
     }
   ]
 }

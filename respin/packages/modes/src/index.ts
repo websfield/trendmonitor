@@ -189,6 +189,9 @@ export {
 export {
   CODE_SPIN_STRICTNESS_FLOOR,
   SpinSimilarityError,
+  // Phase 10a: the public Sample Spin validates its checked-in gate projection
+  // at fixture load with the gate's own assertion, before any vendor call.
+  assertTrustedReference,
   effectiveSpinStrictness,
   evaluateSpinSimilarity,
   type SpinReference,

@@ -24,13 +24,34 @@ import {
 import { resolveAutopsyFramework } from "./frameworks";
 import { isActiveProfileLifecycleForSystemInTx } from "./membership-lifecycle";
 
-export type SystemSpendAttribution = {
-  jobId: string;
-  trendItemId: string;
-  autopsyCacheClaimId: string;
-  purpose: "trend_autopsy";
-  model: string;
-};
+/**
+ * R-117's closed purpose union. `system_spend_purpose` in the schema is the
+ * same list; `system-spend.test.ts` pins the two equal so a purpose added here
+ * without its CHECK and registry row class is a red test, not a silent row.
+ */
+export const SYSTEM_SPEND_PURPOSES = ["trend_autopsy", "public_sample_spin"] as const;
+export type SystemSpendPurpose = (typeof SYSTEM_SPEND_PURPOSES)[number];
+
+/**
+ * Purpose attribution is a CHECKED union (R-117): an autopsy names the trend
+ * item and cache claim its money was taken under; a public Sample Spin names
+ * only its opaque request id (`jobId`) — never a tenant, profile, autopsy or
+ * visitor identifier. The schema's per-purpose CHECK refuses the other shape.
+ */
+export type SystemSpendAttribution =
+  | {
+      purpose: "trend_autopsy";
+      jobId: string;
+      trendItemId: string;
+      autopsyCacheClaimId: string;
+      model: string;
+    }
+  | {
+      purpose: "public_sample_spin";
+      /** The request's own idempotency id. Opaque, content-free. */
+      jobId: string;
+      model: string;
+    };
 
 export type SystemSpendClaim = {
   jobAttemptId: string;
@@ -38,6 +59,15 @@ export type SystemSpendClaim = {
   capMicroUsd: bigint;
   reserveMicroUsd: bigint;
   attribution: SystemSpendAttribution;
+  /**
+   * R-123's per-purpose sub-cap INSIDE the global authority, required for
+   * `public_sample_spin` and refused for any other purpose. Clamped to
+   * `PUBLIC_SAMPLE_SPIN_DAILY_CODE_CEILING_MICRO_USD`; runtime config may only
+   * tighten it. Derived from the claims themselves (the sum of today's
+   * reserved claims for the purpose under the daily row's lock), so the
+   * ledger is the balance and no second daily row exists.
+   */
+  purposeCapMicroUsd?: bigint;
 };
 
 export type SystemSpendClaimResult =
@@ -64,6 +94,49 @@ export const SYSTEM_AUTOPSY_DAILY_CODE_CEILING_MICRO_USD = 100_000_000n;
  * dispatcher reaches this ceiling — whichever comes first.
  */
 export const SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING = 32;
+
+/**
+ * R-123: the public Sample Spin's daily purpose maximum, $10/day in micro-USD,
+ * inside the $100/day global ceiling above. At the worst-case three-call
+ * reservation this admits at most 16 attempts a day at today's recorded
+ * prices. Runtime config may only tighten it.
+ */
+export const PUBLIC_SAMPLE_SPIN_DAILY_CODE_CEILING_MICRO_USD = 10_000_000n;
+/** R-123: two concurrent public attempts, product-wide. */
+export const PUBLIC_SAMPLE_SPIN_MAX_CONCURRENT = 2;
+/** R-123: at most two draft calls plus one scoring call per logical attempt. */
+export const PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX = 3;
+/**
+ * R-123: the ONE shared outer deadline for a public attempt, 120 seconds,
+ * compiled. Runtime config (`llm.overallDeadlineMs`) may only tighten it —
+ * `sampleSpinDeadlineMs` in the orchestrator clamps — because the in-flight
+ * lease below is derived from THIS number, and a deadline the lease does not
+ * cover would let a live attempt drop out of the concurrency count and be
+ * recovered as unknown while the vendor is still answering (billing gate,
+ * round 1). The autopsy path refuses the same inversion (`assertAutopsyDeadlineWithinLease`).
+ */
+export const PUBLIC_SAMPLE_SPIN_DEADLINE_CODE_CEILING_MS = 120_000;
+/**
+ * The finalising write after the vendor's last reply is one usage insert and
+ * one daily rollup update in a single transaction. Thirty seconds is an
+ * UNMEASURED LAUNCH MARGIN for that write under a slow connection, chosen
+ * beside the autopsy lease's own margin (`AUTOPSY_CLAIM_LEASE_MS`); revisit
+ * trigger: the first 200 finalised public attempts' measured finalise latency.
+ */
+export const PUBLIC_SAMPLE_SPIN_FINALISE_MARGIN_MS = 30_000;
+/**
+ * How long a reserved public claim with no usage row counts as IN FLIGHT:
+ * the compiled deadline plus the finalise margin. Past it the attempt is stale
+ * — an outbound-started crash with no trusted completion — and
+ * `recoverStalePublicSampleSpinAttempts` finalises it UNKNOWN /
+ * recovery-required. It is never reissued. Measured against the DATABASE
+ * clock (`created_at` is `clock_timestamp()`), so no second clock exists.
+ */
+export const PUBLIC_SAMPLE_SPIN_ATTEMPT_LEASE_MS =
+  PUBLIC_SAMPLE_SPIN_DEADLINE_CODE_CEILING_MS + PUBLIC_SAMPLE_SPIN_FINALISE_MARGIN_MS;
+/** The lease boundary as SQL, on the database clock. */
+const LEASE_BOUNDARY = sql`now() - make_interval(secs => ${PUBLIC_SAMPLE_SPIN_ATTEMPT_LEASE_MS / 1000})`;
+const NO_USAGE_ROW = sql`NOT EXISTS (SELECT 1 FROM ${systemModelUsage} WHERE ${systemModelUsage.jobAttemptId} = ${systemSpendClaims.jobAttemptId})`;
 
 export type SystemAutopsyQueueCandidate = {
   cacheClaimId: string;
@@ -269,11 +342,14 @@ function claimValues(claim: SystemSpendClaim, status: "reserved" | "cap_exhauste
     requestedMicroUsd: claim.reserveMicroUsd,
     status,
     jobId: requiredText(attribution.jobId, "jobId"),
-    trendItemId: requiredText(attribution.trendItemId, "trendItemId"),
-    autopsyCacheClaimId: requiredText(
-      attribution.autopsyCacheClaimId,
-      "autopsyCacheClaimId",
-    ),
+    // The CHECKed shape per purpose: an autopsy names its item and cache claim;
+    // a public Sample Spin names neither (null, and the CHECK refuses a value).
+    trendItemId: attribution.purpose === "trend_autopsy"
+      ? requiredText(attribution.trendItemId, "trendItemId")
+      : null,
+    autopsyCacheClaimId: attribution.purpose === "trend_autopsy"
+      ? requiredText(attribution.autopsyCacheClaimId, "autopsyCacheClaimId")
+      : null,
     purpose: attribution.purpose,
     model: requiredText(attribution.model, "model"),
   };
@@ -297,14 +373,25 @@ function assertStoredClaimMatches(
   }
 }
 
+function assertClaimShape(claim: SystemSpendClaim): void {
+  if (claim.capMicroUsd < 0n || claim.reserveMicroUsd <= 0n) {
+    throw new Error("system spend cap must be nonnegative and reservation positive");
+  }
+  if (claim.attribution.purpose === "public_sample_spin") {
+    if (claim.purposeCapMicroUsd === undefined || claim.purposeCapMicroUsd < 0n) {
+      throw new Error("a public sample spin claim must carry its nonnegative purpose cap");
+    }
+  } else if (claim.purposeCapMicroUsd !== undefined) {
+    throw new Error("only the public sample spin purpose carries a purpose cap");
+  }
+}
+
 /** Atomically reserve a code-ceiling amount before the vendor call. */
 export async function claimSystemSpend(
   db: DbLike,
   claim: SystemSpendClaim,
 ): Promise<SystemSpendClaimResult> {
-  if (claim.capMicroUsd < 0n || claim.reserveMicroUsd <= 0n) {
-    throw new Error("system spend cap must be nonnegative and reservation positive");
-  }
+  assertClaimShape(claim);
   try {
     return await db.transaction(async (tx) => claimInTx(tx, claim));
   } catch (error) {
@@ -317,6 +404,112 @@ export async function claimSystemSpend(
     }
     throw error;
   }
+}
+
+/**
+ * The same reservation inside a caller's transaction, so the public limiter
+ * can consume a visitor's bucket and reserve the money in ONE atomic step
+ * (plan C4). A duplicate attempt id throws `DuplicateSystemSpendClaim`
+ * semantics as `claimSystemSpend` does; the caller decides what a replay
+ * means for its own rows.
+ */
+export async function claimSystemSpendInTx(
+  tx: TxLike,
+  claim: SystemSpendClaim,
+): Promise<SystemSpendClaimResult> {
+  assertClaimShape(claim);
+  return claimInTx(tx, claim);
+}
+
+/**
+ * Reserved public claims with no usage row yet, younger than the attempt
+ * lease on the DATABASE clock: the attempts that may still be talking to the
+ * vendor. Read under the LIMITER's advisory lock (`admitPublicSampleSpin`),
+ * so two admissions cannot both see one slot.
+ */
+export async function publicSampleSpinInFlightCount(tx: TxLike): Promise<number> {
+  const [row] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(systemSpendClaims)
+    .where(and(
+      eq(systemSpendClaims.purpose, "public_sample_spin"),
+      eq(systemSpendClaims.status, "reserved"),
+      sql`${systemSpendClaims.createdAt} >= ${LEASE_BOUNDARY}`,
+      NO_USAGE_ROW,
+    ));
+  return row?.count ?? 0;
+}
+
+/**
+ * An outbound-started public attempt whose process died with no trusted
+ * completion is finalised UNKNOWN with the conservative full call count and a
+ * `recovery_required` code. The reservation is not refunded — a vendor call
+ * may have happened — and the attempt is never reissued (R-117). Traffic
+ * independent: the retention tick calls this every minute.
+ */
+export async function recoverStalePublicSampleSpinAttempts(
+  db: DbLike,
+): Promise<{ recovered: number; failed: number }> {
+  const stalePredicate = and(
+    eq(systemSpendClaims.purpose, "public_sample_spin"),
+    eq(systemSpendClaims.status, "reserved"),
+    sql`${systemSpendClaims.createdAt} < ${LEASE_BOUNDARY}`,
+    NO_USAGE_ROW,
+  );
+  const stale = await db
+    .select({ jobAttemptId: systemSpendClaims.jobAttemptId })
+    .from(systemSpendClaims)
+    .where(stalePredicate)
+    .orderBy(asc(systemSpendClaims.createdAt))
+    .limit(SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING);
+  let recovered = 0;
+  let failed = 0;
+  for (const candidate of stale) {
+    let inserted = false;
+    try {
+      inserted = await db.transaction(async (tx) => {
+      // RE-CHECKED INSIDE THE TRANSACTION, under the row lock: the lease
+      // boundary and the absence of a usage row are both re-evaluated, so a
+      // live attempt that finalised between the scan and this write is left
+      // alone rather than raced into "already bound to a different fact"
+      // (billing gate, round 1). A miss is a quiet `false`, never a throw
+      // that would abort the whole retention tick.
+      const [claim] = await tx
+        .select()
+        .from(systemSpendClaims)
+        .where(and(eq(systemSpendClaims.jobAttemptId, candidate.jobAttemptId), stalePredicate))
+        .for("update")
+        .limit(1);
+      if (!claim) return false;
+      const result = await recordSystemModelUsageInTx(tx, {
+        jobAttemptId: claim.jobAttemptId,
+        jobId: claim.jobId,
+        trendItemId: null,
+        purpose: "public_sample_spin",
+        model: claim.model,
+        tokensIn: null,
+        tokensOut: null,
+        costMicroUsd: null,
+        costState: "unknown",
+        outcome: "vendor_failed",
+        callCount: PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX,
+        unknownCallCount: PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX,
+        errorCode: "recovery_required",
+        businessDate: claim.businessDate,
+        reservedCostMicroUsd: claim.reservedMicroUsd,
+        reservationOverrunMicroUsd: null,
+      });
+      return result.inserted;
+      });
+    } catch {
+      // ONE candidate's failure never aborts the tick (lean gate round 1,
+      // R-5d): it is counted, the next candidate is tried, and the retention
+      // summary carries the count.
+      failed += 1;
+    }
+    if (inserted) recovered += 1;
+  }
+  return { recovered, failed };
 }
 
 async function claimInTx(
@@ -351,6 +544,31 @@ async function claimInTx(
       capMicroUsd: sql`GREATEST(${systemSpendDaily.reservedMicroUsd}, LEAST(${systemSpendDaily.capMicroUsd}, ${effectiveCap}))`,
     })
     .where(eq(systemSpendDaily.businessDate, claim.businessDate));
+  // THE PURPOSE SUB-CAP (R-123), inside the same authority and under the same
+  // row lock the update above took: the sum of today's reserved claims for the
+  // purpose is the purpose's balance, so no second daily row exists to drift.
+  if (claim.attribution.purpose === "public_sample_spin") {
+    const purposeCap = claim.purposeCapMicroUsd! < PUBLIC_SAMPLE_SPIN_DAILY_CODE_CEILING_MICRO_USD
+      ? claim.purposeCapMicroUsd!
+      : PUBLIC_SAMPLE_SPIN_DAILY_CODE_CEILING_MICRO_USD;
+    const [sum] = await tx
+      .select({ reserved: sql<string>`coalesce(sum(${systemSpendClaims.reservedMicroUsd}), 0)::text` })
+      .from(systemSpendClaims)
+      .where(and(
+        eq(systemSpendClaims.businessDate, claim.businessDate),
+        eq(systemSpendClaims.purpose, "public_sample_spin"),
+        eq(systemSpendClaims.status, "reserved"),
+      ));
+    if (BigInt(sum?.reserved ?? "0") + claim.reserveMicroUsd > purposeCap) {
+      const refused = await tx
+        .insert(systemSpendClaims)
+        .values(claimValues(claim, "cap_exhausted"))
+        .onConflictDoNothing()
+        .returning({ id: systemSpendClaims.id });
+      if (refused.length === 0) throw new DuplicateSystemSpendClaim();
+      return { status: "cap_exhausted" };
+    }
+  }
   const reserved = await tx
     .update(systemSpendDaily)
     .set({
@@ -393,7 +611,7 @@ export type RecordSystemModelUsage = Omit<
   | "errorCode"
   | "purpose"
 > & {
-  purpose: "trend_autopsy";
+  purpose: SystemSpendPurpose;
   reservedCostMicroUsd?: bigint;
   reservationOverrunMicroUsd?: bigint | null;
   errorCode?: string | null;
@@ -457,10 +675,13 @@ function assertUsageShape(usage: RecordSystemModelUsage): void {
     && usage.reservationOverrunMicroUsd < 0n) {
     throw new Error("system model usage reservation overrun must be null or nonnegative");
   }
+  const callsPerAttempt = usage.purpose === "public_sample_spin"
+    ? PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX
+    : AUTOPSY_VENDOR_CALLS_PER_ATTEMPT;
   if (!Number.isSafeInteger(usage.callCount)
     || usage.callCount < 0
-    || usage.callCount > AUTOPSY_VENDOR_CALLS_PER_ATTEMPT) {
-    throw new Error("system model usage callCount is outside the fixed autopsy pipeline");
+    || usage.callCount > callsPerAttempt) {
+    throw new Error("system model usage callCount is outside its fixed pipeline");
   }
   if (!Number.isSafeInteger(usage.unknownCallCount) || usage.unknownCallCount < 0) {
     throw new Error("system model usage unknownCallCount must be a nonnegative integer");
@@ -471,12 +692,22 @@ function assertUsageShape(usage: RecordSystemModelUsage): void {
   if ((usage.outcome === "budget_exhausted") !== (usage.callCount === 0)) {
     throw new Error("only a budget refusal may record zero vendor calls");
   }
-  if (usage.outcome === "succeeded"
+  if (usage.outcome === "succeeded" && usage.purpose === "trend_autopsy"
     && usage.callCount !== AUTOPSY_VENDOR_CALLS_PER_ATTEMPT) {
     throw new Error("a successful autopsy must record every fixed-order stage call");
   }
-  if (usage.outcome === "succeeded" && usage.costState !== "measured") {
-    throw new Error("a successful autopsy must retain measured cost");
+  // One or two drafts plus the scoring call: a successful Sample Spin is never
+  // a single call and never a fourth (R-123).
+  if (usage.outcome === "succeeded" && usage.purpose === "public_sample_spin"
+    && (usage.callCount < 2 || usage.callCount > PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX)) {
+    throw new Error("a successful sample spin records its drafts and the scoring call");
+  }
+  // An autopsy is priced at models this build owns, so its success is always
+  // measured. A public Sample Spin is priced at the model the vendor SERVED;
+  // an alias with no price row is a success with UNKNOWN cost and the tokens
+  // kept (R-117; billing gate round 1) — the daily row counts it as unknown.
+  if (usage.outcome === "succeeded" && usage.costState !== "measured" && usage.purpose !== "public_sample_spin") {
+    throw new Error("a successful system attempt must retain measured cost");
   }
   if ((usage.costState === "unknown") !== (usage.unknownCallCount > 0)) {
     throw new Error("unknown cost state must retain at least one unknown call");
@@ -816,7 +1047,10 @@ function mapUsageRecord(row: SystemModelUsage): SystemAutopsyAttemptRecord {
     !Number.isSafeInteger(row.unknownCallCount) ||
     row.unknownCallCount < 0 ||
     row.unknownCallCount > row.callCount ||
-    row.purpose !== "trend_autopsy"
+    row.purpose !== "trend_autopsy" ||
+    // The schema CHECK makes this unreachable for an autopsy row; the worker
+    // contract still refuses rather than trusting a cast.
+    row.trendItemId === null
   ) {
     throw new Error("persisted system usage is outside the closed worker contract");
   }

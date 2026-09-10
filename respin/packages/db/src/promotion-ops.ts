@@ -494,14 +494,73 @@ export type PromotionReviewClaim = {
   } | { absence: string };
 };
 
+/**
+ * WHAT A PROPOSAL'S EVIDENCE IS WORTH, derived from the JOINED evidence rows
+ * and both population sizes — never from the stored `early|repeated|
+ * corroborated` enum alone (R-115, Phase 10a C1). The enum is history; this
+ * is the reading the screen renders.
+ */
+export type LearningEligibility =
+  | { kind: "verified_results"; treatmentN: number; baselineN: number }
+  /** A historic result proposal whose joined evidence carries a non-verified row: kept as history, proposes nothing. */
+  | { kind: "legacy_unverified" }
+  | { kind: "structured_feedback"; occurrences: number };
+
 export type PromotionProposalReview = PromotionProposalStoredReview & {
   baseBrainDocId: string | null;
   mergedContent: unknown;
   claims: PromotionReviewClaim[];
   freshnessToken: string;
+  learningEligibility: LearningEligibility;
 };
 
-async function buildReview(scope: ProfileScope, stored: PromotionProposalStoredReview, tx: TxLike): Promise<{ review: PromotionProposalReview; draft: PromotionProposalDraft; base: BrainDoc | null; summary: ReturnType<typeof summaryFor> }> {
+/** True when a `results` proposal's joined evidence carries any row that is not connector verified. */
+export function carriesUnverifiedEvidence(stored: PromotionProposalStoredReview): boolean {
+  return stored.proposal.source === "results"
+    && stored.resultEvidence.some((row) => row.evidenceState !== "connector_verified");
+}
+
+function eligibilityFor(stored: PromotionProposalStoredReview, draft: PromotionProposalDraft): LearningEligibility {
+  if (draft.source === "results") {
+    return { kind: "verified_results", treatmentN: draft.rule.treatment.n, baselineN: draft.rule.baseline.n };
+  }
+  return { kind: "structured_feedback", occurrences: new Set(stored.feedbackEvidence.map((row) => row.generationId)).size };
+}
+
+async function buildReview(scope: ProfileScope, stored: PromotionProposalStoredReview, tx: TxLike): Promise<{ review: PromotionProposalReview; draft: PromotionProposalDraft | null; base: BrainDoc | null; summary: ReturnType<typeof summaryFor> }> {
+  // THE VERIFIED-ONLY HISTORY RULE (R-115, Phase 10a C1). A result proposal
+  // minted before the rule can carry self-reported rows that the comparison
+  // now excludes, so it cannot reconstruct and must not be made to: its
+  // stored digest is a fact about the old rule. Three cases, none silent:
+  //   - terminal (rejected / stale / superseded): readable history, labelled
+  //     legacy, proposing nothing — no replay, no claims, no token to decide;
+  //   - proposed: the deploy audit supersedes these; until it has, the review
+  //     refuses rather than presenting a proposal the rule no longer allows;
+  //   - accepted: a DEPLOYMENT BLOCK — named by id, never detached from the
+  //     active brain here.
+  if (carriesUnverifiedEvidence(stored)) {
+    if (stored.proposal.status === "accepted") {
+      throw new PromotionPayloadError("an accepted result proposal carries non-verified evidence; the verified-only rule blocks deployment until an owner remediates it (proposal audit)");
+    }
+    if (stored.proposal.status === "proposed") {
+      throw new PromotionFreshnessError("its evidence is not connector verified; the proposal audit supersedes proposals like it");
+    }
+    return {
+      review: {
+        ...stored,
+        baseBrainDocId: null,
+        mergedContent: null,
+        claims: [],
+        freshnessToken: sha({ proposalId: stored.proposal.id, legacy: true }),
+        learningEligibility: { kind: "legacy_unverified" },
+      },
+      // No draft: a terminal legacy row reconstructs nothing, and the two
+      // write-side callers refuse a null draft by name.
+      draft: null,
+      base: null,
+      summary: { content: "", claims: [] },
+    };
+  }
   const draft = await reconstructStoredDraft(scope, stored, tx);
   if (
     stored.proposal.status === "proposed" &&
@@ -570,6 +629,7 @@ async function buildReview(scope: ProfileScope, stored: PromotionProposalStoredR
         mergedContent: acceptedDoc.content,
         claims,
         freshnessToken: sha(tokenFields),
+        learningEligibility: eligibilityFor(stored, draft),
       },
       draft,
       base: acceptedDoc,
@@ -611,8 +671,9 @@ async function buildReview(scope: ProfileScope, stored: PromotionProposalStoredR
     mergedContentHash: sha(merged.content),
     claims: claims.map(({ pointer, displayedValue, sourceEvidence }) => ({ pointer, displayedValue, sourceEvidence })).sort((a, b) => a.pointer.localeCompare(b.pointer)),
   };
-  return { review: { ...stored, baseBrainDocId: base?.id ?? null, mergedContent: merged.content, claims, freshnessToken: sha(tokenFields) }, draft, base, summary };
+  return { review: { ...stored, baseBrainDocId: base?.id ?? null, mergedContent: merged.content, claims, freshnessToken: sha(tokenFields), learningEligibility: eligibilityFor(stored, draft) }, draft, base, summary };
 }
+
 
 export async function promotionProposalReviewInScope(scope: ProfileScope, proposalId: string, tx: TxLike): Promise<PromotionProposalReview> {
   requireProposalId(proposalId);
@@ -644,6 +705,7 @@ export async function appendPromotionSummaryForProposalInScope(scope: ProfileSco
     throw new PromotionDecisionError(`its status is ${stored.proposal.status}`);
   }
   const built = await buildReview(scope, stored, tx);
+  if (built.draft === null) throw new PromotionPayloadError("legacy unverified history has no draft to summarise");
   const content = built.summary.content;
   if (content.length > POST_CONTENT_MAX) {
     throw new OnboardingInputLimitError(
@@ -716,6 +778,7 @@ export async function decidePromotionProposalInScope(
   }
   if (stored.proposal.status !== "proposed") throw new PromotionDecisionError(`its status is ${stored.proposal.status}`);
   const built = await buildReview(scope, stored, tx);
+  if (built.draft === null) throw new PromotionDecisionError("legacy unverified history cannot be decided");
   if (params.freshnessToken !== built.review.freshnessToken) throw new PromotionFreshnessError("the review token does not match");
   if (params.decision === "reject") {
     if (!Array.isArray(params.confirmedFields) || params.confirmedFields.length !== 0) throw new PromotionDecisionError("a rejection cannot carry field confirmations");

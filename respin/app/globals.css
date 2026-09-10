@@ -1208,3 +1208,124 @@ input[type="checkbox"].toggle:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- The live Sample Spin panel (Phase 10a): the demo panel's shell, with a
+   form in the "after" column and terminal states only. */
+.sample-spin-title {
+  margin: var(--sp-3) 0 0;
+  font: 600 13px / 1.5 var(--font-sans);
+  color: var(--text-2);
+}
+.sample-spin-form {
+  margin-top: var(--sp-4);
+  display: grid;
+  gap: var(--sp-3);
+}
+.sample-spin-label {
+  font: 400 13px / 1.5 var(--font-sans);
+  color: var(--text-3);
+}
+.sample-spin-textarea {
+  width: 100%;
+  resize: vertical;
+  font: 400 14.5px / 1.6 var(--font-sans);
+  color: var(--text-1);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-3);
+}
+.sample-spin-textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.sample-spin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.sample-spin-count {
+  font: 500 var(--fs-meta) / 1 var(--font-mono);
+  color: var(--text-3);
+}
+.sample-spin-count.sample-spin-over {
+  color: var(--danger-text, #b42318);
+}
+.sample-spin-status {
+  margin: 0;
+  font: 400 13px / 1.55 var(--font-sans);
+  color: var(--text-3);
+}
+.sample-spin-refusal {
+  border-left: 2px solid var(--border);
+  padding-left: var(--sp-3);
+}
+.sample-spin-refusal p {
+  margin: var(--sp-1) 0 0;
+  font: 400 14px / 1.55 var(--font-sans);
+  color: var(--text-2);
+}
+.sample-spin-result {
+  margin-top: var(--sp-4);
+  display: grid;
+  gap: var(--sp-4);
+}
+.spin-units {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  row-gap: var(--sp-3);
+  column-gap: var(--sp-3);
+}
+.spin-unit {
+  display: contents;
+}
+.spin-units dd {
+  margin: 0;
+}
+.spin-rules ul {
+  margin: var(--sp-2) 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: var(--sp-2);
+}
+.spin-rule {
+  font: 400 13.5px / 1.55 var(--font-sans);
+  color: var(--text-1);
+  background: var(--accent-surface-2);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+}
+.legal-section h1 {
+  font: 700 32px / 1.15 var(--font-sans);
+  margin: 0 0 var(--sp-3);
+}
+.legal-section h2 {
+  font: 600 18px / 1.3 var(--font-sans);
+  margin: var(--sp-8) 0 var(--sp-3);
+}
+.legal-list,
+.changelog {
+  margin: var(--sp-4) 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: var(--sp-3);
+  font: 400 15px / 1.6 var(--font-sans);
+  color: var(--text-2);
+}
+.changelog {
+  padding-left: 0;
+}
+.changelog-entry dt {
+  font: 600 15px / 1.5 var(--font-sans);
+  color: var(--text-1);
+}
+.changelog-entry dd {
+  margin: var(--sp-1) 0 0;
+}
+@media (max-width: 720px) {
+  .spin-units {
+    grid-template-columns: 1fr;
+  }
+}

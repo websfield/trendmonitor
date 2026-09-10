@@ -24,7 +24,7 @@ import {
   resolveDeletionRequestEnablement,
 } from "./deletion-request-enablement";
 import { createAuthMailRecoveryDelivery, type AuthMailPort } from "./auth-mail";
-import { resolveActivationExclusions } from "./activation";
+import { deriveActivationCohorts, resolveActivationExclusions, type ActivationCohort } from "./activation";
 import {
   beginIdentityCancellationRecoverySession,
   createIdentityCancellationProofWithPassword,
@@ -245,6 +245,14 @@ function runSlotPoolMax(): number {
 }
 
 export const respinDb = {
+  /**
+   * Phase 10a plan C5 / R-121: the internal activation report, exact daily
+   * counts for authorised operators only. The consumer of 10b-1's sole
+   * activation seam; it copies no SQL and no rule, and every row carries the
+   * verification limitation and the small-cell flag on the returned shape.
+   */
+  activationReport: (asOf: Date = new Date()): Promise<readonly ActivationCohort[]> =>
+    deriveActivationCohorts(getServerDb(), resolveActivationExclusions(process.env), asOf),
   ensureUserWorkspace: (params: BootstrapParams) =>
     ensureUserWorkspace(getServerDb(), params),
   withWorkspace: (ctx: WorkspaceCtx) => withWorkspace(getServerDb(), ctx),

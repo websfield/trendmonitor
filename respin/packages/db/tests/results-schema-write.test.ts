@@ -410,11 +410,45 @@ describe("recordResult — the one writer of `results`", () => {
       expect(row.metricDeclaredByDocId).toBe(activated.id);
     }
 
-    // 3. `resultComparisons` — the composition, not the builder. This is where
-    //    a `declaredMetrics` map built from stored documents either resolves or
-    //    does not, and on the shipped code it could not: every version returned
-    //    `null` from `declaredMetricOf`, so the map was empty and no group
-    //    could carry a unit or a direction.
+    // 3. R-115 (Phase 10a C1), ON THE REAL WRITER: the three rows the only
+    //    production writer can mint are self-reported, and self-reported never
+    //    enters a population. The composition still resolves the declared
+    //    metric — the group exists, carries the unit — but both populations
+    //    are `none`. This is the "verified analytics are not connected"
+    //    state the page renders, proven from the write path.
+    const selfReportedGroups = await resultComparisons(db, workspaceScope, pA1);
+    expect(selfReportedGroups.length, "no group was produced from three real results").toBeGreaterThan(0);
+    const selfReportedReach = selfReportedGroups[0]!.comparisons.find((c) => c.lever === "reach")!;
+    expect(selfReportedReach.treatment.state).toBe("none");
+    expect(selfReportedReach.baseline.state).toBe("none");
+    expect(selfReportedReach.effectPer1k).toBeNull();
+
+    // 3b. VERIFIED ROWS, inserted directly because no production writer can
+    //     mint them (R-115: only the future connector seam may): same stratum,
+    //     same treatment key, three windows. From here the case is the
+    //     original one — the `declaredMetrics` map either resolves from stored
+    //     documents or it does not.
+    const written = await db.select().from(results).where(eq(results.profileId, pA1));
+    expect(written).toHaveLength(3);
+    await db.insert(results).values(written.map((row, index) => ({
+      profileId: row.profileId,
+      workspaceId: row.workspaceId,
+      generationId: row.generationId,
+      platform: row.platform,
+      audienceClass: row.audienceClass,
+      metricKey: row.metricKey,
+      metricDeclaredByDocId: row.metricDeclaredByDocId,
+      observedFrom: new Date(row.observedFrom.getTime() + 24 * 60 * 60_000 * (index + 40)),
+      observedTo: new Date(row.observedTo.getTime() + 24 * 60 * 60_000 * (index + 40)),
+      treatmentKey: row.treatmentKey,
+      evidenceState: "connector_verified" as const,
+      connectorSource: "fixture-connector",
+      connectorEventId: `evt-e2e-${index}`,
+      connectorObservedAt: new Date("2026-09-01T00:00:00Z"),
+      reachValue: row.reachValue,
+      reachDenominator: row.reachDenominator,
+      confounders: [],
+    })));
     const groups = await resultComparisons(db, workspaceScope, pA1);
     expect(
       groups.length,

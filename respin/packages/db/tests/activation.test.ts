@@ -234,6 +234,18 @@ describe("activation cohorts — an erasure stub is not a signup", () => {
     expect(cohorts).toEqual([]);
   });
 
+  it("`matured` is computed from the cohort date by the ONE authority: false while the day's last window is open, true at exactly day start + 48 h (lean gate round 2, L-1)", async () => {
+    for (const [auth, createdAt] of [["mature-auth", "2026-09-06T12:00:00.000Z"], ["open-auth", "2026-09-08T06:00:00.000Z"]] as const) {
+      await seedAuthUser(db, auth);
+      await db.insert(users).values({ id: randomUUID(), authUserId: auth, createdAt: new Date(createdAt) });
+    }
+    const at = async (asOf: string) => Object.fromEntries((await deriveActivationCohorts(db, NO_ACTIVATION_EXCLUSIONS, new Date(asOf))).map((c) => [c.cohortDate, c.matured]));
+    expect(await at("2026-09-09T12:00:00.000Z")).toEqual({ "2026-09-06": true, "2026-09-08": false });
+    // The boundary: 2026-09-08's last signup's window closes at 2026-09-10T00:00Z.
+    expect(await at("2026-09-09T23:59:59.999Z")).toMatchObject({ "2026-09-08": false });
+    expect(await at("2026-09-10T00:00:00.000Z")).toMatchObject({ "2026-09-08": true });
+  });
+
   it("an ACTIVE account on the same day still counts — the filter is not a blanket off-switch", async () => {
     // Non-vacuity for the test above: if the live pass counted nobody, the
     // assertion there would hold for the wrong reason.

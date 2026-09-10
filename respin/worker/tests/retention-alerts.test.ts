@@ -13,7 +13,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { OVERDUE_BACKLOG_MS, evaluateRetentionAlerts, type RetentionRunSummary } from "../retention";
+import { toSafeWorkerEvent } from "../health";
+import { OVERDUE_BACKLOG_MS, evaluateRetentionAlerts, retentionTickEvent, type RetentionRunSummary } from "../retention";
 
 const WORKER = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -51,11 +52,23 @@ const summary = (over: Partial<RetentionRunSummary["retention"]> = {}): Retentio
     hardCleared: 0,
     failureCode: null,
   },
+  sampleSpin: { recovered: 0, failed: 0 },
 });
 
 const codes = (s: RetentionRunSummary) => evaluateRetentionAlerts(s).map((alert) => alert.code).sort();
 
 describe("retention alerts", () => {
+  it("a public Sample Spin candidate whose recovery failed pages, and both counts survive the event allowlist (round 2, 2026-09-09)", () => {
+    const failing = { ...summary(), sampleSpin: { recovered: 2, failed: 1 } };
+    const alerts = evaluateRetentionAlerts(failing);
+    expect(alerts).toEqual([{ code: "sample_spin_recovery_failed", severity: "critical", detail: { sampleSpinRecoveryFailed: 1 } }]);
+    // The allowlist keeps the two keys (a dropped key is a metric that reads zero forever).
+    const event = toSafeWorkerEvent({ code: "retention_tick", observedAt: "2026-09-09T00:00:00.000Z", ...retentionTickEvent(failing) });
+    expect(event).toMatchObject({ sampleSpinRecovered: 2, sampleSpinRecoveryFailed: 1 });
+    // Recovered-only is a quiet tick.
+    expect(codes({ ...summary(), sampleSpin: { recovered: 3, failed: 0 } })).toEqual([]);
+  });
+
   it("a clean tick raises nothing — the non-vacuity baseline", () => {
     expect(codes(summary())).toEqual([]);
   });
@@ -139,6 +152,13 @@ describe("the retention sweep is actually scheduled", () => {
     expect(production).toMatch(/runRetentionAndRecovery/);
   });
 
+  it("the retention tick calls the public Sample Spin's stale recovery (Phase 10a; billing gate round 1)", () => {
+    // Deleting the call left every test green: the recovery had no witness
+    // on the tick that runs it. Source-level for the same reason as above.
+    const retention = readFileSync(join(WORKER, "retention.ts"), "utf8");
+    expect(retention).toMatch(/await recoverStalePublicSampleSpinAttempts\(ports\.db\)/);
+  });
+
   it("the deletion lifecycle is scheduled too, on its own queue", () => {
     expect(runtime).toMatch(/schedule\(\s*DELETION_LIFECYCLE_QUEUE\s*,\s*DELETION_LIFECYCLE_CRON/);
   });
@@ -160,6 +180,7 @@ describe("the retention tick event carries the poisoned count (consolidating rev
         failures: [],
       },
       generation: { abandonedBeforeVendor: 0, startedPastDeadline: 0, hardCleared: 0 },
+      sampleSpin: { recovered: 0, failed: 0 },
     } as never);
     expect(event.retentionPoisoned).toBe(3);
   });

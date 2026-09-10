@@ -17,6 +17,7 @@ import type { SafeWorkerEventInput } from "./health";
 import {
   runGenerationRecoveryTick,
   runRetentionTick,
+  recoverStalePublicSampleSpinAttempts,
   type DbLike,
   type GenerationRecoveryOutcome,
   type RetentionTickSummary,
@@ -28,6 +29,8 @@ export const RETENTION_TICK_CRON = "*/1 * * * *";
 export type RetentionRunSummary = Readonly<{
   retention: RetentionTickSummary;
   generation: GenerationRecoveryOutcome;
+  /** Phase 10a: public Sample Spin attempts recovered unknown this tick, and candidates whose recovery FAILED (each is retried next tick, and pages while it keeps failing). */
+  sampleSpin: Readonly<{ recovered: number; failed: number }>;
 }>;
 
 export type RetentionTickPorts = Readonly<{
@@ -48,7 +51,11 @@ export async function runRetentionAndRecovery(
   const generation = await runGenerationRecoveryTick(ports.db, now, {
     overallDeadlineMs: ports.overallDeadlineMs,
   });
-  return { retention, generation };
+  // Phase 10a (R-117): an outbound-started public Sample Spin whose process
+  // died is finalised unknown / recovery-required here, on the same
+  // traffic-independent tick, and never reissued.
+  const sampleSpin = await recoverStalePublicSampleSpinAttempts(ports.db);
+  return { retention, generation, sampleSpin };
 }
 
 /**
@@ -65,7 +72,8 @@ export type RetentionAlertCode =
   | "retention_batch_truncated"
   | "retention_poisoned_rows"
   | "generation_recovery_failed"
-  | "generation_candidates_cleared";
+  | "generation_candidates_cleared"
+  | "sample_spin_recovery_failed";
 
 /**
  * The alert's payload is typed as the worker's content-safe event input, NOT as
@@ -135,6 +143,18 @@ export function evaluateRetentionAlerts(summary: RetentionRunSummary): readonly 
       detail: { reasonCode: summary.generation.failureCode },
     });
   }
+  // A public attempt whose recovery fails EVEN ALONE (round-2 code review and
+  // billing, 2026-09-09): the per-candidate isolation that keeps the tick
+  // alive would otherwise turn a loud job failure into a claim that loops
+  // silently forever, its unknown fact never appended. Same shape as
+  // `retention_poisoned_rows`: progress around it, and page.
+  if (summary.sampleSpin.failed > 0) {
+    alerts.push({
+      code: "sample_spin_recovery_failed",
+      severity: "critical",
+      detail: { sampleSpinRecoveryFailed: summary.sampleSpin.failed },
+    });
+  }
   if (summary.generation.hardCleared > 0) {
     // C5 requires an alert on the 24-hour clear specifically: every cleared row
     // is a candidate whose provider call may already have been charged for and
@@ -171,6 +191,8 @@ export function retentionTickEvent(summary: RetentionRunSummary): RetentionAlert
     generationSettleable: number;
     generationHardCleared: number;
     retentionPoisoned: number;
+    sampleSpinRecovered: number;
+    sampleSpinRecoveryFailed: number;
     retentionOldestOverdueMs?: number;
   } = {
     retentionScanned: summary.retention.scanned,
@@ -186,6 +208,8 @@ export function retentionTickEvent(summary: RetentionRunSummary): RetentionAlert
     generationPastDeadline: summary.generation.startedPastDeadline,
     generationSettleable: summary.generation.settlementAttempted,
     generationHardCleared: summary.generation.hardCleared,
+    sampleSpinRecovered: summary.sampleSpin.recovered,
+    sampleSpinRecoveryFailed: summary.sampleSpin.failed,
   };
   if (summary.retention.oldestOverdueMs !== null) {
     event.retentionOldestOverdueMs = summary.retention.oldestOverdueMs;

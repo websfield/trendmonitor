@@ -1,0 +1,50 @@
+# Phase 10a — verified-only truth, real gated Sample Spin, one system-spend authority, content-safe observability
+
+**Status: ALMOST — engineering complete and twice reviewer-gated; evidence unearned (2026-09-09).** This is not Ready. The frozen implementation contract is [the 10a phase plan](../../plans/respin-finish-phase-10a.md) (plan gate Grade A); this card records only earned evidence and residuals. Built in one pass on 2026-09-09 by the single-driver lane (`/implement`), gate intensity lean with billing and tenancy escalated to their own reviewers, over the owner's commit `961c2a9`. Nothing is committed: the whole phase is the uncommitted working tree.
+
+## What is being integrated
+
+- **C1 — verified-only learning (R-115).** `isNumerical` is `connector_verified` only; a result proposal refuses any other evidence row and is `corroborated` at the shared minimum; the review carries a derived `learningEligibility`; a still-proposed legacy unverified proposal refuses review by name (the audit supersedes it), a terminal one reads as history with no draft, an accepted one is the deployment block. `pnpm proposals:audit` (exit 2 = block) ran locally: zero in every class. The results view shows `VERIFICATION_UNAVAILABLE` when no verified row exists and computes nothing.
+- **C2 — the real gated public Sample Spin.** A fictional chair-restorer fixture validated at load (brain-content schemas, canonical autopsy parser, mechanism-level scan, trusted-reference assertion, an identity / URL / handle / performance-number scan); `Untrusted<SampleSpinIdea>` with a 600-code-point cap; the metered orchestrator on the production `runGeneration` with a counted three-call budget, the similarity gate and the kill test as hard pre-display gates, and a fourth call as an invariant failure; `POST /api/demo` behind `RESPIN_PUBLIC_SAMPLE_SPIN` (closed by default; `public` refused by this build; JSON only; cross-site refused); the landing panel with terminal states; every refusal an honest sentence that names only a cause the system knows (`draft_unusable`, `service_unavailable`, `could_not_complete`, the limiter's three); the pre-registered ten-idea evaluation set.
+- **C3 — one system-spend authority.** `system_spend_purpose` (`trend_autopsy | public_sample_spin`) on both spend tables with purpose-aware CHECKs; the $10/day purpose sub-cap derived from the day's reserved claims under the daily row's lock; the two-concurrent in-flight count on the DATABASE clock; the public deadline config-clamped to a compiled 120 s ceiling with the 150 s lease derived from it; stale-attempt recovery to unknown / `recovery_required` on the retention tick, per candidate, with failures counted, paged (`sample_spin_recovery_failed`, critical) and retried; a late measured fact reconciles a recovered row; an unpriced served alias is a success with UNKNOWN cost and the tokens kept (public purpose only; migration 0061).
+- **C4 — the public abuse limiter and its lifecycle registration.** `public_sample_spin_buckets` (HMAC-of-IP under a versioned keyring, 24-hour windows, counters) registered at all sixteen sites with a populated sweep fixture; the DB-atomic admission under one advisory lock (replay → duplicate, two slots, bucket, then the money; a refused budget or slot never consumes the window); the address is the proxy-ATTESTED one (`null`, a shared fail-closed bucket, wherever no trusted proxy is configured); the two public metering row classes are one whole-row seven-year financial fact each; `pnpm sample-spin:keyring` says when a prior key may be erased.
+- **C5 — content-safe observability, activation reporting, G-15.** SDK-less Sentry envelope and PostHog capture built from allowlisted values only, with tighten-only budgets and a construction-time environment tag; `instrumentation.ts` (edge-safe) + `instrumentation-node.ts`; `runStartupPreflight` at CI, server register and worker main (G-15 closed: the import-time throw in `brain-content.ts` is gone); `/admin/activation` behind `requireAdmin` with `matured` from the ONE authority and `window_open` rows carrying no rate; the daily aggregate emitter with small-cell suppression; the Stripe webhook's raw-message log replaced by `logRefusal`. Deviations recorded as **R-126**.
+
+## Evidence status
+
+| Evidence class | Current status |
+|---|---|
+| Engineering implementation | Complete on the working tree. Canonical gate #8 on the final tree (`entry-gate-10a-8.txt`): typecheck, lint, worker typecheck, `db:check`, **the full suite with Docker live — 231 files / 5,168 tests / 0 failed / 0 skipped, exit 0** — and `next build`, every stage exit 0. Eight full gate runs this phase; the seven before it are recorded with their causes in the ledger (`entry-gate-10a-1..7.txt`). |
+| Live-Postgres money invariants | Executed: the public limiter under real concurrency (`public-sample-spin.docker.test.ts` — eight racing admissions for one address → one window; six addresses → two slots; a rotation under load), with the `LIMITER_LOCK` mutation executed by the lane and re-executed independently by the billing reviewer (3 of 3 red without the lock; six of six admitted). |
+| Independent Critical-Path review | Two rounds, both spent. Round 1: billing NEEDS CHANGES (C), tenancy NEEDS CHANGES (B), lean NEEDS CHANGES on all four lenses — every finding fixed in one pass. Round 2: **tenancy PASS (A)**; lean **spin compliance PASS, security PASS**, learning NEEDS CHANGES, code review NEEDS CHANGES; **billing NEEDS CHANGES (B)** — 0 BLOCK anywhere; the three CHANGE sets overlap on one regression the round-1 fix pass introduced (the recovery's failure count silently dropped by the worker) and on missing witnesses for fixes that were correct in code. All fixed in the build lane the same hour and gated (#8); **not re-reviewed — the owner accepted this on 2026-09-09 ("accept."), so there is no third round.** Reports: `10a-gate-{billing,tenancy,lean}.md`, `10a-gate-{billing,tenancy,lean}-round2.md`. |
+| Pre-registered Sample Spin evaluation (10a-E1) | Registered (`10a-sample-spin-evaluation.md`), **NOT RUN**: needs a real vendor key, a preview deployment and the owner's verdicts. |
+| Acceptance walks (10a-E2) | **Not run**: anonymous browser Sample Spin, the forced-near-copy retry, the induced Sentry canary against a real collector, the matured-cohort read against a real PostHog project. Managed-browser localhost policy has blocked every browser walk since 9a; Sentry and PostHog accounts are not provisioned (no purchase or usage-based upgrade is authorised, R-126). |
+| PRD §5 / M6 launch evidence | Unearned. The Sample Spin is `preview`-only by construction; a production opening (10c) needs the dated platform registry, the privacy text, a real trusted-proxy list (10a-R7) and the walks above. |
+
+## Named residuals and deferrals
+
+All registered in [`respin-finish-open-items.md`](../respin-finish-open-items.md) under "Phase 10a build residuals".
+
+| ID | Severity | Detail |
+|---|---|---|
+| 10a-E1 / 10a-E2 | evidence | Evaluation set registered not run; four walks not run (above). |
+| 10a-R1 | Low | Telemetry budgets are per process; N processes can send N× the ceiling (bounded at 80% / 1% of the free allowances). |
+| 10a-R2 | Low | `/legal` is a placeholder; 10c C6 publishes the documents after legal review. |
+| 10a-R3 | Info | `STRIPE_PAYLOAD_RECEIVER_WIRED` is still a hand-set boolean (T69-R5's scheduling half is closed behaviourally). |
+| 10a-R4 / 10a-R8 | Info | Token counts are UTF-8 byte upper bounds, ~4× a tokeniser; a draft over the scorer's bound is a typed `draft_too_large` refusal. |
+| 10a-R5 / 10a-R13 | Info | One usage row per attempt, not per call; after a reconcile the daily call count keeps the conservative 3. |
+| 10a-R6 | Low | A key rotation's deploy overlap can admit one extra window per address for the overlap's minutes. |
+| 10a-R7 | Info | One shared bucket wherever no trusted proxy attests the address; 10c must ship a real proxy list before opening the demo. |
+| 10a-R9 | Info | The Sentry environment tag is `SENTRY_ENVIRONMENT` or `production`, not derived from the deployment. |
+| 10a-R10 | **Medium, inherited from 10b-1** | The autopsy `system_row`'s 90-day identifier scrub has no clock-driven receiver; the tenancy reviewer confirmed deferral to 10b-2 is the right call (isolation and REQ-A04 deletion hold; nothing creator-facing claims 90 days). |
+| 10a-R11 | Info | ~45 edited files sit LF under `core.autocrlf=true`; CI is Linux (LF) and the guards normalise, but the suite has not run on a CRLF checkout of this tree. |
+| 10a-R12 | Low | A recovery landing between the finalise's existence read and its insert still throws (one round trip, past the lease). |
+| 10a-R14 | Info | The panel's accepted state is outside the claims-canon scan (read by hand, clean). |
+| 10a-R15 | Info | An unclassified pipeline error is stored `vendor_failed / unclassified_failure`; the visitor-facing reason names no cause. |
+| Inherited, still open | — | T-R2-4, T-R2-5, T-R2-7, T-R2-9, T-R2-13..16 from 10b-1; the restore drill 10b-1 owes (which the 10a plan card names as a precondition) has NOT been run. |
+
+## Documentation decisions now in force
+
+**R-126** (`docs/initial/decisions.md`) records the phase's deviations from the plan card. Migrations 0058–0061 are additive and forward-only; config version 17 (`publicSampleSpin.dailyCapMicroUsd`) is materialised locally by `pnpm config:migrate`. Deployment order is unchanged: additive DB migration → compatible code → config materialisation. New operator commands: `pnpm proposals:audit`, `pnpm sample-spin:keyring`, `pnpm preflight`.
+
+10a is **ALMOST — engineering complete, evidence incomplete.** The two reviewer rounds are spent with NEEDS CHANGES on two paths whose findings were fixed but not re-reviewed; the evaluation set and the four walks are unearned; the Sample Spin cannot be opened to the public by this build. Nothing in this card makes a 10b-1 residual, the restore drill, or the M6 launch evidence disappear.

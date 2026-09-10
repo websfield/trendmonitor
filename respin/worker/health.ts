@@ -226,6 +226,17 @@ export interface SafeWorkerEventInput {
   readonly generationPastDeadline?: number;
   readonly generationSettleable?: number;
   readonly generationHardCleared?: number;
+  /** Phase 10a: public Sample Spin stale-attempt recovery, per tick. Non-zero `failed` is always actionable. */
+  readonly sampleSpinRecovered?: number;
+  readonly sampleSpinRecoveryFailed?: number;
+  // Phase 10a plan C5: the daily aggregate activation emitter. Counts of
+  // cohorts, never a cohort's numbers — those go to the sink, not the log.
+  readonly activationMatured?: number;
+  readonly activationEmitted?: number;
+  readonly activationSuppressedSmallCell?: number;
+  readonly activationWithheldExpired?: number;
+  readonly activationNotSent?: number;
+  readonly activationFailed?: number;
 }
 
 export type SafeWorkerEvent = Readonly<Record<string, string | number>>;
@@ -265,6 +276,14 @@ const NUMBER_FIELDS = [
   "generationPastDeadline",
   "generationSettleable",
   "generationHardCleared",
+  "sampleSpinRecovered",
+  "sampleSpinRecoveryFailed",
+  "activationMatured",
+  "activationEmitted",
+  "activationSuppressedSmallCell",
+  "activationWithheldExpired",
+  "activationNotSent",
+  "activationFailed",
 ] as const;
 
 const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;

@@ -63,6 +63,10 @@ jobs:
         env:
           DATABASE_URL: postgres://respin:respin_ci@localhost:5432/respin
         run: pnpm db:migrate
+      # Phase 10a (G-15): the startup preflight runs in CI as well as at every
+      # server and worker start, so a registry defect never reaches a deploy.
+      - name: Startup preflight
+        run: pnpm preflight
       - name: Typecheck
         run: pnpm typecheck
       - name: Lint

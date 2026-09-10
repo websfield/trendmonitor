@@ -20,6 +20,11 @@ export default async function AdminPage() {
         provider, by month and tier, and the reconciliation against
         workspace_spend_monthly.
       </p>
+      <p>
+        <a href="/admin/activation">Activation</a> — exact daily signup cohorts:
+        numerator, denominator, exclusions and metric version, with what each
+        number cannot say.
+      </p>
       <p>Other admin surfaces arrive in later milestones.</p>
     </section>
   );

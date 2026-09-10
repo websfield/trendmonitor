@@ -1,0 +1,33 @@
+
+> respin@0.0.0 typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc --noEmit && pnpm --filter=!respin -r run typecheck
+
+Scope: 8 of 9 workspace projects
+packages/trends typecheck$ tsc --noEmit
+packages/llm typecheck$ tsc --noEmit
+packages/brain typecheck$ tsc --noEmit
+packages/trends typecheck: Done
+packages/brain typecheck: Done
+packages/llm typecheck: Done
+packages/modes typecheck$ tsc --noEmit
+packages/db typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/db typecheck: Done
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+
+C:\projects\ai.playground\trendMonitor\respin\app\(product)\billing-errors.ts
+  143:3  error  'PublicSampleSpinKeyringError' import from '@respin/db' is restricted because only 'respinDb,DELETION_GRACE_MS,WorkspaceAccessError,runStartupPreflight,PreflightRefusedError,MonthlyEventBudget,SENTRY_MONTHLY_EVENT_BUDGET,parseSentryDsn,sendOutbound,sentryEnvelope,tightenOnlySampleRate,SafeErrorEvent,ActivationCohort,Db,DbLike,User,Workspace,Membership,MembershipRole,BootstrapParams,BootstrapResult,WorkspaceCtx,WorkspaceScope,VerifiedWorkspaceId,ProfileScope,WorkspacePausedError,ProfileAccessError,PerformanceLearningEntitlementError,PromotionAccessError,PromotionPayloadError,PromotionFreshnessError,PromotionDecisionError,ProvenanceError,BrainEditEmptyError,BrainEditUnchangedError,BrainEditBusyError,BrainEditLimitError,BrainDocumentLimitError,BrainVersionLimitError,ExportBusyError,AuthMailDeliveryError,AuthMailRefusedError,OnboardingInputLimitError,BRAIN_EDIT_MAX_FIELDS,BRAIN_EDIT_POINTER_MAX,BRAIN_EDIT_VALUE_MAX,BRAIN_EDIT_TOTAL_MAX,ExportClassificationError,ScopeForgeryError,UsageRawError,ContentSchemaError,KindNotYetWritableError,SchemaShapeError,ClaimWalkError,ContentWalkError,BrainReasonError,BrainRoleError,SegmenterUnavailableError,ProfileCapError,ProfileNameError,ProfileRoleError,PostContentError,CreatorProfile,OnboardingInput,DISPLAY_NAME_MAX,POST_CONTENT_MAX,ONBOARDING_PAGE_MAX,REFERENCE_COUNT_MAX,PASTED_REFERENCE_TITLE_MAX,PostAttestationError,EvidenceUnreadableError,ReferenceEchoError,BrainDocsView,BrainVersionView,BrainClaimView,PLACEHOLDER_ABSENCE,SpendReconciliationResult,SpendReconciliationRow,SpendReconciliationClass,UnbilledAttempt,MonthlySpendResult,InterviewAnswerError,InterviewDraftSubmittedError,INTERVIEW_FIELDS,INTERVIEW_ANSWER_MAX,InterviewAnswers,InterviewFieldKey,TextAnswer,ListAnswer,DirectionAnswer,SubmitInterviewResult,OnboardingInterviewDraft,METRIC_DIRECTIONS,INTERVIEW_PLACEHOLDER_ABSENCE,screenAbsenceSentence,VOICE_FIELD_LABELS,STRATEGY_FIELD_LABELS,STRATEGY_METRIC_FIELD_LABELS,KILLTEST_FIELD_LABELS,METRIC_DIRECTION_LABELS,claimLabel,strategyClaimLabel,killtestClaimLabel,isMetricPointer,quoteIntro,GENERATION_FEEDBACK_REACTIONS,SATURATION_NOTICE,FEEDBACK_NOTE_MAX,FRAMEWORK_NAME_MAX,FRAMEWORK_TEXT_MAX,FRAMEWORK_LIST_MAX,PRIVATE_FRAMEWORK_COUNT_MAX,FRAMEWORK_GOALS,FRAMEWORK_NICHES,GenerationFeedbackReaction,GenerationFeedbackRow,EligibleFramework,FrameworkContent,FrameworkGoal,FrameworkNiche,PrivateFrameworkEntitlement,Framework,GenerationLineageError,FeedbackReactionError,FeedbackNoteError,FeedbackDuplicateError,FeedbackTargetError,FrameworkAccessError,FrameworkStaleError,FrameworkContentError,FrameworkLimitError,PrivateFrameworkTierError,TreatmentKeyError,ResultInputError,ResultTargetError,ResultDuplicateError,ComparisonStratumError,ComparisonInputError,RESULT_NOTE_MAX,RESULT_EVIDENCE_STATES,RESULT_AUDIENCE_CLASSES,RESULT_CONFOUNDER_CODES,RESULT_LEVERS,EXTERNAL_COPIES,BACKUP_MAX_RETENTION_DAYS,COHORT_RETENTION_YEARS,lastCapableCopyDay,REQUESTS_DISABLED_CODE,ExternalCopy,ExternalCopyClass' import(s) is/are allowed. app/** may import only the sanctioned @respin/db surface (respinDb, WorkspaceAccessError, the typed refusals, types) — every query goes through withWorkspace, and the write capabilities are package-only (tenancy T1, M2a A-2b)  no-restricted-imports
+
+✖ 1 problem (1 error, 0 warnings)
+
+ ELIFECYCLE  Command failed with exit code 1.
+GATE_EXIT=1

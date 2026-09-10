@@ -121,8 +121,6 @@ export type FeedbackProposalInput = Readonly<{
 
 const minted = new WeakSet<object>();
 const proposalBrand: unique symbol = Symbol("PromotionProposalDraft");
-/** Evidence-strength boundary, distinct from (and derived from) minimum-n. */
-const CORROBORATION_POPULATION_FLOOR = MIN_COMPARABLE_RESULTS + 2;
 
 function mint<T extends object>(value: T): T {
   Object.defineProperty(value, proposalBrand, { value: true });
@@ -212,21 +210,27 @@ function observationEnvelope(
   });
 }
 
+/**
+ * ONE RESULT-EVIDENCE BOUNDARY (R-115, Phase 10a C1): below the shared
+ * verified minimum a comparison is unavailable; at or above it a result
+ * proposal is `corroborated` — every row connector verified, both populations
+ * at `MIN_COMPARABLE_RESULTS` or more. The former `MIN_COMPARABLE_RESULTS + 2`
+ * "strong" tier and the mixed/self-reported `early`/`repeated` cells are gone:
+ * a self-reported row cannot reach this function (the comparison excludes it),
+ * and one that is smuggled in is a refusal, never a weaker label. The three
+ * enum values stay persisted for history; no new writer emits `early`, and
+ * `repeated` is the feedback path's own label. A later strength taxonomy needs
+ * measured calibration and a recorded decision.
+ */
 function strength(
   treatment: readonly ResultEvidenceInput[],
   baseline: readonly ResultEvidenceInput[]
 ): EvidenceStrength {
   const rows = [...treatment, ...baseline];
-  const selfReported = rows.filter((row) => row.evidenceState === "quantified_self_reported").length;
-  const verified = rows.filter((row) => row.evidenceState === "connector_verified").length;
-  if (
-    treatment.length < CORROBORATION_POPULATION_FLOOR ||
-    baseline.length < CORROBORATION_POPULATION_FLOOR ||
-    selfReported === rows.length
-  ) return "early";
-  if (verified === rows.length) return "corroborated";
-  if (selfReported > 0 && verified > 0) return "repeated";
-  fail("evidence state composition is not proposal eligible");
+  if (rows.some((row) => row.evidenceState !== "connector_verified")) {
+    fail("unverified evidence entered a result proposal");
+  }
+  return "corroborated";
 }
 
 /** Creates the sole brain-side result proposal. It writes nothing. */
@@ -261,6 +265,9 @@ export function buildResultProposalDraft(input: ResultProposalInput): ResultProp
     fail("baseline evidence reuses the candidate treatment key");
   }
   if (all.some((row) => row.evidenceState === "unquantified")) fail("unquantified evidence entered a proposal");
+  // VERIFIED ONLY (R-115): refused here, before any arithmetic, and again in
+  // `strength` — the same rule at both ends so neither can be the only guard.
+  if (all.some((row) => row.evidenceState === "quantified_self_reported")) fail("self-reported evidence entered a result proposal");
   if (
     all.some(
       (row) =>

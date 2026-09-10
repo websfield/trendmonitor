@@ -1,0 +1,85 @@
+# Phase 10a canonical gate #8 — 2026-09-09T05:46:48Z — after reviewer round 2 fix pass
+## typecheck
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+EXIT=0
+## lint
+> eslint .
+
+EXIT=0
+## worker:typecheck
+
+EXIT=0
+## db:check
+Everything's fine 🐶🔥
+EXIT=0
+## test (Docker live)
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mgrant → debit spanning lots (partial consumption across grant then pack) [33m 5524[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mbullet: debit while paused → WorkspacePausedError (distinct from insufficient) [33m 3933[2mms[22m[39m
+   [33m[2m✓[22m[39m ledger ops (PGlite)[2m > [22mrefund: expiry inherited from the consumed lot; over-refund refused; never-expiring source → typed error [33m 6580[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mA-3: the write RECORDS the corpus id set on the row [33m 4034[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mA-3: an empty corpus is RECORDED as empty, not as absent [33m 3898[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mA-3: the corpus id set is SERVER-DERIVED — a cast-in value is stripped [33m 4310[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22man EMPTY evidence list is refused BY NAME, not by a raw constraint violation [33m 3504[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mC-28: a claim stated as fact with nothing cited for it is REFUSED [33m 4871[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mC-28: an evidence entry pointing at a position the document does not declare is REFUSED [33m 3663[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mG-10: an evidence entry citing a `[check]` position is REFUSED — the THIRD C-28 direction (R7) [33m 3383[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mG-10/R8: the bijection holds in BOTH directions at once (stated<=>cited) [33m 4319[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mthe evidence key space is CLOSED — a smuggled key is refused, not stored [33m 3115[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22ma GETTER on an evidence entry cannot swap the quote after it is validated [33m 3325[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mthe reason's numerator counts DISTINCT inputs, not evidence entries [33m 3506[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mAC-26: activation refuses while ANY claim position is unconfirmed [33m 3499[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22ma GETTER on the confirmedFields ARRAY cannot swap the record after validation [33m 2926[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22ma GETTER on a confirmedFields ELEMENT cannot swap it either [33m 3108[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mthe confirmation key space is CLOSED — a smuggled key is refused [33m 3053[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mconfirming the same position twice is refused [33m 3262[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mconfirmation refuses a pointer the document does not declare [33m 3358[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mconfirmation refuses a placeholder flag that disagrees with the value [33m 3061[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation refuses when the recorded corpus cannot be read back whole [33m 3364[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mAC-62: BOTH bars take the same corpus accessor, and activation re-reads THE RECORDED SET [33m 3046[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mAC-62 non-vacuity: the bar DOES still refuse an echo of a corpus the write recorded [33m 3405[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation refuses a version that is not PROPOSED (re-activation and rollback) [33m 3157[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation refuses an UNCONFIRMED version [33m 2979[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation refuses when the content CHANGED since confirmation (round-2 V3) [33m 3358[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22m`confirmed_by` is SERVER-DERIVED from the session (round-1 T3) [33m 3346[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mactivation SUPERSEDES the incumbent, leaving exactly one active version [33m 3101[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mC-12: a VIEWER can neither confirm nor activate [33m 2786[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mR-118: an EDITOR cannot decide durable brain state; an OWNER can [33m 3485[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mthe pause gate on BOTH new capabilities is real (REQ-G08) [33m 3011[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mBOTH cage predicates are load-bearing on the confirm/activate read [33m 3312[2mms[22m[39m
+   [33m[2m✓[22m[39m confirm → activate, and the recorded reference corpus (C-29)[2m > [22mP2: a brain doc in another profile is refused with the SAME message as a nonexistent one [33m 2961[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-8 consumption order[2m > [22mbullet: January pack (12-mo) + February grant (1-mo) → the GRANT is consumed first despite being newer (the REQ-G03 case) [33m 6063[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-8 consumption order[2m > [22mbullet: equal expiry → older first; then grants before packs [33m 8043[2mms[22m[39m
+   [33m[2m✓[22m[39m lazy expiry materialization (D-M1-7)[2m > [22mbullet: lot expires with remainder → ONE expiry row materialized; fully-consumed lot gets none [33m 4484[2mms[22m[39m
+   [33m[2m✓[22m[39m R-52 verify-first: the installed pg-boss on real Postgres[2m > [22ma cron schedule fires: schedule row → timekeeper → queue → handler [33m 2352[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mFAIL CLOSED: empty config_versions table → ConfigUnavailableError (never a default price) [33m 5748[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mFAIL CLOSED: malformed active content → ConfigUnavailableError [33m 5726[2mms[22m[39m
+   [33m[2m✓[22m[39m @respin/config[2m > [22mFAIL CLOSED: a version that is not stored is a refusal, never a silent omission [33m 4709[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mno subscriptions row → free/free (B6: Free is absence) [33m 8323[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mactive with a MAPPED price → tier from config at read time; a config fix self-heals with no event replay [33m 5769[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mpast_due inside grace → grace with deadline; past the deadline → free (lazy, no cron) [33m 5462[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mpaused mirror → state paused with resumesAt [33m 3829[2mms[22m[39m
+   [33m[2m✓[22m[39m getWorkspaceBillingState[2m > [22mcanceled → free [33m 3677[2mms[22m[39m
+   [33m[2m✓[22m[39m 0032→0033 and fresh install on real Postgres[2m > [22mupgrades a populated 0032 schema by applying only additive 0033 [33m 3730[2mms[22m[39m
+   [33m[2m✓[22m[39m AC-13 — assertScoped blocks the viewer→owner escalation[2m > [22mObject.assign({role:'owner'}) over a viewer scope is refused at assertOwner [33m 4615[2mms[22m[39m
+   [33m[2m✓[22m[39m pasted reference money under real concurrency (R-98)[2m > [22m8 simultaneous IDENTICAL pastes → one claim, ONE debit, the price charged once [33m 5084[2mms[22m[39m
+   [33m[2m✓[22m[39m pasted reference money under real concurrency (R-98)[2m > [22m8 simultaneous settlements of one PARKED claim → ONE refund, the balance restored once [33m 2014[2mms[22m[39m
+   [33m[2m✓[22m[39m owner-only billing actions (REQ-A02, AC-6 matrix)[2m > [22msecond tier checkout while a live subscription exists → AlreadySubscribedError, no Stripe call (plan-review F1) [33m 4784[2mms[22m[39m
+   [33m[2m✓[22m[39m owner-only billing actions (REQ-A02, AC-6 matrix)[2m > [22munmapped tier price → UnknownTierPriceError naming the remedy [33m 3987[2mms[22m[39m
+   [33m[2m✓[22m[39m maybeAutoTopup SUCCESS path (the branch keyless tests cannot reach)[2m > [22mthe idempotency key advances with the month's row count (n=2 → :3) [33m 3001[2mms[22m[39m
+   [33m[2m✓[22m[39m deletion executor — populated erasure[2m > [22mbounds the erase → rollback → resume loop: after the third failure the operation waits for an operator (round-2 lean C-R2-1) [33m 4432[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: subscribe → grant[2m > [22msubscription.created mirrors state; invoice.paid (subscription_create) grants the tier allowance expiring the SERVICE period end + 1 month [33m 7233[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: cancel → downgrade & payment-failed → grace → downgrade[2m > [22msubscription.deleted → effective free [33m 3342[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: cancel → downgrade & payment-failed → grace → downgrade[2m > [22mpayment_failed → grace for config graceDays; past deadline → free; a second failure never EXTENDS; recovery invoice clears grace [33m 3575[2mms[22m[39m
+   [33m[2m✓[22m[39m accept-when: pack purchase[2m > [22mcheckout.session.completed (payment + pack metadata) → pack row with amountCents and 12-month expiry [33m 3848[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-6 identity: sole-authority mapping[2m > [22munknown customer → refused_unknown_customer, 0 ledger writes, event row recorded null-workspace [33m 2984[2mms[22m[39m
+   [33m[2m✓[22m[39m D-M1-6 identity: sole-authority mapping[2m > [22mmetadata/mapping MISMATCH → refused_identity_mismatch, 0 ledger writes [33m 5359[2mms[22m[39m
+EXIT=0
+## build
+ ✓ Compiled successfully in 11.8s
+EXIT=0
+## test totals (same tree, raw-log re-run) — 06:03:14Z
+[2m Test Files [22m [1m[32m231 passed[39m[22m[90m (231)[39m
+[2m      Tests [22m [1m[32m5168 passed[39m[22m[90m (5168)[39m
+[2m   Duration [22m 482.94s[2m (transform 51.11s, setup 0ms, collect 933.96s, tests 8811.78s, environment 107ms, prepare 132.18s)[22m
+EXIT=0

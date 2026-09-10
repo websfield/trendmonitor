@@ -806,6 +806,24 @@ export {
   AUTOPSY_ATTEMPT_CODE_CEILING,
   AUTOPSY_VENDOR_CALLS_PER_ATTEMPT,
   SYSTEM_AUTOPSY_DAILY_CODE_CEILING_MICRO_USD,
+  SYSTEM_SPEND_PURPOSES,
+  PUBLIC_SAMPLE_SPIN_DAILY_CODE_CEILING_MICRO_USD,
+  PUBLIC_SAMPLE_SPIN_MAX_CONCURRENT,
+  PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX,
+  PUBLIC_SAMPLE_SPIN_ATTEMPT_LEASE_MS,
+  PUBLIC_SAMPLE_SPIN_DEADLINE_CODE_CEILING_MS,
+  PUBLIC_SAMPLE_SPIN_FINALISE_MARGIN_MS,
+  reconcileSystemModelUsage,
+  claimSystemSpend,
+  claimSystemSpendInTx,
+  recordSystemModelUsage,
+  publicSampleSpinInFlightCount,
+  recoverStalePublicSampleSpinAttempts,
+  type SystemSpendPurpose,
+  type SystemSpendAttribution,
+  type SystemSpendClaim,
+  type SystemSpendClaimResult,
+  type RecordSystemModelUsage,
   SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING,
   recordSystemWorkerHealth,
   createSystemAutopsyAttemptStore,
@@ -1117,11 +1135,20 @@ export {
   type DeclaredMetricEdit,
 } from "./brain-ops";
 export {
+  carriesUnverifiedEvidence,
   type DecidePromotionProposalParams,
+  type LearningEligibility,
   type PromotionDecisionResult,
   type PromotionProposalReview,
   type PromotionReviewClaim,
 } from "./promotion-ops";
+// Phase 10a plan C1 (R-115): the pre-deploy result-proposal audit.
+export {
+  auditResultProposals,
+  renderProposalAudit,
+  supersedeUnverifiedResultProposals,
+  type ProposalAuditReport,
+} from "./promotion-audit";
 // ONE exporter (slice 5 gate round 1). `exportBrain`/`exportBrainFile` and
 // their materialising helpers had zero `app/**` callers while carrying every
 // export witness, so they are gone and `openBrainExport` is the whole surface.
@@ -1249,3 +1276,54 @@ export {
   type ExternalCopy,
   type ExternalCopyClass,
 } from "./external-copies";
+
+// Phase 10a plan C4: the public Sample Spin's abuse buckets and the DB-atomic
+// limiter that composes them with the system-spend reservation.
+export { publicSampleSpinBuckets, type PublicSampleSpinBucket } from "./public-sample-spin-schema";
+export {
+  PUBLIC_SAMPLE_SPIN_HMAC_KEYS_ENV,
+  PUBLIC_SAMPLE_SPIN_BUCKET_MS,
+  NO_TRUSTED_IP,
+  PublicSampleSpinKeyringError,
+  admitPublicSampleSpin,
+  ipBucketDigest,
+  parsePublicSampleSpinKeyring,
+  priorKeyVersionRetired,
+  recordPublicSampleSpinOutcome,
+  type PublicSampleSpinAdmission,
+  type PublicSampleSpinAdmissionInput,
+  type PublicSampleSpinKey,
+  type PublicSampleSpinKeyring,
+} from "./public-sample-spin";
+
+// Phase 10a closes G-15: the explicit startup preflight (see preflight.ts).
+export {
+  PREFLIGHT_CHECKS,
+  PreflightRefusedError,
+  runStartupPreflight,
+  type PreflightCheck,
+  type PreflightReport,
+} from "./preflight";
+// Phase 10a plan C5: content-free telemetry sink builders, SDK-less.
+export {
+  ACTIVATION_COHORT_EVENT,
+  ACTIVATION_SMALL_CELL_DENOMINATOR,
+  MonthlyEventBudget,
+  POSTHOG_MONTHLY_EVENT_BUDGET,
+  SENTRY_MONTHLY_EVENT_BUDGET,
+  TELEMETRY_SYSTEM_IDENTITY,
+  activationCohortEventUuid,
+  assertSafeErrorEvent,
+  parsePosthogSink,
+  parseSentryDsn,
+  posthogActivationCapture,
+  sendOutbound,
+  sentryEnvelope,
+  sentryEnvironmentTag,
+  tightenOnlySampleRate,
+  type ActivationCohortAggregate,
+  type OutboundJson,
+  type PosthogSink,
+  type SafeErrorEvent,
+  type SentryDsn,
+} from "./telemetry-sinks";

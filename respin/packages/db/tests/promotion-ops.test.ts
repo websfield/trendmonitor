@@ -109,7 +109,11 @@ describe("promotion operations", () => {
       metricDeclaredByDocId: strategy.id,
       observedFrom: new Date("2026-08-01T00:00:00.000Z"),
       observedTo: new Date("2026-08-31T00:00:00.000Z"),
-      evidenceState: "quantified_self_reported" as const,
+      // VERIFIED (R-115): the only evidence state a result proposal may be
+      // built from. Direct inserts, because no production writer can mint it.
+      evidenceState: "connector_verified" as const,
+    connectorSource: "fixture-connector",
+    connectorObservedAt: new Date("2026-09-01T00:00:00.000Z"),
       reachDenominator: "1000",
       confounders: [] as ("topic_overlap")[],
     };
@@ -118,12 +122,14 @@ describe("promotion operations", () => {
         ...common,
         generationId,
         treatmentKey,
+        connectorEventId: `evt-t-${index}`,
         reachValue: String(2000 + index * 100),
       })),
       ...[0, 1, 2].map((index) => ({
         ...common,
         generationId: null,
         treatmentKey: null,
+        connectorEventId: `evt-b-${index}`,
         reachValue: String(1000 + index * 100),
       })),
     ]);
@@ -278,13 +284,16 @@ describe("promotion operations", () => {
       metricDeclaredByDocId: strategy.id,
       observedFrom: new Date("2026-08-01T00:00:00.000Z"),
       observedTo: new Date("2026-08-31T00:00:00.000Z"),
-      evidenceState: "quantified_self_reported",
+      evidenceState: "connector_verified",
+      connectorSource: "fixture-connector",
+      connectorEventId: "evt-newer",
+      connectorObservedAt: new Date("2026-09-01T00:00:00.000Z"),
       reachValue: "900",
       reachDenominator: "1000",
     });
     await expect(
       db.transaction((tx) => promotionProposalReviewInScope(scope, id, tx))
-    ).resolves.toMatchObject({ proposal: { id, status: "rejected" } });
+    ).resolves.toMatchObject({ proposal: { id, status: "rejected" }, learningEligibility: { kind: "verified_results", treatmentN: 3, baselineN: 3 } });
   });
 
   it("builds feedback only from fixed reactions and summarizes the distinct-generation population without notes", async () => {

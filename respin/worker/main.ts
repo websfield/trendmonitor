@@ -1,8 +1,12 @@
+import { runStartupPreflight } from "@respin/db";
 import { envInteger, requiredEnv } from "./env";
 import { productionAlertPolicy } from "./health";
 import { createProductionWorker } from "./production";
 
 async function main(): Promise<void> {
+  // Phase 10a (G-15): the same preflight the app server runs at register().
+  // A refusal here is `worker_start_failed` below, before any pool opens.
+  runStartupPreflight();
   const env = process.env;
   const heartbeatIntervalMs = envInteger(env, "RESPIN_WORKER_HEARTBEAT_MS", 30_000);
   const worker = await createProductionWorker({

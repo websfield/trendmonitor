@@ -45,6 +45,7 @@ import { journalReceiptDigest, journalRequestChecksum } from "../src/deletion-po
 import { generationAttempts } from "../src/generation-schema";
 import { migrationInventory } from "../src/lifecycle-inventory";
 import { activationCohortDaily } from "../src/lifecycle-schema";
+import { publicSampleSpinBuckets } from "../src/public-sample-spin-schema";
 import { LIFECYCLE_COLUMN_CENSUS } from "../src/lifecycle-column-census";
 import { memberships, users } from "../src/schema";
 import { recordSystemWorkerHealth } from "../src/system-spend";
@@ -106,6 +107,13 @@ const FAMILIES = {
       updatedAt: new Date(),
     });
     await db.insert(rateLimit).values({ id: "rl-fixture", key: "sign-in:9.9.9.9", count: 1, lastRequest: Date.now() });
+    await db.insert(publicSampleSpinBuckets).values({
+      ipHmac: "a".repeat(64),
+      keyVersion: "v1",
+      bucketStartedAt: new Date(),
+      expiresAt: new Date(Date.now() + DAY),
+      admitted: 1,
+    });
     await db.insert(verification).values({
       id: "ver-fixture",
       identifier: `reset-password:${"z".repeat(24)}`,
@@ -323,6 +331,7 @@ const FIXTURES: Readonly<Record<string, Fixture>> = {
   },
   "deletion_recovery_sessions::identity_row::complete_row": { producer: "beginIdentityCancellationRecoverySession", family: "deletion_family" },
   "generation_attempts::profile_row::complete_row": { producer: "generation attempt terminal write (row shape inserted directly)", family: "terminal_attempt" },
+  "public_sample_spin_buckets::system_row::complete_row": { producer: "admitPublicSampleSpin (row shape inserted directly)", family: "simple_rows" },
   "rate_limit::system_row::complete_row": { producer: "Better Auth limiter (row shape inserted directly)", family: "simple_rows" },
   "session::identity_row::complete_row": { producer: "Better Auth session (row shape inserted directly)", family: "simple_rows" },
   "stripe_events::stripe_customer_attributed::linkable_source_ids": { producer: "webhook store (row shape inserted directly)", family: "simple_rows" },
@@ -345,6 +354,8 @@ const CLOCK_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
   deletion_cancellation_proofs: ["created_at", "factor_verified_at", "expires_at", "consumed_at"],
   deletion_recovery_sessions: ["created_at", "expires_at", "consumed_at"],
   auth_mail_outbox: ["created_at", "updated_at", "admitted_at", "dispatched_at", "resolved_at", "action_expires_at"],
+  // Phase 10a C4: `expires_at <= bucket_started_at + 24 h` is CHECKed, so the two move together.
+  public_sample_spin_buckets: ["bucket_started_at", "expires_at", "updated_at"],
 };
 
 async function backdate(db: TestDb, spec: RetentionSweepSpec, past: Date): Promise<void> {

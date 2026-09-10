@@ -2037,10 +2037,19 @@ function snapshotDocIds(activation: BrainActivationSnapshot): string[] {
 
 function brainSentences(docs: readonly BrainDoc[], kind: BrainKind): string[] {
   const doc = docs.find((d) => d.kind === kind);
-  if (!doc) return [];
+  return doc ? brainSentencesOf(kind, doc.content) : [];
+}
+
+/**
+ * One document's confirmed claims as prompt sentences. EXPORTED for the public
+ * Sample Spin (Phase 10a C2), whose fictional brain is content without a
+ * `brain_docs` row: the same flatten, so the demo's prompt is built from
+ * exactly what a creator's would be.
+ */
+export function brainSentencesOf(kind: BrainKind, content: unknown): string[] {
   const out: string[] = [];
-  for (const pointer of enumerateClaimFields(kind, doc.content)) {
-    const value = readPointer(doc.content, pointer);
+  for (const pointer of enumerateClaimFields(kind, content)) {
+    const value = readPointer(content, pointer);
     if (typeof value !== "string" || value === CHECK) continue;
     out.push(`${pointer.slice(1).replace(/\//g, " ")}: ${value}`);
   }
@@ -2061,11 +2070,15 @@ function brainSentences(docs: readonly BrainDoc[], kind: BrainKind): string[] {
  */
 function creatorRulesOf(docs: readonly BrainDoc[]): CreatorRule[] {
   const doc = docs.find((d) => d.kind === "killtest");
-  if (!doc) return [];
+  return doc ? creatorRulesOfContent(doc.content) : [];
+}
+
+/** The scoring rules of one Kill Test document's content; see `brainSentencesOf`. */
+export function creatorRulesOfContent(content: unknown): CreatorRule[] {
   const rules: CreatorRule[] = [];
-  for (const pointer of enumerateClaimFields("killtest", doc.content)) {
+  for (const pointer of enumerateClaimFields("killtest", content)) {
     if (!pointer.startsWith("/rules/")) continue;
-    const value = readPointer(doc.content, pointer);
+    const value = readPointer(content, pointer);
     if (typeof value !== "string") continue;
     rules.push({ id: pointer, text: value });
   }

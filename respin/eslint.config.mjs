@@ -35,6 +35,25 @@ function appRestrictedImports({
             // Phase 10b-1 Task 8: the account copy quotes the executor's grace period.
             "DELETION_GRACE_MS",
             "WorkspaceAccessError",
+            // Phase 10a (G-15, C5): the startup preflight `instrumentation.ts`
+            // runs at register(), and the PURE telemetry sink builders
+            // `lib/telemetry.ts` composes with safe-log's allowlist. None of
+            // them opens a connection or reads a table.
+            "runStartupPreflight",
+            "PreflightRefusedError",
+            // ...and the keyring parse refusal the demo facade can surface,
+            // so billing-errors can give it copy.
+            "PublicSampleSpinKeyringError",
+            "MonthlyEventBudget",
+            "SENTRY_MONTHLY_EVENT_BUDGET",
+            "parseSentryDsn",
+            "sendOutbound",
+            "sentryEnvelope",
+            "tightenOnlySampleRate",
+            "sentryEnvironmentTag",
+            "SafeErrorEvent",
+            // Phase 10a C5: /admin/activation renders the activation seam's row type.
+            "ActivationCohort",
             // Phase 10b-1 Task 5: operator scripts (scripts/**) get the PURE
             // projections and nothing else — the cost forecast, the enablement
             // decision derived from it, and the restore/purge verifier. Not one
@@ -143,6 +162,24 @@ function appRestrictedImports({
                   "resolveActivationExclusions",
                   "runRetentionTick",
                   "runGenerationRecoveryTick",
+                  "recoverStalePublicSampleSpinAttempts",
+                  // Phase 10a C5: the daily aggregate activation emitter
+                  // consumes the ONE activation seam and the pure PostHog
+                  // builders; the worker's main runs the same preflight.
+                  "deriveActivationCohorts",
+                  "ACTIVATION_WINDOW_MS",
+                  "ACTIVATION_SMALL_CELL_DENOMINATOR",
+                  "POSTHOG_MONTHLY_EVENT_BUDGET",
+                  "MonthlyEventBudget",
+                  "parsePosthogSink",
+                  "posthogActivationCapture",
+                  "activationCohortEventUuid",
+                  "ACTIVATION_COHORT_EVENT",
+                  "sendOutbound",
+                  "ActivationCohort",
+                  "ActivationExclusions",
+                  "PosthogSink",
+                  "runStartupPreflight",
                   "RetentionTickSummary",
                   "RetentionTableOutcome",
                   "GenerationRecoveryOutcome",
@@ -555,6 +592,9 @@ function appRestrictedImports({
             "resendMailPortFromEnv",
             "beginIdentityCancellationRecoverySession",
             "createIdentityCancellationProofWithPassword",
+            // Phase 10a: the proxy-ATTESTED client address, for the sessionless
+            // public Sample Spin route's HMAC bucket (null = the shared bucket).
+            "proxyAttestedClientIp",
             "requireUser",
             "requireAdmin",
             "authHandlers",

@@ -97,6 +97,8 @@ const TABLES: Record<string, string> = {
   systemSpendClaims: "system_spend_claims",
   systemSpendDaily: "system_spend_daily",
   systemWorkerHealth: "system_worker_health",
+  // Phase 10a plan C4: the public Sample Spin's abuse buckets.
+  publicSampleSpinBuckets: "public_sample_spin_buckets",
   session: "session",
   stripeEvents: "stripe_events",
   stripeFinanceExtracts: "stripe_finance_extracts",
@@ -725,6 +727,12 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/credits/src/pause.ts::update":
       "The billing pause authority closes the exact open pause under the money lock.",
   },
+  public_sample_spin_buckets: {
+    "packages/db/src/public-sample-spin.ts::insert":
+      "Phase 10a: the DB-atomic public limiter opens a visitor's one 24-hour window under the current key version, inside the same transaction that reserves the R-123 spend.",
+    "packages/db/src/public-sample-spin.ts::update":
+      "Phase 10a: the same limiter advances counters (admitted, blocked, refused, duplicate) on an existing window; it never moves the window's start or expiry.",
+  },
   rate_limit: {
     "packages/db/src/auth-lifecycle.ts::insert":
       "The fresh-factor authorities consume durable, pseudonymous account/client attempt budgets before password hashing so reauthentication work remains bounded across processes.",
@@ -871,6 +879,8 @@ const EXPECTED: Record<string, Record<string, string>> = {
       "refreshPromotionProposalsInScope persists only a draft validated by @respin/brain's private mint; the DB projects it to columns but never constructs a proposal.",
     "packages/db/src/promotion-ops.ts::update":
       "refreshPromotionProposalsInScope marks only proposed rows stale/superseded, and decidePromotionProposalInScope records the terminal server-derived decision/activation under the locked profile.",
+    "packages/db/src/promotion-audit.ts::update":
+      "Phase 10a plan C1 (R-115): the pre-deploy audit's one idempotent migration operation supersedes still-proposed result proposals whose joined evidence carries a non-verified row; it touches no other status and no decision column.",
   },
   proposal_evidence_results: {
     "packages/db/src/promotion-ops.ts::insert":

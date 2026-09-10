@@ -54,6 +54,12 @@ import * as profilesMod from "../src/profiles";
 import * as inferenceMod from "../src/inference";
 import * as monthsMod from "../src/months";
 import * as metricsMod from "../src/metrics";
+import * as sampleSpinIndexMod from "../src/sample-spin/index";
+import * as sampleSpinFixtureMod from "../src/sample-spin/fixture";
+import * as sampleSpinIdeaMod from "../src/sample-spin/idea";
+import * as sampleSpinEnablementMod from "../src/sample-spin/enablement";
+import * as sampleSpinEvaluationMod from "../src/sample-spin/evaluation-set";
+import * as sampleSpinRunMod from "../src/sample-spin/run";
 import * as errorsMod from "../src/errors";
 import * as inferVoiceMod from "../src/infer-voice";
 import * as generateMod from "../src/generate";
@@ -147,6 +153,22 @@ const req = (attemptId: string) => ({
  * the completeness assertion.
  */
 const NOT_DB_FACING: Record<string, string> = {
+  // Phase 10a plan C2: the public Sample Spin's pure surface.
+  loadSampleSpinFixture: "checked-in content, validated in memory — no query",
+  sampleSpinContext: "pure — assembles a GenerationContext from the fixture and a parsed idea",
+  parseSampleSpinIdea: "pure — the untrusted-idea parse",
+  codePointLength: "pure",
+  resolvePublicSampleSpinEnablement: "pure — reads an environment record",
+  publicSampleSpinEnablement: "facade over the pure flag reader; no query",
+  sampleSpinReservationMicroUsd: "pure — the R-123 formula over the active config's prices",
+  sampleSpinDeadlineMs: "pure — the config deadline clamped to the compiled ceiling",
+  SampleSpinBoundError: "error class",
+  tokenUpperBound: "pure — UTF-8 byte length",
+  SampleSpinFixtureError: "error class",
+  SampleSpinIdeaError: "error class",
+  PublicSampleSpinEnablementError: "error class",
+  PublicSampleSpinNotConfiguredError: "error class",
+  SampleSpinInvariantError: "error class",
   foldLedger: "pure function — takes rows as arguments, no query",
   effectiveExpiry: "pure function — no query",
   trackedNicheEntitlement:
@@ -333,6 +355,14 @@ const STRIPE_BOUND: Record<string, string> = {
 };
 
 const COVERED = new Set([
+  // Phase 10a plan C2, and the named case really exists: "accepted: two
+  // metered calls, one measured money fact, the bucket consumed, and no
+  // tenant row anywhere" (sample-spin-spend.test.ts) asserts credit_ledger,
+  // model_usage, generations, session, creator_profiles and workspaces all
+  // stay EMPTY through a whole public run — the isolation this path owes is
+  // that it touches no tenant at all.
+  "runPublicSampleSpin",
+  "publicSampleSpin",
   // Slice 1, and the named case really exists now: "createProfile: A's profile
   // lands only in A, and B's cap is untouched by it". It was in this set with
   // NO case behind it until the billing gate caught the false citation
@@ -457,6 +487,37 @@ type InternalModule = {
 };
 
 const INTERNAL_MODULES: Record<string, InternalModule> = {
+  // Phase 10a plan C2: the public Sample Spin. Everything is re-exported
+  // through index.ts (`export * from "./sample-spin"`); app/** reaches the
+  // orchestrator only through app-server's `publicSampleSpin`. No module here
+  // owns a query: the fixture is checked-in content, the idea parser and the
+  // enablement flag are pure, and the orchestrator composes @respin/db's
+  // limiter and spend authority (isolated where they live) with the
+  // production pipeline. It mints no session, scope or ledger row —
+  // `sample-spin-spend.test.ts` asserts every tenant table stays empty.
+  "sample-spin/index.ts": {
+    reason: "the barrel; every name it carries is claimed on its source module below",
+    viaIndex: ["loadSampleSpinFixture", "sampleSpinContext", "parseSampleSpinIdea", "codePointLength", "resolvePublicSampleSpinEnablement", "runPublicSampleSpin", "sampleSpinDeadlineMs", "sampleSpinReservationMicroUsd", "tokenUpperBound", "SampleSpinFixtureError", "SampleSpinIdeaError", "PublicSampleSpinEnablementError", "PublicSampleSpinNotConfiguredError", "SampleSpinBoundError", "SampleSpinInvariantError"],
+  },
+  "sample-spin/fixture.ts": {
+    reason: "the checked-in fictional brain and reference, validated at load; content, no query",
+    viaIndex: ["loadSampleSpinFixture", "sampleSpinContext", "SampleSpinFixtureError"],
+  },
+  "sample-spin/idea.ts": {
+    reason: "the untrusted-idea boundary; pure",
+    viaIndex: ["parseSampleSpinIdea", "codePointLength", "SampleSpinIdeaError"],
+  },
+  "sample-spin/enablement.ts": {
+    reason: "the closed rollout flag and the two deployment refusals; pure",
+    viaIndex: ["resolvePublicSampleSpinEnablement", "PublicSampleSpinEnablementError", "PublicSampleSpinNotConfiguredError"],
+  },
+  "sample-spin/evaluation-set.ts": {
+    reason: "the pre-registered ten-idea set; data",
+  },
+  "sample-spin/run.ts": {
+    reason: "the metered orchestrator over @respin/db's limiter + spend authority and @respin/modes' pipeline; tenant-free by construction",
+    viaIndex: ["runPublicSampleSpin", "sampleSpinDeadlineMs", "sampleSpinReservationMicroUsd", "tokenUpperBound", "SampleSpinBoundError", "SampleSpinInvariantError"],
+  },
   "balance.ts": {
     reason:
       "the balance authority — reached publicly through index.ts. Since slice 6 it also MINTS: `mintFreeAllowanceIfDue` is the R17 Free grant, and it stays package-private on the strongest form of the usual reason — it is a WRITE to `credit_ledger` on a read path, and the only thing that may run it is the fold that immediately counts it. Exposing it would be a second way to mint credits, outside the lock the fold holds.",
@@ -767,6 +828,10 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "the COMPOSED GENERATION (slice 6). Here rather than in @respin/db for the same layering reason as profiles.ts and inference.ts: it needs the resolved tier (state.ts), the active config, the ledger and the scoped write capabilities, and @respin/db can see only the last. It owns NO query of its own — every db touch is a caged accessor, a write capability, `debitCredits` or `deriveBalance*`, each isolated where it lives. `generate` itself reaches app/** through app-server.ts, which IS enumerated; `hashRequest` is pure and is on the public surface so the payload identity can be asserted without a database. Slice 7 added the framework read (`scope.accessors.eligibleFrameworks()`, a caged accessor breach-tested in profile-scope.test.ts) and the revision's parent read (`caps.readGenerationForAttempt`, an already-isolated write capability) — both somebody else's authority, so the sentence above still holds.",
     viaIndex: ["generate", "generationOp", "hashRequest"],
     internalOnly: [
+      // Phase 10a: the brain flatten and the Kill Test rule projection, as
+      // content-level helpers the public Sample Spin's fixture reuses. Pure.
+      "brainSentencesOf",
+      "creatorRulesOfContent",
       "promptFramework",
       "frameworksForContext",
       "frameworkVersionsUsed",
@@ -898,6 +963,12 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
 
 /** Namespaces for the internal modules, so their claims can be checked. */
 const INTERNAL_NAMESPACES: Record<string, object> = {
+  "sample-spin/index.ts": sampleSpinIndexMod,
+  "sample-spin/fixture.ts": sampleSpinFixtureMod,
+  "sample-spin/idea.ts": sampleSpinIdeaMod,
+  "sample-spin/enablement.ts": sampleSpinEnablementMod,
+  "sample-spin/evaluation-set.ts": sampleSpinEvaluationMod,
+  "sample-spin/run.ts": sampleSpinRunMod,
   "balance.ts": balanceMod,
   "stripe/deletion-commands.ts": deletionCommandsMod,
   "fold.ts": foldMod,

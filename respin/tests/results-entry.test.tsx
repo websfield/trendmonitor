@@ -861,6 +861,7 @@ describe("proposal decisions require a review action's current document", () => 
     },
     resultEvidence: [{ id: "result-1", role: "treatment" }],
     feedbackEvidence: [],
+    learningEligibility: { kind: "verified_results", treatmentN: 3, baselineN: 3 },
     mergedContent: "The refreshed complete document.",
     claims: [
       { pointer: "/rules/0", displayedValue: "observed", sourceEvidence: { quote: "observed", inputClass: "result_summary" } },

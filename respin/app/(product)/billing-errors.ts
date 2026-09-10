@@ -21,6 +21,8 @@ import {
   AutoTopupAuthorityKeyError,
   AutoTopupAuthoritySignatureError,
   BillingContactProviderError,
+  PublicSampleSpinEnablementError,
+  PublicSampleSpinNotConfiguredError,
   BillingReauthenticationError,
   BillingRoleError,
   CheckoutInFlightError,
@@ -138,6 +140,8 @@ import {
   ExportBusyError,
   AuthMailDeliveryError,
   AuthMailRefusedError,
+  PublicSampleSpinKeyringError,
+  PreflightRefusedError,
   ExportClassificationError,
   ProfileAccessError,
   ProfileCapError,
@@ -235,6 +239,10 @@ export const BILLING_ERROR_CODES = [
   "not_owner",
   "no_stripe_customer",
   "billing_contact_provider",
+  // Phase 10a: the public Sample Spin's two deployment refusals. Rendered by
+  // the demo route as a 503; never by a creator screen.
+  "sample_spin_flag_invalid",
+  "sample_spin_not_configured",
   "no_live_subscription",
   "not_paused",
   "pause_length",
@@ -281,6 +289,12 @@ export const BILLING_ERROR_CODES = [
   "onboarding_input_limit",
   "export_busy",
   "auth_mail_refused",
+  // Phase 10a: the bucket keyring's parse refusal (an operator's env value)
+  // and the startup preflight's refusal (never reached by a request: it
+  // stops the process from starting). Copy exists so no facade class renders
+  // as "Something went wrong".
+  "sample_spin_keyring_invalid",
+  "preflight_refused",
   "auth_mail_delivery",
   "scope_forgery",
   "usage_raw",
@@ -502,6 +516,8 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: BillingRoleError, code: "not_owner" },
   { cls: NoStripeCustomerError, code: "no_stripe_customer" },
   { cls: BillingContactProviderError, code: "billing_contact_provider" },
+  { cls: PublicSampleSpinEnablementError, code: "sample_spin_flag_invalid" },
+  { cls: PublicSampleSpinNotConfiguredError, code: "sample_spin_not_configured" },
   { cls: NoLiveSubscriptionError, code: "no_live_subscription" },
   { cls: NotPausedError, code: "not_paused" },
   { cls: PauseLengthError, code: "pause_length" },
@@ -557,6 +573,8 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   // nothing was sent (quota or recipient); a delivery error means the
   // provider did not durably accept it. Neither is ever reported as sent.
   { cls: AuthMailRefusedError, code: "auth_mail_refused" },
+  { cls: PublicSampleSpinKeyringError, code: "sample_spin_keyring_invalid" },
+  { cls: PreflightRefusedError, code: "preflight_refused" },
   { cls: AuthMailDeliveryError, code: "auth_mail_delivery" },
   { cls: ProvenanceError, code: "provenance" },
   { cls: ScopeForgeryError, code: "scope_forgery" },
@@ -826,6 +844,16 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     detail:
       "A billing account is created the first time you subscribe or buy a credit pack. Start there, then the Customer Portal becomes available.",
   },
+  sample_spin_flag_invalid: {
+    title: "The Sample Spin is not configured on this deployment",
+    detail:
+      "RESPIN_PUBLIC_SAMPLE_SPIN carries a value this build does not accept. An operator sets it to preview, or leaves it unset to keep the landing mockup.",
+  },
+  sample_spin_not_configured: {
+    title: "The Sample Spin is not configured on this deployment",
+    detail:
+      "The Sample Spin is switched on but its bucket key is missing. An operator sets RESPIN_PUBLIC_SAMPLE_SPIN_HMAC_KEYS; until then no visitor can be admitted.",
+  },
   billing_contact_provider: {
     title: "The billing contact could not be moved",
     detail:
@@ -1038,6 +1066,16 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "A complete export is already being prepared",
     detail:
       "Another export for this workspace is still in progress. Wait for that download to finish, then try the export again. No Brain data was changed.",
+  },
+  sample_spin_keyring_invalid: {
+    title: "The Sample Spin is not configured on this deployment",
+    detail:
+      "RESPIN_PUBLIC_SAMPLE_SPIN_HMAC_KEYS is malformed. An operator sets it to the current key, optionally followed by the one prior key; see env.example. No visitor is admitted until then.",
+  },
+  preflight_refused: {
+    title: "This server did not start cleanly",
+    detail:
+      "The startup preflight refused a registry check, which should have stopped the process before it served anything. An operator reads the refusal code in the server log and redeploys a build that passes `pnpm preflight`.",
   },
   auth_mail_refused: {
     title: "We could not send that email right now",

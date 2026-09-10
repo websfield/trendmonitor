@@ -49,6 +49,7 @@ export const LIFECYCLE_COLUMN_CENSUS: Readonly<Record<string, readonly string[]>
   "promotion_proposals": ["accepted_activation_id", "accepted_brain_doc_id", "basis_brain_doc_id", "created_at", "decision_at", "decision_role", "decision_user_id", "evidence_digest", "family_key", "id", "payload", "profile_id", "source", "status", "strength", "target_kind", "target_pointer", "updated_at", "workspace_id"],
   "proposal_evidence_feedback": ["feedback_id", "profile_id", "proposal_id", "workspace_id"],
   "proposal_evidence_results": ["profile_id", "proposal_id", "result_id", "role", "workspace_id"],
+  "public_sample_spin_buckets": ["admitted", "blocked", "bucket_started_at", "duplicate", "expires_at", "id", "ip_hmac", "key_version", "refused", "updated_at"],
   "rate_limit": ["count", "id", "key", "last_request"],
   "results": ["audience_class", "confounders", "connector_event_id", "connector_observed_at", "connector_source", "conversion_denominator", "conversion_value", "created_at", "evidence_state", "generation_id", "id", "metric_declared_by_doc_id", "metric_key", "note", "observed_from", "observed_to", "platform", "profile_id", "reach_denominator", "reach_value", "treatment_key", "workspace_id"],
   "session": ["created_at", "expires_at", "id", "ip_address", "reauthenticated_at", "token", "updated_at", "user_agent", "user_id"],

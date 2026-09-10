@@ -29,6 +29,13 @@ export const systemUsageOutcome = pgEnum("system_model_usage_outcome", [
   "analysis_invalid",
 ]);
 export const systemSpendClaimStatus = pgEnum("system_spend_claim_status", ["reserved", "cap_exhausted"]);
+// R-117 (Phase 10a): the CLOSED purpose union. Every sessionless vendor call
+// names which product overhead it is, and the attribution shape is CHECKed per
+// purpose below: an autopsy names its trend item and cache claim; a public
+// Sample Spin names only an opaque request id and never a tenant, profile or
+// autopsy identifier. A third purpose is an enum value, a CHECK edit and a
+// registry row-class — never a config change.
+export const systemSpendPurpose = pgEnum("system_spend_purpose", ["trend_autopsy", "public_sample_spin"]);
 
 export const systemSpendDaily = pgTable("system_spend_daily", {
   businessDate: date("business_date").primaryKey(),
@@ -55,9 +62,11 @@ export const systemSpendClaims = pgTable(
     // proposed paid pipeline. They are deliberately not creator/workspace/profile
     // identifiers; the system budget remains outside every tenant ledger.
     jobId: text("job_id").notNull(),
-    trendItemId: uuid("trend_item_id").notNull(),
-    autopsyCacheClaimId: uuid("autopsy_cache_claim_id").notNull(),
-    purpose: text("purpose").notNull(),
+    // NOT NULL exactly when purpose = trend_autopsy (CHECK below). A public
+    // Sample Spin has no trend item and no cache claim, by construction.
+    trendItemId: uuid("trend_item_id"),
+    autopsyCacheClaimId: uuid("autopsy_cache_claim_id"),
+    purpose: systemSpendPurpose("purpose").notNull(),
     model: text("model").notNull(),
     businessDate: date("business_date").notNull().references(() => systemSpendDaily.businessDate, { onDelete: "restrict" }),
     reservedMicroUsd: bigint("reserved_micro_usd", { mode: "bigint" }).notNull(),
@@ -68,21 +77,26 @@ export const systemSpendClaims = pgTable(
   (t) => [
     uniqueIndex("system_spend_claims_job_attempt_uq").on(t.jobAttemptId),
     check("system_spend_claims_reservation_shape", sql`(${t.status} = 'reserved' AND ${t.reservedMicroUsd} > 0 AND ${t.requestedMicroUsd} = ${t.reservedMicroUsd}) OR (${t.status} = 'cap_exhausted' AND ${t.reservedMicroUsd} = 0 AND ${t.requestedMicroUsd} > 0)`),
-    check("system_spend_claims_attribution_shape", sql`${t.jobAttemptId} ~ '[^[:space:]]' AND ${t.jobId} ~ '[^[:space:]]' AND ${t.purpose} = 'trend_autopsy' AND ${t.model} ~ '[^[:space:]]'`),
+    // The autopsy ids are REQUIRED AT THE WRITE (`claimValues`) and NULLED at
+    // 90 days by the identifier scrubber, so the CHECK cannot demand them for
+    // the autopsy purpose; what it guards is the PUBLIC shape — a Sample Spin
+    // row never names a trend item or a cache claim.
+    check("system_spend_claims_attribution_shape", sql`${t.jobAttemptId} ~ '[^[:space:]]' AND ${t.jobId} ~ '[^[:space:]]' AND ${t.model} ~ '[^[:space:]]' AND (${t.purpose} <> 'public_sample_spin' OR (${t.trendItemId} IS NULL AND ${t.autopsyCacheClaimId} IS NULL))`),
   ]
 );
 
 // Append-only system counterpart of model_usage. One job attempt aggregates
-// the fixed four-stage autopsy pipeline and retains its actual call count;
-// retries mint a new job-attempt id rather than overwriting the first failure.
+// its fixed pipeline (four autopsy stages, or a Sample Spin's at most two
+// drafts plus one scoring call) and retains its actual call count; retries
+// mint a new job-attempt id rather than overwriting the first failure.
 export const systemModelUsage = pgTable(
   "system_model_usage",
   {
     id: id(),
     jobAttemptId: text("job_attempt_id").notNull(),
     jobId: text("job_id").notNull(),
-    trendItemId: uuid("trend_item_id").notNull(),
-    purpose: text("purpose").notNull(),
+    trendItemId: uuid("trend_item_id"),
+    purpose: systemSpendPurpose("purpose").notNull(),
     model: text("model").notNull(),
     tokensIn: integer("tokens_in"),
     tokensOut: integer("tokens_out"),
@@ -102,10 +116,13 @@ export const systemModelUsage = pgTable(
     check("system_model_usage_tokens_nonnegative", sql`(${t.tokensIn} IS NULL OR ${t.tokensIn} >= 0) AND (${t.tokensOut} IS NULL OR ${t.tokensOut} >= 0)`),
     check("system_model_usage_cost_known_iff", sql`(${t.costState} = 'unknown' AND ${t.costMicroUsd} IS NULL AND ${t.reservationOverrunMicroUsd} IS NULL) OR (${t.costState} = 'measured' AND ${t.costMicroUsd} >= 0 AND ${t.reservationOverrunMicroUsd} = GREATEST(${t.costMicroUsd} - ${t.reservedCostMicroUsd}, 0))`),
     check("system_model_usage_overrun_nonnegative", sql`${t.reservedCostMicroUsd} >= 0 AND (${t.reservationOverrunMicroUsd} IS NULL OR ${t.reservationOverrunMicroUsd} >= 0)`),
-    check("system_model_usage_call_shape", sql`${t.callCount} BETWEEN 0 AND 4 AND ${t.unknownCallCount} BETWEEN 0 AND ${t.callCount} AND ((${t.outcome} = 'budget_exhausted') = (${t.callCount} = 0)) AND (${t.outcome} <> 'succeeded' OR (${t.callCount} = 4 AND ${t.costState} = 'measured')) AND ((${t.costState} = 'unknown') = (${t.unknownCallCount} > 0))`),
+    // A SUCCESSFUL attempt records exactly its pipeline's calls: four autopsy
+    // stages, or a Sample Spin's one or two drafts plus the scoring call (2..3).
+    // A fourth Sample Spin call is impossible here as well as in code (R-123).
+    check("system_model_usage_call_shape", sql`${t.callCount} BETWEEN 0 AND 4 AND ${t.unknownCallCount} BETWEEN 0 AND ${t.callCount} AND ((${t.outcome} = 'budget_exhausted') = (${t.callCount} = 0)) AND (${t.purpose} <> 'public_sample_spin' OR ${t.callCount} <= 3) AND (${t.outcome} <> 'succeeded' OR ((${t.purpose} = 'trend_autopsy' AND ${t.costState} = 'measured' AND ${t.callCount} = 4) OR (${t.purpose} = 'public_sample_spin' AND ${t.callCount} BETWEEN 2 AND 3))) AND ((${t.costState} = 'unknown') = (${t.unknownCallCount} > 0))`),
     check("system_model_usage_budget_refusal_zero", sql`${t.outcome} <> 'budget_exhausted' OR (${t.tokensIn} = 0 AND ${t.tokensOut} = 0 AND ${t.costMicroUsd} = 0 AND ${t.reservedCostMicroUsd} = 0 AND ${t.reservationOverrunMicroUsd} = 0 AND ${t.costState} = 'measured' AND ${t.callCount} = 0 AND ${t.unknownCallCount} = 0)`),
     check("system_model_usage_error_code_shape", sql`(${t.outcome} = 'succeeded') = (${t.errorCode} IS NULL) AND (${t.errorCode} IS NULL OR ${t.errorCode} ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')`),
-    check("system_model_usage_attribution_shape", sql`${t.jobAttemptId} ~ '[^[:space:]]' AND ${t.jobId} ~ '[^[:space:]]' AND ${t.purpose} = 'trend_autopsy' AND ${t.model} ~ '[^[:space:]]'`),
+    check("system_model_usage_attribution_shape", sql`${t.jobAttemptId} ~ '[^[:space:]]' AND ${t.jobId} ~ '[^[:space:]]' AND ${t.model} ~ '[^[:space:]]' AND (${t.purpose} <> 'public_sample_spin' OR ${t.trendItemId} IS NULL)`),
   ]
 );
 

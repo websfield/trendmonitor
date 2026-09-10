@@ -24,6 +24,7 @@ import {
   retentionTickEvent,
   type RetentionRunSummary,
 } from "./retention";
+import type { ActivationEmitSummary } from "./activation-emitter";
 
 export const PG_BOSS_SCHEMA = "respin_worker";
 export const REFRESH_QUEUE = "respin.refresh.v1";
@@ -34,6 +35,10 @@ export const DEAD_LETTER_QUEUE = "respin.dead-letter.v1";
 export const DELETION_LIFECYCLE_QUEUE = "respin.deletion-lifecycle.v1";
 /** Phase 10b-1 Task 6: the retention receiver and attempt-recovery tick. */
 export const RETENTION_QUEUE = "respin.retention.v1";
+/** Phase 10a plan C5: the daily aggregate activation emitter (R-121). */
+export const ACTIVATION_QUEUE = "respin.activation.v1";
+/** Ten past midnight UTC: after the day's last cohort has had its full window. */
+export const ACTIVATION_CRON = "10 0 * * *";
 export const DAILY_REFRESH_CRON = "0 2 * * *";
 export const AUTOPSY_DISPATCH_CRON = "* * * * *";
 export const DELETION_LIFECYCLE_CRON = "* * * * *";
@@ -124,6 +129,12 @@ export interface PgBossRuntimeSources {
    * rather than a queue whose handler has nothing to call.
    */
   readonly runRetention?: (scheduledAt: Date) => Promise<RetentionRunSummary>;
+  /**
+   * Phase 10a plan C5: the daily aggregate activation emitter. Optional for
+   * the same reason as the two above; the production composition supplies it
+   * and `production-sources.test.ts` proves the queue is registered.
+   */
+  readonly emitActivationAggregates?: (scheduledAt: Date) => Promise<ActivationEmitSummary>;
 }
 
 export interface WorkerEventSink {
@@ -382,6 +393,18 @@ export class RespinPgBossRuntime {
           async (jobs) => this.#runRetention(jobs as JobWithMetadata<null>[]),
         );
       }
+      if (this.#sources.emitActivationAggregates) {
+        await this.#ensureQueue(ACTIVATION_QUEUE, { policy: "exclusive", ...QUEUE_RETRY });
+        await this.#boss.schedule(ACTIVATION_QUEUE, ACTIVATION_CRON, null, {
+          tz: "UTC",
+          key: "activation-v1",
+        });
+        await this.#boss.work<null>(
+          ACTIVATION_QUEUE,
+          { includeMetadata: true, localConcurrency: 1, pollingIntervalSeconds: 1 },
+          async (jobs) => this.#runActivationEmit(jobs as JobWithMetadata<null>[]),
+        );
+      }
       if (this.#sources.advanceDeletionLifecycle) {
         // Exclusive: one tick in flight per queue; the executor's own lease is
         // the per-operation fence across workers.
@@ -444,6 +467,23 @@ export class RespinPgBossRuntime {
       deletionWaiting: summary.waiting,
       deletionBlocked: summary.blocked,
       deletionErased: summary.erased,
+    }));
+  }
+
+  /** Phase 10a C5: cohort COUNTS only; a cohort's own numbers go to the sink, never the log. */
+  async #runActivationEmit(jobs: JobWithMetadata<null>[]): Promise<void> {
+    const job = jobs[0];
+    if (!job) throw new Error("activation worker received no job");
+    const emit = this.#sources.emitActivationAggregates;
+    if (!emit) throw new Error("activation emitter is not composed");
+    const summary = await emit(job.createdOn);
+    this.#events.emit(safeEvent("activation_emit", new Date(), {
+      activationMatured: summary.matured,
+      activationEmitted: summary.emitted,
+      activationSuppressedSmallCell: summary.suppressedSmallCell,
+      activationWithheldExpired: summary.withheldExpired,
+      activationNotSent: summary.notSent,
+      activationFailed: summary.failed,
     }));
   }
 

@@ -305,6 +305,15 @@ export const LOG_PENDING_LABEL = "Recording your result…";
 export const COMPARISON_HEADING = "Against your own earlier results";
 
 /**
+ * THE FIRST OF THE THREE EVIDENCE STATES (R-115, Phase 10a C1): only
+ * self-reported or unquantified results exist, so no comparison is computed.
+ * Said before any population sentence, because every population below would
+ * otherwise read "no results at all" about results the creator can see.
+ */
+export const VERIFICATION_UNAVAILABLE =
+  "Comparison unavailable: verified analytics are not connected. Your logged results stay listed above with their evidence label; self-reported numbers do not enter a comparison, a median or a proposal.";
+
+/**
  * WHAT THE COMPARISON IS, in one sentence, before any of it is read.
  *
  * Names all six predicates, because a creator who cannot see what "comparable"

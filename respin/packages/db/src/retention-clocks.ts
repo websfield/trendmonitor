@@ -342,6 +342,13 @@ export const RETENTION_MEASURES = [
     why: "C5: other content-free terminal attempt metadata expires one year after terminal time, while settled/debited rows follow their linked financial chain and are excluded by the precondition. The 5 m/15 m/deadline/24 h transitions belong to the generation receiver, not to this clock; a non-terminal attempt has no terminal_at and is never swept here.",
   },
   {
+    table: "public_sample_spin_buckets", rowClass: "system_row", fieldSet: "complete_row",
+    measuredFrom: "bucket_started_at", measuredAs: "timestamptz",
+    precondition: null,
+    effect: del(),
+    why: "Phase 10a C4: a bucket is deleted 24 h after the request that opened it. `expires_at` is CHECKed to be no later than that, and no counter update moves `bucket_started_at`, so the deletion never waits on traffic.",
+  },
+  {
     table: "rate_limit", rowClass: "system_row", fieldSet: "complete_row",
     measuredFrom: "last_request", measuredAs: "epoch_millis",
     precondition: null,

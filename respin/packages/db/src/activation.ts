@@ -357,6 +357,16 @@ export type ActivationCohort = Readonly<{
    * nothing on the row to say so.
    */
   aggregateExpired: boolean;
+  /**
+   * TRUE once the cohort's last possible signup has had its full 24-hour
+   * window: cohort day start + 24 h (the day) + 24 h (the window) <= asOf.
+   * Until then the numerator and denominator are PARTIAL and R-121 forbids
+   * reporting them as a rate ("report only after the full 24-hour window
+   * matures"); the internal page renders such a row as `window_open` and the
+   * external emitter skips it. ONE authority for both consumers (lean gate
+   * round 1, L-1: the emitter had its own copy and the page had none).
+   */
+  matured: boolean;
   /** Always present, so a consumer cannot render the number without it. */
   limitation: string;
 }>;
@@ -500,6 +510,7 @@ export async function deriveActivationCohorts(
       excluded: t.excluded,
       smallCell: t.signups < 10,
       aggregateExpired: Date.parse(t.cohortDate + "T00:00:00.000Z") < aggregateHorizon,
+      matured: Date.parse(t.cohortDate + "T00:00:00.000Z") + 2 * ACTIVATION_WINDOW_MS <= asOf.getTime(),
       limitation: ACTIVATION_VERIFICATION_LIMITATION,
     }));
 }

@@ -61,7 +61,9 @@ function result(
     observedFrom: new Date("2026-08-05T00:00:00Z"),
     observedTo: new Date("2026-08-12T00:00:00Z"),
     treatmentKey: null,
-    evidenceState: "quantified_self_reported",
+    // VERIFIED BY DEFAULT since R-115 (Phase 10a): the only numerical state.
+    // Cases about the other two states set them explicitly.
+    evidenceState: "connector_verified",
     reachValue: null,
     reachDenominator: null,
     conversionValue: null,
@@ -445,10 +447,46 @@ describe("C5 rule 4: `unquantified` never enters a numerical cohort, on either s
     expect(counted(comparison.treatment).n).toBe(2);
   });
 
-  it("`connector_verified` IS numerical — the allowlist admits it, unreachable though it is in v1", () => {
-    // The state is in C1's vocabulary and structurally unassignable in v1. The
-    // builder still treats it as numerical, so the day a connector lands this
-    // module is not the thing that has to change.
+  it("`quantified_self_reported` is NOT numerical (R-115): it enters neither population, on either side", () => {
+    const comparison = reachOf(
+      build([
+        reach("t1", 10, { treatmentKey: TREATMENT }),
+        reach("t2", 20, { treatmentKey: TREATMENT }),
+        reach("s1", 30, { treatmentKey: TREATMENT, evidenceState: "quantified_self_reported" }),
+        reach("b1", 5),
+        reach("b2", 6),
+        reach("sb", 7, { evidenceState: "quantified_self_reported" }),
+      ])
+    );
+    expect(comparison.treatment.state).toBe("short");
+    expect(counted(comparison.treatment).n).toBe(2);
+    expect(comparison.baseline.state).toBe("short");
+    expect(counted(comparison.baseline).n).toBe(2);
+  });
+
+  it("R-115 BYTE-IDENTITY: adding, changing or deleting a self-reported row leaves every verified derivative byte-identical", () => {
+    const clean = [
+      reach("t1", 10, { treatmentKey: TREATMENT }),
+      reach("t2", 20, { treatmentKey: TREATMENT }),
+      reach("t3", 30, { treatmentKey: TREATMENT }),
+      reach("b1", 5),
+      reach("b2", 6),
+      reach("b3", 7),
+    ];
+    const baseline = JSON.stringify(build(clean));
+    // NON-VACUITY: the same rows, admitted as verified, DO move the numbers.
+    const admitted = JSON.stringify(build([...clean, reach("x1", 1000, { treatmentKey: TREATMENT }), reach("x2", 1, {})]));
+    expect(admitted).not.toBe(baseline);
+    const added = build([...clean, reach("x1", 1000, { treatmentKey: TREATMENT, evidenceState: "quantified_self_reported" }), reach("x2", 1, { evidenceState: "quantified_self_reported" })]);
+    expect(JSON.stringify(added)).toBe(baseline);
+    const changed = build([...clean, reach("x1", 2, { treatmentKey: TREATMENT, evidenceState: "quantified_self_reported" })]);
+    expect(JSON.stringify(changed)).toBe(baseline);
+    const groups = (rows: ComparisonResultInput[]) =>
+      JSON.stringify(buildComparisonGroups({ profileId: STRATUM.profileId, results: rows, truncated: false, declaredMetrics: METRICS }));
+    expect(groups([...clean, reach("x1", 1000, { treatmentKey: TREATMENT, evidenceState: "quantified_self_reported" })])).toBe(groups(clean));
+  });
+
+  it("`connector_verified` IS numerical — the one state the allowlist admits", () => {
     const comparison = reachOf(
       build([
         reach("t1", 10, { treatmentKey: TREATMENT, evidenceState: "connector_verified" }),

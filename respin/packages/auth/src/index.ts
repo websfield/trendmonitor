@@ -22,6 +22,7 @@ export {
   type ResendMailPortOptions,
 } from "./resend-mail";
 export { adminAllowed, parseAdminAllowlist } from "./allowlist";
+export { canonicalClientIp, proxyAttestedClientIp } from "./client-ip";
 export {
   authHandlers,
   beginIdentityCancellationRecoverySession,

@@ -117,7 +117,10 @@ describe.skipIf(!MAINTENANCE_URL)("promotion decisions on real Postgres", () => 
       metricDeclaredByDocId: strategy.id,
       observedFrom: new Date("2026-08-01T00:00:00.000Z"),
       observedTo: new Date("2026-08-31T00:00:00.000Z"),
-      evidenceState: "quantified_self_reported" as const,
+      // VERIFIED (R-115): the only evidence state a proposal is built from.
+      evidenceState: "connector_verified" as const,
+      connectorSource: "fixture-connector",
+      connectorObservedAt: new Date("2026-09-01T00:00:00.000Z"),
       reachDenominator: "1000",
       confounders: [] as ("topic_overlap")[],
     };
@@ -126,12 +129,14 @@ describe.skipIf(!MAINTENANCE_URL)("promotion decisions on real Postgres", () => 
         ...common,
         generationId,
         treatmentKey,
+        connectorEventId: `evt-t-${profile.id}-${index}`,
         reachValue: String(2000 + index * 100),
       })),
       ...[0, 1, 2].map((index) => ({
         ...common,
         generationId: null,
         treatmentKey: null,
+        connectorEventId: `evt-b-${profile.id}-${index}`,
         reachValue: String(1000 + index * 100),
       })),
     ]);

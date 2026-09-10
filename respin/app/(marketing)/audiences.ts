@@ -2,9 +2,10 @@
 // landing, different hero copy, hero photo, and illustrative demo. Pricing,
 // steps, refusals, and the closing card are the shared sections — every
 // number stays in ./pricing-copy.ts under its landing-pricing.test.ts pin.
-// Demo copy is illustrative output SHAPE, like the main page's (the real
-// comparison demo, REQ-H02, lands at M6); unverifiable specifics in the
-// shot lines render as [check] tokens, per REQ-I03.
+// Demo copy is illustrative output SHAPE, like the main page's, and renders
+// only while the real Sample Spin (REQ-H02, Phase 10a) is closed by its
+// rollout flag; unverifiable specifics in the shot lines render as [check]
+// tokens, per REQ-I03.
 
 export type DemoCopy = {
   slop: [string, string];
