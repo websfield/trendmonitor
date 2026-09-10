@@ -1,14 +1,15 @@
 import type { JsonColumnInventoryEntry, JsonPathInventoryEntry, LifecycleWriterInventoryEntry, MigrationForeignKey, MigrationInventory, RowClassInventoryEntry } from "./lifecycle-inventory";
+import { LIFECYCLE_COLUMN_CENSUS } from "./lifecycle-column-census";
 import type { LifecycleExecutorImplementations } from "./lifecycle-executors";
 import type { ResidueProbeImplementations } from "./lifecycle-probes";
 
 export const APP_TABLES = [
-  "account", "auth_mail_outbox", "auto_topup_protocol_rollouts", "autopsies", "autopsy_cache_claims", "brain_activation_snapshots", "brain_docs",
+  "account", "activation_cohort_daily", "auth_mail_outbox", "auto_topup_protocol_rollouts", "autopsies", "autopsy_cache_claims", "brain_activation_snapshots", "brain_docs",
   "config_versions", "creator_profiles", "credit_ledger", "deletion_cancellation_proofs", "deletion_external_commands", "deletion_membership_snapshots", "deletion_operation_transitions", "deletion_operations", "deletion_recovery_sessions", "first_billable_attempts", "frameworks",
   "generation_attempts", "generation_feedback", "generations", "membership_profile_selections", "memberships",
   "model_usage", "onboarding_inputs", "onboarding_interview_drafts", "pause_periods", "promotion_proposals",
-  "proposal_evidence_feedback", "proposal_evidence_results", "rate_limit", "results", "session", "stripe_events",
-  "subscriptions", "system_model_usage", "system_model_usage_reconciliations", "system_spend_claims",
+  "proposal_evidence_feedback", "proposal_evidence_results", "public_sample_spin_buckets", "rate_limit", "results", "session", "stripe_events",
+  "stripe_finance_extracts", "subscriptions", "system_model_usage", "system_model_usage_reconciliations", "system_spend_claims",
   "system_spend_daily", "system_worker_health", "tracked_niches", "trend_items", "trend_sources",
   "tier_checkout_protocol_rollouts", "trend_transcripts", "user", "users", "verification", "workspaces", "workspace_spend_monthly",
 ] as const;
@@ -23,11 +24,25 @@ export type DataRowClass =
   | "stripe_workspace_attributed"
   | "stripe_customer_attributed"
   | "stripe_unattributed"
+  // Task 6's finance extract. Two classes because the two statuses have
+  // DIFFERENT retention: a complete row is a 30-day staging hand-off to
+  // 10b-2's projector, an incomplete row is the permanent authority for
+  // withholding that period and rides the seven-year financial chain.
+  | "finance_extract_complete"
+  | "finance_extract_incomplete"
   | "profile_private"
   | "creator_consent"
   | "independently_licensed"
   | "product_seed"
-  | "shared_library";
+  | "shared_library"
+  // Phase 10a plan C4: the public Sample Spin's system-metering rows on the
+  // two spend tables, discriminated by `purpose`. Content-free, tenant-free,
+  // IP-free by the schema's own CHECK. The WHOLE row is a financial fact kept
+  // seven years (R-122): its `job_id` is a browser-random request id that no
+  // erasure subject can name and no bucket links to once the window expires,
+  // so there is no 90-day scrub to promise (tenancy gate round 1, CHANGE 2 —
+  // the first registration promised one that no executor could ever run).
+  | "public_sample_spin_row";
 
 /**
  * Every application table names its permitted row classes explicitly. There
@@ -36,6 +51,7 @@ export type DataRowClass =
  */
 export const ROW_CLASSES_BY_TABLE = {
   account: ["identity_row"],
+  activation_cohort_daily: ["system_row"],
   auth_mail_outbox: ["identity_row"],
   auto_topup_protocol_rollouts: ["system_row"],
   autopsies: ["profile_private", "creator_consent", "independently_licensed"],
@@ -65,14 +81,16 @@ export const ROW_CLASSES_BY_TABLE = {
   promotion_proposals: ["profile_row"],
   proposal_evidence_feedback: ["profile_row"],
   proposal_evidence_results: ["profile_row"],
+  public_sample_spin_buckets: ["system_row"],
   rate_limit: ["system_row"],
   results: ["profile_row"],
   session: ["identity_row"],
   stripe_events: ["stripe_workspace_attributed", "stripe_customer_attributed", "stripe_unattributed"],
+  stripe_finance_extracts: ["finance_extract_complete", "finance_extract_incomplete"],
   subscriptions: ["workspace_row"],
-  system_model_usage: ["system_row"],
+  system_model_usage: ["system_row", "public_sample_spin_row"],
   system_model_usage_reconciliations: ["system_row"],
-  system_spend_claims: ["system_row"],
+  system_spend_claims: ["system_row", "public_sample_spin_row"],
   system_spend_daily: ["system_row"],
   system_worker_health: ["system_row"],
   tier_checkout_protocol_rollouts: ["system_row"],
@@ -92,7 +110,7 @@ export type RowClassFor<T extends AppTable> =
 export type LifecycleAction = "cascade" | "delete_explicit" | "pseudonymise" | "retain_financial" | "external_delete" | "not_applicable";
 export type ExportDisposition = "included" | "excluded_secret" | "excluded_system";
 export type ExportProjector = "identity_self" | "profile_creator" | "workspace_owner" | "none";
-export type RetentionRule = "identity_lifetime" | "profile_lifetime" | "workspace_lifetime" | "session_expiry" | "verification_expiry" | "rate_limit_window" | "identity_recovery_7_days" | "generation_recovery_24_hours" | "stripe_payload_90_days" | "operational_90_days" | "security_audit_one_year" | "deletion_receipt_one_year" | "financial_chain_seven_years" | "library_lifetime" | "installation_lifetime";
+export type RetentionRule = "identity_lifetime" | "profile_lifetime" | "workspace_lifetime" | "session_expiry" | "verification_expiry" | "rate_limit_window" | "identity_recovery_7_days" | "generation_attempt_terminal_one_year" | "stripe_payload_90_days" | "finance_extract_30_days" | "cohort_two_years" | "operational_90_days" | "security_audit_one_year" | "deletion_receipt_one_year" | "financial_chain_seven_years" | "library_lifetime" | "installation_lifetime";
 export type ExecutorId = "identity_cascade" | "profile_cascade" | "workspace_cascade" | "explicit_row_delete" | "workspace_pseudonymiser" | "identifier_scrubber" | "financial_retention_receiver" | "stripe_payload_receiver" | "expiry_receiver" | "external_deletion_receiver" | "library_retention" | "system_retention";
 export type ProbeId = "identity_residue" | "profile_residue" | "workspace_residue" | "retained_financial_residue" | "stripe_payload_residue" | "expiry_residue" | "shared_library_residue" | "system_residue";
 export type ExternalWriterAuthority = Readonly<{
@@ -132,9 +150,12 @@ export const SPLIT_TABLE_FIELD_SETS = {
   ],
   deletion_operations: [
     { name: "recovery_secret", kind: "columns", columns: ["request_session_digest", "recovery_secret_digest", "recovery_secret_prefix"] },
-    { name: "linkable_identifiers", kind: "columns", columns: ["id", "target_key", "user_id", "workspace_id", "profile_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash"] },
+    // Task 7: the keyed activation hash is identifier-bearing material and
+    // scrubs with the target; the contribution numbers and receipt digest are
+    // receipt facts and survive on the one-year clock.
+    { name: "linkable_identifiers", kind: "columns", columns: ["id", "target_key", "user_id", "workspace_id", "profile_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash", "activation_payload_hash"] },
     { name: "requester_identity", kind: "columns", columns: ["requester_user_id"] },
-    { name: "receipt_facts", kind: "remaining_columns", excluding: ["request_session_digest", "recovery_secret_digest", "recovery_secret_prefix", "id", "target_key", "user_id", "workspace_id", "profile_id", "requester_user_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash"] },
+    { name: "receipt_facts", kind: "remaining_columns", excluding: ["request_session_digest", "recovery_secret_digest", "recovery_secret_prefix", "id", "target_key", "user_id", "workspace_id", "profile_id", "requester_user_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash", "activation_payload_hash"] },
   ],
   deletion_operation_transitions: [
     { name: "linkable_identifiers", kind: "columns", columns: ["id", "operation_id", "target_key", "user_id", "workspace_id", "profile_id", "payload_hash"] },
@@ -159,6 +180,29 @@ export const SPLIT_TABLE_FIELD_SETS = {
   workspace_spend_monthly: [
     { name: "workspace_link", kind: "columns", columns: ["workspace_id"] },
     { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id"] },
+  ],
+  // Task 6: the four tables `FINANCIAL_CHAIN_TABLES` used to hold erasure for.
+  // Same split `workspace_spend_monthly` has always had — the link
+  // pseudonymises at erasure, the money facts ride the seven-year chain.
+  credit_ledger: [
+    { name: "workspace_link", kind: "columns", columns: ["workspace_id"] },
+    { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id"] },
+  ],
+  subscriptions: [
+    // `billing_contact_user_id` (plan C3) rides the LINK set, not the facts:
+    // it names a person, so a retained seven-year row must not keep it. The
+    // workspace pseudonymiser nulls it (nullable uuid -> `uuid_null`); identity
+    // erasure clears it structurally through ON DELETE SET NULL.
+    { name: "workspace_link", kind: "columns", columns: ["workspace_id", "billing_contact_user_id"] },
+    { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id", "billing_contact_user_id"] },
+  ],
+  pause_periods: [
+    { name: "workspace_link", kind: "columns", columns: ["workspace_id"] },
+    { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id"] },
+  ],
+  model_usage: [
+    { name: "profile_workspace_link", kind: "columns", columns: ["profile_id", "workspace_id"] },
+    { name: "financial_facts", kind: "remaining_columns", excluding: ["profile_id", "workspace_id"] },
   ],
   system_model_usage: [
     { name: "linkable_source_ids", kind: "columns", columns: ["job_attempt_id", "job_id", "trend_item_id"] },
@@ -202,8 +246,14 @@ type TableWithRowClass<R extends DataRowClass> = {
 }[AppTable];
 const row = <T extends AppTable>(table: T, rowClass: RowClassFor<T>, defaults: Defaults, fieldSet: LifecycleFieldSetFor<T> = all<T>(), governedJsonPaths: readonly string[] = []): LifecycleClassEntryFor<T> => ({ table, rowClass, fieldSet, governedJsonPaths, ...defaults });
 const identity = <T extends TableWithRowClass<"identity_row">>(table: T, owner: string) => row(table, "identity_row" as RowClassFor<T>, {
-  scope: "identity", writerOwner: owner, export: table === "account" || table === "session" || table === "verification" ? "excluded_secret" : "included",
-  exportProjector: table === "account" || table === "session" || table === "verification" ? "none" : "identity_self",
+  // NOT `included` UNDER `identity_self`. That projector is declared in the type
+  // and NOT BUILT — `export.ts` keys `exportPlan` off `profile_creator` alone —
+  // so marking these rows "included" was a creator-facing export claim no code
+  // could honour. They are excluded until the slice that builds the
+  // identity-self projector, and `validateLifecycleClosure` refuses any
+  // `included` disposition under an unbuilt projector so this cannot drift back.
+  scope: "identity", writerOwner: owner, export: table === "account" || table === "session" || table === "verification" ? "excluded_secret" : "excluded_system",
+  exportProjector: "none",
   action: table === "session" || table === "verification" ? "delete_explicit" : "cascade",
   retention: table === "session" ? "session_expiry" : table === "verification" ? "verification_expiry" : "identity_lifetime",
   executor: table === "session" || table === "verification" ? "expiry_receiver" : "identity_cascade",
@@ -212,12 +262,16 @@ const identity = <T extends TableWithRowClass<"identity_row">>(table: T, owner: 
 const profile = <T extends TableWithRowClass<"profile_row">>(table: T, owner: string, included: boolean, governedJsonPaths: readonly string[] = []) => row(table, "profile_row" as RowClassFor<T>, {
   scope: "profile", writerOwner: owner, export: included ? "included" : "excluded_system", exportProjector: included ? "profile_creator" : "none",
   action: table === "generation_attempts" ? "delete_explicit" : "cascade",
-  retention: table === "generation_attempts" ? "generation_recovery_24_hours" : "profile_lifetime",
+  retention: table === "generation_attempts" ? "generation_attempt_terminal_one_year" : "profile_lifetime",
   executor: table === "generation_attempts" ? "expiry_receiver" : "profile_cascade",
   residueProbe: table === "generation_attempts" ? "expiry_residue" : "profile_residue",
 } satisfies Defaults, all<T>(), governedJsonPaths);
 const workspace = <T extends TableWithRowClass<"workspace_row">>(table: T, owner: string, disposition: ExportDisposition = "excluded_system", governedJsonPaths: readonly string[] = []) => row(table, "workspace_row" as RowClassFor<T>, {
-  scope: "workspace", writerOwner: owner, export: disposition, exportProjector: disposition === "included" ? "workspace_owner" : "none",
+  // Same as `identity` above: `workspace_owner` is declared and NOT BUILT, so an
+  // `included` disposition here would be an export claim nothing can honour.
+  // The disposition is preserved in the type for the slice that builds the
+  // projector; until then it is downgraded rather than promised.
+  scope: "workspace", writerOwner: owner, export: disposition === "included" ? "excluded_system" : disposition, exportProjector: "none",
   action: "cascade", retention: "workspace_lifetime", executor: "workspace_cascade", residueProbe: "workspace_residue",
 } satisfies Defaults, all<T>(), governedJsonPaths);
 const system = <T extends TableWithRowClass<"system_row">>(table: T, owner: string, retention: RetentionRule = "installation_lifetime") => row(table, "system_row" as RowClassFor<T>, {
@@ -248,6 +302,18 @@ const rights = <R extends RightsRowClass, T extends TableWithRowClass<R>>(
   residueProbe: rowClass === "profile_private" ? "profile_residue" : rowClass === "creator_consent" ? "identity_residue" : "shared_library_residue",
 } satisfies Defaults, all<T>(), governedJsonPaths);
 
+/**
+ * The four tables that used to cascade with their scope and now ride the
+ * seven-year financial chain (R-122). They are written out below rather than
+ * generated by a helper, for the reason the rest of this file writes split
+ * tables out: each entry's field set comes from `SPLIT_TABLE_FIELD_SETS`, so
+ * the two declarations of the split cannot drift apart.
+ *
+ * There is deliberately NO cascade foreign key on any of them.
+ * `expectedOwnershipEdge` demands one only for `action: "cascade"`, and a
+ * cascade to the row being erased would contradict the retention clock: one of
+ * the two would have to be a lie. C3 settles which.
+ */
 export const LIFECYCLE_REGISTRY = [
   identity("account", "packages/auth"), identity("session", "packages/auth"), identity("user", "packages/auth"),
   // Task 4 auth-delivery outbox: the recipient link scrubs at identity erasure;
@@ -303,13 +369,24 @@ export const LIFECYCLE_REGISTRY = [
   // While these rows stay, the executor refuses workspace erasure and the
   // worker refuses the scope at startup (`unretainedFinancialChainTables`,
   // FINANCIAL_CHAIN_TABLES in deletion-executor.ts — round-1 billing CHANGE).
-  workspace("credit_ledger", "packages/credits", "included"),
-  workspace("pause_periods", "packages/credits/src/pause.ts"),
-  workspace("subscriptions", "packages/credits/src/stripe", "excluded_system"),
+  // Task 6 / R-122: retained on the seven-year financial chain rather than
+  // cascaded with the workspace. `credit_ledger` keeps its owner export
+  // (the creator's own ledger) while it is alive; after erasure only the
+  // pseudonymised money facts survive, and the destructive receiver that
+  // would finally purge them stays disabled until jurisdiction/ledger review.
+  row("credit_ledger", "workspace_row", { scope: "workspace", writerOwner: "packages/credits", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "workspace_pseudonymiser", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.credit_ledger[0]),
+  row("credit_ledger", "workspace_row", { scope: "workspace", writerOwner: "packages/credits", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.credit_ledger[1]),
+  row("pause_periods", "workspace_row", { scope: "workspace", writerOwner: "packages/credits/src/pause.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "workspace_pseudonymiser", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.pause_periods[0]),
+  row("pause_periods", "workspace_row", { scope: "workspace", writerOwner: "packages/credits/src/pause.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.pause_periods[1]),
+  row("subscriptions", "workspace_row", { scope: "workspace", writerOwner: "packages/credits/src/stripe", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "workspace_pseudonymiser", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.subscriptions[0]),
+  row("subscriptions", "workspace_row", { scope: "workspace", writerOwner: "packages/credits/src/stripe", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.subscriptions[1]),
   profile("membership_profile_selections", "packages/db/src/profile-selection.ts", false),
   profile("creator_profiles", "packages/db/src/with-workspace.ts", true), profile("brain_docs", "packages/db/src/with-workspace.ts", true, ["source_evidence$[*].inputId", "reference_corpus_ids$[*]"]),
   profile("onboarding_inputs", "packages/db/src/with-workspace.ts", true), profile("onboarding_interview_drafts", "packages/db/src/interview-ops.ts", true),
-  profile("brain_activation_snapshots", "packages/db/src/with-workspace.ts", true), profile("model_usage", "packages/db/src/with-workspace.ts", false),
+  profile("brain_activation_snapshots", "packages/db/src/with-workspace.ts", true), 
+  // Task 6 / R-122: REQ-G05's margin input outlives the profile.
+  row("model_usage", "profile_row", { scope: "profile", writerOwner: "packages/db/src/with-workspace.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "identifier_scrubber", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.model_usage[0]),
+  row("model_usage", "profile_row", { scope: "profile", writerOwner: "packages/db/src/with-workspace.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.model_usage[1]),
   profile("first_billable_attempts", "packages/db/src/with-workspace.ts", false), profile("generation_attempts", "packages/db/src/with-workspace.ts", false, ["candidate$.request.brainActivationId", "candidate$.request.parentGenerationId", "candidate$.request.spinAutopsyId", "candidate$.frameworkVersions[*].id"]),
   profile("generations", "packages/db/src/with-workspace.ts", true, ["framework_versions$[*].frameworkId", "context_input_ids$[*]", "request$.brainActivationId", "request$.parentGenerationId", "request$.spinAutopsyId"]), profile("generation_feedback", "packages/db/src/with-workspace.ts", true),
   profile("tracked_niches", "packages/db/src/trends-storage.ts", true), profile("results", "packages/db/src/with-workspace.ts", true),
@@ -331,8 +408,15 @@ export const LIFECYCLE_REGISTRY = [
   rights("autopsy_cache_claims", "creator_consent", "packages/db/src/trends-storage.ts", false),
   rights("autopsy_cache_claims", "independently_licensed", "packages/db/src/trends-storage.ts", false),
   system("config_versions", "packages/config/src"),
+  // Task 7 / R-121: system counts expire two years after cohort maturity.
+  row("activation_cohort_daily", "system_row", { scope: "system", writerOwner: "packages/db/src/activation.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "cohort_two_years", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
   system("auto_topup_protocol_rollouts", "packages/credits/src/stripe/auto-topup-rollout.ts"),
   system("tier_checkout_protocol_rollouts", "packages/credits/src/stripe/tier-checkout-rollout.ts"),
+  // Phase 10a plan C4 (R-117): the public Sample Spin's abuse buckets. An IP
+  // HMAC under a versioned dedicated key, a window start, an expiry at most 24 h
+  // later, counters — deleted by the traffic-independent receiver on the same
+  // 24-hour clock the auth limiter uses.
+  row("public_sample_spin_buckets", "system_row", { scope: "system", writerOwner: "packages/db/src/public-sample-spin.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "rate_limit_window", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
   row("rate_limit", "system_row", { scope: "system", writerOwner: "packages/auth", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "rate_limit_window", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
   row("stripe_events", "stripe_workspace_attributed", { scope: "workspace", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, { name: "provider_payload", kind: "columns", columns: ["payload"] }),
   row("stripe_events", "stripe_workspace_attributed", { scope: "workspace", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "identifier_scrubber", residueProbe: "retained_financial_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["workspace_id", "stripe_customer_id"] }),
@@ -348,17 +432,37 @@ export const LIFECYCLE_REGISTRY = [
   row("stripe_events", "stripe_customer_attributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[2], ["tier_invoice_authority$.respin_tier_invoice_id", "tier_invoice_authority$.respin_tier_subscription_id", "tier_invoice_authority$.respin_tier_workspace_id", "tier_invoice_authority$.respin_tier_customer_id", "tier_invoice_authority$.respin_tier_checkout_attempt_id", "tier_invoice_authority$.respin_tier_price_id", "tier_invoice_authority$.respin_tier_stripe_account_id"]),
   row("stripe_events", "stripe_customer_attributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[3]),
   row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, { name: "provider_payload", kind: "columns", columns: ["payload"] }),
+  // The unattributed class's link columns are BOTH NULL BY CHECK
+  // (`stripe_events_receipt_attribution_shape`: unattributed <=> workspace_id
+  // IS NULL AND stripe_customer_id IS NULL), so this set never holds a value
+  // for any clock to scrub — the "no effective clock" the 10b-1 phase review
+  // named is structurally empty, and retention-receiver.test.ts proves the
+  // CHECK refuses a row that would give it one. The entry stays so the field
+  // partition is exhaustive.
   row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "stripe_payload_90_days", executor: "identifier_scrubber", residueProbe: "stripe_payload_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["workspace_id", "stripe_customer_id"] }),
   row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "stripe_payload_90_days", executor: "stripe_payload_receiver", residueProbe: "stripe_payload_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[2], ["tier_invoice_authority$.respin_tier_invoice_id", "tier_invoice_authority$.respin_tier_subscription_id", "tier_invoice_authority$.respin_tier_workspace_id", "tier_invoice_authority$.respin_tier_customer_id", "tier_invoice_authority$.respin_tier_checkout_attempt_id", "tier_invoice_authority$.respin_tier_price_id", "tier_invoice_authority$.respin_tier_stripe_account_id"]),
   row("stripe_events", "stripe_unattributed", { scope: "system", writerOwner: "packages/credits/src/stripe/webhooks.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.stripe_events[3]),
+  // Task 6 / C5: the pre-redaction finance extract. A COMPLETE row is a
+  // 30-day staging hand-off — 10b-2's projector stamps `ingested_at` and the
+  // clock starts there, so an unconsumed row is never swept. An INCOMPLETE row
+  // is the permanent authority for withholding that period (C5: it "never
+  // delays the 90-day PII redaction deadline or becomes zero"), so it rides
+  // the seven-year chain whose destructive receiver R-122 keeps disabled.
+  row("stripe_finance_extracts", "finance_extract_complete", { scope: "system", writerOwner: "packages/db/src/finance-extract.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "finance_extract_30_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
+  row("stripe_finance_extracts", "finance_extract_incomplete", { scope: "system", writerOwner: "packages/db/src/finance-extract.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }),
   row("workspace_spend_monthly", "financial_row", { scope: "workspace", writerOwner: "packages/db/src/spend-rollup.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "workspace_pseudonymiser", residueProbe: "retained_financial_residue" }, { name: "workspace_link", kind: "columns", columns: ["workspace_id"] }),
   row("workspace_spend_monthly", "financial_row", { scope: "workspace", writerOwner: "packages/db/src/spend-rollup.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "financial_facts", kind: "remaining_columns", excluding: ["workspace_id"] }),
   row("system_model_usage", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "system_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["job_attempt_id", "job_id", "trend_item_id"] }),
   row("system_model_usage", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "cost_and_outcome_facts", kind: "remaining_columns", excluding: ["job_attempt_id", "job_id", "trend_item_id"] }),
+  // Phase 10a plan C4: the public Sample Spin's metering rows on the same two
+  // tables, discriminated by purpose. The whole row is a content-free
+  // financial fact (see the row class above): no scrub, no erasure subject.
+  row("system_model_usage", "public_sample_spin_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }),
   row("system_model_usage_reconciliations", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "system_residue" }, { name: "linkable_attempt_id", kind: "columns", columns: ["job_attempt_id"] }),
   row("system_model_usage_reconciliations", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "cost_facts", kind: "remaining_columns", excluding: ["job_attempt_id"] }),
   row("system_spend_claims", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "operational_90_days", executor: "identifier_scrubber", residueProbe: "system_residue" }, { name: "linkable_source_ids", kind: "columns", columns: ["job_attempt_id", "job_id", "trend_item_id", "autopsy_cache_claim_id"] }),
   row("system_spend_claims", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, { name: "reservation_facts", kind: "remaining_columns", excluding: ["job_attempt_id", "job_id", "trend_item_id", "autopsy_cache_claim_id"] }),
+  row("system_spend_claims", "public_sample_spin_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }),
   row("system_spend_daily", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }),
   row("system_worker_health", "system_row", { scope: "system", writerOwner: "packages/db/src/system-spend.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "operational_90_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }),
 ] as const satisfies readonly LifecycleClassEntry[];
@@ -378,6 +482,33 @@ type RowClassDiscriminator = Readonly<{
 const ROW_CLASS_DISCRIMINATORS: Readonly<
   Partial<Record<AppTable, RowClassDiscriminator>>
 > = {
+  stripe_finance_extracts: {
+    kind: "enum_value",
+    column: "status",
+    enumName: "stripe_finance_extract_status",
+    sourceFile: "packages/db/src/finance-extract.ts",
+    sourceToken: "status",
+    values: {
+      finance_extract_complete: "complete",
+      finance_extract_incomplete: "incomplete",
+    },
+  },
+  system_model_usage: {
+    kind: "enum_value",
+    column: "purpose",
+    enumName: "system_spend_purpose",
+    sourceFile: "packages/db/src/system-spend-schema.ts",
+    sourceToken: "purpose",
+    values: { system_row: "trend_autopsy", public_sample_spin_row: "public_sample_spin" },
+  },
+  system_spend_claims: {
+    kind: "enum_value",
+    column: "purpose",
+    enumName: "system_spend_purpose",
+    sourceFile: "packages/db/src/system-spend-schema.ts",
+    sourceToken: "purpose",
+    values: { system_row: "trend_autopsy", public_sample_spin_row: "public_sample_spin" },
+  },
   deletion_operations: {
     kind: "enum_value",
     column: "scope",
@@ -626,6 +757,7 @@ const FOREIGN_KEY_ROLE_DELETE_ACTION = {
  */
 const FINAL_SCHEMA_FOREIGN_KEYS = {
   account: [["account_user_id_user_id_fk", ["user_id"], "user", ["id"], "cascade", "scope_owner"]],
+  activation_cohort_daily: [],
   auth_mail_outbox: [
     ["auth_mail_outbox_auth_user_id_user_id_fk", ["auth_user_id"], "user", ["id"], "restrict", "retention_restrict"],
     ["auth_mail_outbox_operation_id_deletion_operations_id_fk", ["operation_id"], "deletion_operations", ["id"], "restrict", "retention_restrict"],
@@ -637,12 +769,16 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
     ["autopsies_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
     ["autopsies_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
     ["autopsies_trend_item_id_trend_items_id_fk", ["trend_item_id"], "trend_items", ["id"], "cascade", "related_cascade"],
+    ["autopsies_trend_item_rights_scope_fk", ["trend_item_id", "rights_scope"], "trend_items", ["id", "rights_scope"], "cascade", "related_cascade"],
+    ["autopsies_trend_item_profile_fk", ["trend_item_id", "profile_id"], "trend_items", ["id", "profile_id"], "cascade", "related_cascade"],
   ],
   autopsy_cache_claims: [
     ["autopsy_cache_claims_autopsy_id_autopsies_id_fk", ["autopsy_id"], "autopsies", ["id"], "restrict", "retention_restrict"],
     ["autopsy_cache_claims_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
     ["autopsy_cache_claims_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
     ["autopsy_cache_claims_trend_item_id_trend_items_id_fk", ["trend_item_id"], "trend_items", ["id"], "cascade", "related_cascade"],
+    ["autopsy_cache_claims_trend_item_rights_scope_fk", ["trend_item_id", "rights_scope"], "trend_items", ["id", "rights_scope"], "cascade", "related_cascade"],
+    ["autopsy_cache_claims_trend_item_profile_fk", ["trend_item_id", "profile_id"], "trend_items", ["id", "profile_id"], "cascade", "related_cascade"],
   ],
   brain_activation_snapshots: [["brain_activation_snapshots_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
   brain_docs: [
@@ -651,7 +787,10 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
   ],
   config_versions: [],
   creator_profiles: [["creator_profiles_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "secondary_scope"]],
-  credit_ledger: [["credit_ledger_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "scope_owner"]],
+  // Task 6 / R-122: RESTRICT, not dropped. The key still refuses a
+  // cross-parented row; only the delete action moved, so the retained
+  // seven-year row is repointed to a stub instead of cascading away.
+  credit_ledger: [["credit_ledger_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"]],
   deletion_cancellation_proofs: [
     ["deletion_cancellation_proofs_auth_user_id_user_id_fk", ["auth_user_id"], "user", ["id"], "restrict", "retention_restrict"],
     ["deletion_cancellation_proofs_operation_id_deletion_operations_id_fk", ["operation_id"], "deletion_operations", ["id"], "restrict", "retention_restrict"],
@@ -711,10 +850,16 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
     ["memberships_user_id_users_id_fk", ["user_id"], "users", ["id"], "cascade", "scope_owner"],
     ["memberships_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "secondary_scope"],
   ],
-  model_usage: [["model_usage_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
+  // Task 6 / R-122: RESTRICT, not dropped. The key still refuses a
+  // cross-parented row; only the delete action moved, so the retained
+  // seven-year row is repointed to a stub instead of cascading away.
+  model_usage: [["model_usage_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "restrict", "retention_restrict"]],
   onboarding_inputs: [["onboarding_inputs_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
   onboarding_interview_drafts: [["onboarding_interview_drafts_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
-  pause_periods: [["pause_periods_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "scope_owner"]],
+  // Task 6 / R-122: RESTRICT, not dropped. The key still refuses a
+  // cross-parented row; only the delete action moved, so the retained
+  // seven-year row is repointed to a stub instead of cascading away.
+  pause_periods: [["pause_periods_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"]],
   promotion_proposals: [
     ["promotion_proposals_accepted_activation_fk", ["accepted_activation_id", "profile_id", "workspace_id"], "brain_activation_snapshots", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
     ["promotion_proposals_accepted_doc_fk", ["accepted_brain_doc_id", "profile_id", "workspace_id"], "brain_docs", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
@@ -738,12 +883,19 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
   ],
   session: [["session_user_id_user_id_fk", ["user_id"], "user", ["id"], "cascade", "scope_owner"]],
   stripe_events: [["stripe_events_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "set_null", "reference_set_null"]],
-  subscriptions: [["subscriptions_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "cascade", "scope_owner"]],
+  // Task 6 / R-122: RESTRICT, not dropped. The key still refuses a
+  // cross-parented row; only the delete action moved, so the retained
+  // seven-year row is repointed to a stub instead of cascading away.
+  subscriptions: [
+    ["subscriptions_billing_contact_user_id_users_id_fk", ["billing_contact_user_id"], "users", ["id"], "set_null", "reference_set_null"],
+    ["subscriptions_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"],
+  ],
   system_model_usage: [["system_model_usage_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
   system_model_usage_reconciliations: [["system_model_usage_reconciliations_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
   system_spend_claims: [["system_spend_claims_business_date_system_spend_daily_business_date_fk", ["business_date"], "system_spend_daily", ["business_date"], "restrict", "retention_restrict"]],
   system_spend_daily: [],
   system_worker_health: [],
+  public_sample_spin_buckets: [],
   tracked_niches: [["tracked_niches_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
   trend_items: [
     ["trend_items_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
@@ -755,13 +907,36 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
     ["trend_transcripts_reference_input_id_onboarding_inputs_id_fk", ["reference_input_id"], "onboarding_inputs", ["id"], "cascade", "related_cascade"],
     ["trend_transcripts_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
     ["trend_transcripts_trend_item_id_trend_items_id_fk", ["trend_item_id"], "trend_items", ["id"], "cascade", "related_cascade"],
+    ["trend_transcripts_trend_item_rights_scope_fk", ["trend_item_id", "rights_scope"], "trend_items", ["id", "rights_scope"], "cascade", "related_cascade"],
+    ["trend_transcripts_trend_item_profile_fk", ["trend_item_id", "profile_id"], "trend_items", ["id", "profile_id"], "cascade", "related_cascade"],
   ],
   user: [],
   users: [["users_auth_user_id_user_id_fk", ["auth_user_id"], "user", ["id"], "restrict", "retention_restrict"]],
   verification: [],
   workspaces: [],
+  stripe_finance_extracts: [
+    ["stripe_finance_extracts_source_stripe_event_id_stripe_events_id_fk", ["source_stripe_event_id"], "stripe_events", ["id"], "restrict", "retention_restrict"],
+  ],
   workspace_spend_monthly: [],
 } as const satisfies Readonly<Record<AppTable, readonly FinalSchemaForeignKeySpec[]>>;
+
+/**
+ * Every final-schema foreign key as a plain edge (child table -> referenced
+ * table), derived from the classified inventory above so it cannot drift from
+ * it. The retention receiver orders its sweeps children-first over these
+ * edges: a parent row deleted before its RESTRICT children fails the batch,
+ * is counted as poisoned, and (until the next tick) leaves the parent
+ * overdue. Found by the populated one-tick sweep fixture, where
+ * `deletion_recovery_sessions` sorted alphabetically AFTER its parent
+ * `deletion_operations` and the parent could never be deleted in the tick.
+ */
+export const LIFECYCLE_FOREIGN_KEY_EDGES: readonly Readonly<{
+  table: AppTable;
+  referencedTable: AppTable;
+  onDelete: MigrationForeignKey["onDelete"];
+}>[] = (Object.entries(FINAL_SCHEMA_FOREIGN_KEYS) as [AppTable, readonly FinalSchemaForeignKeySpec[]][]).flatMap(
+  ([table, keys]) => keys.map(([, , referencedTable, , onDelete]) => ({ table, referencedTable, onDelete }))
+);
 
 type ExpectedOwnershipEdge = Readonly<{
   constraintName: string;
@@ -1075,6 +1250,51 @@ export function validateLifecycleClosure(input: LifecycleClosureInput): void {
     }
     for (const column of table.columns) if (!covered.has(column)) failures.push(`missing field: ${item.table}.${item.rowClass}.${column}`);
   }
+  // THE COLUMN CENSUS. The loop above can never report a missing field for a
+  // COMPUTED field set (`remaining_columns` / `all_columns`), because such a set
+  // is defined as the table's own columns minus an exclusion list — so it
+  // absorbs any newly added column and `covered` already contains it. That made
+  // `ALTER TABLE ... ADD COLUMN` invisible to this gate, which C1 requires it to
+  // fail. The census is the declared LIST the migrations are compared against.
+  for (const [table, declared] of Object.entries(LIFECYCLE_COLUMN_CENSUS)) {
+    const actual = migrationTables.get(table);
+    if (!actual) { failures.push(`census names a table absent from migrations: ${table}`); continue; }
+    const declaredSet = new Set(declared);
+    const actualSet = new Set(actual.columns);
+    for (const column of actualSet) {
+      if (!declaredSet.has(column)) {
+        failures.push(
+          `uncensused column: ${table}.${column} — a computed field set would absorb it silently. ` +
+            `Add it to LIFECYCLE_COLUMN_CENSUS and decide which field set governs it.`
+        );
+      }
+    }
+    for (const column of declaredSet) {
+      if (!actualSet.has(column)) failures.push(`census names a column absent from migrations: ${table}.${column}`);
+    }
+  }
+  // EXPORT CLAIMS MUST BE HONOURABLE. `exportProjector` names three projectors
+  // and only `profile_creator` is built (`export.ts` keys `exportPlan` off it).
+  // This entry marked `credit_ledger` `included` under the unbuilt
+  // `workspace_owner`, which is a creator-facing export claim no code can
+  // honour — a table declared into an export it never joins. An unbuilt
+  // projector may exist in the type, but nothing may be `included` under it.
+  for (const entry of input.registry) {
+    if (entry.export !== "included") continue;
+    if (!(BUILT_EXPORT_PROJECTORS as readonly string[]).includes(entry.exportProjector)) {
+      failures.push(
+        `export claim with no projector: ${registryKey(entry)} is "included" under "${entry.exportProjector}", ` +
+          `which is declared but not built. Build the projector, or mark the entry excluded until the slice that does.`
+      );
+    }
+  }
+  // And every table that USES a computed field set must be censused at all.
+  for (const entry of input.registry) {
+    if (entry.fieldSet.kind === "columns") continue;
+    if (!(entry.table in LIFECYCLE_COLUMN_CENSUS)) {
+      failures.push(`table uses a computed field set but is absent from LIFECYCLE_COLUMN_CENSUS: ${entry.table}`);
+    }
+  }
   for (const jsonPath of input.jsonPaths) {
     const table = migrationTables.get(jsonPath.table);
     if (!table?.columns.includes(jsonPath.column)) failures.push(`missing JSON column/path: ${jsonPath.table}.${jsonPath.column}${jsonPath.path}`);
@@ -1102,19 +1322,43 @@ export function validateLifecycleClosure(input: LifecycleClosureInput): void {
   if (failures.length) throw new Error(failures.sort().join("\n"));
 }
 /**
- * The ONE dynamic writer the AST writer scanner cannot see: the registry-driven
- * SQL port renders DELETE/UPDATE for every executable target through
- * `sql.identifier`, naming no table in source. It is listed as a physical
- * writer only for the roots it INSERTs stubs into (scannable literals). Its
- * coverage is registry closure (`validateLifecycleClosure`) plus the
- * independent residue probes, exercised on a populated fixture in
- * `deletion-executor.test.ts` — stated here so no reader takes the scanner's
- * silence for absence (round-1 tenancy CHANGE).
+ * The dynamic writers the AST writer scanner cannot see: modules that render
+ * DELETE/UPDATE against table names computed at runtime, naming no table in
+ * source. Their coverage is registry closure (`validateLifecycleClosure`) and
+ * the retention-clock closure, plus the independent residue probes, exercised
+ * on populated fixtures — stated here so no reader takes the scanner's silence
+ * for absence.
+ *
+ * A LIST, AND IT HAS TWO ENTRIES. This was a single record called "the ONE
+ * dynamic writer" while `retention-receiver.ts` had become a second one:
+ * `sql.raw` table names driving `DELETE FROM ${table}` and
+ * `UPDATE ${table} SET ...` across roughly fifteen governed tables, present in
+ * no `physicalWriters` list of any table it destroys. The second producer was
+ * absorbed by adding a line to a DIFFERENT allowlist instead of to this
+ * population — precisely the shape CLAUDE.md Respin rule 7 forbids, and the
+ * reason that rule says a population is a list rather than a producer. A
+ * singular constant cannot hold two, so the type is what changed.
  */
-export const DYNAMIC_LIFECYCLE_WRITER = {
-  file: "packages/db/src/lifecycle-sql-port.ts",
-  actions: ["cascade", "delete_explicit", "pseudonymise"],
-} as const satisfies Readonly<{ file: string; actions: readonly LifecycleAction[] }>;
+/**
+ * The export projectors that actually EXIST. `exportProjector` declares three;
+ * `export.ts` builds one. Listing the built ones separately is what lets
+ * `validateLifecycleClosure` refuse an `included` disposition that no code can
+ * honour, instead of the type quietly implying all three work.
+ */
+export const BUILT_EXPORT_PROJECTORS = ["profile_creator"] as const;
+
+export const DYNAMIC_LIFECYCLE_WRITERS = [
+  {
+    file: "packages/db/src/lifecycle-sql-port.ts",
+    actions: ["cascade", "delete_explicit", "pseudonymise"],
+    why: "the registry-driven erasure port; listed as a physical writer only for the roots it INSERTs stubs into (scannable literals)",
+  },
+  {
+    file: "packages/db/src/retention-receiver.ts",
+    actions: ["delete_explicit", "pseudonymise"],
+    why: "the retention sweep; renders DELETE/UPDATE for every governed table through sql.raw, covered by assertRetentionClockClosure rather than by the AST scanner",
+  },
+] as const satisfies readonly Readonly<{ file: string; actions: readonly LifecycleAction[]; why: string }>[];
 
 /**
  * Independent logical-writer inventory. Keep this separate from the registry:
@@ -1125,6 +1369,7 @@ export const DYNAMIC_LIFECYCLE_WRITER = {
  */
 export const LIFECYCLE_WRITER_INVENTORY = [
   { table: "account", owner: "packages/auth", physicalWriters: [] },
+  { table: "activation_cohort_daily", owner: "packages/db/src/activation.ts", physicalWriters: ["packages/db/src/activation.ts"] },
   { table: "auth_mail_outbox", owner: "packages/db/src/auth-mail.ts", physicalWriters: ["packages/db/src/auth-mail.ts"] },
   { table: "auto_topup_protocol_rollouts", owner: "packages/credits/src/stripe/auto-topup-rollout.ts", physicalWriters: ["packages/credits/src/stripe/auto-topup-rollout.ts"] },
   { table: "tier_checkout_protocol_rollouts", owner: "packages/credits/src/stripe/tier-checkout-rollout.ts", physicalWriters: ["packages/credits/src/stripe/tier-checkout-rollout.ts"] },
@@ -1139,11 +1384,14 @@ export const LIFECYCLE_WRITER_INVENTORY = [
   { table: "deletion_external_commands", owner: "packages/db/src/deletion-external-commands.ts", physicalWriters: ["packages/db/src/deletion-external-commands.ts"] },
   { table: "deletion_membership_snapshots", owner: "packages/db/src/deletion-lifecycle.ts", physicalWriters: ["packages/db/src/deletion-lifecycle.ts"] },
   { table: "deletion_operation_transitions", owner: "packages/db/src/deletion-lifecycle.ts", physicalWriters: ["packages/db/src/deletion-lifecycle.ts"] },
-  { table: "deletion_operations", owner: "packages/db/src/deletion-lifecycle.ts", physicalWriters: ["packages/db/src/deletion-executor.ts", "packages/db/src/deletion-lifecycle.ts"] },
+  { table: "deletion_operations", owner: "packages/db/src/deletion-lifecycle.ts", physicalWriters: ["packages/db/src/activation.ts", "packages/db/src/deletion-executor.ts", "packages/db/src/deletion-lifecycle.ts"] },
   { table: "deletion_recovery_sessions", owner: "packages/db/src/auth-lifecycle.ts", physicalWriters: ["packages/db/src/auth-lifecycle.ts"] },
   { table: "first_billable_attempts", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
   { table: "frameworks", owner: "packages/db/src/frameworks.ts", physicalWriters: ["packages/db/src/frameworks.ts"] },
-  { table: "generation_attempts", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
+  // Task 6 adds the worker-side attempt receiver as a SECOND physical writer.
+  // The owner is unchanged: settlement (the debit) stays in with-workspace.ts,
+  // and the receiver only moves rows no session owns.
+  { table: "generation_attempts", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/generation-recovery.ts", "packages/db/src/with-workspace.ts"] },
   { table: "generation_feedback", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
   { table: "generations", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
   { table: "membership_profile_selections", owner: "packages/db/src/profile-selection.ts", physicalWriters: ["packages/db/src/profile-selection.ts"] },
@@ -1152,14 +1400,20 @@ export const LIFECYCLE_WRITER_INVENTORY = [
   { table: "onboarding_inputs", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/promotion-ops.ts", "packages/db/src/with-workspace.ts"] },
   { table: "onboarding_interview_drafts", owner: "packages/db/src/interview-ops.ts", physicalWriters: ["packages/db/src/interview-ops.ts"] },
   { table: "pause_periods", owner: "packages/credits/src/pause.ts", physicalWriters: ["packages/credits/src/pause.ts"] },
-  { table: "promotion_proposals", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts"] },
+  { table: "promotion_proposals", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts", "packages/db/src/promotion-audit.ts"] },
   { table: "proposal_evidence_feedback", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts"] },
   { table: "proposal_evidence_results", owner: "packages/db/src/promotion-ops.ts", physicalWriters: ["packages/db/src/promotion-ops.ts"] },
+  { table: "public_sample_spin_buckets", owner: "packages/db/src/public-sample-spin.ts", physicalWriters: ["packages/db/src/public-sample-spin.ts"] },
   { table: "rate_limit", owner: "packages/auth", physicalWriters: ["packages/db/src/auth-lifecycle.ts"] },
   { table: "results", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
   { table: "session", owner: "packages/auth", physicalWriters: ["packages/db/src/auth-lifecycle.ts", "packages/db/src/deletion-lifecycle.ts"] },
-  { table: "stripe_events", owner: "packages/credits/src/stripe/webhooks.ts", physicalWriters: ["packages/credits/src/stripe/webhooks.ts"] },
-  { table: "subscriptions", owner: "packages/credits/src/stripe", physicalWriters: ["packages/credits/src/pause.ts", "packages/credits/src/stripe/actions.ts", "packages/credits/src/stripe/auto-topup-rollout.ts", "packages/credits/src/stripe/auto-topup-v1-reconcile.ts", "packages/credits/src/stripe/auto-topup.ts", "packages/credits/src/stripe/customers.ts", "packages/credits/src/stripe/deletion-commands.ts", "packages/credits/src/stripe/tier-checkout-rollout.ts", "packages/credits/src/stripe/tier-checkout-v1-reconcile.ts", "packages/credits/src/stripe/webhooks.ts"] },
+  // `retention-receiver.ts` is here because its subject-erasure payload purge
+  // names the table in SOURCE (the dynamic sweep in the same file does not, and
+  // is covered by DYNAMIC_LIFECYCLE_WRITERS instead). The tenancy review found
+  // this file in NO physicalWriters list of any table it writes.
+  { table: "stripe_events", owner: "packages/credits/src/stripe/webhooks.ts", physicalWriters: ["packages/credits/src/stripe/webhooks.ts", "packages/db/src/retention-receiver.ts"] },
+  { table: "stripe_finance_extracts", owner: "packages/db/src/finance-extract.ts", physicalWriters: ["packages/db/src/finance-extract.ts"] },
+  { table: "subscriptions", owner: "packages/credits/src/stripe", physicalWriters: ["packages/credits/src/pause.ts", "packages/credits/src/stripe/actions.ts", "packages/credits/src/stripe/auto-topup-rollout.ts", "packages/credits/src/stripe/billing-contact.ts", "packages/credits/src/stripe/auto-topup-v1-reconcile.ts", "packages/credits/src/stripe/auto-topup.ts", "packages/credits/src/stripe/customers.ts", "packages/credits/src/stripe/deletion-commands.ts", "packages/credits/src/stripe/tier-checkout-rollout.ts", "packages/credits/src/stripe/tier-checkout-v1-reconcile.ts", "packages/credits/src/stripe/webhooks.ts"] },
   { table: "system_model_usage", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
   { table: "system_model_usage_reconciliations", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
   { table: "system_spend_claims", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },

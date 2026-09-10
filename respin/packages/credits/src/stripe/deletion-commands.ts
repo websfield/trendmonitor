@@ -105,15 +105,45 @@ async function subscriptionRow(db: DbLike, workspaceId: string): Promise<Subscri
   return row ?? null;
 }
 
-const CLEARED_CUSTOMER_FIELDS: Stripe.CustomerUpdateParams = {
+/**
+ * Plan C3's Stripe customer PERSONAL-FIELD CLASS, in one place: every field a
+ * person's details can land in on a Customer object. Two consumers share it so
+ * they cannot disagree about what "personal" means: the workspace erasure
+ * command below clears all of it (plus metadata, whose values may name a
+ * person), and `acceptBillingContact` clears all of it and then writes the
+ * accepting owner's email in place of the departing one. A list, not a
+ * producer (CLAUDE.md Respin rule 7): a new personal field on the Stripe API
+ * is an edit here.
+ */
+export const CUSTOMER_PERSONAL_FIELDS_CLEARED = {
   name: "",
   email: "",
   phone: "",
   description: "",
   address: "",
   shipping: "",
+} as const satisfies Stripe.CustomerUpdateParams;
+
+const CLEARED_CUSTOMER_FIELDS: Stripe.CustomerUpdateParams = {
+  ...CUSTOMER_PERSONAL_FIELDS_CLEARED,
   metadata: "",
 };
+
+/**
+ * The personal-field class (email aside) is clear on a customer object read
+ * back from the provider. DERIVED from the list above rather than re-typed,
+ * so a field added to the class is checked here without a second edit
+ * (lean gate R-2). Stripe returns a cleared string field as "" or null and a
+ * cleared object field (address, shipping) as null; both read as "empty".
+ */
+export function customerPersonalFieldsClear(customer: Stripe.Customer): boolean {
+  return (Object.keys(CUSTOMER_PERSONAL_FIELDS_CLEARED) as (keyof typeof CUSTOMER_PERSONAL_FIELDS_CLEARED)[])
+    .filter((field) => field !== "email")
+    .every((field) => {
+      const value = (customer as unknown as Record<string, unknown>)[field];
+      return value === null || value === undefined || value === "";
+    });
+}
 
 /**
  * Success condition of the fence: no field left that could authorise a
@@ -135,8 +165,7 @@ function liveSubscriptionId(row: SubscriptionRow | null): string | null {
 
 function customerIsClear(customer: Stripe.Customer | Stripe.DeletedCustomer): boolean {
   if (customer.deleted) return true;
-  return !customer.name && !customer.email && !customer.phone && !customer.description
-    && customer.address === null && customer.shipping === null
+  return customerPersonalFieldsClear(customer) && !customer.email
     && Object.keys(customer.metadata ?? {}).length === 0;
 }
 

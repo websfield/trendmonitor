@@ -226,6 +226,10 @@ describe("the two first-login pages use the bootstrap-then-scope authority", () 
       path: "app/(product)/settings/billing/page.tsx",
       importPath: "../../workspace-scope",
     },
+    {
+      path: "app/(product)/settings/account/page.tsx",
+      importPath: "../../workspace-scope",
+    },
   ];
 
   it.each(surfaces)("$path routes scope derivation through scopeForUser", ({

@@ -465,27 +465,32 @@ describe("R-98 fix round 1: parkedAutopsyClaimsForProfile — EVERY parked claim
       .resolves.toEqual([{ claimId: theirs.claimId }]);
   });
 
-  it("CHANGE A: the money's population is deliberately NOT item-scoped — a parked claim whose trend_item_id names ANOTHER profile's item is still returned, and no item is returned at all", async () => {
+  it("CHANGE A: the money's population is deliberately NOT item-scoped — and the mis-parented claim it once had to tolerate is now REFUSED by the schema", async () => {
     const { db, scope, a, b } = await fixture();
     const mine = await intakePastedReference(db, scope, a.id, { sourceUrl: CANONICAL_URL, transcript: "A's transcript" });
     const sibling = await intakePastedReference(db, scope, b.id, { sourceUrl: CANONICAL_URL, transcript: "B's transcript" });
-    // THE SHAPE THE SCHEMA ACCEPTS AND NO WRITER BUILDS (tenancy round 2,
+    // THE SHAPE THE SCHEMA USED TO ACCEPT AND NO WRITER BUILT (tenancy round 2,
     // CHANGE A — the reviewer forged this on real Postgres): a claim carrying
-    // A's `(profile_id, workspace_id)` pair and B's `trend_item_id`. Nothing
-    // relates the claim's composite FK to the item's, and
-    // `claimPrivateAutopsyForSystem` pair-checks the item before inserting, so
-    // this is reachable only by writing the row directly, as here.
-    await db.update(autopsyCacheClaims)
-      .set({ trendItemId: sibling.itemId })
-      .where(eq(autopsyCacheClaims.id, mine.claimId));
+    // A's `(profile_id, workspace_id)` pair and B's `trend_item_id`. Since
+    // migration 0057 (Phase 10b-1 fix round 2) the composite
+    // `(trend_item_id, profile_id)` key refuses it outright, so the money
+    // population's item-independence is no longer what keeps a mis-parented,
+    // debited claim refundable — the row cannot exist. The refusal is pinned
+    // by constraint name so the guard cannot quietly lapse.
+    let refusal: { code?: string; constraint?: string } | null = null;
+    try {
+      await db.update(autopsyCacheClaims).set({ trendItemId: sibling.itemId }).where(eq(autopsyCacheClaims.id, mine.claimId));
+    } catch (error) {
+      const cause = (error as { cause?: { code?: string; constraint?: string } }).cause ?? (error as { code?: string; constraint?: string });
+      refusal = { code: cause.code, constraint: cause.constraint };
+    }
+    expect(refusal).toEqual({ code: "23503", constraint: "autopsy_cache_claims_trend_item_profile_fk" });
     await park(db, mine.claimId);
 
-    // THE CLAIM IS STILL SETTLED. This is the assertion that makes "do not add
-    // the item join" a red test rather than a docblock: an
-    // `innerJoin(trendItems, ...pair)` — the tidy-looking fix — drops this row
-    // and makes a parked, DEBITED claim permanently unrefundable, which is
-    // round 1's CHANGE 1 in a new dress. The refund follows the CLAIM's pair,
-    // which is the pair the debit was taken under.
+    // THE CLAIM IS SETTLED under its own pair, and the read returns the claim
+    // id ALONE: the refund follows the CLAIM's pair, which is the pair the
+    // debit was taken under, and re-selecting the `trend_item_id` out stays
+    // red here rather than merely unreviewed.
     const rows = await parkedAutopsyClaimsForProfile(db, scope, a.id);
     expect(rows).toEqual([{ claimId: mine.claimId }]);
     // ...and the row carries the claim id ALONE, so re-selecting the unscoped

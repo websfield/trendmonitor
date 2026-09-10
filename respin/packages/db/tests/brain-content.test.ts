@@ -146,57 +146,61 @@ describe("assertClosedSchema", () => {
     const url = new URL("../src/brain-content.ts", import.meta.url);
     const src = await readFile(url, "utf8");
 
-    // A top-level call: at column 0, not indented inside a function or a test.
+    // Phase 10a closes G-15: the guard must NOT run at module load any more.
+    // A top-level call (column 0, not inside a function) is the shape that
+    // took every Stripe delivery down with one bad schema edit.
     const TOP_LEVEL_CALL = /^assertRegistryClosed\(BRAIN_CONTENT_SCHEMAS\);$/m;
 
     expect(
       TOP_LEVEL_CALL.test(src),
-      "brain-content.ts must call assertRegistryClosed at module load"
-    ).toBe(true);
+      "brain-content.ts must NOT call assertRegistryClosed at module load (G-15) — the preflight owns it"
+    ).toBe(false);
 
-    // The planted violation: comment the call out and the scan must fail.
-    const doctored = src.replace(
-      "\nassertRegistryClosed(BRAIN_CONTENT_SCHEMAS);",
-      "\n// assertRegistryClosed(BRAIN_CONTENT_SCHEMAS);"
-    );
+    // The planted violation: a source WITH the call must be refused.
+    const doctored = `${src}\nassertRegistryClosed(BRAIN_CONTENT_SCHEMAS);\n`;
     expect(doctored, "the plant must actually change the source").not.toBe(src);
     expect(
       TOP_LEVEL_CALL.test(doctored),
-      "the scan must REJECT a source whose module-load call is commented out"
-    ).toBe(false);
+      "the scan must CATCH a source that re-adds the module-load call"
+    ).toBe(true);
 
-    // And an indented (in-function) call must not satisfy it either.
+    // And an indented (in-function) call is not the hazard: it does not match.
     expect(
       TOP_LEVEL_CALL.test("  assertRegistryClosed(BRAIN_CONTENT_SCHEMAS);")
     ).toBe(false);
   });
 
-  it("runs the registry guard at MODULE LOAD, not in a test", async () => {
-    // Importing the module is the assertion: a bad registry throws on import.
+  it("does NOT run the registry guard at module load; the preflight does, and it is reachable from every startup (G-15)", async () => {
     const mod = await import("../src/brain-content");
     expect(Object.keys(mod.BRAIN_CONTENT_SCHEMAS).sort()).toEqual(
       [...brainKind.enumValues].sort()
     );
-    // And the guard is a real export that a caller can run — but nothing in
-    // this suite loops it over the registry, on purpose.
     expect(typeof mod.assertClosedSchema).toBe("function");
+    // THE THREE STARTUP POINTS, by source: the CI step, the Next.js server's
+    // register(), and the worker's main. A registry defect refuses a process
+    // from STARTING rather than a delivery from being served.
+    const { readFile } = await import("node:fs/promises");
+    const root = new URL("../../../", import.meta.url);
+    const ci = await readFile(new URL("../../../../.github/workflows/respin.yml", import.meta.url), "utf8");
+    const instrumentation = await readFile(new URL("instrumentation-node.ts", root), "utf8");
+    const workerMain = await readFile(new URL("worker/main.ts", root), "utf8");
+    expect(ci).toMatch(/run:\s*pnpm preflight/);
+    expect(instrumentation).toMatch(/runStartupPreflight\(\)/);
+    expect(workerMain).toMatch(/runStartupPreflight\(\)/);
   });
 
-  it("REACHES A DEPLOYED PROCESS: the guard runs when @respin/db is imported", async () => {
-    // THE BLOCK THIS CLOSES. The module-load call above was structurally
-    // correct and factually dormant: nothing in `respin/**` imported
-    // `brain-content.ts` outside this file, so no deployed process ever loaded
-    // it. A reviewer planted a bad schema, imported `@respin/db`, and measured
-    // `IMPORT @respin/db threw: NO`.
-    //
-    // Importing the PACKAGE ROOT is the assertion — the same door a route
-    // handler comes through — rather than the relative path this suite uses
-    // everywhere else, which is precisely the path that stayed green.
+  it("ORDINARY PACKAGE IMPORT CANNOT TAKE STRIPE DELIVERY DOWN: the root imports without running the guard, and the preflight is where it runs (G-15)", async () => {
+    // The history: the module-load call was dormant until the index imported
+    // brain-content, then it was LIVE in every process including the Stripe
+    // webhook's — a bad schema edit made `@respin/db` unimportable and every
+    // delivery a 500. Now the root imports cleanly and exposes the guard for
+    // the preflight to run; `preflight.test.ts` plants the bad kind.
     const root = await import("../src/index");
     expect(
       typeof root.assertRegistryClosed,
-      "@respin/db's index must pull brain-content.ts into the module graph"
+      "@respin/db's index must still expose the guard for the preflight"
     ).toBe("function");
+    expect(typeof root.runStartupPreflight).toBe("function");
     expect(typeof root.assertReferenceQuoteBudget).toBe("function");
     expect(typeof root.renderBrainReason).toBe("function");
 

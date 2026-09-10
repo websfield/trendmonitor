@@ -65,20 +65,25 @@ function OutcomeDisclosure({ effect }: { effect: unknown }) {
   );
 }
 
-function evidenceStrengthMeaning(
-  strength: Review["proposal"]["strength"],
-  source: Review["proposal"]["source"]
-): string {
-  if (source === "feedback") {
-    return "Repeated: the same feedback reaction was recorded for at least three distinct generations. It has no result evidence-state composition.";
-  }
-  switch (strength) {
-    case "early":
-      return "Early: either population has fewer than five results, or all counted results are self reported.";
-    case "repeated":
-      return "Repeated: both populations have at least five results and the evidence includes both self-reported and connector-verified results.";
-    case "corroborated":
-      return "Corroborated: both populations have at least five results and every result is connector verified.";
+/**
+ * ONE RESULT-EVIDENCE BOUNDARY (R-115, Phase 10a C1). The words come from the
+ * derived eligibility, never from the stored strength enum: a verified result
+ * proposal says its exact treatment and baseline n; a historic proposal that
+ * carried self-reported rows says so and proposes nothing; a feedback proposal
+ * says how many distinct generations repeated the reaction. There is no
+ * "strong" tier and no five-result threshold.
+ */
+function evidenceMeaning(eligibility: Review["learningEligibility"]): string {
+  switch (eligibility.kind) {
+    case "verified_results":
+      return `Verified result evidence: treatment n ${eligibility.treatmentN}, baseline n ${eligibility.baselineN}, every result connector verified.`;
+    case "legacy_unverified":
+      // "not learning eligible" is the plan's wording; the claims canon bans
+      // the word "learn" on every creator-facing surface, so it reads as
+      // "not proposal eligible" here — the same fact, in permitted words.
+      return "Legacy mixed/unverified evidence — not proposal eligible. Kept as history; it proposes nothing and cannot be accepted.";
+    case "structured_feedback":
+      return `Structured feedback: the same reaction was recorded on ${eligibility.occurrences} distinct generations. It carries no result numbers.`;
   }
 }
 
@@ -118,7 +123,7 @@ function ProposalFacts({ review }: { review: Review }) {
             Treatment: n {display(payloadValue(treatment, ["n"]))}, median {display(payloadValue(treatment, ["medianPer1k"]))}. Baseline: n {display(payloadValue(baseline, ["n"]))}, median {display(payloadValue(baseline, ["medianPer1k"]))}. Signed effect: {display(effect)} per 1,000.
           </p>
           <p>
-            Evidence states: {display(selfReportedN)} self reported and {display(connectorVerifiedN)} connector verified. Evidence strength: <strong>{review.proposal.strength}</strong>. {evidenceStrengthMeaning(review.proposal.strength, review.proposal.source)}
+            Evidence states: {display(selfReportedN)} self reported and {display(connectorVerifiedN)} connector verified. <span data-testid="promotion-evidence-meaning">{evidenceMeaning(review.learningEligibility)}</span>
           </p>
           <p>Structured confounders: {Array.isArray(confounders) && confounders.length ? confounders.map(display).join(", ") : "none recorded"}.</p>
           <p>Exact result evidence IDs: {resultIds.length ? resultIds.join(", ") : "[check]"}.</p>
@@ -126,7 +131,7 @@ function ProposalFacts({ review }: { review: Review }) {
         </>
       ) : <>
         <p>Feedback evidence population: n {feedbackIds.length} records across {feedbackGenerations.size} distinct generations.</p>
-        <p>Evidence strength: <strong>{review.proposal.strength}</strong>. {evidenceStrengthMeaning(review.proposal.strength, review.proposal.source)}</p>
+        <p><span data-testid="promotion-evidence-meaning">{evidenceMeaning(review.learningEligibility)}</span></p>
         <p>Exact feedback evidence IDs: {feedbackIds.length ? feedbackIds.join(", ") : "[check]"}.</p>
       </>}
     </div>

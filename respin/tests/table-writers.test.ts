@@ -42,6 +42,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * unpoliced write surface, and the green suite is the dangerous half.
  */
 const TABLES: Record<string, string> = {
+  activationCohortDaily: "activation_cohort_daily",
   account: "account",
   // Phase 10b-1 Task 4 (closed auth-delivery outbox).
   authMailOutbox: "auth_mail_outbox",
@@ -96,8 +97,11 @@ const TABLES: Record<string, string> = {
   systemSpendClaims: "system_spend_claims",
   systemSpendDaily: "system_spend_daily",
   systemWorkerHealth: "system_worker_health",
+  // Phase 10a plan C4: the public Sample Spin's abuse buckets.
+  publicSampleSpinBuckets: "public_sample_spin_buckets",
   session: "session",
   stripeEvents: "stripe_events",
+  stripeFinanceExtracts: "stripe_finance_extracts",
   subscriptions: "subscriptions",
   tierCheckoutProtocolRollouts: "tier_checkout_protocol_rollouts",
   user: "user",
@@ -691,7 +695,7 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/db/src/auth-mail.ts::insert":
       "Quota admission inserts one outbox row per admitted transactional mail under the global advisory lock, before any provider call.",
     "packages/db/src/auth-mail.ts::update":
-      "The dispatch mark and the single outcome writer are the only application mutations; terminal outcomes accept only an identical replay. The identity-erasure recipient scrub is NOT here: it is the registry-driven SQL port (lifecycle-sql-port.ts, DYNAMIC_LIFECYCLE_WRITER), which this scanner cannot see and which registry closure plus the independent probe cover instead (round-1 tenancy CHANGE).",
+      "The dispatch mark and the single outcome writer are the only application mutations; terminal outcomes accept only an identical replay. The identity-erasure recipient scrub is NOT here: it is the registry-driven SQL port (lifecycle-sql-port.ts, DYNAMIC_LIFECYCLE_WRITERS), which this scanner cannot see and which registry closure plus the independent probe cover instead (round-1 tenancy CHANGE).",
     "packages/db/src/auth-mail.ts::delete":
       "The 90-day retention receiver deletes content-free delivery outcomes by admission time.",
   },
@@ -723,6 +727,12 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/credits/src/pause.ts::update":
       "The billing pause authority closes the exact open pause under the money lock.",
   },
+  public_sample_spin_buckets: {
+    "packages/db/src/public-sample-spin.ts::insert":
+      "Phase 10a: the DB-atomic public limiter opens a visitor's one 24-hour window under the current key version, inside the same transaction that reserves the R-123 spend.",
+    "packages/db/src/public-sample-spin.ts::update":
+      "Phase 10a: the same limiter advances counters (admitted, blocked, refused, duplicate) on an existing window; it never moves the window's start or expiry.",
+  },
   rate_limit: {
     "packages/db/src/auth-lifecycle.ts::insert":
       "The fresh-factor authorities consume durable, pseudonymous account/client attempt budgets before password hashing so reauthentication work remains bounded across processes.",
@@ -738,8 +748,16 @@ const EXPECTED: Record<string, Record<string, string>> = {
   stripe_events: {
     "packages/credits/src/stripe/webhooks.ts::insert":
       "The verified Stripe webhook transaction records the provider event exactly once.",
+    "packages/db/src/retention-receiver.ts::update":
+      "The subject-erasure payload purge (Phase 10b-1 round 3). A COMPLETED identity or workspace erasure used to leave the deleted person's email, name and billing address in `payload` for up to 90 days, because `erasureHold` was satisfied by the RECEIVER existing and that receiver is a clock measured from `received_at`, not an erasure step. The purge lifts the finance facts out first, in the same transaction, then blanks the payload for every workspace the subject belonged to. It names the table in source (unlike the dynamic sweep in the same file), so it is a scannable physical writer and is enumerated here rather than left to registry closure.",
+  },
+  stripe_finance_extracts: {
+    "packages/db/src/finance-extract.ts::insert":
+      "Phase 10b-1 Task 6: the pre-redaction finance extract. The ONLY writer, and it writes in the same transaction as — and strictly before — the 90-day payload redaction, so no money fact is lost to a redaction that ran first. Idempotent on (source event, object id), so a resumed sweep re-extracting an event books nothing twice.",
   },
   subscriptions: {
+    "packages/credits/src/stripe/billing-contact.ts::update":
+      "Plan C3 (Phase 10b-1): the billing-contact handover moves `billing_contact_user_id` to the accepting owner, only after the provider copy has been rewritten and verified.",
     "packages/credits/src/stripe/deletion-commands.ts::update":
       "The deletion executor's auto-top-up fence disables the mirror flag for a tombstoned workspace; this package still owns every subscriptions write (Phase 10b-1 Task 4).",
     "packages/credits/src/pause.ts::update":
@@ -822,7 +840,15 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/db/src/deletion-external-commands.ts::update":
       "The dispatch mark and the single outcome writer advance a command through pending → succeeded | failed | unknown; terminal rows accept only an identical replay.",
   },
+  activation_cohort_daily: {
+    "packages/db/src/activation.ts::onConflictDoUpdate":
+      "Phase 10b-1 Task 7: the same upsert's ON CONFLICT arm — the per-cohort counters increment in place, and the row carries no id to conflict on but (cohort_date, metric_version).",
+    "packages/db/src/activation.ts::insert":
+      "Phase 10b-1 Task 7 / R-121: the identifier-free cohort aggregate. Upserted exactly once per identity erasure, in the erasure transaction, from a contribution captured at request time; carries dates, counts and the metric version and no id of any kind.",
+  },
   deletion_operations: {
+    "packages/db/src/activation.ts::update":
+      "Phase 10b-1 Task 7: the pending -> applied transition of the captured activation contribution, in the erasure transaction. Guarded by the pending state in the WHERE, so a replay updates zero rows and applies nothing twice.",
     "packages/db/src/deletion-executor.ts::update":
       "The worker executor claims and releases the operation lease, erases the recovery digest at erasure start, and clears the lease on completion; state transitions still go through the deletion authority's journal append.",
     "packages/db/src/deletion-lifecycle.ts::insert":
@@ -853,6 +879,8 @@ const EXPECTED: Record<string, Record<string, string>> = {
       "refreshPromotionProposalsInScope persists only a draft validated by @respin/brain's private mint; the DB projects it to columns but never constructs a proposal.",
     "packages/db/src/promotion-ops.ts::update":
       "refreshPromotionProposalsInScope marks only proposed rows stale/superseded, and decidePromotionProposalInScope records the terminal server-derived decision/activation under the locked profile.",
+    "packages/db/src/promotion-audit.ts::update":
+      "Phase 10a plan C1 (R-115): the pre-deploy audit's one idempotent migration operation supersedes still-proposed result proposals whose joined evidence carries a non-verified row; it touches no other status and no decision column.",
   },
   proposal_evidence_results: {
     "packages/db/src/promotion-ops.ts::insert":
@@ -980,6 +1008,8 @@ const EXPECTED: Record<string, Record<string, string>> = {
   generation_attempts: {
     "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().claimGenerationAttempt — the durable claim committed BEFORE outbound HTTP (R14). Insert-or-observe via onConflictDoNothing, so two concurrent presses of one attempt id produce one row and one winner; `state`, the timestamps and both terminal ids are written here, never taken from a caller.",
+    "packages/db/src/generation-recovery.ts::update":
+      "Phase 10b-1 Task 6 / C5: the one-minute attempt receiver, which is a WORKER path and deliberately not a writeCapabilities one — it moves rows no session owns (a claim abandoned before the vendor at 15 minutes, a started attempt past its deadline, an unsettled candidate at 24 hours). It NEVER settles and never calls a provider: settlement stays with `settleGeneration` in with-workspace.ts, because a second author on the debit would be a second chance to charge for one build.",
     "packages/db/src/with-workspace.ts::update":
       "writeCapabilities().advanceGenerationAttempt (claimed -> vendor_started -> vendor_complete, and the two non-settled terminals) and .settleGeneration (the `settled` transition, which is deliberately unreachable from the first). BOTH put the legal FROM-states in the WHERE, so a skipped or replayed transition updates zero rows and refuses — the half of `forward only` application code owns, since Postgres cannot compare a row to its own previous value without a trigger. R14c: advanceGenerationAttempt is ALSO the writer that stores the durable `candidate` on the move to `vendor_complete` and CLEARS it on every other transition, and settleGeneration clears it on the way to `settled` — `generation_attempts_candidate_iff_vendor_complete` is an EQUALITY, so no terminal row may retain output text and no `vendor_complete` row may exist that a retry cannot settle. The candidate is server-derived here and is never taken from a caller.",
   },
@@ -1175,7 +1205,19 @@ describe("P8 — every M2a table's writers are enumerated", () => {
 
   it(
     "reddens for a second app-table or pg-boss capability writer without requiring a direct import",
-    { timeout: 180_000 },
+    // SEVEN planted shapes, each re-running the FULL AST closure scan over
+    // every production source -- that is what makes this a witness rather
+    // than an assertion about the scanner's own filter, so the cost is
+    // inherent and fewer plants would be a weaker guard, not a faster one.
+    //
+    // Measured, because this budget was already near its limit: 156.8 s on
+    // the Tasks 6-9 build tree (87% of the old 180 s) and 173.2 s once the
+    // gate fixes added sources for it to walk (96%), then a timeout on the
+    // next full-suite run under contention. The old budget was a latent red
+    // before this change touched it. Raised with headroom rather than
+    // trimmed; the real fix is to memoise the parse across plants instead of
+    // re-parsing the whole tree seven times, recorded as a gate residual.
+    { timeout: 420_000 },
     async () => {
     const yieldToWorkerRpc = () =>
       new Promise<void>((resolve) => setImmediate(resolve));

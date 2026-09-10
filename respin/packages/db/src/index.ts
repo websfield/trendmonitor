@@ -22,6 +22,8 @@ export {
   deletionExternalCommandStatus,
   deletionMembershipSnapshots,
   deletionOperations,
+  activationCohortDaily,
+  activationContributionState,
   deletionOperationTransitions,
   deletionRecoverySessions,
   deletionOperationState,
@@ -91,6 +93,92 @@ export {
   type ErasureEnablementPort,
   type ErasureResult,
 } from "./deletion-executor";
+export {
+  assertRetentionClockClosure,
+  isReceiverExecutor,
+  measureKey,
+  RETENTION_CLOCKS,
+  RETENTION_MEASURES,
+  retentionMeasureFor,
+  retentionSweepSpecs,
+  type RetentionClock,
+  type RetentionEffect,
+  type RetentionMeasure,
+  type RetentionMeasureKey,
+  type RetentionPrecondition,
+  type RetentionSweepSpec,
+} from "./retention-clocks";
+export {
+  ACTIVATION_EXCLUDED_USER_IDS_ENV,
+  ACTIVATION_FULL_SCRIPT_MODES,
+  ACTIVATION_METRIC_VERSION,
+  ACTIVATION_WINDOW_MS,
+  ADMIN_USER_IDS_ENV,
+  applyActivationContributionInTx,
+  captureActivationContributionInTx,
+  classifyActivation,
+  deriveActivationCohorts,
+  loadActivationSignals,
+  NO_ACTIVATION_EXCLUSIONS,
+  queryActivation,
+  resolveActivationExclusions,
+  type ActivationCohort,
+  type ActivationContribution,
+  type ActivationExclusions,
+  type ActivationSignals,
+} from "./activation";
+export {
+  composeDeletionJournal,
+  DELETION_JOURNAL_ENV,
+  JOURNAL_UNAVAILABLE_CODE,
+  parseDeletionJournalEnv,
+  resolveAppDeletionJournal,
+  unavailableDeletionJournal,
+  type DeletionJournalEnv,
+  type JournalTransportFactory,
+} from "./deletion-journal-compose";
+export {
+  assertDeletionRequestsEnabled,
+  DELETION_REQUEST_SCOPES_ENV,
+  DELETION_SCOPES,
+  parseDeletionScopeList,
+  REQUESTS_DISABLED_CODE,
+  resolveDeletionRequestEnablement,
+  type DeletionRequestEnablement,
+} from "./deletion-request-enablement";
+export {
+  assertLifecycleRegistration,
+  REGISTRATION_SUBJECTS,
+  type LifecycleRegistrationInput,
+} from "./lifecycle-registration";
+export {
+  pseudonymousWorkspaceKey,
+  runRetentionTick,
+  RETENTION_BATCH_SIZE,
+  RETENTION_MAX_BATCHES,
+  type RetentionTableOutcome,
+  type RetentionTickSummary,
+} from "./retention-receiver";
+export {
+  extractFinanceFacts,
+  persistFinanceExtractsInTx,
+  EXTRACTABLE_OBJECT_TYPES,
+  FINANCE_EXTRACTION_VERSION,
+  type FinanceExtractInput,
+  type FinanceExtractRow,
+  type IncompleteReason,
+} from "./finance-extract";
+export {
+  runGenerationRecoveryTick,
+  ABANDONED_BEFORE_VENDOR,
+  CLAIMED_ABANDON_MS,
+  GENERATION_RECOVERY_BATCH,
+  VENDOR_COMPLETE_HARD_CLEAR_MS,
+  VENDOR_COMPLETE_SETTLE_MS,
+  VENDOR_STARTED_GRACE_MS,
+  type GenerationRecoveryOptions,
+  type GenerationRecoveryOutcome,
+} from "./generation-recovery";
 export {
   createSqlLifecycleMutationPort,
   createSqlResidueProbePort,
@@ -718,6 +806,24 @@ export {
   AUTOPSY_ATTEMPT_CODE_CEILING,
   AUTOPSY_VENDOR_CALLS_PER_ATTEMPT,
   SYSTEM_AUTOPSY_DAILY_CODE_CEILING_MICRO_USD,
+  SYSTEM_SPEND_PURPOSES,
+  PUBLIC_SAMPLE_SPIN_DAILY_CODE_CEILING_MICRO_USD,
+  PUBLIC_SAMPLE_SPIN_MAX_CONCURRENT,
+  PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX,
+  PUBLIC_SAMPLE_SPIN_ATTEMPT_LEASE_MS,
+  PUBLIC_SAMPLE_SPIN_DEADLINE_CODE_CEILING_MS,
+  PUBLIC_SAMPLE_SPIN_FINALISE_MARGIN_MS,
+  reconcileSystemModelUsage,
+  claimSystemSpend,
+  claimSystemSpendInTx,
+  recordSystemModelUsage,
+  publicSampleSpinInFlightCount,
+  recoverStalePublicSampleSpinAttempts,
+  type SystemSpendPurpose,
+  type SystemSpendAttribution,
+  type SystemSpendClaim,
+  type SystemSpendClaimResult,
+  type RecordSystemModelUsage,
   SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING,
   recordSystemWorkerHealth,
   createSystemAutopsyAttemptStore,
@@ -1029,11 +1135,20 @@ export {
   type DeclaredMetricEdit,
 } from "./brain-ops";
 export {
+  carriesUnverifiedEvidence,
   type DecidePromotionProposalParams,
+  type LearningEligibility,
   type PromotionDecisionResult,
   type PromotionProposalReview,
   type PromotionReviewClaim,
 } from "./promotion-ops";
+// Phase 10a plan C1 (R-115): the pre-deploy result-proposal audit.
+export {
+  auditResultProposals,
+  renderProposalAudit,
+  supersedeUnverifiedResultProposals,
+  type ProposalAuditReport,
+} from "./promotion-audit";
 // ONE exporter (slice 5 gate round 1). `exportBrain`/`exportBrainFile` and
 // their materialising helpers had zero `app/**` callers while carrying every
 // export witness, so they are gone and `openBrainExport` is the whole surface.
@@ -1148,3 +1263,67 @@ export {
   type FakeS3Options,
   type FakeS3Tamper,
 } from "./testing-s3";
+
+// Plan C4's external-copy registry: the holders of a subject's data outside
+// this database. `/settings/account` derives its "what survives erasure"
+// sentence from this list, so a new processor cannot be added without the
+// public copy changing in the same change.
+export {
+  EXTERNAL_COPIES,
+  BACKUP_MAX_RETENTION_DAYS,
+  COHORT_RETENTION_YEARS,
+  lastCapableCopyDay,
+  type ExternalCopy,
+  type ExternalCopyClass,
+} from "./external-copies";
+
+// Phase 10a plan C4: the public Sample Spin's abuse buckets and the DB-atomic
+// limiter that composes them with the system-spend reservation.
+export { publicSampleSpinBuckets, type PublicSampleSpinBucket } from "./public-sample-spin-schema";
+export {
+  PUBLIC_SAMPLE_SPIN_HMAC_KEYS_ENV,
+  PUBLIC_SAMPLE_SPIN_BUCKET_MS,
+  NO_TRUSTED_IP,
+  PublicSampleSpinKeyringError,
+  admitPublicSampleSpin,
+  ipBucketDigest,
+  parsePublicSampleSpinKeyring,
+  priorKeyVersionRetired,
+  recordPublicSampleSpinOutcome,
+  type PublicSampleSpinAdmission,
+  type PublicSampleSpinAdmissionInput,
+  type PublicSampleSpinKey,
+  type PublicSampleSpinKeyring,
+} from "./public-sample-spin";
+
+// Phase 10a closes G-15: the explicit startup preflight (see preflight.ts).
+export {
+  PREFLIGHT_CHECKS,
+  PreflightRefusedError,
+  runStartupPreflight,
+  type PreflightCheck,
+  type PreflightReport,
+} from "./preflight";
+// Phase 10a plan C5: content-free telemetry sink builders, SDK-less.
+export {
+  ACTIVATION_COHORT_EVENT,
+  ACTIVATION_SMALL_CELL_DENOMINATOR,
+  MonthlyEventBudget,
+  POSTHOG_MONTHLY_EVENT_BUDGET,
+  SENTRY_MONTHLY_EVENT_BUDGET,
+  TELEMETRY_SYSTEM_IDENTITY,
+  activationCohortEventUuid,
+  assertSafeErrorEvent,
+  parsePosthogSink,
+  parseSentryDsn,
+  posthogActivationCapture,
+  sendOutbound,
+  sentryEnvelope,
+  sentryEnvironmentTag,
+  tightenOnlySampleRate,
+  type ActivationCohortAggregate,
+  type OutboundJson,
+  type PosthogSink,
+  type SafeErrorEvent,
+  type SentryDsn,
+} from "./telemetry-sinks";

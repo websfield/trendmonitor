@@ -1,0 +1,6 @@
+{
+  "bucket-policy": [],
+  "iam-purger": [],
+  "iam-verifier": [],
+  "iam-writer": []
+}

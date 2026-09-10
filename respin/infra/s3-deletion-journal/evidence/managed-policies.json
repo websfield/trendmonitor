@@ -1,0 +1,18 @@
+{
+  "writer": {
+    "Arn": "arn:aws:iam::770371751912:policy/respin-journal-writer-prod",
+    "AttachmentCount": 0
+  },
+  "verifier": {
+    "Arn": "arn:aws:iam::770371751912:policy/respin-journal-verifier-prod",
+    "AttachmentCount": 0
+  },
+  "purger": {
+    "Arn": "arn:aws:iam::770371751912:policy/respin-journal-purger-prod",
+    "AttachmentCount": 0
+  },
+  "break-glass": {
+    "Arn": "arn:aws:iam::770371751912:policy/respin-journal-break-glass-prod",
+    "AttachmentCount": 0
+  }
+}

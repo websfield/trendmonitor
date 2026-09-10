@@ -1,0 +1,16 @@
+{
+  "_comment": [
+    "Recorded from price-evidence.ap-southeast-2.json (the operator's reviewed",
+    "AWS price-list pull, reviewedAt 2026-09-08). tests/journal-forecast-cli.test.ts pins",
+    "every number here to that evidence file, so the two cannot drift."
+  ],
+  "region": "ap-southeast-2",
+  "currency": "USD",
+  "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/ap-southeast-2/index.json",
+  "effectiveAt": "2026-08-01",
+  "reviewedAt": "2026-09-08",
+  "storagePerGibMonth": "0.025",
+  "putPer1000Requests": "0.0055",
+  "getPer1000Requests": "0.00044",
+  "listPer1000Requests": "0.0055"
+}

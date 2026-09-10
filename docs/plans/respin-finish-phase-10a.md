@@ -116,7 +116,11 @@ G-15 closes by moving the import-time registry assertion into an explicit CI/sta
 
 ## Task sequence and handoffs
 
-1. Confirm 10b-1's registry/receiver/restore gate is green, then correct verified-only eligibility, copy, writer closure, and deployment audit; preserve feedback proposals.
+1. Confirm 10b-1's registry/receiver/restore gate is green **and close the three Tasks 6-9 residuals this slice is built on** (`respin-finish-open-items.md`, added 2026-09-08), then correct verified-only eligibility, copy, writer closure, and deployment audit; preserve feedback proposals.
+   - **T69-R8 - the registration API must catch a new FIELD, not only a new table or row class.** `assertLifecycleRegistration` closes tables and row classes, but the field partition is complete by construction (`remaining_columns` is the last set), so a column added by this slice lands silently in `receipt_facts`, is never scrubbed at erasure, and the closure stays green. Task 9's own "Done when" - a later slice "cannot add an uncovered table, row class, **or field set**" - is therefore not met, and 10a is the first slice to add columns under it. Close it here or every later slice inherits the hole.
+   - **T69-R1 / T69-R15 - the activation number this slice reports over-counts, and nothing carries that.** Better Auth stores no email-verification timestamp, so `emailVerified` is read as of capture rather than within the 24-hour window R-121 requires; the bias is one-directional (numerator over-reports, never under). `ActivationCohort` has no caveat field and `smallCell` is computed but unenforced. C5 below makes this slice the consumer, so the caveat must ride the returned shape - a reporting surface cannot attach a limitation it was never handed.
+   - **T69-R5 - nothing asserts the retention sweep is scheduled at all.** `runRetention` is optional in `PgBossRuntimeSources` and the queue registers only `if (this.#sources.runRetention)`; `worker/retention.ts` has no test file. C4 gives this slice a new 24-hour HMAC-bucket clock driven by that same receiver, so an unscheduled sweep means the new clock silently never runs.
+   - **The fixture habit, which is why the above were found late.** Two reviewer rounds on Tasks 6-9 produced six BLOCKs, every one invisible to a green ~4,800-test gate, and both round-2 BLOCKs sat in sweep specs that had never been given a real row - 24 of 29 still have none. C4 already requires a populated fixture for this slice's own spec **before the public flag can turn on**; treat that as the minimum, not the ceiling.
 2. Generalise system spend and migrate existing autopsy data compatibly; prove old autopsy behavior.
 3. Add validated fictional fixtures and the sessionless Sample Spin orchestrator.
 4. Register every new row class/field set in 10b-1's executable gate; add HMAC limiter, exact R-123 concurrency/deadline/input/output controls, receiver, and worker health.
@@ -176,6 +180,9 @@ Deviations are recorded in the implementation ledger with the authority preserve
 | Count an immature or duplicate activation | cohort-boundary tests |
 | Drop email verification, admit a non-script/demo/test row, add heuristic exclusions, or lose a deleted-before-maturity denominator | activation contract/mutation matrix |
 | Emit a PostHog activation cell with denominator `<10` or render suppression as zero | small-cell privacy test |
+| Add a column to any split table without naming it in exactly one field set | field-level registration closure (T69-R8) |
+| Report an activation number with no verification-limitation caveat on the returned shape | activation provenance test (T69-R1/R15) |
+| Compose a production worker with no retention sweep queue registered | receiver-scheduling test (T69-R5) |
 
 **Population:** every result aggregate/proposal constructor, every Sample Spin output field from `outputTextUnits`, every provider-call site, every demo/observability persistence writer, and every activation source table is enumerated from exports/schema rather than a handwritten subset. At least three mutations are planted by someone other than the implementer. Visual usefulness and text quality remain sampled human judgements and are reported with sample n, model/config/prompt versions and failures—not as mutation coverage or uplift.
 
@@ -193,3 +200,4 @@ Record official pricing URLs and review dates, derived ceilings/formulae, migrat
 - PRD/build-plan/tech-spec/marketing/privacy/changelog are consistent with R-115–R-117/R-121.
 - Full Respin billing, tenancy, spin-compliance, and learning-honesty gates PASS; final code review PASS.
 - Every 10a table/row class/field set passes 10b-1's already-executable gate; 10b-2/10c receive stable Sample/system-spend interfaces.
+- The three inherited Tasks 6-9 residuals are closed with witnesses that redden when replanted: a new **field** cannot escape registration, the activation caveat rides the returned shape, and the retention sweep is asserted scheduled in the production composition. Every sweep spec this slice adds ships with a populated fixture.

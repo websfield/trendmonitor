@@ -26,6 +26,7 @@ Assume the plan shipped and **failed in production**. Enumerate the most likely 
 - **Handoff contracts** — every artifact produced in phase i and consumed in phase j>i has its interface pinned in phase i and cited by phase j.
 - **Verifiability** — every Acceptance Criterion is PASS/FAIL with evidence; no "it works" criteria.
 - **Number provenance** — every quantitative target is cited (doc:line) or derived in a Derived Budgets table. "Adds recurring spend" is an uncited number too: a new external service or paid dependency with no recurring-cost row (estimated monthly cost + free-tier ceiling) is a finding.
+- **Invariant-ID slugs** — every named invariant carries a non-empty `invariant-id` slug, and no two invariants in the plan share one. On an amendment to an existing plan, confirm no previously-assigned slug was silently renamed — the workflow engine (where in use) binds recurrence to that slug by exact string match, so a rename breaks it without a visible error.
 
 ### 4. Consolidate
 You receive the other reviewers' verdicts in your brief. Merge them with your own findings, deduplicate, and prioritize.

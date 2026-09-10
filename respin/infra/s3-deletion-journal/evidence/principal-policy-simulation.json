@@ -1,0 +1,737 @@
+{
+  "writer": [
+    {
+      "EvalActionName": "s3:PutObject",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-writer-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 3,
+            "Column": 17
+          },
+          "EndPosition": {
+            "Line": 18,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-writer-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 3,
+                "Column": 17
+              },
+              "EndPosition": {
+                "Line": 18,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:PutObjectRetention",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-writer-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 18,
+            "Column": 6
+          },
+          "EndPosition": {
+            "Line": 32,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-writer-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 18,
+                "Column": 6
+              },
+              "EndPosition": {
+                "Line": 32,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:GetObject",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:GetObjectVersion",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:GetObjectRetention",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:DeleteObject",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:DeleteObjectVersion",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:ListBucket",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:ListBucketVersions",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    }
+  ],
+  "verifier": [
+    {
+      "EvalActionName": "s3:PutObject",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:PutObjectRetention",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:GetObject",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-verifier-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 17,
+            "Column": 6
+          },
+          "EndPosition": {
+            "Line": 28,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-verifier-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 17,
+                "Column": 6
+              },
+              "EndPosition": {
+                "Line": 28,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:GetObjectVersion",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-verifier-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 17,
+            "Column": 6
+          },
+          "EndPosition": {
+            "Line": 28,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-verifier-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 17,
+                "Column": 6
+              },
+              "EndPosition": {
+                "Line": 28,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:GetObjectRetention",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-verifier-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 17,
+            "Column": 6
+          },
+          "EndPosition": {
+            "Line": 28,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-verifier-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 17,
+                "Column": 6
+              },
+              "EndPosition": {
+                "Line": 28,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:DeleteObject",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:DeleteObjectVersion",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:ListBucket",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-verifier-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 3,
+            "Column": 17
+          },
+          "EndPosition": {
+            "Line": 17,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-verifier-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 3,
+                "Column": 17
+              },
+              "EndPosition": {
+                "Line": 17,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:ListBucketVersions",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-verifier-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 3,
+            "Column": 17
+          },
+          "EndPosition": {
+            "Line": 17,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-verifier-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 3,
+                "Column": 17
+              },
+              "EndPosition": {
+                "Line": 17,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "purger": [
+    {
+      "EvalActionName": "s3:PutObject",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:PutObjectRetention",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:GetObject",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-purger-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 17,
+            "Column": 6
+          },
+          "EndPosition": {
+            "Line": 28,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-purger-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 17,
+                "Column": 6
+              },
+              "EndPosition": {
+                "Line": 28,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:GetObjectVersion",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-purger-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 17,
+            "Column": 6
+          },
+          "EndPosition": {
+            "Line": 28,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-purger-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 17,
+                "Column": 6
+              },
+              "EndPosition": {
+                "Line": 28,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:GetObjectRetention",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-purger-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 17,
+            "Column": 6
+          },
+          "EndPosition": {
+            "Line": 28,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-purger-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 17,
+                "Column": 6
+              },
+              "EndPosition": {
+                "Line": 28,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:DeleteObject",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "implicitDeny",
+      "MatchedStatements": [],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "implicitDeny"
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:DeleteObjectVersion",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-purger-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 17,
+            "Column": 6
+          },
+          "EndPosition": {
+            "Line": 28,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/simulation",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-purger-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 17,
+                "Column": 6
+              },
+              "EndPosition": {
+                "Line": 28,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:ListBucket",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-purger-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 3,
+            "Column": 17
+          },
+          "EndPosition": {
+            "Line": 17,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-purger-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 3,
+                "Column": 17
+              },
+              "EndPosition": {
+                "Line": 17,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "EvalActionName": "s3:ListBucketVersions",
+      "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+      "EvalDecision": "allowed",
+      "MatchedStatements": [
+        {
+          "SourcePolicyId": "respin-journal-purger-prod",
+          "SourcePolicyType": "IAM Policy",
+          "StartPosition": {
+            "Line": 3,
+            "Column": 17
+          },
+          "EndPosition": {
+            "Line": 17,
+            "Column": 6
+          }
+        }
+      ],
+      "MissingContextValues": [],
+      "EvalDecisionDetails": {},
+      "ResourceSpecificResults": [
+        {
+          "EvalResourceName": "arn:aws:s3:::respin-deletion-journal-prod-770371751912",
+          "EvalResourceDecision": "allowed",
+          "MatchedStatements": [
+            {
+              "SourcePolicyId": "respin-journal-purger-prod",
+              "SourcePolicyType": "IAM Policy",
+              "StartPosition": {
+                "Line": 3,
+                "Column": 17
+              },
+              "EndPosition": {
+                "Line": 17,
+                "Column": 6
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

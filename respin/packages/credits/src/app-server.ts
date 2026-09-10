@@ -65,6 +65,12 @@ import {
   type CheckoutUrls,
 } from "./stripe/actions";
 import {
+  acceptBillingContact,
+  billingContactStatus,
+  BillingContactProviderError,
+  type BillingContactStatus,
+} from "./stripe/billing-contact";
+import {
   PackPriceMismatchError,
   PackPriceNotMappedError,
   PackPriceUnavailableError,
@@ -99,6 +105,20 @@ import {
   NotEnoughPostsError,
 } from "@respin/llm";
 import { inferVoice, type InferVoiceResult } from "./infer-voice";
+import {
+  PublicSampleSpinEnablementError,
+  PublicSampleSpinNotConfiguredError,
+  resolvePublicSampleSpinEnablement,
+  runPublicSampleSpin,
+  type PublicSampleSpinEnablement,
+  type SampleSpinResponse,
+} from "./sample-spin";
+export { PublicSampleSpinEnablementError, PublicSampleSpinNotConfiguredError };
+import { parsePublicSampleSpinKeyring, PUBLIC_SAMPLE_SPIN_HMAC_KEYS_ENV } from "@respin/db";
+// Display-only values the landing page renders beside the live panel: the
+// synthetic original and the idea ceiling. No behaviour rides on them.
+export { SAMPLE_ORIGINAL, SAMPLE_SPIN_IDEA_MAX_CODE_POINTS, SAMPLE_SPIN_NEXT_ACTION } from "./sample-spin";
+import { getActiveConfigRequiringStored } from "@respin/config";
 import {
   BrainNotActivatedError,
   BrainPointerDivergenceError,
@@ -307,6 +327,8 @@ export {
   StripeAccountBindingError,
   StripeSessionUrlMissingError,
   UnknownTierPriceError,
+  // Phase 10b-1 C3: reachable from `respinCredits.acceptBillingContact`.
+  BillingContactProviderError,
   // Audit 2026-08-17 remediation (R1). Each is reachable from a facade method,
   // so the walk in facade-errors.test.ts demands them here — and each has a
   // rendered `?e=` code in app/(product)/billing-errors.ts, because a typed
@@ -685,4 +707,60 @@ export const respinCredits = {
     opts: { enabled: boolean; monthlyCapCents?: number },
     authority: ReauthenticatedSessionRef
   ) => setAutoTopup(getServerDb(), scope, opts, authority),
+  // Plan C3 (Phase 10b-1): the billing-contact handover that lifts identity
+  // deletion's `billing_contact_*` refusals. Provider write first, then the
+  // binding (billing-contact.ts).
+  billingContactStatus: (scope: WorkspaceScope): Promise<BillingContactStatus> =>
+    billingContactStatus(getServerDb(), scope),
+  acceptBillingContact: (
+    scope: WorkspaceScope,
+    email: string,
+    authority: ReauthenticatedSessionRef
+  ): Promise<BillingContactStatus> => acceptBillingContact(getServerDb(), scope, email, authority),
+  /**
+   * Phase 10a: is the public Sample Spin reachable on this deployment? Read at
+   * request time, never at import (keyless build). An unknown value throws —
+   * the landing page and the route both fail closed on it.
+   */
+  publicSampleSpinEnablement: (): PublicSampleSpinEnablement =>
+    resolvePublicSampleSpinEnablement(process.env),
+  /**
+   * Phase 10a plan C2: the sessionless public Sample Spin. THE ONLY DOOR from
+   * app/** to a vendor call without a session, and it mints none: no
+   * WorkspaceScope, no ProfileScope, no ledger row. The provider is built with
+   * `maxRetries: 0` HERE, deliberately — a retry inside the SDK is an HTTP
+   * attempt the orchestrator could not count, and R-123 makes a hidden retry an
+   * invariant failure. `sample-spin-facade.test.ts` pins that construction.
+   *
+   * `canonicalIp` is resolved by the route through `@respin/auth`'s one
+   * trusted-proxy authority; this facade never reads a header.
+   */
+  publicSampleSpin: async (input: {
+    requestId: string;
+    canonicalIp: string | null;
+    body: unknown;
+  }): Promise<SampleSpinResponse> => {
+    const db = getServerDb();
+    const { content, version } = await getActiveConfigRequiringStored(db, [
+      "publicSampleSpin.dailyCapMicroUsd",
+      "systemAutopsy.dailyCapMicroUsd",
+      "similarity.strictness",
+      "llm.models.generation",
+      "llm.models.classification",
+      "llm.maxOutputTokens",
+      "llm.timeoutMs",
+      "llm.overallDeadlineMs",
+    ]);
+    const keyring = parsePublicSampleSpinKeyring(process.env[PUBLIC_SAMPLE_SPIN_HMAC_KEYS_ENV]);
+    if (keyring === null) throw new PublicSampleSpinNotConfiguredError();
+    const provider = createAnthropicProvider({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      timeoutMs: content.llm.timeoutMs,
+      maxRetries: 0,
+    });
+    return runPublicSampleSpin(
+      { db, provider, content, configVersion: version, keyring, now: () => new Date() },
+      input
+    );
+  },
 };

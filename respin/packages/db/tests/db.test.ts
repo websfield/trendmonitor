@@ -506,11 +506,29 @@ describe("M1 billing schema constraints (AC-4)", () => {
       outcome: "refused_unknown_customer",
     });
 
+    // TASK 6: the ledger, the subscription mirror and the pause rows are on
+    // R-122's seven-year chain now, so their keys are RESTRICT and the raw
+    // delete is refused while they still point here. The executor repoints them
+    // to a stub first (`orderTargetsForExecution` ranks pseudonymise ahead of
+    // every cascade); this schema test has no executor, so it repoints by hand.
+    await expect(db.delete(workspaces).where(eq(workspaces.id, wsId))).rejects.toThrow();
+    const stub = (
+      await db.insert(workspaces).values({ name: "Deleted workspace" }).returning()
+    )[0]!;
+    await db.update(creditLedger).set({ workspaceId: stub.id }).where(eq(creditLedger.workspaceId, wsId));
+    await db.update(subscriptions).set({ workspaceId: stub.id }).where(eq(subscriptions.workspaceId, wsId));
+    await db.update(pausePeriods).set({ workspaceId: stub.id }).where(eq(pausePeriods.workspaceId, wsId));
+
     await db.delete(workspaces).where(eq(workspaces.id, wsId));
 
-    expect(await db.select().from(creditLedger)).toHaveLength(0);
-    expect(await db.select().from(subscriptions)).toHaveLength(0);
-    expect(await db.select().from(pausePeriods)).toHaveLength(0);
+    // RETAINED, not cascaded — and pointing at the stub rather than at the
+    // workspace that is gone.
+    expect(await db.select().from(creditLedger)).toHaveLength(1);
+    expect(await db.select().from(subscriptions)).toHaveLength(1);
+    expect(await db.select().from(pausePeriods)).toHaveLength(1);
+    for (const row of await db.select().from(creditLedger)) {
+      expect(row.workspaceId).toBe(stub.id);
+    }
     const events = await db.select().from(stripeEvents);
     expect(events).toHaveLength(2);
     expect(events.find((event) => event.id === "evt_attributed")).toMatchObject({

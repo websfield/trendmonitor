@@ -6,7 +6,6 @@
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { createHmac } from "node:crypto";
-import { getIp } from "better-auth/api";
 import { toNextJsHandler } from "better-auth/next-js";
 import {
   beginIdentityCancellationRecoverySession as beginCancellationRecovery,
@@ -16,7 +15,8 @@ import {
   type ReauthenticatedSessionRef,
 } from "@respin/db";
 import { adminAllowed, parseAdminAllowlist } from "./allowlist";
-import { createAuth, resolveTrustedProxies, type Auth } from "./create-auth";
+import { canonicalClientIp } from "./client-ip";
+import { createAuth, type Auth } from "./create-auth";
 import { resendMailPortFromEnv } from "./resend-mail";
 
 let cached: Auth | undefined;
@@ -68,16 +68,7 @@ async function authRateLimitKeyDigest(
 ): Promise<string> {
   const secret = process.env.BETTER_AUTH_SECRET;
   if (!secret) throw new Error("cancellation_recovery_refused");
-  const ip = getIp(requestHeaders, {
-    advanced: {
-      ipAddress: {
-        trustedProxies: resolveTrustedProxies(
-          process.env.NODE_ENV,
-          process.env.RESPIN_TRUSTED_PROXIES
-        ),
-      },
-    },
-  });
+  const ip = canonicalClientIp(requestHeaders);
   return createHmac("sha256", secret)
     .update(`${purpose}\0${ip ?? "no-trusted-ip"}`, "utf8")
     .digest("hex");

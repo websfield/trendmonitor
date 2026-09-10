@@ -47,3 +47,25 @@ export function isProtectedPath(pathname: string): boolean {
 export function isAdminPath(pathname: string): boolean {
   return underPrefix(pathname, ADMIN_PREFIX);
 }
+
+/**
+ * The public page the identity-deletion recovery mail links to.
+ *
+ * ONE authority, because three places have to agree and a disagreement is
+ * silent: the mail link (`settings/account/actions.ts`), the redirects out of
+ * `POST /api/deletion/recover`, and the page itself. Task 6-9 round 1 shipped
+ * with the mail pointing at `/settings/account/recover` — a path with no page,
+ * under a PROTECTED prefix, sent to a reader whose sessions were all revoked at
+ * acknowledgement. The single control that makes an irreversible deletion
+ * survivable 404'd, and the copy promised it worked.
+ *
+ * It is deliberately NOT under `/settings`: `isProtectedPath` must be false
+ * here, which `tests/deletion-recover-route.test.ts` asserts.
+ */
+export const RECOVER_DELETION_PATH = "/recover-deletion";
+
+/** The recovery link put in the mail. Built here so a test can hold it. */
+export function recoverDeletionUrl(base: string, operationId: string, secret: string): string {
+  const query = `op=${encodeURIComponent(operationId)}&s=${encodeURIComponent(secret)}`;
+  return `${base.replace(/\/+$/, "")}${RECOVER_DELETION_PATH}?${query}`;
+}

@@ -1,6 +1,7 @@
 ---
 description: Convene a panel of read-only critic agents, grouped into co-equal tracks, and merge their findings into one ranked, owner-assignable risk register. The whole-codebase audit counterpart to /review-phase. Do NOT use to gate one phase of a plan — that's /review-phase; to deep-read one file or document, use /interrogate.
 argument-hint: [track | all]
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent
 ---
 
 You are the **audit chair** for this repository. The argument is `$ARGUMENTS` (a single track name like `architecture` or `ux`, or `all`; default to `all` if empty).
@@ -81,4 +82,4 @@ One pass misses the tail. After synthesizing the rooms:
 
 ## Output
 
-Markdown only. Lead with the merged ranked register (the deliverable), then per-room detail. Be concise; every line actionable. Edit nothing except the register file under `docs/progress/audit/`.
+Markdown only. Lead with the merged ranked register (the deliverable), then per-room detail. Be concise; every line actionable. Write or edit nothing except the register file under `docs/progress/audit/`. Bash is only for read-only critic discovery and the documented Codex probe/review procedure; never use it to mutate the repository.

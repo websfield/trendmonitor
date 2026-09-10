@@ -9,7 +9,6 @@ import { buttonClass } from "../../../ui/button";
 import { AUDIENCES, getAudience } from "../../audiences";
 import {
   ClosingBand,
-  DemoPanel,
   LandingFooter,
   LandingHeader,
   MarqueeTags,
@@ -17,6 +16,7 @@ import {
   RefusesBand,
   StepsBand,
 } from "../../landing-sections";
+import { SampleSpinOrMockup } from "../../sample-spin/sample-spin-section";
 
 export const dynamicParams = false;
 
@@ -64,7 +64,7 @@ export default async function AudienceLandingPage({
         </div>
       </section>
 
-      <DemoPanel demo={a.demo} />
+      <SampleSpinOrMockup demo={a.demo} />
 
       <MarqueeTags />
       <StepsBand />

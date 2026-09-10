@@ -3,14 +3,14 @@
 // verify. The pricing/marquee copy lives in ./pricing-copy.ts, where every
 // number is pinned to its authority by `tests/landing-pricing.test.ts` — the
 // mockup's own figures contradicted the shipped config (billing gate BLOCK,
-// 2026-08-29). The real comparison demo (REQ-H02) still lands at M6; this
-// page renders the mockup's illustrative before/after, not product output.
+// 2026-08-29). The proof slot (REQ-H02) is `SampleSpinOrMockup`: the real,
+// metered Sample Spin when RESPIN_PUBLIC_SAMPLE_SPIN=preview, otherwise the
+// mockup's illustrative before/after, whose foot says it is not product output.
 // Sections shared with the /for/<audience> variants live in
 // ./landing-sections.tsx; audience copy lives in ./audiences.ts.
 import { buttonClass } from "../ui/button";
 import {
   ClosingBand,
-  DemoPanel,
   LandingFooter,
   LandingHeader,
   MarqueeTags,
@@ -19,6 +19,7 @@ import {
   StepsBand,
 } from "./landing-sections";
 import type { DemoCopy } from "./audiences";
+import { SampleSpinOrMockup } from "./sample-spin/sample-spin-section";
 
 const MAIN_DEMO: DemoCopy = {
   slop: [
@@ -66,7 +67,7 @@ export default function LandingPage() {
 
       {/* The demo panel overlaps the hero photo's bottom edge (negative
           margin), so the product artifact reads as sitting on the page. */}
-      <DemoPanel demo={MAIN_DEMO} />
+      <SampleSpinOrMockup demo={MAIN_DEMO} />
 
       <MarqueeTags />
       <StepsBand />

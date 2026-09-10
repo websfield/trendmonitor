@@ -102,13 +102,43 @@ TARGET_URL="$(RESPIN_MAINT_URI="$MAINTENANCE_URL" RESPIN_DRILL_DB="$DRILL_DB" no
   u.pathname = "/" + process.env.RESPIN_DRILL_DB;
   console.log(u.toString());
 ')"
-# The SAME URI with the password removed. Every line this script PRINTS uses
-# this one; only the psql/pg_restore invocations use the credentialed form, and
-# they take it through PGPASSWORD rather than argv.
+# The SAME URI with the password removed. EVERY psql/pg_restore invocation in
+# this script uses a password-less URI and takes the secret through PGPASSWORD,
+# mirroring scripts/backup.sh.
+#
+# The previous version of this comment claimed exactly that while all six
+# invocations passed the credentialed URI on argv, and the string `PGPASSWORD`
+# appeared nowhere else in the file. tests/shell-credentials.test.ts is the
+# witness that keeps the claim true: every psql/pg_restore/pg_dump line is
+# scanned for a credentialed variable, and an `export PGPASSWORD=` must exist
+# on a non-comment line (CLAUDE.md 2026-07-30: a comment claiming a property is
+# not the property — and a comment naming a guard that does not exist, as the
+# previous version of THIS paragraph did, is the same mistake).
+# libpq also accepts the password as a QUERY parameter (`?password=` and
+# `?sslpassword=`); `u.password = ""` alone would leave that form on argv. Both
+# are stripped here; `password` is lifted into DB_PASSWORD below, `sslpassword`
+# (a client-key passphrase) is NOT re-supplied anywhere, so a deployment that
+# needs one fails loudly at connect rather than leaking it — fail-closed, on
+# purpose, until such a deployment exists.
 TARGET_URL_SAFE="$(RESPIN_MAINT_URI="$TARGET_URL" node -e '
-  try { const u = new URL(process.env.RESPIN_MAINT_URI); u.password = ""; console.log(u.toString()); }
+  try { const u = new URL(process.env.RESPIN_MAINT_URI); u.password = ""; u.searchParams.delete("password"); u.searchParams.delete("sslpassword"); console.log(u.toString()); }
   catch { console.log("(unparseable target url)"); }
 ')"
+# The password, lifted out of the URI once. `node -e` receives the URI through
+# the ENVIRONMENT, never its own argv, which has the same exposure.
+DB_PASSWORD="$(RESPIN_MAINT_URI="$MAINTENANCE_URL" node -e '
+  const u = new URL(process.env.RESPIN_MAINT_URI);
+  const raw = u.password || u.searchParams.get("password") || "";
+  // A password containing a stray "%" makes decodeURIComponent throw; falling
+  // back to the raw value beats substituting an empty password and failing auth
+  // with a discarded error (the defect backup.sh records).
+  try { console.log(decodeURIComponent(raw)); } catch { console.log(raw); }
+')"
+MAINTENANCE_URL_SAFE="$(RESPIN_MAINT_URI="$MAINTENANCE_URL" node -e '
+  try { const u = new URL(process.env.RESPIN_MAINT_URI); u.password = ""; u.searchParams.delete("password"); u.searchParams.delete("sslpassword"); console.log(u.toString()); }
+  catch { console.log("(unparseable maintenance url)"); }
+')"
+export PGPASSWORD="$DB_PASSWORD"
 
 echo "[drill] recreating ${DRILL_DB}"
 # `-v db=` + `:"db"` makes psql quote the identifier, so even if the guard above
@@ -120,10 +150,10 @@ echo "[drill] recreating ${DRILL_DB}"
 # against this repo's own client (psql 17.11): `-c` errors, stdin yields
 # `SELECT "zzz_probe"`. The first version of this fix used `-c` and would have
 # aborted the drill on every single run under `set -euo pipefail`.
-psql "$MAINTENANCE_URL" -v ON_ERROR_STOP=1 -v db="$DRILL_DB" <<'DROP_SQL'
+psql "$MAINTENANCE_URL_SAFE" -v ON_ERROR_STOP=1 -v db="$DRILL_DB" <<'DROP_SQL'
 DROP DATABASE IF EXISTS :"db" WITH (FORCE);
 DROP_SQL
-psql "$MAINTENANCE_URL" -v ON_ERROR_STOP=1 -v db="$DRILL_DB" <<'CREATE_SQL'
+psql "$MAINTENANCE_URL_SAFE" -v ON_ERROR_STOP=1 -v db="$DRILL_DB" <<'CREATE_SQL'
 CREATE DATABASE :"db";
 CREATE_SQL
 
@@ -131,7 +161,7 @@ CREATE_SQL
 echo "[drill] decrypting and restoring"
 gpg --batch --yes --decrypt --passphrase-file "$BACKUP_PASSPHRASE_FILE" "$BACKUP_FILE" \
   | gunzip \
-  | pg_restore --dbname="$TARGET_URL" --no-owner --no-privileges --exit-on-error
+  | pg_restore --dbname="$TARGET_URL_SAFE" --no-owner --no-privileges --exit-on-error
 
 # ---------------------------------------------------------------------------
 # THE ACTUAL CHECK. A restore that produces empty tables "succeeds" at the
@@ -140,7 +170,7 @@ gpg --batch --yes --decrypt --passphrase-file "$BACKUP_PASSPHRASE_FILE" "$BACKUP
 # subscriptions, the credit ledger, and the webhook event log.
 # ---------------------------------------------------------------------------
 echo "[drill] verifying representative rows"
-psql "$TARGET_URL" -v ON_ERROR_STOP=1 --quiet --tuples-only --no-align <<'SQL'
+psql "$TARGET_URL_SAFE" -v ON_ERROR_STOP=1 --quiet --tuples-only --no-align <<'SQL'
 \set ON_ERROR_STOP on
 DO $$
 DECLARE
@@ -190,7 +220,7 @@ SQL
 #
 # What CAN be observed is the migration ledger inside the restored database.
 echo "[drill] comparing the restored migration ledger with the committed migrations"
-APPLIED="$(psql "$TARGET_URL" --quiet --tuples-only --no-align -c "
+APPLIED="$(psql "$TARGET_URL_SAFE" --quiet --tuples-only --no-align -c "
   SELECT CASE WHEN to_regclass('drizzle.__drizzle_migrations') IS NULL THEN 'NONE'
          ELSE coalesce((SELECT count(*)::text FROM drizzle.__drizzle_migrations), '0')
          END;" 2>/dev/null || echo "UNREADABLE")"
@@ -235,7 +265,7 @@ echo "[drill]   migration COUNT matches (${APPLIED}); this is a cardinality chec
 echo "[drill] extracting the restored deletion state for journal comparison"
 OPERATIONS_JSON="$(mktemp)"
 trap 'rm -f "$OPERATIONS_JSON"' EXIT
-psql "$TARGET_URL" --quiet --tuples-only --no-align -c "
+psql "$TARGET_URL_SAFE" --quiet --tuples-only --no-align -c "
   SELECT CASE WHEN to_regclass('public.deletion_operations') IS NULL THEN '[]'
          ELSE coalesce((SELECT json_agg(json_build_object(
                 'id', id, 'state', state, 'journalVersion', journal_version,

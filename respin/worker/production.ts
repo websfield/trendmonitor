@@ -1,3 +1,4 @@
+import { runRetentionAndRecovery } from "./retention";
 import { randomUUID } from "node:crypto";
 import {
   assertAutopsyDeadlineWithinLease,
@@ -36,6 +37,7 @@ import {
   RespinPgBossRuntime,
   consoleWorkerEventSink,
   type PgBossRuntimeConfig,
+  type PgBossRuntimeSources,
   type WorkerEventSink,
 } from "./pg-boss-runtime";
 import { unavailableYouTubeDiscovery } from "./refresh";
@@ -43,6 +45,8 @@ import type { AutopsyRunOnceCommand } from "./run-once";
 import { persistSystemWorkerHealth } from "./system-usage";
 import type { SystemVendorPortFactory } from "./system-autopsy";
 import { unavailableDigestDelivery } from "./weekly-digest";
+import { activationEmitterPorts, emitMaturedActivationCohorts } from "./activation-emitter";
+import { resolveActivationExclusions } from "@respin/db";
 
 /**
  * Per-attempt input-token ceiling — and, times the classification price plus
@@ -302,6 +306,7 @@ export async function createProductionWorker(input: {
     await activeSystemConfig(db);
     const deletionLifecycle = createDeletionLifecycleTick({
       db,
+      env: process.env,
       workerName: input.runtime.workerName,
       migrations: loadMigrationInventory(),
       ports: {
@@ -328,34 +333,12 @@ export async function createProductionWorker(input: {
     const runtime = new RespinPgBossRuntime({
       config: { ...input.runtime, connectionString: input.databaseUrl },
       handlers,
-      sources: {
-        refreshNiches: () => systemRefreshNiches(db),
-        async autopsyCandidates() {
-          await recoverStaleSystemAutopsyAttempts(db);
-          return systemAutopsyQueueCandidates(db);
-        },
-        autopsyCommands: (candidates, scheduledAt) => productionAutopsyCommands({
-          db,
-          workerName: input.runtime.workerName,
-          candidates,
-          scheduledAt,
-        }),
-        async operationalState(businessDate) {
-          const [state, active] = await Promise.all([
-            systemWorkerOperationalState(db, input.runtime.workerName, businessDate),
-            activeSystemConfig(db),
-          ]);
-          return state.budgetCapMicroUsd === 0
-            ? { ...state, budgetCapMicroUsd: active.content.systemAutopsy.dailyCapMicroUsd }
-            : state;
-        },
-        persistHealth: (snapshot) => persistSystemWorkerHealth(
-          db,
-          input.runtime.workerName,
-          snapshot,
-        ).then(() => undefined),
-        advanceDeletionLifecycle: deletionLifecycle,
-      },
+      sources: composeProductionSources({
+        db,
+        workerName: input.runtime.workerName,
+        deletionLifecycle,
+        env: process.env,
+      }),
       events: input.events ?? consoleWorkerEventSink(),
     });
     let started = false;
@@ -397,4 +380,66 @@ export async function createProductionWorker(input: {
     await closeSystemWorkerDb(db);
     throw error;
   }
+}
+
+/**
+ * THE PRODUCTION SOURCES, as one function (Phase 10a closes T69-R5).
+ *
+ * `runRetention`, `advanceDeletionLifecycle` and `emitActivationAggregates`
+ * are optional on `PgBossRuntimeSources`, and the runtime registers each
+ * queue only when its source is present — so "the sweep is scheduled" was a
+ * fact about THIS composition that no test could observe while it lived
+ * inline in `createProductionWorker`, behind a real pool. Extracted, the
+ * composition is a pure function of its ports, and
+ * `worker/tests/production-sources.test.ts` starts a runtime on a fake boss
+ * with exactly these sources and asserts the retention, lifecycle and
+ * activation queues are registered and scheduled. Removing a source from
+ * this object reddens that test; nothing else in the tree changes.
+ */
+export function composeProductionSources(ports: {
+  db: Db;
+  workerName: string;
+  deletionLifecycle: NonNullable<PgBossRuntimeSources["advanceDeletionLifecycle"]>;
+  env: Readonly<Record<string, string | undefined>>;
+  fetchImpl?: typeof fetch;
+}): PgBossRuntimeSources {
+  const { db } = ports;
+  const activation = activationEmitterPorts(db, resolveActivationExclusions(ports.env), ports.env, ports.fetchImpl);
+  return {
+    refreshNiches: () => systemRefreshNiches(db),
+    async autopsyCandidates() {
+      await recoverStaleSystemAutopsyAttempts(db);
+      return systemAutopsyQueueCandidates(db);
+    },
+    autopsyCommands: (candidates, scheduledAt) => productionAutopsyCommands({
+      db,
+      workerName: ports.workerName,
+      candidates,
+      scheduledAt,
+    }),
+    async operationalState(businessDate) {
+      const [state, active] = await Promise.all([
+        systemWorkerOperationalState(db, ports.workerName, businessDate),
+        activeSystemConfig(db),
+      ]);
+      return state.budgetCapMicroUsd === 0
+        ? { ...state, budgetCapMicroUsd: active.content.systemAutopsy.dailyCapMicroUsd }
+        : state;
+    },
+    persistHealth: (snapshot) => persistSystemWorkerHealth(db, ports.workerName, snapshot).then(() => undefined),
+    advanceDeletionLifecycle: ports.deletionLifecycle,
+    // Task 6: the retention receiver and the attempt-recovery boundaries. The
+    // deadline is resolved ONCE per tick from the active config, before any
+    // row moves: a config change mid-sweep must not move the boundary under
+    // half the attempts.
+    runRetention: async (scheduledAt) => {
+      const active = await activeSystemConfig(db);
+      return runRetentionAndRecovery(
+        { db, overallDeadlineMs: active.content.llm.overallDeadlineMs },
+        scheduledAt,
+      );
+    },
+    // Phase 10a C5: the daily aggregate activation emitter (R-121).
+    emitActivationAggregates: (scheduledAt) => emitMaturedActivationCohorts(activation, scheduledAt),
+  };
 }

@@ -548,17 +548,21 @@ export function assertRegistryClosed(
   }
 }
 
-// THE GUARD RUNS HERE, AT MODULE LOAD, over every registered kind.
+// THE GUARD NO LONGER RUNS AT MODULE LOAD (Phase 10a closes G-15).
 //
-// Not in a test. Round 5's review put it exactly right: "a guard that runs
-// only in a test is a test, not a guard" — the previous version's only caller
-// was the test suite, so the registry-wide guarantee the file claimed did not
-// exist in any deployed process. It is also why the suite must NOT contain
-// its own registry loop: with one, planting an unmarked leaf reddens whether
-// or not this call exists.
-//
-// Cost is microseconds, once, at import.
-assertRegistryClosed(BRAIN_CONTENT_SCHEMAS);
+// It used to: "a guard that runs only in a test is a test, not a guard", and
+// the module-load call was how it reached a deployed process. It reached
+// every deployed process — `@respin/db`'s index imports this module, and so
+// does the Stripe webhook route through `@respin/credits/webhook-server` — so
+// one bad schema edit made the package unimportable and every Stripe delivery
+// a 500 with no way out. The guard now runs from `preflight.ts`
+// (`runStartupPreflight`) at three explicit startup points: the CI step
+// (`pnpm preflight`), the Next.js server's `instrumentation.ts` `register()`,
+// and the worker's `main`. A refusal there stops a process from STARTING,
+// which is where a registry defect belongs. `brain-content.test.ts` scans
+// this file for a top-level call and refuses one; `preflight.test.ts` plants
+// a bad kind and watches the refusal. Nothing here is skippable by
+// environment.
 
 
 /**

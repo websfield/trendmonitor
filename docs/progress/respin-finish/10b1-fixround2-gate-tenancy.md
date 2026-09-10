@@ -1,0 +1,40 @@
+# Respin brain tenancy review — Phase 10b-1 fix round 2 (round 1 of this gate, 2026-09-09)
+
+*Report returned by `respin-tenancy-reviewer`; saved verbatim by the build lane because the read-only agent writes no files.*
+
+**Readiness: Not yet · Grade: D · The round's scoping, roles, sweep order and rollout flag all hold and are witnessed, but the billing-contact handover's provider write can be silently replayed by Stripe's idempotency cache, which lets an identity erasure complete with the subject's email still on the customer object, and two recorded claims have no test behind them.**
+
+Counts: 1 BLOCK, 3 CHANGE, 2 NOTE.
+
+**Scope**: the uncommitted round-2 files, reviewed against HEAD d5fbaf7 — `respin/packages/db/src/{deletion-lifecycle,deletion-executor,deletion-request-enablement,retention-clocks,creator-data-registry,trends-schema,app-server,billing-schema}.ts`, migration 0056, `respin/packages/credits/src/{stripe/billing-contact,stripe/customers,app-server}.ts`, `respin/app/(product)/settings/account/{actions,page,refusal-code}.ts(x)`, `respin/worker/deletion-lifecycle.ts`, `respin/eslint.config.mjs`, and the tests named below. Only Respin code was touched.
+
+## Findings
+
+- ❌ BLOCK `respin/packages/credits/src/stripe/billing-contact.ts:127-137` — The provider write's idempotency key is `billing-contact:${customer}:${scope.userId}:${emailDigest}`, identical every time the same owner accepts the same customer. Stripe's idempotency layer returns the *cached first response* for a repeated key for 24 hours without re-executing the write. So on A accepts → B accepts → A accepts again (within 24 h), the third call returns A's stale object; the verification passes on that stale object; the binding moves to A while the real customer object still carries B's email. B's identity deletion then passes `assertBillingContactReleased` at request and at erasure and erases with B's email left on the provider — the exact leak C3 was built to refuse. Compare `deletion-commands.ts:167`, which keys per `command.attempt`. · Fix: put the outgoing contact (`row.billingContactUserId ?? "unknown"`) or a fresh nonce in the key, and add a test whose fake client replays the previous response to a repeated key and asserts the handover is refused. Confidence: high on the mechanism, medium on how often A→B→A occurs.
+- ⚠️ CHANGE `respin/packages/db/src/trends-schema.ts:312-316` (+ register line 403) — The register records "the database now refuses the disagreement" for the three composite `(trend_item_id, rights_scope)` keys, but no test inserts a disagreeing row and expects the refusal (grep for the constraint names in `tests/**`: zero). Also, the tie stops at the scope class: nothing ties `(trend_item_id, profile_id)`, so a `profile_private` autopsy, cache claim or transcript for profile P1 can structurally reference P2's private item. The producers filter by profile, but the round's own rationale ("the class, not the field") argues for the profile tie too. · Fix: a refused-insert test for the shipped key, and a `(id, profile_id)` UNIQUE + composite FK for the private class, or record why not.
+- ⚠️ CHANGE `respin/packages/db/tests/retention-sweep-fixtures.test.ts:318,322` — The two `recovery_secret` `unproducible` reasons state "retention-clocks.test.ts asserts both halves". Nothing in that suite mentions `recovery_shape`, `recovery_secret` or `recovery_expires_at`, and the suite's own check of an `unproducible` reason is a string-length test. · Fix: assert the CHECK here with a refused insert (workspace-scope operation with `recovery_expires_at` set), and drop the false citation.
+- ⚠️ CHANGE `respin/packages/db/src/deletion-lifecycle.ts:827-831,857-861` (+ register T-R2-5) — `billing_contact_unknown` refuses every **member** of a pre-C3 workspace with a customer, not "every one of its owners": `lockIdentityWorkspaces` selects memberships with no role or lifecycle filter. A viewer or editor has no remedy (accept is owner-only; no leave-workspace path exists in `app/`), so REQ-A04's 30-day deletion becomes indefinite for them while any owner is inactive. Fail-closed is the right direction for PII, but the register understates the population and no test covers the non-owner case. · Fix: state the real population, add the viewer-refused test, and name the operator path.
+- 💡 NOTE `respin/packages/db/src/deletion-executor.ts:559-565` — The erasure-time re-check passes `[]`; the comment says "a Stripe customer may have been created ... during grace" but a NULL contact cannot arise there: `customers.ts:106` is the sole `subscriptions` inserter and always sets the contact. Say so in the comment.
+- 💡 NOTE `respin/packages/db/src/deletion-lifecycle.ts:925-940` — `pendingDeletionsForScope` lists every workspace/profile operation in the scope's workspace to any member (pre-existing semantics); the page renders only id/scope/state/dates. Worth a one-line comment that this is intentional.
+
+## Checks run
+
+- T1 — ✅ holds. All five new cage entries verified against the code; `billingContactStatus`/`acceptBillingContact` read and write only the scope's workspace row; `profile-cage.test.ts` 43/43 green.
+- T2 — n/a (no session→library flow touched). Executor rights-class case green.
+- T3 / REQ-B02 — n/a (no `brain_docs` or inference code).
+- T4 — ✅ at the schema/registry level (`billing_contact_user_id` in the pseudonymised `workspace_link` set, FK `set_null` inventoried, `lifecycle-registry.test.ts` 18/18, `db:check` fine). ❌ at the provider level via the BLOCK.
+- T5 — ✅ holds. Owner-only at the scope role and re-proven in-transaction; editor refused before any provider call; accept rendered only for owners. Cancellation never gated (exactly three `assertDeletionRequestsEnabled` sites, all on request facades; source witness green).
+- T6 — ✅ holds. Content-free provider error; the acceptor's email comes from the session user, never from form input; no `contactUserId` rendered; refusal codes a closed list.
+- Provenance — ❌ at the two unwitnessed claims (CHANGE 2 and 3). Children-first sweep order ✅ derived from the hand-classified FK list (Respin rule 7), cycle refusal with a planted-cycle test, key-order violation asserted. Sweep fixtures ✅ real producers, bijection asserted, one tick `failures: []` / `poisoned: 0`, second tick no-op — 6/6 green.
+
+## Coverage
+
+- read fully: `deletion-lifecycle.ts` 1-1560 and 1790-1880; `billing-contact.ts`; `deletion-request-enablement.ts`; `refusal-code.ts`; account `actions.ts`, `page.tsx`; `billing-contact.test.ts`; `retention-sweep-fixtures.test.ts`; `retention-clocks.ts` 544-589; migration 0056; the diffs of `profile-cage.test.ts`, `trends-schema.ts`, `deletion-executor.ts`, both `app-server.ts`, `customers.ts`, `worker/deletion-lifecycle.ts`, `eslint.config.mjs`, `retention-receiver.ts`; ranges of `deletion-lifecycle.test.ts`, `deletion-executor.test.ts`, `import-boundary.test.ts`; the register entry · skimmed: `creator-data-registry.ts`, `trends-storage.ts`, `account-view.tsx`, `lifecycle-column-census.ts`, `deletion-commands.ts` · not read: `journal-forecast.ts`, the price snapshot, `README.md`, `REGISTERING-A-TABLE.md`, `env.example`, `copy.ts`, `billing-errors.ts`, `isolation.test.ts` diff, `deletion-executor.docker.test.ts`, `retention-receiver.test.ts`, `journal-forecast-cli.test.ts`, the meta snapshot.
+- commands run: `vitest run billing-contact deletion-request-enablement account-copy retention-clocks` → 31/31; `vitest run retention-sweep-fixtures profile-cage import-boundary` → 169/169; `vitest run deletion-lifecycle -t "Plan C3"` → 2/2; `vitest run deletion-executor -t "C3 at the LAST|rights class"` → 2/2; `vitest run lifecycle-registry table-writers` → 83/83; `pnpm -C respin db:check` → fine; `git diff --stat HEAD -- respin/` → 61 files, +2877/-459.
+
+## Verdict
+
+BLOCK
+The replayable handover key defeats the one verification the C3 mechanism rests on, so an erasure can complete with the subject's email on the provider; everything else in the round is sound or fixable in one pass.
+
+*Ask `/go` to explain any finding in plain words — or to just fix them.*

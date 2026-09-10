@@ -10,7 +10,7 @@ import {
 
 const metric = { key: "follows", label: "Follows", unit: "per 1k", direction: "higher_is_better" as const };
 const key = "candidate";
-const rows = (prefix: string, values: number[], treatmentKey: string | null, state: "quantified_self_reported" | "connector_verified" = "quantified_self_reported") =>
+const rows = (prefix: string, values: number[], treatmentKey: string | null, state: "quantified_self_reported" | "connector_verified" = "connector_verified") =>
   values.map((value, index) => ({
     id: `${prefix}${index + 1}`,
     metricDeclaredByDocId: "strategy-a",
@@ -47,7 +47,7 @@ describe("promotion proposal constructors", () => {
     expect(first.familyKey).toBe("aefd1fb6a66eba94e97398b7219974bce35d83ecba794d14dbc9c1914c6cddde");
     expect(first.familyKey).toBe(withNewEvidence.familyKey);
     expect(first.evidenceDigest).not.toBe(withNewEvidence.evidenceDigest);
-    expect(first.rule.evidenceStrength).toBe("early");
+    expect(first.rule.evidenceStrength).toBe("corroborated");
     expect(first.evidence.map((row) => row.resultId)).toEqual(["b1", "b2", "b3", "t1", "t2", "t3"]);
   });
 
@@ -82,29 +82,37 @@ describe("promotion proposal constructors", () => {
     const dates = { from: new Date("2026-01-01Z"), to: new Date("2026-02-01Z") };
     const initial = input({ stratum: { ...input().stratum, observedFrom: dates.from, observedTo: dates.to } });
     const draft = buildResultProposalDraft(initial)!;
-    const connector = input({
-      treatmentEvidence: initial.treatmentEvidence.map((row, index) => index === 0 ? { ...row, evidenceState: "connector_verified" as const } : row),
+    // A changed confounder on one row is a different evidence digest; a
+    // changed evidence STATE is no longer a variant at all under R-115 (a
+    // self-reported row refuses), so the digest sensitivity is shown on a
+    // field every verified row still carries.
+    const confounded = input({
+      treatmentEvidence: initial.treatmentEvidence.map((row, index) => index === 0 ? { ...row, confounders: ["account_growth" as const] } : row),
     });
-    const changedState = buildResultProposalDraft(connector)!;
+    const changedState = buildResultProposalDraft(confounded)!;
     dates.from.setUTCFullYear(2099);
     dates.to.setUTCFullYear(2099);
     expect(draft.rule.observationEnvelope).toEqual({ observedFrom: "2026-01-05T00:00:00.000Z", observedTo: "2026-01-25T00:00:00.000Z" });
     expect(Object.isFrozen(draft.rule.observationEnvelope)).toBe(true);
     expect(Object.isFrozen(draft.rule.evidenceStates)).toBe(true);
     expect(draft.evidenceDigest).not.toBe(changedState.evidenceDigest);
-    expect(draft.rule.evidenceStates).toContainEqual({ resultId: "t1", evidenceState: "quantified_self_reported" });
+    expect(draft.rule.evidenceStates).toContainEqual({ resultId: "t1", evidenceState: "connector_verified" });
   });
 
-  it("keeps the evidence-strength precedence mutually exclusive", () => {
-    expect(buildResultProposalDraft(input())!.rule.evidenceStrength).toBe("early");
-    const verified = rows("b", [1, 2, 3, 4, 5], null, "connector_verified");
-    const validMixed = input({ treatmentEvidence: rows("t", [4, 5, 6, 7, 8], key), baselineEvidence: verified, treatment: { state: "present" as const, n: 5, medianPer1k: 6, resultIds: ["t1", "t2", "t3", "t4", "t5"] }, baseline: { state: "present" as const, n: 5, medianPer1k: 3, resultIds: ["b1", "b2", "b3", "b4", "b5"] }, effectPer1k: 3 });
-    expect(buildResultProposalDraft(validMixed)!.rule.evidenceStrength).toBe("repeated");
-    const allVerified = { ...validMixed, treatmentEvidence: rows("t", [4, 5, 6, 7, 8], key, "connector_verified") };
-    expect(buildResultProposalDraft(allVerified)!.rule.evidenceStrength).toBe("corroborated");
+  it("R-115: ONE evidence boundary — every verified row is `corroborated` at the shared minimum; a self-reported row is a refusal, never a weaker label", () => {
+    expect(buildResultProposalDraft(input())!.rule.evidenceStrength).toBe("corroborated");
+    const mixed = input({ treatmentEvidence: rows("t", [4, 5, 6], key, "quantified_self_reported") });
+    expect(() => buildResultProposalDraft(mixed)).toThrow(ProposalInputError);
+    expect(() => buildResultProposalDraft(mixed)).toThrow(/self-reported evidence entered a result proposal/);
+    const selfBaseline = input({ baselineEvidence: rows("b", [1, 2, 3], null, "quantified_self_reported") });
+    expect(() => buildResultProposalDraft(selfBaseline)).toThrow(ProposalInputError);
+    // No five-result tier exists any more: five verified rows and three verified rows read the same word.
+    const five = input({ treatmentEvidence: rows("t", [4, 5, 6, 7, 8], key), baselineEvidence: rows("b", [1, 2, 3, 4, 5], null), treatment: { state: "present" as const, n: 5, medianPer1k: 6, resultIds: ["t1", "t2", "t3", "t4", "t5"] }, baseline: { state: "present" as const, n: 5, medianPer1k: 3, resultIds: ["b1", "b2", "b3", "b4", "b5"] }, effectPer1k: 3 });
+    expect(buildResultProposalDraft(five)!.rule.evidenceStrength).toBe("corroborated");
+    expect(buildResultProposalDraft(five)!.rule.evidenceCounts).toEqual({ quantifiedSelfReported: 0, connectorVerified: 10 });
   });
 
-  it("covers every population-size × evidence-composition cell with one strength", () => {
+  it("covers every population-size × evidence-composition cell: verified is corroborated, anything else refuses", () => {
     const states = ["self", "mixed", "verified"] as const;
     for (const treatmentN of [3, 4, 5]) for (const baselineN of [3, 4, 5]) for (const composition of states) {
       const evidenceFor = (prefix: string, n: number, treatmentKey: string | null, offset: number) =>
@@ -130,10 +138,11 @@ describe("promotion proposal constructors", () => {
         baseline: { state: "present", n: baselineN, medianPer1k: middle(baselineEvidence), resultIds: baselineEvidence.map((r) => r.id) },
         effectPer1k: middle(treatmentEvidence) - middle(baselineEvidence),
       });
-      const expected = treatmentN < 5 || baselineN < 5 || composition === "self"
-        ? "early"
-        : composition === "mixed" ? "repeated" : "corroborated";
-      expect(buildResultProposalDraft(candidate)!.rule.evidenceStrength, `${treatmentN}/${baselineN}/${composition}`).toBe(expected);
+      if (composition === "verified") {
+        expect(buildResultProposalDraft(candidate)!.rule.evidenceStrength, `${treatmentN}/${baselineN}/${composition}`).toBe("corroborated");
+      } else {
+        expect(() => buildResultProposalDraft(candidate), `${treatmentN}/${baselineN}/${composition}`).toThrow(ProposalInputError);
+      }
     }
   });
 

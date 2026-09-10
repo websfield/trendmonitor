@@ -6,6 +6,42 @@
 // imports; the dynamic-import source scan in respin/tests/import-boundary.test.ts
 // covers `await import(...)`, which no-restricted-imports does not see.
 import {
+  cancelIdentityDeletion,
+  cancelScopedDeletion,
+  pendingDeletionsForScope,
+  readIdentityCancellationStatus,
+  requestIdentityDeletion,
+  requestProfileDeletion,
+  requestWorkspaceDeletion,
+  type IdentityDeletionRequestResult,
+  type ScopedRequestParams,
+} from "./deletion-lifecycle";
+import type { DeletionOperation, DeletionScope } from "./lifecycle-schema";
+import { resolveAppDeletionJournal } from "./deletion-journal-compose";
+import {
+  assertDeletionRequestsEnabled,
+  DELETION_SCOPES,
+  resolveDeletionRequestEnablement,
+} from "./deletion-request-enablement";
+import { createAuthMailRecoveryDelivery, type AuthMailPort } from "./auth-mail";
+import { deriveActivationCohorts, resolveActivationExclusions, type ActivationCohort } from "./activation";
+import {
+  beginIdentityCancellationRecoverySession,
+  createIdentityCancellationProofWithPassword,
+} from "./auth-lifecycle";
+import type { MembershipRestorePolicyPort } from "./deletion-ports";
+
+/**
+ * Phase 10b-1 Task 8: until 10b-2 introduces seat caps there is no capacity to
+ * refuse, so an unchanged suspended membership is always restorable. 10b-2
+ * replaces this constant with the real seat policy — "cancellation never
+ * assumes capacity" (deletion-ports.ts) is why it is a named port, not an
+ * inline `true`.
+ */
+export const NO_SEAT_CAP_RESTORE_POLICY: MembershipRestorePolicyPort = {
+  mayRestore: async () => ({ allowed: true, refusal: null }),
+};
+import {
   createDb,
   createRunSlotPool,
   DEFAULT_RUN_SLOT_POOL_MAX,
@@ -209,6 +245,14 @@ function runSlotPoolMax(): number {
 }
 
 export const respinDb = {
+  /**
+   * Phase 10a plan C5 / R-121: the internal activation report, exact daily
+   * counts for authorised operators only. The consumer of 10b-1's sole
+   * activation seam; it copies no SQL and no rule, and every row carries the
+   * verification limitation and the small-cell flag on the returned shape.
+   */
+  activationReport: (asOf: Date = new Date()): Promise<readonly ActivationCohort[]> =>
+    deriveActivationCohorts(getServerDb(), resolveActivationExclusions(process.env), asOf),
   ensureUserWorkspace: (params: BootstrapParams) =>
     ensureUserWorkspace(getServerDb(), params),
   withWorkspace: (ctx: WorkspaceCtx) => withWorkspace(getServerDb(), ctx),
@@ -639,4 +683,78 @@ export const respinDb = {
     const caps = writeCapabilities(profileScope);
     return getServerDb().transaction((tx) => caps.decidePromotionProposal(params, entitlement, tx));
   },
+
+  // ---- Phase 10b-1 Task 8: owner-facing deletion (plan C2) -------------------
+  // Every rule lives in deletion-lifecycle.ts and was gated in Tasks 3–5; these
+  // are thin compositions. The journal is the SAME composition the worker uses:
+  // unprovisioned, every request stops at `journal_pending` and says so.
+  deletionJournalStatus: async (): Promise<{ configured: boolean }> => {
+    const { configured } = await resolveAppDeletionJournal(process.env);
+    return { configured };
+  },
+  /**
+   * Which scopes this deployment lets a person REQUEST (`RESPIN_DELETION_REQUEST_SCOPES`).
+   * Read by the page so a closed scope renders as closed rather than as a
+   * button that refuses. Cancellation is never gated.
+   */
+  deletionRequestStatus: (): Readonly<Record<DeletionScope, boolean>> => {
+    const enablement = resolveDeletionRequestEnablement(process.env);
+    return Object.fromEntries(
+      DELETION_SCOPES.map((scope) => [scope, enablement.requestsEnabled(scope)])
+    ) as Record<DeletionScope, boolean>;
+  },
+  // The read asserts the cage itself (deletion-lifecycle.ts); the facade is a
+  // thin forward of the same `scope`.
+  pendingDeletions: (scope: WorkspaceScope): Promise<readonly DeletionOperation[]> =>
+    pendingDeletionsForScope(getServerDb(), scope),
+  requestWorkspaceDeletion: async (scope: WorkspaceScope, params: ScopedRequestParams): Promise<DeletionOperation> => {
+    assertDeletionRequestsEnabled(resolveDeletionRequestEnablement(process.env), "workspace");
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return requestWorkspaceDeletion(getServerDb(), scope, params, journal);
+  },
+  requestProfileDeletion: async (scope: WorkspaceScope, profileId: string, params: ScopedRequestParams): Promise<DeletionOperation> => {
+    assertDeletionRequestsEnabled(resolveDeletionRequestEnablement(process.env), "profile");
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return requestProfileDeletion(getServerDb(), scope, profileId, params, journal);
+  },
+  cancelScopedDeletion: async (
+    operationId: string,
+    params: Omit<ScopedRequestParams, "idempotencyKey" | "typedName">,
+  ): Promise<DeletionOperation> => {
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return cancelScopedDeletion(getServerDb(), operationId, params, journal);
+  },
+  requestIdentityDeletion: async (
+    params: Readonly<{ sessionId: string; idempotencyKey: string; reauthMaxAgeMs?: number }>,
+    mail: Readonly<{ port: AuthMailPort; actionUrl: (operationId: string, secret: string) => string }>,
+  ): Promise<IdentityDeletionRequestResult> => {
+    assertDeletionRequestsEnabled(resolveDeletionRequestEnablement(process.env), "identity");
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return requestIdentityDeletion(getServerDb(), params, {
+      journal,
+      recoveryDelivery: createAuthMailRecoveryDelivery(getServerDb(), mail.port, { actionUrl: mail.actionUrl }),
+      activationExclusions: resolveActivationExclusions(process.env),
+    });
+  },
+  cancelIdentityDeletion: async (
+    operationId: string,
+    recoverySecret: string,
+    params: Readonly<{ proofId: string; cancellationReceipt: string; reauthMaxAgeMs?: number }>,
+  ) => {
+    const { journal } = await resolveAppDeletionJournal(process.env);
+    return cancelIdentityDeletion(getServerDb(), operationId, recoverySecret, params, {
+      journal,
+      membershipRestore: NO_SEAT_CAP_RESTORE_POLICY,
+    });
+  },
+  beginIdentityCancellationRecoverySession: (operationId: string, recoverySecret: string, rateLimitKeyDigest: string) =>
+    beginIdentityCancellationRecoverySession(getServerDb(), operationId, recoverySecret, rateLimitKeyDigest),
+  createIdentityCancellationProofWithPassword: (
+    operationId: string,
+    recoverySession: string,
+    password: string,
+    rateLimitKeyDigest: string,
+  ) => createIdentityCancellationProofWithPassword(getServerDb(), operationId, recoverySession, password, rateLimitKeyDigest),
+  readIdentityCancellationStatus: (operationId: string, cancellationReceipt: string) =>
+    readIdentityCancellationStatus(getServerDb(), operationId, cancellationReceipt),
 };

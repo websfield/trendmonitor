@@ -178,3 +178,7 @@ export {
   type GenerateResult,
   type GenerationRefusalCode,
 } from "./generate";
+
+// Phase 10a plan C2: the public Sample Spin (fixture, untrusted-idea boundary,
+// metered orchestrator, enablement flag, pre-registered evaluation set).
+export * from "./sample-spin";

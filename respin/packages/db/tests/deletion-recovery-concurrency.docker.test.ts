@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { session } from "../src/auth-schema";
+import { NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
 import {
   beginIdentityCancellationRecoverySession,
   CANCELLATION_FACTOR_MAX_ATTEMPTS,
@@ -163,7 +164,7 @@ describe.skipIf(!MAINTENANCE_URL)(
               sessionId,
               idempotencyKey: `recovery-rate-race-${index}`,
             },
-            { recoveryDelivery, journal }
+            { recoveryDelivery, journal, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
           );
           const secret = secrets.get(requested.operation.id);
           expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -266,6 +267,7 @@ describe.skipIf(!MAINTENANCE_URL)(
         } as const;
         await expect(
           requestIdentityDeletion(db, params, {
+            activationExclusions: NO_ACTIVATION_EXCLUSIONS,
             recoveryDelivery,
             journal: {
               appendTransition: async () => ({
@@ -389,7 +391,7 @@ describe.skipIf(!MAINTENANCE_URL)(
         const identity = await requestIdentityDeletion(
           db,
           { sessionId, idempotencyKey: "constraint-identity" },
-          { recoveryDelivery, journal }
+          { recoveryDelivery, journal, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
         );
         const [workspaceOperation] = await db
           .insert(deletionOperations)

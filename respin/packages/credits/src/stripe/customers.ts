@@ -8,6 +8,7 @@ import {
   trustWorkspaceId,
   type DbLike,
   type TxLike,
+  type VerifiedUserId,
   type VerifiedWorkspaceId,
 } from "@respin/db";
 import { getStripe } from "./adapter";
@@ -67,7 +68,13 @@ export async function workspaceForCustomer(
 export async function getOrCreateCustomer(
   db: DbLike | TxLike,
   workspaceId: VerifiedWorkspaceId,
-  email: string
+  email: string,
+  /**
+   * Plan C3: the owner whose email the customer is created with becomes the
+   * workspace's billing contact. Recorded on the mapping row so identity
+   * deletion can refuse while that person is still the contact.
+   */
+  billingContactUserId: VerifiedUserId
 ): Promise<string> {
   const [existing] = await db
     .select()
@@ -102,6 +109,7 @@ export async function getOrCreateCustomer(
         ? {
             workspaceId,
             stripeCustomerId: customer.id,
+            billingContactUserId,
             stripeSubscriptionId: `checkout_fence:${workspaceId}`,
             status: "incomplete",
             tierCheckoutFenceAt: new Date(),
@@ -112,6 +120,7 @@ export async function getOrCreateCustomer(
         : {
             workspaceId,
             stripeCustomerId: customer.id,
+            billingContactUserId,
             // Expansion remains readable and writable by the legacy binary.
             stripeSubscriptionId: null,
             status: "none",

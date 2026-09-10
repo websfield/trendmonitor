@@ -15,6 +15,8 @@
     "db:migrate": "tsx src/migrate-cli.ts",
     "db:check": "drizzle-kit check",
     "db:seed": "tsx src/seed-cli.ts",
+    "proposals:audit": "tsx src/proposal-audit-cli.ts",
+    "sample-spin:keyring": "tsx src/sample-spin-keyring-cli.ts",
     "test:concurrency": "vitest run --root ../.. packages/db/tests/concurrency.docker.test.ts"
   },
   "dependencies": {

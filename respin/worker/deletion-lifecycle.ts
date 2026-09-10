@@ -15,8 +15,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   advanceDeletionOperations,
-  assertJournalConfig,
-  createDeletionJournalStore,
+  composeDeletionJournal,
+  parseDeletionJournalEnv,
+  parseDeletionScopeList,
+  resolveActivationExclusions,
   ERASURE_DISABLED,
   erasureHold,
   migrationInventory,
@@ -34,7 +36,6 @@ import {
 import { createS3JournalClient, s3JournalWriter } from "@respin/db/deletion-journal-s3";
 
 export const DELETION_ERASURE_SCOPES_ENV = "RESPIN_DELETION_ERASURE_SCOPES";
-const SCOPES: readonly DeletionScope[] = ["identity", "profile", "workspace"];
 
 /**
  * Comma-separated closed scope list. An unknown token refuses startup rather
@@ -44,20 +45,21 @@ export function resolveErasureEnablement(
   env: Readonly<Record<string, string | undefined>>,
   hold: (scope: DeletionScope) => string | null = erasureHold
 ): ErasureEnablementPort {
-  const raw = env[DELETION_ERASURE_SCOPES_ENV]?.trim();
-  if (!raw) return ERASURE_DISABLED;
-  const enabled = new Set<DeletionScope>();
-  for (const token of raw.split(",").map((part) => part.trim()).filter(Boolean)) {
-    if (!(SCOPES as readonly string[]).includes(token)) {
-      throw new Error(`${DELETION_ERASURE_SCOPES_ENV} names an unknown scope; allowed: ${SCOPES.join(",")}`);
-    }
-    enabled.add(token as DeletionScope);
-  }
+  // The same closed parser the app's request flag uses (@respin/db), so the
+  // two flags cannot drift in what they accept.
+  const enabled = parseDeletionScopeList(env[DELETION_ERASURE_SCOPES_ENV], DELETION_ERASURE_SCOPES_ENV);
+  if (enabled.size === 0) return ERASURE_DISABLED;
   for (const scope of enabled) {
     // The executor's own hold derivation (R-122 financial chain, the unwired
     // payload receiver). Naming a held scope is a misconfiguration — refused
-    // loudly at startup rather than held silently at grace. Until Task 6
-    // every scope is held, and this refuses every value.
+    // loudly at startup rather than held silently at grace.
+    //
+    // It refuses NOTHING today: Task 6 emptied `FINANCIAL_CHAIN_TABLES` and
+    // wired the payload receiver, so `erasureHold` returns null for every
+    // scope. The check stays because it is the seam a future retained financial
+    // table re-arms, and the executor's tests plant a hold through its
+    // parameters to prove it still refuses. The previous comment claimed
+    // "until Task 6 every scope is held", which stopped being true in Task 6.
     const reason = hold(scope);
     if (reason !== null) {
       throw new Error(
@@ -68,66 +70,24 @@ export function resolveErasureEnablement(
   return { erasureEnabled: (scope) => enabled.has(scope) };
 }
 
-export const JOURNAL_UNAVAILABLE_CODE = "journal_store_not_configured";
-
-/**
- * Refuses every append. This is the composition when the deployment has no
- * journal configured — which is the state until an owner provisions the bucket
- * — and it is deliberately a REFUSAL rather than a local fallback: a journal
- * that quietly writes somewhere else is worse than no journal, because the
- * operation would advance on a durability promise nothing is keeping.
- */
-export const unavailableDeletionJournal: DeletionJournalPort = Object.freeze({
-  async appendTransition() {
-    return { outcome: "conflict" as const, code: JOURNAL_UNAVAILABLE_CODE };
-  },
-});
-
-export const DELETION_JOURNAL_ENV = Object.freeze({
-  bucket: "RESPIN_DELETION_JOURNAL_BUCKET",
-  region: "RESPIN_DELETION_JOURNAL_REGION",
-  environment: "RESPIN_DELETION_JOURNAL_ENVIRONMENT",
-  endpoint: "RESPIN_DELETION_JOURNAL_ENDPOINT",
-});
+export {
+  DELETION_JOURNAL_ENV,
+  JOURNAL_UNAVAILABLE_CODE,
+  unavailableDeletionJournal,
+} from "@respin/db";
 
 /**
  * Compose the real S3 journal, or the refusing one when nothing is configured.
- *
- * PARTIAL configuration is a startup error, not a fallback. "Bucket set, region
- * missing" is an operator halfway through provisioning, and silently handing
- * that deployment a journal that refuses every append would look identical to a
- * deployment that never configured one — so it says so and stops.
+ * The parsing (including the partial-configuration refusal) is shared with the
+ * app's request path in `@respin/db`'s `deletion-journal-compose`; the worker
+ * differs only in supplying the statically imported adapter.
  */
 export function resolveDeletionJournal(
   env: Readonly<Record<string, string | undefined>>
 ): DeletionJournalPort {
-  const bucket = env[DELETION_JOURNAL_ENV.bucket]?.trim();
-  const region = env[DELETION_JOURNAL_ENV.region]?.trim();
-  const environment = env[DELETION_JOURNAL_ENV.environment]?.trim();
-  const endpoint = env[DELETION_JOURNAL_ENV.endpoint]?.trim();
-
-  const present = [bucket, region, environment].filter((value) => Boolean(value)).length;
-  if (present === 0) return unavailableDeletionJournal;
-  if (present < 3) {
-    throw new Error(
-      `the deletion journal is partially configured: ${DELETION_JOURNAL_ENV.bucket}, ${DELETION_JOURNAL_ENV.region} and ${DELETION_JOURNAL_ENV.environment} must all be set, or all be unset. Set the missing one, or clear the others to run without a journal (every append then refuses and no deletion can advance).`
-    );
-  }
-
-  const config = assertJournalConfig({
-    bucket: bucket as string,
-    region: region as string,
-    environment: environment as string,
-  });
-  return createDeletionJournalStore({
-    config,
-    transport: s3JournalWriter(
-      createS3JournalClient({
-        region: config.region,
-        ...(endpoint === undefined || endpoint.length === 0 ? {} : { endpoint }),
-      })
-    ),
-  });
+  return composeDeletionJournal(parseDeletionJournalEnv(env), (input) =>
+    s3JournalWriter(createS3JournalClient(input))
+  );
 }
 
 /** The committed migrations are the registry's schema authority at runtime too. */
@@ -149,11 +109,15 @@ export function createDeletionLifecycleTick(input: Readonly<{
   ports: DeletionExecutorPorts;
   migrations: MigrationInventory;
   limit?: number;
+  /** Task 7: the process environment, read ONCE here for ADMIN_USER_IDS / ACTIVATION_EXCLUDED_USER_IDS. */
+  env?: Readonly<Record<string, string | undefined>>;
 }>): DeletionLifecycleTick {
+  const activationExclusions = resolveActivationExclusions(input.env ?? {});
   return () =>
     advanceDeletionOperations(input.db, input.ports, {
       workerName: input.workerName,
       migrations: input.migrations,
+      activationExclusions,
       ...(input.limit === undefined ? {} : { limit: input.limit }),
     });
 }

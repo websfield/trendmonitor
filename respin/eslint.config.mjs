@@ -32,7 +32,28 @@ function appRestrictedImports({
           name: "@respin/db",
           allowImportNames: [
             "respinDb",
+            // Phase 10b-1 Task 8: the account copy quotes the executor's grace period.
+            "DELETION_GRACE_MS",
             "WorkspaceAccessError",
+            // Phase 10a (G-15, C5): the startup preflight `instrumentation.ts`
+            // runs at register(), and the PURE telemetry sink builders
+            // `lib/telemetry.ts` composes with safe-log's allowlist. None of
+            // them opens a connection or reads a table.
+            "runStartupPreflight",
+            "PreflightRefusedError",
+            // ...and the keyring parse refusal the demo facade can surface,
+            // so billing-errors can give it copy.
+            "PublicSampleSpinKeyringError",
+            "MonthlyEventBudget",
+            "SENTRY_MONTHLY_EVENT_BUDGET",
+            "parseSentryDsn",
+            "sendOutbound",
+            "sentryEnvelope",
+            "tightenOnlySampleRate",
+            "sentryEnvironmentTag",
+            "SafeErrorEvent",
+            // Phase 10a C5: /admin/activation renders the activation seam's row type.
+            "ActivationCohort",
             // Phase 10b-1 Task 5: operator scripts (scripts/**) get the PURE
             // projections and nothing else — the cost forecast, the enablement
             // decision derived from it, and the restore/purge verifier. Not one
@@ -120,6 +141,49 @@ function appRestrictedImports({
                   "assertJournalConfig",
                   "createDeletionJournalStore",
                   "DeletionJournalConfig",
+                  // Phase 10b-1 Task 8: the env parsing moved into the package
+                  // so the app's request path composes the SAME journal.
+                  "composeDeletionJournal",
+                  "parseDeletionJournalEnv",
+                  "parseDeletionScopeList",
+                  "DELETION_JOURNAL_ENV",
+                  "JOURNAL_UNAVAILABLE_CODE",
+                  "unavailableDeletionJournal",
+                  // Phase 10b-1 Task 6: the retention receiver and the
+                  // generation-attempt boundaries run ONLY in this worker, for
+                  // the reason the deletion executor does (plan C2: never
+                  // inside an HTTP request). Two tick functions and their
+                  // summary types. The clock authority, the finance extractor
+                  // and `pseudonymousWorkspaceKey` stay OUT deliberately: they
+                  // are the receiver's internals, and a worker that could call
+                  // the extractor directly could redact a payload without one.
+                  // Phase 10b-1 Task 7: the worker resolves the two audited id
+                  // sets once per process and hands them to the executor.
+                  "resolveActivationExclusions",
+                  "runRetentionTick",
+                  "runGenerationRecoveryTick",
+                  "recoverStalePublicSampleSpinAttempts",
+                  // Phase 10a C5: the daily aggregate activation emitter
+                  // consumes the ONE activation seam and the pure PostHog
+                  // builders; the worker's main runs the same preflight.
+                  "deriveActivationCohorts",
+                  "ACTIVATION_WINDOW_MS",
+                  "ACTIVATION_SMALL_CELL_DENOMINATOR",
+                  "POSTHOG_MONTHLY_EVENT_BUDGET",
+                  "MonthlyEventBudget",
+                  "parsePosthogSink",
+                  "posthogActivationCapture",
+                  "activationCohortEventUuid",
+                  "ACTIVATION_COHORT_EVENT",
+                  "sendOutbound",
+                  "ActivationCohort",
+                  "ActivationExclusions",
+                  "PosthogSink",
+                  "runStartupPreflight",
+                  "RetentionTickSummary",
+                  "RetentionTableOutcome",
+                  "GenerationRecoveryOutcome",
+                  "GenerationRecoveryOptions",
                 ]
               : []),
             // types only below
@@ -484,6 +548,20 @@ function appRestrictedImports({
             "RESULT_AUDIENCE_CLASSES",
             "RESULT_CONFOUNDER_CODES",
             "RESULT_LEVERS",
+            // Plan C4's external-copy registry and its two derived constants.
+            // Read-only data and a pure function — no query, no write
+            // capability — and the account page's "what survives erasure"
+            // sentence is DERIVED from them, so a new processor cannot be added
+            // without the public copy changing in the same commit.
+            "EXTERNAL_COPIES",
+            "BACKUP_MAX_RETENTION_DAYS",
+            "COHORT_RETENTION_YEARS",
+            "lastCapableCopyDay",
+            // Phase 10b-1 rollout: the request-flag refusal prefix, so the account
+            // page can map `deletion_refused:requests_disabled:<scope>` to copy.
+            "REQUESTS_DISABLED_CODE",
+            "ExternalCopy",
+            "ExternalCopyClass",
           ],
           message:
             "app/** may import only the sanctioned @respin/db surface (respinDb, WorkspaceAccessError, the typed refusals, types) — every query goes through withWorkspace, and the write capabilities are package-only (tenancy T1, M2a A-2b)",
@@ -508,6 +586,15 @@ function appRestrictedImports({
           allowImportNames: [
             "getSessionUser",
             "reauthenticateCurrentSessionWithPassword",
+            // Phase 10b-1 Task 8: the account page composes the recovery mail port,
+            // and the public recovery page exchanges the emailed secret for a
+            // bounded session and a fresh password proof.
+            "resendMailPortFromEnv",
+            "beginIdentityCancellationRecoverySession",
+            "createIdentityCancellationProofWithPassword",
+            // Phase 10a: the proxy-ATTESTED client address, for the sessionless
+            // public Sample Spin route's HMAC bucket (null = the shared bucket).
+            "proxyAttestedClientIp",
             "requireUser",
             "requireAdmin",
             "authHandlers",

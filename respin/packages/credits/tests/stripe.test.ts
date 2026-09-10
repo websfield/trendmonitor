@@ -1241,6 +1241,22 @@ describe("code-review blockers (regression pins)", () => {
     expect(rows.every((r) => r.stripeCustomerId === "cus_test")).toBe(true);
     expect(rows.every((r) => r.receiptAttribution === "workspace_attributed")).toBe(true);
 
+    // TASK 6: the workspace's retained money rows (credit_ledger,
+    // subscriptions, pause_periods — R-122's seven-year chain) hold RESTRICT
+    // keys now, so the raw delete is refused until they are repointed. The
+    // executor repoints them to a stub; this test repoints to a second real
+    // workspace, because what it is pinning is the STRIPE EVENT's behaviour,
+    // not the chain's.
+    const [detachTarget] = await db
+      .insert(schema.workspaces)
+      .values({ name: "Retained chain" })
+      .returning();
+    for (const table of [schema.creditLedger, schema.subscriptions, schema.pausePeriods]) {
+      await db
+        .update(table)
+        .set({ workspaceId: detachTarget!.id })
+        .where(eq(table.workspaceId, ws));
+    }
     await db.delete(schema.workspaces).where(eq(schema.workspaces.id, ws));
     const retained = await db.select().from(stripeEvents);
     expect(retained).toHaveLength(2);

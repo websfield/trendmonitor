@@ -1,0 +1,4 @@
+ALTER TABLE "trend_items" ADD CONSTRAINT "trend_items_id_profile_uq" UNIQUE("id","profile_id");--> statement-breakpoint
+ALTER TABLE "autopsies" ADD CONSTRAINT "autopsies_trend_item_profile_fk" FOREIGN KEY ("trend_item_id","profile_id") REFERENCES "public"."trend_items"("id","profile_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "autopsy_cache_claims" ADD CONSTRAINT "autopsy_cache_claims_trend_item_profile_fk" FOREIGN KEY ("trend_item_id","profile_id") REFERENCES "public"."trend_items"("id","profile_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "trend_transcripts" ADD CONSTRAINT "trend_transcripts_trend_item_profile_fk" FOREIGN KEY ("trend_item_id","profile_id") REFERENCES "public"."trend_items"("id","profile_id") ON DELETE cascade ON UPDATE no action;

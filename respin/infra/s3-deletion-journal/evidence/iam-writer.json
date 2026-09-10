@@ -1,0 +1,34 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ConditionalCreateOnly",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/*",
+      "Condition": {
+        "Null": {
+          "s3:if-none-match": "false"
+        },
+        "StringEquals": {
+          "s3:x-amz-server-side-encryption": "AES256",
+          "s3:object-lock-mode": "COMPLIANCE"
+        }
+      }
+    },
+    {
+      "Sid": "SetComplianceRetentionAtLeast28Days",
+      "Effect": "Allow",
+      "Action": "s3:PutObjectRetention",
+      "Resource": "arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:object-lock-mode": "COMPLIANCE"
+        },
+        "NumericGreaterThanEquals": {
+          "s3:object-lock-remaining-retention-days": "28"
+        }
+      }
+    }
+  ]
+}

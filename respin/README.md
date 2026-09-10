@@ -7,23 +7,29 @@ build-plan, decisions).
 ## Layout
 
 ```
-app/             Next.js 15 App Router — (marketing) / and /for/<audience>, (auth) /sign-in
-                 /sign-up, (product) /onboarding /brain /studio /usage /settings/billing,
-                 (admin) /admin /admin/config      [route groups are URL-invisible]
+app/             Next.js 15 App Router — (marketing) / and /for/<audience> /changelog /legal
+                 (+ the Sample Spin panel), (auth) /sign-in /sign-up, (product) /onboarding
+                 /brain /studio /usage /settings/billing /settings/account, (admin) /admin
+                 /admin/config /admin/activation; api/demo is the sessionless Sample Spin
+                 [route groups are URL-invisible]
 app/ui/          Signal design-system primitives (Panel, Banner, Button/buttonClass,
                  Field, LedgerTable, Badge, Meter) — presentational only; tokens in
                  app/respin-tokens.css + app/globals.css, spec in ./DESIGN.md
-lib/             route-boundary constants (middleware deploys these directly)
+lib/             route-boundary constants (middleware deploys these directly) and the
+                 content-free Sentry telemetry (telemetry.ts); instrumentation.ts +
+                 instrumentation-node.ts run the startup preflight and error forwarding
 packages/db      @respin/db — Drizzle schema (domain + auth + billing + brain + onboarding
                  tables), migrations, seed, tenancy helpers (withWorkspace + its scoped
                  accessors), the run-slot concurrency semaphore
 packages/auth    @respin/auth — Better Auth instance, requireUser/requireAdmin (THE gate,
-                 server layer, fail closed); middleware is an optimistic cookie redirect only
+                 server layer, fail closed); middleware is an optimistic cookie redirect only;
+                 client-ip.ts is the one client-address authority (proxy-attested or null)
 packages/config  @respin/config — the versioned runtime config (credit costs, allowances,
                  pack price, grace/pause bounds, Stripe price map); append-only versions
 packages/credits @respin/credits — the credit ledger and its ONE balance authority, the
-                 Stripe adapter, webhook handlers, the owner-gated billing actions, and the
-                 metered spend path (profile intake, runInference, inferVoice)
+                 Stripe adapter, webhook handlers, the owner-gated billing actions, the
+                 metered spend path (profile intake, runInference, inferVoice) and the
+                 public Sample Spin orchestrator (sample-spin/, system-metered, no tenant)
 packages/llm     @respin/llm — the Anthropic provider adapter (pinned origin, typed errors,
                  ceiling pricing); consumed only by @respin/credits — app/ may not import it
 packages/trends  @respin/trends — compliant metadata/transcript intake, canonical autopsy,
@@ -32,7 +38,9 @@ packages/trends  @respin/trends — compliant metadata/transcript intake, canoni
                  lexical/structural proxy against the autopsy's bounded reference — not
                  semantic similarity and not plagiarism detection; R-87)
 worker/          pg-boss system worker — scheduled refresh/autopsy dispatch, non-tenant
-                 system-spend authority, bounded provider work, health and dead letters
+                 system-spend authority, bounded provider work, health and dead letters,
+                 the retention/recovery tick and the daily activation-cohort emitter
+scripts/         operator CLIs (preflight, journal forecast/purge, backup + restore drill)
 ```
 
 Rule: `app/` imports only the sanctioned surfaces — `respinDb` /
@@ -62,9 +70,10 @@ the key there. **Never pipe `pnpm dev` through `head`** — when `head` exits th
 pipe closes and the dev server dies mid-session, answering a few requests and
 then hanging every one after.
 
-Checks (same set CI runs): `pnpm typecheck && pnpm lint && pnpm test && pnpm db:check && pnpm build`
-— you should see all five exit 0. Tests run against in-process PGlite (R-17): no
-database setup needed.
+Checks (same set CI runs): `pnpm preflight && pnpm typecheck && pnpm lint && pnpm test && pnpm db:check && pnpm build`
+— you should see all six exit 0. `preflight` needs no database, no network and no
+environment (a registry defect is a fact about the code), so it runs first and fails
+fast. Tests run against in-process PGlite (R-17): no database setup needed.
 
 The two `*.docker.test.ts` suites are the exception: they need real Postgres and
 LOUD-SKIP without it. They are what proves the ledger's money invariants under
@@ -212,10 +221,22 @@ public).
    `RESEND_API_KEY`/`RESEND_FROM` with real delivery evidence (T-16) still
    deferred. The worker also runs the deletion-lifecycle tick, whose
    irreversible erasure needs `RESPIN_DELETION_ERASURE_SCOPES` and the Task 5
-   journal store before anything can advance. Installation, health, recovery and rollback are documented
+   journal store before anything can advance; the app accepts deletion
+   REQUESTS only for the scopes named in `RESPIN_DELETION_REQUEST_SCOPES`
+   (unset = none, the launch state), and cancellation is never gated. Installation, health, recovery and rollback are documented
    in [`../docs/runbooks/respin-worker-operations.md`](../docs/runbooks/respin-worker-operations.md).
    The deferred real-vendor, target-host, YouTube and Resend acceptance walks
    are specified in [`../docs/runbooks/respin-vendor-acceptance-walks.md`](../docs/runbooks/respin-vendor-acceptance-walks.md).
+
+## Phase 10a: the public Sample Spin, the startup preflight, telemetry, and the proposal audit
+
+**The public Sample Spin (R-116/R-117/R-123).** `POST /api/demo` and the landing panel run a visitor's idea through the fictional chair-restorer fixture (`packages/credits/src/sample-spin/`) on the production `analyseAndSpin` pipeline with every gate. Closed by default: set `RESPIN_PUBLIC_SAMPLE_SPIN=preview` and `RESPIN_PUBLIC_SAMPLE_SPIN_HMAC_KEYS=v1=<64 hex>` (see `env.example`) to open it on a deployment. Every model call is metered under the one system-spend authority as `purpose = public_sample_spin` with a $10/day purpose cap inside the $100/day global cap (config `publicSampleSpin.dailyCapMicroUsd` may only tighten it); one admission per 24 hours per HMAC bucket of the PROXY-ATTESTED client address (with `RESPIN_TRUSTED_PROXIES=none` or no list every visitor shares one fail-closed bucket), two concurrent product-wide, at most two drafts plus one scoring call. Rotate the HMAC key by prepending a new version and keeping the prior one until `pnpm sample-spin:keyring` exits 0. `public` is not a value this build accepts — only Phase 10c may open the flag. The pre-registered ten-idea evaluation set is `docs/progress/respin-finish/10a-sample-spin-evaluation.md` (not yet run).
+
+**The startup preflight (closes G-15).** `pnpm preflight` runs the brain-content registry guard that used to run at module load; the same function runs at the Next.js server's `register()` (`instrumentation.ts`) and at the worker's start. A refusal names its code (`preflight_refused:brain_content_registry`) and stops the process from starting; it can no longer make `@respin/db` unimportable under a Stripe delivery. CI runs it before typecheck.
+
+**Telemetry (content-free, SDK-less).** `SENTRY_DSN` turns on error events built from `safe-log`'s allowlist only (code, class name, driver SQLSTATE, route pattern); `RESPIN_SENTRY_SAMPLE_RATE` may only lower the rate; `SENTRY_ENVIRONMENT` tags events (default `production`); the budget is 4,000 events/month per process. `POSTHOG_HOST` + `POSTHOG_PROJECT_KEY` turn on the daily aggregate activation event (counts only, small cells suppressed, 10,000 events/month per process). Unset = disabled. Exact activation counts are on `/admin/activation`.
+
+**Verified-only learning (R-115).** Result comparisons and proposals use `connector_verified` rows only; self-reported numbers stay visible with their label. Before deploying a database that already holds result proposals, run `DATABASE_URL=... pnpm proposals:audit`: exit 2 means an accepted proposal carries non-verified evidence and an owner must remediate it by id; `--supersede` retires still-proposed unverified ones. Record the zero/non-zero result in the slice card.
 
 ## Recording M1 evidence (owner, test mode)
 

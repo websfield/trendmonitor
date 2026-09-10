@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 import { workspaces } from "../src/schema";
+import { creditLedger, pausePeriods, subscriptions } from "../src/billing-schema";
 import {
   brainDocs,
   creatorProfiles,
@@ -744,14 +745,41 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
         f.table + ": the fixture did not land, so its cascade is untested"
       ).toBeGreaterThan(0);
     }
-    // The assertion `restrict` made impossible: with a usage row present, the
-    // workspace delete must still succeed. A-5 first specified `restrict` on
-    // model_usage, which combined with both-columns-NOT-NULL made `set null`
-    // unrepresentable — so a profile with one usage row could never be deleted,
-    // and since profiles cascade from workspaces, this delete would have failed.
-    // `ON DELETE no action` on ANY of these tables reproduces exactly that
-    // outage, which is why `migration-shape.test.ts`'s "some ON DELETE clause
-    // exists" scan is not a substitute for this.
+    // TASK 6 CHANGED THIS CONTRACT, and both halves are pinned rather than one
+    // quietly replacing the other.
+    //
+    // The original A-5 outage was: `restrict` on `model_usage` plus
+    // both-columns-NOT-NULL made `set null` unrepresentable, so a profile with
+    // one usage row could never be deleted — and since profiles cascade from
+    // workspaces, this delete failed. R-122 needs those money rows to outlive
+    // the workspace for seven years, which a CASCADE cannot do, so Task 6 put
+    // the key back at `restrict` — and paid for it by making the caller repoint
+    // first. The executor does exactly that: `orderTargetsForExecution` ranks
+    // `pseudonymise` before every cascade and puts the root tables last, so the
+    // links move to a stub before the workspace row goes.
+    //
+    // HALF ONE — the delete is REFUSED while a retained money row still points
+    // at this workspace. Without this the "repoint first" contract would be
+    // satisfied vacuously by a schema that never enforced it.
+    await expect(
+      db.delete(workspaces).where(eq(workspaces.id, wsA))
+    ).rejects.toThrow();
+
+    // HALF TWO — REQ-A04 is still POSSIBLE. Repoint the retained chain the way
+    // the executor does (here to the other real workspace, since this is a
+    // schema test with no executor to mint a stub), and the delete succeeds.
+    // `model_usage` is removed rather than repointed here. Its key is
+    // COMPOSITE — (profile_id, workspace_id) — so repointing needs a stub
+    // PROFILE, and minting one would leave a `creator_profiles` row behind that
+    // this test's own cascade assertion would then read as a survivor. What the
+    // executor really does (repoint to a "Deleted profile" stub, keeping the
+    // seven-year cost facts) is proven end to end in `deletion-executor.test.ts`;
+    // this schema test only needs the RESTRICT lifted so the cascade set below
+    // is what is being measured.
+    await db.delete(modelUsage).where(eq(modelUsage.workspaceId, wsA));
+    await db.update(creditLedger).set({ workspaceId: wsB }).where(eq(creditLedger.workspaceId, wsA));
+    await db.update(subscriptions).set({ workspaceId: wsB }).where(eq(subscriptions.workspaceId, wsA));
+    await db.update(pausePeriods).set({ workspaceId: wsB }).where(eq(pausePeriods.workspaceId, wsA));
     await expect(
       db.delete(workspaces).where(eq(workspaces.id, wsA))
     ).resolves.toBeDefined();

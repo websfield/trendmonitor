@@ -18,6 +18,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -190,6 +191,18 @@ export const trendItems = pgTable(
     uniqueIndex("trend_items_private_source_video_profile_uq")
       .on(t.sourceId, t.externalVideoId, t.profileId)
       .where(sql`${t.rightsScope} = 'profile_private'`),
+    // A table-level UNIQUE CONSTRAINT (not an index) so the three composite
+    // foreign keys below can reference (id, rights_scope): every transcript,
+    // cache claim and autopsy carries its item's rights scope, and the
+    // database refuses a row whose scope disagrees with its item's — the
+    // producers in trends-storage.ts already select the item by scope, this
+    // makes that agreement structural (10b-1 phase review, tenancy item).
+    unique("trend_items_id_rights_scope_uq").on(t.id, t.rightsScope),
+    // The same tie one notch further for the PRIVATE class: a private row's
+    // profile must be its item's profile. `MATCH SIMPLE` semantics mean the
+    // key is inert when the child's profile_id is NULL (every shared row), so
+    // this constrains exactly the rows that carry a profile.
+    unique("trend_items_id_profile_uq").on(t.id, t.profileId),
   ]
 );
 
@@ -229,6 +242,16 @@ export const trendTranscripts = pgTable(
       columns: [t.profileId, t.workspaceId],
       foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
       name: "trend_transcripts_profile_workspace_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.trendItemId, t.rightsScope],
+      foreignColumns: [trendItems.id, trendItems.rightsScope],
+      name: "trend_transcripts_trend_item_rights_scope_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.trendItemId, t.profileId],
+      foreignColumns: [trendItems.id, trendItems.profileId],
+      name: "trend_transcripts_trend_item_profile_fk",
     }).onDelete("cascade"),
     check(
       "trend_transcripts_rights_profile_pair",
@@ -296,6 +319,16 @@ export const autopsies = pgTable(
       foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
       name: "autopsies_profile_workspace_fk",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.trendItemId, t.rightsScope],
+      foreignColumns: [trendItems.id, trendItems.rightsScope],
+      name: "autopsies_trend_item_rights_scope_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.trendItemId, t.profileId],
+      foreignColumns: [trendItems.id, trendItems.profileId],
+      name: "autopsies_trend_item_profile_fk",
+    }).onDelete("cascade"),
     check(
       "autopsies_rights_profile_pair",
       sql`(${t.rightsScope} = 'profile_private') = (${t.profileId} IS NOT NULL AND ${t.workspaceId} IS NOT NULL)`
@@ -356,6 +389,8 @@ export const autopsyCacheClaims = pgTable("autopsy_cache_claims", {
   updatedAt: updatedAt(),
 }, (t) => [
   foreignKey({ columns: [t.profileId, t.workspaceId], foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId], name: "autopsy_cache_claims_profile_workspace_fk" }).onDelete("cascade"),
+  foreignKey({ columns: [t.trendItemId, t.rightsScope], foreignColumns: [trendItems.id, trendItems.rightsScope], name: "autopsy_cache_claims_trend_item_rights_scope_fk" }).onDelete("cascade"),
+  foreignKey({ columns: [t.trendItemId, t.profileId], foreignColumns: [trendItems.id, trendItems.profileId], name: "autopsy_cache_claims_trend_item_profile_fk" }).onDelete("cascade"),
   check("autopsy_cache_claims_rights_profile_pair", sql`(${t.rightsScope} = 'profile_private') = (${t.profileId} IS NOT NULL AND ${t.workspaceId} IS NOT NULL)`),
   check(
     "autopsy_cache_claims_rights_shape",

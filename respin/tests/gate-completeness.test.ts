@@ -91,6 +91,14 @@ const SESSION_FREE_API_ROUTES: { file: string; why: string }[] = [
     file: "api/stripe/webhook/route.ts",
     why: "authenticated by Stripe's signature (Stripe.webhooks.constructEvent), not by a session; the caller is Stripe, never a browser.",
   },
+  {
+    file: "api/demo/route.ts",
+    why: "Phase 10a plan C2: the public Sample Spin is SESSIONLESS by design (R-116) — it mints no session, WorkspaceScope or ProfileScope, reads no tenant row and debits no ledger. What bounds it instead: the closed RESPIN_PUBLIC_SAMPLE_SPIN flag (404 when unset), a strict untrusted-idea parse, the DB-atomic client-IP-HMAC bucket (one admission per 24 h per proxy-ATTESTED address; with no trusted proxy configured every visitor shares one bucket, fail closed), two concurrent product-wide, and the R-123 spend reservation under the $10/day purpose cap — all in @respin/credits/app-server's publicSampleSpin.",
+  },
+  {
+    file: "api/deletion/recover/route.ts",
+    why: "Phase 10b-1 Task 8: cancels an identity deletion from the emailed recovery link, AFTER every session was revoked, so no session can exist. Authenticated by the single-use recovery secret exchanged for a bounded recovery session plus a fresh password proof (packages/db auth-lifecycle), each rate-limited by client-IP digest; link possession alone reaches nothing.",
+  },
 ];
 
 /**
@@ -193,12 +201,24 @@ const PUBLIC_ENTRYPOINTS: { file: string; why: string }[] = [
     why: "the marketing landing page — the first thing a signed-out visitor sees.",
   },
   {
+    file: "(marketing)/changelog/page.tsx",
+    why: "Phase 10a task 5 / REQ-H01: the public changelog, a checked-in list of shipped engineering.",
+  },
+  {
+    file: "(marketing)/legal/page.tsx",
+    why: "Phase 10a task 5 / REQ-H01: the terms-and-privacy entrypoint; an honest placeholder until 10c publishes the reviewed documents.",
+  },
+  {
     file: "(auth)/sign-in/page.tsx",
     why: "sign-in cannot require a session; it is how one is obtained.",
   },
   {
     file: "(auth)/sign-up/page.tsx",
     why: "sign-up cannot require a session; it is how an account is created.",
+  },
+  {
+    file: "(auth)/recover-deletion/page.tsx",
+    why: "Phase 10b-1 Task 8: the identity-deletion recovery link lands here AFTER every session was revoked, so it cannot require one; the single-use recovery secret plus a fresh password proof gate the action instead (plan C2).",
   },
 ];
 
@@ -456,6 +476,18 @@ const NAMED_PROTECTED_PAGES: {
     url: "/settings/billing",
     gate: "requireUser",
   },
+  // Phase 10b-1 Task 8: deletion status/request/cancel. The page and its
+  // action module each gate above their own try, as the billing pair does.
+  {
+    file: "(product)/settings/account/page.tsx",
+    url: "/settings/account",
+    gate: "requireUser",
+  },
+  {
+    file: "(product)/settings/account/actions.ts",
+    url: "/settings/account",
+    gate: "requireUser",
+  },
   { file: "(admin)/admin/page.tsx", url: "/admin", gate: "requireAdmin" },
   {
     file: "(admin)/admin/config/page.tsx",
@@ -473,6 +505,12 @@ const NAMED_PROTECTED_PAGES: {
   {
     file: "(admin)/admin/model-spend/page.tsx",
     url: "/admin/model-spend",
+    gate: "requireAdmin",
+  },
+  // Phase 10a plan C5: the internal activation report (R-121).
+  {
+    file: "(admin)/admin/activation/page.tsx",
+    url: "/admin/activation",
     gate: "requireAdmin",
   },
 ];

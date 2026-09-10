@@ -1,11 +1,22 @@
 {
   "_comment": [
-    "R-124 WRITER principal: create only, under one prefix, and nothing else.",
-    "It cannot delete, add a delete marker, copy over, change retention, suspend",
-    "versioning, or bypass a lock — those verbs are simply absent, and the",
-    "bucket policy denies them again. The application-code mirror of this is",
-    "`JournalWriterTransport` in packages/db/src/deletion-journal.ts, whose only",
-    "method is putObject."
+    "R-124 WRITER principal: create only, under one prefix.",
+    "",
+    "TWO statements, because AWS requires s3:PutObjectRetention whenever an",
+    "upload supplies Object Lock settings. With s3:PutObject alone this",
+    "principal could not have written a single journal object -- every append",
+    "would have been denied. Found by live provisioning, not by any test here.",
+    "",
+    "THE COST, STATED: that permission lets the writer EXTEND a COMPLIANCE lock.",
+    "It cannot shorten one and cannot delete or rewrite the protected version --",
+    "S3 forbids that to every principal, including the account root. So the",
+    "claim 'the writer can never change retention' is too strong; the durable",
+    "promise is that it cannot shorten protection or destroy a locked version.",
+    "The retention statement is itself fenced to COMPLIANCE and >= 28 days.",
+    "",
+    "The writer has NO read, list or delete permission. Its application mirror",
+    "is `JournalWriterTransport` in packages/db/src/deletion-journal.ts, whose",
+    "only method is putObject."
   ],
   "Version": "2012-10-17",
   "Statement": [
@@ -15,10 +26,26 @@
       "Action": "s3:PutObject",
       "Resource": "arn:aws:s3:::<BUCKET>/<ENVIRONMENT>/deletion-journal/*",
       "Condition": {
-        "Null": { "s3:if-none-match": "false" },
+        "Null": {
+          "s3:if-none-match": "false"
+        },
         "StringEquals": {
           "s3:x-amz-server-side-encryption": "AES256",
-          "s3:x-amz-object-lock-mode": "COMPLIANCE"
+          "s3:object-lock-mode": "COMPLIANCE"
+        }
+      }
+    },
+    {
+      "Sid": "SetComplianceRetentionAtLeast28Days",
+      "Effect": "Allow",
+      "Action": "s3:PutObjectRetention",
+      "Resource": "arn:aws:s3:::<BUCKET>/<ENVIRONMENT>/deletion-journal/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:object-lock-mode": "COMPLIANCE"
+        },
+        "NumericGreaterThanEquals": {
+          "s3:object-lock-remaining-retention-days": "28"
         }
       }
     }

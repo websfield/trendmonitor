@@ -220,6 +220,23 @@ describe("Stripe external-command adapter", () => {
       outcome: "failed",
       failureCode: "customer_fields_not_cleared",
     });
+    // The PERSONAL-FIELD half of the composed predicate, on THIS consumer: an
+    // object with the email cleared but a name still set is refused too, by
+    // execute and by reconcile (billing gate, fix round 2, round 2 — the echo
+    // above is caught by the email clause alone).
+    const namedOnly = fakeClient({
+      customerUpdate: vi.fn(async (id: string) => ({ id, name: "Owner", email: "", phone: "", description: "", address: null, shipping: null, metadata: {} }) as never),
+      customerRetrieve: vi.fn(async (id: string) => ({ id, name: "Owner", email: "", phone: "", description: "", address: null, shipping: null, metadata: {} }) as never),
+    });
+    const namedPort = createStripeExternalCommandPort(db, () => namedOnly.client);
+    expect(await namedPort.execute(command("stripe_customer_personal_fields_clear", workspaceId))).toEqual({
+      outcome: "failed",
+      failureCode: "customer_fields_not_cleared",
+    });
+    expect(await namedPort.reconcile(command("stripe_customer_personal_fields_clear", workspaceId))).toEqual({
+      outcome: "failed",
+      failureCode: "not_applied",
+    });
   });
 
   it("classifies provider outcomes honestly: definitive refusals fail, indeterminate exchanges are unknown", async () => {

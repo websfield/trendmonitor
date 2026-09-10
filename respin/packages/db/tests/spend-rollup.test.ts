@@ -9,6 +9,7 @@ import { ensureUserWorkspace } from "../src/bootstrap";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 import { creditLedger } from "../src/billing-schema";
 import { creatorProfiles } from "../src/brain-schema";
+import { workspaces } from "../src/schema";
 import { modelUsage, workspaceSpendMonthly } from "../src/onboarding-schema";
 import {
   ProfileScope,
@@ -484,9 +485,24 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
       outcome: "succeeded",
       consumedIncludedBuild: false,
     });
-    // model_usage cascades from creator_profiles (onboarding-schema.ts's own
-    // docblock); deleting the profile is what produces the orphaned shape —
-    // the rollup row has no FK and survives untouched.
+    // TASK 6 changed how this shape is PRODUCED, not whether it exists.
+    // `model_usage` no longer cascades from `creator_profiles` — it is on
+    // R-122's seven-year chain — so deleting a profile can no longer strand a
+    // rollup row. What still can is WORKSPACE erasure, which repoints the usage
+    // rows to a stub workspace and leaves the rollup row (which has no foreign
+    // key) behind under the old workspace id. That is the shape reproduced here.
+    const [stubWorkspace] = await db
+      .insert(workspaces)
+      .values({ name: "Deleted workspace" })
+      .returning();
+    const [stubProfile] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId: stubWorkspace!.id, displayName: "Deleted profile" })
+      .returning();
+    await db
+      .update(modelUsage)
+      .set({ profileId: stubProfile!.id, workspaceId: stubWorkspace!.id })
+      .where(eq(modelUsage.workspaceId, workspaceId));
     await db.delete(creatorProfiles).where(eq(creatorProfiles.id, profileId));
 
     const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
@@ -495,7 +511,7 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
     expect(result.counts.drift).toBe(0);
   });
 
-  it("KNOWN LIMITATION (tenancy gate, 2026-08-29, documented in reconcileSpend's own docblock): deleting ONE profile of a MULTI-profile workspace false-positives as DRIFT, not orphaned — not reachable today (profiles are archived, never individually deleted; see the limitation note), but proven here so the shape is on record rather than rediscovered", async () => {
+  it("TASK 6 CLOSED the 2026-08-29 limitation: deleting ONE profile of a MULTI-profile workspace no longer false-positives as DRIFT", async () => {
     const caps = writeCapabilities(await scopeFor());
     // A second, SURVIVING profile in the same workspace.
     const [secondProfile] = await db
@@ -539,20 +555,32 @@ describe("reconcileSpend (R11-R13, R-41): three classes plus unbilled, while mod
       consumedIncludedBuild: false,
     });
 
-    // Simulate a HYPOTHETICAL per-profile deletion (no such path exists in
-    // this product today — see the limitation note): only ONE profile's row
-    // is removed, cascading only its own model_usage.
+    // Simulate a per-profile deletion. The deleted profile's cost rows are
+    // retained (R-122) and RESTRICT the delete, so they are repointed to a stub
+    // profile IN THE SAME WORKSPACE first — which is exactly what the executor
+    // does for a profile erasure (`stubFor("profile")` uses the operation's own
+    // workspace). The workspace's spend therefore stays whole.
+    const [stubProfile] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId, displayName: "Deleted profile" })
+      .returning();
+    await db
+      .update(modelUsage)
+      .set({ profileId: stubProfile!.id })
+      .where(eq(modelUsage.profileId, profileId));
     await db.delete(creatorProfiles).where(eq(creatorProfiles.id, profileId));
 
     const result = await reconcileSpend(db, includedFor(INCLUDED_BUILD_PURPOSES));
     const row = result.rows.find((r) => r.workspaceId === workspaceId);
-    // THE DOCUMENTED LIMITATION, PINNED: the survivor keeps hasProfiles
-    // true, so this reads DRIFT (rollup 1500 vs surviving usage 500) rather
-    // than the true state (one profile legitimately gone, one still
-    // spending). If this assertion ever flips to "reconciled" or
-    // "orphaned", the limitation note is stale and should be corrected
-    // alongside whatever fixed the underlying grain.
-    expect(row?.class).toBe("drift");
+    // THE LIMITATION IS GONE, and this is the "whatever fixed the underlying
+    // grain" the old note asked to be named. It read DRIFT because the deleted
+    // profile's `model_usage` cascaded away, so surviving usage (500) no longer
+    // matched the rollup (1500) even though nothing was wrong. Task 6 put those
+    // cost rows on R-122's seven-year chain, so BOTH profiles' usage survives
+    // the deletion, the totals agree, and the alarm no longer fires on a
+    // correct state.
+    expect(row?.class).toBe("reconciled");
+    expect(result.counts.drift).toBe(0);
   });
 
   it("the rollup disagreeing with model_usage while the profile still exists is DRIFT — the only class that is a defect", async () => {

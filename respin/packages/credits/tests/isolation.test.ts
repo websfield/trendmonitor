@@ -25,6 +25,7 @@ import {
   withWorkspace,
   CONFIG_V1_SEED,
   type TestDb,
+  type VerifiedUserId,
   type VerifiedWorkspaceId,
   type WorkspaceScope,
 } from "@respin/db";
@@ -36,6 +37,7 @@ import * as appServer from "../src/app-server";
 import * as webhookServer from "../src/webhook-server";
 import * as deletionServer from "../src/deletion-server";
 import * as stripeActions from "../src/stripe/actions";
+import * as billingContactMod from "../src/stripe/billing-contact";
 import * as stripeCustomers from "../src/stripe/customers";
 import * as stripeWebhooks from "../src/stripe/webhooks";
 import * as stripeAutoTopup from "../src/stripe/auto-topup";
@@ -52,6 +54,12 @@ import * as profilesMod from "../src/profiles";
 import * as inferenceMod from "../src/inference";
 import * as monthsMod from "../src/months";
 import * as metricsMod from "../src/metrics";
+import * as sampleSpinIndexMod from "../src/sample-spin/index";
+import * as sampleSpinFixtureMod from "../src/sample-spin/fixture";
+import * as sampleSpinIdeaMod from "../src/sample-spin/idea";
+import * as sampleSpinEnablementMod from "../src/sample-spin/enablement";
+import * as sampleSpinEvaluationMod from "../src/sample-spin/evaluation-set";
+import * as sampleSpinRunMod from "../src/sample-spin/run";
 import * as errorsMod from "../src/errors";
 import * as inferVoiceMod from "../src/infer-voice";
 import * as generateMod from "../src/generate";
@@ -145,6 +153,22 @@ const req = (attemptId: string) => ({
  * the completeness assertion.
  */
 const NOT_DB_FACING: Record<string, string> = {
+  // Phase 10a plan C2: the public Sample Spin's pure surface.
+  loadSampleSpinFixture: "checked-in content, validated in memory — no query",
+  sampleSpinContext: "pure — assembles a GenerationContext from the fixture and a parsed idea",
+  parseSampleSpinIdea: "pure — the untrusted-idea parse",
+  codePointLength: "pure",
+  resolvePublicSampleSpinEnablement: "pure — reads an environment record",
+  publicSampleSpinEnablement: "facade over the pure flag reader; no query",
+  sampleSpinReservationMicroUsd: "pure — the R-123 formula over the active config's prices",
+  sampleSpinDeadlineMs: "pure — the config deadline clamped to the compiled ceiling",
+  SampleSpinBoundError: "error class",
+  tokenUpperBound: "pure — UTF-8 byte length",
+  SampleSpinFixtureError: "error class",
+  SampleSpinIdeaError: "error class",
+  PublicSampleSpinEnablementError: "error class",
+  PublicSampleSpinNotConfiguredError: "error class",
+  SampleSpinInvariantError: "error class",
   foldLedger: "pure function — takes rows as arguments, no query",
   effectiveExpiry: "pure function — no query",
   trackedNicheEntitlement:
@@ -159,6 +183,7 @@ const NOT_DB_FACING: Record<string, string> = {
   CheckoutInFlightError: "error class",
   CheckoutReconciliationRequiredError: "error class",
   NoStripeCustomerError: "error class",
+  BillingContactProviderError: "error class",
   NoLiveSubscriptionError: "error class",
   NotPausedError: "error class",
   TierCheckoutRolloutError: "error class",
@@ -330,6 +355,14 @@ const STRIPE_BOUND: Record<string, string> = {
 };
 
 const COVERED = new Set([
+  // Phase 10a plan C2, and the named case really exists: "accepted: two
+  // metered calls, one measured money fact, the bucket consumed, and no
+  // tenant row anywhere" (sample-spin-spend.test.ts) asserts credit_ledger,
+  // model_usage, generations, session, creator_profiles and workspaces all
+  // stay EMPTY through a whole public run — the isolation this path owes is
+  // that it touches no tenant at all.
+  "runPublicSampleSpin",
+  "publicSampleSpin",
   // Slice 1, and the named case really exists now: "createProfile: A's profile
   // lands only in A, and B's cap is untouched by it". It was in this set with
   // NO case behind it until the billing gate caught the false citation
@@ -368,6 +401,12 @@ const COVERED = new Set([
   "bindPendingAutoTopupPaymentIntent",
   "createPortalUrl",
   "setAutoTopup",
+  // Plan C3 (Phase 10b-1): the billing-contact handover and its status read.
+  // Both take a WorkspaceScope, read ONE subscriptions row by the scope's
+  // workspace id, and the handover writes that same row — covered by the
+  // A-vs-B billing-contact case below, with the provider driven by a fake.
+  "billingContactStatus",
+  "acceptBillingContact",
   // Audit 2026-08-17 remediation (R2, #8). Genuinely COVERED rather than
   // STRIPE_BOUND: its owner gate, its workspace-scoped mirror read and its
   // status narrowing all run BEFORE the first Stripe call, so the keyless case
@@ -422,6 +461,7 @@ const ENUMERATED: Record<string, object> = {
   // Phase 10b-1 Task 4: the dedicated worker's one door into this package.
   "deletion-server.ts": deletionServer,
   "stripe/actions.ts": stripeActions,
+  "stripe/billing-contact.ts": billingContactMod,
   "stripe/customers.ts": stripeCustomers,
   "stripe/webhooks.ts": stripeWebhooks,
   "stripe/auto-topup.ts": stripeAutoTopup,
@@ -447,6 +487,37 @@ type InternalModule = {
 };
 
 const INTERNAL_MODULES: Record<string, InternalModule> = {
+  // Phase 10a plan C2: the public Sample Spin. Everything is re-exported
+  // through index.ts (`export * from "./sample-spin"`); app/** reaches the
+  // orchestrator only through app-server's `publicSampleSpin`. No module here
+  // owns a query: the fixture is checked-in content, the idea parser and the
+  // enablement flag are pure, and the orchestrator composes @respin/db's
+  // limiter and spend authority (isolated where they live) with the
+  // production pipeline. It mints no session, scope or ledger row —
+  // `sample-spin-spend.test.ts` asserts every tenant table stays empty.
+  "sample-spin/index.ts": {
+    reason: "the barrel; every name it carries is claimed on its source module below",
+    viaIndex: ["loadSampleSpinFixture", "sampleSpinContext", "parseSampleSpinIdea", "codePointLength", "resolvePublicSampleSpinEnablement", "runPublicSampleSpin", "sampleSpinDeadlineMs", "sampleSpinReservationMicroUsd", "tokenUpperBound", "SampleSpinFixtureError", "SampleSpinIdeaError", "PublicSampleSpinEnablementError", "PublicSampleSpinNotConfiguredError", "SampleSpinBoundError", "SampleSpinInvariantError"],
+  },
+  "sample-spin/fixture.ts": {
+    reason: "the checked-in fictional brain and reference, validated at load; content, no query",
+    viaIndex: ["loadSampleSpinFixture", "sampleSpinContext", "SampleSpinFixtureError"],
+  },
+  "sample-spin/idea.ts": {
+    reason: "the untrusted-idea boundary; pure",
+    viaIndex: ["parseSampleSpinIdea", "codePointLength", "SampleSpinIdeaError"],
+  },
+  "sample-spin/enablement.ts": {
+    reason: "the closed rollout flag and the two deployment refusals; pure",
+    viaIndex: ["resolvePublicSampleSpinEnablement", "PublicSampleSpinEnablementError", "PublicSampleSpinNotConfiguredError"],
+  },
+  "sample-spin/evaluation-set.ts": {
+    reason: "the pre-registered ten-idea set; data",
+  },
+  "sample-spin/run.ts": {
+    reason: "the metered orchestrator over @respin/db's limiter + spend authority and @respin/modes' pipeline; tenant-free by construction",
+    viaIndex: ["runPublicSampleSpin", "sampleSpinDeadlineMs", "sampleSpinReservationMicroUsd", "tokenUpperBound", "SampleSpinBoundError", "SampleSpinInvariantError"],
+  },
   "balance.ts": {
     reason:
       "the balance authority — reached publicly through index.ts. Since slice 6 it also MINTS: `mintFreeAllowanceIfDue` is the R17 Free grant, and it stays package-private on the strongest form of the usual reason — it is a WRITE to `credit_ledger` on a read path, and the only thing that may run it is the fold that immediately counts it. Exposing it would be a second way to mint credits, outside the lock the fold holds.",
@@ -679,7 +750,13 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   "stripe/deletion-commands.ts": {
     reason:
       "the Stripe/local adapter behind the deletion executor's ExternalCommandPort (Phase 10b-1 Task 4) — reached only through the enumerated deletion-server entrypoint, never through index.ts",
-    internalOnly: ["createStripeExternalCommandPort"],
+    internalOnly: [
+      "createStripeExternalCommandPort",
+      // Plan C3: the personal-field predicate shared with billing-contact.ts,
+      // so the erasure command and the handover cannot disagree about what
+      // "clear" means. Pure, no query.
+      "customerPersonalFieldsClear",
+    ],
   },
   "stripe/adapter.ts": {
     reason:
@@ -751,6 +828,10 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "the COMPOSED GENERATION (slice 6). Here rather than in @respin/db for the same layering reason as profiles.ts and inference.ts: it needs the resolved tier (state.ts), the active config, the ledger and the scoped write capabilities, and @respin/db can see only the last. It owns NO query of its own — every db touch is a caged accessor, a write capability, `debitCredits` or `deriveBalance*`, each isolated where it lives. `generate` itself reaches app/** through app-server.ts, which IS enumerated; `hashRequest` is pure and is on the public surface so the payload identity can be asserted without a database. Slice 7 added the framework read (`scope.accessors.eligibleFrameworks()`, a caged accessor breach-tested in profile-scope.test.ts) and the revision's parent read (`caps.readGenerationForAttempt`, an already-isolated write capability) — both somebody else's authority, so the sentence above still holds.",
     viaIndex: ["generate", "generationOp", "hashRequest"],
     internalOnly: [
+      // Phase 10a: the brain flatten and the Kill Test rule projection, as
+      // content-level helpers the public Sample Spin's fixture reuses. Pure.
+      "brainSentencesOf",
+      "creatorRulesOfContent",
       "promptFramework",
       "frameworksForContext",
       "frameworkVersionsUsed",
@@ -882,6 +963,12 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
 
 /** Namespaces for the internal modules, so their claims can be checked. */
 const INTERNAL_NAMESPACES: Record<string, object> = {
+  "sample-spin/index.ts": sampleSpinIndexMod,
+  "sample-spin/fixture.ts": sampleSpinFixtureMod,
+  "sample-spin/idea.ts": sampleSpinIdeaMod,
+  "sample-spin/enablement.ts": sampleSpinEnablementMod,
+  "sample-spin/evaluation-set.ts": sampleSpinEvaluationMod,
+  "sample-spin/run.ts": sampleSpinRunMod,
   "balance.ts": balanceMod,
   "stripe/deletion-commands.ts": deletionCommandsMod,
   "fold.ts": foldMod,
@@ -1465,8 +1552,11 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       { workspaceId: B, stripeCustomerId: "cus_B", status: "none" },
     ]);
     // Keyless: reaching Stripe here would throw StripeNotConfiguredError.
-    expect(await getOrCreateCustomer(db, A, "a@example.com")).toBe("cus_A");
-    expect(await getOrCreateCustomer(db, B, "b@example.com")).toBe("cus_B");
+    // The contact id is only WRITTEN on a fresh mapping; both exist here, so
+    // a placeholder brand is enough to prove the early return.
+    const contact = "00000000-0000-4000-8000-000000000001" as VerifiedUserId;
+    expect(await getOrCreateCustomer(db, A, "a@example.com", contact)).toBe("cus_A");
+    expect(await getOrCreateCustomer(db, B, "b@example.com", contact)).toBe("cus_B");
   });
 
   it("handleStripeEvent: an event for B's customer writes ONLY B's rows — A is untouched", async () => {
@@ -1789,6 +1879,37 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     const rows = await db.select().from(subscriptions);
     expect(rows.find((r) => r.workspaceId === A)?.autoTopupMonthlyCapCents).toBe(1000);
     expect(rows.find((r) => r.workspaceId === B)?.autoTopupMonthlyCapCents).toBe(5000);
+  });
+
+  it("acceptBillingContact on A rewrites A's customer and A's binding only; billingContactStatus reads A's row only", async () => {
+    const db = await createTestDb();
+    const { A, B } = await twoWorkspaces(db);
+    const ownerA = await mintScope(db, A, "owner");
+    const ownerB = await mintScope(db, B, "owner");
+    await db.insert(subscriptions).values([
+      { workspaceId: A, stripeCustomerId: "cus_A", status: "active", billingContactUserId: ownerB.userId },
+      { workspaceId: B, stripeCustomerId: "cus_B", status: "active", billingContactUserId: ownerB.userId },
+    ]);
+    const updated: string[] = [];
+    const client = () => ({
+      customers: {
+        update: async (id: string, params: unknown) => {
+          updated.push(id);
+          return { id, ...(params as object), address: null, shipping: null, metadata: {} } as never;
+        },
+        retrieve: async () => {
+          throw new Error("not used");
+        },
+      },
+    });
+    expect(await billingContactMod.billingContactStatus(db, ownerA)).toMatchObject({ hasCustomer: true, isCurrentUser: false });
+    await billingContactMod.acceptBillingContact(db, ownerA, "owner-a@example.test", reauthenticationFor(ownerA), client);
+    // ONE provider write, on A's customer; B's customer and B's binding untouched.
+    expect(updated).toEqual(["cus_A"]);
+    const rows = await db.select().from(subscriptions);
+    expect(rows.find((r) => r.workspaceId === A)?.billingContactUserId).toBe(ownerA.userId);
+    expect(rows.find((r) => r.workspaceId === B)?.billingContactUserId).toBe(ownerB.userId);
+    expect(await billingContactMod.billingContactStatus(db, ownerB)).toEqual({ hasCustomer: true, contactUserId: ownerB.userId, isCurrentUser: true });
   });
 
   it("ensurePauseStarted/Ended on A converge without touching B's pause state", async () => {

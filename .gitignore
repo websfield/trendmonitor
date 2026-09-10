@@ -53,3 +53,11 @@ Thumbs.db
 # ---- Playwright MCP (generated browser session artifacts, not tracked) ----
 .playwright-mcp/
 .gstack/
+# ---- Machine-local caches and scratch (never useful in a clone) ----
+# Codex sandbox scratch (node compile cache, tsx cache) and pnpm's
+# content-addressable store. Both are rebuilt on demand, and both showed up in
+# every `git status` — which is how a real change gets lost in the noise.
+.codex-tmp/
+.pnpm-store/
+# Chromium DNS warnings left behind by a browser walk.
+debug.log

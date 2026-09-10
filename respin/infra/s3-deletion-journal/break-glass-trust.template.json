@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "R-124 BREAK-GLASS trust policy TEMPLATE. Replace <ACCOUNT_ID>.",
+    "",
+    "The break-glass role is the ONE principal the bucket policy exempts from its",
+    "tampering denial, so this trust policy is what stands between that exemption",
+    "and anyone in the account. It requires a same-account IAM user AND MFA.",
+    "",
+    "NOT PROVEN: an operator's real assume-role flow. The provisioning run was a",
+    "root console session, which cannot demonstrate it. The operator also needs",
+    "sts:AssumeRole permission, which this file does not grant."
+  ],
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RequireSameAccountIAMOperatorWithMFA",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<ACCOUNT_ID>:root"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "Bool": {
+          "aws:MultiFactorAuthPresent": "true"
+        },
+        "ArnLike": {
+          "aws:PrincipalArn": "arn:aws:iam::<ACCOUNT_ID>:user/*"
+        }
+      }
+    }
+  ]
+}

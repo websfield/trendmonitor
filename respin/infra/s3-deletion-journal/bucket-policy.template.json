@@ -2,12 +2,41 @@
   "_comment": [
     "R-124 deletion-journal bucket policy TEMPLATE. Replace every <PLACEHOLDER>.",
     "Applied by an operator with `aws s3api put-bucket-policy`; the application",
-    "never creates, reads or applies this. Record the sha256 of the RENDERED",
-    "policy in RUNBOOK.md at provisioning, per R-124's evidence list.",
-    "Condition keys verified 2026-09-07 against",
-    "https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html",
-    "s3:if-none-match with the Null operator; s3:ObjectCreationOperation exempts",
-    "the multipart APIs, which cannot carry conditional headers."
+    "never creates, reads or applies this.",
+    "",
+    "THIS IS THE POLICY THAT IS ACTUALLY DEPLOYED. It was regenerated on",
+    "2026-09-08 from the rendered document applied to the live bucket, whose",
+    "sha256 is recorded in RUNBOOK.md. Strip this _comment before submitting to",
+    "AWS -- a top-level _comment is not valid in a policy document.",
+    "",
+    "THREE CORRECTIONS LIVE PROVISIONING FOUND, none of which any test in this",
+    "repository could have caught (see POLICY-CHANGES.md):",
+    "  * s3:x-amz-object-lock-mode WAS INVALID. The correct key is",
+    "    s3:object-lock-mode -- the x-amz- prefix belongs to the encryption and",
+    "    ACL keys, not to Object Lock. AWS Access Analyzer reported",
+    "    INVALID_SERVICE_CONDITION_KEY, which means DenyWeakOrAbsentObjectLock",
+    "    never evaluated as intended and the writer condition never matched.",
+    "  * The tampering denial can NOT include s3:PutObjectRetention: a blanket",
+    "    non-break-glass denial of it also denies the retention authorization",
+    "    every valid upload needs. Shorter-than-28-day and non-COMPLIANCE",
+    "    retention are still denied, by the two statements above it.",
+    "  * s3:PutBucketObjectLockConfiguration and s3:PutEncryptionConfiguration",
+    "    were missing from the tampering denial, so the bucket's actual default",
+    "    retention and default encryption were unprotected.",
+    "",
+    "Condition keys otherwise verified 2026-09-08 against the AWS docs:",
+    "DenyNonConditionalCreate's Null + Bool pairing is AWS's own published Deny",
+    "shape (conditional-writes-enforce.html Example 2); a review had suspected",
+    "it was vacuous, and it is not.",
+    "",
+    "KNOWN CONSEQUENCES, documented rather than discovered later:",
+    "  * CopyObject fails on this bucket (403 without the header, 501 with it) --",
+    "    an accepted cost, since nothing copies journal objects.",
+    "  * A PutObject with NO object-lock-mode header SUCCEEDS, inheriting the",
+    "    bucket's 28-day COMPLIANCE default. That is a protected write, not an",
+    "    unlocked one; the live probe verified the resulting retention.",
+    "  * The bucket-owner ROOT principal can still replace this policy (an",
+    "    explicit S3 recovery exception). Existing COMPLIANCE locks survive it."
   ],
   "Version": "2012-10-17",
   "Statement": [
@@ -20,7 +49,11 @@
         "arn:aws:s3:::<BUCKET>",
         "arn:aws:s3:::<BUCKET>/*"
       ],
-      "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
     },
     {
       "Sid": "DenyNonConditionalCreate",
@@ -29,8 +62,12 @@
       "Action": "s3:PutObject",
       "Resource": "arn:aws:s3:::<BUCKET>/*",
       "Condition": {
-        "Null": { "s3:if-none-match": "true" },
-        "Bool": { "s3:ObjectCreationOperation": "true" }
+        "Null": {
+          "s3:if-none-match": "true"
+        },
+        "Bool": {
+          "s3:ObjectCreationOperation": "true"
+        }
       }
     },
     {
@@ -40,17 +77,39 @@
       "Action": "s3:PutObject",
       "Resource": "arn:aws:s3:::<BUCKET>/*",
       "Condition": {
-        "StringNotEquals": { "s3:x-amz-server-side-encryption": "AES256" }
+        "StringNotEquals": {
+          "s3:x-amz-server-side-encryption": "AES256"
+        }
       }
     },
     {
       "Sid": "DenyWeakOrAbsentObjectLock",
       "Effect": "Deny",
       "Principal": "*",
-      "Action": "s3:PutObject",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectRetention"
+      ],
       "Resource": "arn:aws:s3:::<BUCKET>/*",
       "Condition": {
-        "StringNotEquals": { "s3:x-amz-object-lock-mode": "COMPLIANCE" }
+        "StringNotEquals": {
+          "s3:object-lock-mode": "COMPLIANCE"
+        }
+      }
+    },
+    {
+      "Sid": "DenyRetentionShorterThanDay28",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectRetention"
+      ],
+      "Resource": "arn:aws:s3:::<BUCKET>/*",
+      "Condition": {
+        "NumericLessThan": {
+          "s3:object-lock-remaining-retention-days": "28"
+        }
       }
     },
     {
@@ -60,18 +119,21 @@
       "Action": [
         "s3:PutBucketVersioning",
         "s3:PutObjectLegalHold",
-        "s3:PutObjectRetention",
         "s3:BypassGovernanceRetention",
         "s3:PutBucketPolicy",
         "s3:DeleteBucketPolicy",
-        "s3:PutBucketPublicAccessBlock"
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketObjectLockConfiguration",
+        "s3:PutEncryptionConfiguration"
       ],
       "Resource": [
         "arn:aws:s3:::<BUCKET>",
         "arn:aws:s3:::<BUCKET>/*"
       ],
       "Condition": {
-        "StringNotEquals": { "aws:PrincipalArn": "<BREAK_GLASS_ADMIN_ROLE_ARN>" }
+        "StringNotEquals": {
+          "aws:PrincipalArn": "<BREAK_GLASS_ADMIN_ROLE_ARN>"
+        }
       }
     }
   ]

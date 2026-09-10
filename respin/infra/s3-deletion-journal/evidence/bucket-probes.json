@@ -1,0 +1,85 @@
+{
+  "CallerArn": "arn:aws:iam::770371751912:root",
+  "StartedAt": "2026-09-08T12:13:37.072828+00:00",
+  "Bucket": "respin-deletion-journal-prod-770371751912",
+  "ProbeKey": "prod/deletion-journal/r124-probe-3cc4b00a8b034c18b06b0f13d0b8b017",
+  "Results": [
+    {
+      "Name": "MissingConditionalHeader",
+      "Code": "AccessDenied",
+      "Http": 403,
+      "RequestId": "YZCZGWXMFDK66B25",
+      "Message": "User: arn:aws:iam::770371751912:root is not authorized to perform: s3:PutObject on resource: \"arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/r124-probe-3cc4b00a8b034c18b06b0f13d0b8b017\" with an explicit deny in a resource-based policy"
+    },
+    {
+      "Name": "ValidConditionalComplianceUpload",
+      "Code": "Success",
+      "Http": 200,
+      "RequestId": "YZCY02G0X1ZAJSR0",
+      "VersionId": "EES95hWh99CFmZFfVxLK4MgT14AvBmDT"
+    },
+    {
+      "Name": "DuplicateConditionalCreate",
+      "Code": "PreconditionFailed",
+      "Http": 412,
+      "RequestId": "YZCX3194XJ9V2ZD0",
+      "Message": "At least one of the pre-conditions you specified did not hold"
+    },
+    {
+      "Name": "TwoDayRetention",
+      "Code": "AccessDenied",
+      "Http": 403,
+      "RequestId": "YZCMM03WHDW8PNF3",
+      "Message": "User: arn:aws:iam::770371751912:root is not authorized to perform: s3:PutObjectRetention on resource: \"arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/r124-probe-3cc4b00a8b034c18b06b0f13d0b8b017-short\" with an explicit deny in a resource-based policy"
+    },
+    {
+      "Name": "MissingAES256Header",
+      "Code": "AccessDenied",
+      "Http": 403,
+      "RequestId": "YZCJMKEGXZH6WXKW",
+      "Message": "User: arn:aws:iam::770371751912:root is not authorized to perform: s3:PutObject on resource: \"arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/r124-probe-3cc4b00a8b034c18b06b0f13d0b8b017-no-encryption\" with an explicit deny in a resource-based policy"
+    },
+    {
+      "Name": "GovernanceMode",
+      "Code": "AccessDenied",
+      "Http": 403,
+      "RequestId": "YZCK03VPKBCSRCE9",
+      "Message": "User: arn:aws:iam::770371751912:root is not authorized to perform: s3:PutObjectRetention on resource: \"arn:aws:s3:::respin-deletion-journal-prod-770371751912/prod/deletion-journal/r124-probe-3cc4b00a8b034c18b06b0f13d0b8b017-governance\" with an explicit deny in a resource-based policy"
+    },
+    {
+      "Name": "MissingObjectLockMode",
+      "Code": "Success",
+      "Http": 200,
+      "RequestId": "YZCQPWSJD17JWN6F",
+      "VersionId": "1VUZzJlyGC0ySNWCxyl4wdf6zcV6.spL"
+    }
+  ],
+  "StoredObjects": [
+    {
+      "Probe": "ValidConditionalComplianceUpload",
+      "Key": "prod/deletion-journal/r124-probe-3cc4b00a8b034c18b06b0f13d0b8b017",
+      "VersionId": "EES95hWh99CFmZFfVxLK4MgT14AvBmDT",
+      "Bytes": 4,
+      "Encryption": "AES256",
+      "ChecksumSHA256": "n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg=",
+      "Retention": {
+        "Mode": "COMPLIANCE",
+        "RetainUntilDate": "2026-10-07 12:13:37+00:00"
+      }
+    },
+    {
+      "Probe": "MissingObjectLockMode",
+      "Key": "prod/deletion-journal/r124-probe-3cc4b00a8b034c18b06b0f13d0b8b017-no-mode",
+      "VersionId": "1VUZzJlyGC0ySNWCxyl4wdf6zcV6.spL",
+      "Bytes": 4,
+      "Encryption": "AES256",
+      "ChecksumSHA256": "n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg=",
+      "Retention": {
+        "Mode": "COMPLIANCE",
+        "RetainUntilDate": "2026-10-06 12:13:37.347000+00:00"
+      }
+    }
+  ],
+  "DefaultRetentionProbeExplanation": "Omitting explicit Object Lock headers succeeded because S3 applies the bucket default COMPLIANCE lock. HeadObject/GetObjectRetention verified 28-day COMPLIANCE protection. The initial probe expectation of AccessDenied was incorrect; the stored object meets the required protection.",
+  "BucketProtectionChecksPassed": true
+}

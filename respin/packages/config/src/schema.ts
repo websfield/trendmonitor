@@ -486,6 +486,21 @@ export const respinConfigV1 = z
       })
       .strict()
       .default({ dailyCapMicroUsd: 100_000_000 }),
+    // Phase 10a (R-123): the public Sample Spin's daily purpose maximum inside
+    // the same system-spend authority. The claim clamps this dial to
+    // `PUBLIC_SAMPLE_SPIN_DAILY_CODE_CEILING_MICRO_USD` ($10/day), so a stored
+    // value can only tighten it.
+    publicSampleSpin: z
+      .object({
+        dailyCapMicroUsd: z
+          .number()
+          .int()
+          .min(0)
+          .max(Number.MAX_SAFE_INTEGER)
+          .default(10_000_000),
+      })
+      .strict()
+      .default({ dailyCapMicroUsd: 10_000_000 }),
     // THE MODEL LAYER (slice 2a, tech-spec §1 / R-5). Everything the
     // provider adapter needs that must be changeable without a deploy: which
     // model each class of operation uses, what each model costs us, and the

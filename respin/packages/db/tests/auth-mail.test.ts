@@ -10,6 +10,9 @@ import {
   admitAuthMail,
   AUTH_MAIL_COMPILED_CEILINGS,
   AUTH_MAIL_PURPOSES,
+  AUTH_MAIL_PER_USER_PER_DAY,
+  AUTH_MAIL_RECOVERY_RESERVE,
+  AUTH_MAIL_RESET_RESERVE,
   AUTH_MAIL_SECURITY_RESERVE,
   AUTH_MAIL_CLOCK_SKEW_MS,
   AUTH_MAIL_TTL_MS,
@@ -24,6 +27,7 @@ import {
   type AuthMailSendResult,
 } from "../src/auth-mail";
 import { authMailOutbox, type AuthMailPurpose } from "../src/auth-mail-schema";
+import { NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
 import { session } from "../src/auth-schema";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import {
@@ -129,13 +133,16 @@ describe("auth-mail authority — purposes, ceilings and rendering", () => {
     expect(AUTH_MAIL_COMPILED_CEILINGS).toEqual({
       totalPerDay: 80,
       totalPerMonth: 2_400,
-      invitesPerDay: 60,
-      invitesPerMonth: 1_800,
+      invitesPerDay: 50,
+      invitesPerMonth: 1_500,
     });
-    expect(AUTH_MAIL_SECURITY_RESERVE).toEqual({ perDay: 20, perMonth: 600 });
+    // recovery (10) + reset (10) + verification headroom (10): the reset floor
+    // is charged to the invite share at the compiled level (fix pass 3).
+    expect(AUTH_MAIL_SECURITY_RESERVE).toEqual({ perDay: 30, perMonth: 900 });
+    expect(AUTH_MAIL_SECURITY_RESERVE.perDay).toBeGreaterThanOrEqual(AUTH_MAIL_RECOVERY_RESERVE.perDay + AUTH_MAIL_RESET_RESERVE.perDay + AUTH_MAIL_RESET_RESERVE.perDay);
     expect(resolveAuthMailCeilings(null)).toEqual(AUTH_MAIL_COMPILED_CEILINGS);
-    expect(resolveAuthMailCeilings({ totalPerDay: 40, invitesPerDay: 20 })).toMatchObject({
-      totalPerDay: 40,
+    expect(resolveAuthMailCeilings({ totalPerDay: 50, invitesPerDay: 20 })).toMatchObject({
+      totalPerDay: 50,
       invitesPerDay: 20,
       totalPerMonth: 2_400,
     });
@@ -149,12 +156,12 @@ describe("auth-mail authority — purposes, ceilings and rendering", () => {
     expect(() => resolveAuthMailCeilings({ totalPerDay: 60, totalPerMonth: 1_800 })).toThrow("auth_mail_refused:ceiling_invalid:invitesPerDay");
     expect(() => resolveAuthMailCeilings({ totalPerDay: 79 })).toThrow("auth_mail_refused:ceiling_invalid:invitesPerDay");
     expect(() => resolveAuthMailCeilings({ totalPerMonth: 2_399 })).toThrow("auth_mail_refused:ceiling_invalid:invitesPerMonth");
-    expect(() => resolveAuthMailCeilings({ totalPerDay: 60, invitesPerDay: 41 })).toThrow("auth_mail_refused:ceiling_invalid:invitesPerDay");
-    expect(resolveAuthMailCeilings({ totalPerDay: 60, invitesPerDay: 40, totalPerMonth: 1_800, invitesPerMonth: 1_200 })).toEqual({
+    expect(() => resolveAuthMailCeilings({ totalPerDay: 60, invitesPerDay: 31 })).toThrow("auth_mail_refused:ceiling_invalid:invitesPerDay");
+    expect(resolveAuthMailCeilings({ totalPerDay: 60, invitesPerDay: 30, totalPerMonth: 1_800, invitesPerMonth: 900 })).toEqual({
       totalPerDay: 60,
-      invitesPerDay: 40,
+      invitesPerDay: 30,
       totalPerMonth: 1_800,
-      invitesPerMonth: 1_200,
+      invitesPerMonth: 900,
     });
   });
 
@@ -188,6 +195,29 @@ describe("auth-mail authority — admission and outcomes (PGlite)", () => {
       actionExpiresAt: new Date(Date.now() + Math.min(AUTH_MAIL_TTL_MS[purpose], HOUR) - 5_000),
       ceilings,
     });
+
+  /**
+   * Admit as a FRESH auth user each time. The GLOBAL ceilings are a property of
+   * the whole install, so driving them with one repeated subject conflated them
+   * with the per-subject bucket added in round 3 -- and it is the per-subject
+   * bucket that makes the global one expensive for an attacker to reach, since
+   * password reset and email verification are both pre-authentication.
+   */
+  let spreadSeq = 0;
+  const admitAsFreshUser = async (
+    purpose: AuthMailPurpose,
+    ceilings?: Parameters<typeof resolveAuthMailCeilings>[0]
+  ) => {
+    spreadSeq += 1;
+    const id = `spread-${spreadSeq}`;
+    await seedAuthUser(db, id, `${id}@example.test`);
+    return admitAuthMail(db, {
+      purpose,
+      authUserId: id,
+      actionExpiresAt: new Date(Date.now() + Math.min(AUTH_MAIL_TTL_MS[purpose], HOUR) - 5_000),
+      ceilings,
+    });
+  };
 
   it("admits a row before dispatch with the recipient address in memory only", async () => {
     const admission = await admit("password_reset");
@@ -230,25 +260,60 @@ describe("auth-mail authority — admission and outcomes (PGlite)", () => {
   });
 
   it("enforces the daily total, keeps the security reserve out of invite reach, and refusals consume nothing", async () => {
-    for (let index = 0; index < AUTH_MAIL_COMPILED_CEILINGS.invitesPerDay; index += 1) {
-      await admit("workspace_invite");
+    // The compiled invite ceiling (50) is the reset floor's worth short of the
+    // old 60: that is what pays for the floor without eating verification's
+    // headroom (lean gate S-1 on fix pass 3).
+    const inviteCeiling = AUTH_MAIL_COMPILED_CEILINGS.invitesPerDay;
+    for (let index = 0; index < inviteCeiling; index += 1) {
+      await admitAsFreshUser("workspace_invite");
     }
-    await expect(admit("workspace_invite")).rejects.toThrow("auth_mail_refused:invite_quota_day_exhausted");
-    // Security mail still has the derived reserve.
-    for (let index = 0; index < AUTH_MAIL_SECURITY_RESERVE.perDay; index += 1) {
-      await admit("password_reset");
+    await expect(admitAsFreshUser("workspace_invite")).rejects.toThrow("auth_mail_refused:invite_quota_day_exhausted");
+    // VERIFICATION STILL HAS INVITE-PROOF HEADROOM after a full invite day —
+    // exactly the reset reserve's worth, on top of what reset itself keeps.
+    for (let index = 0; index < AUTH_MAIL_RESET_RESERVE.perDay; index += 1) {
+      await admitAsFreshUser("email_verification");
     }
-    await expect(admit("password_reset")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
-    await expect(admit("email_verification")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
-    expect(await db.select().from(authMailOutbox)).toHaveLength(AUTH_MAIL_COMPILED_CEILINGS.totalPerDay);
+    await expect(admitAsFreshUser("email_verification")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
+    // Security mail still has the derived reserve, MINUS the recovery floor:
+    // every purpose except identity-deletion recovery now sees a total reduced
+    // by AUTH_MAIL_RECOVERY_RESERVE, so a reset flood cannot deny someone their
+    // single-use deletion-recovery credential.
+    // Reset keeps its own floor above verification's exhaustion point:
+    // exactly AUTH_MAIL_RESET_RESERVE more admissions, then the day is spent.
+    for (let index = 0; index < AUTH_MAIL_RESET_RESERVE.perDay; index += 1) {
+      await admitAsFreshUser("password_reset");
+    }
+    await expect(admitAsFreshUser("password_reset")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
+    await expect(admitAsFreshUser("email_verification")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
+    // AND THE POINT OF THE RESERVE: the bucket every other purpose has just
+    // exhausted still has the recovery floor left in it, so a reset flood
+    // cannot deny someone their deletion-recovery credential. (Admitting one
+    // needs a real operation link, which `deletion-lifecycle.test.ts` drives;
+    // here the arithmetic is the assertion.)
+    expect(await db.select().from(authMailOutbox)).toHaveLength(
+      AUTH_MAIL_COMPILED_CEILINGS.totalPerDay - AUTH_MAIL_RECOVERY_RESERVE.perDay
+    );
   });
 
-  it("lets security mail use unused invite capacity", async () => {
-    for (let index = 0; index < AUTH_MAIL_COMPILED_CEILINGS.totalPerDay; index += 1) {
-      await admit("email_verification");
+  it("lets security mail use unused invite capacity — and a verification flood can no longer starve password reset", async () => {
+    // Verification (and every other non-reserved purpose) may use the whole
+    // day MINUS both floors; a flood of free signups stops here...
+    const verificationCeiling = AUTH_MAIL_COMPILED_CEILINGS.totalPerDay - AUTH_MAIL_RECOVERY_RESERVE.perDay - AUTH_MAIL_RESET_RESERVE.perDay;
+    for (let index = 0; index < verificationCeiling; index += 1) {
+      await admitAsFreshUser("email_verification");
     }
-    await expect(admit("email_verification")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
-    await expect(admit("workspace_invite")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
+    await expect(admitAsFreshUser("email_verification")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
+    await expect(admitAsFreshUser("workspace_invite")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
+    // ...while password reset still has its own floor (security review of
+    // 10b-1, round 2: ~70 free signups a day used to deny every reset until
+    // the next UTC day), and the recovery floor above it stays untouched.
+    for (let index = 0; index < AUTH_MAIL_RESET_RESERVE.perDay; index += 1) {
+      await admitAsFreshUser("password_reset");
+    }
+    await expect(admitAsFreshUser("password_reset")).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
+    expect(await db.select().from(authMailOutbox)).toHaveLength(
+      AUTH_MAIL_COMPILED_CEILINGS.totalPerDay - AUTH_MAIL_RECOVERY_RESERVE.perDay
+    );
   });
 
   it("enforces the monthly ceiling across days through the tighten-only override", async () => {
@@ -258,12 +323,36 @@ describe("auth-mail authority — admission and outcomes (PGlite)", () => {
       console.warn("[auth-mail.test] monthly-ceiling case SKIPPED on the 1st: the backfilled month would share today's daily bucket.");
       return;
     }
-    // 603 = the compiled monthly reserve (600) + three invites: the smallest
-    // month a tighten-only override can express without eroding the reserve.
-    await backfill(db, "u1", 602, `${month}-01`);
-    const month603 = { totalPerMonth: 603, invitesPerMonth: 3 };
+    // The compiled monthly reserve (900) + three invites: the smallest month a
+    // tighten-only override can express without eroding the reserve. A reset
+    // sees that total MINUS the recovery floor only (its own floor is for the
+    // OTHER purposes to respect), so the last admissible row is one before
+    // 903 - 300.
+    const smallest = AUTH_MAIL_SECURITY_RESERVE.perMonth + 3;
+    const month603 = { totalPerMonth: smallest, invitesPerMonth: 3 };
+    const effective = smallest - AUTH_MAIL_RECOVERY_RESERVE.perMonth;
+    await backfill(db, "u1", effective - 1, `${month}-01`);
     await admit("password_reset", month603);
     await expect(admit("password_reset", month603)).rejects.toThrow("auth_mail_refused:quota_month_exhausted");
+  });
+
+  it("caps one subject's mail per purpose per day, while OTHER subjects are unaffected", async () => {
+    // The global ceilings were a single bucket, and password reset and email
+    // verification are both reachable BEFORE authentication -- so an
+    // unauthenticated attacker behind a modest proxy pool could burn the whole
+    // monthly allowance in about a day and take reset and verification down
+    // product-wide for a calendar month. Because a deletion request correctly
+    // fails closed without recovery mail, that also made the erasure right
+    // unexercisable. A per-subject bucket is what makes the global one
+    // expensive to reach.
+    for (let index = 0; index < AUTH_MAIL_PER_USER_PER_DAY; index += 1) {
+      await admit("password_reset");
+    }
+    await expect(admit("password_reset")).rejects.toThrow("auth_mail_refused:quota_user_day_exhausted");
+
+    // NON-VACUITY: the cap is per (subject, purpose), not a global off-switch.
+    await expect(admit("email_verification")).resolves.toBeTruthy();
+    await expect(admitAsFreshUser("password_reset")).resolves.toBeTruthy();
   });
 
   it("sends once, records provider acceptance as a digest, and never reports an unaccepted send delivered", async () => {
@@ -323,14 +412,14 @@ describe("auth-mail authority — admission and outcomes (PGlite)", () => {
         actionExpiresAt: new Date(Date.now() + AUTH_MAIL_TTL_MS.email_verification),
       })
     ).rejects.toThrow("auth_mail_delivery_unknown:request_failed");
-    await backfill(db, "u1", 20); // 2 sent above + 20 = the 22 ceiling below (20 = the compiled reserve)
+    await backfill(db, "u1", 20); // 2 sent above + 20 = 22, past the reset's effective 32 - 10 below (32 - 2 = the compiled 30 reserve)
     await expect(
       deliverAuthMail(db, port, {
         purpose: "email_verification",
         authUserId: "u1",
         actionUrl: "https://app.example/verify?token=t",
         actionExpiresAt: new Date(Date.now() + AUTH_MAIL_TTL_MS.email_verification),
-        ceilings: { totalPerDay: 22, invitesPerDay: 2 },
+        ceilings: { totalPerDay: 32, invitesPerDay: 2 },
       })
     ).rejects.toThrow("auth_mail_refused:quota_day_exhausted");
   });
@@ -373,6 +462,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const result = await requestIdentityDeletion(db, params("identity-mail-1"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(result.acknowledged).toBe(true);
     expect(result.delivery).toBe("confirmed");
@@ -416,6 +506,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const first = await requestIdentityDeletion(db, params("identity-mail-2"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(first.acknowledged).toBe(false);
     expect(first.delivery).toBe("failed");
@@ -425,6 +516,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const second = await requestIdentityDeletion(db, params("identity-mail-2"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(second.operation.id).toBe(first.operation.id);
     expect(second.acknowledged).toBe(true);
@@ -457,6 +549,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const first = await requestIdentityDeletion(db, params("identity-mail-race"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(first.acknowledged).toBe(false);
     expect(first.delivery).toBe("failed");
@@ -474,6 +567,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const first = await requestIdentityDeletion(db, params("identity-mail-3"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(first.delivery).toBe("unknown");
     expect(first.operation.recoveryDeliveryStatus).toBe("unknown");
@@ -492,6 +586,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const redelivered = await requestIdentityDeletion(db, params("identity-mail-3"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(redelivered.acknowledged).toBe(true);
     expect(redelivered.operation.recoveryDeliveryAttempt).toBe(2);
@@ -520,6 +615,7 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     const result = await requestIdentityDeletion(db, params("identity-mail-4"), {
       recoveryDelivery,
       journal: confirmedJournal(),
+      activationExclusions: NO_ACTIVATION_EXCLUSIONS,
     });
     expect(result.delivery).toBe("failed");
     expect(result.acknowledged).toBe(false);

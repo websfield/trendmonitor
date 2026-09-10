@@ -31,6 +31,7 @@ import {
   LOG_LIST_HEADING,
   LOG_LIST_NOTE,
   NOTHING_COMPARABLE_YET,
+  VERIFICATION_UNAVAILABLE,
   NO_RESULTS_YET,
   NO_TREATMENT_ON_ROW,
   NO_DECLARED_METRIC_TITLE,
@@ -293,6 +294,11 @@ export function ResultsView({ state, logPanel, promotionPanel }: ResultsViewProp
             <p className="muted" data-testid="results-comparison-basis">
               {COMPARISON_BASIS}
             </p>
+            {state.results.length > 0 && state.results.every((row) => row.evidenceState !== "connector_verified") ? (
+              <p className="muted" data-testid="results-verification-unavailable">
+                {VERIFICATION_UNAVAILABLE}
+              </p>
+            ) : null}
             {state.comparisonError ? (
               // IN PLACE, NOT INSTEAD OF THE PAGE. The form above and the
               // history above it are still usable; this says what failed and

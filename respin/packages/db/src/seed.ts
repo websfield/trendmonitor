@@ -144,6 +144,9 @@ export const CONFIG_V1_SEED = {
   // Product-owned daily autopsy ceiling, in micro-USD. The worker preserves
   // its independent code ceiling; this seed matches that ceiling exactly.
   systemAutopsy: { dailyCapMicroUsd: 100_000_000 },
+  // Phase 10a: the public Sample Spin purpose cap (R-123, $10/day), matching
+  // its code ceiling exactly; config may only tighten it.
+  publicSampleSpin: { dailyCapMicroUsd: 10_000_000 },
   // The model layer (slice 2a). Explicit in the seed for the same reason as
   // `profileCaps` and `onboardingBrainRebuild` above: a fresh install writes
   // it, and a merely-defaulted `llm.prices` cannot price a debit (R19).

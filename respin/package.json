@@ -39,6 +39,9 @@
     "worker:typecheck": "tsc -p worker/tsconfig.json --pretty false",
     "journal:forecast": "tsx scripts/journal-forecast.ts",
     "journal:purge": "tsx scripts/journal-purge.ts",
+    "proposals:audit": "pnpm --filter @respin/db proposals:audit",
+    "sample-spin:keyring": "pnpm --filter @respin/db sample-spin:keyring",
+    "preflight": "tsx scripts/preflight.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {

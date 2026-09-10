@@ -9,6 +9,7 @@ import {
   StripeNotConfiguredError,
 } from "@respin/credits/webhook-server";
 import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
+import { logRefusal } from "../../../(product)/safe-log";
 
 const STRIPE_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 
@@ -75,10 +76,11 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ received: true, outcome: "duplicate" });
     }
     // Handler failure: the whole tx (incl. the event row) rolled back —
-    // non-2xx makes Stripe redeliver (fail closed, self-healing).
-    console.error(
-      `[stripe-webhook] ${event.id} handler failed: ${err instanceof Error ? err.message : "unknown"}`
-    );
+    // non-2xx makes Stripe redeliver (fail closed, self-healing). Logged by
+    // CODE, never by message (Phase 10a C5): a DrizzleQueryError's message
+    // embeds the bound parameters, which on this path is the customer's
+    // billing identity.
+    logRefusal("[stripe-webhook] handler failed", err, { stripeEventId: event.id });
     return new Response("handler error", { status: 500 });
   }
 }

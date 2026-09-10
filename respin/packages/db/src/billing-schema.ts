@@ -15,7 +15,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { uuidv7 } from "uuidv7";
-import { workspaces } from "./schema";
+import { users, workspaces } from "./schema";
 
 const id = () =>
   uuid("id")
@@ -63,10 +63,33 @@ export const subscriptions = pgTable(
   "subscriptions",
   {
     id: id(),
+    // R-122 / Task 6: the foreign key STAYS, and only its delete action moves
+    // (cascade -> restrict). Dropping it entirely was the first attempt and it
+    // was wrong: this key is not only a cascade, it is the structural refusal
+    // of a cross-parented row, and `brain-schema.test.ts` proved the leak the
+    // moment it went (Respin non-negotiable 5). A seven-year clock and a
+    // CASCADE are what contradict each other; a seven-year clock and RESTRICT
+    // do not. At erasure the `link` scrub rule repoints this column to the
+    // "Deleted workspace" stub `lifecycle-sql-port.ts` already mints, so the
+    // money row survives with referential integrity and no re-linkable id.
     workspaceId: uuid("workspace_id")
       .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
+      .references(() => workspaces.id, { onDelete: "restrict" }),
     stripeCustomerId: text("stripe_customer_id").notNull(),
+    // Plan C3 (Phase 10b-1): the ONE active owner whose personal details the
+    // Stripe customer carries. Set by the customer authority at creation to the
+    // owner who started Checkout; moved only by `acceptBillingContact`, which
+    // rewrites the provider copy FIRST. Identity deletion refuses while the
+    // deleting person is this contact (or while it is unknown on a workspace
+    // that has a customer), so no erasure can complete with their email still
+    // on the customer object. NULL = unknown: pre-C3 rows are backfilled to
+    // NULL and an owner must confirm the contact before any owner of that
+    // workspace can delete their account. ON DELETE SET NULL, never cascade:
+    // the row is a seven-year financial record and the link must simply go.
+    // Workspace erasure nulls it through the `workspace_link` field set.
+    billingContactUserId: uuid("billing_contact_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     stripeSubscriptionId: text("stripe_subscription_id"),
     stripePriceId: text("stripe_price_id"),
     status: text("status").notNull().default("none"),
@@ -573,9 +596,18 @@ export const creditLedger = pgTable(
   "credit_ledger",
   {
     id: id(),
+    // R-122 / Task 6: the foreign key STAYS, and only its delete action moves
+    // (cascade -> restrict). Dropping it entirely was the first attempt and it
+    // was wrong: this key is not only a cascade, it is the structural refusal
+    // of a cross-parented row, and `brain-schema.test.ts` proved the leak the
+    // moment it went (Respin non-negotiable 5). A seven-year clock and a
+    // CASCADE are what contradict each other; a seven-year clock and RESTRICT
+    // do not. At erasure the `link` scrub rule repoints this column to the
+    // "Deleted workspace" stub `lifecycle-sql-port.ts` already mints, so the
+    // money row survives with referential integrity and no re-linkable id.
     workspaceId: uuid("workspace_id")
       .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
+      .references(() => workspaces.id, { onDelete: "restrict" }),
     delta: integer("delta").notNull(),
     kind: creditKind("kind").notNull(),
     refType: text("ref_type"),
@@ -911,9 +943,18 @@ export const pausePeriods = pgTable(
   "pause_periods",
   {
     id: id(),
+    // R-122 / Task 6: the foreign key STAYS, and only its delete action moves
+    // (cascade -> restrict). Dropping it entirely was the first attempt and it
+    // was wrong: this key is not only a cascade, it is the structural refusal
+    // of a cross-parented row, and `brain-schema.test.ts` proved the leak the
+    // moment it went (Respin non-negotiable 5). A seven-year clock and a
+    // CASCADE are what contradict each other; a seven-year clock and RESTRICT
+    // do not. At erasure the `link` scrub rule repoints this column to the
+    // "Deleted workspace" stub `lifecycle-sql-port.ts` already mints, so the
+    // money row survives with referential integrity and no re-linkable id.
     workspaceId: uuid("workspace_id")
       .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
+      .references(() => workspaces.id, { onDelete: "restrict" }),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
     // The KNOWLEDGE time of the OPEN, symmetric with ended_known_at below
@@ -982,6 +1023,122 @@ export const pausePeriods = pgTable(
     ),
   ]
 );
+
+// Phase 10b-1 Task 6 / C5 — the pre-redaction Stripe finance extract.
+//
+// `stripe_events.payload` is redacted at 90 days. Everything 10b-2's revenue
+// projector needs must therefore be lifted out of the payload BEFORE that, in
+// the SAME transaction, or the fact is gone. This table is that lift, and it
+// is content-free by construction: ids, amounts, currency, periods, states.
+// No email, no name, no address, no raw payload.
+//
+// `workspace_key` is TEXT, not a `workspaces` reference: it is the pseudonymous
+// financial-chain key (C3), so it survives the workspace it came from and can
+// never be re-linked to it.
+export const stripeFinanceExtractStatus = pgEnum("stripe_finance_extract_status", [
+  "complete",
+  "incomplete",
+]);
+
+export const stripeFinanceExtracts = pgTable(
+  "stripe_finance_extracts",
+  {
+    id: id(),
+    sourceStripeEventId: text("source_stripe_event_id")
+      .notNull()
+      .references(() => stripeEvents.id, { onDelete: "restrict" }),
+    objectType: text("object_type").notNull(),
+    objectId: text("object_id").notNull(),
+    invoiceLineId: text("invoice_line_id"),
+    paymentIntentId: text("payment_intent_id"),
+    refundId: text("refund_id"),
+    creditNoteId: text("credit_note_id"),
+    disputeId: text("dispute_id"),
+    chargeId: text("charge_id"),
+    workspaceKey: text("workspace_key"),
+    // The currency Stripe actually reported, NOT a constant. A row withheld for
+    // `non_usd_currency` or `missing_currency` must not claim USD: the reason code
+    // carried the truth while this column contradicted it, on the row C5 calls the
+    // permanent authority for withholding the period. Nullable, because a withheld
+    // row may have had no readable currency at all.
+    currency: text("currency"),
+    // Excluding tax, in cents — the same integer-cents precedent
+    // `credit_ledger.amount_cents` sets. SIGNED: a mid-cycle plan downgrade emits
+    // a proration credit line whose `amount_excluding_tax` is NEGATIVE. That is a
+    // real economic fact, not a malformed one, and refusing it with a `>= 0` CHECK
+    // aborted the whole redaction batch on every tick, forever.
+    amountExcludingTaxCents: integer("amount_excluding_tax_cents"),
+    // Stripe's `charge.amount`, `payment_intent.amount` and `refund.amount` are
+    // tax-INCLUSIVE and have no tax-excluding sibling on the object. Booking them
+    // in the column above mixed tax into revenue (T69-R14) while the module
+    // refused exactly that substitution for invoice lines and credit notes;
+    // withholding them instead would lose a real fact. They land here, labelled
+    // for what they are, and 10b-2 decides what a tax-inclusive number is worth.
+    amountIncludingTaxCents: integer("amount_including_tax_cents"),
+    disputedAmountCents: integer("disputed_amount_cents"),
+    servicePeriodStart: timestamp("service_period_start", { withTimezone: true }),
+    servicePeriodEnd: timestamp("service_period_end", { withTimezone: true }),
+    disputeStatus: text("dispute_status"),
+    disputeEffectiveAt: timestamp("dispute_effective_at", { withTimezone: true }),
+    extractionVersion: integer("extraction_version").notNull(),
+    status: stripeFinanceExtractStatus("status").notNull(),
+    // Non-null exactly when the status is `incomplete`. C5: an unparseable or
+    // historically absent field becomes an incomplete row rather than a zero,
+    // and that row is the permanent authority for withholding the period.
+    incompleteReason: text("incomplete_reason"),
+    extractedAt: timestamp("extracted_at", { withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+    // Stamped by 10b-2's projector when it has verifiably ingested the row.
+    // The 30-day expiry clock measures from HERE, so a row nothing has
+    // consumed is never swept.
+    ingestedAt: timestamp("ingested_at", { withTimezone: true }),
+  },
+  (t) => [
+    // One extract per (event, object). Re-running the receiver over an
+    // already-extracted event is a no-op rather than a duplicate revenue row.
+    uniqueIndex("stripe_finance_extracts_event_object_uq").on(
+      t.sourceStripeEventId,
+      t.objectId
+    ),
+    index("stripe_finance_extracts_sweep_idx").on(t.status, t.ingestedAt),
+    check(
+      "stripe_finance_extracts_incomplete_reason",
+      sql`(${t.status} = 'incomplete') = (${t.incompleteReason} IS NOT NULL)`
+    ),
+    // R-122's clocks are stated in USD, so a COMPLETE row must be USD — a non-USD
+    // complete row would be a silent currency mix in 10b-2's margin dashboard. An
+    // INCOMPLETE row records whatever Stripe reported, or NULL: that is the point
+    // of a withheld period, and the stored currency must agree with the reason
+    // code rather than contradict it.
+    check(
+      "stripe_finance_extracts_currency_shape",
+      sql`${t.status} <> 'complete' OR ${t.currency} = 'USD'`
+    ),
+    // A disputed amount is a magnitude and stays non-negative. The two revenue
+    // columns ADMIT a sign, and the sign is per `object_type`: an invoice LINE
+    // carries Stripe's own sign (a proration credit line is negative, the 0055
+    // wedge), while a `credit_note` and a `refund` are stored as POSITIVE
+    // magnitudes under their own object type (`finance-extract.test.ts` pins
+    // 700 and 2280). A projector therefore subtracts BY OBJECT TYPE and never
+    // sums this column across types. What is forbidden here is one row carrying
+    // BOTH amount columns: one economic fact occupies one column. That guards
+    // the pair within a row only — one payment still yields an invoice line, a
+    // charge and a payment intent as separate rows, and the projector must
+    // de-duplicate them by `payment_intent_id` / `charge_id`.
+    check(
+      "stripe_finance_extracts_amounts_shape",
+      sql`(${t.disputedAmountCents} IS NULL OR ${t.disputedAmountCents} >= 0)
+          AND NOT (${t.amountExcludingTaxCents} IS NOT NULL AND ${t.amountIncludingTaxCents} IS NOT NULL)`
+    ),
+    check(
+      "stripe_finance_extracts_service_period_order",
+      sql`${t.servicePeriodStart} IS NULL OR ${t.servicePeriodEnd} IS NULL OR ${t.servicePeriodEnd} >= ${t.servicePeriodStart}`
+    ),
+  ]
+);
+
+export type StripeFinanceExtract = typeof stripeFinanceExtracts.$inferSelect;
 
 export type Subscription = typeof subscriptions.$inferSelect;
 export type AutoTopupProtocolRollout = typeof autoTopupProtocolRollouts.$inferSelect;

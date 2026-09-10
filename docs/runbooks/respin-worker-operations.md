@@ -94,6 +94,18 @@ The health reader supplies one `WorkerHealthSnapshot` containing the observation
 | `budget_exhausted` | Spend reaches/exceeds the resolved daily cap | Expected behaviour is zero further vendor calls. Confirm refusals are being recorded with `callCount = 0`. |
 | `pool_pressure` | Active/pool ratio reaches the code-fixed threshold (`POOL_PRESSURE_RATIO`, 0.8) or any job is queued | Check long-running attempts and adapter latency. Tighten concurrency if needed; config cannot exceed the code ceiling. |
 
+The retention/recovery tick (`respin/worker/retention.ts`, every minute) evaluates its own codes from the tick summary — `evaluateRetentionAlerts` — and emits them through the same content-safe event allowlist:
+
+| Alert | Severity | Trigger |
+|---|---|---|
+| `retention_sweep_failed` | critical | A governed table's sweep failed this tick (its `retentionKey` and a failure code are on the event) |
+| `retention_batch_truncated` | warning | A sweep hit its batch bound; the rest waits for the next tick |
+| `retention_poisoned_rows` | critical | Rows the receiver could not write EVEN ALONE — progress continues around them, so they would otherwise sit silently forever |
+| `retention_overdue_backlog` | critical | The oldest still-overdue governed row is more than 24 h past its deadline (`OVERDUE_BACKLOG_MS`) |
+| `generation_recovery_failed` | critical | The paid-generation attempt receiver failed this tick |
+| `generation_candidates_cleared` | critical | Attempts hard-cleared at the 24-hour boundary — each may already be charged with no settlement; needs a human |
+| `sample_spin_recovery_failed` | critical | A public Sample Spin attempt past its lease could not be recovered even alone (Phase 10a); it is retried every tick and pages until it stops failing. `sampleSpinRecovered` / `sampleSpinRecoveryFailed` counts ride the tick event |
+
 The four multipliers and ratios (`HEARTBEAT_STALE_INTERVALS`, `SCHEDULE_GRACE_MS`, `NEAR_BUDGET_RATIO`, `POOL_PRESSURE_RATIO`) are code-fixed in `respin/worker/health.ts` with their reasons and revisit triggers and are read from neither env nor config; changing one is a reviewed code change. The 90 s stale-heartbeat figure is NOT one of them: it is `HEARTBEAT_STALE_INTERVALS` × `RESPIN_WORKER_HEARTBEAT_MS`, so a deployment that sets a different heartbeat interval moves it.
 
 ## What the worker cannot alert on itself

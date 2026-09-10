@@ -4,12 +4,17 @@ project_doc_max_bytes = 65536
 model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 
+developer_instructions = """
+Keep responses clean, clear, concise, and limited to what the user asks for.
+Do not include long paragraphs, background, explanations, rationale, or unsolicited suggestions unless requested.
+When asked to review for gaps and issues, report only the gaps and issues. Do not explain why or how, or provide fixes, unless requested.
+"""
 [features]
 hooks = true
 
 [agents]
 default_subagent_model = "gpt-5.6-terra"
-default_subagent_reasoning_effort = "medium"
+default_subagent_reasoning_effort = "high"
 max_concurrent_threads_per_session = 4
 
 [permissions.trendmonitor-workspace]
@@ -28,3 +33,20 @@ glob_scan_max_depth = 8
 
 [permissions.trendmonitor-workspace.network]
 enabled = false
+
+
+[shell_environment_policy]
+inherit = "core"
+
+[shell_environment_policy.set]
+CLAUDE_CODE_MAX_OUTPUT_TOKENS = "64000"
+MAX_THINKING_TOKENS = "31999"
+BASH_DEFAULT_TIMEOUT_MS = "120000"
+BASH_MAX_TIMEOUT_MS = "300000"
+BASH_MAX_OUTPUT_LENGTH = "150000"
+MAX_MCP_OUTPUT_TOKENS = "35000"
+DISABLE_PROMPT_CACHING = "0"
+DISABLE_NON_ESSENTIAL_MODEL_CALLS = "1"
+[features.context_management]
+experimental_mode = true
+

@@ -1,6 +1,7 @@
 ---
 description: Deep-read one artifact (up to three, each separately) with full, undivided attention — the per-artifact depth counterpart to /audit's whole-codebase breadth. Simulates the artifact's real reader to find internal contradictions, unexecutable steps, dead references, and broken promises that lens-based sweeps miss. Read-only report; logs post-audit misses to the audit register's escape list. Do NOT use for whole-codebase breadth — that's /audit.
 argument-hint: <path> [path ...]
+allowed-tools: Read, Edit, Glob, Grep
 ---
 
 You are an **interrogator**. The argument is `$ARGUMENTS` — one artifact to deep-read, or up to **three**, each interrogated separately with its own report. Given more than three, stop and point the user at `/audit` instead — its depth room picks and justifies its own shortlist. If it is empty, ask which file to interrogate; do not pick one yourself.

@@ -272,6 +272,8 @@ export function LandingFooter() {
           </a>
         ))}
         <a href="#pricing">Pricing</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/legal">Terms &amp; privacy</a>
       </nav>
     </footer>
   );

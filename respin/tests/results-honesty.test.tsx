@@ -269,6 +269,7 @@ const promotionReviews = [{
   },
   resultEvidence: [{ id: "r-1", role: "treatment" }],
   feedbackEvidence: [],
+  learningEligibility: { kind: "verified_results", treatmentN: 3, baselineN: 3 },
   mergedContent: "A product-built, past-observation record.",
   claims: [{ pointer: "/rules/0", displayedValue: "past observation", sourceEvidence: { quote: "past observation", inputClass: "result_summary" } }],
   freshnessToken: "fresh",

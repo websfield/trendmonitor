@@ -1,8 +1,8 @@
 {
   "_comment": [
     "R-124 PURGE principal: delete an EXACT version, and only after Object Lock",
-    "has expired. COMPLIANCE mode is what actually enforces the timing \u2014 no",
-    "principal, including the account root, can delete a locked version \u2014 so",
+    "has expired. COMPLIANCE mode is what actually enforces the timing — no",
+    "principal, including the account root, can delete a locked version — so",
     "this policy grants the verb and the lock supplies the clock.",
     "s3:BypassGovernanceRetention is deliberately absent and is denied again by",
     "the bucket policy. Mirrored by `JournalPurgeTransport`, whose only method",

@@ -18,6 +18,13 @@ import type {
   RefreshRunOnceCommand,
   RunOnceHandlers,
 } from "./run-once";
+import {
+  evaluateRetentionAlerts,
+  retentionTableEvents,
+  retentionTickEvent,
+  type RetentionRunSummary,
+} from "./retention";
+import type { ActivationEmitSummary } from "./activation-emitter";
 
 export const PG_BOSS_SCHEMA = "respin_worker";
 export const REFRESH_QUEUE = "respin.refresh.v1";
@@ -26,9 +33,20 @@ export const AUTOPSY_QUEUE = "respin.autopsy.v1";
 export const DEAD_LETTER_QUEUE = "respin.dead-letter.v1";
 /** Phase 10b-1 Task 4: the deletion executor's one-minute tick. */
 export const DELETION_LIFECYCLE_QUEUE = "respin.deletion-lifecycle.v1";
+/** Phase 10b-1 Task 6: the retention receiver and attempt-recovery tick. */
+export const RETENTION_QUEUE = "respin.retention.v1";
+/** Phase 10a plan C5: the daily aggregate activation emitter (R-121). */
+export const ACTIVATION_QUEUE = "respin.activation.v1";
+/** Ten past midnight UTC: after the day's last cohort has had its full window. */
+export const ACTIVATION_CRON = "10 0 * * *";
 export const DAILY_REFRESH_CRON = "0 2 * * *";
 export const AUTOPSY_DISPATCH_CRON = "* * * * *";
 export const DELETION_LIFECYCLE_CRON = "* * * * *";
+// One minute, set by the SHORTEST rule the tick owns: C5 puts the generation
+// attempt boundaries on a one-minute receiver. The retention clocks themselves
+// are 24 h and longer, so they are swept far more often than they need to be —
+// which is the safe direction, and cheap because each sweep counts first.
+export const RETENTION_CRON = "* * * * *";
 export const PG_BOSS_POOL_CODE_CEILING = 2;
 // The daily refresh's completed jobs are the only durable evidence that a
 // 02:00 UTC run happened. pg-boss deletes completed jobs `deleteAfterSeconds`
@@ -105,6 +123,18 @@ export interface PgBossRuntimeSources {
    * rather than a queue whose handler has nothing to call.
    */
   readonly advanceDeletionLifecycle?: (scheduledAt: Date) => Promise<DeletionLifecycleTickSummary>;
+  /**
+   * Phase 10b-1 Task 6: the retention receiver. Optional for the same reason
+   * the lifecycle tick is — a runtime composed without it registers no queue,
+   * rather than a queue whose handler has nothing to call.
+   */
+  readonly runRetention?: (scheduledAt: Date) => Promise<RetentionRunSummary>;
+  /**
+   * Phase 10a plan C5: the daily aggregate activation emitter. Optional for
+   * the same reason as the two above; the production composition supplies it
+   * and `production-sources.test.ts` proves the queue is registered.
+   */
+  readonly emitActivationAggregates?: (scheduledAt: Date) => Promise<ActivationEmitSummary>;
 }
 
 export interface WorkerEventSink {
@@ -348,6 +378,33 @@ export class RespinPgBossRuntime {
         },
         async (jobs) => this.#runAutopsy(jobs as JobWithMetadata<AutopsyRunOnceCommand>[]),
       );
+      if (this.#sources.runRetention) {
+        // Exclusive, like the lifecycle tick: two concurrent sweeps would both
+        // count the same overdue rows and each report a backlog the other was
+        // already clearing.
+        await this.#ensureQueue(RETENTION_QUEUE, { policy: "exclusive", ...QUEUE_RETRY });
+        await this.#boss.schedule(RETENTION_QUEUE, RETENTION_CRON, null, {
+          tz: "UTC",
+          key: "retention-v1",
+        });
+        await this.#boss.work<null>(
+          RETENTION_QUEUE,
+          { includeMetadata: true, localConcurrency: 1, pollingIntervalSeconds: 1 },
+          async (jobs) => this.#runRetention(jobs as JobWithMetadata<null>[]),
+        );
+      }
+      if (this.#sources.emitActivationAggregates) {
+        await this.#ensureQueue(ACTIVATION_QUEUE, { policy: "exclusive", ...QUEUE_RETRY });
+        await this.#boss.schedule(ACTIVATION_QUEUE, ACTIVATION_CRON, null, {
+          tz: "UTC",
+          key: "activation-v1",
+        });
+        await this.#boss.work<null>(
+          ACTIVATION_QUEUE,
+          { includeMetadata: true, localConcurrency: 1, pollingIntervalSeconds: 1 },
+          async (jobs) => this.#runActivationEmit(jobs as JobWithMetadata<null>[]),
+        );
+      }
       if (this.#sources.advanceDeletionLifecycle) {
         // Exclusive: one tick in flight per queue; the executor's own lease is
         // the per-operation fence across workers.
@@ -411,6 +468,43 @@ export class RespinPgBossRuntime {
       deletionBlocked: summary.blocked,
       deletionErased: summary.erased,
     }));
+  }
+
+  /** Phase 10a C5: cohort COUNTS only; a cohort's own numbers go to the sink, never the log. */
+  async #runActivationEmit(jobs: JobWithMetadata<null>[]): Promise<void> {
+    const job = jobs[0];
+    if (!job) throw new Error("activation worker received no job");
+    const emit = this.#sources.emitActivationAggregates;
+    if (!emit) throw new Error("activation emitter is not composed");
+    const summary = await emit(job.createdOn);
+    this.#events.emit(safeEvent("activation_emit", new Date(), {
+      activationMatured: summary.matured,
+      activationEmitted: summary.emitted,
+      activationSuppressedSmallCell: summary.suppressedSmallCell,
+      activationWithheldExpired: summary.withheldExpired,
+      activationNotSent: summary.notSent,
+      activationFailed: summary.failed,
+    }));
+  }
+
+  /** Codes and counts only (C5): no table row or identifier enters the stream. */
+  async #runRetention(jobs: JobWithMetadata<null>[]): Promise<void> {
+    const job = jobs[0];
+    if (!job) throw new Error("retention worker received no job");
+    const tick = this.#sources.runRetention;
+    if (!tick) throw new Error("retention tick is not composed");
+    const summary = await tick(job.createdOn);
+    const observedAt = new Date();
+    this.#events.emit(safeEvent("retention_tick", observedAt, retentionTickEvent(summary)));
+    for (const table of retentionTableEvents(summary)) {
+      this.#events.emit(safeEvent("retention_table", observedAt, table));
+    }
+    for (const alert of evaluateRetentionAlerts(summary)) {
+      // The severity rides the CODE rather than a field: the event allowlist
+      // takes no `severity`, and a dropped one would make every alert look
+      // like a warning.
+      this.#events.emit(safeEvent(`retention_alert_${alert.severity}_${alert.code}`, observedAt, alert.detail));
+    }
   }
 
   async #ensureQueue(name: string, shape: QueueShape): Promise<void> {

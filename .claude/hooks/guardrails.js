@@ -38,10 +38,11 @@
  *   - Claude Code passes an ABSOLUTE file_path (back-slashes normalized to "/"). So
  *     filePattern/notFilePattern must use "(^|/)foo" NOT "^foo" — a bare "^" anchor
  *     never matches an absolute path. Prefer mid-string anchors and a trailing "$".
- *   - "flags" applies to filePattern, notFilePattern AND bodyPattern (one shared field).
- *   - absentPattern is judged against the body PLUS the current on-disk file content,
- *     so a partial Edit whose snippet omits a required token is NOT wrongly blocked when
- *     that token already exists in the file. It is for "this file must contain X" rules.
+ *   - "flags" applies to filePattern, notFilePattern, bodyPattern AND absentPattern
+ *     (one shared field).
+ *   - For Write, absentPattern is judged against the replacement body alone. For Edit and
+ *     MultiEdit, the hook applies the proposed replacements to the current file and judges
+ *     the resulting content. An edit it cannot model unambiguously is diagnostic-skipped.
  */
 
 const fs = require("fs");
@@ -51,17 +52,21 @@ function failOpen() {
   process.exit(0);
 }
 
+// Keep every fallible operation below one ultimate fail-open boundary. Individual
+// diagnostics stay narrow; an unexpected engine error exits silently.
+function main() {
 let input;
 try {
-  input = JSON.parse(fs.readFileSync(0, "utf8"));
+  input = JSON.parse(fs.readFileSync(0, "utf8")) || {};
 } catch (e) {
   failOpen();
 }
 
 const tool = input.tool_name || "";
 const ti = input.tool_input || {};
-const filePath = (ti.file_path || ti.path || "").replace(/\\/g, "/");
-if (!filePath) failOpen();
+const rawFilePath = ti.file_path || ti.path || "";
+if (typeof rawFilePath !== "string" || !rawFilePath) failOpen();
+const filePath = rawFilePath.replace(/\\/g, "/");
 
 // Collect every body chunk this call would write/edit.
 const bodies = [];
@@ -102,27 +107,102 @@ for (const c of candidates) {
 }
 if (!config || !Array.isArray(config.rules)) failOpen();
 
-function safeRegex(src, flags) {
-  if (typeof src !== "string") return null;
+function safeRegex(src, flags, ruleId, field) {
+  if (typeof src !== "string") {
+    process.stderr.write(
+      `guardrails: rule "${ruleId}" has non-string ${field} in ` +
+        `.claude/guardrails.rules.json; this rule did not run. Fix the pattern before retrying.\n`
+    );
+    return null;
+  }
   try {
     return new RegExp(src, flags || "");
   } catch (e) {
-    process.stderr.write(`guardrails: rule has invalid regex /${src}/ — skipped.\n`);
+    process.stderr.write(
+      `guardrails: rule "${ruleId}" has invalid ${field} pattern /${src}/ in ` +
+        `.claude/guardrails.rules.json; this rule did not run. Fix the pattern before retrying.\n`
+    );
     return null;
   }
 }
 
-// Lazily read the target file's current content (pre-edit state on disk), cached.
-// Used only by absentPattern rules so partial Edits aren't judged on the fragment alone.
+function safeFlags(flags, ruleId) {
+  if (typeof flags !== "string") {
+    process.stderr.write(
+      `guardrails: rule "${ruleId}" has non-string shared flags in ` +
+        `.claude/guardrails.rules.json; this rule did not run. Fix flags before retrying.\n`
+    );
+    return null;
+  }
+  try {
+    new RegExp("", flags);
+    return flags;
+  } catch (e) {
+    process.stderr.write(
+      `guardrails: rule "${ruleId}" has invalid shared flags "${flags}" in ` +
+        `.claude/guardrails.rules.json; this rule did not run. Fix flags before retrying.\n`
+    );
+    return null;
+  }
+}
+
+// Lazily derive the file content that the proposed operation would leave behind.
+// Edit rejects an ambiguous old_string unless replace_all is true; mirror that rule
+// here rather than treating pre-edit content as evidence the required token survives.
+let _existingLoaded = false;
 let _existing = null;
 function existingFileContent() {
-  if (_existing !== null) return _existing;
+  if (_existingLoaded) return _existing;
+  _existingLoaded = true;
   try {
-    _existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+    _existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
   } catch (e) {
-    _existing = "";
+    _existing = null;
   }
   return _existing;
+}
+
+function applyEdit(content, edit) {
+  if (
+    !edit ||
+    typeof edit !== "object" ||
+    typeof edit.old_string !== "string" ||
+    typeof edit.new_string !== "string" ||
+    edit.old_string.length === 0
+  ) {
+    return null;
+  }
+  const first = content.indexOf(edit.old_string);
+  if (first === -1) return null;
+  if (edit.replace_all === true) {
+    return content.split(edit.old_string).join(edit.new_string);
+  }
+  if (content.indexOf(edit.old_string, first + edit.old_string.length) !== -1) {
+    return null;
+  }
+  return (
+    content.slice(0, first) +
+    edit.new_string +
+    content.slice(first + edit.old_string.length)
+  );
+}
+
+let _resultingLoaded = false;
+let _resulting = null;
+function resultingFileContent() {
+  if (_resultingLoaded) return _resulting;
+  _resultingLoaded = true;
+  let content = existingFileContent();
+  if (content === null) return null;
+  const edits =
+    tool === "Edit" ? [ti] : tool === "MultiEdit" && Array.isArray(ti.edits) ? ti.edits : null;
+  if (!edits || !edits.length) return null;
+  for (const edit of edits) {
+    content = applyEdit(content, edit);
+    if (content === null) return null;
+  }
+  _resulting = content;
+  return _resulting;
 }
 
 let blocked = false;
@@ -143,33 +223,46 @@ for (const rule of config.rules) {
   // therefore matches nothing and fails open (never evaluates Edit/Write rules).
   if (!tools.includes(tool)) continue;
 
-  const flags = rule.flags || "";
+  const id = rule.id || "(unnamed)";
+  const configuredFlags =
+    rule.flags === undefined || rule.flags === null ? "" : rule.flags;
+  const flags = safeFlags(configuredFlags, id);
+  if (flags === null) continue;
 
-  if (rule.filePattern) {
-    const re = safeRegex(rule.filePattern, flags);
+  if (Object.prototype.hasOwnProperty.call(rule, "filePattern")) {
+    const re = safeRegex(rule.filePattern, flags, id, "filePattern");
     if (!re || !re.test(filePath)) continue;
   }
-  if (rule.notFilePattern) {
-    const re = safeRegex(rule.notFilePattern, flags);
+  if (Object.prototype.hasOwnProperty.call(rule, "notFilePattern")) {
+    const re = safeRegex(rule.notFilePattern, flags, id, "notFilePattern");
     // An exemption we can't evaluate must skip the whole rule, not silently drop the
     // exemption — firing anyway risks a false BLOCK on a path the author meant to exempt.
     if (!re || re.test(filePath)) continue;
   }
-  if (rule.bodyPattern) {
-    const re = safeRegex(rule.bodyPattern, flags);
+  if (Object.prototype.hasOwnProperty.call(rule, "bodyPattern")) {
+    const re = safeRegex(rule.bodyPattern, flags, id, "bodyPattern");
     if (!re || !re.test(body)) continue;
   }
-  if (rule.absentPattern) {
-    const re = safeRegex(rule.absentPattern, flags);
-    // Fires only when the required pattern is ABSENT. Judge against the body PLUS the
-    // current on-disk file, so a partial Edit that omits a token already present in the
-    // file is not wrongly blocked. (existingFileContent is read lazily and cached.)
-    if (re && re.test(body + "\n" + existingFileContent())) continue;
+  if (Object.prototype.hasOwnProperty.call(rule, "absentPattern")) {
+    const re = safeRegex(rule.absentPattern, flags, id, "absentPattern");
+    // An absent condition we cannot evaluate must skip the whole rule; firing would risk
+    // a false block when the rule author's required pattern is invalid.
+    if (!re) continue;
+    // Write replaces the whole file. Partial edits are applied in memory so both a
+    // surviving token and removal of the only token are evaluated against final content.
+    const contentAfterWrite = tool === "Write" ? body : resultingFileContent();
+    if (contentAfterWrite === null) {
+      process.stderr.write(
+        `guardrails: rule "${id}" could not evaluate resulting content after ${tool}; ` +
+          `this rule did not run. Retry with an unambiguous edit.\n`
+      );
+      continue;
+    }
+    if (re.test(contentAfterWrite)) continue;
   }
   // A rule with no body/absent pattern is a pure path rule — it has already passed
   // the file gates above, so it fires.
 
-  const id = rule.id || "(unnamed)";
   const msg = rule.message || "guardrail triggered";
   if (sev === "block") {
     process.stderr.write(`guardrail BLOCK [${id}]: ${msg}\n`);
@@ -179,10 +272,21 @@ for (const rule of config.rules) {
   }
 }
 } catch (e) {
-  process.stderr.write(`guardrails: evaluation error (${(e && e.message) || String(e)}); failing open.\n`);
+  process.stderr.write(
+    `guardrails: ENFORCEMENT SKIPPED after an evaluation error ` +
+      `(${(e && e.message) || String(e)}). Your edit continued without complete guardrail protection. ` +
+      `Run /doctor before the next edit; if this repeats, inspect .claude/guardrails.rules.json.\n`
+  );
   failOpen();
 }
 
 // Emit warnings (non-fatal) then decide exit code.
 for (const w of warnings) process.stderr.write(w + "\n");
 process.exit(blocked ? 2 : 0);
+}
+
+try {
+  main();
+} catch (e) {
+  failOpen();
+}
