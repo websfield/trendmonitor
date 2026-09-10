@@ -14,7 +14,7 @@
  * What it reports:
  *   - set up?      CLAUDE.md exists and is filled (not the skeleton template).
  *   - North Star?  NORTH_STAR.md exists and has a real Goal (not the placeholder).
- *   - in flight?   any docs/plans/<feature>-master-plan.md present.
+ *   - progress?    last recorded phase outcomes; ambiguous records need inspection.
  *   - dormant?     a leftover .claude/settings.pack.json (hooks may be un-merged).
  * and recommends the next step accordingly (almost always: just run /go).
  *
@@ -36,6 +36,86 @@ function done(text) {
     /* ignore */
   }
   process.exit(0);
+}
+
+// Deliberately recognize a small written contract, not arbitrary success prose.
+// These records are orientation hints, never a fresh validation of the work.
+function recordLines(text) {
+  let fence = null;
+  return text.replace(/<!--[\s\S]*?(?:-->|$)/g, "").split(/\r?\n/).map((line) => {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (fence[0] === marker[1][0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      return "";
+    }
+    return fence || /^(?:\s*>| {4}|\t)/.test(line) ? "" : line;
+  });
+}
+
+function recordedPhase(ledger, review, phase) {
+  const historical = /\b(?:histor(?:y|ical)|previous(?:ly)?|prior|archive(?:d)?|example|component|baseline|superseded|old)\b/i;
+  const currentScope = (sections, kind) => sections.every((section) => {
+    if (historical.test(section)) return false;
+    const numbers = [...section.matchAll(/\bPhase\s+(\d+)\b/gi)];
+    if (numbers.some((match) => Number(match[1]) !== phase)) return false;
+    const headings = kind === "ledger"
+      ? /^(?:Progress(?:\s+(?:tracking|ledger))?|Ledger|Current(?:\s+progress)?|Phase\s+\d+)(?:\s*[—–:-].*)?$/i
+      : /^(?:Phase\s+\d+(?:\s+review)?|Review(?:\s+report)?|Report\s+card|Current(?:\s+(?:review|overall))?)(?:\s*[—–:-].*)?$/i;
+    return headings.test(section);
+  });
+  let ledgerStatus = null;
+  const ledgerSections = [];
+  for (const raw of recordLines(ledger)) {
+    const line = raw.replace(/\*\*/g, "").trim();
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      ledgerSections.length = heading[1].length;
+      ledgerSections[heading[1].length - 1] = heading[2];
+    }
+    // Append-only ledgers put the status immediately after the exact Phase cell.
+    // A later started/blocked/reopened/unknown cell supersedes an older complete.
+    const cells = line.split("|").map((cell) => cell.trim());
+    const index = cells.findIndex((cell) => new RegExp(`^Phase\\s+${phase}$`, "i").test(cell));
+    if (index >= 0 && index + 1 < cells.length) {
+      ledgerStatus = /^complete$/i.test(cells[index + 1]) && currentScope(ledgerSections, "ledger")
+        ? "complete" : "inspect";
+    } else if (new RegExp(`^(?:[-*]\\s+)?Phase\\s+${phase}\\s*(?::|[—–-]|\\bis\\b|\\bnot\\b)`, "i").test(line)) {
+      ledgerStatus = new RegExp(`^(?:[-*]\\s+)?Phase\\s+${phase}\\s*:\\s*complete\\s*$`, "i").test(line) && currentScope(ledgerSections, "ledger")
+        ? "complete" : "inspect";
+    } else if (new RegExp(`\\bPhase\\s+${phase}\\b[^\\r\\n]*\\b(?:not complete|blocked|reopen(?:ed)?)\\b`, "i").test(line)) {
+      ledgerStatus = "inspect";
+    }
+  }
+
+  let reviewStatus = null;
+  const sections = [];
+  for (const raw of recordLines(review)) {
+    const line = raw.replace(/\*\*/g, "").trim();
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    // Only the report's Overall headline establishes a positive record. Status,
+    // Readiness, component cards and historical examples cannot close a phase.
+    const overall = line.match(/^(?:#{1,6}\s+)?Overall\s*:\s*(.+)$/i);
+    const negative = /^(?:#{1,6}\s+)?(?:Status|Readiness)\s*:\s*(?:Not\b|Almost\b|Blocked\b|Reopen(?:ed)?\b|In progress\b)/i.test(line);
+    if (heading && !overall && !negative) {
+      sections.length = heading[1].length;
+      sections[heading[1].length - 1] = heading[2];
+    }
+    if (!overall) {
+      if (negative) reviewStatus = "inspect";
+      continue;
+    }
+    const value = overall[1].trim();
+    // Unknown sections cannot turn a later status into silence and leave an old
+    // success standing. Only a fresh, correctly scoped positive can close it.
+    reviewStatus = currentScope(sections, "review") && /^Ready(?:\s*(?:[—–·]|$))/i.test(value) &&
+      !/\b(?:not|almost|blocked|reopen(?:ed)?|previous(?:ly)?|histor(?:y|ical)|was|pending)\b/i.test(value)
+      ? "complete" : "inspect";
+  }
+  // Across different files there is no trusted total ordering. A conflicting
+  // incomplete record always wins; /go can inspect dates and real evidence.
+  if (ledgerStatus === "inspect" || reviewStatus === "inspect") return false;
+  return ledgerStatus === "complete" || reviewStatus === "complete";
 }
 
 try {
@@ -92,15 +172,34 @@ try {
     northStar.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*[#>].*$/gm, "").trim()
       .length > 40;
 
-  // Plans in flight: master-plan files under docs/plans/.
+  // Plans in flight: master-plan files under docs/plans/ whose recorded ledger/review
+  // does not yet show a correctly-scoped, non-historical complete/Ready record.
   let inFlight = [];
   try {
     const dir = path.join(projectDir, "docs", "plans");
     if (fs.existsSync(dir)) {
-      inFlight = fs
-        .readdirSync(dir)
+      const planFiles = fs.readdirSync(dir);
+      const masters = planFiles
         .filter((f) => /-master-plan\.md$/.test(f))
         .map((f) => f.replace(/-master-plan\.md$/, ""));
+      inFlight = masters.filter((feature) => {
+        const escaped = feature.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const phasePattern = new RegExp(`^${escaped}-phase-(\\d+)\\.md$`);
+        const phases = planFiles
+          .map((file) => {
+            const match = file.match(phasePattern);
+            return match ? Number(match[1]) : null;
+          })
+          .filter((phase) => phase !== null);
+        if (!phases.length) return true;
+
+        const ledger = read(path.join("docs", "progress", feature, "ledger.md")) || "";
+        return phases.some((phase) => {
+          const review =
+            read(path.join("docs", "progress", `${feature}-phase-${phase}-review.md`)) || "";
+          return !recordedPhase(ledger, review, phase);
+        });
+      }).map((name) => ({ name, nextAction: null }));
     }
   } catch (e) {
     inFlight = [];
@@ -117,10 +216,10 @@ try {
   statusBits.push(northStarSet ? "North Star: set" : "North Star: not set");
   statusBits.push(
     inFlight.length
-      ? "in progress: " + inFlight.slice(0, 4).join(", ")
-      : "in progress: none"
+      ? "unfinished work: " + inFlight.slice(0, 4).map((entry) => entry.name).join(", ")
+      : "unfinished work: none recorded"
   );
-  lines.push("Status — " + statusBits.join(" | ") + ".");
+  lines.push("Recorded progress — " + statusBits.join(" | ") + ". Current completion has not been verified.");
 
   let next;
   if (!setUp) {
@@ -128,9 +227,10 @@ try {
       'Run  /go  and say what you want to build — it will set the project up first (one short round of questions), then plan and build it. (Or run /bootstrap-claude-pack to set up manually.)';
   } else if (inFlight.length) {
     next =
-      'Run  /go  to continue "' +
-      inFlight[0] +
-      '" from its next phase, or  /go  to start something new. (To check a finished phase: /review-phase <feature> <N>.)';
+      'Run  /go  to inspect "' +
+      inFlight[0].name +
+      '" and identify its next step.' +
+      (inFlight[0].nextAction ? " Last recorded: " + inFlight[0].nextAction : "");
   } else {
     next =
       "Run  /go  and say what you want to build, in plain words — it plans, builds, and checks it for you.";

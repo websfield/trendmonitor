@@ -67,7 +67,7 @@ try {
             @('model_reasoning_effort = "xhigh"', 'orchestrator effort'),
             @('hooks = true', 'hook feature'),
             @('default_subagent_model = "gpt-5.6-terra"', 'default subagent'),
-            @('default_subagent_reasoning_effort = "medium"', 'default subagent effort'),
+            @('default_subagent_reasoning_effort = "high"', 'default subagent effort'),
             @('max_concurrent_threads_per_session = 4', 'thread ceiling')
         )) { Assert-ContainsLiteral -Text $config -Expected $pair[0] -Label $pair[1] }
     }

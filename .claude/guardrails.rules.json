@@ -4,7 +4,7 @@
     {
       "id": "secret-private-key-literal",
       "severity": "block",
-      "notFilePattern": "(\\.env\\.example$|\\.sample$|\\.template$|guardrails\\.rules\\.json$)",
+      "notFilePattern": "(\\.env\\.example$|\\.sample$|\\.template$|guardrails\\.rules\\.json$|(^|/)\\.claude/commands/doctor\\.md$)",
       "bodyPattern": "-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
       "message": "Private key literal in file body. Never commit private keys. Use a secret manager or an env var with a .env.example placeholder."
     },

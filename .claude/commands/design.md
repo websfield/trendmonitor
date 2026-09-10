@@ -33,41 +33,18 @@ Restate the request plainly, then classify:
 
 When unsure, lean to a quick pass; keep it proportional.
 
-## Step 2 — Establish the design source of truth (DESIGN.md)
+## Step 2 — Run the design method
 
-`DESIGN.md` at the repo root is the one place the design system lives, so every screen and every tool reads
-the same tokens.
-- **Missing?** Create it before designing — use the template in the `designing-uis` skill
-  (`resources/design-md-template.md`). Fill it from the product's *real* subject and `NORTH_STAR.md`, not
-  from defaults. Show the person the system you chose (atmosphere, color, type, the one signature element).
-- **Present?** Read it and design to it. If you need a token it lacks, add it to `DESIGN.md` first, then use
-  it — never invent a one-off color/font/spacing inline.
+For real UI work, follow the `designing-uis` skill as the authority, in order:
 
-## Step 2.5 — Ground it in references (taste in, not defaults out)
+1. Read and follow **The spine: DESIGN.md is the source of truth**.
+2. Run **The loop: references → diverge → critique → render & pick → build → iterate → verify**.
+3. Apply its **Priority-tiered rules** and **Microcopy is design material** section while building.
 
-Taste transfers through examples, not adjectives. When creating `DESIGN.md` or materially changing its direction:
-- Ask the person for **1–3 references** — screenshots, or names of sites/apps whose look this should be in the
-  family of. From a screenshot, extract the *actual* system (palette, type feel, density, shapes) into candidate tokens.
-- **No references to give?** Offer the **aesthetic families** menu (`designing-uis`
-  `resources/aesthetic-families.md`) — named directions with token starting points — and recommend the one that
-  fits the product's subject. Picking a family deliberately beats defaulting silently.
-- Never ask a beginner to "describe the design system" — show options and let them point.
+Do not restate or alter those rules here. The skill owns the DESIGN.md contract, reference fallback,
+variant count, anti-slop pass, build rules, screenshot cadence, real-state checks, and accessibility floor.
 
-## Step 3 — Design loop (diverge → critique → render → pick, before real code)
-
-Per the `designing-uis` skill:
-1. **Pass 1 — diverge.** Sketch **2–3 genuinely different directions** (different families or different
-   signature moves — not three tints of one idea), each as a compact token set + one signature element.
-2. **Pass 2 — self-critique each.** Ask *"would I produce this for any product in this category?"* Run the
-   anti-slop bans (`resources/anti-slop.md`). Drop or push what fails; remove one thing from what survives.
-3. **Render the survivors and let the person pick.** Build each as a **throwaway single-file HTML mockup** of
-   the one most representative screen — real tokens, honest content, no build system. Screenshot them and show
-   the person side by side: they choose with their eyes, not from prose. The pick (plus anything they liked
-   from the losers) becomes the locked `DESIGN.md`.
-
-For a *small* addition to an existing, already-chosen system: skip the variants — design within `DESIGN.md`, keep Pass 2.
-
-## Step 4 — Choose how to produce it (route to a tool only if it helps)
+## Step 3 — Choose how to produce it (route to a tool only if it helps)
 
 Use the `ui-design-tools` decision tree. Default is **hand-write against `DESIGN.md`** — often the best path.
 Reach for a tool when it genuinely accelerates a step, and confirm the choice with the person if it adds a
@@ -81,13 +58,13 @@ dependency or an external account:
 Whatever a tool emits is a **starting layout, not the finished UI**: re-normalize its tokens to `DESIGN.md`,
 land assets in a versioned repo folder (never a temporary URL), keep API keys in env vars.
 
-## Step 5 — Build
+## Step 4 — Build
 
 Build to the locked `DESIGN.md`. Tokens come from the system, never hardcoded per component. Microcopy is
 design material — active verbs, consistent labels, empty/error states that say what to do next, and **never
 fabricate data** (no fake metrics/logos/testimonials).
 
-## Step 6 — Iterate with your eyes open (the quality lever)
+## Step 5 — Iterate with your eyes open (the quality lever)
 
 Building blind is how UI ends up generic — a model judges rendered UI far better than it imagines it.
 - With a screenshot tool available (a Playwright/browser MCP, a `browse` skill): **loop at least twice for
@@ -98,7 +75,7 @@ Building blind is how UI ends up generic — a model judges rendered UI far bett
 - **No screenshot tool?** Say so plainly and recommend wiring one (it is the single biggest lever on UI
   quality); fall back to asking the person to paste screenshots between rounds. Never silently skip iteration.
 
-## Step 7 — Verify and report a readiness card
+## Step 6 — Verify and report a readiness card
 
 Run the `designing-uis` Verify step, then report in plain words:
 - **Looks** — screenshot and compare to `DESIGN.md` + anti-slop bans at 2–3 widths (use a screenshot tool
@@ -108,7 +85,7 @@ Run the `designing-uis` Verify step, then report in plain words:
 
 Lead with **Ready / Almost / Not yet**, earned by what you found — a Tier-1 miss is always *Not yet*.
 
-## Step 8 — Keep DESIGN.md honest
+## Step 7 — Keep DESIGN.md honest
 
 If the work introduced or changed a token, update `DESIGN.md` (merge, never clobber) and show the change, so
 the next screen and the next tool inherit it.

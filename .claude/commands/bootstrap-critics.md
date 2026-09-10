@@ -1,6 +1,7 @@
 ---
 description: Analyze this repository and generate a tailored panel of read-only critic agents (one lens each, tagged by track), the way /bootstrap-claude-pack generates jig's reviewers. Proposes the roster, confirms it, then writes the agents. Do NOT use for first-time project setup — that's /bootstrap-claude-pack.
 argument-hint: [optional focus e.g. "architecture security" | blank for full roster]
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 ---
 
 You are generating this repo's **critic panel** - the read-only auditors that `/audit` will convene. This mirrors how jig generates project-specific reviewers, with the same discipline: evidence-only, never manufacture a critic the repo does not warrant.
@@ -24,7 +25,8 @@ You are generating this repo's **critic panel** - the read-only auditors that `/
 
 - For each confirmed `new` critic, write `.claude/agents/<name>.md` from the `_critic-template.md` archetype, filled in for THIS repo: a one-lens mandate, a reading list of the **real** files/dirs it owns, and the critic output schema. Put the `Track:` marker line at the top of the body. Keep the archetype's `effort: max` frontmatter — critics are gates, so they think hardest; it applies when `/audit` dispatches them by name, `max` is the ceiling on any model, and it needs no per-account tuning.
 - For each confirmed `upgrade`, show the diff before writing (the roster confirmation authorized the upgrade; the diff is so nothing hand-tuned is lost silently) and preserve every repo-specific line that is still true. For each confirmed `retire`, delete only after the roster confirmation explicitly included it.
-- Read-only tools only (`Read, Grep, Glob`; add `WebFetch, WebSearch` only where confirming an external framework's behaviour is part of the lens).
+- Bash is allowed only to retire a confirmed critic file under `.claude/agents/`; do not use it for any other mutation.
+- Generated critics use read-only tools only (`Read, Grep, Glob`; add `WebFetch, WebSearch` only where confirming an external framework's behaviour is part of the lens).
 - Never invent file paths; every reading-list entry must be a path you verified exists. If a lens has no real subject in the repo, drop it and say so.
 
 ## 4. Report

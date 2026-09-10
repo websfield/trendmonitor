@@ -43,5 +43,7 @@ Readiness: **Ready | Almost | Not yet** - grade **A–F** (derived from findings
 - `[HUNCH]` what smells wrong, where you looked, what would confirm it (the chair chases these)
 #### Coverage
 - read fully: <paths> · skimmed: <paths> · did not read: <in-lane paths you didn't reach>
+#### Hunted and not found
+- <what you specifically looked for that held up — required when findings are zero>
 #### Could not verify
 - what you needed and couldn't find

@@ -21,6 +21,8 @@ system lives, so every screen and every tool reads/writes the same tokens instea
   skeleton and fill it from the product's real subject and the brand, not from defaults.
 - **Has one?** Read it first and build to it. If a screen needs a token the system lacks, add it to
   `DESIGN.md` first, then use it — never invent a one-off color/font/spacing inline.
+- When work adds or changes a token, merge it into the existing `DESIGN.md` without clobbering the
+  file, and show the person the change.
 - It pairs with `NORTH_STAR.md` (what the product is for) — `DESIGN.md` is *how it looks and feels*.
 
 ## The loop: references → diverge → critique → render & pick → build → iterate → verify
