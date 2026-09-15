@@ -31,17 +31,17 @@ test("studio-tier operator - workspace, profiles, seats", async ({ page, browser
 
   // Chapter 3 - upgrade to Studio (Stripe test-mode checkout). Studio is the
   // only tier whose profileCap is above 1 (config: free/creator/pro = 1,
-  // studio = 5) and the only one with up to 3 seats (PRD REQ-A02). BEST
-  // EFFORT, same known app bug as the solo-creator journey (see its own
-  // header note): packages/credits/src/stripe/actions.ts imports
-  // `assertFreshWorkspaceScopeInTx` from `@respin/db`, which is defined but
-  // not exported, so every subscribe action fails today. Recorded, not
-  // silently worked around.
+  // studio = 5) and the only one with up to 3 seats (PRD REQ-A02). Every
+  // billing form carries a step-up "Current password" field (10b-1) that the
+  // real user types before pressing Subscribe - filled here the same way.
+  // BEST EFFORT: recorded, not silently worked around, if it fails.
   await page.goto("/settings/billing");
   let studioActive = await page.getByTestId("manage-plan").isVisible().catch(() => false);
   if (!studioActive) {
     try {
-      await page.getByTestId("subscribe-studio").getByRole("button", { name: /Subscribe/ }).click();
+      const subscribeForm = page.getByTestId("subscribe-studio");
+      await subscribeForm.locator('input[name="password"]').fill(owner.password);
+      await subscribeForm.getByRole("button", { name: /Subscribe/ }).click();
       await completeStripeTestCheckout(page, { email: owner.email });
       await page.waitForURL("**/usage");
       // The tier flip is driven by Stripe's webhook (checkout.session.completed
@@ -55,15 +55,13 @@ test("studio-tier operator - workspace, profiles, seats", async ({ page, browser
       studioActive = true;
     } catch (err) {
       artifacts.note(
-        `BLOCKING APP BUG: Studio-tier checkout did not complete - ${String(err)}. Same missing @respin/db ` +
-          "export as the solo-creator journey (assertFreshWorkspaceScopeInTx). This workspace stays on Free, " +
+        `BLOCKING APP BUG: Studio-tier checkout did not complete - ${String(err)}. This workspace stays on Free, ` +
           "which caps creator profiles at 1 - the second-profile chapter below is skipped as a direct " +
           "consequence and noted, not faked."
       );
       test.info().annotations.push({
         type: "bug",
-        description:
-          "Stripe subscribe is broken for every tier: missing @respin/db export assertFreshWorkspaceScopeInTx.",
+        description: `Studio-tier Stripe checkout did not complete: ${String(err)}`,
       });
     }
   }

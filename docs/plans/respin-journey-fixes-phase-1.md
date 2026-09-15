@@ -1,0 +1,184 @@
+# respin-journey-fixes — Phase 1: paid tiers reachable, included build honest
+
+Status: DRAFT — revised after plan-review batches 0, 1 and 2 (all findings applied below). The specialist retry budget is exhausted with the last billing verdict NEEDS CHANGES on the pre-batch-2-fix text; the batch-2 fixes are applied but unverified by a reviewer. Depends on: none.
+Master plan: [`respin-journey-fixes-master-plan.md`](respin-journey-fixes-master-plan.md) · Audit rows: F-01, F-02, F-05, F-12, F-17 (activation half).
+
+## Project Conventions Pinned (READ FIRST)
+
+Golden rules, verbatim from `CLAUDE.md`:
+
+1. **Read before you write.** Never edit a file you haven't read; never state a "fact" about the code you haven't verified in the code — and a claim you *record* (in a comment, a doc, a decision log) is verified against the file it names **in the same action that records it**. A structural claim ("this can never happen") is proven by running it (a test or the command), not by an argument.
+2. **No secrets in code, commits, or logs.** Credentials live in env/config; a leaked secret is a rotate-everything incident.
+3. **Never destroy what you didn't create without explicit confirmation** — files, data, branches, running state. Deletion is the one mistake you can't iterate on.
+4. **Fix causes, not symptoms.** A change that silences an error without explaining it hides the bug instead of fixing it.
+5. **Match the codebase.** Existing conventions beat your preferences; a new dependency needs a reason the standard library can't answer.
+6. **Report honestly.** Failing tests, skipped steps, and half-done work are reported as exactly that — "done" is a claim the checks have to back. A result counts only if the *method* was sanctioned too: output from a command this file's rules forbid, or from a run pointed at a copy instead of the real target, is discarded and re-obtained — and you name the command you actually ran, rather than waiting for someone to object.
+7. **Small, verifiable steps.** Prefer the change you can test over the big-bang you can't; if you can't verify it, say so.
+8. **Scale caution to blast radius.** Reading and analyzing are free — they change nothing. Edits and test runs are cheap — they're reversible. Pushing, publishing, sending anything outside the repo, and deleting what you didn't create (rule 3) are not: those wait for explicit confirmation, and if you catch yourself reaching for reasons one is *probably* fine, that reaching is the signal to stop and ask.
+9. **Current facts beat trained memory.** Library APIs, CLI flags, and config schemas are present-day facts: verify against the installed version (lockfile, type definitions, `--help`, official docs) before use — partial recognition from training is not current knowledge.
+
+Respin non-negotiables that govern this phase, verbatim:
+
+2. **The ledger is the balance.** `credit_ledger` is append-only, balance derived; webhooks idempotent on Stripe event id; debit in the generation's transaction (REQ-G04/G06, R-6).
+6. **No invented specifics, no guarantees.** `[check]` placeholders; every output names its weakest point; engineering and evidence completion are separate claims (REQ-I03/I04, build-plan).
+7. **A derived guard's population is a list, not a producer.** Any allowlist/guard computed by reading "everything that can reach this state" from a single call site — refusal codes a screen can throw, fields a scope guards, tables a registry covers — enumerates that population explicitly and is updated by listing every producer, never by grepping one; a second producer added later is a list edit, not an automatic inclusion.
+
+Lessons that touch this phase, verbatim:
+
+- 2026-07-30 — Fail closed, but **never without a way forward**: before making an unreadable or invalid file fatal, grep every *writer* into that directory, and read the refusal's own printed remedy — if it says "delete this evidence", the control is the outage.
+- 2026-08-21 — **Proving a field cannot be TYPED is not proving it cannot be CAST**: for every server-derived column, assert the runtime strip by smuggling a value in through `as unknown as`, not only by `@ts-expect-error`.
+- 2026-08-26 — **A verifier that reports success is not verified until something OUTSIDE it tries to break it**: … every scanner must assert it catches a PLANTED violation of each shape it claims to cover … a REQUIRED parameter with no default gave the same blind spot its sharpest form — deleting R8's whole `attested !== true` refusal left **158 tests green** because every call site passed `true` and the refusal had no witness.
+- 2026-09-04 — **Verify the bytes your edit changed, and the harness that says they are fine**: an edit that rewrites line endings is invisible to `git` under `core.autocrlf=true` yet silently breaks every guard matching a multi-line source literal.
+
+Stack and boundaries: Next.js 15 / TypeScript, pnpm (`pnpm -C respin …`), self-hosted Postgres + Drizzle, Better Auth, Stripe, pg-boss, Anthropic behind the provider adapter. `app/**` never imports raw tables (eslint `no-restricted-imports`); every scoped read goes through `respinDb` / `respinCredits`. Prices and allowances come from versioned config, never code (billing skill B5). Billing-path rules B1–B7 in `.claude/skills/respin-billing-credits/SKILL.md` apply in full. Two existing guards bind copy and error classes: `respin/tests/billing-ui.test.tsx:1702-1730` reddens any `BILLING_ERROR_COPY` entry matching `\bincluded (build|run)\b`; `respin/packages/llm/tests/no-text.test.ts` reddens any free-text string constructor parameter on an error class in `errors.ts` (exemption count pinned at 3).
+
+Agents: owner `respin-engineer`; reviewers `respin-billing-reviewer` (separate, full), `plan-reviewer`. Do NOT request `workflow-manager`, `qa-reviewer`, or any agent not in `.claude/agents/`.
+
+## Requirements Checklist (functional)
+
+- [ ] F-01 / REQ-G01: a documented, scripted path activates the tier-checkout **and** auto-top-up v1 protocols on a dev or CI database using only the shipped CLIs, **against a Stripe test account that has never issued a Respin Checkout Session from another database lineage**; after it, Subscribe opens Stripe Checkout and the webhook flips the tier.
+- [ ] F-02 / REQ-G02, REQ-G04: a voice reply the product cannot parse is recorded as a billable failure (vendor paid by us, usage row carries its tokens and cost) that does **not** consume the included build and takes nothing from the balance; the refusal copy says so without stating a price and names the remedy.
+- [ ] F-12 / REQ-G03: the billing page has one plan form with a tier choice, one auto-top-up status sentence, a plan label without "— free", and no config version in customer copy.
+- [ ] F-05 / REQ-E05: on a plan whose tracked-niche allowance is 0, the niche form is replaced by a named tier block; on any plan a refused save states its typed reason.
+
+## Requirements Checklist (technical)
+
+- [ ] B1: no ledger mutation, no claim-row deletion; the fix moves classification earlier, never repairs state after the fact.
+- [ ] B5: every price or allowance the page prints comes from the active config; the config **version** is not printed to customers; test bounds (the uncharged cap N) are read from config, never literals.
+- [ ] Non-negotiable 7: the activation script contains no state write; the set of files permitted to update either rollout table is an explicit allowlist asserted by a test over the tree.
+- [ ] Invariants `included-build-survives-unusable-reply`, `unusable-reply-cost-recorded`, `uncharged-attempt-cap-counts-unusable`, `rollout-active-single-producer`, `activation-one-ceremony-per-lineage`, `plan-form-tier-matches-choice` each have a test or transcript named below.
+
+## The activation constraint, stated plainly (from batch-0 BLOCK)
+
+`auditTierCheckoutLegacyDrain` (`respin/packages/credits/src/stripe/tier-checkout-rollout.ts:333-363`) lists **every** Checkout Session in the bound Stripe account with no date filter, and any subscription or pack Session whose `metadata.workspace_id` is set but whose customer is absent from the local `subscriptions` mapping is `orphaned_customer_mapping` — before any status check, so expired and completed Sessions count. Consequences this phase designs around:
+
+- A Stripe test account that has issued Sessions from **another database lineage** (the shared dev account did on 2026-08-17 and 2026-09-05) can never audit clear from a fresh database, and the only remedy is provider-side deletion of those customers — a shared-account destructive action this plan does not take.
+- Therefore activation is **one ceremony per (database lineage, Stripe account)**: a dedicated Stripe sandbox is bound to one database lineage and the row stays `active` for the life of that lineage. A CI environment that recreates its database per run cannot re-activate on the second run; Phase 3 therefore uses a persistent journeys database (or a restored snapshot already reading `active` for the same sandbox), never a per-run service container.
+- The script short-circuits when `status` already reads `active` (`activateTierCheckoutAttemptProtocol` returns the row at `:544-547`), so re-running it on an activated lineage is a no-op.
+
+No seeding of `subscriptions`, no widening of the audit, no env flag: those are the bypass the master plan's Non-goals forbid.
+
+## Edge Cases & Failure Paths
+
+| Question | Answer → task |
+|---|---|
+| Inverse: the audit reports blockers after `begin` | Script exits non-zero printing the blocker list verbatim and the runbook's per-reason remedy; state stays `draining`; `restart-drain` documented (T1/T2). |
+| Double failure: script killed between `begin` and `activate` | State is `draining` with a revision; the script's `status` pre-check resumes at `audit` instead of `begin` (T2). |
+| Degraded: Stripe unreachable during audit | CLI throws; script exits non-zero; nothing activated; rerun idempotent (T2). |
+| Already `active` | Script prints both states and exits 0 without running any drain (T2). |
+| Unusable reply on a **paid** rebuild (a prior claim exists) | Same class, same path: vendor paid by us, no debit, no claim change, balance unchanged; bounded by the cap; copy states nothing was taken from the balance (T3, test a′). |
+| Unusable reply N times | The uncharged-attempt cap refuses the (N+1)th press before the vendor is called (T3 test b). The cap is **lifetime per profile** (`inference.ts:506`) with an operator-only remedy (`uncharged_attempt_cap` copy) — stated in the runbook's operations note and in the refusal copy; not changed here. |
+| The validate hook itself throws something other than `AssemblyError` | Wrapped: every throw from the hook becomes `LlmUnusableReplyError`, never an unbillable `unavailable` row for a paid call (T3). |
+| Tier choice missing on the plan form | The existing gate (`app/(product)/settings/billing/actions.ts:99-102`) refuses before Stripe; it throws an unnamed `Error` today — T4 gives it a named code (T4). |
+| Niche allowance 0 but existing tracked rows (downgrade) | The tracked list and Remove controls stay; only the add form is replaced (T5). |
+
+## Failure Modes & Degraded Behavior
+
+| Boundary | Failure | Degraded behaviour | Reconciliation | Spec |
+|---|---|---|---|---|
+| Stripe (audit/activate) | timeout / 5xx | script non-zero, state unchanged | rerun | runbook step; `activate-billing-protocols` prints `status` first |
+| Anthropic (voice build) | unparseable text | `schema_invalid`, billable, `consumed_included_build=false`, tokens and cost on the row, no debit | none; cap bounds retries | `packages/credits` tests T3-a/a′/b/c |
+| Postgres (`recordUsage`) | write fails after vendor answered | existing behaviour: vendor error carried on `cause` | existing | unchanged |
+
+## Handoff Contracts
+
+- `pnpm -C respin dev:activate-billing-protocols` — env: `DATABASE_URL`, `STRIPE_SECRET_KEY`, `RESPIN_STRIPE_ACCOUNT_ID`, `RESPIN_STRIPE_LIVEMODE`, `RESPIN_AUTO_TOPUP_AUTHORITY_KEY`; precondition: **no app, worker, or webhook process running** — the script checks port 8000 and the worker's `system_worker_health.last_heartbeat_at` (printing the remaining staleness wait) and prints "forwarder: not checked; stop it yourself" for the Stripe CLI; `main()` is guarded (`import.meta.url` entry check) and the CLI runner is injectable so the unit test can import the module; exit 0 iff both rollout rows read `active`. Consumed by Phase 3 T4 on a persistent database.
+- Billing page: `data-testid="subscribe"` is the one plan form; tier choice is `input[name="tier"]` radios carrying `data-testid="subscribe-<tier>"`; one `input[name="password"]`; one submit. Consumed by the three journey specs (updated in T4) and by Phase 3.
+- Track-niche panel: `data-testid="niche-disabled-tier"`, `niche-saved`, `niche-refused` (the refused element carries `data-reason="<typed reason>"`). Consumed by Phase 3 T1.
+- `LlmUnusableReplyError` (`packages/llm/src/errors.ts`): `outcome: "schema_invalid"`, `billable: true`, `consumesIncludedBuild: false`; **no constructor parameters** (no free text — `no-text.test.ts`); operator signal is `errorName` in the log line, as today. Maps to a new `BillingErrorCode` `llm_attempt_not_consuming` in `billing-errors.ts`, branched **before** the `billable → llm_attempt_recorded` line (`:1991`) on `err instanceof LlmError && err.billable && !err.consumesIncludedBuild`.
+
+## Reachability
+
+A Free creator whose voice build comes back unparseable can press "Build my voice brain" again with the included build still theirs — via `/onboarding`, shipped in this phase. A developer with a dev database bound to a dedicated Stripe sandbox can subscribe to Creator from `/settings/billing` after `pnpm -C respin dev:activate-billing-protocols` — shipped in this phase.
+
+## Depends on
+
+none. Owner prerequisite (not code): a dedicated Stripe **sandbox** for the dev lineage, with `stripe:setup` re-run so the `stripePriceMap` in the active config names that sandbox's prices (read `respin/packages/credits/src/stripe/` setup command and `docs/runbooks/auto-topup-protocol-v1-rollout.md` "Immutable key contract" first).
+
+## Implementation Tasks
+
+| # | Task | Owner | File(s) |
+|---|---|---|---|
+| T1 | Write `docs/runbooks/tier-checkout-protocol-v1-rollout.md` mirroring the auto-top-up runbook: immutable bindings (`RESPIN_STRIPE_ACCOUNT_ID`, `RESPIN_STRIPE_LIVEMODE`), cutover (`begin` → 300 s DB fence → `audit` → `activate`), every `TierCheckoutDrainBlocker.reason` with its remedy (the list is derived from the union in `tier-checkout-rollout.ts:47-62` and pinned by a test, T1-t), the **one-ceremony-per-lineage** constraint, rollback/restore, an operations note on the lifetime uncharged-attempt cap, and a **sandbox section** listing every step a fresh sandbox needs: `stripe:setup` (creates the product, three tier prices and the pack price and prints the whole `stripePriceMap`, `setup.ts:64-151`) with the map **replaced whole** in `/admin/config` (a legacy-keyed pack entry left behind fails the `respin_pack_checkout_v1` writer fence, `pack-price.ts:55-57`); `RESPIN_STRIPE_ACCOUNT_ID` re-read from the sandbox; `STRIPE_WEBHOOK_SECRET` from `stripe listen --print-secret`; the "for reference" amounts printed beside the map (`setup.ts:156-159`) must be read before pasting, because `stripe:setup` seeds tier amounts from the R-7 launch-default literals (`setup.ts:88`) and config records price id → tier, never an amount; and the one dashboard-only object — the Customer Portal configuration must be saved once in the sandbox dashboard **with subscription cancellation enabled** because `billingPortal.sessions.create` passes no `configuration` (`stripe/actions.ts:1066-1069`) and the product's final cancel is a hand-off to that portal (`billing-view.tsx:690-710`); the CI snapshot section states that `RESPIN_AUTO_TOPUP_AUTHORITY_KEY` must be the exact key the snapshot was activated with (the row carries its fingerprint, `auto-topup-rollout.ts:223-224`, checked at request time `:141-147`) and that each CI run leaves live test-mode subscriptions in the CI sandbox that a restored snapshot forgets (their renewal webhooks land as final `refused_unknown_customer` receipts; the journeys cancel their subscription in a closing chapter, Phase 3 T3). Add a root `package.json` alias `stripe:tier-checkout:rollout` (the auto-top-up one exists at root; the tier one exists only in `packages/credits/package.json:20`). | respin-engineer | `docs/runbooks/tier-checkout-protocol-v1-rollout.md`, `respin/package.json`, `respin/packages/credits/tests/tier-checkout-runbook-reasons.test.ts` |
+| T2 | `respin/scripts/activate-billing-protocols.ts` (TypeScript run via `tsx`, like `preflight.ts` and `worker:start` — a `.mjs` file would be invisible to `tests/table-writers.test.ts`'s `\.(ts\|tsx)$` scan over `PRODUCTION_ROOTS` incl. `scripts`, to typecheck, and to lint) + script `dev:activate-billing-protocols`. Precondition: refuses if port 8000 or the worker heartbeat is live (the Stripe forwarder binds no port and cannot deliver to a stopped app, so it is **not** checked — the script prints "forwarder: not checked; stop it yourself" rather than a fail-open process scan) — a stopped worker reads live for up to `HEARTBEAT_STALE_INTERVALS × RESPIN_WORKER_HEARTBEAT_MS` (90 s at defaults, `worker/health.ts:37`), so the refusal prints the remaining wait. **Branch per protocol** from its own `status`: `active` → skip; `expanded` → open its drain (tier `begin`; auto-top-up first `cutover`, whose bundled `begin → reconcile → activate` (`auto-topup-rollout-cli.ts:71-80`) is expected to stop on the **fence message only** — any other non-zero exit (binding, key, blocker) is a failure, never "expected"); `draining` → resume at the audit step (tier `audit` throws outside `draining`, `tier-checkout-rollout.ts:301-303`, so a mixed state must not re-run `begin`). Open every needed drain first, wait once for the longest reported fence — the auto-top-up side reports `remainingMs` from its first `cutover`; the tier side reports nothing from `begin`, so the script calls tier `audit` immediately and parses the fence refusal's remaining wait (`tier-checkout-rollout.ts:307-313`); no 300 s literal appears in the script — then tier `audit` → `activate`; auto-top-up `reconcile-v1` (`reconcileBoundAutoTopupAttempts`, gated by `assertAutoTopupProtocolRecoveryReady`: `draining` or `active`, `auto-topup-rollout.ts:155-170`) → `cutover`. Prints both final states; never writes SQL. Add both env names to `respin/env.example` comments. Unit test with the CLIs stubbed: ordering; short-circuit when both `active`; **tier `active` + auto-top-up `expanded` rerun activates only auto-top-up without calling tier `audit`**; **a non-fence first-`cutover` failure exits non-zero before any wait**; non-zero on blockers. | respin-engineer | `respin/scripts/activate-billing-protocols.ts`, `respin/package.json`, `respin/env.example`, `respin/tests/activate-billing-protocols.test.ts` |
+| T3 | Included build survives an unusable reply. (i) `runInference` accepts `validateReply: (text: string) => void`; `inferVoice` passes `parseVoiceReply` bound to its fields/posts (the parsed result is recomputed after the run as today, or returned via the hook's closure — choose one and say so in code). (ii) Inside the vendor `try`, **after** `usageRaw = result.usage.raw` (`inference.ts:786`), call the hook; wrap **every** throw from it into `LlmUnusableReplyError` so the catch at `:796-807` records `schema_invalid`, `consumedIncludedBuild=false`, with `tokensIn/tokensOut/usageRaw` already set and cost computed (no `cost_state: 'unknown'`). (iii) Align `LlmSchemaInvalidError("no_text_block", true)` to `consumesIncludedBuild=false` — same fact ("vendor answered, nothing usable"), same creator remedy — and **assert it**, not comment it: `packages/llm/tests/adapter.test.ts` asserts `new LlmSchemaInvalidError("no_text_block", true).consumesIncludedBuild === false`; `tests/billing-ui.test.tsx` asserts `billingErrorCode(...)` → `llm_attempt_not_consuming` for it; `inference-unusable-reply.test.ts` gains case (d): planted `no_text_block` → no `first_billable_attempts` row. (iv) `billing-errors.ts`: new code `llm_attempt_not_consuming` branched before `:1991`; copy: title "The model answered, but not usably", detail phrased like `llm_unavailable` ("did not use up your first run for this creator … nothing was taken from your credit balance … try again; if it keeps happening tell us, this attempt sends a fixed message of ours") — must not match `\bincluded (build|run)\b`. **Studio override required:** `tests/studio-ui.test.tsx:1633-1651` scans every `STUDIO_ERROR_CODES` entry against `/included (build|run)\b|first run for this creator/` because Studio has no included draft, so `app/(product)/studio/copy.ts` gains `STUDIO_OVERRIDES.llm_attempt_not_consuming` with Studio-safe wording (precedent `:237-241` for `llm_attempt_recorded`: "nothing was taken from your credit balance"). Retire the now-unreachable `AssemblyError → inference_unusable` row (`billing-errors.ts:611`) and the `inference_unusable` entries in `ONBOARDING_ERROR_CODES` and its copy — after the hook, no producer throws `AssemblyError` out of the voice path (non-negotiable 7: a list carries only real producers); the onboarding derivation test updates accordingly. (v) Tests in `packages/credits/tests/inference-unusable-reply.test.ts`: (a) no prior claim, planted unparseable reply → no `first_billable_attempts` row, `model_usage.outcome='schema_invalid'`, `consumed_included_build=false`, `tokens_out > 0`, `cost_micro_usd IS NOT NULL` (mirror `inference.test.ts:472-475`); next valid press claims and settles as included; (a′) prior claim present, balance 500, unusable reply → no `credit_ledger` row for the attempt, balance 500; next valid press charges the configured rebuild price; (b) N = `content.onboarding.maxUnchargedBillableAttempts` (read from config, never a literal) planted unusable replies, then the (N+1)th press refuses `uncharged_attempt_cap` before the vendor; (c) a planted valid reply still claims and settles as today. (vi) `tests/billing-ui.test.tsx`: `billingErrorCode(new LlmUnusableReplyError())` → `llm_attempt_not_consuming`; copy assertion; the `included` guard stays green. (vii) **Six literal lists** must gain the new class/code (non-negotiable 7 — the population, enumerated): `INSTANCE_BRANCH_CODES.LlmError` at `app/(product)/billing-errors.ts:757` (`["llm_attempt_recorded","llm_truncated"]` → add `llm_attempt_not_consuming`; three screen derivations union over it — `tests/onboarding-ui.test.tsx:1315-1323`, `tests/studio-ui.test.tsx:1578-1586`, `tests/framework-ui.test.tsx:1011-1019`); `ERROR_CLASS_COVERED_BY_BASE` at `billing-errors.ts:799-806` (add `LlmUnusableReplyError: "LlmError"`); `ONBOARDING_ERROR_CODES` at `app/(product)/onboarding/copy.ts:128` (a closed allowlist whose fallback maps any other code to `unknown`, `:263-264` — without this entry the F-02 remedy copy never reaches `/onboarding`); `STUDIO_ERROR_CODES` at `app/(product)/studio/copy.ts:131-132`; the "ordinary material" guard's code list at `tests/billing-ui.test.tsx:1737`; the no-creator-text sweep's class list at `packages/llm/tests/no-text.test.ts:439-450` (add `new LlmUnusableReplyError()`). AC6 gains a rendered `/onboarding?e=llm_attempt_not_consuming` assertion that the new copy, not `unknown`, is shown. | respin-engineer | `respin/packages/llm/src/errors.ts`, `index.ts`; `respin/packages/credits/src/inference.ts`, `infer-voice.ts`; `respin/app/(product)/billing-errors.ts`; `respin/packages/credits/tests/inference-unusable-reply.test.ts`; `respin/tests/billing-ui.test.tsx` |
+| T4 | Billing page: one "Start a plan" form (`data-testid="subscribe"`; per-tier `subscribe-<tier>` moves to the radio inputs) with a required tier radio group, one password field, one submit; `app/(product)/settings/billing/actions.ts:99-102` refuses a missing/unknown tier with a **named** code (`?e=unknown_tier`, copy added) before `billingReauthentication` and before Stripe; plan label renders the tier name only; drop "(from config vN)" from customer copy (keep the version on `/admin/config`); auto-top-up status reduced to one sentence chosen from the existing three states. Update `tests/billing-ui.test.tsx` including the AC-3 marker scan expectations and the new code's copy. **The three journey call sites that locate the password field and button inside `subscribe-<tier>` (`e2e/journeys/solo-creator.spec.ts:113-115`, `studio-operator.spec.ts:42-45`, `editor-seat.spec.ts:97`) are updated in this same task** to check the tier radio inside `subscribe`, fill its single password field, and press its submit — otherwise verification step 5 and AC1 cannot be produced in-phase. | respin-engineer | `respin/app/(product)/settings/billing/billing-view.tsx`, `page.tsx`, `actions.ts`, `respin/app/(product)/billing-errors.ts`, `respin/tests/billing-ui.test.tsx`, `respin/e2e/journeys/solo-creator.spec.ts`, `studio-operator.spec.ts`, `editor-seat.spec.ts` |
+| T5 | Track-niche: page reads the allowance through `trackedNicheEntitlement(billing.tier, content.trackedNiches)` (`packages/credits/src/mode-access.ts:317`, already the source `app-server.ts:649` uses — verify the page's current read before reusing); when the allowance is 0, render `data-testid="niche-disabled-tier"` naming the plans whose allowance is > 0 (from config), no form; the action's refusal state carries a typed `reason` from `trackNicheForProfile` (`packages/db/src/trends-storage.ts:781`) — its reasons enumerated as an explicit list in `track-state.ts`, never message-matched — and the panel prints one sentence per reason. Pending label follows DESIGN.md ("Tracking…", never "Saving"). Tests for the three states + one per reason. | respin-engineer | `respin/app/(product)/trends/page.tsx`, `track-niche-panel.tsx`, `track-state.ts`, `actions.ts`, `respin/packages/db/src/trends-storage.ts` (typed refusal only if absent — read first), `respin/tests/trends-niche-ui.test.tsx` |
+| T6 | Single-producer guard: **no new scanner** — `respin/tests/table-writers.test.ts` already pins both rollout tables to their one writer each (`EXPECTED` at `:702-709`, asserted equal to `LIFECYCLE_WRITER_INVENTORY.physicalWriters` in `packages/db/src/creator-data-registry.ts:1374-1375`, over four planted shapes including raw SQL, across `PRODUCTION_ROOTS = ["packages","app","worker","scripts","lib","ops"]`). T6 is the witness only: plant a `.update(tierCheckoutProtocolRollouts)` in a temporary `respin/scripts/` file and confirm that suite reddens (w4), then remove it. Because T2's script is `.ts` under `scripts/`, it is inside that scan by construction. | respin-engineer | none (witness transcript only) |
+
+## Files to Create / Modify
+
+| Path | New/Mod | Owner | Note |
+|---|---|---|---|
+| `docs/runbooks/tier-checkout-protocol-v1-rollout.md` | new | respin-engineer | T1 |
+| `respin/package.json` | mod | respin-engineer | T1 alias, T2 script |
+| `respin/packages/credits/tests/tier-checkout-runbook-reasons.test.ts` | new | respin-engineer | T1-t |
+| `respin/scripts/activate-billing-protocols.ts` | new | respin-engineer | T2 |
+| `respin/packages/llm/tests/adapter.test.ts`, `respin/packages/llm/tests/no-text.test.ts` | mod | respin-engineer | T3 (iii), (vii) |
+| `respin/env.example` | mod | respin-engineer | T2 |
+| `respin/tests/activate-billing-protocols.test.ts` | new | respin-engineer | T2 |
+| `respin/packages/llm/src/errors.ts` | mod | respin-engineer | T3 class + alignment |
+| `respin/packages/llm/src/index.ts` | mod | respin-engineer | T3 export |
+| `respin/packages/credits/src/inference.ts` | mod | respin-engineer | T3 hook |
+| `respin/packages/credits/src/infer-voice.ts` | mod | respin-engineer | T3 caller |
+| `respin/packages/credits/tests/inference-unusable-reply.test.ts` | new | respin-engineer | T3 a/a′/b/c |
+| `respin/app/(product)/billing-errors.ts` | mod | respin-engineer | T3 code+copy, retire `inference_unusable`, T4 `unknown_tier` |
+| `respin/app/(product)/studio/copy.ts` | mod | respin-engineer | T3 Studio override |
+| `respin/app/(product)/onboarding/copy.ts` | mod | respin-engineer | T3 retire `inference_unusable` |
+| `respin/tests/studio-ui.test.tsx`, `respin/tests/onboarding-ui.test.tsx` | mod | respin-engineer | T3 derivations |
+| `respin/e2e/journeys/solo-creator.spec.ts`, `studio-operator.spec.ts`, `editor-seat.spec.ts` | mod | respin-engineer | T4 subscribe-form locators |
+| `respin/tests/billing-ui.test.tsx` | mod | respin-engineer | T3, T4 |
+| `respin/app/(product)/settings/billing/billing-view.tsx` | mod | respin-engineer | T4 |
+| `respin/app/(product)/settings/billing/page.tsx` | mod | respin-engineer | T4 |
+| `respin/app/(product)/settings/billing/actions.ts` | mod | respin-engineer | T4 |
+| `respin/app/(product)/trends/page.tsx` | mod | respin-engineer | T5 |
+| `respin/app/(product)/trends/track-niche-panel.tsx` | mod | respin-engineer | T5 |
+| `respin/app/(product)/trends/track-state.ts` | mod | respin-engineer | T5 |
+| `respin/app/(product)/trends/actions.ts` | mod | respin-engineer | T5 |
+| `respin/packages/db/src/trends-storage.ts` | mod (conditional) | respin-engineer | T5 |
+| `respin/tests/trends-niche-ui.test.tsx` | new | respin-engineer | T5 |
+
+## Migration Steps
+
+None. No schema change; the enum value `schema_invalid` already exists.
+
+## Verification Steps
+
+1. `pnpm -C respin typecheck && pnpm -C respin lint && pnpm -C respin test && pnpm -C respin build` — clean tree after T1–T6.
+2. `docker compose -f respin/docker-compose.yml up -d` (state: Postgres up) then `TEST_DATABASE_URL=… pnpm -C respin test` — the Docker suites run live (requires 1).
+3. Owner action recorded: dedicated Stripe sandbox created, `stripe:setup` re-run, `.env.local` bound to it (`STRIPE_SECRET_KEY`, `RESPIN_STRIPE_ACCOUNT_ID`, `STRIPE_WEBHOOK_SECRET` from `stripe listen --print-secret`), active config's `stripePriceMap` updated via `/admin/config`.
+4. Stop the dev server, worker, `stripe listen` (state: fleet down), then `pnpm -C respin dev:activate-billing-protocols` (requires 2, 3) — expect both rows `active`, or a printed blocker list (record either as evidence). Run it a **second** time — expect the short-circuit.
+5. Restart the fleet; `pnpm -C respin exec playwright test e2e/journeys/solo-creator.spec.ts` (requires 4 succeeded) — expect the note "webhook confirmed by the billing page".
+6. Mutation witnesses (each reverted after): (w1) set the new class's `consumesIncludedBuild` to the `billable` default → test (a) red; (w2) delete the `llm_attempt_not_consuming` branch → the `billing-ui` mapping test red; (w3) move the hook call to between `inference.ts:782` (`text` assigned) and `:784` (tokens assigned) → tokens stay 0, `noUsageReported` true (`:1069-1071`), `cost_micro_usd` NULL, test (a) red; (w4) plant a `.update(tierCheckoutProtocolRollouts)` in a temporary `respin/scripts/` file → `tests/table-writers.test.ts` red; (w5) revert the `no_text_block` alignment → `adapter.test.ts` and case (d) red.
+
+## Acceptance Criteria (PASS/FAIL)
+
+| # | Criterion | Evidence |
+|---|---|---|
+| AC1 | With both rollout rows `active` on the sandbox-bound lineage, Subscribe — Creator opens `checkout.stripe.com` and the billing page shows `manage-plan` within 30 s of return | journey note + `solo-creator/billing-upgraded.png` |
+| AC2 | The runbook names every `TierCheckoutDrainBlocker.reason` literal, asserted by a test that parses the union from source | `tier-checkout-runbook-reasons.test.ts` |
+| AC3 | Test (a): no claim row, `schema_invalid`, `consumed_included_build=false`, `tokens_out > 0`, `cost_micro_usd` not null, next press included | `inference-unusable-reply.test.ts` |
+| AC3′ | Test (a′): prior claim, balance 500 → no ledger row, balance 500; next valid press charges the configured rebuild price | same file |
+| AC4 | Test (b): (N+1)th press refuses `uncharged_attempt_cap` with N read from config | same file |
+| AC5 | Witnesses w1–w5 each red, then green on revert | verification step 6 transcript |
+| AC6 | `billingErrorCode(LlmUnusableReplyError)` → `llm_attempt_not_consuming`; its copy matches `/did not use up your first run/i` and the `included` guard stays green; `/onboarding?e=llm_attempt_not_consuming` renders that copy, not the `unknown` fallback; all six lists in T3 (vii) carry the entry (the three screen derivations pass); the Studio override passes the `FALSE_ON_THIS_SCREEN` scan at `studio-ui.test.tsx:1633-1651`; `inference_unusable` no longer appears in any list or copy map | `billing-ui.test.tsx`, `onboarding-ui.test.tsx`, `studio-ui.test.tsx` |
+| AC7 | On the **Free, no-Stripe-customer** render: one `input[name="password"]` inside each of `subscribe` (plan), `buy-pack`, `auto-topup` and none elsewhere, plus one tier radio group. On an **active-tier** render: `portal-manage`, `pause`, `cancel-final` (and `resume` when paused) each carry exactly one too — those forms all call `billingReauthentication` (`settings/billing/actions.ts:143-212`) and stay reauthenticated. On the **past-due / recover-invoice** render: `recover-invoice` carries exactly one (`actions.ts:161-166`, panel `billing-view.tsx:360-374`). Missing tier → `?e=unknown_tier` with copy | `billing-ui.test.tsx` (asserts per form and per state, three states, not a bare count) |
+| AC8 | Customer billing copy contains no "config v" | `billing-ui.test.tsx` |
+| AC9 | Free `/trends` renders `niche-disabled-tier` and no form; Creator renders the form; each typed refusal reason prints its sentence | `trends-niche-ui.test.tsx` |
+| AC10 | Second `dev:activate-billing-protocols` run on an active lineage exits 0 without opening a drain; the stubbed unit test covers the mixed-state rerun and the non-fence first-`cutover` failure; the planted `scripts/` writer reddens `tests/table-writers.test.ts` (w4) | transcript + `activate-billing-protocols.test.ts` |
+
+## Risk coverage within those criteria
+
+`included-build-survives-unusable-reply` → AC3 + w1/w2. `unusable-reply-cost-recorded` → AC3 (`cost_micro_usd`) + w3. `uncharged-attempt-cap-counts-unusable` → AC4. `rollout-active-single-producer` → AC10 + w4 (the existing `table-writers` scanner, a list edit never a new producer). `activation-one-ceremony-per-lineage` → verification 4 (two runs) + AC1. `plan-form-tier-matches-choice` → AC7.
+
+## Least confident
+
+That a freshly created Stripe sandbox plus `stripe:setup` reproduces every object the active config's `stripePriceMap` and the webhook secret depend on with no manual dashboard step — if one is needed, the runbook's sandbox section must list it, and AC1 cannot be walked until it is.
+
+## Out of Scope (Surgical Changes)
+
+`tier-checkout-rollout.ts` and `auto-topup-rollout.ts` state machines and audits; webhook handlers; the ledger; `packages/modes`; onboarding page structure (Phase 2); the journeys beyond re-running them (Phase 3).
+
+## Completion Criteria (Definition of Done)
+
+Entry gate clean; `respin-billing-reviewer` PASS (separate, full); report card Ready; docs updated (runbook, env.example, root alias); reachability demonstrated in a browser with screenshots under `docs/progress/respin-journey-fixes/`.

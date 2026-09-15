@@ -101,34 +101,34 @@ test("solo creator - full lifecycle", async ({ page }) => {
 
   // Chapter 9 - upgrade to Creator tier (test-mode Stripe checkout). This is
   // what unlocks Trends (Free's trackedNiches allowance is 0) and the
-  // full-script Studio modes (Free has Hooks/Caption/Ideation only). BEST
-  // EFFORT: at the time this journey was written, the app's own subscribe
-  // action was broken for every tier (packages/credits/src/stripe/actions.ts
-  // imports `assertFreshWorkspaceScopeInTx` from `@respin/db`, which exists
-  // in packages/db/src/with-workspace.ts but is not exported from the
-  // package's index - every subscribe/pack/portal action fails with a
-  // generic `?e=unknown`). Recorded, not silently worked around; the rest of
-  // this journey adapts to whichever tier the workspace actually ends up on.
+  // full-script Studio modes (Free has Hooks/Caption/Ideation only). Every
+  // billing form carries a step-up "Current password" field (10b-1) that the
+  // real user types before pressing Subscribe - filled here the same way.
+  // BEST EFFORT: the rest of this journey adapts to whichever tier the
+  // workspace actually ends up on, and records the outcome honestly.
   await page.goto("/settings/billing");
   let upgraded = await page.getByTestId("manage-plan").isVisible().catch(() => false);
   if (!upgraded) {
     try {
-      await page.getByTestId("subscribe-creator").getByRole("button", { name: /Subscribe/ }).click();
+      const subscribeForm = page.getByTestId("subscribe-creator");
+      await subscribeForm.locator('input[name="password"]').fill(identity.password);
+      await subscribeForm.getByRole("button", { name: /Subscribe/ }).click();
       await completeStripeTestCheckout(page, { email: identity.email });
       await page.waitForURL("**/usage");
-      artifacts.note("Stripe test-mode checkout completed for Creator tier");
+      // The tier flip is driven by Stripe's webhook, which arrives
+      // asynchronously - the checkout redirect completing is not proof the
+      // workspace's tier has changed yet. Poll the billing page's own answer.
+      await page.goto("/settings/billing");
+      await expect(page.getByTestId("manage-plan")).toBeVisible({ timeout: 30_000 });
+      artifacts.note("Stripe test-mode checkout completed for Creator tier, webhook confirmed by the billing page.");
       upgraded = true;
     } catch (err) {
       artifacts.note(
-        `BLOCKING APP BUG: Creator-tier checkout did not complete - ${String(err)}. ` +
-          "Dev server log shows: \"Attempted import error: 'assertFreshWorkspaceScopeInTx' is not " +
-          "exported from '@respin/db'\" (packages/credits/src/stripe/actions.ts:7, defined but not " +
-          "re-exported in packages/db/src/with-workspace.ts:3520). Continuing this journey on the Free plan."
+        `BLOCKING APP BUG: Creator-tier checkout did not complete - ${String(err)}. Continuing this journey on the Free plan.`
       );
       test.info().annotations.push({
         type: "bug",
-        description:
-          "Stripe subscribe is broken for every tier: missing @respin/db export assertFreshWorkspaceScopeInTx.",
+        description: `Creator-tier Stripe checkout did not complete: ${String(err)}`,
       });
     }
   }
