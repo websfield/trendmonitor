@@ -23,6 +23,36 @@ Before judging, read the project's `CLAUDE.md` (and `.claude/project-context.md`
 4. **Tests** — does new behaviour have a test in the same change? Do the tests actually assert the behaviour (not just call it)? Are the mandatory specs the project requires present?
 5. **Maintainability** — only flag what *matters*: dead code, copy-paste that will drift, a function that does five things, a leaky abstraction. Do **not** nitpick formatting (the formatter owns that) or flag theoretical concerns unlikely to matter.
 
+## Recurring findings (when the project tracks them)
+
+If the goal has an active `docs/progress/<goal>/workflow.json` and `.claude/gate-rules.md` documents
+the repair/convergence canon, check whether this finding's invariant already appeared earlier in the
+same goal (same `invariantId`) before writing it up — `node .claude/scripts/workflow-state.js status`
+returns the goal's recorded findings. A second occurrence of the same invariant is canon §5's
+convergence stop-rule; say so explicitly in your report rather than treating it as a fresh, unrelated
+issue. Resolving a recurring or High finding through `record-finding` needs the engine's full
+`repair` shape (canon §4): `{invariant, cause, population, query, reproducer, correction, before,
+after, siblings}` — a bare instance-only patch is not sufficient proof for a repeat.
+
+**The schema proves a shape, never that the repair actually works — that is still your job.** The
+engine checks that `before` is a recorded failure and `after` is a current passing receipt reserved
+afterward; it cannot tell a genuinely discriminating reproducer from a hollow one (`assert(true)`, a
+check that never touches the changed code, a case too narrow to catch the real defect). Before
+accepting a repair brief:
+- **Re-run or directly inspect the reproducer against the pre-fix code** — don't take the brief's
+  "fails before / passes after" narrative on its word; if you can't execute it yourself, read it
+  closely enough to confirm it would actually fail on the original behavior, not merely that it
+  exists.
+- **Challenge the stated population** — does `population`/`query` actually name every caller or
+  variant the invariant covers, or does it stop at the one instance already found? Spot-check at
+  least one sibling or boundary case the brief didn't already claim.
+- **State which classification applies and why** — `residual` (same defect, not yet fixed),
+  `sibling` (a distinct instance of the same invariant), `fix-induced` (introduced by this repair),
+  or `disputed`. A repair report that never names one of these for a recurring finding is incomplete.
+
+Absent the
+engine or an active goal record, this section does not apply; report findings as usual.
+
 ## Readiness headline (lead with this — it's what a non-expert reads)
 
 Open the report with one plain-language line anyone can act on, then the detail below it:

@@ -1,5 +1,5 @@
 ---
-description: Deep-read one artifact (up to three, each separately) with full, undivided attention — the per-artifact depth counterpart to /audit's whole-codebase breadth. Simulates the artifact's real reader to find internal contradictions, unexecutable steps, dead references, and broken promises that lens-based sweeps miss. Read-only report; logs post-audit misses to the audit register's escape list. Do NOT use for whole-codebase breadth — that's /audit.
+description: Deep-read one artifact (up to three, each separately) with full, undivided attention — the per-artifact depth counterpart to /audit's whole-codebase breadth. Simulates the artifact's real reader to find internal contradictions, unexecutable steps, dead references, and broken promises that lens-based sweeps miss. Leaves the artifact read-only; may log post-audit misses only to an existing audit register's escape list. Do NOT use for whole-codebase breadth — that's /audit.
 argument-hint: <path> [path ...]
 allowed-tools: Read, Edit, Glob, Grep
 ---

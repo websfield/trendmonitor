@@ -1,7 +1,7 @@
 ---
 name: doctor
 description: >-
-  Use $doctor for the migrated Claude /doctor workflow. On-demand health check for the pack's safety layer — confirms Node is present, the guardrail / post-edit / session-start hooks are wired and live, and the write-ti...
+  Use $doctor for the migrated Claude /doctor workflow. On-demand, read-only health check for the pack's safety layer — inspects Node and hook configuration, directly probes the engines, and reports runtime dispatch as...
 ---
 
 # doctor

@@ -120,11 +120,24 @@ function recordedPhase(ledger, review, phase) {
 
 try {
   // ---- read the payload (best-effort; we mostly just want `source` and `cwd`) ----
-  let input = {};
+  let input;
   try {
-    input = JSON.parse(fs.readFileSync(0, "utf8")) || {};
+    input = JSON.parse(fs.readFileSync(0, "utf8"));
   } catch (e) {
-    input = {};
+    done();
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) done();
+  if (
+    Object.prototype.hasOwnProperty.call(input, "cwd") &&
+    (typeof input.cwd !== "string" || input.cwd.length === 0 || input.cwd.includes("\0"))
+  ) {
+    done();
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(input, "source") &&
+    typeof input.source !== "string"
+  ) {
+    done();
   }
 
   // Stay quiet during compaction — that fires mid-conversation and an orientation
@@ -143,14 +156,15 @@ try {
     try {
       return fs.readFileSync(path.join(projectDir, rel), "utf8");
     } catch (e) {
-      return null;
+      if (e && e.code === "ENOENT") return null;
+      throw e;
     }
   };
   const exists = (rel) => {
     try {
       return fs.existsSync(path.join(projectDir, rel));
     } catch (e) {
-      return false;
+      throw e;
     }
   };
 
@@ -172,8 +186,7 @@ try {
     northStar.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*[#>].*$/gm, "").trim()
       .length > 40;
 
-  // Plans in flight: master-plan files under docs/plans/ whose recorded ledger/review
-  // does not yet show a correctly-scoped, non-historical complete/Ready record.
+  // Lightweight recorded progress only. No source hashing or current gate claims.
   let inFlight = [];
   try {
     const dir = path.join(projectDir, "docs", "plans");
@@ -182,6 +195,8 @@ try {
       const masters = planFiles
         .filter((f) => /-master-plan\.md$/.test(f))
         .map((f) => f.replace(/-master-plan\.md$/, ""));
+      // Plan-based goals have no workflow.json to read a next action from; the fast-lane scan
+      // below is the only source of a recorded nextAction.
       inFlight = masters.filter((feature) => {
         const escaped = feature.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const phasePattern = new RegExp(`^${escaped}-phase-(\\d+)\\.md$`);
@@ -202,7 +217,48 @@ try {
       }).map((name) => ({ name, nextAction: null }));
     }
   } catch (e) {
-    inFlight = [];
+    done();
+  }
+
+  // Fast-lane work deliberately produces no plan documents, so the scan above cannot see it; its
+  // durable record is docs/progress/<goal>/workflow.json. Without this, the first screen a returning
+  // user reads reports nothing outstanding for work that is genuinely unfinished and invites them to
+  // start something new, orphaning it. Read-only, bounded, and silent on every problem.
+  try {
+    const progressDir = path.join(projectDir, "docs", "progress");
+    if (fs.existsSync(progressDir)) {
+      // inFlight now holds {name, nextAction} records, not bare strings — dedup on .name.
+      const recorded = new Set(inFlight.map((entry) => entry.name));
+      for (const entry of fs.readdirSync(progressDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || recorded.has(entry.name)) continue;
+        const snapshotPath = path.join(progressDir, entry.name, "workflow.json");
+        if (!fs.existsSync(snapshotPath)) continue;
+        // A completed goal's snapshot is never deleted or renamed, so presence alone would report
+        // it as unfinished forever. Read the fields that say otherwise; any parse problem leaves
+        // it in the list — silent-failure here must stay conservative (still flag it), not
+        // silently drop a genuinely unfinished goal.
+        let nextAction = null;
+        try {
+          const snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf8"));
+          if (snapshot && snapshot.execution && snapshot.execution.disposition === "complete") continue;
+          // Last-recorded progress, never a re-derived current Ready claim: lastClosure.nextAction
+          // is written once, by an actual close() call, and never re-computed here. Some of the
+          // engine's own nextAction strings are written for an agent to act on and legitimately
+          // carry a raw attemptId/findingId (e.g. "Reconcile attempt <uuid> from actual execution
+          // evidence...") — fine when a build command consumes it, never fine printed straight to
+          // a person on the first screen of a session. Refuse anything UUID-shaped here; the bare
+          // goal name is always a safe fallback.
+          const recordedNext = (snapshot && snapshot.lastClosure && snapshot.lastClosure.nextAction) || (snapshot && snapshot.nextAction);
+          if (typeof recordedNext === "string" && recordedNext && !/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(recordedNext)) nextAction = recordedNext;
+        } catch (e) {
+          /* Unreadable/malformed snapshot: still flag it — better a false "unfinished" than a
+             silently dropped one. nextAction stays null; the bare name is still shown. */
+        }
+        inFlight.push({ name: entry.name, nextAction });
+      }
+    }
+  } catch (e) {
+    // Leave whatever the plan scan already found; never wedge the session over this.
   }
 
   const dormant = exists(path.join(".claude", "settings.pack.json"));

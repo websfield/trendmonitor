@@ -63,17 +63,17 @@ Do not run multiple write-capable agents against overlapping files. Do not deleg
 
 Keep the strongest reasoning where a miss could ship silently, and use cheaper models only where outputs are re-verified:
 
-- Main orchestration and ambiguous cross-module decisions: `gpt-5.6-sol` at `xhigh`.
-- Critical-Path reviewers, security reviewers, and final plan/release gates: `gpt-5.6-sol` at `max`.
+- Main orchestration and ambiguous cross-module decisions: `gpt-6-astra` at `xhigh`.
+- Critical-Path reviewers, security reviewers, and final plan/release gates: `gpt-6-astra` at `max`.
 - Money, tenancy, migration, or external-write implementation: explicitly dispatch `gpt-5.6-sol` at `high`.
 - Small, independent implementation matching the Spark routing policy: `gpt-5.3-codex-spark` at `medium`, with parent diff inspection and validation.
-- Ordinary implementation: `gpt-5.6-terra` at `high`.
-- Read-heavy exploration, inventory, and summarization: `gpt-5.6-terra` at `medium`.
-- Deterministic verification and narrow repeatable checks: `gpt-5.6-luna` at `low`.
+- Ordinary implementation: `gpt-5.6-terra` at `xhigh`.
+- Read-heavy exploration, inventory, and summarization: `gpt-5.6-terra` at `high`.
+- Deterministic verification and narrow repeatable checks: `gpt-5.6-luna` at `high`.
 
 Do not use Ultra or proactive delegation automatically. Keep at most four sub-agents active, delegate only independent work, and prefer one owner per write surface. A reviewer may never run below the model tier used for the code it judges; any uncertainty or second-round High/BLOCK finding escalates to Sol.
 
-Read only the active phase plan plus its dependency proof, acceptance criteria, touched Critical-Path checklists, and exact source files. Do not preload every phase plan. A sub-agent with a complete pinned task contract does not reread the full conversation or every project document. Return conclusions, file references, commands, and verdicts instead of raw logs.
+Read only the active phase plan plus its dependency proof, acceptance criteria, touched Critical-Path checklists, and exact source files. Only load phase plans with master level of information. A sub-agent with a complete pinned task contract does not reread the full conversation or every project document. Return conclusions, file references, commands, and verdicts instead of raw logs.
 
 Use focused checks during implementation. Run the canonical full entry gate once the change is stable and once more after batched gate fixes if code changed. Every touched Critical Path still gets its complete checklist and verdict; token economy changes who performs bounded work and when checks run, never what must pass before Ready.
 

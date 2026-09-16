@@ -19,6 +19,7 @@ confidence, disagreement surfaces something worth a human look. Present Codex's 
 
 ## Step A — Probe (skip cleanly if unavailable)
 
+**Bash**
 ```bash
 # codex is optional. A missing binary or missing auth is a SKIP, never an error.
 if ! command -v codex >/dev/null 2>&1; then
@@ -28,6 +29,23 @@ elif [ -z "${CODEX_API_KEY:-}${OPENAI_API_KEY:-}" ] && [ ! -f "${CODEX_HOME:-$HO
 else
   echo "CODEX_OK"
 fi
+```
+
+**PowerShell**
+```powershell
+# codex is optional. A missing binary or missing auth is a SKIP, never an error.
+$codexHomePath = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
+if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
+  "CODEX_SKIP: codex CLI not installed (npm install -g @openai/codex) — continuing with Claude reviewers only."
+} elseif (
+  -not $env:CODEX_API_KEY -and
+  -not $env:OPENAI_API_KEY -and
+  -not (Test-Path -LiteralPath (Join-Path $codexHomePath "auth.json"))
+) {
+  "CODEX_SKIP: no Codex auth (run 'codex login' or set OPENAI_API_KEY) — continuing with Claude reviewers only."
+} else {
+  "CODEX_OK"
+}
 ```
 
 If the output is a `CODEX_SKIP:` line, print that line to the user and **skip Steps B–D**.
@@ -47,27 +65,39 @@ boundary verbatim to the prompt in Step C:
 
 ## Step C — Run Codex (pick the mode that matches the input)
 
-Run on the **Bash tool with a 300000 ms timeout**. `< /dev/null` is required — it prevents
-a known Codex stdin deadlock. Capture stderr so a non-zero exit is visible, not read as a
-silent stall.
-
-Every mode pins `gpt-6-astra` with `xhigh` reasoning explicitly. Do not rely on the
-machine or repository Codex defaults for either setting.
+Run with a **300000 ms timeout**. Closed stdin is required because it prevents a known Codex
+stdin deadlock: Bash uses `< /dev/null`; PowerShell pipes `$null`. Both forms below preserve
+that requirement. Capture stderr so a non-zero exit is visible, not read as a silent stall.
 
 ### Mode 1 — Code diff (used by `/start-teams` 2d)
 
 Newer Codex CLIs reject a custom prompt together with `--base`, so the diff scope goes in
 the prompt text, not a flag. Substitute `<base>` with the detected base branch.
 
+**Bash**
 ```bash
-codex -m gpt-6-astra review "<filesystem boundary>
+codex review "<filesystem boundary>
 
 Review the changes on this branch against the base branch <base>. Run
 \`git diff <base>...HEAD\` (fall back to \`git diff origin/<base>...HEAD\`) and review ONLY
 those changes. Mark each finding [P1] for a must-fix correctness/security defect or [P2]
 for advisory. End with one PASS/FAIL line: FAIL if any [P1], else PASS." \
-  -c 'model_reasoning_effort="xhigh"' < /dev/null 2>codex-err.txt
+  -c 'model_reasoning_effort="high"' < /dev/null 2>codex-err.txt
 echo "exit=$?"
+```
+
+**PowerShell**
+```powershell
+$prompt = @'
+<filesystem boundary>
+
+Review the changes on this branch against the base branch <base>. Run
+`git diff <base>...HEAD` (fall back to `git diff origin/<base>...HEAD`) and review ONLY
+those changes. Mark each finding [P1] for a must-fix correctness/security defect or [P2]
+for advisory. End with one PASS/FAIL line: FAIL if any [P1], else PASS.
+'@
+$null | codex review $prompt -c 'model_reasoning_effort="high"' 2> codex-err.txt
+"exit=$LASTEXITCODE"
 ```
 
 ### Mode 2 — Plan documents (used by `/create-plan` 5.5)
@@ -75,8 +105,9 @@ echo "exit=$?"
 Plan files may be new/untracked, so `codex review` (diff-scoped) doesn't fit. Use
 `codex exec` in a read-only sandbox and name the files explicitly. Substitute `<feature>`.
 
+**Bash**
 ```bash
-codex exec -m gpt-6-astra -s read-only "<filesystem boundary>
+codex exec -s read-only "<filesystem boundary>
 
 Read these plan documents fully: docs/plans/<feature>-master-plan.md and every
 docs/plans/<feature>-phase-*.md, plus docs/progress/<feature>-codebase-review.md.
@@ -89,8 +120,29 @@ Audit ONLY for mechanical consistency — derivations, not taste:
 - handoff contracts pinned; every quantitative budget has provenance
 Mark each finding [P1] (a real inconsistency) or [P2] (advisory). End with one PASS/FAIL
 line: FAIL if any [P1], else PASS." \
-  -c 'model_reasoning_effort="xhigh"' < /dev/null 2>codex-err.txt
+  -c 'model_reasoning_effort="high"' < /dev/null 2>codex-err.txt
 echo "exit=$?"
+```
+
+**PowerShell**
+```powershell
+$prompt = @'
+<filesystem boundary>
+
+Read these plan documents fully: docs/plans/<feature>-master-plan.md and every
+docs/plans/<feature>-phase-*.md, plus docs/progress/<feature>-codebase-review.md.
+
+Audit ONLY for mechanical consistency — derivations, not taste:
+- coverage parity: every gating enumeration names its defining set and matches it 1:1
+- closure: every file in a Tasks table appears in Files-to-Create/Modify and vice versa;
+  every Owner agent is referenced; every acceptance criterion has an evidence pointer
+- deferral ledger: every 'a later phase will...' promise has a resolvable receiving task
+- handoff contracts pinned; every quantitative budget has provenance
+Mark each finding [P1] (a real inconsistency) or [P2] (advisory). End with one PASS/FAIL
+line: FAIL if any [P1], else PASS.
+'@
+$null | codex exec -s read-only $prompt -c 'model_reasoning_effort="high"' 2> codex-err.txt
+"exit=$LASTEXITCODE"
 ```
 
 ### Mode 3 — Whole-repo audit (used by `/audit`, the outside-voice room)
@@ -98,8 +150,9 @@ echo "exit=$?"
 An audit sweeps the codebase as it exists, not a diff, so `codex review` doesn't fit.
 Use `codex exec` in a read-only sandbox:
 
+**Bash**
 ```bash
-codex exec -m gpt-6-astra -s read-only "<filesystem boundary>
+codex exec -s read-only "<filesystem boundary>
 
 You are auditing this repository as an independent last-line reviewer. Assume defects
 exist. Read the highest-risk code first — entry points, auth, money/data mutation,
@@ -109,8 +162,26 @@ that the code breaks. For each finding give file:line, what is wrong, and the co
 way it fails. Mark each [P1] for a real defect/risk or [P2] for advisory. Do not
 describe or summarize the codebase; report only findings. End with one line: the count
 of P1 and P2 findings." \
-  -c 'model_reasoning_effort="xhigh"' < /dev/null 2>codex-err.txt
+  -c 'model_reasoning_effort="high"' < /dev/null 2>codex-err.txt
 echo "exit=$?"
+```
+
+**PowerShell**
+```powershell
+$prompt = @'
+<filesystem boundary>
+
+You are auditing this repository as an independent last-line reviewer. Assume defects
+exist. Read the highest-risk code first — entry points, auth, money/data mutation,
+concurrency, error handling, parsing of external input — then widen to the most complex
+remaining files. Report concrete defects, risky structure, and promises the docs make
+that the code breaks. For each finding give file:line, what is wrong, and the concrete
+way it fails. Mark each [P1] for a real defect/risk or [P2] for advisory. Do not
+describe or summarize the codebase; report only findings. End with one line: the count
+of P1 and P2 findings.
+'@
+$null | codex exec -s read-only $prompt -c 'model_reasoning_effort="high"' 2> codex-err.txt
+"exit=$LASTEXITCODE"
 ```
 
 **Audit use:** in Mode 3, skip Step D's PASS/FAIL fix-or-dismiss triage — the audit chair
@@ -135,7 +206,8 @@ re-run scoped, per its note); any other non-zero = surface the first line of
 3. **Cross-model note.** State where Codex and the Claude reviewers agreed, what only
    Codex found, and what only the Claude reviewers found. Agreement is a recommendation,
    not a decision — the existing gate owner (the orchestrator) still decides.
-4. **Clean up:** `rm -f codex-err.txt`.
+4. **Clean up:** Bash: `rm -f codex-err.txt`. PowerShell:
+   `Remove-Item -LiteralPath codex-err.txt -Force -ErrorAction SilentlyContinue`.
 
 Codex is an **advisory cross-check**, not an independent blocking authority: it sharpens
 the Claude reviewers' verdict, it does not replace it. The gate's final READY/NEEDS-CHANGES

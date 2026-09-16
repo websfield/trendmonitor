@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "generatorMarker": "claude-jig",
+  "sourceRelease": "1.61.0",
+  "at": "2026-09-14T12:53:01.471Z",
+  "selectedModules": [],
+  "actions": [
+    {
+      "path": ".claude/agents/code-reviewer.md",
+      "action": "copied",
+      "sourceHash": "d3d68242ed66e2830cb2c73344e1c8c2c4b613926ccc4c93cbebc812b302c2cc",
+      "targetHash": "efbf1021211d9105a6361871bd4ec23f2799ea92bf798d4e4a0d87653c39083c"
+    },
+    {
+      "path": ".claude/codex-review.md",
+      "action": "copied",
+      "sourceHash": "fe3c2c0f48f12e26cae903e138216f731233cef8c77d2d803ac4b1954065e135",
+      "targetHash": "ed41a623abaee8e2e9864b7a3ad4e333c06149ba7199bdad5b29432309b280f9"
+    },
+    {
+      "path": ".claude/commands/bootstrap-claude-pack.md",
+      "action": "customized-merged",
+      "sourceHash": "e1ac9078f132a3fddf7b9633278b08513343dea8d2e19aad179bc5b341b699ff",
+      "targetHash": "8478e04d6e812b17b350d7420d94708a71e548e44a0ab0cdc811592674f8e529"
+    },
+    {
+      "path": ".claude/commands/bootstrap-critics.md",
+      "action": "copied",
+      "sourceHash": "0bc5225d502b144663399d9aeaece2b84ee54dc0b8992c02df3f581f6b64c654",
+      "targetHash": "97a694009d107027c8faa001efd0813b8f26d132b7a4b20d728483dd9fb90174"
+    },
+    {
+      "path": ".claude/commands/create-plan.md",
+      "action": "copied",
+      "sourceHash": "97c6446df545d597b4b23e6b146fa07cbeea67026ac4192e53fb2df62dd1c381",
+      "targetHash": "97c6446df545d597b4b23e6b146fa07cbeea67026ac4192e53fb2df62dd1c381"
+    },
+    {
+      "path": ".claude/commands/doctor.md",
+      "action": "copied",
+      "sourceHash": "8ddbc8e98bee7a6738fc332162486a951119e37e85b499d939ca4d48137873b1",
+      "targetHash": "8ddbc8e98bee7a6738fc332162486a951119e37e85b499d939ca4d48137873b1"
+    },
+    {
+      "path": ".claude/commands/go.md",
+      "action": "copied",
+      "sourceHash": "a901ae1c79aff9f600851032442f176daca2d28e31e709969b9f7ae448ed98a9",
+      "targetHash": "a901ae1c79aff9f600851032442f176daca2d28e31e709969b9f7ae448ed98a9"
+    },
+    {
+      "path": ".claude/commands/implement.md",
+      "action": "copied",
+      "sourceHash": "c76264c39dc66ee596d4ce71d6f7e13f62b388ec13cd3664ce30624f14239674",
+      "targetHash": "c76264c39dc66ee596d4ce71d6f7e13f62b388ec13cd3664ce30624f14239674"
+    },
+    {
+      "path": ".claude/commands/interrogate.md",
+      "action": "copied",
+      "sourceHash": "d2116042befbf7d10c8be3cc3e15ea1f69889fd6127b4c1a6461dfe32e982303",
+      "targetHash": "ae96a875cbfed321d2ef4ad82f949b282fb4195a36ceac708008a55d692abd80"
+    },
+    {
+      "path": ".claude/commands/review-phase.md",
+      "action": "copied",
+      "sourceHash": "28b6c08ffa6bca0407649c448e503520bcfb1f644ee4648a5d34a41e6711a604",
+      "targetHash": "28b6c08ffa6bca0407649c448e503520bcfb1f644ee4648a5d34a41e6711a604"
+    },
+    {
+      "path": ".claude/commands/start-teams.md",
+      "action": "customized-merged",
+      "sourceHash": "b2ed50172e55c7bad682fc75374f3309bc0ac5a0014f9c1482220d9e135d8fbb",
+      "targetHash": "43a13a108cf22bf755389062b8548f823f5cec2f53bbee9f967e8a34afd5a380"
+    },
+    {
+      "path": ".claude/commands/sync-pack.md",
+      "action": "copied",
+      "sourceHash": "8afc2deac934edb6fa4036c2fec584e8bbdaa0664dd190538ee8b2c982623c4f",
+      "targetHash": "8afc2deac934edb6fa4036c2fec584e8bbdaa0664dd190538ee8b2c982623c4f"
+    },
+    {
+      "path": ".claude/gate-rules.md",
+      "action": "copied",
+      "sourceHash": "3a89ab998a2f7d196b4d1ec54865530d6901da1a620466e501ebac436539fce2",
+      "targetHash": "3a89ab998a2f7d196b4d1ec54865530d6901da1a620466e501ebac436539fce2"
+    },
+    {
+      "path": ".claude/hooks/session-start.js",
+      "action": "copied",
+      "sourceHash": "3b10fee19c53f8f39fb52292e4ab3aa48e9842405f556a4cfebfce9807106ac5",
+      "targetHash": "3b10fee19c53f8f39fb52292e4ab3aa48e9842405f556a4cfebfce9807106ac5"
+    },
+    {
+      "path": ".claude/hooks/workflow-stop.js",
+      "action": "copied",
+      "sourceHash": "2cba1401ddc7abfcb9dc49b5a8486c91739fa1471a51df9436559681b1eac19b",
+      "targetHash": "2cba1401ddc7abfcb9dc49b5a8486c91739fa1471a51df9436559681b1eac19b"
+    },
+    {
+      "path": ".claude/lib/workflow-evidence.js",
+      "action": "copied",
+      "sourceHash": "6294c6e353a38b7b80aaac17c90dd9a816e668d806dd6abdcc33f5dd616dc6f0",
+      "targetHash": "6294c6e353a38b7b80aaac17c90dd9a816e668d806dd6abdcc33f5dd616dc6f0"
+    },
+    {
+      "path": ".claude/scripts/workflow-state.js",
+      "action": "copied",
+      "sourceHash": "85fd812be77c6eb4f67fc14e1a765c70f4176d369b2493039696b7751dee4a5b",
+      "targetHash": "85fd812be77c6eb4f67fc14e1a765c70f4176d369b2493039696b7751dee4a5b"
+    },
+    {
+      "path": ".claude/settings.json",
+      "action": "customized-merged",
+      "sourceHash": "b6cf74a5aca60684d0431c91ac1eb35d135cf63e315ce60876e168ddac969c30",
+      "targetHash": "bacba42a7a307a840e9521a322647a26a83a749b08eb41622cf9afd9945f8e96"
+    },
+    {
+      "path": ".claude/skills/using-the-pack/SKILL.md",
+      "action": "copied",
+      "sourceHash": "0ff1c0778862b0d54eceb49cf2f9f9cb7ea01c5daa05abef7fc29c7fb213a530",
+      "targetHash": "0ff1c0778862b0d54eceb49cf2f9f9cb7ea01c5daa05abef7fc29c7fb213a530"
+    }
+  ]
+}

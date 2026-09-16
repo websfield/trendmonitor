@@ -31,7 +31,10 @@ function migrationSql(prefix: string): string {
     (f) => f.startsWith(prefix) && f.endsWith(".sql")
   );
   if (!file) throw new Error("no migration matching " + prefix);
-  return readFileSync(join(MIGRATIONS, file), "utf8");
+  // Migrations are committed with LF, but a Windows checkout may materialize
+  // them as CRLF. Source-shape assertions below describe SQL, not checkout
+  // line-ending policy, so give every assertion one canonical representation.
+  return readFileSync(join(MIGRATIONS, file), "utf8").replace(/\r\n/g, "\n");
 }
 
 /**

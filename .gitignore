@@ -48,6 +48,8 @@ Thumbs.db
 !.env.example
 *.pem
 *.key
+# ---- temp files ----
+.tmp/
 # ---- Codebase map (generated, not tracked) ----
 .codebase-map/
 # ---- Playwright MCP (generated browser session artifacts, not tracked) ----

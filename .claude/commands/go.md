@@ -14,7 +14,7 @@ This command **drives the other commands; it does not replace them.** To run a s
 
 ## Usage
 ```
-/go                      # "where am I and what's next?" — report state + recommend/offer the next step
+/go                      # inspect recorded work; continue only within a still-valid authorization
 /go <what you want>      # drive the pipeline toward that outcome, from wherever the project is now
 ```
 `$ARGUMENTS` is the person's goal in plain words (e.g. "let people log in with Google", "make the dashboard load faster"), or empty / "status" / "next" / "help".
@@ -23,18 +23,18 @@ This command **drives the other commands; it does not replace them.** To run a s
 
 Detect, in parallel:
 
-- **Hooks active?** Read `.claude/settings.json` and any `.claude/settings.pack.json` separately — a sidecar is proposed configuration, not evidence that existing hooks are active or dormant, and Node's mere presence proves neither dispatch nor protection. Report project wiring as configured/missing where observable; runtime dispatch stays **unknown** without actual host evidence (`/doctor` is where that's checked). If `.claude/settings.json` lacks the `guardrails.js` / `post-edit-check.js` / `session-start.js` hooks, or a sidecar exists, the safety checks are configured-but-unmerged (the installer didn't merge them because a settings.json already existed).
-- **Post-edit checks doing anything?** Read `.claude/workspaces.json`. If it's still empty on a bootstrapped project, the post-edit hook runs but checks nothing.
+- **Hook configuration?** Inspect .claude/settings.json and any settings.pack.json separately. A sidecar is proposed configuration, not evidence that existing hooks are active or dormant. Node presence proves neither dispatch nor protection. Report project wiring as configured/missing where observable; runtime dispatch remains unknown without actual host evidence. Follow doctor.md when the user asks what is working.
+- **Post-edit checks doing anything?** Read `.claude/workspaces.json`. If it's still empty on a bootstrapped project, no post-edit checks are configured; runtime dispatch remains unknown.
 - **Set up (bootstrapped)?** `CLAUDE.md` exists **and is filled** — i.e. not the skeleton. Treat it as *not set up* if it still contains the "Run `/bootstrap-claude-pack`" note or ⟨angle-bracket⟩ placeholders, or if `.claude/project-context.md` is absent.
 - **North Star set?** `NORTH_STAR.md` exists and has a real **Goal** (not the template's `<!-- ... -->` comment placeholders).
 - **Decisions journaled?** Note whether `DECISIONS.md` exists at the repo root (the decision journal — see the `using-the-pack` skill). If it does and the current ask reopens a question a past entry already settled, surface that prior decision in plain words before proceeding — a team of one shouldn't relitigate their own settled trade-offs by accident. Absent file → nothing to check.
 - **Feedback captured?** Note whether `FEEDBACK.md` exists at the repo root (the feedback ledger — user asks/complaints, one line each; see the `using-the-pack` skill). It's the evidence for "what should I build next?" — action 1 ranks its open asks against the North Star. Absent file → nothing to check.
 - **Pause points?** Check `CLAUDE.md` for a `Pause points:` line (e.g. `Pause points: plan approval, before each phase`). Each named point is a **mandatory stop** in this project — pause there and wait for a go-ahead, even where you would otherwise proceed on a stated assumption.
-- **Gate intensity?** Check `CLAUDE.md` for a `Gate intensity:` line. `lean` = each reviewer gate consolidates into **one merged run** that still renders a verdict per touched Critical Path (mechanics in the build/review command files) — never zero reviewers, always announced on the report card. Absent, an unresolved `⟨lean | full⟩` placeholder, or any unrecognised value = full intensity, the safe direction — say so once on the report card (*"Gate intensity not set — running full; add `Gate intensity: lean` to `CLAUDE.md` to roughly halve reviewer spend; `Full gates?` paths stay full either way"*). Paths marked `yes` in the Critical-Path table's `Full gates?` column keep separate reviewers even under lean, and if the person says **"full gates on this one"**, that phase runs at full intensity and the card says so.
+- **Gate intensity?** Before routing a gate, read `.claude/gate-rules.md` §§7–§9 and follow it. Check `CLAUDE.md` for the recorded intensity and determine any `Full gates?` or plain-language escalation. If intensity is absent, unresolved, or unrecognised, say once on the report card: *"Gate intensity not set — running full; add `Gate intensity: lean` to `CLAUDE.md` to combine eligible review runs while preserving every checklist; `Full gates?` paths stay full either way."* Otherwise report the effective choice; the gate-running command owns execution.
 - **Checkpoint consent?** Check `CLAUDE.md` for a `Checkpoints:` line. `on` = the person asked for an announced git snapshot before each build phase — the build commands carry the mechanics (`implement.md` Step 2, "Checkpoint snapshot"). No line = the first build step asks once (in a git repo) and records the answer — until then, never snapshot at all; with the line, every snapshot is still announced.
-- **Work already planned?** Glob `docs/plans/*-master-plan.md`. For each, read its *Progress Tracking* and classify it: **planned-not-started**, **in-progress** (some phases Complete, some not), or **all-complete**. For *in-progress* plans, prefer the **progress ledger** (`docs/progress/<feature>/ledger.md`) over the plan's table to decide where things truly stand — the ledger is the append-only record of what actually happened, so it survives an interrupted session where the table may be stale or never updated. The next phase to build is the lowest-numbered phase **not** proven complete on disk whose predecessor **is** proven complete (its Ready phase-review, or its entry-gate + Definition-of-Done evidence). A phase blocked on an unfinished predecessor is surfaced honestly, not started. **A `Complete` table cell, an old `Ready` headline, or a recently-touched filename is a claim, not current proof** — inspect contradictory or reopened records and any source/config edits made after that record before treating a phase as closed.
+- **Existing goals and evidence?** Read retained plans, briefs, progress records and review history. Preserve the original accepted goal, scope, decisions, authorization and next action. A Complete table cell, old Ready headline or recent filename is a claim, not current proof. Inspect contradictory/reopened records and the final assessed source/check inputs before calling any phase complete. Keep stable goal/gate identity and consumed review batches across sessions. An absent review file or empty search does not prove unused allowance: report **review history unknown**, including during status and pause, until retained evidence or the user's history confirmation establishes it. Never write an assumed zero or "untouched" allowance into an existing goal's record.
 - **The goal — build goal, support signal, or live fire?** `$ARGUMENTS` is usually a new outcome to build. Two exceptions read differently:
-  - A **pasted bug report or customer email** — a description of something *already broken*, with a symptom to reproduce, often in a reporter's voice — is a different job: reproduce-and-fix, not plan-and-build. Read it as a support signal only when it clearly reports a defect (not a request for something new, which is a build goal); when genuinely unclear, treat it as a build goal and let `/shape` sort it out — misreading a feature request as a bug wastes a reproduction, so bias toward shaping. This routes to action 4's triage fork.
+  - A **pasted bug report or customer email** — a description of something *already broken*, with a symptom to reproduce, often in a reporter's voice — is a different job: reproduce-and-fix, not plan-and-build. Read it as a support signal only when it clearly reports a defect (not a request for something new, which is a build goal); when genuinely unclear, treat it as a build goal and let `/shape` sort it out — misreading a feature request as a bug wastes a reproduction, so bias toward shaping. This routes to the triage intent branch before the build lifecycle.
   - An **active outage** — the site is down, users are locked out, payments are failing *right now* — is a **fire**, and it pre-empts everything (see the pre-emptive branch at the top of Step 2). Read it as an outage **only on an explicit active-outage signal** (down / broken / failing *now*, for real users) — the highest bar of the three, because the firefight offers a state-changing rollback. When it's unclear whether the system is truly down, do **not** default into the fire: treat a reported defect as a support signal (triage) and anything else as a build goal, and let those routes sort it out.
   Also note any **time signal** in their words ("I've got half an hour", "just got 20 minutes", "before my meeting") — it changes which unit starts next (see *Right-size to the person's time* below), never how thoroughly it's checked. A bare "quick" about the *change* is scope — `/shape`'s job; a stated window about *their time* is what this reads.
 
@@ -42,65 +42,163 @@ Build a short `TodoWrite` list for the route you pick below, so the person can s
 
 ## Step 2 — Pick the route
 
-Do the **first** matching action, then re-evaluate from the new state.
+Select intent first, then lifecycle. Re-evaluate after each completed action. Announce the
+observed state and next action in one or two plain sentences; this is a disclosure, not another
+permission request. Authorization already granted for a whole goal covers its remaining phases,
+fixes, checks and required docs unless the user changes it or a real project pause applies.
 
-When a goal was given, **say what you detected and which action fired before executing it** — one or two lines, in plain words, e.g. "Project is set up; `checkout` is mid-build and phase 2 is the next one not yet finished (per the progress log) — continuing the build." Repeat the one-liner each time you hop to a new action (route picks are single-pass judgments; showing the evidence lets the person catch a misread the moment it happens). This is a **disclosure, not a pause**: say it and keep moving — deliberate stops still belong to action 1 and the project's `Pause points:` line.
+**Intent precedence (before setup or shaping):**
 
-**Before the numbered ladder — a review/assessment request stays a review.** If the person's words ask only to review, assess, or check existing work — not to build or fix it — that request authorizes the relevant assessment only, never construction inferred from it. For a selected phase, read `.claude/commands/review-phase.md` and follow it; for design/UX, inspect the requested surface with an independent reviewer against the design checklist without running `design.md`'s build loop; for production readiness, run the independent production review without deploying. Report the evidence and stop, or continue only work already separately authorized — never infer permission to shape, build, or fix from a review request.
+- **Explicit pause/stop:** stop the authorized work and record the pause and next action. Do not
+  interpret a pause as a request to resume or stabilize something else.
+- **Status or explanation only:** answer from evidence without starting a build. A progress question
+  during an already-authorized build is answered briefly and the build continues; it is not a pause.
+  A question about a finding receives a plain explanation. A been-away request follows
+  `recap.md` for its written catch-up. Never invent new authorization from a question.
+- **Evaluation only:** a request to review, assess or check existing work authorizes the relevant assessment, not construction. For a selected phase follow `review-phase.md`; for design/UX inspect the requested surface and use an independent reviewer with the design checklist, without running `design.md`'s build loop; for production readiness run its independent production review without deploying. Preserve its scope and existing repair permissions, but do not infer permission to shape, build or fix from a review request. Report the evidence and stop, or continue only work already separately authorized.
+- **Active outage:** an explicit site-down/users-locked-out/payments-failing-now report follows
+  `incident.md` immediately, even before bootstrap. Honor its authorization boundaries for
+  mitigation. An uncertain outage stays a defect/triage signal rather than an assumed rollback.
+- **Reported defect:** a pasted bug report or customer complaint about broken behavior follows
+  `triage.md`; retain its reproduction, fast-lane/plan escalation and draft-only reply.
+- **Build/design/production goal:** select the lifecycle below, preserving UI/design handling and
+  carrying production intent into the required production review. None authorizes deployment.
 
-**Before the numbered ladder — an active outage pre-empts everything.** If Step 1 read the goal as an **active-outage signal** (the site is down, users are locked out, payments are failing *right now*), stabilizing comes before *anything* — setup, shaping, planning, even switching on dormant hooks: **read `.claude/commands/incident.md` and follow it immediately**, skipping actions 1–9. This fires **even on an un-set-up repo** — a fire is not the moment to bootstrap the project, and `/incident` degrades gracefully with no runbook (it helps find a mitigation instead). Hold the bar high, per Step 1: only an explicit *system-is-down-now* signal triggers this; if you're unsure it's a real outage, fall through to the ladder (a reported defect → action 4's triage fork; anything else → a build goal) rather than defaulting into the firefight.
+**Lifecycle selection (disjoint):**
 
-1. **No goal given (empty / "status" / "next" / "help") — or a question, not a goal.**
-   Report in plain language: is the project set up, is the North Star set, and is anything mid-build (name it and its next phase). State the single recommended next step and **offer to do it** ("Want me to continue building <feature>, phase <N>?"). If a plan is in progress, offer to continue it; otherwise invite them to say what they want in their own words. Do not kick off a heavy build with no goal and no in-progress plan.
-   - **When nothing's mid-build, answer "what should I build next?" from the feedback ledger.** If `FEEDBACK.md` exists with **open** asks (the lines **not** marked `— done` — a shipped ask is struck or deleted, per the `using-the-pack` convention) **and** `NORTH_STAR.md` is filled, rank those open asks by how well each advances the **Goal / Current focus**, and present the **top one or two candidates** in plain words with the one-line reason each earns its rank — then **offer** to shape or build the top pick ("Want me to shape this one?"). If the person picks one and it ships this session, offer once to mark its `FEEDBACK.md` line done so it stops resurfacing. This is still action 1: you **offer, you never launch** — no heavy build kicks off without the person picking. Degrade cleanly: **`NORTH_STAR.md` missing or still the template** (no yardstick to rank against — the common brand-new-repo state) → list the open asks unranked and invite them to pick or to say what they want; **`FEEDBACK.md` absent** → behave exactly as today (invite them to say what they want in their own words). Never manufacture a ranking without a real North Star to rank against.
-   - **The been-away question gets the written brief, not an improvised answer.** If their words ask for a catch-up over *elapsed time* ("I've been away", "catch me up", "what did I miss?", "what happened last week?"), **read `.claude/commands/recap.md` and follow it** — it assembles the one-page shipped / stuck / decided / heard / next brief from the pack's records, and its closing recommendation lands back here. A plain "what's next?" (no time-away signal) stays in this action's live report.
-   Likewise, **a question about a report card or a reviewer finding is answered directly, in plain words** — no shaping, no brief, no build unless they then ask you to fix it. (Every report card invites exactly this: "Ask `/go` to explain any finding in plain words — or to just fix them.")
+| Evidence and intent | Action |
+|---|---|
+| One explicitly selected existing goal, or clear continuation of an existing active goal (excluding a bare invocation) | Inspect its remaining obligations and authorization, then action 6. No reshaping interview. |
+| Explicit new goal, without continuation intent | Preserve the older goal and its history; select the new goal and enter actions 2–5 as needed. |
+| More than one plausible goal or a request ambiguous between amendment and new work | Ask once which goal/scope is intended. Never select by filename recency alone. Continue only independent work already authorized. |
+| Bare `/go` and one active goal with persisted, still-valid authorization for remaining work | Inspect its state and continue via action 6. |
+| Otherwise: a bare `/go` without the authorized active goal above, or no actionable selected goal | Action 1: status and one next step. |
 
-2. **Safety checks dormant or hollow** (settings.pack.json present, hooks missing, or workspaces.json empty on a bootstrapped project) **and the person wants to build.**
-   If the hooks are dormant, say plainly that the write-time guardrails and post-edit checks aren't switched on yet, and offer to switch them on (follow `bootstrap-claude-pack.md`'s **"Wire and verify" phase**: merge the pack's `hooks` block into the live `settings.json`, show the diff first, then delete `settings.pack.json`). Likewise, if `.claude/workspaces.json` is still empty on a bootstrapped project, the post-edit hook runs but checks nothing — offer to fill it from the project's real typecheck/lint commands (bootstrap Phase 5). Then continue. Don't hard-stop over it. If the person asks whether their safety checks are actually working — or session-start printed nothing, a sign Node may be missing — **read `.claude/commands/doctor.md` and follow it**: it runs the health check (Node present? hooks live? guardrail actually fires?) and reports the one fix that matters.
+A change to the active goal is an explicit amendment retaining original scope, prior decisions and
+review history; never overwrite the old contract. A plan-only request authorizes planning only.
+An explicit new goal remains separate. Missing or contradictory completion/budget records require
+inspection before dispatch or closure; manual checks do not manufacture an unknown allowance.
 
-3. **Not set up** (CLAUDE.md is still the skeleton).
-   Tell them: "First I'll set up this project's rules and safety checks — one short round of questions, then I won't need to ask again." **Read `.claude/commands/bootstrap-claude-pack.md` and follow it fully** (it also drafts the North Star). Hold on to their goal and resume at action 4 afterward.
+1. **Orientation without authorized remaining work.** Report setup, North Star and recorded work,
+   with one recommended next action. If nothing is mid-build, use open `FEEDBACK.md` asks to
+   recommend one or two candidates against a filled North Star; without that yardstick list them
+   unranked. Offer to start the chosen work, never launch it unasked. Missing feedback is normal.
+   A status question during active work has already been answered under intent precedence and
+   does not enter this offer-to-continue path.
 
-4. **Set up, goal given — shape it first (make sure it's the right thing).**
-   **First, the support fork:** if Step 1 read the input as a **support signal** — a pasted bug report or customer email describing something already broken — this isn't a thing to plan, it's a thing to reproduce and fix. Say so ("this looks like a bug report — I'll reproduce it, fix it through the gates, and draft you a reply to send") and **read `.claude/commands/triage.md` and follow it.** `/triage` reproduces first, writes its own fast-lane brief, fixes through `/implement`'s fast lane, and drafts (never sends) the reply — so when its report card is written, skip to action 9. If reproduction shows the fix is bigger than a fast lane admits, `/triage` upgrades to planning on its own; and if the "bug" turns out to be a feature request, it falls back here to shaping. When the input is an ordinary build goal (the common case), skip this fork.
+2. **Inspect setup capabilities when a build needs them.** Follow bootstrap's Wire and verify
+   phase to offer additive hook wiring if configuration is missing; show the concrete diff and
+   preserve existing settings/opt-ins. Empty workspaces means no configured post-edit checks;
+   use real project checks manually, and offer their configuration once. Capability diagnosis
+   follows `doctor.md`. Missing optional hook setup does not stop otherwise-authorized work.
 
-   Otherwise, run `.claude/commands/shape.md` with the goal. It right-sizes the request (a small, clear ask passes straight through in seconds), finds the real job hiding inside it, checks it against the North Star — and offers to capture the North Star if it's missing and a goal just became clear — then writes `docs/plans/<feature>-brief.md`. For anything vague or ambitious, this is where the person confirms scope. (This folds in the old "capture the North Star" and "alignment check" steps — shaping does both, and it is the step that makes sure we build what the person actually wants.)
+3. **Bootstrap only when needed for this build.** Follow `bootstrap-claude-pack.md` for a skeleton
+   CLAUDE/context, retain the user's goal and return to the selected lifecycle. A resumed valid
+   contract is not automatically a fresh setup interview. Outage, defect, pause and status routes
+   have already been handled above.
 
-5. **Shaped, no plan yet — fast-lane it or plan it.**
-   - **Clear and contained** (the brief carries a `Surface:` line) → **fast lane**: "This is small and clear — building it directly, gates without the paperwork." **Read `.claude/commands/implement.md` and follow its Fast lane section.** Its admission test governs — an admission failure falls through to the plan path below. When its report card is written, skip to action 9 — the card **is** this route's check: the fast lane runs every gate a phase review would (`implement.md` names the one advisory pass it skips), and action 8's `/review-phase` needs a phase plan as its rubric.
-   - **Otherwise** → "Now I'll plan it." **Read `.claude/commands/create-plan.md` and follow it** with the goal as `$ARGUMENTS`; it reads `docs/plans/<feature>-brief.md` as its starting contract and runs its own multi-agent plan-review gate. When it finishes, continue to action 7.
+4. **Shape a new, unshaped goal.** Follow `shape.md`. A precise small request should pass through
+   with a compact brief; ask about scope only when a consequential ambiguity changes the build.
+   Existing accepted goals skip this action. Record an accepted amendment before proceeding.
 
-6. **A plan for this goal already exists (or they just said `/go` with work in progress).**
-   - **More than one plausible goal, or a request ambiguous between amending existing work and starting new work** → ask once which goal/scope is intended. Never select by filename recency alone.
-   - planned-not-started or in-progress → go to action 7 and build the next incomplete phase.
-   - all-complete → tell them it's done; offer an independent re-check (`review-phase.md`), a doc sync (`sync-docs.md`), a full-project health check (`audit.md`; `/bootstrap-critics` first if there's no critic panel yet), or the next goal.
+5. **Select compact or planned work.** Confirm implementation is authorized before either build lane. A plan-only or brief-only request ends with that reviewed artifact and next action. A clear contained brief with a named Surface follows
+   `implement.md`'s Fast lane, whose admission rules apply; it skips phase plans, never independent
+   review, acceptance or DoD. After its complete card, go to action 9. Otherwise follow
+   `create-plan.md` and its independent plan review, then action 7 only if implementation is
+   authorized. A plan request alone ends with the reviewed plan and next action.
 
-7. **Plan ready — build it.** Choose how:
-   - **Single-driver** (`implement.md`) for a small plan: ~1–2 phases, a single owner agent, or a repo with few/no specialist agents in `.claude/agents/`.
-   - **Specialist team** (`start-teams.md`) for a larger plan: 3+ phases, or multiple distinct owner agents.
-   - If it's genuinely a toss-up, ask **once** (AskUserQuestion: "build it step-by-step myself, or spin up a small specialist team?") with a recommended default. Then **read that command's file and follow it.** Both run the entry gate + every Critical-Path reviewer gate + the Definition of Done — `/go` never weakens those.
-   - **If the work is primarily UI/visual** (a new page/screen/component, or "make X look good / less generic"), **read `.claude/commands/design.md` and follow it** — it establishes `DESIGN.md`, runs the design loop, routes to a design tool only if it helps, and verifies (accessibility, states, looks). Use it standalone for a pure design ask, or as the UI portion of a larger build.
+6. **Resume the selected goal from real evidence.** Inspect contracts, remaining phases, prior
+   decisions, current source/check inputs and consumed review batches. Planned/in-progress work
+   with valid authorization goes to action 7 at the first actual outstanding obligation.
+   All-complete records go through action 8's evidence inspection before any completion claim.
+   Missing authorization gets status and one concrete decision, not an invented go-ahead.
 
-8. **Verify and report (as a report card).**
-   Run an independent check on the shipped phase(s) — **read `.claude/commands/review-phase.md` and follow it** — then report in plain language as a **report card**: overall readiness (Ready / Almost / Not yet), one line per gate with its grade, what got built, and the top things (if any) that need the person's decision. If more phases remain and they asked for the whole thing, loop back to action 7. **A build-time reviewer's PASS does not excuse this independent pass** — re-check any source, config, or contract edited after that build-time verdict; an accepted-risk or failed verdict is never counted as PASS here.
-   - **If the person's words signal production intent** (e.g. "production-ready", "production quality", "ship to prod", "harden for production", "go live"), carry that intent into this step so `review-phase.md`'s **production-readiness gate** runs and appears on the report card. Don't run it otherwise — it's opt-in, on mention.
+7. **Build within the authorized scope.** Choose `implement.md` for a coherent single owner;
+   use `start-teams.md` for genuinely independent specialist boundaries. Make routine choices
+   without a workflow menu. Both planned lanes require a current independently reviewed contract.
+   UI/visual work follows `design.md` as the appropriate portion of the build. Preserve the
+   project's explicit pause points. Finish the usable slice and its required docs; then action 8.
 
-9. **Keep the docs honest (closing step).**
-   Offer to run `.claude/commands/sync-docs.md` so the project's documentation matches what just shipped — it auto-fixes mechanical drift (paths, command lists, counts, trees) and asks before any subjective rewrite. **If what shipped is user-visible** (a feature a customer can touch), also offer — one line — `.claude/commands/user-docs.md`: the customer-facing help (getting-started / how-tos / FAQ), outbound-truth-gated so it can't promise what the product doesn't do. If what just shipped completes a multi-phase feature or a milestone, also offer — one line, no hard sell — a full-project health check: `/audit` (a panel of read-only critics ranks the project's biggest risks; if this repo has no critic panel yet, `/bootstrap-critics` builds one first). If the person then **accepts** a risk off that register rather than fixing it, that's a load-bearing call — offer to journal it (the "Record load-bearing decisions" behavior below). **And if the shipped work is ready to go live** — the person says "ship it / release / go live / deploy", or a milestone is Ready and deploying is the obvious next move — offer `.claude/commands/release.md`: the act-of-shipping gate (a changelog, a migration/env checklist, a rollback plan named *before* the deploy, and a post-deploy smoke test). Read that file and follow it; it never deploys or commits on its own. (A release is planned shipping — if instead the site is *already down*, that's a firefight, not a release: `/incident`, which stabilizes first.) **When more than one of these closing offers applies** (docs sync, user docs, audit, release — they co-fire exactly when a user-visible milestone lands Ready), present them together as one short wrap-up list — one line each, one answer — never as a gauntlet of sequential questions. Then give the final plain-language summary of what was built and what's next.
+8. **Complete the independent coverage and final check.** Follow `review-phase.md` for planned
+   work, retaining every entry/path/acceptance/integration/DoD obligation and any production-intent
+   trigger. Inspect prior assessments before deciding what remains owed; do not skip this step
+   merely because a build reviewer returned PASS. Remove duplicate evaluations only when identical
+   current independent coverage is demonstrated; until then use the manual coverage checklist.
+   Recheck source/assertion/config/contract edits after assessment within the same remaining
+   allowance. A failed or accepted-risk verdict is never PASS. If phases remain in an authorized
+   whole-goal build, continue at action 7; a Ready slice is not a Ready whole goal.
+
+9. **Close with evidence and required docs complete.** Required documentation is part of DoD and
+   is finished before Ready. Report outcome, proof, remaining original scope and next action;
+   distinguish local readiness from release/deployment. Optional expanded help via `user-docs.md`,
+   broad `sync-docs.md`, milestone `audit.md` (bootstrap critics if absent), or `release.md`
+   remains a compact follow-up offer where useful. None substitutes for required docs or authorizes
+   commits, deployment, messages or publication. If an audit risk is accepted, preserve the actual
+   finding and offer the existing decision-journal entry once.
+
+## Reference — review dispatch and resume mechanics
+
+These apply while running actions 6–9 above; read them when you reach a review dispatch or a
+solo/fast/team resume, not before.
+
+**Before any review dispatch, including a plan review while resuming:** the command running
+the gate must save the complete batch reservation in that goal's brief/card, Plan Review Log
+or retry notes (reuse the record, or create it if absent). Under canon §2, mark each selected
+slot pending launch and explicitly **Read** the saved reservation after its last edit before
+invoking that reviewer. A Write/Edit hint saying no Read is needed does not perform this
+checkpoint; never claim a read-back from the write acknowledgment alone. Record the
+known consumed batches, all specialist/final slots and fixed assessment inputs. A prompt
+saying "batch 0" is not a persisted reservation. If existing allowance is unknown or the
+reservation cannot be saved, ask the one history/capability question needed for that review;
+continue independently authorized inspection and checks while it is pending. Do not launch
+an evaluation to discover whether its allowance exists. Keep working results pending under
+canon §1 and reconcile interrupted or uncertain launches before any redispatch under §2;
+creating a missing record never resets an existing gate's unknown or consumed allowance.
+
+**Solo/fast evidence recovery.** For a selected solo/fast goal, follow canon §1's compatible-helper
+check and `/implement`'s durable-evidence steps. If its `workflow.json` exists, call
+`node .claude/scripts/workflow-state.js status` with JSON stdin
+`{"projectRoot":"<actual absolute project path>","goalDirectory":"docs/progress/<selected goal>"}`.
+Inspect the returned state, scope, obligations, findings and attempts alongside the accepted brief/
+plans. That call needs a permission the shipped inspection-only allow list does not cover, so say in
+one line what it is before the prompt appears: **this one only reads the progress record — it changes
+nothing, runs no check and starts no reviewer.** Later steps that record results do write to that same
+file; say so when they come. A declined prompt is an expected path, not a failure — fall back to the
+manual checklist per canon §1, preserve every existing record, say which record could not be read or
+written, and reassure them in one line: *"no problem — every check and review still runs exactly the
+same, I'll just track progress in the written notes instead of the saved record."* A phase-only Ready or older card cannot close the whole goal; request whole-goal status
+without `phaseId` before claiming it complete. Read-only status never grants build authorization.
+
+Resume the same goal/gate and reconcile pending attempts before any new review. For each pending
+attempt, call the same read-only `status` with its `attemptId`; inspect `attemptAssessment` and
+record actual interrupted/unverified evidence through `/implement`'s terminal recovery shape.
+Unknown lineage stays unknown and consumed. A null current digest or missing query retains the
+manual hold; neither permits guessed evidence or a new gate. Once actual
+remaining authorization and observed session identity are established, the single writer records
+session/disposition changes with `amend` and
+`{reason,change:{type:"execution",execution:{sessionId,disposition}}}`. Use `paused` for an explicit
+pause, `waiting` for a required decision, and `running` only for authorized continuing work;
+status questions alone do not change disposition or cancel the goal. A new constructor context
+also appends its owner lineage under `/implement`; never relabel it as an independent reviewer.
+When authorized work actually enters its next planned phase after dependencies pass, follow
+`/implement`'s (or, for a team goal, `/start-teams`'s) `amend` phase-entry shape. Inspect the
+returned activated finding IDs and route their owner/proof work under the original gate's retained
+allowance. A deferred later-phase finding still belongs to the whole goal; a status question or
+earlier scoped Ready does not activate or finish it. If no snapshot exists, initialize only via that
+command's inspected contract/history procedure. Missing/partial/unsupported helpers and unavailable
+provenance retain the manual checklist, scope and consumed budget; team review/build evidence stays
+on the manual bridge (`gate-rules.md` §1). A helper hold cannot be bypassed with another command.
 
 ## How to behave (this is what makes it work for anyone)
 
 - **Plain language, always.** Narrate as *set up → plan → build → check*, not as command names. You may name the underlying command once in parentheses for the curious, but never require the person to know it.
 - **Do the work; don't describe it.** Run the tests — don't say "you could run the tests." The person came to the front door to get the thing done, not to receive a to-do list. That includes verification: never end a step *offering* to run a check the step requires — run it in the same turn and report the result.
-- **One decision at a time, only when it's real.** Stop only for: confirming Critical Paths (during setup), a scope/alignment conflict, team-vs-solo when truly unclear, plan approval if they want it, any stop the project's `Pause points:` line declares, or a reviewer **BLOCK** a human must weigh in on. Everything else: proceed with a stated assumption and tell them what you assumed. If someone asks mid-run for a pause you'd normally skip ("show me the plan before you build"), honor it — and offer **once** to record it as a standing `Pause points:` line in `CLAUDE.md`, so they never have to ask again.
+- **One decision at a time, only when it's real.** Stop only for: confirming Critical Paths (during setup), a scope/alignment conflict, team-vs-solo when truly unclear, plan approval if they want it, any stop the project's `Pause points:` line declares, an exhausted review allowance, unavailable capability/permission, or a reviewer residual that needs a real human decision. Everything else: proceed with a stated assumption and tell them what you assumed. If someone asks mid-run for a pause you'd normally skip ("show me the plan before you build"), honor it — and offer **once** to record it as a standing `Pause points:` line in `CLAUDE.md`, so they never have to ask again.
 - **Always resumable.** If a session was interrupted, re-detect state in Step 1 and pick up from the true next step — never assume where things stand.
-- **Right-size to the person's time.** When their words carry a time signal, pick the next step that can *finish* — gates included — inside that window: answering a question, a doc sync, one reviewer fix-round, a fast-lane fix, or a single phase. Say honestly what won't fit ("phase 3 won't fit in half an hour — its review alone is longer; here's what will"). Duration estimates are rough, so promise **completable units, never wall-clock times** — and never shrink a gate to fit a window: if the gates don't fit, the unit doesn't start. If the window closes early anyway, stop at a clean boundary — the progress records (the ledger — or, in the fast lane, the diff on disk) and any `Checkpoints: on` snapshot make the stop safe, and the next `/go` resumes from the true state.
-- **Gates are about WHAT is checked. Rounds are about HOW MANY TIMES. Never trade the first; always bound the second.** These are different dials and it is easy to conflate them. Every applicable reviewer runs **once** — that is the gate, and it is not negotiable. What is bounded is *re-review*.
-- **Count every re-review as a round, and stop at two.** A round is any reviewer spawn after the first verdict — whatever you name it: a "quick confirmation" or a "narrow re-read" counts the same as a full re-run, and rounds are counted per gate, not per reviewer. After two, stop and hand the person the leftovers — one line each, with severity and your recommendation; a third round happens only if they say so right then. The mechanics live in the build and review commands' gate steps.
-- **Only serious findings earn a re-run.** A finding a reviewer marks as its most serious kind (BLOCK, or High severity) sends the failing reviewer back for a round. Everything smaller — Medium and below: a typo, a comment, a doc table, a tidy-up — gets fixed and shipped in the same commit and listed on the report card as *fixed without re-review* — except in the independent review (`/review-phase`), where they are recorded and routed back to the build instead. Never spawn a reviewer to confirm a comment fix.
-- **Announce the spend before it happens; total it after.** Before a gate, say how many reviewer agents are about to run and why (`Gate: 2 reviewers — security-reviewer (new endpoint), code-reviewer (consolidating)`); put the total on the report card. Cost a person cannot see is cost they cannot choose to avoid.
-- **Never skip a gate.** `/go` lowers the bar to *start*, not the bar to *ship*. Entry checks, every applicable reviewer gate, and the Definition of Done all still run — the fast lane (action 5) skips *paperwork*, never *gates*. Catching yourself arguing a change is too small **to check at all** is the signal to run the gate — once; only the *follow-up* is proportional to the risk. It is not a licence to re-review a typo fix. The proportionality dial is the **number of rounds**, and the reviewer set **only** through the sanctioned lean merge — never by dropping a Critical Path from the set. Every touched path is looked at, every time.
+- **Right-size to the person's time.** When their words carry a time signal, pick the next step that can *finish* — gates included — inside that window: answering a question, a doc sync, one reviewer fix-round, a fast-lane fix, or a single phase. Say honestly what won't fit ("phase 3 won't fit in half an hour — its review alone is longer; here's what will"). Duration estimates are rough, so promise **completable units, never wall-clock times** — and never shrink a gate to fit a window: if the gates don't fit, the unit doesn't start. If the window closes early anyway, stop at a clean boundary — the progress records (the ledger — or, in the fast lane, the compact card plus diff) and any `Checkpoints: on` snapshot make the stop safe, and the next `/go` resumes from the true state.
+<!-- canon: .claude/gate-rules.md#1-16 -->
+- **Follow the gate canon.** Before routing any reviewer gate, read `.claude/gate-rules.md` §§1–§16 and follow it. `/go` preserves every touched-path verdict, batch 0 plus retries 1–2 with persistent history, semantic freshness, independent fallback, spend disclosure, intensity, and complete acceptance/DoD coverage; it routes the gate rather than weakening it.
+
 - **Fail honest.** If a step can't proceed (a Stop Condition fired, a required reviewer is missing, tests fail in a way you can't fix), say so plainly and offer concrete options — don't bluff past it.
 - **Remember expensive mistakes.** When a reviewer gate, the person, or a failed run catches a mistake that could plausibly recur — not a one-off typo — offer **once** to record it as a one-line entry in `CLAUDE.md` → *Lessons* (and, if a diff pattern can catch it, as a guardrail rule too). Never append silently: a person okays every entry, which is what keeps the log high-value. If `CLAUDE.md` has no Lessons section yet, offer to add it.
 - **Record load-bearing decisions.** When the person *settles* a call the pack shouldn't relitigate later — they override a reviewer **BLOCK** and ship anyway, accept a flagged risk off an `/audit` register, or choose a scope/approach at a real fork — offer **once** to record it as a one-line entry in `DECISIONS.md` (the decision journal; canon in the `using-the-pack` skill): `- <today, YYYY-MM-DD> — <decision> — because <why>`. Same discipline as Lessons — never silent, a person okays each entry, capped to load-bearing calls, the file created on first entry. Where a mistake asks "how do we not repeat this?", a decision asks "why did we choose this?" — a team of one has no colleague holding either answer.

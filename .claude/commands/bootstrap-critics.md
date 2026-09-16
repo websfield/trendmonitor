@@ -23,7 +23,7 @@ You are generating this repo's **critic panel** - the read-only auditors that `/
 
 ## 3. Generate the agents
 
-- For each confirmed `new` critic, write `.claude/agents/<name>.md` from the `_critic-template.md` archetype, filled in for THIS repo: a one-lens mandate, a reading list of the **real** files/dirs it owns, and the critic output schema. Put the `Track:` marker line at the top of the body. Keep the archetype's `effort: max` frontmatter — critics are gates, so they think hardest; it applies when `/audit` dispatches them by name, `max` is the ceiling on any model, and it needs no per-account tuning.
+- For each confirmed `new` critic, write `.claude/agents/<name>.md` from the `_critic-template.md` archetype, filled in for THIS repo: a one-lens mandate, a reading list of the **real** files/dirs it owns, and the critic output schema. Put the `Track:` marker line at the top of the body. Keep the archetype's `effort: max` frontmatter — critics are high-effort audit seats, so they think hardest; it applies when `/audit` dispatches them by name, `max` is the ceiling on any model, and it needs no per-account tuning.
 - For each confirmed `upgrade`, show the diff before writing (the roster confirmation authorized the upgrade; the diff is so nothing hand-tuned is lost silently) and preserve every repo-specific line that is still true. For each confirmed `retire`, delete only after the roster confirmation explicitly included it.
 - Bash is allowed only to retire a confirmed critic file under `.claude/agents/`; do not use it for any other mutation.
 - Generated critics use read-only tools only (`Read, Grep, Glob`; add `WebFetch, WebSearch` only where confirming an external framework's behaviour is part of the lens).
