@@ -1,0 +1,170 @@
+
+ RUN  v3.2.7 C:/projects/ai.playground/trendMonitor/respin
+
+ ❯ packages/llm/tests/assemble-kinds.test.ts (115 tests | 6 failed | 108 skipped) 14332ms
+   ↓ AssemblyError kinds > produces no_fields_supplied
+   ↓ AssemblyError kinds > produces duplicate_post
+   ↓ AssemblyError kinds > produces duplicate_field_request
+   ↓ AssemblyError kinds > produces not_json
+   ↓ AssemblyError kinds > produces bad_shape
+   ↓ AssemblyError kinds > produces unknown_field
+   ↓ AssemblyError kinds > produces duplicate_field
+   ↓ AssemblyError kinds > produces empty_values
+   ↓ AssemblyError kinds > produces single_arity
+   ↓ AssemblyError kinds > produces list_max
+   ↓ AssemblyError kinds > produces placeholder_with_citation
+   ↓ AssemblyError kinds > produces placeholder_in_list
+   ↓ AssemblyError kinds > produces value_without_quote
+   ↓ AssemblyError kinds > produces post_not_supplied
+   ↓ AssemblyError kinds > produces quote_not_found
+   ↓ AssemblyError kinds > produces fields_unfilled
+   ↓ AssemblyError kinds > keeps the closed union equal to the kinds at every throw site
+   ↓ canonical quote location > keeps exact-match-first behavior
+   ↓ canonical quote location > refuses empty and table-whitespace-only needles before exact matching
+   ↓ canonical quote location > maps the original literal slice for curly quotes
+   ↓ canonical quote location > maps the original literal slice for em dash
+   ↓ canonical quote location > maps the original literal slice for en dash
+   ↓ canonical quote location > maps the original literal slice for doubled spaces
+   ↓ canonical quote location > maps the original literal slice for tab
+   ↓ canonical quote location > maps the original literal slice for single line feed
+   ↓ canonical quote location > maps the original literal slice for verbatim paragraph
+   ↓ canonical quote location > maps the original literal slice for trailing canonical space
+   ↓ canonical quote location > maps the original literal slice for astral prefix
+   ↓ canonical quote location > maps the original literal slice for combining-mark neighbour
+   ↓ canonical quote location > maps the original literal slice for mixed paragraph run
+   ↓ canonical quote location > refuses space cannot replace a paragraph
+   ↓ canonical quote location > refuses paragraph cannot replace U+2029
+   ↓ canonical quote location > refuses case
+   ↓ canonical quote location > refuses comma
+   ↓ canonical quote location > refuses full stop
+   ↓ canonical quote location > refuses paraphrase
+   ↓ canonical quote location > refuses NBSP
+   ↓ canonical quote location > folds exactly the independently pinned table over every Unicode scalar value
+   ↓ canonical quote location > contains no broad whitespace class or trim call in the canonicaliser
+   ↓ canonical quote location > generatively maps picked ranges through parseVoiceReply and preserves original evidence
+   ↓ canonical quote location > refuses generated case, punctuation and must-not-fold mutations
+   ↓ canonical map-back postcondition > rejects negative
+   ↓ canonical map-back postcondition > rejects fractional
+   ↓ canonical map-back postcondition > rejects NaN
+   ↓ canonical map-back postcondition > rejects infinite
+   ↓ canonical map-back postcondition > rejects empty
+   ↓ canonical map-back postcondition > rejects reversed
+   ↓ canonical map-back postcondition > rejects over-end
+   ↓ canonical map-back postcondition > rejects start shifted
+   ↓ canonical map-back postcondition > rejects end into non-whitespace
+   ↓ canonical map-back postcondition > rejects end into whitespace
+   ↓ canonical map-back postcondition > rejects split-surrogate end
+   ↓ canonical map-back postcondition > rejects split-surrogate start
+   ↓ canonical map-back postcondition > accepts the correct literal range
+   ↓ canonical map-back postcondition > surfaces injected negative as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected fractional as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected NaN as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected infinite as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected empty as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected reversed as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected over-end as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected end into non-whitespace as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected end into whitespace as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected split-surrogate end as quote_not_found
+   ↓ canonical map-back postcondition > surfaces injected split-surrogate start as quote_not_found
+   ↓ canonical map-back postcondition > stores the creator's original bytes for a correct injected range
+   ↓ mapper containment > permits only the internal forwarding call and test injection
+   ↓ mapper containment > rejects the credits override plant
+   ↓ mapper containment > rejects the namespace override plant
+   ↓ mapper containment > rejects the parenthesized namespace override plant
+   ↓ mapper containment > rejects the parenthesized alias override plant
+   ↓ mapper containment > rejects the as-wrapped alias override plant
+   ↓ mapper containment > rejects the non-null alias override plant
+   ↓ mapper containment > rejects the satisfies-wrapped alias override plant
+   ↓ mapper containment > rejects the template namespace override plant
+   ↓ mapper containment > rejects the dynamic namespace override plant
+   ↓ mapper containment > rejects the namespace object alias escape plant
+   ↓ mapper containment > rejects the relative namespace object alias escape plant
+   ↓ mapper containment > rejects the namespace object destructure escape plant
+   ↓ mapper containment > rejects the namespace object argument escape plant
+   ↓ mapper containment > rejects the namespace reference escape plant
+   ↓ mapper containment > rejects the imported reference escape plant
+   ↓ mapper containment > rejects the third argument plant
+   ↓ mapper containment > rejects the parenthesized third argument plant
+   ↓ mapper containment > rejects the template namespace third argument plant
+   ↓ mapper containment > rejects the aliased override plant
+   ↓ mapper containment > rejects the spread override plant
+   ↓ mapper containment > rejects the quoted-key override plant
+   ↓ mapper containment > rejects the dynamic-key override plant
+   ↓ mapper containment > rejects the getter-defined override plant
+   ↓ mapper containment > rejects the setter-bearing override plant
+   ↓ mapper containment > rejects the method override plant
+   ↓ mapper containment > rejects the method-shaped field plant
+   ↓ mapper containment > rejects the prototype override plant
+   ↓ mapper containment > rejects the quoted prototype override plant
+   ↓ mapper containment > rejects the defaulted mapper binding plant
+   ↓ mapper containment > rejects the writable mapper binding plant
+   ↓ mapper containment > rejects the local mapper replacing the parameter-derived binding plant
+   ↓ mapper containment > rejects the parameter reassignment before binding plant
+   ↓ mapper containment > rejects the parameter property mutation before binding plant
+   ↓ mapper containment > rejects the parameter computed-property mutation before binding plant
+   ↓ mapper containment > rejects the parameter alias before binding plant
+   ↓ mapper containment > rejects the parameter escape before binding plant
+   ↓ mapper containment > rejects the parameter closure escape before binding plant
+   × mapper containment > rejects the block function mapper shadow plant 2724ms
+     → expected [] to deep equally contain { file: 'assemble.ts', …(1) }
+   × mapper containment > rejects the hoisted block function mapper shadow plant 2086ms
+     → expected [] to deep equally contain { file: 'assemble.ts', …(1) }
+   × mapper containment > rejects the async block function mapper shadow plant 2016ms
+     → expected [] to deep equally contain { file: 'assemble.ts', …(1) }
+   × mapper containment > rejects the generator block function mapper shadow plant 1866ms
+     → expected [] to deep equally contain { file: 'assemble.ts', …(1) }
+   × mapper containment > rejects the block class mapper shadow plant 1864ms
+     → expected [] to deep equally contain { file: 'assemble.ts', …(1) }
+   × mapper containment > rejects the block enum mapper shadow plant 1953ms
+     → expected [] to deep equally contain { file: 'assemble.ts', …(1) }
+   ✓ mapper containment > allows unrelated nested mapper bindings without mistaking methods for declarations  1820ms
+   ↓ mapper containment > rejects the wrapped forwarding call plant
+   ↓ mapper containment > rejects the different forwarding content plant
+   ↓ mapper containment > rejects the different forwarding quote plant
+   ↓ mapper containment > rejects the extra forwarding argument plant
+pnpm : 
+At line:2 char:1
++ pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/llm/tests/assemble-kinds.test.ts > mapper containment > rejects the block function mapper shadow plant
+ FAIL  packages/llm/tests/assemble-kinds.test.ts > mapper containment > rejects the hoisted block function mapper 
+shadow plant
+ FAIL  packages/llm/tests/assemble-kinds.test.ts > mapper containment > rejects the async block function mapper shadow 
+plant
+ FAIL  packages/llm/tests/assemble-kinds.test.ts > mapper containment > rejects the generator block function mapper 
+shadow plant
+ FAIL  packages/llm/tests/assemble-kinds.test.ts > mapper containment > rejects the block class mapper shadow plant
+ FAIL  packages/llm/tests/assemble-kinds.test.ts > mapper containment > rejects the block enum mapper shadow plant
+AssertionError: expected [] to deep equally contain { file: 'assemble.ts', …(1) }
+
+- Expected: 
+{
+  "file": "assemble.ts",
+  "reason": "parseVoiceReply mapper is not the unchanged params.mapBack binding",
+}
+
++ Received: 
+[]
+
+ ❯ packages/llm/tests/assemble-kinds.test.ts:917:42
+    915|         )] as const;
+    916|       });
+    917|       expect(mapperContainment(sources)).toContainEqual({
+       |                                          ^
+    918|         file: "assemble.ts",
+    919|         reason: "parseVoiceReply mapper is not the unchanged params.ma…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 1 passed | 108 skipped (115)
+   Start at  16:51:59
+   Duration  15.40s (transform 84ms, setup 0ms, collect 493ms, tests 14.33s, environment 0ms, prepare 240ms)
+

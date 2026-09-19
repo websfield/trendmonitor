@@ -34,6 +34,8 @@ import type { ReactNode } from "react";
 import { Banner } from "../../ui/banner";
 import {
   CHECK_MARKER,
+  DISCLOSURE_FIELD_PREFIX,
+  DISCLOSURE_PROVENANCE,
   checkOffer,
   claimFamilyNote,
   claimsHeading,
@@ -88,8 +90,12 @@ function FrameworksNotUsed({ count }: { count: number | null }) {
 }
 
 function KillTestBlock({ summary }: { summary: KillTestSummary }) {
-  const hard = summary.traceability.filter((f) => f.enforcement === "hard");
-  const flagged = summary.traceability.filter((f) => f.enforcement === "flag");
+  const traceability = summary.traceability.filter(
+    (f) =>
+      !f.field.startsWith(DISCLOSURE_FIELD_PREFIX) || f.enforcement === "hard"
+  );
+  const hard = traceability.filter((f) => f.enforcement === "hard");
+  const flagged = traceability.filter((f) => f.enforcement === "flag");
   return (
     <div data-testid="studio-kill-test" style={{ marginTop: "1rem" }}>
       <h3 style={{ marginBottom: "0.25rem" }}>What the checks found</h3>
@@ -112,12 +118,15 @@ function KillTestBlock({ summary }: { summary: KillTestSummary }) {
       ) : null}
 
       <h3 style={{ marginBottom: "0.25rem" }}>Where the specifics came from</h3>
+      <p className="muted" data-testid="studio-disclosure-provenance">
+        {DISCLOSURE_PROVENANCE}
+      </p>
       <p data-testid="studio-traceability-heading">
         {traceabilityHeading(hard.length, flagged.length)}
       </p>
-      {summary.traceability.length > 0 ? (
+      {traceability.length > 0 ? (
         <ul data-testid="studio-traceability">
-          {summary.traceability.map((f: TraceabilityFlag, i) => (
+          {traceability.map((f: TraceabilityFlag, i) => (
             <li key={`${f.field}-${i}`}>
               {/*
                 THE OFFER, NOT AN EDIT. The token is shown as it appears in the
@@ -130,19 +139,13 @@ function KillTestBlock({ summary }: { summary: KillTestSummary }) {
               {" · "}
               <span data-testid="studio-check-offer">{checkOffer(f.token)}</span>
               {/*
-                THE NOTE IS COMPUTED FROM THE FINDING, not fixed. This branch
-                printed "(a name, not a rule violation — ordinary words land
-                here)" for EVERY flag, which was true while the flag bucket was
-                proper nouns alone. `traceability.ts` then demoted
-                `plain-number` and made `/disclosure/` flag-only whatever the
-                shape, so the same sentence began calling the number `5` a name.
-                `traceabilityFlagNote` keys on `kind` and `field`, which are the
-                two inputs `enforcementFor` itself uses.
+                Disclosure traceability findings are filtered before rendering.
+                Remaining flag notes classify the creator-field finding by kind.
               */}
               {f.enforcement === "flag" ? (
                 <span className="muted" data-testid="studio-flag-note">
                   {" "}
-                  {traceabilityFlagNote(f.kind, f.field)}
+                  {traceabilityFlagNote(f.kind)}
                 </span>
               ) : null}
             </li>
@@ -164,15 +167,9 @@ function KillTestBlock({ summary }: { summary: KillTestSummary }) {
       {/*
         REQ-I04 / REQ-I05, MADE REACHABLE. `runKillTest` scans the model's own
         text for performance forecasts, certainty promises and concealment
-        advice and stores every finding; the hard ones reach a creator through
-        the refusal's `why`, and until this block the flag-level ones reached
-        nobody at all — including a concealment sentence sitting in the
-        disclosure guidance this screen renders as the product's advice.
+        advice and stores every finding. Hard claim findings refuse the draft; flag-level claims render below, including a concealment finding in the disclosure guidance.
 
-        THE PHRASE IS QUOTED, NOT REPEATED AS A CLAIM. A flag-level finding is
-        in text the creator is already reading (the only hard-enforced section
-        is `whyThisPerforms`, and a hard finding refuses the draft outright), so
-        naming the line adds no word to this page that was not already on it.
+        THE PHRASE IS QUOTED, NOT REPEATED AS A CLAIM. Hard claim findings on `/whyThisPerforms/` or `/disclosure/` refuse the draft; a rendered flag finding is a product warning the creator can inspect.
       */}
       {summary.claims.length > 0 ? (
         <>

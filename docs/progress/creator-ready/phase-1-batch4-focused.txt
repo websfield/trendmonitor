@@ -1,0 +1,60 @@
+
+ RUN  v3.2.7 C:/projects/ai.playground/trendMonitor/respin
+
+ ✓ packages/llm/tests/assemble-kinds.test.ts (115 tests) 101468ms
+   ✓ canonical quote location > folds exactly the independently pinned table over every Unicode scalar value  9616ms
+   ✓ mapper containment > permits only the internal forwarding call and test injection  2180ms
+   ✓ mapper containment > rejects the credits override plant  1888ms
+   ✓ mapper containment > rejects the namespace override plant  1811ms
+   ✓ mapper containment > rejects the parenthesized namespace override plant  1847ms
+   ✓ mapper containment > rejects the parenthesized alias override plant  1987ms
+   ✓ mapper containment > rejects the as-wrapped alias override plant  1980ms
+   ✓ mapper containment > rejects the non-null alias override plant  2092ms
+   ✓ mapper containment > rejects the satisfies-wrapped alias override plant  2205ms
+   ✓ mapper containment > rejects the template namespace override plant  2326ms
+   ✓ mapper containment > rejects the dynamic namespace override plant  1877ms
+   ✓ mapper containment > rejects the namespace object alias escape plant  1832ms
+   ✓ mapper containment > rejects the relative namespace object alias escape plant  1902ms
+   ✓ mapper containment > rejects the namespace object destructure escape plant  1796ms
+   ✓ mapper containment > rejects the namespace object argument escape plant  1798ms
+   ✓ mapper containment > rejects the namespace reference escape plant  1799ms
+   ✓ mapper containment > rejects the imported reference escape plant  1653ms
+   ✓ mapper containment > rejects the third argument plant  1780ms
+   ✓ mapper containment > rejects the parenthesized third argument plant  1835ms
+   ✓ mapper containment > rejects the template namespace third argument plant  1936ms
+   ✓ mapper containment > rejects the aliased override plant  1732ms
+   ✓ mapper containment > rejects the spread override plant  1974ms
+   ✓ mapper containment > rejects the quoted-key override plant  1860ms
+   ✓ mapper containment > rejects the dynamic-key override plant  1831ms
+   ✓ mapper containment > rejects the getter-defined override plant  1815ms
+   ✓ mapper containment > rejects the setter-bearing override plant  1845ms
+   ✓ mapper containment > rejects the method override plant  1884ms
+   ✓ mapper containment > rejects the method-shaped field plant  1698ms
+   ✓ mapper containment > rejects the prototype override plant  1797ms
+   ✓ mapper containment > rejects the quoted prototype override plant  1760ms
+   ✓ mapper containment > rejects the defaulted mapper binding plant  1796ms
+   ✓ mapper containment > rejects the writable mapper binding plant  1762ms
+   ✓ mapper containment > rejects the local mapper replacing the parameter-derived binding plant  1756ms
+   ✓ mapper containment > rejects the parameter reassignment before binding plant  1927ms
+   ✓ mapper containment > rejects the parameter property mutation before binding plant  1792ms
+   ✓ mapper containment > rejects the parameter computed-property mutation before binding plant  1744ms
+   ✓ mapper containment > rejects the parameter alias before binding plant  1778ms
+   ✓ mapper containment > rejects the parameter escape before binding plant  1746ms
+   ✓ mapper containment > rejects the parameter closure escape before binding plant  1886ms
+   ✓ mapper containment > rejects the block function mapper shadow plant  2212ms
+   ✓ mapper containment > rejects the hoisted block function mapper shadow plant  2139ms
+   ✓ mapper containment > rejects the async block function mapper shadow plant  1855ms
+   ✓ mapper containment > rejects the generator block function mapper shadow plant  1728ms
+   ✓ mapper containment > rejects the block class mapper shadow plant  1690ms
+   ✓ mapper containment > rejects the block enum mapper shadow plant  1980ms
+   ✓ mapper containment > allows unrelated nested mapper bindings without mistaking methods for declarations  1804ms
+   ✓ mapper containment > rejects the wrapped forwarding call plant  1935ms
+   ✓ mapper containment > rejects the different forwarding content plant  1837ms
+   ✓ mapper containment > rejects the different forwarding quote plant  1844ms
+   ✓ mapper containment > rejects the extra forwarding argument plant  1834ms
+
+ Test Files  1 passed (1)
+      Tests  115 passed (115)
+   Start at  16:52:58
+   Duration  102.45s (transform 80ms, setup 0ms, collect 445ms, tests 101.47s, environment 0ms, prepare 243ms)
+

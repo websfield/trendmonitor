@@ -889,39 +889,45 @@ function KindSection({
         </div>
       ) : null}
 
-      {proposed !== null || active !== null ? (
-        <div className="panel" data-testid={`${testIdPrefix}-edit-panel`}>
-          {decideBlock ? (
-            <p className="muted" data-testid={`${testIdPrefix}-edit-blocked`}>
-              {decideBlock.reason}
-            </p>
-          ) : testIdPrefix === "strategy" && metricEditAction ? (
-            <StrategyEditForms
-              claims={(proposed ?? active)!.claims}
-              editAction={editAction}
-              metricAction={metricEditAction}
-            />
-          ) : (
-            <EditDocumentForm
-              claims={(proposed ?? active)!.claims}
-              labelFor={labelFor}
-              action={editAction}
-              testIdPrefix={testIdPrefix}
-            />
-          )}
-        </div>
-      ) : null}
+      <details
+        data-testid={`${testIdPrefix}-document-controls`}
+        open={proposed !== null && active === null}
+      >
+        <summary>Document controls</summary>
+        {proposed !== null || active !== null ? (
+          <div className="panel" data-testid={`${testIdPrefix}-edit-panel`}>
+            {decideBlock ? (
+              <p className="muted" data-testid={`${testIdPrefix}-edit-blocked`}>
+                {decideBlock.reason}
+              </p>
+            ) : testIdPrefix === "strategy" && metricEditAction ? (
+              <StrategyEditForms
+                claims={(proposed ?? active)!.claims}
+                editAction={editAction}
+                metricAction={metricEditAction}
+              />
+            ) : (
+              <EditDocumentForm
+                claims={(proposed ?? active)!.claims}
+                labelFor={labelFor}
+                action={editAction}
+                testIdPrefix={testIdPrefix}
+              />
+            )}
+          </div>
+        ) : null}
 
-      <div className="panel">
-        <VersionHistory
-          heading={heading}
-          history={history}
-          labelFor={labelFor}
-          absenceFor={absenceFor}
-          renderClaims={renderClaims}
-          testIdPrefix={testIdPrefix}
-        />
-      </div>
+        <div className="panel">
+          <VersionHistory
+            heading={heading}
+            history={history}
+            labelFor={labelFor}
+            absenceFor={absenceFor}
+            renderClaims={renderClaims}
+            testIdPrefix={testIdPrefix}
+          />
+        </div>
+      </details>
     </section>
   );
 }
@@ -1164,38 +1170,6 @@ export function BrainView({
       <h1>Your Creator Brain</h1>
       {error ? <Refusal error={error} /> : null}
 
-      {exportJsonHref && exportMarkdownHref ? (
-        <div className="panel" data-testid="brain-export-panel">
-          <h2>Export your brain</h2>
-          <p>{BRAIN_EXPORT_JSON_COPY}</p>
-          <p className="muted">{BRAIN_EXPORT_MARKDOWN_COPY}</p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-3)" }}>
-            <a
-              className={buttonClass("primary")}
-              href={exportJsonHref}
-              download
-              style={control}
-            >
-              Download complete JSON
-            </a>
-            <a
-              className={buttonClass("secondary")}
-              href={exportMarkdownHref}
-              download
-              style={control}
-            >
-              Download readable markdown
-            </a>
-          </div>
-        </div>
-      ) : null}
-
-      <BrainAssets counts={assetCounts} />
-
-      <PerformanceMeta history={performanceHistory} />
-
-      <ProposalHistory proposals={proposalHistory} />
-
       <KindSection
         heading="How you write"
         emptyTitle="Nothing drafted yet"
@@ -1285,6 +1259,38 @@ export function BrainView({
         decideBlock={decideBlock}
         testIdPrefix="killtest"
       />
+
+      {exportJsonHref && exportMarkdownHref ? (
+        <div className="panel" data-testid="brain-export-panel">
+          <h2>Export your brain</h2>
+          <p>{BRAIN_EXPORT_JSON_COPY}</p>
+          <p className="muted">{BRAIN_EXPORT_MARKDOWN_COPY}</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-3)" }}>
+            <a
+              className={buttonClass("primary")}
+              href={exportJsonHref}
+              download
+              style={control}
+            >
+              Download complete JSON
+            </a>
+            <a
+              className={buttonClass("secondary")}
+              href={exportMarkdownHref}
+              download
+              style={control}
+            >
+              Download readable markdown
+            </a>
+          </div>
+        </div>
+      ) : null}
+
+      <BrainAssets counts={assetCounts} />
+
+      <PerformanceMeta history={performanceHistory} />
+
+      <ProposalHistory proposals={proposalHistory} />
     </section>
   );
 }

@@ -1,0 +1,4 @@
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+

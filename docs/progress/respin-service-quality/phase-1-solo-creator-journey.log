@@ -1,0 +1,114 @@
+# solo-creator journey log — started 2026-09-18T05:20:00.545Z
+[console:info] http://localhost:8000/ :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[screenshot] 01-marketing-home.png @ http://localhost:8000/
+[console:log] http://localhost:8000/ :: [Fast Refresh] rebuilding
+[console:info] http://localhost:8000/sign-up :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:log] http://localhost:8000/sign-up :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/sign-up :: [Fast Refresh] done in 1842ms
+[console:log] http://localhost:8000/sign-up :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/sign-up :: [Fast Refresh] done in 1430ms
+[console:info] http://localhost:8000/sign-up :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=43 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/sign-up :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=19 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 02-post-signup-studio.png @ http://localhost:8000/onboarding
+[console:info] http://localhost:8000/onboarding :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=13 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=11 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 03-onboarding-profile-created.png @ http://localhost:8000/onboarding
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=18 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=11 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=17 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=10 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=22 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=17 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=11 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=15 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[requestfailed] GET http://localhost:8000/onboarding?_rsc=sku8Kx3MNhMrHyqM :: net::ERR_ABORTED
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=20 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=10 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=13 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[requestfailed] GET http://localhost:8000/onboarding?_rsc=sku8Kx3MNhMrHyqM :: net::ERR_ABORTED
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=17 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=13 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=11 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[requestfailed] GET http://localhost:8000/onboarding?_rsc=sku8Kx3MNhMrHyqM :: net::ERR_ABORTED
+[screenshot] 04-onboarding-posts-saved.png @ http://localhost:8000/onboarding
+[note] voice inference run result visible: false
+[screenshot] 05-onboarding-voice-run-result.png @ http://localhost:8000/onboarding
+[console:log] http://localhost:8000/onboarding :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/onboarding :: [Fast Refresh] done in 897ms
+[console:info] http://localhost:8000/brain :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/brain :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=21 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 06-brain-voice-activated.png @ http://localhost:8000/brain
+[console:log] http://localhost:8000/brain :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/brain :: [Fast Refresh] done in 885ms
+[console:info] http://localhost:8000/onboarding/interview :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/onboarding/interview :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=20 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 07-interview-filled.png @ http://localhost:8000/onboarding/interview
+[console:info] http://localhost:8000/onboarding/interview :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=24 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 08-interview-review.png @ http://localhost:8000/onboarding/interview?step=review
+[console:info] http://localhost:8000/onboarding/interview?step=review :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=26 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 09-interview-submitted.png @ http://localhost:8000/brain
+[console:info] http://localhost:8000/brain :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=18 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/brain :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=22 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[requestfailed] POST http://localhost:8000/brain :: net::ERR_ABORTED
+[console:info] http://localhost:8000/brain :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=17 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/brain :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=15 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 10-brain-all-activated.png @ http://localhost:8000/brain
+[console:log] http://localhost:8000/brain :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/brain :: [Fast Refresh] done in 872ms
+[console:info] http://localhost:8000/settings/billing :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/settings/billing :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=22 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/settings/billing :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=28 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[requestfailed] POST http://localhost:8000/settings/billing :: net::ERR_ABORTED
+[note] BLOCKING APP BUG: Creator-tier checkout did not complete - TimeoutError: page.waitForURL: Timeout 30000ms exceeded.
+=========================== logs ===========================
+waiting for navigation until "load"
+  navigated to "http://localhost:8000/settings/billing?e=tier_checkout_rollout"
+  navigated to "http://localhost:8000/settings/billing?e=tier_checkout_rollout"
+============================================================. Continuing this journey on the Free plan.
+[screenshot] 11-billing-upgrade-failed.png @ http://localhost:8000/settings/billing?e=tier_checkout_rollout
+[console:log] http://localhost:8000/settings/billing?e=tier_checkout_rollout :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/settings/billing?e=tier_checkout_rollout :: [Fast Refresh] done in 1198ms
+[console:info] http://localhost:8000/onboarding/first-ideas :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/onboarding/first-ideas :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=21 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/onboarding/first-ideas :: %c%s%c [respin-metric] respin.credits.fold.row_count=1 respin.credits.fold.duration_ms=30 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[note] first-ideas outcome: usable
+[screenshot] 12-first-ideas-result.png @ http://localhost:8000/onboarding/first-ideas
+[console:log] http://localhost:8000/onboarding/first-ideas :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/onboarding/first-ideas :: [Fast Refresh] done in 1120ms
+[console:info] http://localhost:8000/studio :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/studio :: %c%s%c [respin-metric] respin.credits.fold.row_count=2 respin.credits.fold.duration_ms=29 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/studio :: %c%s%c [respin-metric] respin.credits.fold.row_count=2 respin.credits.fold.duration_ms=29 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 13-studio-hooks-result.png @ http://localhost:8000/studio
+[screenshot] 14-studio-caption-result.png @ http://localhost:8000/studio
+[note] third Studio mode: Ideation (plan modes offered: Hooks, Caption, Ideation)
+[requestfailed] POST http://localhost:8000/studio :: net::ERR_ABORTED
+[screenshot] 15-studio-third-mode-result.png @ http://localhost:8000/studio
+[screenshot] 16-studio-feedback-recorded.png @ http://localhost:8000/studio
+[console:log] http://localhost:8000/studio :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/studio :: [Fast Refresh] done in 1300ms
+[console:info] http://localhost:8000/trends :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/trends :: %c%s%c [respin-metric] respin.credits.fold.row_count=4 respin.credits.fold.duration_ms=38 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/trends :: %c%s%c [respin-metric] respin.credits.fold.row_count=4 respin.credits.fold.duration_ms=33 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[note] Niche tracking is not included on this workspace's current plan.
+[screenshot] 17-trends-niche-blocked.png @ http://localhost:8000/trends
+[note] Paste-for-autopsy still tier-blocked after upgrade - recording and moving on
+[screenshot] 18-trends-paste-blocked.png @ http://localhost:8000/trends
+[console:log] http://localhost:8000/trends :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/trends :: [Fast Refresh] done in 2759ms
+[console:info] http://localhost:8000/results :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/results :: %c%s%c [respin-metric] respin.credits.fold.row_count=4 respin.credits.fold.duration_ms=36 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[note] results log blocked: true (expected true on Free, given the billing bug above)
+[note] No declared metric available - results log form withheld, as designed
+[screenshot] 19-results-no-metric.png @ http://localhost:8000/results
+[console:log] http://localhost:8000/results :: [Fast Refresh] rebuilding
+[console:log] http://localhost:8000/results :: [Fast Refresh] done in 1059ms
+[console:info] http://localhost:8000/usage :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/usage :: %c%s%c [respin-metric] respin.credits.fold.row_count=4 respin.credits.fold.duration_ms=31 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/usage :: %c%s%c [respin-metric] respin.credits.fold.row_count=4 respin.credits.fold.duration_ms=24 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/usage :: %c%s%c [respin-metric] respin.credits.fold.row_count=4 respin.credits.fold.duration_ms=53 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 20-usage-balance.png @ http://localhost:8000/usage
+[console:info] http://localhost:8000/studio :: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[console:info] http://localhost:8000/studio :: %c%s%c [respin-metric] respin.credits.fold.row_count=4 respin.credits.fold.duration_ms=20 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[console:info] http://localhost:8000/studio :: %c%s%c [respin-metric] respin.credits.fold.row_count=4 respin.credits.fold.duration_ms=24 workspace=01a0b2f5-a073-7c99-8a54-2cbe58d63147 background: #e6e6e6;background: light-dark(rgba(0,0,0,0.1), rgba(255,255,255,0.25));color: #000000;color: light-dark(#000000, #ffffff);border-radius: 2px  Server  
+[screenshot] 21-signed-out.png @ http://localhost:8000/

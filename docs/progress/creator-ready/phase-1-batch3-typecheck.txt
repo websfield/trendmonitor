@@ -1,0 +1,21 @@
+
+> respin@0.0.0 typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc --noEmit && pnpm --filter=!respin -r run typecheck
+
+Scope: 8 of 9 workspace projects
+packages/brain typecheck$ tsc --noEmit
+packages/trends typecheck$ tsc --noEmit
+packages/llm typecheck$ tsc --noEmit
+packages/trends typecheck: Done
+packages/brain typecheck: Done
+packages/llm typecheck: Done
+packages/db typecheck$ tsc --noEmit
+packages/modes typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/db typecheck: Done
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done

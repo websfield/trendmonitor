@@ -1,5 +1,453 @@
 # Plan review — respin-service-quality
 
+## Post-batch-10 bounded repair (2026-09-17)
+
+**Current assurance remains NOT READY / Not yet / Grade D.** [Final generalist report](creator-ready/batch10-generalist.md): one Medium (B10-C1 failed-dispatch consumption evidence lost), one Low (B10-C2 persisted fixture). All four authorized evaluations completed; no further evaluation authorized. Tenancy and compliance passed the assessed contracts. Nine of ten batch-9 findings closed; B9-C1 remained partial. All 13 tasks and 19 ACs were simulated. Historical 35 reconcile as 33 present, one no-change, one unrecoverable.
+
+The final reviewer supplied the bounded §5 diagnostic: the behavioral scan incorrectly gated both journey success and evidence retention. Under the original repair request, Phase 2 now separates a strictly validated, content-free consumption manifest from the main report, retains it only after verified cleanup, and keeps missing-screenshot/BLOCKING failures red. Initial unknown records, upload/validation failure, strict field/path validation, duplicate handling, download/reconciliation, and negative/mutation cases are specified in the handoff, T2/T4, verification and ACs. The persisted fixture is `succeeded`; the database enum was directly inspected. Both repairs are **unverified plan changes**, not closed findings or product implementation.
+
+Proposed finite reassessment: **billing, tenancy, final generalist**. Compliance text is unchanged; its plan verdict remains scoped to that unchanged contract. This proposal grants no review allowance. Phase 0 stays Ready/A; Phase 3 stays parked. No product tests, hosted dispatches or external writes ran.
+
+Validation observed after this repair: **26 inline Node document assertions passed** (retention contract, separate upload conditions, fixture correction, report presence and current gate link); `git diff --check` passed with only the pre-existing Phase-0 CRLF warning; `git diff HEAD --name-only -- respin` returned no product paths, with a global-ignore access warning. These are document checks, not runtime or independent acceptance. An initial replacement script stopped before writing because its status-text match failed; the corrected script then applied the changes. The planned scan script does not exist yet, as expected for this unimplemented phase.
+
+## Batch 10 — owner-approved eighth extension (2026-09-17)
+
+Owner approved the proposed four-reviewer batch with “go ahead”. All three specialists and the final generalist assessed the same frozen contracts. **Overall: Not yet / Grade D — one Medium and one Low finding.** No product implementation or runtime acceptance is claimed. Batches 0–10 remain consumed; batch 10 completed four evaluations and authorizes no fifth evaluation.
+
+- [Tenancy report](creator-ready/batch10-tenancy.md): Ready/A, PASS; all four batch-9 tenancy findings closed at plan level.
+- [Billing report](creator-ready/batch10-billing.md): NEEDS CHANGES, one Medium and one Low. Failed artifact scans can discard consumption reconciliation evidence; the post-parse fixture names the wrong persisted usage outcome.
+- [Compliance report](creator-ready/batch10-compliance.md): Ready/A, PASS; w8b propagation and retained findings closed.
+- [Generalist report](creator-ready/batch10-generalist.md): NOT READY, Not yet/D; full 13-task/19-AC simulation, mechanical closure, premortem and consolidation completed. No additional substantive findings.
+
+Reports above preserve the returned verdicts and substantive findings/checklist dispositions. Billing's returned “Almost / Grade B” headline is retained in its report; the parent does not infer Ready from that label. Current proof is plan assessment only. Optional cross-model review unavailable; no tests or external writes performed. Earlier no-batch-10-approval statements below are historical and superseded by this explicit reservation.
+
+## Repair disposition — 2026-09-17
+
+The owner's current $go request authorizes the bounded batch-9 repairs. **Ten of ten findings now have plan edits or explicit disposition; independent verification remains owed.** This is constructor accounting, not a reviewer verdict. No product implementation or new reviewer evaluation ran. Batches 0–9 remain consumed; batch 10 requires explicit approval. Phase 0 stays Ready/A and Phase 3 stays parked. The original batch-9 reports below are unchanged.
+
+### Current ten findings
+
+| Finding | Plan repair / disposition | Re-read location |
+|---|---|---|
+| T9-1 | Mapper scan admits exactly one internal forwarding call, rejects production overrides, and has positive/negative controls. | `docs/plans/respin-service-quality-phase-1.md:90`, `docs/plans/respin-service-quality-phase-1.md:188` |
+| T9-2 | Predicate validates offset domain before slicing; predicate and end-to-end seam negatives include the clamped over-end reproducer. | `docs/plans/respin-service-quality-phase-1.md:110`, `docs/plans/respin-service-quality-phase-1.md:188` |
+| T9-3 | Separate process groups, bounded TERM/KILL, group absence and conditional artifact upload; Linux probes exercise delayed and failed cleanup. | `docs/plans/respin-service-quality-phase-2.md:95`, `docs/plans/respin-service-quality-phase-2.md:124`, `docs/plans/respin-service-quality-phase-2.md:139` |
+| B9-C1 | Read-only per-press claim/usage snapshots, scoped attempt reconciliation, deduplicated refusal counter and unknown-evidence stop; no policy change. | `docs/plans/respin-service-quality-phase-2.md:72`, `docs/plans/respin-service-quality-phase-2.md:135`, `docs/plans/respin-service-quality-master-plan.md:346` |
+| T9-4 | Concrete mapper signature, position-table semantics, private default and exact forwarding exception recorded in Handoff Contracts. | `docs/plans/respin-service-quality-phase-1.md:90` |
+| C9-1 / B9-C2 | w8b now appears in governing Verification 7 and AC12 as well as AC3. | `docs/plans/respin-service-quality-phase-1.md:181`, `docs/plans/respin-service-quality-phase-1.md:198` |
+| B9-C3 | Removed positive call-count floor; retained conditional 17/run and 51/demonstration upper estimate before SDK retries; solo verification also has no floor. | `docs/plans/respin-service-quality-master-plan.md:104`, `docs/plans/respin-service-quality-phase-1.md:180` |
+| B9-C4 | Corrected the historical all-applied claim and supplied all 35 individual dispositions below; missing original report remains unrecoverable. | `docs/plans/respin-service-quality-master-plan.md:9` |
+| B9-N1 | Removed conditional-pass reading: absent buy-pack/config failure fails the chapter before the reason assertion. | `docs/plans/respin-service-quality-phase-2.md:135` |
+| G9-1 | Refreshed both phase headers, Phase-0 dependency and current umbrella projections; standing-rule reference uses a section link. | `docs/plans/respin-service-quality-phase-1.md:3`, `docs/plans/respin-service-quality-phase-2.md:3`, `docs/plans/respin-service-quality-master-plan.md:115`, `docs/plans/creator-ready-master-plan.md:3` |
+
+### Historical 35-item correction
+
+Each item from the batch-9 reconstruction is retained separately. **33 plan changes/disclosures present, 1 original item required no change, 1 original report unrecoverable.** Six formerly partial items (3, 10, 14, 15, 20, 27) have been repaired in this pass; their substantive changes are not independently verified. A present requirement is not implemented or tested behavior.
+
+| # | Retained obligation | Current author disposition | Re-read location |
+|---:|---|---|---|
+| 1 | B7 tenancy CHANGE 4 — workflow plants | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-2.md:138` |
+| 2 | B7 tenancy NOTE 1 — numeric floor | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:110` |
+| 3 | B7 tenancy NOTE 2 — test-only mapper | Plan repair applied; reassessment pending. | `docs/plans/respin-service-quality-phase-1.md:90` |
+| 4 | B7 tenancy NOTE 3 — README conditional | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-2.md:96`, `docs/plans/respin-service-quality-phase-2.md:141` |
+| 5 | B7 tenancy NOTE 4 — persistent-secret wording | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-2.md:95` |
+| 6 | B7 billing C2 / compliance C-2 — scan alternative | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:189` |
+| 7 | B7 billing N1 — standing-rule reference | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:110` |
+| 8 | B7 billing N2 / compliance N-a — rule scope | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-master-plan.md:70` |
+| 9 | B7 billing N3 — unguarded history residual | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:110` |
+| 10 | B7 billing N4 — surface-present precondition | Plan repair applied; reassessment pending. | `docs/plans/respin-service-quality-phase-2.md:135` |
+| 11 | B7 compliance C-3 — eight render files | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:196` |
+| 12 | B7 compliance N-c — nonliteral-fold residual | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:196` |
+| 13 | B7 compliance N-b — destination degradation | No change required; original recommendation was None. | `docs/plans/respin-service-quality-phase-1.md:110` |
+| 14 | B8 #1 — individual disposition | Plan repair applied; reassessment pending. | `docs/plans/respin-service-quality-master-plan.md:9` |
+| 15 | B8 #2 — pointer assertion/witness | Plan repair applied; reassessment pending. | `docs/plans/respin-service-quality-phase-1.md:189`, `docs/plans/respin-service-quality-phase-1.md:181`, `docs/plans/respin-service-quality-phase-1.md:198` |
+| 16 | B8 #3 — impossible scan arm | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:189` |
+| 17 | B8 #4 — eight-file population | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:196` |
+| 18 | B8 #5 — trigger clauses/plants | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-2.md:138` |
+| 19 | B8 #6 — generative floor | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:110` |
+| 20 | B8 #7 — mapper scan/signature/handoff | Plan repair applied; reassessment pending. | `docs/plans/respin-service-quality-phase-1.md:90` |
+| 21 | B8 #8 — parked-clause guard | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:189` |
+| 22 | B8 #9 — standing rule/reference | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-master-plan.md:70`, `docs/plans/respin-service-quality-phase-1.md:110` |
+| 23 | B8 #10 — historical search correction | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-master-plan.md:250` |
+| 24 | B8 #11 — w2e invariant credit | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:202` |
+| 25 | B8 #12 — README conditional | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-2.md:141` |
+| 26 | B8 #13 — persistent-secret wording | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-2.md:95` |
+| 27 | B8 #14 — config precondition | Plan repair applied; reassessment pending. | `docs/plans/respin-service-quality-phase-2.md:135` |
+| 28 | B8 #15 — umbrella refresh | Existing plan edit/disclosure retained. | `docs/plans/creator-ready-master-plan.md:63` |
+| 29 | B8 #16 — historical pointer label | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-master-plan.md:317` |
+| 30 | B8 #17 — unguarded read residual | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:110` |
+| 31 | B8 #18 — widened consuming-refusal population | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-master-plan.md:93` |
+| 32 | B8 #19 — literal-fold residual | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:196` |
+| 33 | B8 #20 — live wording label | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:110` |
+| 34 | B8 #21 — empty-needle citation | Existing plan edit/disclosure retained. | `docs/plans/respin-service-quality-phase-1.md:110` |
+| 35 | B8 #22 — missing batch-7 generalist report | Undone: complete original report was not retained and cannot be recovered; no reconstruction claimed. | `docs/plans/respin-service-quality-master-plan.md:252` |
+
+### Verification and next action
+
+Validation: an inline Node assertion script delivered through a PowerShell here-string passed **89 document/citation and isolated range-contract checks**: ten current findings, 35 historical items, every recorded plan citation, mapper forwarding/domain requirements, w8b propagation, cleanup/upload conditions, claim-based counting, config precondition and status/dependency projections. The isolated range check reproduces JavaScript slice clamping; it is not a test of product code. `git diff --check` passed; `git diff HEAD --name-only -- respin` returned no product changes. Product suites and planned runtime/mutation witnesses are **NOT RUN** (plan-only repair). No reviewer was dispatched; review spend this repair: **0 evaluations**. Required next gate is one finite batch 10: tenancy, billing, compliance, then final generalist, against the repaired contracts. This is a proposed batch, not a reservation or authorization. Product implementation resumes only after current independent plan assurance; approval to continue work does not reset consumed review allowance.
+
+
+## Batch 9 — owner-approved seventh extension (2026-09-17)
+
+Current assessment: **NOT READY — Not yet, Grade D; four Medium and six Low findings (one Low uncertain).** All four authorized evaluations completed; batches 0–9 are consumed and no batch 10 is authorized. Reservation and frozen inputs: `docs/plans/respin-service-quality-master-plan.md`, current review reservation. Historical reports below remain unchanged. No plan/source repair occurred during this batch. Each report is returned by its independent context and recorded by the orchestrator. The final generalist report and reconciliation below govern the current status.
+
+### Compliance — `/root/batch9_compliance`
+
+**Readiness: Almost · Grade B.** One Low verification-list omission remains; no BLOCK, High, or Medium compliance finding.
+
+**Verdict: NEEDS CHANGES — Respin spin compliance.** Plan review only. `plan gate ran lean (consolidated)`.
+
+**Finding**
+
+- **C9-1 — Low, high confidence:** `docs/plans/respin-service-quality-phase-1.md:187` introduces pointer-deletion witness **w8b**, but the governing mutation instructions at `:179` and complete witness/transcript criterion at `:196` omit it. AC3 requires the witness, while the prescribed verification transcript does not include it—the same population omission previously corrected for w6b. This is an evidence-list consistency defect; the literal assertion itself is now buildable.
+
+**Prior compliance findings**
+
+| Prior item | Current disposition |
+|---|---|
+| Batch 7 C-1: obsolete pointer in AC3/Decisions | Closed: P1 `:108`, `:187`; master `:63` reference one live sentence. |
+| Batch 7 C-2 / batch 8 C3: `SPEND_ONLY` alternative | Closed: P1 `:187` deletes the alternative and requires rendered pre-vendor states. Source confirmed at `respin/tests/onboarding-ui.test.tsx:1411`. |
+| Batch 7 C-3 / batch 8 C2: incomplete fold population | Closed: P1 `:194` enumerates all eight rendered component files, excludes the string-only button helper, and requires list maintenance. The current component tree matches. |
+| Batch 7 N-a / batch 8 C1: standing rule forbids adopted copy | Closed: master `:62` permits stable locations and forbids external values; P1 `:108` reflects that distinction. |
+| Batch 7 N-b: destination’s degraded states | Retained, acknowledged residual: P1 `:108`. No new money-path repair inferred. |
+| Batch 7 N-c / batch 8 N1: nonliteral fold residual | Recorded at P1 `:194`; no prop-selected element was found in the inspected render tree. |
+| Batch 8 C4: pointer lacks independent literal/witness | Literal requirement closed at P1 `:187`; witness accounting remains C9-1 above. |
+| Batch 8 C5: misleading propagation record | Superseded wording is now explicitly marked at master `:286`; the correction and historical search record are retained at `:264`. |
+| Batch 8 N2: second live-pointer copy | Historical status explicitly marked at master `:309`. |
+| Batch 8 N3: byte identity presented as truth | Closed: P1 `:187` separates static-string invariance from ledger-location evidence. |
+| Batch 8 N4: silently omitted dispositions | Compliance items are now addressed at master `:238–244`; the missing historical generalist report remains explicitly unrecoverable. Whole-list accounting belongs to the final generalist. |
+
+**Eight checklist dispositions**
+
+1. **Sources allowlist — holds within scope.** No adapter/dependency change planned. Manifest search found only the existing Playwright test dependency among the searched scraping/browser terms.
+2. **Similarity gate before display — n/a.** Spin execution and similarity gating are outside this change.
+3. **Minimum-difference rule — n/a.** No Spin-generation or comparison change.
+4. **Kill-test honesty — holds in planned behavior.** P1 `:113–114`, `:194` preserve refusal reasons, sharper angle, charge and preparation disclosures. Current renderer separates honest refusal from draft display (`generation-outcome.tsx:473`, `:510`, `:543`). C9-1 concerns the additional voice-refusal witness record.
+5. **No invented specifics — holds under the approved R-68 amendment.** Creator-field offers, hard disclosure fallback, filtered counts and unchanged stored findings are explicitly tested at P1 `:193`. The disclosure-specific residual is recorded.
+6. **No guarantees — holds.** New copy promises no performance or resolution timeline; weakest-point visibility remains required. AC3 uses independent literals rather than its own copy table.
+7. **No automation/concealment — holds.** No automation surface is introduced. T6 leaves `summary.claims` unfiltered; hard disclosure enforcement remains at `respin/packages/modes/src/claims.ts:467`, with context demotion retaining findings at `:691`.
+8. **Autopsy caching/honesty — n/a.** No autopsy or trend-score change.
+
+**Least-confident probes**
+
+- **Phase 1:** The suspected quote-normalisation cause remains unproven and is honestly labelled. The current parser has the stated exact-match failure path (`assemble.ts:264`, `:372`); the planned kind and mapper-witness thread can diagnose subsequent refusals without claiming the observed failure is solved.
+- **Phase 2:** Hosted-runner bootstrap assumptions remain explicitly unverified pending the bounded dispatch demonstration. No runtime assurance was inferred.
+
+**Coverage**
+
+Read fully: `AGENTS.md`, `CLAUDE.md`, gate rules, compliance agent/skill, master plan, both phase plans, codebase review, retained batch-7/8 compliance reports and batch-8 generalist report; all eight component files in AC10, plus `studio-view.tsx`, onboarding `run-outcome.tsx`, and `safe-log.ts`.
+
+Read targeted sections: codebase-map feature index; R-68/R-69 and PRD requirements; assembly/inference and settlement paths; disclosure scanners; copy functions; UI/agreement tests; usage ledger display; Phase-0 card confirming **Ready, Grade A**.
+
+Commands: read-only PowerShell `Get-Content`/line selections and `rg` searches. **No product tests, mutation runs, writes, network operations, or credential/environment-file reads.** Requested model/effort: `gpt-6-astra`/`max`; resolved runtime unverified.
+
+### Tenancy — `/root/batch9_tenancy`
+
+**Readiness: Not yet · Grade C · TENANCY verdict: NEEDS CHANGES.**
+**0 BLOCK · 0 High · 3 Medium · 1 Low.** CI secret-lifetime proof remains incomplete under gate-rules §1.
+
+References below use `P1` = `docs/plans/respin-service-quality-phase-1.md`, `P2` = corresponding `phase-2.md`, and `Master` = corresponding `master-plan.md`.
+
+| ID | Severity / confidence | Finding |
+|---|---|---|
+| T9-1 | **Medium / High** | **`P1:108` — the new test-only scan rejects the required implementation.** `parseVoiceReply` must forward `mapBack` to its internal `locateQuote` call, while the scan prohibits `mapBack` at every call site outside `packages/llm/tests/**`. That required call is in `packages/llm/src/assemble.ts:372`. No permitted forwarding exception is specified. Keeping `defaultMapBack` private also does not prevent callers supplying their own mapper. **Defect introduced by the plan repair; no observed production leakage.** |
+| T9-2 | **Medium / High** | **`P1:108` — the promised mis-map classification lacks a bounds failure case.** The mandated predicate checks canonical equality and whitespace edges, but does not require integer/in-bounds offsets. Inspection counterexample: content `"a-b"`, model quote `"a–b"`, injected range `[0,4)`. `slice` clamps to `"a-b"`; both specified checks pass, but the database rejects `endUtf16 > content.length` at `respin/packages/db/src/with-workspace.ts:5723`. Neither the wrong-range table nor seam negatives covers this case. Thus a mis-map can still reach a kindless provenance refusal. **Newly identified gap in the planned guarantee; existing database protection remains intact.** |
+| T9-3 | **Medium / High** | **`P2:89`, `P2:130` — HTTP shutdown does not establish that key-bearing processes have exited.** Step 6 records PIDs without specifying the process-group setup that step 8 assumes. Step 8 signals TERM and waits only for HTTP connection refusal; the separate worker handles TERM asynchronously (`respin/worker/main.ts:45`) and awaits graceful shutdown with a 30-second timeout (`respin/worker/pg-boss-runtime.ts:448`). Upload runs with `if: always()`, including after cleanup failure. The worker can therefore retain the vendor key during upload, contrary to the stated boundary. AC5 provides workflow-text checks, not this negative case. **Gap in the proposed workflow, not an observed deployed leak.** |
+| T9-4 | **Low / High** | **`P1:88`, `P1:108`, `Master:240` — the claimed mapper handoff was not added.** Handoff Contracts contains no `mapBack` entry, and its callback signature remains unspecified. Literal injected ranges and private default visibility are now stated, but the retained contract item is only partly addressed. **Remaining documentation/accounting defect.** |
+
+The least-confident probes support P1’s diagnosis-first approach: the original failed reply is unavailable, and the plan does not promise canonicalization fixes that incident. Its stronger mis-map guarantee fails T9-2. P2’s UI-based admin bootstrap matches `platform-admin.spec.ts:41`; hosted-runner behavior remains explicitly pending the first dispatch, while cleanup already has the source-supported gap T9-3.
+
+Retained-item accounting — **12 closed, 3 partial**, counting each retained report item separately:
+
+| Retained item | Disposition and current evidence |
+|---|---|
+| Batch 7 CHANGE 1 — seam reachability | **Closed on its original defect:** `P1:108` threads the mapper through `parseVoiceReply`; containment tracked separately below. |
+| Batch 7 CHANGE 2 — obsolete w2b | **Closed:** governing definition `P1:179`. |
+| Batch 7 CHANGE 3 — AC12 “only” claim | **Closed:** `P1:196`. |
+| Batch 7 CHANGE 4 — missing workflow plants | **Closed:** both plants and clauses at `P2:89`, `P2:129`. |
+| Batch 7 NOTE 1 — numerical floor | **Closed:** 20 qualifying cases/run, `P1:108`. |
+| Batch 7 NOTE 2 — test-only seam | **Partial:** scan exists but conflicts with forwarding, T9-1. |
+| Batch 7 NOTE 3 — repository-secret qualification | **Closed:** `P2:90`, `P2:132`. |
+| Batch 7 NOTE 4 — artifact-secret wording | **Closed:** “persistent” qualifier, `P2:89`. |
+| Batch 8 CHANGE 1 — numerical floor | **Closed:** `P1:108`. |
+| Batch 8 CHANGE 2 — scan and handoff | **Partial:** T9-1 and T9-4. |
+| Batch 8 CHANGE 3 — workflow plants | **Closed:** `P2:89`, `P2:129`. |
+| Batch 8 NOTE 1 — README qualification | **Closed:** `P2:90`, `P2:132`. |
+| Batch 8 NOTE 2 — artifact-secret wording | **Closed:** `P2:89`. |
+| Batch 8 NOTE 3 — w2e credit | **Closed:** `P1:200`. |
+| Batch 8 NOTE 4 — mapper contract | **Partial:** literal mapper/private default specified; signature and handoff remain absent. |
+
+All eight numbered checks, in **plan-review mode**:
+
+| Check | Disposition |
+|---|---|
+| **1. Single scoping helper** | **Holds.** The actual proposed accessor is `hasGenerationForProfile`, not `hasFullScript`. `P1:94` composes scoped `generationsNewest({limit:1})`; registration points, selected-profile callers, sibling/workspace negatives and P4 contamination witness are enumerated. |
+| **2. Mechanism-level stripping** | **N/A:** no new shared-library flow. |
+| **3. Append-only brains, provenance, approval** | **Violated for the matcher guarantee — T9-2.** Existing scoped evidence validation, versioning and confirmation remain preserved. Confidence is withdrawn by current `PRD.md:67`; its absence is not a finding. |
+| **4. Sensitive inference** | **N/A:** no new inferred fields or sensitive-trait inference. |
+| **5. Export/deletion completeness** | **N/A:** no new creator-data table. |
+| **6. Roles/admin boundary** | **Holds in plan.** Bootstrap creates an ephemeral identity through signup; existing allowlist remains authoritative. No billing/admin authority is added to seats. |
+| **7. PII/secrets posture** | **Violated — T9-3.** Static refusal diagnostics and explicit synthetic-artifact disclosures otherwise hold. |
+| **8. Requirement provenance and tested claims** | **Violated — T9-1 through T9-4.** Requirements are cited, but the stated containment, classification and cleanup claims exceed their specified proofs. |
+
+Coverage: read the master, both phase plans, brief and codebase review fully; read canon, reviewer/skill, retained tenancy reports and relevant requirement sections. Inspected exact matcher/export/caller, DB provenance/scoping, accessor-registration/tests, onboarding/logging, admin bootstrap/auth/artifact, workflow and worker-shutdown sources. Read the codebase map before source exploration. Money Phase 3 stayed outside scope.
+
+Actual commands were read-only `Get-Content -LiteralPath` with bounded line selections, targeted `rg -n` searches, and `rg --files .github/workflows`. One unquoted-path read failed in PowerShell and was retried quoted; no product command ran. **No fresh tests, witness mutations, writes, network access or secret-file reads.**
+
+Phase 0’s final batch-15 **Ready / A** reconciliation is accepted; its dependency finding is not reopened. Historical entry evidence remains 5,067 passed / 101 skipped, with 23 Docker files not run. This verdict assesses the plans, not implementation acceptance. Requested model was `gpt-6-astra/max`; runtime resolution was not independently verified.
+
+### Billing — `/root/batch9_billing`
+
+**Readiness: Almost · Grade B · NEEDS CHANGES.** Four CHANGE findings and one NOTE; no BLOCK. This is a plan verdict, not implementation acceptance.
+
+Scope: `docs/plans/respin-service-quality-{master-plan,phase-1,phase-2}.md`. Below, **M**, **P1**, and **P2** refer to those files. Phase 0’s batch-15 Ready/A dependency proof is accepted.
+
+| ID | Severity / confidence | Finding |
+|---|---|---|
+| C1 | **Medium / High** | **M:338; P2:87,126:** the demonstration stops after two refusals that **consumed** an included build, but the planned evidence records only outcome/code/optional assembly kind. Non-assembly failures have no consumption witness: `workspace_paused` occurs before consumption (`respin/packages/credits/src/inference.ts:562`) and after it (`respin/packages/db/src/with-workspace.ts:4076`, called after settlement by `infer-voice.ts:256`); truncation explicitly consumes nothing (`respin/packages/llm/src/errors.ts:256`). The action returns code without consumption or attempt identity (`respin/app/(product)/onboarding/actions.ts:323`). No reconciliation step or negative-case test establishes the required count. **Unsatisfied plan requirement; underlying settlement behavior is pre-existing.** |
+| C2 | **Low / High** | **P1:179,196:** AC3 introduces pointer-deletion witness **w8b** at P1:187, but both the required mutation execution list and AC12’s transcript list omit it. This repeats the propagation gap previously repaired for w6b. **Introduced by the latest plan fix.** |
+| C3 | **Low / High** | **M:96:** the asserted 11-call lower estimate says each solo generation makes at least two calls because scoring is active. Parsing can refuse after the first call (`respin/packages/modes/src/pipeline.ts:164`), and scoring runs only on an accepted draft with usable rules (`:313–319`). Authorized refusal branches therefore invalidate that floor. The 51-call upper estimate remains conservative. **Existing plan claim remains inaccurate.** |
+| C4 | **Low / High** | **M:238–244:** the 35-item disposition adds totals but condenses 25 items into grouped prose without individually identifying every item and its location/status. It still does not satisfy `.claude/gate-rules.md:431–433`. **Prior billing accounting finding remains partially unresolved.** |
+| N1 | **Low / Medium** | **P2:126:** “the assertion runs only where `config.ok`” permits skipping the owner-boundary assertion on unavailable config, whereas T1 at P2:86 requires asserting the surface exists first. The acceptance wording leaves a conditional-pass interpretation that T1 excludes. The control really is absent when config fails (`respin/app/(product)/settings/billing/billing-view.tsx:436`). **Ambiguity introduced by the precondition fix.** |
+
+The pre-existing unguarded credit-history read and parked false sibling money clauses are recorded residuals, not new blockers. The widened post-settlement refusal population is now explicitly recorded at M:85.
+
+| Check | Disposition |
+|---|---|
+| **1 — B1, ledger/balance** | **N/A to mutation:** P1:52,208 exclude ledger/balance changes. No mutable balance is proposed. This was not a fresh whole-ledger audit. |
+| **2 — B2, idempotency** | **N/A to mutation:** no webhook changes. Existing double-delivery and grace/downgrade tests inspected at `credits/tests/stripe.test.ts:609,675`; zero-balance pre-call refusal inspected at `credits/tests/inference.test.ts:300`. Not executed. |
+| **3 — B3, settlement** | **N/A to mutation:** claim/debit-before-parser ordering verified at `credits/src/inference.ts:869,927` and `infer-voice.ts:214,236,256`. The plan preserves the parked policy rather than promising atomic voice-document settlement. |
+| **4 — B4, expiry/pause** | **N/A:** no expiry/allocation/pause implementation changes. Applied current canon’s lot-fold/soonest-effective-expiry supersession, not the checklist’s obsolete naive-sum/oldest-first wording (`tech-spec.md:80,118`). |
+| **5 — B5, config authority** | **Holds:** T8 uses the existing live entitlement facade; no seeded tier-name list or numeric price enters product copy. Verified `app-server.ts:642`, `mode-access.ts:310`, `trends/actions.ts:99`; P1:115,195. |
+| **6 — B6, tiers/owners** | **Holds in product design:** Free stays keyless/default; owner reason outranks Stripe/config mapping remedies. Existing action-owner test covers all seven operations (`credits/tests/actions.test.ts:471`). Planned UI acceptance ambiguity is N1. |
+| **7 — number provenance** | **Holds for authority:** allowance/rebuild examples cite seed config; dispatch/refusal caps cite owner decisions. The vendor-call estimate itself remains inaccurate: C3. |
+| **8 — B7, effective tests** | **Violated in planned proof:** C1 lacks a consuming-refusal witness; C2 drops the new pointer witness from execution requirements. Other scoped tests are meaningfully specified: literal pointer, static-entry check, four parked-clause pins, allowance-zero/positive/error cases and shared-Date identity. No money-mutating implementation is proposed. |
+
+Prior-item accounting, using batch-8 billing findings in their recorded order:
+
+| Prior item | Closure |
+|---|---|
+| Batch7 C1 — stale pointer in AC/master | **RESOLVED:** P1:108,187; M:63. |
+| Batch7 C2 — `SPEND_ONLY` alternative | **RESOLVED:** P1:187 removes it. |
+| Batch7 N1 — dangling standing-rule citation | **RESOLVED:** P1:108 points to master Decisions. |
+| Batch7 N2 — overbroad causal claim/rule | **RESOLVED:** M:62 scopes the rule and says three of five defects. |
+| Batch7 N3 — unguarded history read | **RESOLVED as disclosure only:** P1:108; code at `usage/page.tsx:108` remains pre-existing. |
+| Batch7 N4 — AC1 surface precondition | **PARTIAL:** P2:126 adds config wording but leaves N1’s ambiguity. |
+| Batch8 C1 — impossible scan alternative | **RESOLVED:** P1:187. |
+| Batch8 C2 — three identical renders | **RESOLVED:** P1:187 specifies one render, static-source check and separate price-line tests. |
+| Batch8 C3 — unspecified literal pin | **RESOLVED in design:** P1:187 requires a literal independent of the copy table; C2 identifies the new execution-list gap. |
+| Batch8 C4 — parked-clause guard | **RESOLVED:** P1:187 pins all four named clauses. |
+| Batch8 C5 — individual disposition | **PARTIAL:** totals added; C4 remains. |
+| Batch8 N1 — second live wording | **RESOLVED:** M:309 labels the historical copy explicitly. |
+| Batch8 N2 — rule forbids its own pointer | **RESOLVED:** M:62 permits stable locations. |
+| Batch8 N3 — destination failure residual | **RESOLVED as disclosure only:** P1:108. |
+| Batch8 N4 — enlarged charged/refused population | **RESOLVED as disclosure only:** M:85. |
+| Batch8 N5 — live sentence label | **RESOLVED:** P1:108. |
+
+**Least-confident probes:** P1:204 correctly leaves the original model failure unexplained; the proposed tolerance cannot establish that root cause, and M:85 now records its billing consequence. P2:140 correctly leaves hosted-runner bootstrap assumptions for the bounded dispatch demonstration; that uncertainty is separate from C1’s missing consumption evidence.
+
+**Coverage and commands:** Read the master, both phases, brief, and codebase review fully; also AGENTS, CLAUDE, gate rules, billing reviewer, billing skill and project context. Read the codebase-map index before source exploration; retained-history coverage included lines 1255–1332 and 1404–1508.
+
+Source coverage included:
+
+- Onboarding outcome/state/cost-copy modules fully; actions:275–331; billing-error producer/copy ranges:570–625,970–1180,1908–2010,2045–2063; honesty tests:1361–1490.
+- Credits `infer-voice`:126–280; `inference`:521–1020,1078–1104; entitlement facade:631–655; mode-access:281–325; Stripe actions:279–316,900–1002.
+- LLM assembly:46–400; error classifications:85–203,226–258.
+- Usage page:1–140,228–245; history view:546–585; DB accessor:739–762 and pause-write producer:4064–4080.
+- Trends page:287–357; actions:78–122; niche panel fully; billing-view owner/config/control ranges.
+- Seed:29–89; config schema:21–72; relevant creator journey bodies, artifact-note writer, pipeline:140–204,302–323 and worker schedules:340–365.
+- PRD §4G; tech-spec settlement/config/ledger provisions; decisions R-6/R-7/R-12; M1 acceptance; T6-P deferral; Phase0 batch-15 verdict.
+
+Commands were read-only `Get-Content -LiteralPath … -Encoding UTF8` with numbered-range loops and `rg -n` source/history searches. Failed lookups for nonexistent brain-write files and a misplaced billing-errors path were corrected through source search. **No writes, product execution, tests, network or secret-file reads.** Historical 5,067 passed/101 skipped and 23 Docker files NOT RUN are not fresh acceptance evidence. Requested model/effort: `gpt-6-astra/max`; resolution unverified.
+
+### Generalist — `/root/batch9_generalist`
+
+**Readiness: Not yet · Grade D · NOT READY.** The mapper instructions conflict, and two Phase 2 controls lack sufficient evidence contracts.
+
+This is the reserved batch-9 final assessment. No files changed, tests ran, or additional reviews launched.
+
+References: **M** = `docs/plans/respin-service-quality-master-plan.md`; **P1/P2** = corresponding phase plans; **R** = `docs/progress/respin-service-quality-plan-review.md`; **U** = `docs/plans/creator-ready-master-plan.md`.
+
+#### Consolidated findings
+
+**Four Medium, six Low; one Low is uncertain. No High or BLOCK.**
+
+| ID | Severity / confidence | Finding |
+|---|---|---|
+| **T9-1** | Medium / High | **P1:108:** the required `parseVoiceReply` → `locateQuote` forwarding passes `mapBack` outside `packages/llm/tests/**`, which the new source scan forbids. No forwarding exception is specified. The instructions cannot both be satisfied. |
+| **T9-2** | Medium / High | **P1:108,186,204:** the postcondition lacks integer/bounds checks. For content `"a-b"`, needle `"a–b"` and injected `[0,4)`, `slice` clamps; canonical equality and whitespace-edge checks pass. The database rejects the range at `respin/packages/db/src/with-workspace.ts:5723`, producing the kindless provenance refusal the plan promises to prevent. Neither mandated seam negative covers this. |
+| **T9-3** | Medium / High | **P2:89,130:** step 6 records PIDs without establishing the process groups step 8 assumes. HTTP connection refusal does not prove the separate worker exited; its TERM handler awaits asynchronous shutdown (`respin/worker/main.ts:45`, `pg-boss-runtime.ts:448`). Upload also runs after cleanup failure. The stated key-lifetime boundary is therefore unproven. |
+| **B9-C1** | Medium / High | **M:338; P2:87,126:** the two-consuming-refusal stop rule has no consumption reconciliation or negative-case witness. `workspace_paused` can occur before consumption (`inference.ts:562`) or after settlement (`with-workspace.ts:4076`); truncation consumes nothing (`llm/src/errors.ts:256`). Outcome/code/optional kind cannot reliably establish the count. |
+| **T9-4** | Low / High | **P1:88,108; M:240:** the claimed mapper handoff remains absent, and its callback signature is unspecified. Literal injected ranges and private default visibility address only part of the retained item. |
+| **C9-1 = B9-C2** | Low / High | **P1:179,187,196:** AC3 adds **w8b**, but Verification 7 and AC12 omit it. This repeats the earlier w6b propagation omission. |
+| **B9-C3** | Low / High | **M:96:** the 11-call floor assumes every solo generation reaches scoring. Parsing can fail after call one (`pipeline.ts:164`); scoring requires an accepted draft with usable rules (`:313–319`). The 51-call upper estimate remains conservative under its stated exclusions. |
+| **B9-C4** | Low / High | **M:238–244:** “35 applied” is unsupported. The disposition groups items without individual status/location accounting; six reconstructed obligations remain partial or defective, and one historical report remains unrecoverable. |
+| **B9-N1** | Low / Medium — uncertain | **P2:86,126:** T1 requires asserting the billing surface exists; AC1 says the assertion runs only where `config.ok`. That permits a conditional-pass interpretation which T1 excludes. The control is absent when configuration fails (`billing-view.tsx:436`). |
+| **G9-1** | Low / High | **P1:3; P2:3; M:107:** current projections still say “pending batch 6,” and M’s Phase-1 dependency cell says `none` despite P1:102 and U:102 requiring Phase 0. P1:108’s standing-rule citation also points to M:43 rather than its current home at M:62. Phase 0 is satisfied; this is document inconsistency, not a reopened dependency failure. |
+
+The original specialist reports remain unchanged:
+
+| Reviewer | Original result |
+|---|---|
+| Tenancy | Not yet / C; NEEDS CHANGES; three Medium, one Low |
+| Billing | Almost / B; NEEDS CHANGES; one Medium, four Low |
+| Compliance | Almost / B; NEEDS CHANGES; one Low |
+
+The aggregate uses the plan-reviewer’s **Not yet / D** rule because T1 contains incompatible instructions. No original verdict is converted into PASS. The compliance finding is deduplicated with billing C2.
+
+#### Execution simulation
+
+All **13 tasks and 19 ACs** were walked.
+
+| Task | Outcome |
+|---|---|
+| P1 T1(i) — kinds | Buildable: sixteen named throw sites, exhaustive set check and fixtures. |
+| P1 T1(ii)/(iv) — matcher and proof | **Blocked:** T9-1; promised classification also fails T9-2. Mapper contract remains incomplete. |
+| P1 T1(iii) — refusal/logging | Buildable; w8b execution accounting remains incomplete. |
+| P1 T2 — landing/nav | Buildable; destinations, caller and tests named. |
+| P1 T3 — steps/accessor | Buildable; scoped composition, registration population, unknown/rethrow cases and sibling witnesses named. |
+| P1 T4 — brain folds | Buildable; default/open states and section order specified. |
+| P1 T5 — active-document notices | Buildable; Studio and first-ideas failed-read handling included. |
+| P1 T6 — disclosure offers | Buildable under the approved R-68 narrowing; creator findings and concealment assertions retained. |
+| P1 T7 — progressive disclosure | Buildable; eight-file render population, state fixtures and planted violations specified. |
+| P1 T8 — niche block | Buildable; live allowance, shared `Date`, preserved rows and journey branch specified. |
+| P2 T1 — settled waits/owner assertions | Buildable except B9-N1’s acceptance ambiguity. |
+| P2 T2 — voice/editor handoff | Branch handling buildable; consuming-refusal demonstration evidence is missing. |
+| P2 T3 — routes/paid gates | Buildable; route population and branch-independent screenshot names specified. |
+| P2 T4 — workflow/scanners | **Incomplete:** process shutdown/key-lifetime proof fails T9-3; demonstration counting fails B9-C1. |
+| P2 T5 — README | Buildable as documentation; its shutdown claim inherits T9-3. |
+
+| Acceptance criterion | Simulation outcome |
+|---|---|
+| P1 AC1 | Buildable. |
+| P1 AC2 | **Incomplete:** incompatible scan and uncovered bounds failure. |
+| P1 AC3 | Literal/static-source assertions are now buildable; w8b is missing from governing execution lists. |
+| P1 AC4 | Buildable. |
+| P1 AC5 | Buildable. |
+| P1 AC6 | Buildable. |
+| P1 AC7 | Buildable. |
+| P1 AC8 | Buildable. |
+| P1 AC9 | Buildable, including named manual checks. |
+| P1 AC10 | Buildable; previous render-population omission closed. |
+| P1 AC11 | Buildable. |
+| P1 AC12 | **Incomplete witness enumeration:** w8b omitted. |
+| P2 AC1 | Branch evidence specified; config precondition ambiguous and insufficient for consumption counting. |
+| P2 AC2 | Buildable, with both planted proximity violations. |
+| P2 AC3 | Buildable from the explicit F-20 route population. |
+| P2 AC4 | Buildable; both previously missing workflow plants now present. |
+| P2 AC5 | **Incomplete:** workflow-text checks do not prove worker/process exit. |
+| P2 AC6 | First-run evidence specified; the master’s bounded closing demonstration still lacks consumption evidence. |
+| P2 AC7 | Conditional repository-secret disclosure is specified; shutdown assurance remains incomplete. |
+
+#### Pre-mortem and weakest assumptions
+
+- **Wrong original diagnosis:** honestly retained at P1:204. The failed reply is unavailable; kinds diagnose a subsequent refusal. Tolerance is not claimed to prove that incident’s cause.
+- **Wrong map-back loses the diagnostic:** **unabsorbed bounds case**, T9-2. Original seam reachability is repaired; the broader guarantee remains incomplete.
+- **Invented onboarding completion:** absorbed by T3’s scoped reads, clamp/config cases and explicit unexpected-error rethrow.
+- **Green run conceals skipped personas:** absorbed by shared screenshot names, missing-screenshot plants and explicit operator/editor branches.
+- **Key-bearing worker survives until upload:** **unabsorbed**, T9-3.
+- **Demonstration stops or continues on the wrong refusal count:** **unabsorbed**, B9-C1.
+- **Cold bootstrap/compile failure:** explicitly addressed by readiness checks and bounded redispatch; hosted-runner behavior remains unverified until execution, as P2:140 states.
+- **Hidden disclosure/parked-copy regression:** addressed by the eight-file population and four clause pins.
+- **Unusable `/usage` destination and charged-without-deliverable policy:** recorded existing residuals under the approved scope. This review does not reopen the parked money implementation.
+
+#### Mechanical checks
+
+- **Dependency proof:** Phase 0’s final batch-15 reconciliation is **Ready / A**, plan and execution PASS (`creator-ready-phase-0-card.md:279,315`). Historical failures were not treated as current.
+- **Task/file closure:** P1 has **43 rows / 49 distinct paths**; P2 has **14 rows**. Task ownership and modification tables reconcile.
+- **Owners/reviewers:** all five named agent files exist.
+- **Requirement routing:** service/paid splits reconcile through U:31, including its explicit F-17 override.
+- **Invariants:** P1’s eleven and P2’s three named slugs reconcile with their checklists and coverage sections. No silent rename found in the retained history.
+- **Handoffs:** kinds, testids, signup destination and scoped accessor are specified; mapper handoff is the exception.
+- **Reachability/Least confident:** present in both phases and probed above.
+- **Numbers:** the call-floor claim fails B9-C3. The newly pinned 20-case floor resolves its previous missing-value finding.
+- **Size:** the >25-row warning remains applicable and owner-accepted. I could simulate the current tasks; no additional inability-to-simulate finding is claimed.
+
+#### Individual accounting of the claimed 35 fixes
+
+This reconstructs the **13 residual batch-7 items** from R:1654–1663 and the **22 numbered batch-8 items** from R:1640–1644. Repeated defects across batches are counted separately because the claim does so.
+
+“Closed” means the requested plan edit or explicitly requested residual disclosure is present—not that implementation passed.
+
+| # | Retained obligation | Current disposition / evidence |
+|---:|---|---|
+| 1 | B7 tenancy CHANGE 4 — workflow plants | **Closed:** P2:89,129. |
+| 2 | B7 tenancy NOTE 1 — numeric floor | **Closed:** P1:108. |
+| 3 | B7 tenancy NOTE 2 — test-only mapper | **Partial/defective:** conflicting scan, T9-1; P1:108. |
+| 4 | B7 tenancy NOTE 3 — README conditional | **Closed:** P2:90,132. |
+| 5 | B7 tenancy NOTE 4 — artifact wording | **Closed:** “persistent” qualifier, P2:89. |
+| 6 | B7 billing C2 / compliance C-2 — scan alternative | **Closed:** P1:187. |
+| 7 | B7 billing N1 — standing-rule reference | **Closed in substance:** M’s Decisions identified, P1:108; current line drift is G9-1. |
+| 8 | B7 billing N2 / compliance N-a — rule scope | **Closed:** M:62. |
+| 9 | B7 billing N3 — unguarded history destination | **Closed as disclosure:** P1:108. |
+| 10 | B7 billing N4 — surface-present precondition | **Partial:** P2:126 retains B9-N1 ambiguity. |
+| 11 | B7 compliance C-3 — missing render files | **Closed:** P1:194. |
+| 12 | B7 compliance N-c — nonliteral-fold residual | **Closed as disclosure:** P1:194. |
+| 13 | B7 compliance N-b — destination degradation | **No change required:** original fix was “None”; acknowledged at P1:108. |
+| 14 | B8 #1 — individual disposition | **Partial:** M:238–244 still groups items. |
+| 15 | B8 #2 — pointer assertion/witness | **Partial:** literal/source check present at P1:187; w8b execution lists incomplete. |
+| 16 | B8 #3 — impossible scan arm | **Closed:** P1:187. |
+| 17 | B8 #4 — eight-file population | **Closed:** P1:194. |
+| 18 | B8 #5 — trigger clauses/plants | **Closed:** P2:89,129. |
+| 19 | B8 #6 — generative floor | **Closed:** P1:108. |
+| 20 | B8 #7 — mapper scan/signature/handoff | **Partial/defective:** T9-1 and T9-4; P1:88,108. |
+| 21 | B8 #8 — parked-clause guard | **Closed:** P1:187. |
+| 22 | B8 #9 — standing rule/dangling reference | **Closed in substance:** M:62; P1:108. |
+| 23 | B8 #10 — search record/supersession marker | **Closed:** dated correction M:264; explicit marker M:286. |
+| 24 | B8 #11 — w2e invariant credit | **Closed:** P1:200. |
+| 25 | B8 #12 — README conditional | **Closed:** P2:90,132. |
+| 26 | B8 #13 — persistent-secret wording | **Closed:** P2:89. |
+| 27 | B8 #14 — config precondition | **Partial:** P2:126; B9-N1. |
+| 28 | B8 #15 — umbrella batch-8 refresh | **Closed for that historical correction:** U:63,94; current projections are separate. |
+| 29 | B8 #16 — second live-sentence copy | **Closed:** historical label, M:309. |
+| 30 | B8 #17 — unguarded read residual | **Closed as disclosure:** P1:108. |
+| 31 | B8 #18 — enlarged consuming-refusal population | **Closed as disclosure:** M:85. |
+| 32 | B8 #19 — literal-fold residual | **Closed as disclosure:** P1:194. |
+| 33 | B8 #20 — label live wording | **Closed:** P1:108. |
+| 34 | B8 #21 — empty-needle citation | **Closed:** P1:108 cites `assemble.ts:269`. |
+| 35 | B8 #22 — missing batch-7 generalist report | **Unrecoverable history:** acknowledged at M:244,252; the complete original report is still absent. |
+
+**Total: 35 — 27 closed, 6 partial/defective, 1 required no change, 1 unrecoverable-history item.** The missing generalist’s original four-item report was not reconstructed or invented; the retained batch-8 enumeration supplies the 35-item accounting above.
+
+#### §5 convergence diagnostic
+
+| Recurring class | Reproducer | Bounded repair surface |
+|---|---|---|
+| Mapper contract/proof | Required forwarding violates its own scan; `[0,4)` clamps yet reaches database rejection. | T1 mapper signature, permitted forwarding, predicate domain and corresponding negative witnesses. |
+| Key lifetime | Web port closes while worker shutdown is pending; upload still runs after cleanup failure. | P2 T4 process lifecycle and AC5’s cleanup-failure evidence. |
+| Consumption accounting | Same refusal code arises before and after durable consumption. | Journey evidence/reconciliation and demonstration counter; no settlement-policy change implied. |
+| Disposition propagation | w8b exists in AC3 but not Verification 7/AC12; claimed handoff row absent. | Existing disposition and governing task/AC lists. No additional artifact layer. |
+
+The original seam and refusal wording improvements remain valid. Their stronger proof and propagation claims have not converged. **Stop here with the residuals recorded; batch 9 supplies no authorization for repair-driven reevaluation or batch 10.**
+
+#### Evidence and limits
+
+Read fully: AGENTS, CLAUDE, gate rules, plan-reviewer contract, using-the-pack skill, overlay/project context; service-quality master, both phases, brief and codebase review; all current specialists; retained batch-7 specialists and all batch-8 reports. Read relevant map descriptors, umbrella scope/translation/dependencies and Phase-0 final reconciliation.
+
+Source inspection covered matcher/assembly, logging and refusal rendering, provenance bounds, settlement/consumption, worker shutdown, billing control rendering, generation scoring, bootstrap, Playwright configuration and the eight-file render population.
+
+Actual commands were read-only:
+
+- `Get-Content -LiteralPath … -Encoding UTF8` with bounded numbered selections.
+- Targeted `rg -n` searches.
+- `rg --files .claude/agents` and `.github/workflows`.
+
+No product execution, mutation witnesses, writes, network operations, credential reads or environment-file reads occurred. Parent-supplied unchanged-hash/product-diff and successful `git diff --check` evidence is retained as parent-observed. Historical entry evidence remains **5,067 passed / 101 skipped; 23 Docker files NOT RUN**, not fresh acceptance.
+
+Requested reviewer posture: `gpt-6-astra/max`, independent default fallback; resolved runtime unverified. Nested cross-model review was unavailable and not recursively invoked.
+
+**Verdict: NOT READY. Batch 9’s four authorized evaluations are consumed; no further evaluation is authorized.**
+
+*Ask `/go` to explain any finding in plain words — or to just fix them.*
+
+### Orchestrator reconciliation — 2026-09-17
+
+Four independent evaluations completed in batch 9, with actual dispatch requests `agent_type: default`, `model: gpt-6-astra`, `reasoning_effort: max`, `fork_turns: none`. The reports above preserve their verdicts; final workflow status is **Not yet / NOT READY, Grade D**. Report citations refer to the assessed file positions before final report insertion and status-only projection updates. No constructor self-review or optional unavailable cross-model check is counted as independent assurance.
+
+All ten consolidated findings remain recorded, **0 repaired / 10 unresolved**: T9-1 mapper-scan conflict; T9-2 offset-domain gap; T9-3 worker shutdown; B9-C1 consumption evidence; T9-4 mapper handoff; C9-1/B9-C2 witness list; B9-C3 call floor; B9-C4 historical disposition claim; B9-N1 config ambiguity; G9-1 phase metadata. Each location and uncertainty is retained in the consolidated table. No semantic repairs are made after assessment: the recurring classes reached the §5 convergence stop, and batch 9 has exhausted the approved allowance. Status-only master projections record the verdict without claiming those findings closed. Implementation remains unstarted; Phase 0 remains Ready/A and Phase 3 remains parked. Next action is an owner decision on the bounded repair surfaces above; no batch 10 is assumed.
+
+## Historical reports — batches 2–8
+
 Written by the generalist `plan-reviewer` (batch 2, last slot, 2026-09-15) and recorded verbatim by the orchestrator. `plan gate ran lean (consolidated)` for the compliance path; tenancy and billing ran full. Merged-context posture: session model with a "think hard" instruction; each specialist's configured `effort: max` was not applied (gate-rules §7 lean trade).
 
 **Readiness: Not yet · Grade: D · The plan is unusually well-anchored to the code, but three specialist verdicts still stand at NEEDS CHANGES on unverified fixes, one Phase 1 task names an error class the page cannot import, and the Phase 2 CI job is missing the environment it needs to start.**

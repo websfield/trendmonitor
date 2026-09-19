@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -31,6 +32,10 @@ import { respinConfigV1 } from "@respin/config";
 // answers for a document (billing gate, 2026-09-02).
 import { onboardingBrainPrices } from "@respin/credits";
 import {
+  ASSEMBLY_KINDS,
+  ASSEMBLY_KINDS_PRE_VENDOR,
+} from "@respin/credits/app-server";
+import {
   ONBOARDING_ERROR_CODES,
   capReached,
   capSentence,
@@ -44,6 +49,7 @@ import {
   runChargeSentence,
   runCostSentence,
   voiceOutcomeSentence,
+  ASSEMBLY_KIND_COPY,
 } from "../app/(product)/onboarding/run-copy";
 import type { RunInferencePanelProps } from "../app/(product)/onboarding/run-inference-panel";
 import { RunOutcome } from "../app/(product)/onboarding/run-outcome";
@@ -53,6 +59,7 @@ import {
   ERROR_CLASS_COVERED_BY_BASE,
   INSTANCE_BRANCH_CODES,
   billingErrorCode,
+  BILLING_ERROR_COPY,
 } from "../app/(product)/billing-errors";
 
 import {
@@ -221,6 +228,82 @@ describe("the pure decisions", () => {
   });
 });
 
+describe("creator onboarding progress", () => {
+  const steps = [
+    { id: "posts" as const, label: "Own posts", state: "done" as const },
+    { id: "voice" as const, label: "Voice", state: "done" as const },
+    { id: "interview" as const, label: "Interview", state: "next" as const },
+    { id: "first-ideas" as const, label: "First ideas", state: "todo" as const },
+  ];
+  const profilePanel = {
+    profiles: [{ id: "profile-1", displayName: "Anna" }],
+    selectedProfileId: "profile-1",
+    selectProfileAction: async () => undefined,
+    createProfileAction: async () => undefined,
+    createBlock: null,
+    capReached: false,
+    plan: { tier: "creator", cap: 3, used: 1 },
+    nameLimit: 80,
+  };
+
+  it("renders every derived state and the completed count", () => {
+    const html = render({
+      step: "paste-posts",
+      profileName: "Anna",
+      steps,
+      profilePanel,
+    });
+    expect(html).toContain('data-testid="onboarding-steps"');
+    expect(html).toContain("2 of 4 done");
+    for (const state of ["done", "next", "todo"] as const) {
+      expect(html).toContain(`data-step-state="${state}"`);
+    }
+    expect(
+      render({
+        step: "paste-posts",
+        profileName: "Anna",
+        steps: steps.map((item) => ({ ...item, state: "unknown" as const })),
+        profilePanel,
+      })
+    ).toContain('data-step-state="unknown"');
+  });
+
+  it("keeps the progress header off the missing-profile view", () => {
+    expect(render()).not.toContain('data-testid="onboarding-steps"');
+  });
+
+  it("orders the creator panels and leaves one plan line", () => {
+    const html = render({
+      step: "paste-posts",
+      profileName: "Anna",
+      steps,
+      profilePanel,
+      candidateSafetyAction: async (state) => state,
+      run: runFixture(),
+    });
+    const markers = [
+      "Creator profile",
+      "Add your own past posts",
+      "Add posts you admire",
+      "Check a candidate reference",
+      "Draft the rules for how you write",
+      "Answer the structured interview",
+      "Make this creator&#x27;s first ideas",
+      "Your posts",
+    ];
+    let prior = -1;
+    for (const marker of markers) {
+      const at = html.indexOf(marker);
+      expect(at, `${marker} is missing`).toBeGreaterThan(-1);
+      expect(at, `${marker} is out of order`).toBeGreaterThan(prior);
+      prior = at;
+    }
+    expect(html.match(/creator profiles used on the creator plan/g)).toHaveLength(1);
+    expect(html).toMatch(/<details class="panel"><summary[^>]*>\s*Add posts you admire/);
+    expect(html).toMatch(/<details class="panel"><summary[^>]*>\s*Check a candidate reference/);
+  });
+});
+
 describe("the create-profile step", () => {
   it("shows the cap on the PASTE step too — where the cap refusal is reachable", () => {
     // The cap refusal can only fire when `used >= cap`, i.e. when a profile
@@ -233,8 +316,18 @@ describe("the create-profile step", () => {
       step: "paste-posts",
       profileName: "Anna",
       plan: { tier: "creator", cap: 3, used: 1 },
+      profilePanel: {
+        profiles: [{ id: "profile-1", displayName: "Anna" }],
+        selectedProfileId: "profile-1",
+        selectProfileAction: async () => undefined,
+        createProfileAction: async () => undefined,
+        createBlock: null,
+        capReached: false,
+        plan: { tier: "creator", cap: 3, used: 1 },
+        nameLimit: 80,
+      },
     });
-    expect(html).toContain("Your creator plan includes 3 creator profiles");
+    expect(html).toContain("1 of 3 creator profiles used on the creator plan");
   });
 
   it("shows the plan's cap from the server, and a form", () => {
@@ -1425,6 +1518,273 @@ describe("every refusal a SPEND can return says what happened to the money", () 
   });
 });
 
+describe("assembly refusals stay diagnostic and content-free", () => {
+  const copyByCode = Object.fromEntries(
+    ONBOARDING_ERROR_CODES.map((code) => [code, onboardingErrorFor(code)!])
+  );
+  const refused = (assemblyKind?: (typeof ASSEMBLY_KINDS)[number]) =>
+    renderToStaticMarkup(
+      <RunOutcome
+        state={{
+          status: "refused",
+          code: "inference_unusable",
+          ...(assemblyKind ? { assemblyKind } : {}),
+        }}
+        refusalCopy={copyByCode}
+        fallbackCopy={onboardingErrorFor("unknown")!}
+      />
+    );
+
+  it("pins the closed copy set and the three pre-vendor kinds", () => {
+    expect(Object.keys(ASSEMBLY_KIND_COPY).sort()).toEqual(
+      [...ASSEMBLY_KINDS].sort()
+    );
+    expect(ASSEMBLY_KINDS_PRE_VENDOR).toEqual([
+      "no_fields_supplied",
+      "duplicate_post",
+      "duplicate_field_request",
+    ]);
+  });
+
+  it("scans the three rendered pre-vendor refusals for the money outcome", () => {
+    const refusalCopy = Object.fromEntries(
+      ONBOARDING_ERROR_CODES.map((code) => [code, onboardingErrorFor(code)!])
+    );
+    for (const assemblyKind of ASSEMBLY_KINDS_PRE_VENDOR) {
+      const html = renderToStaticMarkup(
+        <RunOutcome
+          state={{
+            status: "refused",
+            code: "inference_unusable",
+            assemblyKind,
+          }}
+          refusalCopy={refusalCopy}
+          fallbackCopy={onboardingErrorFor("unknown")!}
+        />
+      );
+      expect(
+        html.toLowerCase(),
+        `${assemblyKind} rendered without saying what happened to credits`
+      ).toMatch(/spent|charged/);
+    }
+  });
+
+  it.each([
+    [
+      "no_fields_supplied",
+      "The product prepared no voice checks before the run. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+    ],
+    [
+      "duplicate_post",
+      "The product prepared the same saved post more than once. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+    ],
+    [
+      "duplicate_field_request",
+      "The product prepared the same voice check more than once. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+    ],
+  ] as const)("%s replaces the counted detail with its exact pre-vendor copy", (kind, copy) => {
+    const html = refused(kind);
+    expect(html).toContain(copy);
+    expect(html).not.toContain("Your run was still made, so it counted");
+    expect(html).toContain('data-code="inference_unusable"');
+    expect(html).toContain(`data-assembly-kind="${kind}"`);
+    expect(html.toLowerCase()).not.toMatch(/try again|fix (?:it|this) by/);
+  });
+
+  it("renders the counted detail before every post-vendor kind sentence", () => {
+    for (const kind of ASSEMBLY_KINDS.filter(
+      (item) => !(ASSEMBLY_KINDS_PRE_VENDOR as readonly string[]).includes(item)
+    )) {
+      const html = refused(kind);
+      const shared = html.indexOf("Your run was still made, so it counted");
+      const diagnostic = html.indexOf(ASSEMBLY_KIND_COPY[kind]);
+      expect(shared, kind).toBeGreaterThan(-1);
+      expect(diagnostic, kind).toBeGreaterThan(shared);
+      expect(html, kind).toContain(`data-assembly-kind="${kind}"`);
+    }
+  });
+
+  it("pins the branch-independent usage pointer as a static literal", () => {
+    const pointer =
+      "Any charge for this run is in your credit history on the usage page.";
+    expect(refused()).toContain(pointer);
+    expect(BILLING_ERROR_COPY.inference_unusable.detail).toContain(pointer);
+    expect(BILLING_ERROR_COPY.inference_unusable.detail).toContain(
+      "Your run was still made, so it counted"
+    );
+    expect(BILLING_ERROR_COPY.inference_unusable.detail).not.toMatch(
+      /try again|most often a quote|your balance/i
+    );
+
+    const source = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        "../app/(product)/billing-errors.ts"
+      ),
+      "utf8"
+    );
+    const entry = source.match(
+      /inference_unusable:\s*\{\s*title:\s*"[^"]*",\s*detail:\s*"([^"]*)",\s*\}/
+    );
+    expect(entry?.[1]).toContain(pointer);
+    expect(entry?.[0]).not.toContain("${");
+  });
+
+  it("keeps the four parked money clauses byte-identical", () => {
+    expect(BILLING_ERROR_COPY.provenance.detail).toBe(
+      "Every claim in a brain has to point at something you actually wrote, and one of the quotes did not appear where it said it did — so it was refused rather than stored. Nothing was saved and no credits were spent. Try the build again; if it keeps happening, contact support. The refusal code and error type are recorded without the quote."
+    );
+    expect(BILLING_ERROR_COPY.brain_document_limit.detail).toBe(
+      "The proposed Brain version has too many claim or evidence entries, or its combined text is too large. Nothing was stored and the version already in force is unchanged. Shorten or reduce the claims and evidence, then rebuild or submit the replacement again."
+    );
+    expect(BILLING_ERROR_COPY.reference_echo.detail).toBe(
+      "A reference post is kept only to find the pattern behind it, never to be repeated word for word — so a draft that echoes a long stretch of one, or quotes more of one than the limit allows, is refused rather than stored. Nothing was saved and no credits were spent. Rewrite the field describing the mechanism in your own words, or cite a shorter piece of the reference post, and try again. This check does not promise the result is original or safe to publish — it only stops the one thing it can measure: repeating a reference post's own wording."
+    );
+    expect(BILLING_ERROR_COPY.unknown.detail).toBe(
+      "The action did not complete and nothing was charged. Try again; if it keeps happening, contact support. The refusal code, error type and any server-derived context are recorded without exception details."
+    );
+  });
+
+  it("independently pins the onboarding code and override initializers", () => {
+    const source = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        "../app/(product)/onboarding/copy.ts"
+      ),
+      "utf8"
+    );
+    const parsed = ts.createSourceFile(
+      "copy.ts",
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    );
+    const initializer = (name: string): ts.Expression => {
+      let found: ts.Expression | undefined;
+      const visit = (node: ts.Node): void => {
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === name
+        ) {
+          found = node.initializer;
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(parsed);
+      expect(found, `${name} initializer`).toBeDefined();
+      let value = found!;
+      while (
+        ts.isAsExpression(value) ||
+        ts.isSatisfiesExpression(value) ||
+        ts.isParenthesizedExpression(value)
+      ) {
+        value = value.expression;
+      }
+      return value;
+    };
+    const propertyName = (name: ts.PropertyName): string => {
+      if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+      throw new Error(`unresolved initializer key: ${name.getText(parsed)}`);
+    };
+
+    const codes = initializer("ONBOARDING_ERROR_CODES");
+    expect(ts.isArrayLiteralExpression(codes)).toBe(true);
+    const codeValues = (codes as ts.ArrayLiteralExpression).elements.map(
+      (element) => {
+        expect(ts.isStringLiteral(element)).toBe(true);
+        return (element as ts.StringLiteral).text;
+      }
+    );
+    const expectedCodes = [
+      "profile_cap",
+      "profile_role",
+      "profile_name",
+      "post_content",
+      "onboarding_input_limit",
+      "brain_document_limit",
+      "brain_version_limit",
+      "post_attestation",
+      "not_enough_posts",
+      "inference_unusable",
+      "llm_truncated",
+      "uncharged_attempt_cap",
+      "brain_pointer_divergence",
+      "workspace_paused",
+      "config_unavailable",
+      "profile_access",
+      "scope_forgery",
+      "workspace_access",
+      "clock_skew",
+      "inference_role",
+      "profile_archived",
+      "topup_in_flight",
+      "insufficient_credits",
+      "config_not_migrated",
+      "llm_unavailable",
+      "unpriced_operation",
+      "llm_attempt_recorded",
+      "debit_refused_after_call",
+      "run_slot_busy",
+      "server_at_capacity",
+      "ledger_integrity",
+      "topup_reconciliation_required",
+      "reference_echo",
+      "provenance",
+      "brain_content_walk",
+      "segmenter_unavailable",
+      "unknown",
+    ];
+    expect(codeValues).toEqual(expectedCodes);
+    expect(ONBOARDING_ERROR_CODES).toEqual(expectedCodes);
+
+    const overrides = initializer("ONBOARDING_OVERRIDES");
+    expect(ts.isObjectLiteralExpression(overrides)).toBe(true);
+    const overrideValues = Object.fromEntries(
+      (overrides as ts.ObjectLiteralExpression).properties.map((property) => {
+        expect(ts.isPropertyAssignment(property)).toBe(true);
+        const entry = property as ts.PropertyAssignment;
+        expect(ts.isObjectLiteralExpression(entry.initializer)).toBe(true);
+        return [
+          propertyName(entry.name),
+          Object.fromEntries(
+            (entry.initializer as ts.ObjectLiteralExpression).properties.map(
+              (field) => {
+                expect(ts.isPropertyAssignment(field)).toBe(true);
+                const assignment = field as ts.PropertyAssignment;
+                expect(ts.isStringLiteral(assignment.initializer)).toBe(true);
+                return [
+                  propertyName(assignment.name),
+                  (assignment.initializer as ts.StringLiteral).text,
+                ];
+              }
+            )
+          ),
+        ];
+      })
+    );
+    expect(overrideValues).toEqual({
+      workspace_paused: {
+        title: "This workspace's subscription is paused",
+        detail:
+          "While a workspace is paused, nothing new can be added to it. Nothing you have already saved was changed or removed. Resume the subscription on the billing page and try again.",
+      },
+      profile_archived: {
+        title: "This creator profile is archived",
+        detail:
+          "Nothing runs for an archived profile. Everything you have saved against it is untouched \u2014 archiving only takes the profile out of your plan's allowance. Nothing was spent. Reactivate the profile first if you want to run this.",
+      },
+      config_unavailable: {
+        title: "This server's settings could not be read",
+        detail:
+          "Your creator profile allowance is set in the server's stored settings, and that document could not be read, so the action stopped rather than guessing. Nothing was created. An operator needs to seed or repair it; nothing you have saved is affected.",
+      },
+    });
+    for (const kind of ASSEMBLY_KINDS) expect(source).not.toContain(kind);
+  });
+});
+
 describe("R12 reaches the OUTCOME states too, and the vendor's words are quarantined", () => {
   // THE HOLE THIS CLOSES, and it was live and proven (compliance gate,
   // 2026-08-28). Three run states were added to the FORBIDDEN scan above and
@@ -1491,6 +1851,13 @@ describe("R12 reaches the OUTCOME states too, and the vendor's words are quarant
           string,
           VoiceInferenceState,
         ]
+    ),
+    ...ASSEMBLY_KINDS.map(
+      (assemblyKind) =>
+        [
+          `assembly refusal: ${assemblyKind}`,
+          { status: "refused", code: "inference_unusable", assemblyKind },
+        ] as [string, VoiceInferenceState]
     ),
   ];
 

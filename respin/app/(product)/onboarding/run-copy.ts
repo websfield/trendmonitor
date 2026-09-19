@@ -1,4 +1,4 @@
-// The metered run's sentences, as PURE functions with NO imports at all.
+// The metered run's sentences, as PURE functions with no value imports.
 //
 // WHY THEY ARE NOT IN `./copy.ts` WITH THE REST. These two are rendered by
 // `run-outcome.tsx`, which is client code, and `copy.ts` imports
@@ -7,12 +7,35 @@
 // Putting them there compiled and tested green and broke `next build` with
 // "Module not found: Can't resolve 'dns'/'net'", because the client bundle had
 // been handed a Postgres driver. The import graph is the boundary; a file with
-// no imports cannot cross it.
+// no value imports cannot cross it.
 //
 // R18: THE BUTTON SAYS WHAT IT WILL SPEND BEFORE IT SPENDS IT. These are pure
 // functions for the same reason every other decision on this screen is: a
 // sentence about money assembled inline in a component is a sentence no test
 // drives.
+import type { AssemblyKind } from "@respin/credits/app-server";
+
+export const ASSEMBLY_KIND_COPY: Readonly<Record<AssemblyKind, string>> = {
+  no_fields_supplied:
+    "The product prepared no voice checks before the run. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+  duplicate_post:
+    "The product prepared the same saved post more than once. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+  duplicate_field_request:
+    "The product prepared the same voice check more than once. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+  not_json: "The model reply was not readable as the required data.",
+  bad_shape: "The model reply did not have the required voice-draft structure.",
+  unknown_field: "The model reply included a voice section the product did not request.",
+  duplicate_field: "The model reply repeated a voice section.",
+  empty_values: "The model reply left a requested voice section empty.",
+  single_arity: "The model reply gave multiple answers where one voice answer was required.",
+  list_max: "The model reply gave more voice items than the product can review safely.",
+  placeholder_with_citation: "The model reply attached evidence to an unknown voice value.",
+  placeholder_in_list: "The model reply mixed an unknown voice value with stated values.",
+  value_without_quote: "The model reply stated a voice value without a supporting quote.",
+  post_not_supplied: "The model reply cited material that was not supplied to this run.",
+  quote_not_found: "The model reply cited words that did not match the supplied post.",
+  fields_unfilled: "The model reply left a requested voice section unfilled.",
+};
 
 /**
  * What the run control says BEFORE it is pressed.

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   usageRunwayFor: vi.fn(),
   selectedProfileForMember: vi.fn(),
   brainAssetSummary: vi.fn(),
+  hasGenerationForProfile: vi.fn(),
   getActiveConfigServer: vi.fn(),
 }));
 
@@ -32,6 +33,7 @@ vi.mock("@respin/db", async (importOriginal) => ({
     burnByMode: mocks.burnByMode,
     selectedProfileForMember: mocks.selectedProfileForMember,
     brainAssetSummary: mocks.brainAssetSummary,
+    hasGenerationForProfile: mocks.hasGenerationForProfile,
   },
 }));
 
@@ -176,6 +178,7 @@ beforeEach(() => {
     loggedResults: 0,
     feedback: 0,
   });
+  mocks.hasGenerationForProfile.mockResolvedValue(false);
   mocks.getActiveConfigServer.mockResolvedValue({
     version: 1,
     content: {

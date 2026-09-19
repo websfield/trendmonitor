@@ -1,0 +1,209 @@
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > clean shutdown: start records two groups (each its own session leader), cleanup ends with both gone, port refused, handoff deleted, safe_to_upload=true  1105ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > web port closes while the worker delays TERM: no success output until the worker is actually gone  3105ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a worker that ignores TERM is KILLed; a child that outlives its launcher is still a live group  6144ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: a port-only cleanup reports success while the surviving child is still alive (so this proof would go red)  6233ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a failing liveness probe (pgrep errors) fails cleanup rather than reading the group as gone  1124ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > start fails when the web process never answers, and when a launched process exits after launch  6157ms
+      Tests  36 passed (36)
+
+Run 2026-09-19 inside docker image node:22-bookworm (Docker Desktop 29.7.2, Linux engine), repo files copied: .github/workflows/*.yml, respin/tests/journeys-workflow-triggers.test.ts, respin/tests/journeys-upload-population.ts; vitest 3.2.7 installed in the container; command: JOURNEYS_PROCESS_PROOF=required npx vitest run tests/journeys-workflow-triggers.test.ts. The transcript above is the filtered tail (grep on the process-proof lines); the full run reported 36 passed (36). Not the hosted GitHub runner.
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > clean shutdown: start records two groups (each its own session leader), cleanup ends with both gone, port refused, handoff deleted, safe_to_upload=true  1134ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > web port closes while the worker delays TERM: no success output until the worker is actually gone  3104ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a worker that ignores TERM is KILLed; a child that outlives its launcher is still a live group  6171ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: a port-only cleanup reports success while the surviving child is still alive (so this proof would go red)  6150ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a failing liveness probe (pgrep errors) fails cleanup rather than reading the group as gone  1100ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > start fails when the web process never answers, and when a launched process exits after launch  6132ms
+      Tests  40 passed (40)
+--- rerun 2026-09-19 after batch-0 fixes (bootstrap PGID recorded, needs: canary, step-attributed key check)
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > clean shutdown: start records two groups (each its own session leader), cleanup ends with both gone, port refused, handoff deleted, safe_to_upload=true  1108ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > web port closes while the worker delays TERM: no success output until the worker is actually gone  3101ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a worker that ignores TERM is KILLed; a child that outlives its launcher is still a live group  6122ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: a port-only cleanup reports success while the surviving child is still alive (so this proof would go red)  5205ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a failing liveness probe (pgrep errors) fails cleanup rather than reading the group as gone  1099ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > start fails when the web process never answers, and when a launched process exits after launch  6135ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a STALE bootstrap.pgid (the normal path: its step already stopped the group) plus a live web/worker pair still cleans up and marks safe  1417ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a LIVE bootstrap group with no `started` marker (bootstrap failed after launch) is stopped and the port refused before safe_to_upload  847ms
+   ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: reverting the group list to `web worker` marks safe with the bootstrap server still alive (so this proof would go red)  863ms
+      Tests  52 passed (52)
+--- rerun 3, 2026-09-19, after batch-1 tenancy fixes (bootstrap-group scenarios + revert mutant added; step ids; class-wide secrets attribution)
+--- run 4, 2026-09-19, after batch-2 tenancy fixes (bootstrap group-empty check + 4 bootstrap-step scenarios; job population, block-scalar comments, key flow, anchored ids, anchors/aliases, mapping-form environment). UNFILTERED vitest --reporter=verbose output (B2 Info 2), ANSI stripped. Same recipe as runs 1-3: docker image node:22-bookworm, repo files copied (.github/workflows/*.yml, respin/tests/journeys-workflow-triggers.test.ts, respin/tests/journeys-upload-population.ts), vitest 3.2.7, jq installed via apt in the container (the bootstrap step calls jq); command: JOURNEYS_PROCESS_PROOF=required npx vitest run tests/journeys-workflow-triggers.test.ts --reporter=verbose. Not the hosted GitHub runner.
+debconf: delaying package configuration, since apt-utils is not installed
+jq installed
+/usr/bin/pgrep
+/usr/bin/curl
+/usr/bin/setsid
+ RUN  v3.2.7 /work/respin
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the directory read is not vacuous: respin.yml, cutdown.yml and the journeys file are all present 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the real directory satisfies every clause 6ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the secrets context / key name is referenced by exactly the `vendor-key` and `start` step ids, and by `canary` in its own job; every step has a unique id 4ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > every third-party action is pinned by a 40-hex commit SHA 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > every curl in the job carries --connect-timeout 2 --max-time N (no probe can hang to the job limit) 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the admin id is extracted with jq -er '.authUserId | strings' and then shape-validated 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the process proof runs in the workflow before `start` and is REQUIRED there 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > cleanup's defaults are the plan's 35 s TERM window and 10 s KILL window; secret is masked; port-refused wait exists 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the canary proves the repository-secret half: no environment, fails when the key is issued, and gates the spend via needs: 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > baseline contains the exact `on:` block the plants edit 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > push added 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > pull_request_target added 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > workflow_run added 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > flow-form on 3ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > quoted "on": 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > environment: removed 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > courtesy if: removed 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key added to respin.yml 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a new third workflow naming the key 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a second file declaring environment: journeys 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a file dumping toJSON(secrets) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > playwright job added to respin.yml 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key moved to job-level env 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > unconditional report upload 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > canary given an environment 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key moved onto the Install step 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key added to the bootstrap step (spacing variant) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key added to a third-party action step 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > needs: canary gate removed 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key on Install in bracket form, issued-check env kept 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key on Install in lower case 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > toJSON(secrets) inside the journeys file's own Install run 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > Install renamed to the issued-check's name and given the key (duplicate-name spoof) 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > run step rewritten with a bare-dash step start and given the key 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a step with the key and NO id 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a step whose id duplicates vendor-key 3ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > bracket-form key in a third workflow file 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a THIRD job in the journeys file declaring environment: journeys and reading the key 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a third job with no key at all (the population is a list, not a search) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > `# ${{ toJSON(secrets) }}` inside Install's run body (a commented-out dump GitHub still expands) 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > `# $ANTHROPIC_API_KEY` inside the bootstrap run body 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > vendor-key exports the key to GITHUB_ENV (job-wide for every later step and action) 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > start relays the key through GITHUB_OUTPUT and `run` reads steps.start.outputs 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > only the outputs read, no relay write (each half fails on its own) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > `id: start` planted under a third-party action's with:, the key on that step, the real start renamed 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > `id: start` as the first line of a run body, ahead of the real id 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > the key env block anchored on vendor-key and aliased onto Install 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a merge key on Install 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > mapping-form environment in a third file with a secrets.* wildcard 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > mapping-form environment in a third file, nothing else 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the report upload lists the three exclusion lines the plan pins 0ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > is REQUIRED where the workflow runs it: a non-Linux host cannot satisfy it 0ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > clean shutdown: start records two groups (each its own session leader), cleanup ends with both gone, port refused, handoff deleted, safe_to_upload=true 1150ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > web port closes while the worker delays TERM: no success output until the worker is actually gone 3140ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a worker that ignores TERM is KILLed; a child that outlives its launcher is still a live group 6142ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: a port-only cleanup reports success while the surviving child is still alive (so this proof would go red) 6149ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a missing/invalid recorded PGID after a start fails cleanup with no output 28ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a failing liveness probe (pgrep errors) fails cleanup rather than reading the group as gone 1106ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > start fails when the web process never answers, and when a launched process exits after launch 6169ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a STALE bootstrap.pgid (the normal path: its step already stopped the group) plus a live web/worker pair still cleans up and marks safe 1446ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a LIVE bootstrap group with no `started` marker (bootstrap failed after launch) is stopped and the port refused before safe_to_upload 855ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a non-numeric bootstrap.pgid alone fails cleanup with no output 13ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: reverting the group list to `web worker` marks safe with the bootstrap server still alive (so this proof would go red) 868ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > bootstrap, server honours TERM: admin id exported, group verified empty, record dropped, exit 0 1121ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > bootstrap, server closes its port on TERM but never exits: port refused is NOT enough — KILL, then the record is dropped only once pgrep -g is empty 6165ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: dropping the record straight after port-refused (the batch-1 shape) leaves the lingering group alive with no record of it (so this proof would go red) 1455ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > bootstrap fails after launch (the spec fails): exit 1, the record stays, and cleanup sweeps that group 1097ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > cleanup with nothing started marks safe (nothing to stop) — the pre-start failure path 11ms
+ ✓ reads the workflow at its pinned path 2ms
+ Test Files  1 passed (1)
+      Tests  69 passed (69)
+   Start at  23:34:15
+   Duration  39.42s (transform 260ms, setup 0ms, collect 391ms, tests 36.99s, environment 0ms, prepare 1.46s)
+--- run 5, 2026-09-19, after the batch-3 fixes (tenancy B3-TEN-1..4 + NOTEs, generalist G-1/G-2). UNFILTERED vitest --reporter=verbose output, ANSI stripped; same recipe as run 4 (node:22-bookworm, files copied, vitest 3.2.7, jq in the container). Not the hosted GitHub runner. These fixes are NOT independently re-reviewed (round budget exhausted after batch 3).
+debconf: delaying package configuration, since apt-utils is not installed
+jq installed
+ RUN  v3.2.7 /work/respin
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the directory read is not vacuous: respin.yml, cutdown.yml and the journeys file are all present 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the real directory satisfies every clause 5ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the secrets context / key name is referenced by exactly the `vendor-key` and `start` step ids, and by `canary` in its own job; every step has a unique id 4ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > every third-party action is pinned by a 40-hex commit SHA 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > every curl in the job carries --connect-timeout 2 --max-time N (no probe can hang to the job limit) 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the admin id is extracted with jq -er '.authUserId | strings' and then shape-validated 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the process proof runs in the workflow before `start` and is REQUIRED there 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > cleanup's defaults are the plan's 35 s TERM window and 10 s KILL window; secret is masked; port-refused wait exists 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the canary proves the repository-secret half: no environment, fails when the key is issued, and gates the spend via needs: 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > baseline contains the exact `on:` block the plants edit 0ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > push added 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > pull_request_target added 3ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > workflow_run added 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > flow-form on 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > quoted "on": 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > environment: removed 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > courtesy if: removed 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key added to respin.yml 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a new third workflow naming the key 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a second file declaring environment: journeys 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a file dumping toJSON(secrets) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > playwright job added to respin.yml 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key moved to job-level env 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > unconditional report upload 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > canary given an environment 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key moved onto the Install step 3ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key added to the bootstrap step (spacing variant) 3ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key added to a third-party action step 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > needs: canary gate removed 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key on Install in bracket form, issued-check env kept 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > key on Install in lower case 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > toJSON(secrets) inside the journeys file's own Install run 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > Install renamed to the issued-check's name and given the key (duplicate-name spoof) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > run step rewritten with a bare-dash step start and given the key 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a step with the key and NO id 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a step whose id duplicates vendor-key 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > bracket-form key in a third workflow file 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a THIRD job in the journeys file declaring environment: journeys and reading the key 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a third job with no key at all (the population is a list, not a search) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > `# ${{ toJSON(secrets) }}` inside Install's run body (a commented-out dump GitHub still expands) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > `# $ANTHROPIC_API_KEY` inside the bootstrap run body 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > vendor-key exports the key to GITHUB_ENV (job-wide for every later step and action) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > start relays the key through GITHUB_OUTPUT and `run` reads steps.start.outputs 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > only the outputs read, no relay write (each half fails on its own) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > `id: start` planted under a third-party action's with:, the key on that step, the real start renamed 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > `id: start` as the first line of a run body, ahead of the real id 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > the key env block anchored on vendor-key and aliased onto Install 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a merge key on Install 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > mapping-form environment in a third file with a secrets.* wildcard 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > mapping-form environment in a third file, nothing else 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a third job with a double-quoted name `"leak":` 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a third job with a single-quoted name 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a third job whose header carries a trailing comment 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a third job with a space before the colon 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a third job as a flow one-liner 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a quoted `"push":` trigger 2ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a `? push` complex-key trigger 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a `push :` trigger 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > `"run": |` on Install with a commented-out dump in its body 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a double-quoted multi-line run on Install hiding a dump behind a `#` 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > flow-mapping environment in a third file 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > quoted environment in a third file 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > start relays the key through ::set-output and `run` reads steps['start'].outputs 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > the bracket-form outputs read alone 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > the key anchored inside a flow mapping on vendor-key and aliased onto Install 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a forked upload-artifact action 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > planted variants each FAIL (lesson 2026-08-26) > a bare `pnpm install` at the repo root (no package.json there — G-1) 1ms
+ ✓ respin-journeys.yml: manual-or-nightly only, environment-protected key (AC4) > the report upload lists the three exclusion lines the plan pins 0ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > is REQUIRED where the workflow runs it: a non-Linux host cannot satisfy it 0ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > clean shutdown: start records two groups (each its own session leader), cleanup ends with both gone, port refused, handoff deleted, safe_to_upload=true 1116ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > web port closes while the worker delays TERM: no success output until the worker is actually gone 3101ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a worker that ignores TERM is KILLed; a child that outlives its launcher is still a live group 6124ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: a port-only cleanup reports success while the surviving child is still alive (so this proof would go red) 6140ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a missing/invalid recorded PGID after a start fails cleanup with no output 18ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a failing liveness probe (pgrep errors) fails cleanup rather than reading the group as gone 1101ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > start fails when the web process never answers, and when a launched process exits after launch 6129ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a STALE bootstrap.pgid (the normal path: its step already stopped the group) plus a live web/worker pair still cleans up and marks safe 1421ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a LIVE bootstrap group with no `started` marker (bootstrap failed after launch) is stopped and the port refused before safe_to_upload 850ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > a non-numeric bootstrap.pgid alone fails cleanup with no output 9ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: reverting the group list to `web worker` marks safe with the bootstrap server still alive (so this proof would go red) 872ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > bootstrap, server honours TERM: admin id exported, group verified empty, record dropped, exit 0 1096ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > bootstrap, server closes its port on TERM but never exits: port refused is NOT enough — KILL, then the record is dropped only once pgrep -g is empty 7114ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: dropping the record straight after port-refused (the batch-1 shape) leaves the lingering group alive with no record of it (so this proof would go red) 1405ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > bootstrap, group still alive after TERM and KILL (pgrep always reports a member): exit 1, the record is KEPT for cleanup 4113ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > PLANT: moving `rm -f` ahead of the final liveness refusal drops the record on that path (so this proof would go red) 4102ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > bootstrap fails after launch (the spec fails): exit 1, the record stays, and cleanup sweeps that group 1074ms
+ ✓ start/cleanup shell against synthetic processes (AC5 process proof) > cleanup with nothing started marks safe (nothing to stop) — the pre-start failure path 9ms
+ ✓ reads the workflow at its pinned path 1ms
+ Test Files  1 passed (1)
+      Tests  88 passed (88)
+   Start at  00:23:56
+   Duration  47.62s (transform 160ms, setup 0ms, collect 236ms, tests 45.89s, environment 0ms, prepare 949ms)
+npm notice
+npm notice New major version of npm available! 10.9.8 -> 12.0.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.2
+npm notice To update run: npm install -g npm@12.0.2
+npm notice

@@ -1,0 +1,4 @@
+M1 retry ignores consumed (B0-BILL-1 reverted) -> RED ['Tests  2 failed | 26 passed (28)']
+M2 claim-without-consuming-usage -> false (B0-BILL-2 reverted) -> RED ['Tests  1 failed | 27 passed (28)']
+M3 succeeded-with-nothing-written -> false (Info reverted) -> RED ['Tests  1 failed | 27 passed (28)']
+restored -> GREEN ['Tests  28 passed (28)'] sha256 dc6c1687d805

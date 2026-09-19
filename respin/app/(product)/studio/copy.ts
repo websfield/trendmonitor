@@ -52,7 +52,7 @@ import {
 export function generateBlock(params: {
   isViewer: boolean;
   paused: boolean;
-  brainActivated: boolean;
+  brainActivated: boolean | null;
 }): { reason: string } | null {
   if (params.isViewer) {
     return {
@@ -65,6 +65,9 @@ export function generateBlock(params: {
       reason:
         "This workspace's subscription is paused, so credits are frozen and nothing that would spend them runs. Everything already saved is untouched. Resume on the billing page.",
     };
+  }
+  if (params.brainActivated === null) {
+    return { reason: "The brain's state could not be read. Reload this page." };
   }
   if (!params.brainActivated) {
     return {

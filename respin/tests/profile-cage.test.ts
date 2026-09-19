@@ -1308,6 +1308,8 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/db/src/app-server.ts:decidePromotionProposal",
         "packages/db/src/with-workspace.ts:brainAssetSummary",
         "packages/db/src/app-server.ts:brainAssetSummary",
+        "packages/db/src/with-workspace.ts:hasGenerationForProfile",
+        "packages/db/src/app-server.ts:hasGenerationForProfile",
         "packages/db/src/with-workspace.ts:usageRunwayDebits",
         // The ledger-only runway obtains its single authoritative snapshot
         // through a mint/cage-checked scope; readers are intentionally

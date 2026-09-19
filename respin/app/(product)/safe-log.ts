@@ -138,6 +138,53 @@ export function wireLabel(raw: string): string {
   return /^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(raw) ? raw : NOT_A_LABEL;
 }
 
+/** How many rejected key names a single refusal line may name. */
+const SCHEMA_KEYS_LOGGED_MAX = 5;
+
+/**
+ * A schema refusal's LOCATION, clamped to what a log line may carry.
+ *
+ * WHY (live walk, 2026-09-18). `bad_shape` on the voice build was
+ * undiagnosable on every occurrence: `parseVoiceReply` computed the failing
+ * path and put it in the `Error`'s message, and this module withholds
+ * messages. The answer is NOT to start logging messages — a foreign error's
+ * message is exactly what this file exists to contain — but to carry the
+ * location as structured fields that are clamped here, at the boundary.
+ *
+ * `path` and `code` are derived from OUR schema and zod's closed issue set, so
+ * they are clamped only as defence in depth. `keys` is genuinely
+ * vendor-controlled — it is the names a strict object rejected — so it goes
+ * through `wireLabel`, the clamp this file already uses for the same problem,
+ * and the list is bounded: the diagnostic value is in the first few names, and
+ * an unbounded model-chosen array is a log-flooding channel.
+ */
+export function schemaIssueFields(
+  issue: { path: string; code: string; keys?: readonly string[] } | undefined
+): Readonly<Record<string, string>> {
+  if (!issue) return {};
+  const path = /^[A-Za-z0-9_/-]{0,120}$/.test(issue.path) ? issue.path : NOT_A_LABEL;
+  return {
+    // An empty path is the ROOT of the reply, which is a real location (the
+    // top-level object was the wrong type) — reported as "/" rather than as an
+    // absent field, so a reader never has to guess whether it was missing.
+    schemaPath: path === "" ? "/" : path,
+    schemaIssue: wireLabel(issue.code),
+    ...(issue.keys && issue.keys.length > 0
+      ? {
+          schemaKeys: issue.keys
+            .slice(0, SCHEMA_KEYS_LOGGED_MAX)
+            .map((k) => wireLabel(k))
+            .join(","),
+          // STATED, NOT IMPLIED. A truncated list that looks complete would
+          // send the next reader hunting for a key this line never named.
+          ...(issue.keys.length > SCHEMA_KEYS_LOGGED_MAX
+            ? { schemaKeysTotal: String(issue.keys.length) }
+            : {}),
+        }
+      : {}),
+  };
+}
+
 /**
  * Log a refusal safely — one call-site shape, so the rule cannot be applied in
  * one file and forgotten in the next — naming WHO it happened to as well as

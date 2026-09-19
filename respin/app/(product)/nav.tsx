@@ -8,6 +8,7 @@ import { usePathname } from "next/navigation";
 
 const ITEMS = [
   { href: "/onboarding", label: "Onboarding" },
+  { href: "/brain", label: "Brain" },
   { href: "/trends", label: "Trends" },
   { href: "/studio", label: "Studio" },
   // Slice 9a. Reachability is the point: a page nothing links to is inventory

@@ -113,6 +113,10 @@ export const FIRST_IDEAS_NO_RESULTS_BASIS =
 export const FIRST_IDEAS_NEEDS_BRAIN =
   "This creator has no activated brain yet, so there is nothing to write in their voice. Confirm a version on the brain page and activate it, then come back — this step is the first thing that uses it.";
 
+/** Why the control is unavailable when the courtesy brain-state read failed. */
+export const FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE =
+  "This creator's brain state could not be read. Reload this page.";
+
 /** Why the control is not offered, when the plan does not include the mode. */
 export const FIRST_IDEAS_NOT_IN_PLAN =
   "This workspace's plan does not include the mode this step uses, so there is no control here. Nothing about the brain you built is affected: the modes your plan does include are on the studio page, and they use the same brain.";

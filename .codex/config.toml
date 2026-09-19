@@ -1,30 +1,59 @@
-approval_policy = "on-request"
-default_permissions = "trendmonitor-workspace"
-project_doc_max_bytes = 65536
-model = "gpt-5.6-sol"
-model_reasoning_effort = "xhigh"
+#:schema https://developers.openai.com/codex/config-schema.json
+# TrendMonitor project configuration for native Windows.
+# Remove sandbox_mode and [sandbox_workspace_write] from all loaded configs.
+# Do not launch with --sandbox when using this permission profile.
 
+approval_policy = "on-request"
+approvals_reviewer = "user"
+default_permissions = "trendmonitor-workspace"
+
+# Keep the main model selected in Codex; use a quality-oriented reasoning default.
+
+model_verbosity = "low"
+
+# Instruction-file allowance, not a model context or code-output limit.
+project_doc_max_bytes = 65536
+
+# Leave model context, compaction, and tool-output budgets at their defaults.
 developer_instructions = """
 Keep responses clean, clear, concise, and limited to what the user asks for.
 Do not include long paragraphs, background, explanations, rationale, or unsolicited suggestions unless requested.
 When asked to review for gaps and issues, report only the gaps and issues. Do not explain why or how, or provide fixes, unless requested.
+
+Brevity applies to commentary, not implementation quality. Do not truncate requested code, skip necessary validation, or hide material blockers to shorten the response.
+Make focused changes and preserve unrelated work. Run relevant available checks after code changes; state briefly when checks fail or cannot run.
+Prefer targeted searches and relevant file sections over repeated repository-wide scans or unnecessary full-file dumps. Retrieve additional context whenever correctness requires it.
+Use subagents only for independent work that materially benefits from delegation. Avoid duplicated investigation and concurrent edits to the same files. Keep final integration and verification with the main agent.
+
+When a required Git checkpoint is blocked by the sandbox, request approval for the exact Git command if permitted. If approval is denied, stop that action and report the command and error.
+Do not bypass Git hooks or permission restrictions. Do not push, reset, clean, amend, or overwrite unrelated changes unless explicitly requested.
 """
+
 [features]
 hooks = true
 
+# Preserved opt-in; requires a supported client and ChatGPT sign-in/plan.
+[features.context_management]
+experimental_mode = true
+
 [agents]
-default_subagent_model = "gpt-5.6-terra"
+default_subagent_model = "gpt-5.6-sol"
 default_subagent_reasoning_effort = "high"
-max_concurrent_threads_per_session = 4
+# A conservative parallelism ceiling, not a total token or spending cap.
+max_concurrent_threads_per_session = 12
 
 [permissions.trendmonitor-workspace]
-description = "Workspace writes with project secrets and network access denied by default"
+description = "Workspace writes; matching project secrets and sandboxed-command network access denied"
 extends = ":workspace"
 
 [permissions.trendmonitor-workspace.filesystem]
+# Preserved depth: lowering it can reduce recursive deny-rule coverage.
 glob_scan_max_depth = 8
+# Preserved home-read access. Workspace secret rules do not cover all home files.
+"C:/Users/FredWang" = "read"
 
 [permissions.trendmonitor-workspace.filesystem.":workspace_roots"]
+".git" = "write"
 "**/secrets/**" = "deny"
 "**/.env" = "deny"
 "**/.env.*" = "deny"
@@ -32,21 +61,14 @@ glob_scan_max_depth = 8
 "**/*secrets*" = "deny"
 
 [permissions.trendmonitor-workspace.network]
+# Applies to sandboxed commands, not all hosted tools or approved escalations.
 enabled = false
-
 
 [shell_environment_policy]
 inherit = "core"
+ignore_default_excludes = false
 
 [shell_environment_policy.set]
-CLAUDE_CODE_MAX_OUTPUT_TOKENS = "64000"
-MAX_THINKING_TOKENS = "31999"
-BASH_DEFAULT_TIMEOUT_MS = "120000"
-BASH_MAX_TIMEOUT_MS = "300000"
-BASH_MAX_OUTPUT_LENGTH = "150000"
-MAX_MCP_OUTPUT_TOKENS = "35000"
-DISABLE_PROMPT_CACHING = "0"
-DISABLE_NON_ESSENTIAL_MODEL_CALLS = "1"
-[features.context_management]
-experimental_mode = true
-
+# Create this directory before starting a new Codex task.
+TEMP = "C:/projects/ai.playground/trendMonitor/.codex-tmp"
+TMP = "C:/projects/ai.playground/trendMonitor/.codex-tmp"

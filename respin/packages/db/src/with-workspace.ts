@@ -2786,6 +2786,16 @@ export async function brainAssetSummary(
   return profileScope.accessors.brainAssetSummary();
 }
 
+/** App/test seam for whether this profile has produced any generation row. */
+export async function hasGenerationForProfile(
+  db: DbLike,
+  scope: WorkspaceScope,
+  profileId: string
+): Promise<boolean> {
+  const profileScope = await ProfileScope.mint(db, scope, profileId);
+  return (await profileScope.accessors.generationsNewest({ limit: 1 })).length > 0;
+}
+
 // ------------------------------------------------------ write capabilities
 
 /**

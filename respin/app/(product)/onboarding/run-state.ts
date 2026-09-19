@@ -33,6 +33,7 @@
 // a VALUE import here would put a Postgres driver in the client bundle. A
 // `import type` is erased before bundling, so it costs nothing.
 import type { BillingErrorCode } from "../billing-errors";
+import type { AssemblyKind } from "@respin/credits/app-server";
 
 /**
  * What the VOICE inference action hands back (slice 3).
@@ -80,6 +81,10 @@ export type VoiceInferenceState =
       postsUsed: number;
       postsAvailable: number;
     }
-  | { status: "refused"; code: BillingErrorCode };
+  | {
+      status: "refused";
+      code: BillingErrorCode;
+      assemblyKind?: AssemblyKind;
+    };
 
 export const IDLE_VOICE_STATE: VoiceInferenceState = { status: "idle" };

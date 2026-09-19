@@ -10,6 +10,7 @@
 // external dependencies (the Next router and the Better Auth client) are only
 // touched by the submit handler, so the markup this asserts is the markup a real
 // visitor receives.
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -23,7 +24,7 @@ vi.mock("@respin/auth/client", () => ({
   },
 }));
 
-const { AuthForm, PASSWORD_MIN_LENGTH, PASSWORD_RULE } = await import(
+const { AuthForm, authDestination, PASSWORD_MIN_LENGTH, PASSWORD_RULE } = await import(
   "../app/(auth)/auth-form"
 );
 
@@ -111,5 +112,20 @@ describe("audit #15: the existing behaviour is preserved, not traded away", () =
     expect(
       html(<AuthForm mode="sign-in" googleEnabled={false} />)
     ).not.toContain("Continue with Google");
+  });
+});
+
+describe("Phase 1 T2: auth destinations follow the first-session journey", () => {
+  it("sends a new creator to onboarding and keeps sign-in landing in Studio", () => {
+    expect(authDestination("sign-up")).toBe("/onboarding");
+    expect(authDestination("sign-in")).toBe("/studio");
+  });
+
+  it("uses that same mode-derived destination for Google", () => {
+    const source = readFileSync(
+      new URL("../app/(auth)/auth-form.tsx", import.meta.url),
+      "utf8"
+    );
+    expect(source).toContain("callbackURL: authDestination(mode)");
   });
 });

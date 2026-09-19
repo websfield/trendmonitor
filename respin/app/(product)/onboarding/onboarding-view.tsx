@@ -67,6 +67,14 @@ export type ReferencePost = {
 /** Why a write control is unavailable, in words the reader can act on. */
 export type WriteBlock = { reason: string } | null;
 
+export type OnboardingStepState = "done" | "next" | "todo" | "unknown";
+export type OnboardingProgressStep = Readonly<{
+  id: "posts" | "voice" | "interview" | "first-ideas";
+  label: string;
+  state: OnboardingStepState;
+  refusal?: { title: string; detail: string };
+}>;
+
 export type OnboardingViewProps = {
   step: "create-profile" | "paste-posts";
   /**
@@ -127,6 +135,7 @@ export type OnboardingViewProps = {
   profilePanel?: CreatorProfilePanelProps;
   selectionRequired?: boolean;
   candidateSafetyAction?: SafetyAction;
+  steps?: readonly OnboardingProgressStep[];
   /**
    * The metered run (slice 2a), or NULL where there is no profile to run for.
    *
@@ -243,6 +252,7 @@ export function OnboardingView({
   profilePanel,
   selectionRequired = false,
   candidateSafetyAction,
+  steps,
   run,
   error,
 }: OnboardingViewProps): ReactNode {
@@ -250,6 +260,29 @@ export function OnboardingView({
     <section>
       <h1>Set up your creator profile</h1>
       {error ? <Refusal error={error} /> : null}
+      {steps ? (
+        <div className="panel" data-testid="onboarding-steps">
+          <p className="muted">
+            {steps.filter((item) => item.state === "done").length} of {steps.length} done
+          </p>
+          <ol>
+            {steps.map((item) => (
+              <li key={item.id} data-step-state={item.state}>
+                {item.label}: {item.state}
+                {item.refusal ? (
+                  <Banner
+                    title={item.refusal.title}
+                    data-testid={`onboarding-step-refusal-${item.id}`}
+                    role="alert"
+                  >
+                    <p className="muted">{item.refusal.detail}</p>
+                  </Banner>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
 
       {step === "create-profile" ? (
         <div className="panel">
@@ -307,56 +340,6 @@ export function OnboardingView({
             </div>
           ) : (
             <>
-          {/*
-            Slice 3b, Stage B1. A plain link, not folded into this page's own
-            forms — the structured interview is its own screen with its own
-            save/review/submit flow (`./interview/page.tsx`), reachable as
-            soon as a profile exists, independent of how many posts have been
-            pasted below.
-          */}
-          <div className="panel" data-testid="interview-link-panel">
-            <h2>Answer the structured interview</h2>
-            <p className="muted">
-              Goals, positioning, your north-star metric, and words or vibes
-              to avoid — a separate set of questions from the posts below,
-              answered in your own words.
-            </p>
-            <a href="/onboarding/interview" data-testid="interview-link">
-              Start the interview
-            </a>
-          </div>
-
-          {/*
-            SLICE 7, PRD B04 — "onboarding ends by ... the creator's first three
-            ideas through their new brain, so the aha moment happens inside the
-            first session". A plain link, like the interview panel above, and
-            for the same reason: the step is its own screen with its own control
-            and its own money copy.
-
-            IT IS A SIGNPOST, NOT A CONTROL, and the order is stated rather than
-            enforced here: the step needs an activated brain and refuses without
-            one, with copy. Putting a spending button on this page would be a
-            second spend control on a screen whose own control does something
-            else.
-
-            THE WORDING AVOIDS `generat`, `script`, `hook` AND `analy`, which
-            `tests/onboarding-ui.test.tsx` bans on this screen — this screen
-            does not do that thing, and a link to one that does must not read as
-            a claim that it does.
-          */}
-          <div className="panel" data-testid="first-ideas-link-panel">
-            <h2>Make this creator&apos;s first ideas</h2>
-            <p className="muted">
-              Once you have confirmed and activated a brain for this creator,
-              this is the first thing the product makes for them — ideas, each
-              with an opening line, the point it makes, and the framework behind
-              it. It costs credits like anything else the product makes.
-            </p>
-            <a href="/onboarding/first-ideas" data-testid="first-ideas-link">
-              Go to the first ideas step
-            </a>
-          </div>
-
           <div className="panel">
             <h2>Add your own past posts</h2>
             <p className="muted">
@@ -366,7 +349,6 @@ export function OnboardingView({
               voice draft below is built from, which means they are sent to our
               model provider when you build it.
             </p>
-            <PlanLine plan={plan} />
             {pasteBlock ? (
               <p className="muted" data-testid="paste-blocked">
                 {pasteBlock.reason}
@@ -442,8 +424,10 @@ export function OnboardingView({
             )}
           </div>
 
-          <div className="panel">
-            <h2>Add posts you admire (optional)</h2>
+          <details className="panel">
+            <summary style={{ minHeight: "44px" }}>
+              Add posts you admire (optional)
+            </summary>
             {/*
               R2 (slice 4): NO attestation control here, and the copy says what
               the label means instead of asking for one. A reference post is
@@ -525,10 +509,15 @@ export function OnboardingView({
                 ))}
               </ul>
             ) : null}
-          </div>
+          </details>
 
           {candidateSafetyAction ? (
-            <CandidateSafetyPanel action={candidateSafetyAction} />
+            <details className="panel">
+              <summary style={{ minHeight: "44px" }}>
+                Check a candidate reference
+              </summary>
+              <CandidateSafetyPanel action={candidateSafetyAction} />
+            </details>
           ) : null}
 
           {run ? (
@@ -564,6 +553,31 @@ export function OnboardingView({
               />
             </div>
           ) : null}
+
+          <div className="panel" data-testid="interview-link-panel">
+            <h2>Answer the structured interview</h2>
+            <p className="muted">
+              Goals, positioning, your north-star metric, and words or vibes
+              to avoid — a separate set of questions from the posts below,
+              answered in your own words.
+            </p>
+            <a href="/onboarding/interview" data-testid="interview-link">
+              Start the interview
+            </a>
+          </div>
+
+          <div className="panel" data-testid="first-ideas-link-panel">
+            <h2>Make this creator&apos;s first ideas</h2>
+            <p className="muted">
+              Once you have confirmed and activated a brain for this creator,
+              this is the first thing the product makes for them — ideas, each
+              with an opening line, the point it makes, and the framework behind
+              it. It costs credits like anything else the product makes.
+            </p>
+            <a href="/onboarding/first-ideas" data-testid="first-ideas-link">
+              Go to the first ideas step
+            </a>
+          </div>
 
           <div className="panel">
             <h2>Your posts ({posts.length}{morePosts ? "+" : ""})</h2>

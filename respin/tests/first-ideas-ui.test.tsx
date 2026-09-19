@@ -62,6 +62,7 @@ import {
   streamingViolations,
 } from "./support/no-streaming";
 import { STUDIO_ERROR_CODES, studioRefusalCopy } from "../app/(product)/studio/copy";
+import { DISCLOSURE_FIELD_PREFIX } from "../app/(product)/studio/run-copy";
 import type {
   KillTestSummary,
   ScriptDocument,
@@ -69,6 +70,7 @@ import type {
 } from "../app/(product)/studio/run-state";
 import * as firstIdeasCopy from "../app/(product)/onboarding/first-ideas/copy";
 import {
+  FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE,
   FIRST_IDEAS_BUTTON,
   FIRST_IDEAS_INTRO,
   FIRST_IDEAS_NEEDS_BRAIN,
@@ -83,6 +85,7 @@ import {
   firstIdeasHeading,
 } from "../app/(product)/onboarding/first-ideas/copy";
 import { FirstIdeasResult } from "../app/(product)/onboarding/first-ideas/first-ideas-result";
+import { FirstIdeasPanel } from "../app/(product)/onboarding/first-ideas/first-ideas-panel";
 import {
   FirstIdeasView,
   type FirstIdeasViewProps,
@@ -113,6 +116,14 @@ function visibleCopy(html: string): string {
       .replace(/<script[\s\S]*?<\/script>/g, " ")
       .replace(/<[^>]*>/g, " ")
   ).replace(/\s+/g, " ");
+}
+
+function detailsText(markup: string): string {
+  return decoded(markup)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
 }
 
 /**
@@ -546,11 +557,85 @@ describe("what the screen shows", () => {
     expect(html).toContain("That cost 4 credits.");
   });
 
+  it("uses Studio's exact four-row disclosure fixture without losing creator offers", () => {
+    const html = withRun({
+      ...USABLE_RUN,
+      killTest: {
+        ...KILL_TEST,
+        traceability: [
+          { kind: "number", enforcement: "flag", token: "5", field: "/ideas/0/hook", unit: "Five steps." },
+          { kind: "proper_noun", enforcement: "flag", token: "Dorset", field: "/ideas/1/hook", unit: "Filmed in Dorset." },
+          { kind: "proper_noun", enforcement: "flag", token: "TikTok", field: "/disclosure/platform", unit: "TikTok policy." },
+          { kind: "proper_noun", enforcement: "flag", token: "AI", field: "/disclosure/guidance", unit: "AI guidance." },
+        ],
+      },
+    });
+    const traceability = html.match(
+      /<ul data-testid="studio-traceability">[\s\S]*?<\/ul>/
+    )?.[0] ?? "";
+    expect(traceability).not.toBe("");
+    expect(traceability.split('data-testid="studio-check-offer"').length - 1).toBe(2);
+    expect(traceability).toContain("5 [check]");
+    expect(traceability).toContain("Dorset [check]");
+    expect(traceability).not.toContain("TikTok [check]");
+    expect(traceability).not.toContain("AI [check]");
+    expect(html).toContain(
+      "2 other specifics were not found either — a plain number or a name, where an ordinary word can land, so these are a prompt to look, never a fault."
+    );
+    expect(html.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
+    expect(html).toContain("names, numbers and dates are not listed here");
+    expect(html).toContain("recall aid, not a complete check.");
+  });
+
+  it("keeps a hard disclosure row and withholds an all-disclosure list", () => {
+    const hard = withRun({
+      ...USABLE_RUN,
+      killTest: {
+        ...KILL_TEST,
+        traceability: [
+          {
+            kind: "currency",
+            enforcement: "hard",
+            token: "$4,000",
+            field: `${DISCLOSURE_FIELD_PREFIX}guidance`,
+            unit: "Within the first 3 seconds.",
+          },
+        ],
+      },
+    });
+    expect(hard).toContain("$4,000 [check]");
+    expect(hard).toContain("1 amount or date is");
+    expect(hard.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
+
+    const allDisclosure = withRun({
+      ...USABLE_RUN,
+      killTest: {
+        ...KILL_TEST,
+        traceability: [
+          {
+            kind: "proper_noun",
+            enforcement: "flag",
+            token: "AI",
+            field: `${DISCLOSURE_FIELD_PREFIX}guidance`,
+            unit: "AI guidance.",
+          },
+        ],
+      },
+    });
+    expect(allDisclosure).not.toContain('data-testid="studio-traceability"');
+    expect(allDisclosure).toContain(
+      "Every number, date and name outside the disclosure guidance in this draft was found in your brain or in what you typed in."
+    );
+    expect(allDisclosure).not.toContain("Every name in this draft was found");
+    expect(allDisclosure.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
+  });
+
   it("EVERY gate has its own sentence, and they say different things", () => {
     const reasons = [
       FIRST_IDEAS_VIEWER,
       FIRST_IDEAS_PAUSED,
       FIRST_IDEAS_NOT_IN_PLAN,
+      FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE,
       FIRST_IDEAS_NEEDS_BRAIN,
     ];
     expect(new Set(reasons).size, "two gates share one sentence").toBe(reasons.length);
@@ -566,6 +651,17 @@ describe("what the screen shows", () => {
     for (const reason of reasons) {
       expect(reason.toLowerCase()).not.toMatch(/upgrad|subscribe|a plan that includes/);
     }
+  });
+
+  it("names a failed brain-state read and gives the same reload remedy", () => {
+    const html = render({
+      run: {
+        ...baseProps.run!,
+        block: { reason: FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE },
+      },
+    });
+    expect(html).toContain("brain state could not be read");
+    expect(decoded(html)).toContain("Reload this page.");
   });
 
   it("the gate ORDER matches the operation's — role, pause, plan, brain", () => {
@@ -608,6 +704,108 @@ describe("what the screen shows", () => {
     });
     expect(html).toContain('data-testid="first-ideas-action-error"');
     expect(html).toContain('role="alert"');
+  });
+});
+
+describe("Phase 1 T7: first-ideas pre-form prose folds without hiding honesty", () => {
+  it("uses one native fold and renders an injected honest refusal outside it", () => {
+    const killTest = {
+      ...KILL_TEST,
+      traceability: [
+        { kind: "proper_noun", enforcement: "flag" as const, token: "Dorset", field: "/ideas/0/hook", unit: "Filmed in Dorset." },
+      ],
+      claims: [
+        { family: "concealment" as const, enforcement: "flag" as const, token: "skip the label", field: "/disclosure/guidance", unit: "Most people skip the label." },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <FirstIdeasPanel
+        {...baseProps.run!}
+        initialState={{ ...HONEST_REFUSAL, killTest }}
+      />
+    );
+    const details = html.match(/<details[\s\S]*?<\/details>/g) ?? [];
+    expect(details).toHaveLength(1);
+    const folded = details[0] ?? "";
+    expect(folded).toContain("How this works and what it costs");
+    expect(folded).toContain('data-testid="first-ideas-intro"');
+    expect(folded).not.toContain(" open=");
+    expect(detailsText(folded)).toBe(
+      "How this works and what it costs This is the first thing the product makes for this creator. It runs on the brain you confirmed and activated — the same brain every later draft uses — and it comes back as ideas rather than as topics: each one has an opening line, the point it makes, and the framework it is built on."
+    );
+    expect([...folded.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1])).toEqual([
+      "first-ideas-intro",
+    ]);
+    for (const testId of [
+      "first-ideas-cost",
+      "first-ideas-no-results-basis",
+      "first-ideas-no-stream",
+      "first-ideas-status",
+      "studio-honest-refusal",
+      "studio-refusal-why",
+      "studio-sharper-angle",
+      "studio-kill-test",
+      "studio-traceability-heading",
+      "studio-traceability",
+      "studio-traceability-note",
+      "studio-claims",
+      "studio-disclosure-provenance",
+      "studio-charge",
+    ]) {
+      expect(html).toContain(`data-testid="${testId}"`);
+      expect(folded).not.toContain(`data-testid="${testId}"`);
+    }
+  });
+
+  it("keeps an injected usable result whole outside the fold", () => {
+    const html = renderToStaticMarkup(
+      <FirstIdeasPanel
+        {...baseProps.run!}
+        initialState={{
+          ...USABLE_RUN,
+          killTest: {
+            ...KILL_TEST,
+            traceability: [
+              { kind: "proper_noun", enforcement: "flag", token: "Dorset", field: "/ideas/0/hook", unit: "Filmed in Dorset." },
+            ],
+            claims: [
+              { family: "concealment", enforcement: "flag", token: "skip the label", field: "/disclosure/guidance", unit: "Most people skip the label." },
+            ],
+          },
+        }}
+      />
+    );
+    const folded = html.match(/<details[\s\S]*?<\/details>/)?.[0] ?? "";
+    expect((html.match(/<details[\s\S]*?<\/details>/g) ?? [])).toHaveLength(1);
+    expect(folded).toContain("How this works and what it costs");
+    expect(folded).not.toContain(" open=");
+    expect(detailsText(folded)).toBe(
+      "How this works and what it costs This is the first thing the product makes for this creator. It runs on the brain you confirmed and activated — the same brain every later draft uses — and it comes back as ideas rather than as topics: each one has an opening line, the point it makes, and the framework it is built on."
+    );
+    expect([...folded.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1])).toEqual([
+      "first-ideas-intro",
+    ]);
+    for (const testId of [
+      "studio-ideas",
+      "studio-weakest-point",
+      "studio-disclosure",
+      "studio-kill-test",
+      "studio-check-legend",
+      "studio-traceability-heading",
+      "studio-traceability",
+      "studio-traceability-note",
+      "studio-claims",
+      "studio-disclosure-provenance",
+      "studio-charge",
+      "first-ideas-next",
+      "first-ideas-cost",
+      "first-ideas-no-results-basis",
+      "first-ideas-no-stream",
+      "first-ideas-status",
+    ]) {
+      expect(html).toContain(`data-testid="${testId}"`);
+      expect(folded).not.toContain(`data-testid="${testId}"`);
+    }
   });
 });
 
@@ -668,6 +866,15 @@ describe("R16/R21: it does not stream, and it claims no evidence about the creat
       [
         "blocked on a brain",
         { run: { ...baseProps.run!, block: { reason: FIRST_IDEAS_NEEDS_BRAIN } } },
+      ],
+      [
+        "brain history unreadable",
+        {
+          run: {
+            ...baseProps.run!,
+            block: { reason: FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE },
+          },
+        },
       ],
       [
         "blocked on a plan",
@@ -760,6 +967,7 @@ describe("R16/R21: it does not stream, and it claims no evidence about the creat
       FIRST_IDEAS_PENDING_LABEL: [FIRST_IDEAS_PENDING_LABEL],
       FIRST_IDEAS_NEXT: [FIRST_IDEAS_NEXT],
       FIRST_IDEAS_NO_RESULTS_BASIS: [FIRST_IDEAS_NO_RESULTS_BASIS],
+      FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE: [FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE],
       FIRST_IDEAS_NEEDS_BRAIN: [FIRST_IDEAS_NEEDS_BRAIN],
       FIRST_IDEAS_NOT_IN_PLAN: [FIRST_IDEAS_NOT_IN_PLAN],
       FIRST_IDEAS_VIEWER: [FIRST_IDEAS_VIEWER],

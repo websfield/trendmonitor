@@ -1,0 +1,264 @@
+# Phase 1 presentation mutation witnesses
+
+Run date: 2026-09-18
+
+Each plant operated on the real tracked target. The harness retained the target's
+original byte array, ran the stated test command while the mutation was present,
+and restored the byte array in `finally`. `Get-FileHash -Algorithm SHA256` before
+and after each plant matched. `TEMP` and `TMP` were both
+`C:\projects\ai.playground\trendMonitor\.codex-tmp`.
+
+## Harness
+
+```powershell
+$taskBytes = [System.IO.File]::ReadAllBytes($taskPath)
+$taskBefore = (Get-FileHash -Algorithm SHA256 -LiteralPath $taskPath).Hash
+try {
+  # apply exactly the witness mutation below
+  pnpm -C respin exec vitest run <listed test targets>
+  $taskExit = $LASTEXITCODE
+} finally {
+  [System.IO.File]::WriteAllBytes($taskPath, $taskBytes)
+}
+$taskAfter = (Get-FileHash -Algorithm SHA256 -LiteralPath $taskPath).Hash
+```
+
+## W3 — wrong kind filter
+
+Target: `respin/app/(product)/studio/generation-outcome.tsx`
+
+Mutation command expression: replace
+`!f.field.startsWith(DISCLOSURE_FIELD_PREFIX) || f.enforcement === "hard"`
+with `f.kind !== "proper_noun"`.
+
+Red command:
+
+```powershell
+pnpm -C respin exec vitest run tests/studio-ui.test.tsx
+```
+
+Result: exit 1; 4 failed, 168 passed. Intended guard red:
+`filters only flag-level disclosure traceability while keeping creator offers` —
+missing `Dorset [check]`.
+
+Restore hash: `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE`.
+
+Green restore command: `pnpm -C respin exec vitest run tests/studio-ui.test.tsx`
+— exit 0; 172 passed.
+
+## W3b — disclosure scope is narrowed to guidance
+
+Target: `respin/app/(product)/studio/generation-outcome.tsx`
+
+The phase witness is the narrow-exclusion mutation: replace
+`!f.field.startsWith(DISCLOSURE_FIELD_PREFIX)` with
+`f.field !== "/disclosure/guidance"`, preserving the hard-enforcement clause.
+
+Red command:
+
+```powershell
+pnpm -C respin exec vitest run tests/studio-ui.test.tsx
+```
+
+Result: exit 1; 1 failed, 171 passed. Intended TikTok guard red:
+`filters only flag-level disclosure traceability while keeping creator offers` —
+`TikTok disclosure [check]` appeared.
+
+Restore hash: `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE`.
+
+Green restore command: `pnpm -C respin exec vitest run tests/studio-ui.test.tsx`
+— exit 0; 172 passed.
+
+Earlier literal whole-condition probe, also restored: replacing the entire
+inclusion condition with `f.field === "/disclosure/guidance"` exited 1 with
+6 failures and reddened the added creator-owned `TikTok [check]` positive
+control. Its restored SHA-256 was `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE`. It is recorded as an additional probe, not as a substitute for the
+narrow-exclusion witness above.
+
+## W3c — hard disclosure protection removed
+
+Target: `respin/app/(product)/studio/generation-outcome.tsx`
+
+Mutation command expression: remove ` || f.enforcement === "hard"`.
+
+Red command:
+
+```powershell
+pnpm -C respin exec vitest run tests/studio-ui.test.tsx
+```
+
+Result: exit 1; 1 failed, 171 passed. Intended guard red:
+`keeps a synthetic hard disclosure traceability row visible` — missing
+`$4,000 [check]`.
+
+Restore hash: `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE`.
+
+Green restore command: `pnpm -C respin exec vitest run tests/studio-ui.test.tsx`
+— exit 0; 172 passed.
+
+## W4 — provenance moved below disclosure
+
+Target: `respin/app/(product)/studio/generation-outcome.tsx`
+
+Mutation command expression: remove the `studio-disclosure-provenance` paragraph
+from `KillTestBlock` and append it below the `Document` disclosure paragraph.
+
+Red command:
+
+```powershell
+pnpm -C respin exec vitest run tests/studio-ui.test.tsx
+```
+
+Result: exit 1; 3 failed, 169 passed. AC10 honest-refusal guard red:
+`Phase 1 T7: Studio pre-form prose folds without hiding honesty > keeps an
+injected honest refusal whole outside the fold` — provenance was absent.
+
+Restore hash: `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE`.
+
+Green restore command: `pnpm -C respin exec vitest run tests/studio-ui.test.tsx`
+— exit 0; 172 passed.
+
+## W6 — studio no-stream note folded
+
+Target: `respin/app/(product)/studio/studio-panel.tsx`
+
+Mutation command expression: move the `studio-no-stream` paragraph into the
+native pre-form `details` element.
+
+Red command:
+
+```powershell
+pnpm -C respin exec vitest run tests/studio-ui.test.tsx
+```
+
+Result: exit 1; 2 failed, 170 passed. AC10 guards red: the usable panel's
+exact folded test-id list and the honest-refusal whole-panel test both found
+`studio-no-stream` inside the fold.
+
+Restore hash: `50F60C547088C4C905136A63CC81F3AD811E10190777AE44B1D625DE656BE42C`.
+
+Green restore command: `pnpm -C respin exec vitest run tests/studio-ui.test.tsx`
+— exit 0; 172 passed.
+
+## W6b — second testidless honesty fold
+
+Target: `respin/app/(product)/studio/generation-outcome.tsx`
+
+Mutation command expression: wrap the testidless "The draft that failed is not
+shown" honesty paragraph in a second native `details` element.
+
+Red command:
+
+```powershell
+pnpm -C respin exec vitest run tests/studio-ui.test.tsx tests/page-wiring.test.tsx
+```
+
+Result: exit 1; 2 failed, 181 passed. Both intended guards red:
+
+- `keeps an injected honest refusal whole outside the fold` — exact details
+  count expected 1, received 2.
+- `keeps native folds out of the complete two-panel render closure` —
+  `generation-outcome.tsx` expected 0 native folds, received 1.
+
+Restore hash: `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE`.
+
+Green restore command:
+`pnpm -C respin exec vitest run tests/studio-ui.test.tsx tests/page-wiring.test.tsx`
+— exit 0; 183 passed.
+
+## W7a — JSX call-site injection
+
+Target: `respin/app/(product)/studio/studio-view.tsx`
+
+Mutation command expression: change `<StudioPanel {...run} />` to
+`<StudioPanel {...run} initialState={undefined} />`.
+
+Red command:
+
+```powershell
+pnpm -C respin exec vitest run tests/page-wiring.test.tsx
+```
+
+Result: exit 1; 1 failed, 10 passed. The initial-state source scan found the
+forbidden `(product)/studio/studio-view.tsx` call site.
+
+Restore hash: `719D1CC92039DE15CD0BA6B489CFE51FE457043CC280C97651E41DA9DC551F55`.
+
+Green restore command: `pnpm -C respin exec vitest run tests/page-wiring.test.tsx`
+— exit 0; 11 passed.
+
+## W7b — page props-object injection
+
+Target: `respin/app/(product)/studio/page.tsx`
+
+Mutation command expression: insert `initialState: undefined` in the `run` props
+object passed to `StudioView`.
+
+Red command:
+
+```powershell
+pnpm -C respin exec vitest run tests/page-wiring.test.tsx
+```
+
+Result: exit 1; 1 failed, 10 passed. The source scan found the forbidden
+`(product)/studio/page.tsx` props-object key.
+
+Restore hash: `643841A3D99432173AA4F9B19F0E85D882AB11D56AE9DB937986560A6FB34EE7`.
+
+Green restore command: `pnpm -C respin exec vitest run tests/page-wiring.test.tsx`
+— exit 0; 11 passed.
+
+## W7c — panel declaration renamed
+
+Target: `respin/app/(product)/studio/studio-panel.tsx`
+
+Mutation command expression: rename the declaring prop
+`initialState?: StudioActionState;` to `testState?: StudioActionState;`.
+
+Red command:
+
+```powershell
+pnpm -C respin exec vitest run tests/page-wiring.test.tsx
+```
+
+Result: exit 1; 1 failed, 10 passed. The panel positive control expected one
+`initialState` prop declaration and received none.
+
+Restore hash: `50F60C547088C4C905136A63CC81F3AD811E10190777AE44B1D625DE656BE42C`.
+
+Green restore command: `pnpm -C respin exec vitest run tests/page-wiring.test.tsx`
+— exit 0; 11 passed.
+
+## Final focused restore
+
+```powershell
+pnpm -C respin exec vitest run tests/studio-ui.test.tsx tests/first-ideas-ui.test.tsx tests/page-wiring.test.tsx tests/claims-vocabulary-agreement.test.ts
+```
+
+Result: exit 0; 223 passed.
+
+## Batch 0 presentation repair witnesses - 2026-09-18
+
+All plants used the real target, retained its original byte array, restored it in
+`finally`, and compared SHA-256 before/after. `TEMP` and `TMP` were
+`C:\projects\ai.playground\trendMonitor\.codex-tmp`.
+
+| Witness | Target and plant | Red command / result | Restored hash |
+| --- | --- | --- | --- |
+| W3 | `generation-outcome.tsx`: disclosure predicate ? `f.kind !== "proper_noun"` | `pnpm -C respin exec vitest run tests/studio-ui.test.tsx tests/first-ideas-ui.test.tsx`; exit 1, 7 failed / 203 passed. Both four-row fixtures lost `Dorset [check]`. | `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE` |
+| W3b | `generation-outcome.tsx`: prefix exclusion ? `f.field !== "/disclosure/guidance"` | Same command; exit 1, 2 failed / 208 passed. Platform `TikTok` produced a third offer. | `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE` |
+| W3c | `generation-outcome.tsx`: remove ` || f.enforcement === "hard"` | Same command; exit 1, 2 failed / 208 passed. Both hard-disclosure checks lost `$4,000 [check]`. | `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE` |
+| W4 | `generation-outcome.tsx`: relocate disclosure provenance beneath usable-document disclosure | Same command; exit 1, 2 failed / 208 passed. Studio and first-ideas honest-refusal AC10 fixtures lost `studio-disclosure-provenance`. | `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE` |
+| W6 | `studio-panel.tsx`: move `studio-no-stream` into the native fold | `pnpm -C respin exec vitest run tests/studio-ui.test.tsx`; exit 1, 2 failed / 175 passed. Both Studio state folds failed exact folded text. | `50F60C547088C4C905136A63CC81F3AD811E10190777AE44B1D625DE656BE42C` |
+| W6b | `generation-outcome.tsx`: wrap the testidless honesty paragraph in a second `<details>` | `pnpm -C respin exec vitest run tests/studio-ui.test.tsx tests/page-wiring.test.tsx`; exit 1, 2 failed / 186 passed. Exact fold count and source-closure count reddened. | `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE` |
+| W6c | Move that testidless honesty paragraph from `generation-outcome.tsx` into Studio's existing fold | Same command; exit 1, 2 failed / 186 passed. Exact folded-text assertions reddened. Both restored: `A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE`; `50F60C547088C4C905136A63CC81F3AD811E10190777AE44B1D625DE656BE42C`. |
+| W7d | `first-ideas-panel.tsx`: replace named generation-hook argument `initialState ?? IDLE` with `IDLE` | `pnpm -C respin exec vitest run tests/page-wiring.test.tsx`; exit 1, 1 failed / 10 passed. AST wiring assertion reported zero named-hook forwards. | `4F5D64A801C7FBBA58AC7330C6D448B2387CE673ED0484896B27BE813F1D64F3` |
+
+| W7e | `first-ideas-panel.tsx`: rename `initialState?: StudioRunState;` to `testState?: StudioRunState;` | `pnpm -C respin exec vitest run tests/page-wiring.test.tsx`; exit 1, 1 failed / 10 passed. AST assertion reported zero prop declarations. | `4F5D64A801C7FBBA58AC7330C6D448B2387CE673ED0484896B27BE813F1D64F3` |
+Passing-after restore command:
+
+```powershell
+pnpm -C respin exec vitest run tests/studio-ui.test.tsx tests/first-ideas-ui.test.tsx tests/page-wiring.test.tsx tests/results-page-wiring.test.tsx tests/claims-vocabulary-agreement.test.ts
+```
+
+Result: exit 0; 255 passed.

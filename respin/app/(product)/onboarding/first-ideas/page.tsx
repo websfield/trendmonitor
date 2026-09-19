@@ -48,6 +48,7 @@ import { scopeForUser } from "../../workspace-scope";
 import { studioErrorFor, studioRefusalCopy } from "../../studio/copy";
 import { firstIdeasAction } from "./actions";
 import {
+  FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE,
   FIRST_IDEAS_NEEDS_BRAIN,
   FIRST_IDEAS_NOT_IN_PLAN,
   FIRST_IDEAS_PAUSED,
@@ -108,7 +109,7 @@ export default async function FirstIdeasPage(props: {
   // this page cannot read that table (there is no scoped accessor for it in
   // `app/**`), so it infers from what it CAN read — whether any kind has an
   // active version. A wrong signpost, never a wrong charge.
-  let brainActivated = false;
+  let brainActivated: boolean | null = null;
   try {
     const [voice, strategy, killtest] = await Promise.all([
       respinDb.readBrainHistory(scope, profile.id, "voice"),
@@ -120,6 +121,7 @@ export default async function FirstIdeasPage(props: {
     );
   } catch (err) {
     rethrowNextControlFlow(err);
+    // A failed courtesy read remains unknown rather than being called inactive.
     logRefusal("[first-ideas] brain state unavailable", err);
   }
 
@@ -196,6 +198,8 @@ export default async function FirstIdeasPage(props: {
         ? { reason: FIRST_IDEAS_PAUSED }
         : offer === undefined || offer.status === "not_in_plan"
           ? { reason: FIRST_IDEAS_NOT_IN_PLAN }
+          : brainActivated === null
+            ? { reason: FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE }
           : !brainActivated
             ? { reason: FIRST_IDEAS_NEEDS_BRAIN }
             : null;

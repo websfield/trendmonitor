@@ -33,6 +33,7 @@ import {
 import {
   assembleVoicePrompt,
   parseVoiceReply,
+  AssemblyError,
   CHECK,
   type AssembledField,
   type AssembledValue,
@@ -210,6 +211,9 @@ export async function inferVoice(
     minPosts,
   });
 
+  // Filled by `validate` below, which `runInference` runs on the reply it
+  // returns — and, when a first reply is unreadable, on the one retry's reply.
+  let parsed: AssembledField[] | undefined;
   // Every gate slice 2a built runs inside this call, in its established order.
   const run = await runInference(
     db,
@@ -224,16 +228,53 @@ export async function inferVoice(
       // ITS OWN BUNDLE. The default is slice 2a's connectivity ping, which
       // this operation does not run (billing gate, 2026-08-29).
       promptBundleVersion: VOICE_PROMPT_BUNDLE_VERSION,
+      // THE SAME PREDICATE THIS OPERATION APPLIES BELOW, handed in so that one
+      // unreadable reply buys a second call instead of costing the creator
+      // their included build (live walk, 2026-09-18 — `bad_shape` refused a
+      // real build with no retry anywhere on this path).
+      //
+      // THE RESULT IS CAPTURED, NOT RE-DERIVED, and that is a containment rule
+      // rather than an optimisation. `assemble-kinds.test.ts`'s mapper scanner
+      // requires EXACTLY ONE normal production caller of `parseVoiceReply`, so
+      // that no second call site can quietly supply a `mapBack` the seam would
+      // destructure. Validating here and parsing again below would be that
+      // second caller — the scanner caught it, which is what it is for.
+      //
+      // `runInference` guarantees this ran on the text it returns (it is how
+      // the loop terminates), so `parsed` below is this reply's, never an
+      // earlier discarded attempt's.
+      validate: (text) => {
+        parsed = parseVoiceReply({ text, fields: VOICE_FIELDS, posts });
+      },
     },
     at,
   );
 
-  // FAIL CLOSED, AFTER THE MONEY. A reply we cannot trust throws here, and the
-  // throw is deliberately AFTER `runInference` has committed `model_usage` and
-  // taken its debit: the tokens were really spent, so the spend record must
-  // survive the refusal. That is the same A-7 settlement-tail direction the
-  // two-transaction split in R-41 takes, applied one layer up.
-  const fields = parseVoiceReply({ text: run.text, fields: VOICE_FIELDS, posts });
+  // FAIL CLOSED, AND THE REFUSAL NOW HAPPENS EARLIER THAN IT READS.
+  //
+  // It used to be parsed HERE, after `runInference` had committed
+  // `model_usage`, claimed the included build and taken the debit — so an
+  // unreadable reply cost a creator their one free build with no retry and no
+  // way forward (live walk, 2026-09-18). The same parse is now the `validate`
+  // predicate above, which runs INSIDE `runInference` before those steps and
+  // buys exactly one more vendor call on the same attempt id.
+  //
+  // WHAT IS UNCHANGED IS R13: a refusal still leaves the spend record standing,
+  // because each discarded attempt writes its own `schema_invalid` row before
+  // the error leaves. The tokens were really spent either way.
+  //
+  // THE GUARD IS NOT DECORATION. `parsed` is filled by a callback, so "the
+  // callback ran" is a contract this function cannot see in its own types. If
+  // `runInference` ever returned a reply it had not validated, the alternative
+  // to this throw is `buildVoiceDocument(undefined!)` writing a brain document
+  // from nothing — fail closed instead, and the suite pins the contract.
+  if (!parsed) {
+    throw new AssemblyError(
+      "bad_shape",
+      "the reply was never validated, so no voice document can be built from it",
+    );
+  }
+  const fields = parsed;
 
   const { content, sourceEvidence } = buildVoiceDocument(fields);
 

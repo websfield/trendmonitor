@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   pastedReferences: vi.fn(),
   settleParkedAutopsies: vi.fn(),
   pastedReferenceQuote: vi.fn(),
+  trackedNicheEntitlementFor: vi.fn(),
   spinAction: vi.fn(),
   trackNicheAction: vi.fn(),
   untrackNicheAction: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock("@respin/credits/app-server", async (importOriginal) => ({
   respinCredits: {
     settleParkedAutopsies: state.settleParkedAutopsies,
     pastedReferenceQuote: state.pastedReferenceQuote,
+    trackedNicheEntitlementFor: state.trackedNicheEntitlementFor,
   },
 }));
 
@@ -204,6 +206,7 @@ beforeEach(() => {
     state.order.push("pastedReferenceQuote");
     return { creditCost: 7, balance: 31, tier: "creator", allowed: { ok: true } };
   });
+  state.trackedNicheEntitlementFor.mockResolvedValue({ maxTrackedNiches: 1 });
   state.spinAction.mockResolvedValue({ status: "idle" });
   state.trackNicheAction.mockResolvedValue({ status: "idle" });
   state.untrackNicheAction.mockResolvedValue({ status: "idle" });
@@ -285,7 +288,45 @@ describe("/trends server page wiring", () => {
     expect(state.settleParkedAutopsies).not.toHaveBeenCalled();
     expect(state.pastedReferences).not.toHaveBeenCalled();
     expect(state.pastedReferenceQuote).not.toHaveBeenCalled();
+    expect(state.trackedNicheEntitlementFor).not.toHaveBeenCalled();
     expect(html).not.toContain("Paste a reference");
+  });
+
+  it("reads the niche entitlement with the same clock instant as the pasted-reference quote", async () => {
+    await renderPage();
+    expect(state.trackedNicheEntitlementFor).toHaveBeenCalledWith(
+      SCOPE.workspaceId,
+      expect.any(Date)
+    );
+    expect(state.trackedNicheEntitlementFor.mock.calls[0][1]).toBe(
+      state.pastedReferenceQuote.mock.calls[0][1]
+    );
+  });
+
+  it("replaces the niche form when the active allowance is zero", async () => {
+    state.trackedNicheEntitlementFor.mockResolvedValue({ maxTrackedNiches: 0 });
+    const html = await renderPage();
+    expect(html).toContain('data-testid="niche-disabled-tier"');
+    expect(html).not.toContain('id="tracked-niche"');
+  });
+
+  it("renders an unknown entitlement tier through AccessRefusal", async () => {
+    const { UnknownEntitlementTierError } = await import("@respin/credits/app-server");
+    state.trackedNicheEntitlementFor.mockRejectedValue(
+      new UnknownEntitlementTierError("future")
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const html = await renderPage();
+      expect(html).toContain('data-testid="workspace-access-error"');
+      expect(html).toContain("We could not tell what your plan includes");
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[trends] scoped feed unavailable",
+        expect.objectContaining({ code: "unknown_entitlement_tier" })
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("withholds an incomplete completed-autopsy projection instead of inventing its display stages", async () => {

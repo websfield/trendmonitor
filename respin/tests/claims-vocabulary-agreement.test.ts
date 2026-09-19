@@ -42,7 +42,7 @@ import {
   type OutputClaimShape,
 } from "../packages/modes/src/claims";
 import { FLAG_ONLY_FIELD_PREFIXES } from "../packages/modes/src/traceability";
-import { traceabilityFlagNote } from "../app/(product)/studio/run-copy";
+import { DISCLOSURE_FIELD_PREFIX } from "../app/(product)/studio/run-copy";
 
 import {
   CLAIM_SPECIMENS,
@@ -198,26 +198,10 @@ describe("the OTHER two-copy list: which fields are flag-only", () => {
    * stop naming the reason, which is the whole point of the note. So it is
    * asserted rather than tolerated.
    */
-  it("the screen's disclosure branch covers every flag-only prefix `@respin/modes` has", () => {
-    expect(FLAG_ONLY_FIELD_PREFIXES.length).toBeGreaterThan(0);
-    for (const prefix of FLAG_ONLY_FIELD_PREFIXES) {
-      // A `kind` that would otherwise take a DIFFERENT branch, so this can only
-      // pass because the prefix was recognised.
-      const note = traceabilityFlagNote("proper_noun", `${prefix}guidance`);
-      expect(note, prefix).toMatch(/the product wrote rather than you/i);
-      expect(note, prefix).not.toMatch(/a name, not a rule violation/i);
-    }
-    // NON-VACUITY: a field NOT under any flag-only prefix takes the other
-    // branch, so the assertion above is measuring the prefix rather than a
-    // note that says the same thing for everything.
-    expect(traceabilityFlagNote("proper_noun", "/hooks/0/text")).toMatch(
-      /a name, not a rule violation/i
-    );
-    // THE COUNT IS PINNED. A prefix added in `@respin/modes` turns this red,
-    // which is the point: `traceabilityFlagNote` needs teaching about it.
+  it("pins the flag-only prefix used by Studio's stored-not-listed filter", () => {
     expect(
       FLAG_ONLY_FIELD_PREFIXES,
-      "a new flag-only prefix needs a branch in traceabilityFlagNote"
-    ).toEqual(["/disclosure/"]);
+      "a new flag-only prefix needs a presentation decision"
+    ).toEqual([DISCLOSURE_FIELD_PREFIX]);
   });
 });

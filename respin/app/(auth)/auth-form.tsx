@@ -14,6 +14,10 @@ import { Field } from "../ui/field";
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_RULE = `At least ${PASSWORD_MIN_LENGTH} characters.`;
 
+export function authDestination(mode: "sign-in" | "sign-up"): "/studio" | "/onboarding" {
+  return mode === "sign-up" ? "/onboarding" : "/studio";
+}
+
 // Styling comes from the Signal primitives: Field (label + control + stated
 // rule) and buttonClass (app/ui/), backed by app/globals.css.
 
@@ -44,7 +48,7 @@ export function AuthForm({
       setError(result.error.message ?? "Something went wrong — try again.");
       return;
     }
-    router.push("/studio");
+    router.push(authDestination(mode));
   }
 
   return (
@@ -118,7 +122,12 @@ export function AuthForm({
           type="button"
           className={buttonClass("secondary")}
           disabled={busy}
-          onClick={() => authClient.signIn.social({ provider: "google", callbackURL: "/studio" })}
+          onClick={() =>
+            authClient.signIn.social({
+              provider: "google",
+              callbackURL: authDestination(mode),
+            })
+          }
         >
           Continue with Google
         </button>

@@ -6,8 +6,26 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
+import type { Persona } from "./main-chapters";
 
-const ARTIFACTS_ROOT = path.join(__dirname, "..", "journeys", "artifacts");
+/** Exported so the CI witness can prove the workflow's scan/consumption arguments resolve to THIS tree (G-2). */
+export const ARTIFACTS_ROOT = path.join(__dirname, "..", "journeys", "artifacts");
+
+/**
+ * The ONE spelling of a blocking note. A `[note] ` line that begins with this
+ * prefix fails the CI scan (scripts/scan-journey-notes.ts); every other line
+ * in the same log — page console text, page errors, URLs — may contain the
+ * word without meaning it, which is why the scan matches the note prefix and
+ * never the bare word.
+ */
+export const BLOCKING_NOTE_PREFIX = "BLOCKING";
+
+/**
+ * A paid chapter that did not run because `E2E_PAID_TIERS` is not `1` writes
+ * exactly one note with this prefix and continues on the Free path. Never the
+ * `BLOCKING` prefix: a skipped paid chapter is the designed Free-path outcome.
+ */
+export const SKIPPED_NOTE_PREFIX = "skipped:";
 
 export type JourneyArtifacts = {
   readonly personaSlug: string;
@@ -20,6 +38,8 @@ export type JourneyArtifacts = {
   screenshot(page: Page, name: string): Promise<void>;
   /** Free-form line into the same console log, for chapter markers etc. */
   note(line: string): void;
+  /** The one skipped-paid-chapter note shape; see SKIPPED_NOTE_PREFIX. */
+  skipped(what: string): void;
 };
 
 export function journeyArtifacts(personaSlug: string): JourneyArtifacts {
@@ -37,6 +57,9 @@ export function journeyArtifacts(personaSlug: string): JourneyArtifacts {
     consoleLogPath,
     `# ${personaSlug} journey log — started ${new Date().toISOString()}\n`
   );
+  // Fresh consumption records per run for THIS persona only: the personas run
+  // as separate `playwright test` invocations, so each may clear only its own.
+  clearConsumptionRecords(personaSlug);
 
   function append(line: string): void {
     fs.appendFileSync(consoleLogPath, line.endsWith("\n") ? line : `${line}\n`);
@@ -79,5 +102,82 @@ export function journeyArtifacts(personaSlug: string): JourneyArtifacts {
     note(line: string): void {
       append(`[note] ${line}`);
     },
+    skipped(what: string): void {
+      append(`[note] ${SKIPPED_NOTE_PREFIX} ${what}`);
+    },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Structured per-press consumption records (Phase 2, Failed-dispatch retention).
+//
+// Separate from the free-form notes above: one small JSON file per persona and
+// press ordinal under `artifacts/consumption/`, written BEFORE the press as an
+// `unknown` record and atomically replaced after the press settles — so a run
+// that dies mid-press leaves an honest `unknown`, never an absence that a
+// later reader could count as zero. Persisted fields are exactly the closed
+// set below; notes stay supplemental. The CI validator
+// (`scan-journey-notes.ts --consumption-evidence`) re-serialises these into
+// the one uploaded manifest and rejects anything outside this shape.
+// ---------------------------------------------------------------------------
+
+export const CONSUMPTION_DIR = path.join(ARTIFACTS_ROOT, "consumption");
+
+export type VoicePressPersona = Extract<Persona, "solo-creator" | "studio-operator">;
+
+/** The settled voice ACTION (not the model-usage enum). */
+export type PressOutcome = "succeeded" | "refused" | "unknown";
+
+export type ConsumptionRecord = {
+  runId: string;
+  persona: VoicePressPersona;
+  pressOrdinal: number;
+  profileId: string;
+  attemptId: string | null;
+  outcome: PressOutcome;
+  consumed: boolean | "unknown";
+};
+
+/**
+ * One id per dispatch, shared across the personas' separate invocations: on
+ * GitHub it is `<run id>-<run attempt>`; locally `JOURNEY_RUN_ID` must be set
+ * explicitly (the README says so) — a per-process timestamp would give each
+ * persona its own id and the reconciliation would see a foreign run.
+ */
+export function currentRunId(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.GITHUB_RUN_ID) {
+    return `${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT ?? "1"}`;
+  }
+  if (env.JOURNEY_RUN_ID) return env.JOURNEY_RUN_ID;
+  // No guessed id: a shared literal would let a stale sibling persona's record
+  // from an earlier local run pass as this run's (billing batch 0, Low).
+  throw new Error(
+    "no run id: set JOURNEY_RUN_ID (one value shared by every persona of this run) — CI derives it from GITHUB_RUN_ID/GITHUB_RUN_ATTEMPT"
+  );
+}
+
+export function consumptionRecordPath(
+  persona: VoicePressPersona,
+  pressOrdinal: number,
+  dir: string = CONSUMPTION_DIR
+): string {
+  return path.join(dir, `${persona}-${pressOrdinal}.json`);
+}
+
+function clearConsumptionRecords(personaSlug: string, dir: string = CONSUMPTION_DIR): void {
+  if (!fs.existsSync(dir)) return;
+  for (const name of fs.readdirSync(dir)) {
+    if (name.startsWith(`${personaSlug}-`) && name.endsWith(".json")) {
+      fs.rmSync(path.join(dir, name), { force: true });
+    }
+  }
+}
+
+/** Write (or atomically replace) one persona/press record: temp file, then rename. */
+export function writeConsumptionRecord(record: ConsumptionRecord, dir: string = CONSUMPTION_DIR): void {
+  fs.mkdirSync(dir, { recursive: true });
+  const target = consumptionRecordPath(record.persona, record.pressOrdinal, dir);
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(record, null, 2));
+  fs.renameSync(tmp, target);
 }

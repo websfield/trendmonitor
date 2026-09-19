@@ -1,0 +1,414 @@
+# Respin persona journeys as a Free-path service regression (creator-ready
+# Phase 2, ticket T7-A). SPENDS REAL ANTHROPIC CREDITS: manual dispatch only,
+# never `push` or `pull_request` — `respin.yml` stays the code gate and this
+# file is its own workflow. `tests/journeys-workflow-triggers.test.ts` reads
+# this file and fails on any other trigger shape, on a missing `environment:`
+# line, and on any other workflow in this directory naming the vendor key.
+#
+# HOW THE VENDOR KEY IS PROTECTED. `ANTHROPIC_API_KEY` lives ONLY as an
+# environment secret on the GitHub Environment named `journeys`, whose
+# deployment-branch policy admits `main` only; there is no repository secret
+# of that name. GitHub issues environment secrets solely to jobs that declare
+# that environment ("Secrets stored in an environment are only available to
+# workflow jobs that reference the environment" — docs.github.com,
+# actions/reference/workflows-and-actions/deployments-and-environments, read
+# 2026-09-19). The `if: github.ref == 'refs/heads/main'` line on the job is a
+# COURTESY that makes an off-main dispatch skip visibly; it is not the control
+# — `workflow_dispatch` runs the file from the selected ref, so a branch could
+# delete it. The `no-repository-secret` canary below proves the other half:
+# a job with NO environment is issued a repository secret but never an
+# environment one, so a non-empty key there means the repository secret still
+# exists. Within the run the key reaches TWO steps — `vendor-key` (a presence
+# check) and `start` — and `start`'s two process groups are proven gone before
+# any artifact action runs.
+name: respin-journeys
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "17 3 * * *"
+  # Nightly is OFF until e2e/journeys/README.md's "Spend ceiling" section
+  # records the owner-side vendor limit and the first measured run's spend.
+
+permissions:
+  contents: read
+
+jobs:
+  no-repository-secret:
+    # The canary: declares NO environment. If the vendor key is visible here it
+    # is a repository (or organisation) secret readable by any workflow on any
+    # branch — exactly what the Environment-only design forbids.
+    runs-on: ubuntu-latest
+    steps:
+      - name: The vendor key must not be a repository secret
+        id: canary
+        env:
+          CANARY_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$CANARY_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY is issued to a job with no environment — a repository/organisation secret of that name exists. Move it into the main-only 'journeys' Environment and delete the repository secret."
+            exit 1
+          fi
+          echo "no repository-level ANTHROPIC_API_KEY is issued to an environment-less job"
+
+  journeys:
+    runs-on: ubuntu-latest
+    environment: journeys
+    # No spend while the Environment-only property is violated: the canary must
+    # pass first (B0-TEN Low).
+    needs: no-repository-secret
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    env:
+      # There is no dotenv anywhere; respin/env.example is the reference.
+      DATABASE_URL: postgres://respin:respin_local_dev@localhost:5435/respin
+      BETTER_AUTH_URL: http://localhost:8000
+      JOURNEYS_WEB_URL: http://localhost:8000
+      JOURNEYS_STATE_DIR: ${{ runner.temp }}/journeys
+      PLAYWRIGHT_HTML_OPEN: never
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        id: checkout
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        id: pnpm
+        with:
+          package_json_file: respin/package.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        id: node
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: respin/pnpm-lock.yaml
+
+      # (1) Postgres through compose, container `respin-postgres`: the specs'
+      # db-shortcut.ts and brain.ts shell `docker exec respin-postgres psql`.
+      - name: Postgres (compose, healthcheck-gated)
+        id: postgres
+        run: docker compose -f respin/docker-compose.yml up -d --wait
+
+      # (2)
+      - name: Install
+        id: install
+        run: |
+          # The repo root has no package.json: every `pnpm` invocation in this file is `-C respin` (G-1, batch-3 final).
+          pnpm -C respin install --frozen-lockfile
+          pnpm -C respin exec playwright install --with-deps chromium
+
+      # (3)
+      - name: Migrate and seed
+        id: migrate
+        run: |
+          pnpm -C respin db:migrate
+          pnpm -C respin db:seed
+
+      # The Linux process proof (plan T4/AC5): the same `start`/`cleanup` shell
+      # below, extracted from this file and run against synthetic processes.
+      # Skipped on Windows locally; REQUIRED here, so a skip fails the job.
+      - name: Process proof (start/cleanup shell against synthetic processes)
+        id: process-proof
+        env:
+          JOURNEYS_PROCESS_PROOF: required
+        run: pnpm -C respin exec vitest run tests/journeys-workflow-triggers.test.ts
+
+      # (4) Per-run session secret: minted, masked, never written to a file.
+      - name: Mint the session secret
+        id: session-secret
+        run: |
+          secret="$(openssl rand -hex 32)"
+          echo "::add-mask::$secret"
+          echo "BETTER_AUTH_SECRET=$secret" >> "$GITHUB_ENV"
+
+      # (5) Admin bootstrap: a first dev server with NO admin allowlist and no
+      # vendor key; the platform-admin spec signs a fresh identity up through
+      # the product's own /sign-up, writes its Better Auth id to the handoff
+      # and ends in its bootstrap `test.skip`. The id is exported to LATER
+      # steps and this server is stopped by process group before step 6.
+      - name: Admin bootstrap (first start)
+        id: bootstrap
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/bootstrap
+        run: |
+          set -euo pipefail
+          # Defaults are the real commands; the process proof overrides them with synthetic ones
+          # (the same pattern as `start`), so this exact shell is what the proof runs.
+          : "${JOURNEYS_BOOTSTRAP_WEB_CMD:=pnpm -C respin dev}"
+          : "${JOURNEYS_BOOTSTRAP_SPEC_CMD:=pnpm -C respin exec playwright test e2e/journeys/platform-admin.spec.ts}"
+          : "${JOURNEYS_HANDOFF_DIR:=respin/e2e/journeys/artifacts/_handoff}"
+          : "${JOURNEYS_TERM_WAIT:=35}"
+          : "${JOURNEYS_KILL_WAIT:=10}"
+          mkdir -p "$JOURNEYS_STATE_DIR"
+          setsid bash -c "exec $JOURNEYS_BOOTSTRAP_WEB_CMD" > "$JOURNEYS_STATE_DIR/bootstrap-web.log" 2>&1 &
+          pid=$!
+          # Recorded for the cleanup step BEFORE any check can fail: `setsid` makes $pid the session and
+          # group leader, so the pid IS the group id. A failure anywhere below (ps, spec, jq, regex) exits
+          # this step under -e before the kill, and cleanup must still stop this group rather than take
+          # its nothing-started path (B0-TEN Low; B1-TEN Info).
+          echo "$pid" > "$JOURNEYS_STATE_DIR/bootstrap.pgid"
+          sleep 1
+          pgid="$(ps -o pgid= -p "$pid" | tr -d ' ')"
+          [[ "$pgid" =~ ^[0-9]+$ ]] || { echo "::error::bootstrap server: no process group for pid $pid"; exit 1; }
+          [ "$pgid" = "$pid" ] || { echo "::error::bootstrap server: pid $pid is not its own group leader ($pgid)"; exit 1; }
+          for _ in $(seq 1 90); do
+            code="$(curl -s -o /dev/null --connect-timeout 2 --max-time 5 -w '%{http_code}' "$JOURNEYS_WEB_URL/" || true)"
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          [ "$code" = "200" ] || { echo "::error::bootstrap server never answered 200"; exit 1; }
+          # Warm the sign-up path so the bootstrap spec does not pay the first compile under its 30 s waits.
+          curl -s -o /dev/null --connect-timeout 2 --max-time 60 "$JOURNEYS_WEB_URL/sign-up" || true
+          curl -s -o /dev/null --connect-timeout 2 --max-time 60 "$JOURNEYS_WEB_URL/onboarding" || true
+          rm -rf "$JOURNEYS_HANDOFF_DIR"
+          bash -c "$JOURNEYS_BOOTSTRAP_SPEC_CMD"
+          # -e fails on null/missing; `| strings` rejects any non-string, so a JSON null can never become the text "null".
+          admin_id="$(jq -er '.authUserId | strings' "$JOURNEYS_HANDOFF_DIR/platform-admin.json")"
+          [[ "$admin_id" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "::error::admin id has an unexpected shape"; exit 1; }
+          echo "ADMIN_USER_IDS=$admin_id" >> "$GITHUB_ENV"
+          kill -TERM -- "-$pgid"
+          # Wait for the port to be REFUSED (curl exit 7), not merely for the launcher to exit: a dying
+          # server can accept a connection and never answer, and step 6's readiness probe must not be
+          # answered by it.
+          for _ in $(seq 1 30); do
+            curl -s -o /dev/null --connect-timeout 2 --max-time 5 "$JOURNEYS_WEB_URL/" && rc=0 || rc=$?
+            [ "$rc" = "7" ] && break
+            sleep 2
+          done
+          [ "$rc" = "7" ] || { echo "::error::bootstrap server still accepting connections after 30 probes (up to ~210 s)"; kill -KILL -- "-$pgid" || true; exit 1; }
+          # Port refused proves the listener closed, not that the group is empty: a member still exiting, or
+          # a child that closed its socket and hung, is still a live group. The record is dropped only once
+          # `pgrep -g` says no member remains — TERM poll, KILL, poll, refuse — so cleanup signals this group
+          # exactly when this step did NOT verify it empty (B1-TEN Info; B2-TEN-5). Any failure here exits 1
+          # with the record in place, and cleanup sweeps the group.
+          bootstrap_alive() {
+            pgrep -g "$pgid" > /dev/null 2>&1
+            local rc=$?
+            case "$rc" in
+              0) return 0 ;;
+              1) return 1 ;;
+              *) echo "::error::pgrep failed (exit $rc) probing bootstrap group $pgid"; exit 1 ;;
+            esac
+          }
+          deadline=$((SECONDS + JOURNEYS_TERM_WAIT))
+          while bootstrap_alive && [ "$SECONDS" -lt "$deadline" ]; do sleep 1; done
+          if bootstrap_alive; then
+            echo "bootstrap group $pgid survived TERM for ${JOURNEYS_TERM_WAIT}s; sending KILL"
+            kill -KILL -- "-$pgid" 2>/dev/null || true
+            deadline=$((SECONDS + JOURNEYS_KILL_WAIT))
+            while bootstrap_alive && [ "$SECONDS" -lt "$deadline" ]; do sleep 1; done
+          fi
+          if bootstrap_alive; then
+            echo "::error::bootstrap group $pgid is still alive after TERM and KILL — record kept for cleanup"
+            exit 1
+          fi
+          rm -f "$JOURNEYS_STATE_DIR/bootstrap.pgid"
+          echo "admin bootstrap done; bootstrap group $pgid verified empty, port refused"
+
+      # The vendor key is issued from the `journeys` Environment; a missing
+      # secret would otherwise surface as a green run full of by-name refusals.
+      - name: Vendor key issued to this job
+        id: vendor-key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || { echo "::error::ANTHROPIC_API_KEY was not issued — the 'journeys' Environment secret is missing or this run is not on an admitted branch"; exit 1; }
+          echo "vendor key present (value not printed)"
+
+      # (6) THE ONLY STEP THAT SEES THE VENDOR KEY. Both processes start in
+      # their own session/process group; the ids are recorded for cleanup.
+      - name: Start the dev server and the worker
+        id: start
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          : "${JOURNEYS_WEB_CMD:=pnpm -C respin dev}"
+          : "${JOURNEYS_WORKER_CMD:=pnpm -C respin worker:start}"
+          : "${JOURNEYS_WEB_URL:=http://localhost:8000}"
+          : "${JOURNEYS_STATE_DIR:=${RUNNER_TEMP:-/tmp}/journeys}"
+          : "${JOURNEYS_READY_TIMEOUT:=180}"
+          mkdir -p "$JOURNEYS_STATE_DIR"
+          : > "$JOURNEYS_STATE_DIR/started"
+          shell_pgid="$(ps -o pgid= -p $$ | tr -d ' ')"
+          launch() {
+            local name="$1" cmd="$2" pid pgid sid
+            setsid bash -c "exec $cmd" > "$JOURNEYS_STATE_DIR/$name.log" 2>&1 &
+            pid=$!
+            sleep 0.5
+            pgid="$(ps -o pgid= -p "$pid" | tr -d ' ' || true)"
+            sid="$(ps -o sid= -p "$pid" | tr -d ' ' || true)"
+            [[ "$pgid" =~ ^[0-9]+$ ]] || { echo "::error::$name: no process group for pid $pid (exited before it could be recorded?)"; exit 1; }
+            [ "$pgid" = "$sid" ] || { echo "::error::$name: process group $pgid is not its own session leader ($sid)"; exit 1; }
+            [ "$pgid" != "$shell_pgid" ] || { echo "::error::$name: shares the workflow shell's process group"; exit 1; }
+            echo "$pid" > "$JOURNEYS_STATE_DIR/$name.pid"
+            echo "$pgid" > "$JOURNEYS_STATE_DIR/$name.pgid"
+            echo "$name: pid $pid, process group $pgid"
+          }
+          launch web "$JOURNEYS_WEB_CMD"
+          launch worker "$JOURNEYS_WORKER_CMD"
+          code=""
+          deadline=$((SECONDS + JOURNEYS_READY_TIMEOUT))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            code="$(curl -s -o /dev/null --connect-timeout 2 --max-time 5 -w '%{http_code}' "$JOURNEYS_WEB_URL/" || true)"
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          [ "$code" = "200" ] || { echo "::error::dev server never answered 200 within ${JOURNEYS_READY_TIMEOUT}s"; exit 1; }
+          for name in web worker; do
+            kill -0 "$(cat "$JOURNEYS_STATE_DIR/$name.pid")" 2>/dev/null || { echo "::error::$name exited after launch (EADDRINUSE or a startup refusal — see $JOURNEYS_STATE_DIR/$name.log)"; exit 1; }
+          done
+          # Warm-ups of PUBLIC routes only. Stated residual: authenticated pages are redirected away for an
+          # anonymous GET, so the first authenticated navigation may still pay a cold compile; the rule is one
+          # recorded re-dispatch, never a raised timeout.
+          curl -s -o /dev/null --connect-timeout 2 --max-time 60 "$JOURNEYS_WEB_URL/sign-up" || true
+          curl -s -o /dev/null --connect-timeout 2 --max-time 60 "$JOURNEYS_WEB_URL/" || true
+          echo "both process groups up and answering"
+
+      # (7) Every spec runs even when an earlier one failed, each into its own
+      # report directory, so a later run cannot overwrite an earlier failure.
+      - name: Run the four journeys (Free path)
+        id: run
+        # The consumption records take their run id from GITHUB_RUN_ID and
+        # GITHUB_RUN_ATTEMPT (e2e/support/artifacts.ts, currentRunId) — the
+        # same pair the validator step below is handed.
+        run: |
+          # GitHub runs `bash -eo pipefail`; -e would stop at the first failing persona and lose the later
+          # personas' evidence, so it is switched off here and the collected exit codes decide.
+          set +e
+          set -uo pipefail
+          failed=0
+          for persona in solo-creator studio-operator editor-seat platform-admin; do
+            PLAYWRIGHT_HTML_OUTPUT_DIR="playwright-report/$persona" pnpm -C respin exec playwright test "e2e/journeys/$persona.spec.ts"
+            rc=$?
+            echo "$persona: exit $rc"
+            [ "$rc" = "0" ] || failed=1
+          done
+          exit "$failed"
+
+      # (8) Stop BOTH process groups and prove them gone before any artifact
+      # action runs. `safe_to_upload` is set only at the very end; every failure
+      # path leaves it unset, and no upload below runs without it.
+      - name: Cleanup (stop process groups, delete handoffs)
+        id: cleanup
+        if: always()
+        run: |
+          # No -e: every probe below is judged by its exit code, and a failing probe must reach the
+          # explicit refusal (exit 1 with no output), never an implicit exit half-way through.
+          set +e
+          set -uo pipefail
+          : "${JOURNEYS_WEB_URL:=http://localhost:8000}"
+          : "${JOURNEYS_STATE_DIR:=${RUNNER_TEMP:-/tmp}/journeys}"
+          : "${JOURNEYS_TERM_WAIT:=35}"
+          : "${JOURNEYS_KILL_WAIT:=10}"
+          : "${JOURNEYS_HANDOFF_DIR:=respin/e2e/journeys/artifacts/_handoff}"
+          groups=()
+          # bootstrap: the first-start server (normally already stopped by its own step; listed so a
+          # bootstrap failure after launch never leaves it alive through the nothing-started path).
+          for name in bootstrap web worker; do
+            f="$JOURNEYS_STATE_DIR/$name.pgid"
+            if [ -f "$f" ]; then
+              pgid="$(cat "$f")"
+              [[ "$pgid" =~ ^[0-9]+$ ]] || { echo "::error::$name: recorded process group '$pgid' is not a number"; exit 1; }
+              groups+=("$pgid")
+            fi
+          done
+          if [ "${#groups[@]}" -eq 0 ]; then
+            if [ -f "$JOURNEYS_STATE_DIR/started" ]; then
+              echo "::error::the start step ran but recorded no process groups"
+              exit 1
+            fi
+            echo "no process was started; nothing to stop"
+            rm -rf "$JOURNEYS_HANDOFF_DIR"
+            echo "safe_to_upload=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 0 = a member is alive, 1 = none, anything else = the probe itself failed (never read as "gone").
+          group_alive() {
+            pgrep -g "$1" > /dev/null 2>&1
+            local rc=$?
+            case "$rc" in
+              0) return 0 ;;
+              1) return 1 ;;
+              *) echo "::error::pgrep failed (exit $rc) probing group $1"; exit 1 ;;
+            esac
+          }
+          any_alive() {
+            local g
+            for g in "${groups[@]}"; do
+              if group_alive "$g"; then return 0; fi
+            done
+            return 1
+          }
+          for g in "${groups[@]}"; do
+            kill -TERM -- "-$g" 2>/dev/null || true
+          done
+          deadline=$((SECONDS + JOURNEYS_TERM_WAIT))
+          while any_alive && [ "$SECONDS" -lt "$deadline" ]; do sleep 1; done
+          if any_alive; then
+            echo "process group(s) survived TERM for ${JOURNEYS_TERM_WAIT}s; sending KILL"
+            for g in "${groups[@]}"; do
+              kill -KILL -- "-$g" 2>/dev/null || true
+            done
+            deadline=$((SECONDS + JOURNEYS_KILL_WAIT))
+            while any_alive && [ "$SECONDS" -lt "$deadline" ]; do sleep 1; done
+          fi
+          if any_alive; then
+            echo "::error::a process group is still alive after TERM and KILL — refusing to mark artifacts safe"
+            exit 1
+          fi
+          curl -s -o /dev/null --connect-timeout 2 --max-time 5 "$JOURNEYS_WEB_URL/" && rc=0 || rc=$?
+          if [ "$rc" != "7" ]; then
+            echo "::error::the web port still accepts connections (curl exit $rc) although every recorded group is gone"
+            exit 1
+          fi
+          rm -rf "$JOURNEYS_HANDOFF_DIR"
+          echo "both groups gone, port refused, handoffs deleted"
+          echo "safe_to_upload=true" >> "$GITHUB_OUTPUT"
+
+      # Consumption evidence: validated and re-serialised into ONE file in an
+      # empty runner-temp directory, retained even when the behavioural scan
+      # below fails (a red run's claim-based reconciliation is exactly what the
+      # next dispatch decision needs). Independent of `scan`; never of `cleanup`.
+      - name: Validate consumption evidence
+        id: consumption
+        if: always() && steps.cleanup.outputs.safe_to_upload == 'true'
+        # `pnpm -C respin exec` runs the script with cwd respin/, so its relative path arguments
+        # are respin-relative (G-2, batch-3 final; tests/scan-journey-notes.test.ts resolves them
+        # against that cwd and against the real tree).
+        run: |
+          pnpm -C respin exec tsx scripts/scan-journey-notes.ts --consumption-evidence \
+            e2e/journeys/artifacts "$RUNNER_TEMP/consumption-manifest" \
+            --run-id "${{ github.run_id }}-${{ github.run_attempt }}"
+
+      - name: Upload consumption manifest
+        id: upload-consumption
+        if: always() && steps.cleanup.outputs.safe_to_upload == 'true' && steps.consumption.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: consumption-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/consumption-manifest/consumption.json
+          if-no-files-found: error
+
+      # (9) The judgement over both trees: any BLOCKING note, any missing
+      # main-chapter screenshot, any surviving handoff file fails the run.
+      - name: Scan journey notes and screenshots
+        id: scan
+        if: always() && steps.cleanup.outputs.safe_to_upload == 'true'
+        run: pnpm -C respin exec tsx scripts/scan-journey-notes.ts e2e/journeys/artifacts playwright-report
+
+      # (10) Reports and artifacts: handoffs and raw consumption records are
+      # excluded in EVERY outcome; traces sit one level down per persona.
+      - name: Upload journey report
+        id: upload-report
+        if: always() && steps.cleanup.outputs.safe_to_upload == 'true' && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: journeys-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            respin/e2e/journeys/artifacts
+            !respin/e2e/journeys/artifacts/_handoff/**
+            !respin/e2e/journeys/artifacts/consumption/**
+            respin/playwright-report/**
+            !respin/playwright-report/*/data/*.zip
+          if-no-files-found: error

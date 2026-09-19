@@ -104,8 +104,69 @@ export type AssembledField = {
 };
 
 /** Refusals this module raises. All of them mean "no document is written". */
+export const ASSEMBLY_KINDS = [
+  "no_fields_supplied",
+  "duplicate_post",
+  "duplicate_field_request",
+  "not_json",
+  "bad_shape",
+  "unknown_field",
+  "duplicate_field",
+  "empty_values",
+  "single_arity",
+  "list_max",
+  "placeholder_with_citation",
+  "placeholder_in_list",
+  "value_without_quote",
+  "post_not_supplied",
+  "quote_not_found",
+  "fields_unfilled",
+] as const;
+
+export type AssemblyKind = (typeof ASSEMBLY_KINDS)[number];
+
+export const ASSEMBLY_KINDS_PRE_VENDOR = [
+  "no_fields_supplied",
+  "duplicate_post",
+  "duplicate_field_request",
+] as const satisfies readonly AssemblyKind[];
+
+/**
+ * WHERE a schema refusal happened, in a form a log line may carry.
+ *
+ * WHY THIS EXISTS (live walk, 2026-09-18). `bad_shape` fired on a real voice
+ * build and the evidence could not say WHICH field was wrong, because the only
+ * place the location existed was the `Error`'s message — and `logRefusal`
+ * withholds messages by design (`safe-log.ts`, a containment boundary that is
+ * not being weakened here). The refusal was therefore undiagnosable on every
+ * occurrence, not just on the one that was captured: re-running could never
+ * surface it. Two review passes recorded "the failing schema field unknown"
+ * for exactly this reason.
+ *
+ * EVERY MEMBER IS SERVER-DERIVED OR CLAMPED, because this is the one part of a
+ * refusal that travels to stdout:
+ *  - `path` is built from OUR schema's own keys and array indices, never from
+ *    the reply's content.
+ *  - `code` is Zod's issue code, a closed set.
+ *  - `keys` is the ONLY vendor-controlled member — the unrecognized keys a
+ *    strict object rejected — and it is what actually names the cause, so it is
+ *    carried rather than dropped. It is NOT clamped here: an in-process error
+ *    object is not a log line. The clamp belongs at the boundary that logs it,
+ *    which is `schemaIssueFields` in `app/(product)/safe-log.ts`.
+ */
+export type AssemblySchemaIssue = Readonly<{
+  path: string;
+  code: string;
+  keys?: readonly string[];
+}>;
+
 export class AssemblyError extends Error {
-  constructor(message: string) {
+  constructor(
+    readonly kind: AssemblyKind,
+    message: string,
+    /** Present only for `bad_shape`, which is the only kind with a location. */
+    readonly schemaIssue?: AssemblySchemaIssue,
+  ) {
     super(message);
     this.name = "AssemblyError";
   }
@@ -172,6 +233,7 @@ export function assembleVoicePrompt(params: {
   const { posts, fields, minPosts } = params;
   if (fields.length === 0) {
     throw new AssemblyError(
+      "no_fields_supplied",
       "no fields were supplied, so there is nothing to infer",
     );
   }
@@ -183,14 +245,17 @@ export function assembleVoicePrompt(params: {
   const seenIds = new Set<string>();
   for (const p of posts) {
     if (seenIds.has(p.id)) {
-      throw new AssemblyError(`post '${p.id}' was supplied twice`);
+      throw new AssemblyError("duplicate_post", `post '${p.id}' was supplied twice`);
     }
     seenIds.add(p.id);
   }
   const seenKeys = new Set<string>();
   for (const f of fields) {
     if (seenKeys.has(f.key)) {
-      throw new AssemblyError(`field '${f.key}' was requested twice`);
+      throw new AssemblyError(
+        "duplicate_field_request",
+        `field '${f.key}' was requested twice`,
+      );
     }
     seenKeys.add(f.key);
   }
@@ -261,15 +326,156 @@ function listMax(spec: ClaimSpec): number {
  * way, which is the property `validateSourceEvidence` checks — so there is
  * nothing to choose between them and no reason to refuse.
  */
+export const CANON_CODE_POINT_TABLE = Object.freeze({
+  "\u2018": "'",
+  "\u2019": "'",
+  "\u201c": '"',
+  "\u201d": '"',
+  "\u2013": "-",
+  "\u2014": "-",
+  "\u0020": " ",
+  "\u0009": " ",
+  "\u000a": " ",
+} as const);
+
+type CanonPosition = Readonly<{ startUtf16: number; endUtf16: number }>;
+export type MapBack = (
+  positions: readonly CanonPosition[],
+  canonicalStart: number,
+  canonicalEnd: number,
+) => { startUtf16: number; endUtf16: number };
+
+const CANON_WHITESPACE = new Set<string>(["\u0020", "\u0009", "\u000a"]);
+
+function canonWithPositions(value: string): {
+  text: string;
+  positions: CanonPosition[];
+} {
+  const text: string[] = [];
+  const positions: CanonPosition[] = [];
+  let offset = 0;
+
+  const append = (folded: string, startUtf16: number, endUtf16: number) => {
+    text.push(folded);
+    for (let i = 0; i < folded.length; i += 1) {
+      positions.push({ startUtf16, endUtf16 });
+    }
+  };
+
+  while (offset < value.length) {
+    const point = String.fromCodePoint(value.codePointAt(offset)!);
+    const pointEnd = offset + point.length;
+    if (CANON_WHITESPACE.has(point)) {
+      const runStart = offset;
+      let runEnd = pointEnd;
+      let lineFeeds = point === "\u000a" ? 1 : 0;
+      while (runEnd < value.length) {
+        const next = String.fromCodePoint(value.codePointAt(runEnd)!);
+        if (!CANON_WHITESPACE.has(next)) break;
+        if (next === "\u000a") lineFeeds += 1;
+        runEnd += next.length;
+      }
+      append(lineFeeds >= 2 ? "\u000a" : " ", runStart, runEnd);
+      offset = runEnd;
+      continue;
+    }
+
+    const folded = CANON_CODE_POINT_TABLE[point as keyof typeof CANON_CODE_POINT_TABLE] ?? point;
+    append(folded, offset, pointEnd);
+    offset = pointEnd;
+  }
+
+  const canonical = text.join("");
+  let first = 0;
+  while (first < canonical.length && (canonical[first] === " " || canonical[first] === "\u000a")) first += 1;
+  let last = canonical.length;
+  while (last > first && (canonical[last - 1] === " " || canonical[last - 1] === "\u000a")) last -= 1;
+  return {
+    text: canonical.slice(first, last),
+    positions: positions.slice(first, last),
+  };
+}
+
+export function canon(value: string): string {
+  return canonWithPositions(value).text;
+}
+
+function defaultMapBack(
+  positions: readonly CanonPosition[],
+  canonicalStart: number,
+  canonicalEnd: number,
+): { startUtf16: number; endUtf16: number } {
+  const first = positions[canonicalStart];
+  const last = positions[canonicalEnd - 1];
+  return {
+    startUtf16: first?.startUtf16 ?? Number.NaN,
+    endUtf16: last?.endUtf16 ?? Number.NaN,
+  };
+}
+
+function splitsSurrogatePair(content: string, offset: number): boolean {
+  if (offset <= 0 || offset >= content.length) return false;
+  const before = content.charCodeAt(offset - 1);
+  const after = content.charCodeAt(offset);
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+}
+
+export function acceptCanonicalMatch(
+  content: string,
+  needle: string,
+  startUtf16: number,
+  endUtf16: number,
+): boolean {
+  if (
+    !Number.isInteger(startUtf16) ||
+    !Number.isInteger(endUtf16) ||
+    startUtf16 < 0 ||
+    endUtf16 > content.length ||
+    startUtf16 >= endUtf16 ||
+    splitsSurrogatePair(content, startUtf16) ||
+    splitsSurrogatePair(content, endUtf16)
+  ) {
+    return false;
+  }
+
+  const slice = content.slice(startUtf16, endUtf16);
+  if (canon(slice) !== canon(needle)) return false;
+  const sliceStartsWhitespace = CANON_WHITESPACE.has(slice[0] ?? "");
+  const sliceEndsWhitespace = CANON_WHITESPACE.has(slice.at(-1) ?? "");
+  const needleStartsWhitespace = CANON_WHITESPACE.has(needle[0] ?? "");
+  const needleEndsWhitespace = CANON_WHITESPACE.has(needle.at(-1) ?? "");
+  return (
+    (!sliceStartsWhitespace || needleStartsWhitespace) &&
+    (!sliceEndsWhitespace || needleEndsWhitespace)
+  );
+}
+
 export function locateQuote(
   content: string,
   quote: string,
+  mapBack: MapBack = defaultMapBack,
 ): { startUtf16: number; endUtf16: number } | null {
   const needle = quote.normalize("NFC").replace(/\r\n/g, "\n");
-  if (needle.length === 0) return null;
-  const at = content.indexOf(needle);
-  if (at < 0) return null;
-  return { startUtf16: at, endUtf16: at + needle.length };
+  if (canon(needle).length === 0) return null;
+
+  const exactAt = content.indexOf(needle);
+  if (exactAt >= 0) {
+    return { startUtf16: exactAt, endUtf16: exactAt + needle.length };
+  }
+
+  const canonicalNeedle = canon(needle);
+  const canonicalContent = canonWithPositions(content);
+  const canonicalAt = canonicalContent.text.indexOf(canonicalNeedle);
+  if (canonicalAt < 0) return null;
+  const mapped = mapBack(
+    canonicalContent.positions,
+    canonicalAt,
+    canonicalAt + canonicalNeedle.length,
+  );
+  if (!acceptCanonicalMatch(content, needle, mapped.startUtf16, mapped.endUtf16)) {
+    return null;
+  }
+  return mapped;
 }
 
 /**
@@ -285,20 +491,34 @@ export function parseVoiceReply(params: {
   text: string;
   fields: ClaimSpec[];
   posts: OwnPost[];
+  mapBack?: MapBack;
 }): AssembledField[] {
-  const { text, fields, posts } = params;
+  const { text, fields, posts, mapBack } = params;
 
   let raw: unknown;
   try {
     raw = JSON.parse(stripFence(text));
   } catch {
-    throw new AssemblyError("the reply was not JSON");
+    throw new AssemblyError("not_json", "the reply was not JSON");
   }
   const parsed = replySchema.safeParse(raw);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
     throw new AssemblyError(
+      "bad_shape",
       `the reply is not the shape a voice inference takes: ${first.path.length ? `/${first.path.join("/")} ` : ""}${first.message}`,
+      // THE SAME LOCATION THE MESSAGE ALREADY DESCRIBES, STRUCTURED so it can
+      // reach a log line without carrying the message (see
+      // `AssemblySchemaIssue`). `String(seg)` because zod 4 types `path` as
+      // `PropertyKey[]`: a symbol segment would otherwise throw here, inside
+      // the refusal path, turning a diagnosable refusal into a crash.
+      {
+        path: first.path.map((seg) => String(seg)).join("/"),
+        code: first.code,
+        // Zod 4 puts the rejected names on `unrecognized_keys` ONLY, checked
+        // against the installed 4.4.3 typings rather than assumed.
+        ...(first.code === "unrecognized_keys" ? { keys: first.keys } : {}),
+      },
     );
   }
 
@@ -311,26 +531,30 @@ export function parseVoiceReply(params: {
     const spec = specOf.get(f.key);
     if (!spec) {
       throw new AssemblyError(
+        "unknown_field",
         `the reply fills '${f.key}', which was not one of the requested fields`,
       );
     }
     if (filled.has(f.key)) {
-      throw new AssemblyError(`the reply fills '${f.key}' twice`);
+      throw new AssemblyError("duplicate_field", `the reply fills '${f.key}' twice`);
     }
     filled.add(f.key);
 
     if (f.values.length === 0) {
       throw new AssemblyError(
+        "empty_values",
         `'${f.key}' has no values; a field the posts do not support is "${CHECK}", not empty`,
       );
     }
     if (spec.kind === "single" && f.values.length !== 1) {
       throw new AssemblyError(
+        "single_arity",
         `'${f.key}' is a single value and the reply gave ${f.values.length}`,
       );
     }
     if (spec.kind === "list" && f.values.length > listMax(spec)) {
       throw new AssemblyError(
+        "list_max",
         `'${f.key}' allows at most ${listMax(spec)} values and the reply gave ${f.values.length}`,
       );
     }
@@ -342,6 +566,7 @@ export function parseVoiceReply(params: {
         // citation for a claim that was not made — the shape G-10 is about.
         if (v.inputId !== null || v.quote !== null) {
           throw new AssemblyError(
+            "placeholder_with_citation",
             `'${f.key}' has a placeholder carrying a citation; a value that states nothing is not evidenced`,
           );
         }
@@ -352,6 +577,7 @@ export function parseVoiceReply(params: {
         // has misunderstood the instruction and its other fields are suspect.
         if (spec.kind === "list" && f.values.length > 1) {
           throw new AssemblyError(
+            "placeholder_in_list",
             `'${f.key}' mixes a placeholder into a list; a list the posts do not support is a single "${CHECK}"`,
           );
         }
@@ -360,27 +586,34 @@ export function parseVoiceReply(params: {
       }
       if (v.inputId === null || v.quote === null) {
         throw new AssemblyError(
+          "value_without_quote",
           `'${f.key}' states a value with no quote behind it. Every stated value is grounded or it is "${CHECK}"`,
         );
       }
       const content = byId.get(v.inputId);
       if (content === undefined) {
         throw new AssemblyError(
+          "post_not_supplied",
           `'${f.key}' cites a post that was not supplied`,
         );
       }
-      const at = locateQuote(content, v.quote);
+      const at = locateQuote(content, v.quote, mapBack);
       if (at === null) {
         // THE INVENTED-QUOTE REFUSAL. `validateSourceEvidence` would catch this
         // too, at the write — this catches it before the write is attempted, so
         // the refusal names the model rather than the database.
         throw new AssemblyError(
+          "quote_not_found",
           `'${f.key}' quotes text that does not appear in the post it cites`,
         );
       }
       values.push({
         value: v.value,
-        evidence: { inputId: v.inputId, quote: v.quote, ...at },
+        evidence: {
+          inputId: v.inputId,
+          quote: content.slice(at.startUtf16, at.endUtf16),
+          ...at,
+        },
       });
     }
     out.push({ key: f.key, kind: spec.kind, values });
@@ -389,6 +622,7 @@ export function parseVoiceReply(params: {
   const missing = fields.map((f) => f.key).filter((k) => !filled.has(k));
   if (missing.length > 0) {
     throw new AssemblyError(
+      "fields_unfilled",
       `the reply left ${missing.length} of ${fields.length} fields unfilled (${missing.join(", ")})`,
     );
   }

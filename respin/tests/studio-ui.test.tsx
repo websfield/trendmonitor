@@ -74,6 +74,7 @@ import {
   REVISION_SAME_MODE_NOTE,
   checkOffer,
   claimFamilyNote,
+  DISCLOSURE_FIELD_PREFIX,
   feedbackNoteLimit,
   feedbackRecordedSentence,
   frameworksNotUsedSentence,
@@ -83,6 +84,7 @@ import {
   creatorRulesSentence,
   generateChargeSentence,
   generateCostSentence,
+  inForceSentence,
   killTestSentence,
   lineageLineFor,
   priceLineFor,
@@ -103,6 +105,7 @@ import { GenerationOutcome } from "../app/(product)/studio/generation-outcome";
 import { LineageList } from "../app/(product)/studio/lineage-view";
 import { FeedbackBlock } from "../app/(product)/studio/feedback-block";
 import { StudioView, type StudioViewProps } from "../app/(product)/studio/studio-view";
+import { StudioPanel } from "../app/(product)/studio/studio-panel";
 import { GENERATION_FEEDBACK_REACTIONS, FEEDBACK_NOTE_MAX } from "@respin/db";
 import type {
   ClaimFlag,
@@ -198,6 +201,14 @@ function decoded(html: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
+}
+
+function detailsText(markup: string): string {
+  return decoded(markup)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
 }
 
 // ---------------------------------------------------------------- fixtures
@@ -392,6 +403,10 @@ const baseView: StudioViewProps = {
     reactions: GENERATION_FEEDBACK_REACTIONS,
     noteMax: FEEDBACK_NOTE_MAX,
     block: null,
+    activeKinds: ["Voice", "Strategy", "Kill test"],
+    brainHref: "/brain",
+    usageHref: "/usage",
+    frameworksHref: "/studio/frameworks",
     refusalCopy: REFUSAL_COPY,
     fallbackCopy: REFUSAL_COPY.unknown,
   },
@@ -400,6 +415,7 @@ const baseView: StudioViewProps = {
   brainHref: "/brain",
   usageHref: "/usage",
   frameworksHref: "/studio/frameworks",
+  brainActiveWithoutVoice: false,
 };
 
 const IDLE_ACTION_STATE: StudioActionState = {
@@ -564,7 +580,7 @@ describe("the pure decisions", () => {
   });
 
   it("traceabilityHeading splits by ENFORCEMENT, and no longer by kind", () => {
-    expect(traceabilityHeading(0, 0)).toMatch(/found in your brain or in what you typed/i);
+    expect(traceabilityHeading(0, 0)).toMatch(/outside the disclosure guidance/i);
     const hardOnly = traceabilityHeading(2, 0);
     // THE HARD BUCKET IS THE MARKED QUANTITIES — `currency`, `percent`,
     // `multiplier`, `iso-date`, `month-date` — and nothing else.
@@ -578,7 +594,10 @@ describe("the pure decisions", () => {
     // shape, so the flag bucket is no longer "names". The old copy said
     // "1 name was not found" about the number `5`.
     expect(flagOnly).not.toMatch(/\bnames? (was|were)\b/i);
-    expect(flagOnly).toMatch(/a plain number, a name, or something in the disclosure guidance/i);
+    expect(flagOnly).toContain(
+      "1 other specific was not found either — a plain number or a name, where an ordinary word can land, so these are a prompt to look, never a fault"
+    );
+    expect(flagOnly).not.toContain("disclosure guidance");
     // The hard branch never borrows the soft bucket's excuse.
     expect(hardOnly).not.toMatch(/prompt to look/i);
     // BOTH branches promise the draft was not changed (R19, mutation M9's UI
@@ -598,25 +617,22 @@ describe("the pure decisions", () => {
     // SHAPE, or a flag-only FIELD prefix. The field wins, because it overrides
     // the shape — so it is tested first and with a `kind` that would otherwise
     // take a different branch.
-    const disclosure = traceabilityFlagNote("date", "/disclosure/guidance");
-    expect(disclosure).toMatch(/disclosure guidance, which the product wrote/i);
-    expect(traceabilityFlagNote("proper_noun", "/disclosure/guidance")).toBe(disclosure);
     // A NAME outside disclosure keeps the sentence that was always right.
-    expect(traceabilityFlagNote("proper_noun", "/hooks/0/text")).toMatch(
+    expect(traceabilityFlagNote("proper_noun")).toMatch(
       /a name, not a rule violation/i
     );
     // A PLAIN NUMBER is not a name, and this is the sentence the screen used to
     // get wrong: it printed "(a name…)" beside the number `5`.
-    const number = traceabilityFlagNote("number", "/hooks/0/text");
+    const number = traceabilityFlagNote("number");
     expect(number).toMatch(/a plain number/i);
     expect(number).not.toMatch(/\ba name\b/i);
     // AN UNKNOWN KIND falls back to the neutral sentence rather than a guess.
-    const unknown = traceabilityFlagNote("something-new", "/hooks/0/text");
+    const unknown = traceabilityFlagNote("something-new");
     expect(unknown).toMatch(/not a rule violation/i);
     expect(unknown).not.toMatch(/\ba name\b|plain number|disclosure/i);
     // Every branch says the same thing about fault, which is the property the
     // split exists to preserve.
-    for (const note of [disclosure, number, unknown, traceabilityFlagNote("proper_noun", "/x")]) {
+    for (const note of [number, unknown, traceabilityFlagNote("proper_noun")]) {
       expect(note).toMatch(/not a rule violation|never a rule violation|only asks you to look/i);
     }
   });
@@ -634,6 +650,157 @@ describe("the pure decisions", () => {
     expect(
       generateBlock({ isViewer: false, paused: false, brainActivated: false })!.reason
     ).toMatch(/activated brain/i);
+  });
+
+  it("states an unreadable brain state rather than calling it inactive", () => {
+    expect(
+      generateBlock({ isViewer: false, paused: false, brainActivated: null })!.reason
+    ).toBe("The brain's state could not be read. Reload this page.");
+    expect(inForceSentence(null)).toBe(
+      "The documents in force could not be read. Reload this page."
+    );
+  });
+});
+
+describe("Phase 1 T5: voice and active-document preconditions", () => {
+  it.each([
+    ["Voice is active", ["Voice"], false],
+    ["Strategy is active without Voice", ["Strategy"], true],
+    ["Kill test is active without Voice", ["Kill test"], true],
+    ["no document is active", [], false],
+    ["the document histories could not be read", null, false],
+  ] as const)("shows the voice remedy iff %s", (_label, activeKinds, needsVoice) => {
+    const html = renderView({
+      brainActiveWithoutVoice: needsVoice,
+      run: { ...baseView.run!, activeKinds },
+    });
+    expect(html.includes('data-testid="studio-no-voice"')).toBe(needsVoice);
+    if (needsVoice) {
+      expect(html).toMatch(/voice document/i);
+      expect(html).toMatch(/brain page/i);
+    }
+  });
+
+  it("renders the in-force line inside the panel, including the failed-history remedy", () => {
+    const html = renderView({
+      run: { ...baseView.run!, activeKinds: ["Voice", "Strategy"] },
+    });
+    expect(html).toContain('data-testid="studio-in-force"');
+    expect(html).toContain("Voice and Strategy are in force.");
+
+    const failed = renderView({
+      brainActiveWithoutVoice: false,
+      run: {
+        ...baseView.run!,
+        activeKinds: null,
+        block: generateBlock({ isViewer: false, paused: false, brainActivated: null }),
+      },
+    });
+    expect(decoded(failed)).toContain(
+      "The documents in force could not be read. Reload this page."
+    );
+    expect(decoded(failed)).toContain(
+      "The brain's state could not be read. Reload this page."
+    );
+  });
+});
+
+describe("Phase 1 T7: Studio pre-form prose folds without hiding honesty", () => {
+  it("uses one native fold and renders an injected usable state outside it", () => {
+    const state: StudioActionState = {
+      lineage: [],
+      latest: {
+        ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
+        killTest: { ...KILL_TEST, claims: [CONCEALMENT] },
+      },
+    };
+    const html = renderToStaticMarkup(
+      <StudioPanel
+        {...baseView.run!}
+        initialState={state}
+      />
+    );
+    const details = html.match(/<details[\s\S]*?<\/details>/g) ?? [];
+    expect(details).toHaveLength(1);
+    const folded = details[0] ?? "";
+    expect(folded).toContain("How this works and what it costs");
+    expect(folded).toContain('data-testid="studio-intro"');
+    expect(folded).toContain('data-testid="studio-revision-cost"');
+    expect(folded).not.toContain(" open=");
+    expect(detailsText(folded)).toBe(
+      "How this works and what it costs Every draft is written from the brain you confirmed and activated for this creator on the brain page, plus what you type in below, plus the frameworks this creator can draw on — the shared library and any of your own, on the frameworks page. Every charge appears in your credit history on the usage page. A revision costs 2 credits, whichever mode it revises — a revision is priced as a revision, not at the price of the draft it came from."
+    );
+    expect(folded).not.toContain('data-testid="studio-no-results-basis"');
+    expect([...folded.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1]).sort()).toEqual(
+      ["studio-intro", "studio-revision-cost"]
+    );
+    for (const testId of [
+      "studio-disclosure",
+      "studio-weakest-point",
+      "studio-in-force",
+      "studio-mode-note",
+      "studio-cost",
+      "studio-no-results-basis",
+      "studio-no-stream",
+      "studio-status",
+      "studio-kill-test",
+      "studio-traceability-heading",
+      "studio-traceability",
+      "studio-traceability-note",
+      "studio-claims",
+      "studio-check-legend",
+      "studio-disclosure-provenance",
+      "studio-selected-cost",
+      "studio-charge",
+    ]) {
+      expect(html).toContain(`data-testid="${testId}"`);
+      expect(folded).not.toContain(`data-testid="${testId}"`);
+    }
+  });
+
+  it("keeps an injected honest refusal whole outside the fold", () => {
+    const html = renderToStaticMarkup(
+      <StudioPanel
+        {...baseView.run!}
+        initialState={{
+          lineage: [],
+          latest: { ...HONEST_REFUSAL, killTest: { ...KILL_TEST, claims: [CONCEALMENT] } },
+        }}
+      />
+    );
+    const details = html.match(/<details[\s\S]*?<\/details>/g) ?? [];
+    expect(details).toHaveLength(1);
+    const folded = details[0] ?? "";
+    expect(folded).toContain("How this works and what it costs");
+    expect(folded).not.toContain(" open=");
+    expect(detailsText(folded)).toBe(
+      "How this works and what it costs Every draft is written from the brain you confirmed and activated for this creator on the brain page, plus what you type in below, plus the frameworks this creator can draw on — the shared library and any of your own, on the frameworks page. Every charge appears in your credit history on the usage page. A revision costs 2 credits, whichever mode it revises — a revision is priced as a revision, not at the price of the draft it came from."
+    );
+    expect([...folded.matchAll(/data-testid="([^"]+)"/g)].map((m) => m[1]).sort()).toEqual(
+      ["studio-intro", "studio-revision-cost"]
+    );
+    for (const testId of [
+      "studio-honest-refusal",
+      "studio-refusal-why",
+      "studio-sharper-angle",
+      "studio-kill-test",
+      "studio-traceability-heading",
+      "studio-traceability",
+      "studio-traceability-note",
+      "studio-claims",
+      "studio-disclosure-provenance",
+      "studio-charge",
+      "studio-no-results-basis",
+      "studio-no-stream",
+      "studio-mode-note",
+      "studio-in-force",
+      "studio-cost",
+      "studio-selected-cost",
+      "studio-status",
+    ]) {
+      expect(html).toContain(`data-testid="${testId}"`);
+      expect(folded).not.toContain(`data-testid="${testId}"`);
+    }
   });
 });
 
@@ -700,7 +867,7 @@ describe("R19/REQ-I03: the traceability scan flags and offers [check], never edi
 
   it("the RENDERED note matches the finding — a number is not called a name", () => {
     // THE MUTATION THAT SURVIVED WITHOUT THIS TEST (measured, 2026-09-01):
-    // replacing `{traceabilityFlagNote(f.kind, f.field)}` with the old fixed
+    // replacing `{traceabilityFlagNote(f.kind)}` with the old fixed
     // sentence left 94 tests green, because the only flagged finding in the
     // shared fixture is a PROPER NOUN — for which the wrong sentence happens to
     // be right. The pure function had all four branches driven and the SCREEN
@@ -737,14 +904,105 @@ describe("R19/REQ-I03: the traceability scan flags and offers [check], never edi
       })
     );
     // Each finding gets ITS OWN sentence, and all three are on the page.
-    expect(html).toContain(traceabilityFlagNote("number", "/hooks/0/text"));
-    expect(html).toContain(traceabilityFlagNote("date", "/disclosure/guidance"));
-    expect(html).toContain(traceabilityFlagNote("proper_noun", "/hooks/1/text"));
+    expect(html).toContain(traceabilityFlagNote("number"));
+    expect(html).toContain(traceabilityFlagNote("proper_noun"));
     // THE REGRESSION, ASSERTED AS A COUNT rather than as an absence: the "name"
     // sentence appears exactly ONCE, beside the one finding that is a name. A
     // fixed sentence prints it three times.
     const names = html.split("a name, not a rule violation").length - 1;
     expect(names, "the name sentence is printed for a non-name finding").toBe(1);
+  });
+
+  it("offers exactly the two creator specifics from the four-row disclosure fixture", () => {
+    const html = decoded(
+      renderOutcome({
+        ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
+        killTest: {
+          ...KILL_TEST,
+          traceability: [
+            { kind: "number", enforcement: "flag", token: "5", field: "/hooks/0/text", unit: "Five steps." },
+            { kind: "proper_noun", enforcement: "flag", token: "Dorset", field: "/hooks/1/text", unit: "Filmed in Dorset." },
+            { kind: "proper_noun", enforcement: "flag", token: "TikTok", field: `${DISCLOSURE_FIELD_PREFIX}platform`, unit: "TikTok policy." },
+            { kind: "proper_noun", enforcement: "flag", token: "AI", field: `${DISCLOSURE_FIELD_PREFIX}guidance`, unit: "AI guidance." },
+          ],
+        },
+      })
+    );
+    expect(html).toContain("5 [check]");
+    expect(html).toContain("Dorset [check]");
+    const traceability = html.match(
+      /<ul data-testid="studio-traceability">[\s\S]*?<\/ul>/
+    )?.[0] ?? "";
+    expect(traceability).not.toBe("");
+    expect(traceability.split('data-testid="studio-check-offer"').length - 1).toBe(2);
+    expect(traceability).toContain("5 [check]");
+    expect(traceability).toContain("Dorset [check]");
+    expect(traceability).not.toContain("TikTok [check]");
+    expect(traceability).not.toContain("AI [check]");
+    expect(html).toContain(
+      "2 other specifics were not found either — a plain number or a name, where an ordinary word can land, so these are a prompt to look, never a fault."
+    );
+    expect(html.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
+    expect(html).toContain("names, numbers and dates are not listed here");
+    expect(html).toContain("recall aid, not a complete check.");
+  });
+
+  it("keeps a creator-owned TikTok finding distinct from disclosure guidance", () => {
+    const html = decoded(
+      renderOutcome({
+        ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
+        killTest: {
+          ...KILL_TEST,
+          traceability: [
+            {
+              kind: "proper_noun",
+              enforcement: "flag",
+              token: "TikTok",
+              field: "/hooks/2/text",
+              unit: "A TikTok creator anecdote.",
+            },
+          ],
+        },
+      })
+    );
+    expect(html).toContain("TikTok [check]");
+  });
+
+  it("keeps a synthetic hard disclosure traceability row visible", () => {
+    const html = decoded(
+      renderOutcome({
+        ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
+        killTest: {
+          ...KILL_TEST,
+          traceability: [
+            { kind: "currency", enforcement: "hard", token: "$4,000", field: `${DISCLOSURE_FIELD_PREFIX}guidance`, unit: "Within the first 3 seconds." },
+          ],
+        },
+      })
+    );
+    expect(html).toContain("$4,000 [check]");
+    expect(html).toContain("1 amount or date is");
+    expect(html.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
+  });
+
+  it("does not render a traceability list for all-disclosure findings", () => {
+    const html = decoded(
+      renderOutcome({
+        ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
+        killTest: {
+          ...KILL_TEST,
+          traceability: [
+            { kind: "proper_noun", enforcement: "flag", token: "AI", field: `${DISCLOSURE_FIELD_PREFIX}guidance`, unit: "AI guidance." },
+          ],
+        },
+      })
+    );
+    expect(html).not.toContain('data-testid="studio-traceability"');
+    expect(html).toContain(
+      "Every number, date and name outside the disclosure guidance in this draft was found in your brain or in what you typed in."
+    );
+    expect(html).not.toContain("Every name in this draft was found");
+    expect(html.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
   });
 
   it("the LIMIT sentence comes from the operation, and app/** holds no copy of it", () => {
@@ -1792,6 +2050,31 @@ describe("R20/R21: what /studio may and may not claim", () => {
             paused: false,
             brainActivated: false,
           }),
+        },
+      },
+    ],
+    [
+      // THE VOICE NOTICE, IN THE SCAN (Phase 1 T5 / AC8). Every other row
+      // inherits `brainActiveWithoutVoice: false`, so before this row the
+      // `studio-no-voice` banner and `VOICE_DOCUMENT_NEEDED` never entered the
+      // honesty sweep — a planted "Guaranteed success." on that literal passed
+      // every scan (batch-2 GEN02).
+      "brain active without a Voice document",
+      {
+        ...baseView,
+        brainActiveWithoutVoice: true,
+        run: { ...baseView.run!, activeKinds: ["Strategy", "Kill test"] },
+      },
+    ],
+    [
+      "brain histories unreadable",
+      {
+        ...baseView,
+        brainActiveWithoutVoice: false,
+        run: {
+          ...baseView.run!,
+          activeKinds: null,
+          block: generateBlock({ isViewer: false, paused: false, brainActivated: null }),
         },
       },
     ],

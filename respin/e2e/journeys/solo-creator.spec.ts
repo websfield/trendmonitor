@@ -3,10 +3,20 @@
 // billing upgrade (unlocks Trends + full-script modes) -> first ideas ->
 // Studio (hooks, caption, idea-to-script) -> Trends (track, paste, autopsy,
 // spin) -> Results (log) -> Usage -> sign out.
+//
+// FREE PATH FIRST (creator-ready Phase 2): every chapter that needs a paid
+// tier runs only under `E2E_PAID_TIERS=1`; otherwise it writes one
+// `skipped:` note and the journey continues on the Free path it already
+// handles. Every screenshot follows a settled-state wait in the same block
+// (F-18) — `tests/journey-settled-waits.test.ts` reads this file and fails on
+// a screenshot taken mid-submit.
 import { test, expect, type Page } from "@playwright/test";
+import { AUDIENCES } from "../../app/(marketing)/audiences";
 import { journeyArtifacts } from "../support/artifacts";
 import { freshIdentity, signOut, signUp } from "../support/auth";
+import { activateBrainSection, buildVoiceBrain } from "../support/brain";
 import { waitForGenerationOutcome } from "../support/generation";
+import { MAIN_CHAPTERS } from "../support/main-chapters";
 import { completeStripeTestCheckout } from "../support/stripe";
 
 const artifacts = journeyArtifacts("solo-creator");
@@ -20,17 +30,37 @@ test("solo creator - full lifecycle", async ({ page }) => {
   // Chapter 1 - marketing site.
   await page.goto("/");
   await expect(page.getByRole("link", { name: "Start free, no card" }).first()).toBeVisible();
+  await expect(page.locator(".demo-panel").first()).toBeVisible();
   await artifacts.screenshot(page, "marketing-home");
 
-  // Chapter 2 - sign-up.
+  // Chapter 1b - the public pages a visitor can reach without an account
+  // (F-20): changelog, legal, every audience landing, deletion recovery.
+  await page.goto("/changelog");
+  await expect(page.getByRole("heading", { name: "Changelog" })).toBeVisible();
+  await artifacts.screenshot(page, "public-changelog");
+  await page.goto("/legal");
+  await expect(page.getByRole("heading", { name: "Terms and privacy" })).toBeVisible();
+  await artifacts.screenshot(page, "public-legal");
+  for (const audience of AUDIENCES) {
+    await page.goto(`/for/${audience.slug}`);
+    await expect(page.getByText(audience.h1Lead).first()).toBeVisible();
+    await artifacts.screenshot(page, `public-for-${audience.slug}`);
+  }
+  await page.goto("/recover-deletion");
+  await expect(page.getByRole("heading", { name: "Cancel account deletion" })).toBeVisible();
+  await artifacts.screenshot(page, "public-recover-deletion");
+
+  // Chapter 2 - sign-up lands on /onboarding (Phase 1 AC4).
   await signUp(page, identity);
-  await artifacts.screenshot(page, "post-signup-studio");
+  await expect(page.getByTestId("onboarding-steps")).toBeVisible();
+  await artifacts.screenshot(page, "post-signup-onboarding");
 
   // Chapter 3 - onboarding: create the creator profile.
-  await page.goto("/onboarding");
   await page.getByLabel("Creator name").fill("Riley Test Creator");
   await page.getByRole("button", { name: "Create profile" }).click();
-  await page.waitForURL("**/onboarding");
+  // A same-route server action is a soft navigation: `waitForURL` alone would
+  // resolve before the profile panel re-renders with the new heading.
+  await expect(page.getByRole("heading", { name: "Riley Test Creator" })).toBeVisible({ timeout: 15_000 });
   await artifacts.screenshot(page, "onboarding-profile-created");
 
   // Chapter 4 - paste own posts (minOwnPostsForVoice default is 3; four for margin).
@@ -52,20 +82,27 @@ test("solo creator - full lifecycle", async ({ page }) => {
     // list is the real completion signal.
     await expect(page.getByText(content.slice(0, 40))).toBeVisible({ timeout: 15_000 });
   }
-  await artifacts.screenshot(page, "onboarding-posts-saved");
+  // THE MAIN CHAPTER for this persona: every green branch below passes here.
+  await expect(page.getByText(ownPosts[ownPosts.length - 1].slice(0, 40))).toBeVisible();
+  await artifacts.screenshot(page, MAIN_CHAPTERS["solo-creator"]);
 
-  // Chapter 5 - build the voice brain (real Anthropic call).
-  await page.getByRole("button", { name: "Build my voice brain" }).click();
-  await expect(
-    page.locator('[data-testid="run-result"], [data-testid="run-refusal"]').first()
-  ).toBeVisible({ timeout: 90_000 });
-  const voiceRunOk = await page.getByTestId("run-result").isVisible().catch(() => false);
-  artifacts.note(`voice inference run result visible: ${voiceRunOk}`);
+  // Chapter 5 - build the voice brain (real Anthropic call). One press,
+  // bracketed by included-build evidence snapshots; a refusal is recorded
+  // with its kind and NOT retried (the included build is claimed before the
+  // parse, and a Free re-press is refused before the vendor).
+  const voice = await buildVoiceBrain(page, {
+    artifacts,
+    persona: "solo-creator",
+    ownerEmail: identity.email,
+  });
+  artifacts.note(`voice build outcome: ${JSON.stringify(voice)}`);
   await artifacts.screenshot(page, "onboarding-voice-run-result");
 
-  // Chapter 6 - brain: confirm and activate the voice draft.
+  // Chapter 6 - brain: confirm and activate the voice draft (no-op when the
+  // build was refused and nothing was drafted).
   await page.goto("/brain");
   await activateBrainSection(page, "voice");
+  await expect(page.getByTestId("voice-section")).toBeVisible();
   await artifacts.screenshot(page, "brain-voice-activated");
 
   // Chapter 7 - the structured interview.
@@ -84,55 +121,74 @@ test("solo creator - full lifecycle", async ({ page }) => {
   await page.locator("#metricWindow_notdecided").check();
   await page.locator("#bannedWords").fill("literally\nsynergy");
   await page.locator("#bannedVibes").fill("hustle-bro\nfaux-hype");
+  await expect(page.getByRole("button", { name: "Save and review my answers" })).toBeVisible();
   await artifacts.screenshot(page, "interview-filled");
   await page.getByRole("button", { name: "Save and review my answers" }).click();
   await page.waitForURL(/step=review/);
+  await expect(page.getByRole("button", { name: "Submit my interview" })).toBeVisible();
   await artifacts.screenshot(page, "interview-review");
   await page.getByRole("button", { name: "Submit my interview" }).click();
   // Submission redirects straight to /brain (Stage B2's confirm-and-activate
   // surface for what the interview produced) rather than back to itself.
   await page.waitForURL("**/brain");
+  await expect(page.getByTestId("strategy-section")).toBeVisible();
   await artifacts.screenshot(page, "interview-submitted");
 
   // Chapter 8 - brain: confirm and activate strategy + kill test.
   await activateBrainSection(page, "strategy");
   await activateBrainSection(page, "killtest");
+  await expect(page.getByTestId("killtest-section")).toBeVisible();
   await artifacts.screenshot(page, "brain-all-activated");
 
-  // Chapter 9 - upgrade to Creator tier (test-mode Stripe checkout). This is
-  // what unlocks Trends (Free's trackedNiches allowance is 0) and the
-  // full-script Studio modes (Free has Hooks/Caption/Ideation only). Every
-  // billing form carries a step-up "Current password" field (10b-1) that the
-  // real user types before pressing Subscribe - filled here the same way.
-  // BEST EFFORT: the rest of this journey adapts to whichever tier the
-  // workspace actually ends up on, and records the outcome honestly.
+  // Chapter 9 - billing. On the Free path this only reads the page: the
+  // settled state is the keyless refusal banner (CI runs without
+  // STRIPE_SECRET_KEY) or the pack panel, and an OWNER never sees the
+  // not-owner sentence anywhere on it. The Creator-tier checkout (test-mode
+  // Stripe, step-up password) runs only with E2E_PAID_TIERS=1.
   await page.goto("/settings/billing");
-  let upgraded = await page.getByTestId("manage-plan").isVisible().catch(() => false);
-  if (!upgraded) {
-    try {
-      const subscribeForm = page.getByTestId("subscribe-creator");
-      await subscribeForm.locator('input[name="password"]').fill(identity.password);
-      await subscribeForm.getByRole("button", { name: /Subscribe/ }).click();
-      await completeStripeTestCheckout(page, { email: identity.email });
-      await page.waitForURL("**/usage");
-      // The tier flip is driven by Stripe's webhook, which arrives
-      // asynchronously - the checkout redirect completing is not proof the
-      // workspace's tier has changed yet. Poll the billing page's own answer.
-      await page.goto("/settings/billing");
-      await expect(page.getByTestId("manage-plan")).toBeVisible({ timeout: 30_000 });
-      artifacts.note("Stripe test-mode checkout completed for Creator tier, webhook confirmed by the billing page.");
-      upgraded = true;
-    } catch (err) {
-      artifacts.note(
-        `BLOCKING APP BUG: Creator-tier checkout did not complete - ${String(err)}. Continuing this journey on the Free plan.`
-      );
-      test.info().annotations.push({
-        type: "bug",
-        description: `Creator-tier Stripe checkout did not complete: ${String(err)}`,
-      });
+  let upgraded = false;
+  if (process.env.E2E_PAID_TIERS === "1") {
+    upgraded = await page.getByTestId("manage-plan").isVisible().catch(() => false);
+    if (!upgraded) {
+      try {
+        const subscribeForm = page.getByTestId("subscribe-creator");
+        await subscribeForm.locator('input[name="password"]').fill(identity.password);
+        await subscribeForm.getByRole("button", { name: /Subscribe/ }).click();
+        await completeStripeTestCheckout(page, { email: identity.email });
+        await page.waitForURL("**/usage");
+        // The tier flip is driven by Stripe's webhook, which arrives
+        // asynchronously - the checkout redirect completing is not proof the
+        // workspace's tier has changed yet. Poll the billing page's own answer.
+        await page.goto("/settings/billing");
+        await expect(page.getByTestId("manage-plan")).toBeVisible({ timeout: 30_000 });
+        artifacts.note("Stripe test-mode checkout completed for Creator tier, webhook confirmed by the billing page.");
+        upgraded = true;
+      } catch (err) {
+        artifacts.note(
+          `BLOCKING APP BUG: Creator-tier checkout did not complete - ${String(err)}. Continuing this journey on the Free plan.`
+        );
+        test.info().annotations.push({
+          type: "bug",
+          description: `Creator-tier Stripe checkout did not complete: ${String(err)}`,
+        });
+      }
     }
+    await page.goto("/settings/billing");
+    await expect(page.getByTestId(upgraded ? "manage-plan" : "subscribe-creator")).toBeVisible();
+    await artifacts.screenshot(page, upgraded ? "billing-upgraded" : "billing-upgrade-failed");
+  } else {
+    artifacts.skipped("paid tiers not enabled - Creator-tier checkout");
+    await expect(page.getByText("Only the workspace owner can change billing")).toHaveCount(0);
+    await expect(
+      page.locator('[data-testid="stripe-unconfigured"], [data-testid="pack"]').first()
+    ).toBeVisible();
+    await artifacts.screenshot(page, "billing-free");
   }
-  await artifacts.screenshot(page, upgraded ? "billing-upgraded" : "billing-upgrade-failed");
+
+  // Chapter 9b - the account page (F-20).
+  await page.goto("/settings/account");
+  await expect(page.getByRole("heading", { name: "Account and data" })).toBeVisible();
+  await artifacts.screenshot(page, "settings-account");
 
   // Chapter 10 - first ideas (B04's real onboarding-ending run).
   await page.goto("/onboarding/first-ideas");
@@ -163,76 +219,101 @@ test("solo creator - full lifecycle", async ({ page }) => {
   );
   await artifacts.screenshot(page, "studio-third-mode-result");
 
-  // Feedback on the last draft, exercising the feedback loop once.
+  // Feedback on the last draft, exercising the feedback loop once. A refused
+  // draft has no feedback block; that branch records the absence.
   const feedbackBlock = page.getByTestId("studio-feedback");
   if (await feedbackBlock.isVisible().catch(() => false)) {
     await feedbackBlock.locator('input[type="radio"]').first().check();
     await feedbackBlock.getByRole("button", { name: "Record what I said" }).click();
     await expect(feedbackBlock.getByTestId("studio-feedback-recorded")).toBeVisible({ timeout: 15_000 });
-  }
-  await artifacts.screenshot(page, "studio-feedback-recorded");
-
-  // Chapter 12 - Trends: track a niche, paste a reference, autopsy, spin.
-  // Free's trackedNiches allowance is 0 (config), so on the (likely, given
-  // the billing bug above) unupgraded Free plan this is an EXPECTED refusal,
-  // not a failure of this journey - both outcomes are asserted honestly.
-  await page.goto("/trends");
-  await page.locator("#tracked-niche").fill("editing-tips");
-  await page.getByRole("button", { name: "Track niche" }).click();
-  await expect(page.getByRole("status").filter({ hasText: /.+/ }).first()).toBeVisible({ timeout: 15_000 });
-  const nicheTracked = await page.getByText(/Niche saved/).isVisible().catch(() => false);
-  artifacts.note(`niche tracking allowed: ${nicheTracked} (expected false on Free, given the billing bug above)`);
-  await artifacts.screenshot(page, "trends-niche-tracked");
-
-  const pasteBlocked = await page.getByTestId("paste-disabled-tier").isVisible().catch(() => false);
-  if (pasteBlocked) {
-    artifacts.note("Paste-for-autopsy still tier-blocked after upgrade - recording and moving on");
-    await artifacts.screenshot(page, "trends-paste-blocked");
+    await artifacts.screenshot(page, "studio-feedback-recorded");
   } else {
-    await page.getByLabel("Video link").fill("https://example.com/watch?v=e2e-solo-creator");
-    await page.getByLabel(/Title/).fill("A stitched receipts video");
-    await page
-      .getByLabel("Transcript")
-      .fill(
-        "Hook: I never post the first take. Beat one: show the failed attempt. Beat two: show the fix. " +
-          "Ending: the honest cut wins. Follow trigger: comment your worst take."
-      );
-    await page.getByRole("button", { name: "Paste for autopsy" }).click();
-    await expect(page.getByTestId("paste-status")).not.toBeEmpty({ timeout: 15_000 });
-    await artifacts.screenshot(page, "trends-paste-queued");
-
-    // The autopsy runs on the dedicated pg-boss worker - poll by reloading.
-    let spinReady = false;
-    for (let attempt = 0; attempt < 12 && !spinReady; attempt += 1) {
-      await page.waitForTimeout(10_000);
-      await page.goto("/trends");
-      spinReady = (await page.getByRole("button", { name: /Spin/ }).count()) > 0;
-    }
-    artifacts.note(`autopsy became spin-ready: ${spinReady}`);
-    await artifacts.screenshot(page, "trends-autopsy-polled");
-
-    if (spinReady) {
-      await page.getByRole("button", { name: /Spin/ }).first().click();
-      await expect(
-        page.locator('[data-testid^="spin-result-"], [data-testid^="spin-refusal-"]').first()
-      ).toBeVisible({ timeout: 60_000 });
-      await artifacts.screenshot(page, "trends-spin-result");
-    }
+    artifacts.note("no feedback block on the last draft (refused or withheld) - feedback loop not exercised");
+    await expect(page.getByTestId("studio-status")).toBeVisible();
+    await artifacts.screenshot(page, "studio-feedback-absent");
   }
 
-  // Chapter 13 - Results: log a result against one of the Studio drafts.
-  // Free tier has view-only performance-record access (config), so on the
-  // (likely unupgraded, given the billing bug above) Free plan logging is
-  // withheld with a named reason rather than a form - handled the same
-  // honest way as the Trends tier gate above, not asserted as a failure.
+  // Chapter 11b - the frameworks library page (F-20).
+  await page.goto("/studio/frameworks");
+  await expect(page.getByRole("heading", { name: "Frameworks" })).toBeVisible();
+  await artifacts.screenshot(page, "studio-frameworks");
+
+  // Chapter 12 - Trends. Free's trackedNiches allowance is 0 (config), so on
+  // Free the niche block is the EXPECTED, asserted state (Phase 1 T8); the
+  // paste -> autopsy -> spin chapter needs a paid tier and is gated.
+  await page.goto("/trends");
+  const nicheBlocked = await page.getByTestId("niche-disabled-tier").isVisible().catch(() => false);
+  if (nicheBlocked) {
+    artifacts.note("Niche tracking is not included on this workspace's current plan.");
+    await expect(page.getByTestId("niche-disabled-tier")).toBeVisible();
+    await artifacts.screenshot(page, "trends-niche-blocked");
+  } else {
+    await page.locator("#tracked-niche").fill("editing-tips");
+    await page.getByRole("button", { name: "Track niche" }).click();
+    await expect(
+      page.locator('[data-testid="niche-saved"], [data-testid="niche-refused"]').first()
+    ).toBeVisible({ timeout: 15_000 });
+    const nicheTracked = await page.getByTestId("niche-saved").isVisible().catch(() => false);
+    artifacts.note(`niche tracking allowed: ${nicheTracked}`);
+    await expect(
+      page.locator('[data-testid="niche-saved"], [data-testid="niche-refused"]').first()
+    ).toBeVisible();
+    await artifacts.screenshot(page, "trends-niche-tracked");
+  }
+
+  if (process.env.E2E_PAID_TIERS === "1") {
+    const pasteBlocked = await page.getByTestId("paste-disabled-tier").isVisible().catch(() => false);
+    if (pasteBlocked) {
+      artifacts.note("Paste-for-autopsy still tier-blocked after upgrade - recording and moving on");
+      await expect(page.getByTestId("paste-disabled-tier")).toBeVisible();
+      await artifacts.screenshot(page, "trends-paste-blocked");
+    } else {
+      await page.getByLabel("Video link").fill("https://example.com/watch?v=e2e-solo-creator");
+      await page.getByLabel(/Title/).fill("A stitched receipts video");
+      await page
+        .getByLabel("Transcript")
+        .fill(
+          "Hook: I never post the first take. Beat one: show the failed attempt. Beat two: show the fix. " +
+            "Ending: the honest cut wins. Follow trigger: comment your worst take."
+        );
+      await page.getByRole("button", { name: "Paste for autopsy" }).click();
+      await expect(page.getByTestId("paste-status").filter({ hasText: /.+/ })).toBeVisible({ timeout: 15_000 });
+      await artifacts.screenshot(page, "trends-paste-queued");
+
+      // The autopsy runs on the dedicated pg-boss worker - poll by reloading.
+      let spinReady = false;
+      for (let attempt = 0; attempt < 12 && !spinReady; attempt += 1) {
+        await page.waitForTimeout(10_000);
+        await page.goto("/trends");
+        spinReady = (await page.getByRole("button", { name: /Spin/ }).count()) > 0;
+      }
+      artifacts.note(`autopsy became spin-ready: ${spinReady}`);
+      await expect(page.getByRole("heading", { name: "Track a niche" })).toBeVisible();
+      await artifacts.screenshot(page, "trends-autopsy-polled");
+
+      if (spinReady) {
+        await page.getByRole("button", { name: /Spin/ }).first().click();
+        await expect(
+          page.locator('[data-testid^="spin-result-"], [data-testid^="spin-refusal-"]').first()
+        ).toBeVisible({ timeout: 60_000 });
+        await artifacts.screenshot(page, "trends-spin-result");
+      }
+    }
+  } else {
+    artifacts.skipped("paid tiers not enabled - paste/autopsy/spin");
+  }
+
+  // Chapter 13 - Results. Free tier has view-only performance-record access
+  // (config), and logging needs a declared metric: on the Free path the page
+  // is read and its withheld state asserted; logging a result is gated.
   await page.goto("/results");
   const noDeclaredMetric = await page
     .getByTestId("results-no-declared-metric")
     .isVisible()
     .catch(() => false);
   const logBlocked = await page.getByTestId("results-log-blocked").isVisible().catch(() => false);
-  artifacts.note(`results log blocked: ${logBlocked} (expected true on Free, given the billing bug above)`);
-  if (!noDeclaredMetric && !logBlocked) {
+  artifacts.note(`results: no declared metric=${noDeclaredMetric}, log blocked=${logBlocked}`);
+  if (process.env.E2E_PAID_TIERS === "1" && !noDeclaredMetric && !logBlocked) {
     await page.locator("#results-generation").selectOption({ index: 1 });
     await page.locator("#results-platform").selectOption({ index: 1 });
     await page.locator('input[name="audienceClass"]').first().check();
@@ -246,8 +327,13 @@ test("solo creator - full lifecycle", async ({ page }) => {
     await expect(page.getByTestId("results-log-status")).toBeVisible();
     await artifacts.screenshot(page, "results-logged");
   } else {
-    artifacts.note("No declared metric available - results log form withheld, as designed");
-    await artifacts.screenshot(page, "results-no-metric");
+    if (process.env.E2E_PAID_TIERS !== "1") artifacts.skipped("paid tiers not enabled - results logging");
+    await expect(
+      page
+        .locator('[data-testid="results-no-declared-metric"], [data-testid="results-log-blocked"], #results-generation')
+        .first()
+    ).toBeVisible();
+    await artifacts.screenshot(page, "results-free-view");
   }
 
   // Chapter 14 - Usage / credits.
@@ -258,42 +344,9 @@ test("solo creator - full lifecycle", async ({ page }) => {
   // Chapter 15 - sign out.
   await page.goto("/studio");
   await signOut(page);
+  await expect(page.getByRole("link", { name: "Start free, no card" }).first()).toBeVisible();
   await artifacts.screenshot(page, "signed-out");
 });
-
-/** Ticks every confirm checkbox in a brain section, records, then activates. */
-async function activateBrainSection(
-  page: Page,
-  prefix: "voice" | "strategy" | "killtest"
-): Promise<void> {
-  const section = page.getByTestId(`${prefix}-section`);
-  const empty = await section.getByTestId(`${prefix}-empty`).isVisible().catch(() => false);
-  if (empty) return; // nothing was drafted for this kind (e.g. interview left it untouched).
-  const checkboxes = section.locator('input[type="checkbox"]');
-  const count = await checkboxes.count();
-  for (let i = 0; i < count; i += 1) {
-    await checkboxes.nth(i).check();
-  }
-  const recordButton = section.getByRole("button", { name: "Record my decisions" });
-  if (await recordButton.isVisible().catch(() => false)) {
-    await recordButton.click();
-    // `/brain`'s confirm submit is a SAME-ROUTE server-action redirect (a
-    // soft client-side navigation), so `waitForURL("**/brain")` resolves
-    // instantly without the confirmed-state re-render ever happening - the
-    // exact race that silently left every onboarding post half-saved
-    // earlier in this journey. Wait for the real completion signal instead:
-    // the Activate button appearing (or staying absent for a real reason).
-    await Promise.race([
-      section.getByRole("button", { name: "Activate my Creator Brain" }).waitFor({ state: "visible", timeout: 20_000 }),
-      section.getByTestId(`${prefix}-decide-blocked`).waitFor({ state: "visible", timeout: 20_000 }),
-    ]).catch(() => undefined);
-  }
-  const activateButton = section.getByRole("button", { name: "Activate my Creator Brain" });
-  if (await activateButton.isVisible().catch(() => false)) {
-    await activateButton.click();
-    await section.getByTestId(`${prefix}-active-meta`).waitFor({ state: "visible", timeout: 20_000 });
-  }
-}
 
 /** Runs one Studio mode end to end: select it, fill the brief, press, wait. */
 async function runStudioMode(page: Page, modeLabel: string, input: string): Promise<void> {

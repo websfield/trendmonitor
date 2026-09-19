@@ -69,6 +69,7 @@ import {
 import {
   COMPARISON_POPULATION_MAX,
   brainAssetSummary,
+  hasGenerationForProfile,
   PROFILE_EXPORT_TABLES,
   ProfileAccessError,
   ComparisonStratumError,
@@ -641,6 +642,36 @@ describe("ProfileScope — the profile tenancy cage", () => {
     // ...and the sibling in the SAME workspace is not refused, so the refusal
     // is about the workspace predicate rather than about minting at all.
     await expect(ProfileScope.mint(db, scopeA, p2)).resolves.toBeDefined();
+  });
+
+  it("hasGenerationForProfile distinguishes generations from siblings and attempts", async () => {
+    const scopeA = await withWorkspace(db, { authUserId: "user_a" });
+    const [emptySibling, attemptOnly] = await db
+      .insert(creatorProfiles)
+      .values([
+        { workspaceId: aWorkspaceId, displayName: "No generation" },
+        { workspaceId: aWorkspaceId, displayName: "Attempt only" },
+      ])
+      .returning();
+    await db.insert(generationAttempts).values({
+      profileId: attemptOnly.id,
+      workspaceId: aWorkspaceId,
+      attemptId: "attempt-without-generation",
+      purpose: "generation",
+      mode: "hookSet",
+      payloadSha256: "a".repeat(64),
+    });
+
+    await expect(hasGenerationForProfile(db, scopeA, p1)).resolves.toBe(true);
+    await expect(
+      hasGenerationForProfile(db, scopeA, emptySibling.id)
+    ).resolves.toBe(false);
+    await expect(
+      hasGenerationForProfile(db, scopeA, attemptOnly.id)
+    ).resolves.toBe(false);
+    await expect(hasGenerationForProfile(db, scopeA, p3)).rejects.toBeInstanceOf(
+      ProfileAccessError
+    );
   });
 
   it("P2: foreign and nonexistent are byte-identical — no enumeration oracle", async () => {
@@ -2359,6 +2390,11 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
               scoped,
               `${table}.${key} leaked a cross-parented row`
             ).toHaveLength(0);
+          }
+          if (table === "generations") {
+            await expect(
+              hasGenerationForProfile(tx, scopeA, p1)
+            ).resolves.toBe(false);
           }
           const profileOnly = await tx.execute(
             sql.raw(`SELECT id FROM ${table} WHERE ${profileColumn} = '${p1}'`)

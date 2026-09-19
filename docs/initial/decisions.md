@@ -1699,3 +1699,7 @@ Four reversible defaults taken while building Phase 10a against plan cards 10a C
 **Copy within the claims canon.** Plan C1's presenter wording "legacy mixed/unverified evidence — not learning eligible" contains a word the shared claims canon forbids on every creator-facing surface (`learn`); the screen says "not proposal eligible", the same fact in permitted words.
 
 **Two entrypoints REQ-H01 names are placeholders until 10c.** `/legal` states plainly that the terms and the privacy statement are not yet published (legal review is external evidence, plan 10a deferral ledger); `/changelog` is a checked-in list scanned by the same canon. Neither is a contract.
+
+## R-127 — Disclosure traceability is stored, not listed (2026-09-18)
+
+Amends R-68: `/disclosure/` traceability findings are stored at flag level and not listed in the draft's traceability list (stored-not-listed); the agreement test pins it. Claim findings — concealment advice, hard on `/disclosure/` since R-69 — are unaffected and always listed. Residual: every disclosure shape loses offer/count, including numbers and dates such as model-invented “within the first 3 seconds”; revisit when a measured invented specific in disclosure reaches a creator with no offer.

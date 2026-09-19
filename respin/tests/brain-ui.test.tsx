@@ -234,6 +234,62 @@ describe("R6: strategy and killtest render through the SAME machinery as voice",
   });
 });
 
+describe("Phase 1 T4: document controls fold without hiding the brain itself", () => {
+  const controls = (html: string, kind: "voice" | "strategy" | "killtest") => {
+    const marker = html.indexOf(`data-testid="${kind}-document-controls"`);
+    const start = html.lastIndexOf("<details", marker);
+    const end = html.indexOf("</details>", start);
+    return html.slice(start, end + "</details>".length);
+  };
+
+  it("keeps each document's edit form and history closed by default", () => {
+    const html = render({
+      voice: {
+        proposed: null,
+        active: version({ status: "active", activatedAt: POSTED }),
+      },
+    });
+    const voiceControls = controls(html, "voice");
+    expect(voiceControls).toContain("<details");
+    expect(voiceControls).not.toContain("open=\"\"");
+    expect(voiceControls).toContain("Edit this document");
+    expect(voiceControls).toContain("How you write version history");
+  });
+
+  it("opens controls when only a draft exists, including the declared-metric editor", () => {
+    const html = render({
+      strategy: {
+        proposed: version({
+          brainDocId: "strategy-draft",
+          claims: [
+            interviewClaim({ pointer: "/metric/label", value: "Follows" }),
+            interviewClaim({ pointer: "/metric/unit", value: "per 1,000" }),
+            interviewClaim({ pointer: "/metric/direction", value: "higher" }),
+          ],
+        }),
+        active: null,
+      },
+    });
+    const strategyControls = controls(html, "strategy");
+    expect(strategyControls).toContain("open=\"\"");
+    expect(strategyControls).toContain('data-testid="strategy-metric-edit-form"');
+    expect(strategyControls).toContain("Your strategy version history");
+  });
+
+  it("places documents before export, asset, performance-meta and proposal sections", () => {
+    const html = render();
+    const documentEnd = html.indexOf('data-testid="killtest-section"');
+    for (const testId of [
+      "brain-export-panel",
+      "brain-assets",
+      "performance-meta",
+      "proposal-history",
+    ]) {
+      expect(html.indexOf(`data-testid="${testId}"`), testId).toBeGreaterThan(documentEnd);
+    }
+  });
+});
+
 describe("interviewTouchedButUndrafted: a deliberate empty answer is distinct from never answering (tenancy gate finding, 2026-08-30)", () => {
   // THE GAP THIS CLOSES: a creator whose only killtest answer was "no banned
   // words" (a decided-EMPTY list) gets no document at all — `buildDocContents`

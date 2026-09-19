@@ -1,0 +1,210 @@
+Phase 1 core AC12 mutation evidence
+Date: 2026-09-18
+Scope: T1/T3 owned real targets only. No replica was used as acceptance evidence.
+Environment: process TEMP and TMP were C:\projects\ai.playground\trendMonitor\.codex-tmp.
+Method: each plant replaced one exact UTF-8 byte sequence, ran the real target,
+restored the saved original bytes in finally, proved SHA-256 before == after, and
+reran the same command green. A plant was fully restored before the next began.
+No independent review was performed or consumed.
+
+w1 exact-only
+Target: respin/packages/llm/src/assemble.ts
+Plant: return null immediately before the canonical fallback.
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts -t "keeps exact-match-first behavior|maps the original literal slice"
+Mutated: exit 1. "keeps exact-match-first behavior" passed. Canonical literal
+fixtures failed, including curly quotes, both dash kinds, doubled spaces, tab,
+line feed, trailing canonical space, astral prefix, combining-mark neighbour,
+and the mixed paragraph run. The verbatim paragraph control passed.
+Restored: exit 0, 12 selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated 4172170c50af6c0d18b495f8cb8131c1d0dff678ed27ed28be71d67010846538;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+w1b case-fold broadening
+Target: respin/packages/llm/src/assemble.ts
+Plant: append .toLowerCase() to the canonical text returned by canon().
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts -t "refuses case|refuses generated case|maps the original literal slice for curly quotes"
+Mutated: exit 1. "refuses case" and "refuses generated case, punctuation and
+must-not-fold mutations" failed; the selected curly-quote fixture also failed.
+Restored: exit 0, 3 selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated ccc0bd4e45863ec0f0ec578238b6646e518ad75066fcff4fcf96ca4b7866db23;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+w1b broad-whitespace broadening
+Target: respin/packages/llm/src/assemble.ts
+Plant: replace CANON_WHITESPACE.has(point) with /\s/u.test(point).
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts -t "folds exactly the independently pinned table|contains no broad whitespace|refuses NBSP|maps the original literal slice for curly quotes"
+Mutated: exit 1. NBSP refusal, the exhaustive independently pinned Unicode
+scalar oracle, and the source scan all failed. The curly-quote fixture passed.
+Restored: exit 0, 4 selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated 77bdd2620414385819350019b357d321193f2347f39636466e87774761129183;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+w2 model-quote storage
+Target: respin/packages/llm/src/assemble.ts
+Plant: store v.quote instead of content.slice(at.startUtf16, at.endUtf16).
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts packages/credits/tests/voice-build-tolerance.test.ts -t "generatively maps picked ranges|maps a curly model quote"
+Mutated: exit 1. The generated parseVoiceReply evidence equality property and
+the real inferVoice -> PGlite write assertion both failed.
+Restored: exit 0, both selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated 4b294dd61f63bbbb77998541994e6a5b497bcbdf9a366d5bc7c6c9556f609c3d;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+w2b predicate body always true
+Target: respin/packages/llm/src/assemble.ts
+Plant: replace acceptCanonicalMatch's body with return true.
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts -t "maps the original literal slice|canonical map-back postcondition"
+Mutated: exit 1. All eleven wrong-range pure-table cases and all seven
+wrong-range injected-seam cases failed. All eleven literal-slice fixtures and
+the correct pure/injected range controls passed.
+Restored: exit 0, 31 selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated fcc8115bc7d6df7abb2334b830224e8ca706941426d3878c89ec2a31cfc993dc;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+w2e predicate call removed
+Target: respin/packages/llm/src/assemble.ts
+Plant: remove only locateQuote's acceptCanonicalMatch call and early return.
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts -t "canonical map-back postcondition"
+Mutated: exit 1. All seven injected invalid-range cases failed. The complete
+twelve-case pure predicate table and the correct injected-range control passed.
+Restored: exit 0, 20 selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated b9a6b6f45265d9a5226ba94e71ef3e962ff6a8b6b7e431dc9bf65f080e95adfc;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+w2e integer/bounds guard removed
+Target: respin/packages/llm/src/assemble.ts
+Plant: delete only acceptCanonicalMatch's integer, finite bounds, empty/reversed,
+over-end, and split-surrogate guard; leave the canonical and edge checks intact.
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts -t "canonical map-back postcondition"
+Mutated: exit 1. The pure fractional case and injected fractional, NaN,
+infinite, and over-end cases failed. The other pure and injected cases,
+including the correct ranges, passed.
+Restored: exit 0, 20 selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated 6b8465ea53f11296ee9549c0924bfac355c013f54b98ff3c6dab1c0479cb846d;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+w5a scoped read returns true
+Target: respin/packages/db/src/with-workspace.ts
+Plant: replace the scoped generation-read result with return true.
+Command: pnpm -C respin exec vitest run packages/db/tests/profile-scope.test.ts -t "P1: a profile in another workspace|hasGenerationForProfile distinguishes"
+Mutated: exit 1. "hasGenerationForProfile distinguishes generations from
+siblings and attempts" failed at the sibling false assertion. The independent
+P1 foreign-profile rejection passed.
+Restored: exit 0, both selected tests passed.
+Hashes: before 304ae2c8a0d4725480a60a2826ea699eddfd6d5bb3e2183551635d8676400aac;
+mutated e95eb157fd6ed9d5ec04f5dd31b5b65080d11797610660dd71c152de99e30126;
+after 304ae2c8a0d4725480a60a2826ea699eddfd6d5bb3e2183551635d8676400aac.
+
+w5b foreign refusal swallowed
+Target: respin/packages/db/src/with-workspace.ts
+Plant: catch ProfileAccessError in hasGenerationForProfile and return false.
+Command: pnpm -C respin exec vitest run packages/db/tests/profile-scope.test.ts -t "P1: a profile in another workspace|hasGenerationForProfile distinguishes"
+Mutated: exit 1. "hasGenerationForProfile distinguishes generations from
+siblings and attempts" failed with "promise resolved false instead of
+rejecting". The independent P1 foreign-profile rejection passed.
+Restored: exit 0, both selected tests passed.
+Hashes: before 304ae2c8a0d4725480a60a2826ea699eddfd6d5bb3e2183551635d8676400aac;
+mutated 1596dee86a77617326ea066f39e4f8d1bdea3ca4b4a0183d6bfb74c59fcd0d90;
+after 304ae2c8a0d4725480a60a2826ea699eddfd6d5bb3e2183551635d8676400aac.
+
+w5c profile-only read ignores workspace
+Target: respin/packages/db/src/with-workspace.ts
+Plant: replace ProfileScope.generationsNewest with a generations.profileId-only query.
+Command: pnpm -C respin exec vitest run packages/db/tests/profile-scope.test.ts -t "hasGenerationForProfile distinguishes|P4 cross-workspace axis: a cross-parented row is invisible to the accessor"
+Mutated: exit 1. The P4 cross-workspace case failed because the profile-only
+query saw the cross-parented row; the fixture had moved all of that profile's
+generation rows to the foreign workspace, so no own-workspace generation row
+remained. The ordinary mine/sibling/attempt/foreign composition test passed.
+Restored: exit 0, both selected tests passed.
+Hashes: before 304ae2c8a0d4725480a60a2826ea699eddfd6d5bb3e2183551635d8676400aac;
+mutated 604640419ee069ffd3021efb6d94d1a3d82820cc3354dd10e04a1d5dc99c4c41;
+after 304ae2c8a0d4725480a60a2826ea699eddfd6d5bb3e2183551635d8676400aac.
+
+w8 counted clause removed
+Target: respin/app/(product)/billing-errors.ts
+Plant: remove "Your run was still made, so it counted." from inference_unusable.
+Command: pnpm -C respin exec vitest run tests/onboarding-ui.test.tsx -t "assembly refusals stay diagnostic and content-free"
+Mutated: exit 1. "renders the counted detail before every post-vendor kind
+sentence" and the independent static-literal usage-pointer assertion failed.
+All three pre-vendor exact-copy tests, the parked-clause control, and the named
+home control passed.
+Restored: exit 0, 8 selected tests passed.
+Hashes: before f0ae4a7af8714bca322435e51d028fd819e8f2b94bd675f4ea668450a9439374;
+mutated 9137c12e09e0f469c42883b6300158c0cd744ec9bb1b9495bda21d6ff56ae62f;
+after f0ae4a7af8714bca322435e51d028fd819e8f2b94bd675f4ea668450a9439374.
+
+w8b ledger-pointer sentence removed
+Target: respin/app/(product)/billing-errors.ts
+Plant: remove "Any charge for this run is in your credit history on the usage page."
+from inference_unusable.
+Command: pnpm -C respin exec vitest run tests/onboarding-ui.test.tsx -t "assembly refusals stay diagnostic and content-free"
+Mutated: exit 1. The independent static-literal usage-pointer assertion failed.
+The post-vendor counted-detail/order assertion, all three pre-vendor exact-copy
+tests, the parked-clause control, and the named-home control passed.
+Restored: exit 0, 8 selected tests passed.
+Hashes: before f0ae4a7af8714bca322435e51d028fd819e8f2b94bd675f4ea668450a9439374;
+mutated 7ac77cef23ac320cacc2b58fbdf9832667731f03c020b21556d8c40c5a9e0cf2;
+after f0ae4a7af8714bca322435e51d028fd819e8f2b94bd675f4ea668450a9439374.
+
+Outcome
+All twelve required plants reddened their intended assertion(s); every focused
+restore run passed, and all three source files ended at their exact starting
+SHA-256. No ineffective witness was found and no permanent implementation or
+test change was needed. No skip is counted as evidence. Presentation-owned
+T6/T7 targets were not touched and no broad suite was run.
+
+Batch 0 repair rerun: strengthened w2b/w2e coverage
+Date: 2026-09-18
+Reason: P1-TEN-01 added distinct non-whitespace and whitespace end extensions,
+plus canonically equal split-surrogate start/end cases, to both the predicate
+and injected-mapper tables. Each real-target plant below was applied only to
+respin/packages/llm/src/assemble.ts, restored from saved bytes in finally,
+followed by the same command green. No skip is counted as evidence.
+
+batch0 w2b predicate body always true
+Plant: replace acceptCanonicalMatch's body with return true, retaining its signature.
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts -t "maps the original literal slice|canonical map-back postcondition"
+Mutated: exit 1. All twelve invalid pure predicate cases and all eleven
+injected invalid-range cases failed, including the distinct end extensions and
+both canonically equal split-surrogate boundaries. All eleven literal-slice
+fixtures, the correct pure range, and the correct injected range passed.
+Restored: exit 0, 36 selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated fcc8115bc7d6df7abb2334b830224e8ca706941426d3878c89ec2a31cfc993dc;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+batch0 w2e predicate call removed
+Plant: remove only locateQuote's acceptCanonicalMatch call and early return.
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts -t "canonical map-back postcondition"
+Mutated: exit 1. All eleven injected invalid-range cases failed, including the
+two edge extensions and both split-surrogate boundaries. The complete pure
+predicate table and the correct injected-range control passed.
+Restored: exit 0, 25 selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated b9a6b6f45265d9a5226ba94e71ef3e962ff6a8b6b7e431dc9bf65f080e95adfc;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+batch0 w2e integer/bounds guard removed
+Plant: remove only acceptCanonicalMatch's first integer/bounds/surrogate guard;
+retain canonical equality and edge-whitespace checks.
+Command: pnpm -C respin exec vitest run packages/llm/tests/assemble-kinds.test.ts -t "canonical map-back postcondition"
+Mutated: exit 1. Pure fractional and both pure split-surrogate cases failed;
+injected fractional, NaN, infinite, over-end, and both split-surrogate cases
+failed. Canonical mismatch, both edge-extension guards, correct ranges, and the
+remaining invalid controls stayed green.
+Restored: exit 0, 25 selected tests passed.
+Hashes: before ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387;
+mutated 6b8465ea53f11296ee9549c0924bfac355c013f54b98ff3c6dab1c0479cb846d;
+after ed42b7fb1a5d9ff12d1d4a563fcc21f478cfd46591bec473995b2f773bc71387.
+
+Batch 0 rerun outcome
+All three strengthened witnesses reddened their intended new assertions and
+passed their unaffected controls. Every restore run passed, and assemble.ts
+ended byte-identical to its starting SHA-256. No permanent source repair was
+needed for the runtime predicate.

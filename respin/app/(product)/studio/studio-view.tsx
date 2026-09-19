@@ -27,6 +27,7 @@
 // word leaving a ban has to be paid for rather than simply removed.
 import { Banner } from "../../ui/banner";
 import { StudioPanel, type StudioPanelProps } from "./studio-panel";
+import { VOICE_DOCUMENT_NEEDED } from "./run-copy";
 
 export type StudioViewProps = {
   /** The creator this draft would be for, or null when none is selected. */
@@ -40,6 +41,8 @@ export type StudioViewProps = {
   usageHref: string;
   /** Where the creator curates their own frameworks (R5c). */
   frameworksHref: string;
+  /** An active brain without its voice document needs an explicit remedy. */
+  brainActiveWithoutVoice: boolean;
 };
 
 export function StudioView({
@@ -47,9 +50,7 @@ export function StudioView({
   run,
   error,
   onboardingHref,
-  brainHref,
-  usageHref,
-  frameworksHref,
+  brainActiveWithoutVoice,
 }: StudioViewProps) {
   return (
     <section>
@@ -76,14 +77,11 @@ export function StudioView({
       ) : (
         <div className="panel" data-testid="studio-generate">
           <h2 style={{ marginTop: 0 }}>Make something for {profileName}</h2>
-          <p className="muted">
-            Every draft is written from the brain you confirmed and activated for
-            this creator on the <a href={brainHref}>brain page</a>, plus what you
-            type in below, plus the frameworks this creator can draw on — the
-            shared library and any of your own, on the{" "}
-            <a href={frameworksHref}>frameworks page</a>. Every charge appears in
-            your credit history on the <a href={usageHref}>usage page</a>.
-          </p>
+          {brainActiveWithoutVoice ? (
+            <Banner title="Voice document needed" data-testid="studio-no-voice" role="status">
+              <p className="muted">{VOICE_DOCUMENT_NEEDED}</p>
+            </Banner>
+          ) : null}
           {run ? <StudioPanel {...run} /> : null}
         </div>
       )}

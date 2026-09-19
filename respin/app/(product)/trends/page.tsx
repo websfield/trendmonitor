@@ -302,13 +302,16 @@ export default async function TrendsPage() {
   let tracked: Awaited<ReturnType<typeof respinDb.trackedNiches>>;
   let pasted: ScopedPastedReference[];
   let quote: Awaited<ReturnType<typeof respinCredits.pastedReferenceQuote>>;
+  let nicheEntitlement: Awaited<ReturnType<typeof respinCredits.trackedNicheEntitlementFor>>;
   try {
+    const at = new Date();
     // The reader derives entitled niches from this selected scoped profile.
-    [feed, tracked, pasted, quote] = await Promise.all([
+    [feed, tracked, pasted, quote, nicheEntitlement] = await Promise.all([
       respinDb.trendFeed(scope, profile.id),
       respinDb.trackedNiches(scope, profile.id),
       respinDb.pastedReferences(scope, profile.id),
-      respinCredits.pastedReferenceQuote(scope.workspaceId, new Date()),
+      respinCredits.pastedReferenceQuote(scope.workspaceId, at),
+      respinCredits.trackedNicheEntitlementFor(scope.workspaceId, at),
     ]);
   } catch (err) {
     rethrowNextControlFlow(err);
@@ -343,6 +346,7 @@ export default async function TrendsPage() {
   const tracker = (
     <TrackNichePanel
       tracked={tracked}
+      maxTrackedNiches={nicheEntitlement.maxTrackedNiches}
       action={trackNicheAction.bind(null, profile.id)}
       untrackAction={untrackNicheAction.bind(null, profile.id)}
     />

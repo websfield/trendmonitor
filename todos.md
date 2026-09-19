@@ -4,7 +4,7 @@ Decisions that engineering cannot make for itself: owner inputs, product definit
 
 Convention: a decision that is settled here graduates to `docs/video-editing/decisions.md` as a numbered D-row. This file holds only what is *open*.
 
-Last updated: 2026-09-08.
+Last updated: 2026-09-19 (T-19, T-20 added — Phase 2 deploy-side acceptance and CI-scanner hardening deferred by the owner until cloud deployment).
 
 ---
 
@@ -147,5 +147,15 @@ The branch was **3 commits ahead of `origin/main`** (5 by the time it was pushed
 **Blocks:** nothing today; it decides where the R-124 cost ceiling is *enforced*.
 **Decider / owner:** owner (product definition). **Raised:** 2026-09-08.
 Task 5 built the enablement decision and it is reachable through `pnpm -C respin journal:forecast`, whose **exit 2** a release checklist can gate on. It is deliberately **not** wired into `app/(auth)/sign-up`: the product has no public-launch or new-account flag to gate, nothing is deployed, and gating sign-up would have invented a product decision. Three reviewers checked that reasoning and accepted it; the deferral is recorded in the plan's Deferral ledger. If a real enablement flag is introduced later, it must consult `journalEnablementDecision` in the same change — otherwise the ceiling is enforced by a checklist a person can skip.
+
+### T-19 · Phase 2 deploy-side acceptance: GitHub `journeys` Environment, first dispatch, spend ceiling
+**Blocks:** creator-ready Phase 2's *evidence* completion only (AC6 first `workflow_dispatch`, the downloaded `consumption-<run>-<attempt>` manifest, the first run's spend; AC1 live branches). Engineering completion is recorded complete on the [Phase 2 card](docs/progress/creator-ready-phase-2-review.md) (gate closed 2026-09-19, 10 evaluations). Nothing local is blocked.
+**Decider / owner:** owner. **Deferred by owner: 2026-09-19** — "still developing on local computer; deploy and security when the features are completed and ready to deploy to cloud".
+**Needs, in this order:** (1) merge and wait for `respin.yml` green on `main` (runs the cwd witness on ubuntu — closes card residual R-6); (2) GitHub Environment `journeys` with deployment-branch policy `main` only; `ANTHROPIC_API_KEY` stored there; **delete** any repository secret of that name (the `no-repository-secret` canary fails the run while one exists); (3) owner-side vendor spend limit written into `respin/e2e/journeys/README.md` *Spend ceiling*; (4) one dispatch of `respin-journeys`; download the consumption manifest and reconcile before any second dispatch (three-dispatch cap, master plan). A defect surfacing there needs a new owner decision — the Phase 2 gate has no review round left.
+
+### T-20 · Phase 2 CI-scanner hardening residuals (security, deferred with T-19)
+**Blocks:** nothing. The vendor key's control is the GitHub Environment branch policy (T-19), never the scanner; the scanner is PR-time drift detection. Five review rounds found the live controls intact every time.
+**Decider / owner:** owner. **Deferred by owner: 2026-09-19** (same instruction as T-19).
+**Items** (card residual register, all Low/Info, none applied): R-1 escape-balanced quoted fold / explicit `? run` key evade the block opener; R-2 non-plain keys (`"uses":`, `uses :`, `"environment":`) absent to the readers B3-TEN-1 did not touch — the class fix is one set-wide refusal of non-plain keys on YAML lines; R-3 deeper `outputs`-read spellings; R-4 per-token `pnpm -C respin` check; R-5 `scan-journey-notes.ts` tolerates an absent `artifactsDir` (refuse instead); R-10/11/12 one-token regex widenings. Recommended handling when T-19 is picked up: one batch, ~1.5 h, plants for each, one lean tenancy re-check + billing affected re-check for R-5. Alternative on record: amend the plan to allow a `yaml` dev-dependency and rewrite `checkWorkflowSet` on a parsed AST — only if a further reach finding appears.
 
 > **Not in this file:** Task 5 also left seven *engineering* residuals — the journal-PUT/Postgres-COMMIT orphan window, the absent `schemaVersion → reader` registry, four unwitnessed refusal codes, the dynamic-`import()` bypass of the `scripts/**` writer deny, and the fake not enforcing the IAM prefix grant. Those are code, not decisions, and live in [`10b1-task5-review-manifest.md`](docs/progress/respin-finish/10b1-task5-review-manifest.md) and `docs/progress/respin-finish-open-items.md`. This file holds only what engineering cannot settle for itself.

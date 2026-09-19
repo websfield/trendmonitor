@@ -100,9 +100,12 @@ import {
 } from "./inference";
 import {
   createAnthropicProvider,
+  ASSEMBLY_KINDS,
+  ASSEMBLY_KINDS_PRE_VENDOR,
   AssemblyError,
   LlmError,
   NotEnoughPostsError,
+  type AssemblyKind,
 } from "@respin/llm";
 import { inferVoice, type InferVoiceResult } from "./infer-voice";
 import {
@@ -383,6 +386,9 @@ export {
   // action the creator can take ("paste N more"), which is why it is a class
   // of its own rather than a member of `AssemblyError`.
   AssemblyError,
+  ASSEMBLY_KINDS,
+  ASSEMBLY_KINDS_PRE_VENDOR,
+  type AssemblyKind,
   NotEnoughPostsError,
   UnchargedAttemptCapError,
   // The convention-divergence refusal. Not a creator's fault and not a

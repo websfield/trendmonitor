@@ -33,6 +33,7 @@ import {
   type WorkspaceScope,
 } from "@respin/db";
 import { respinConfigV1 } from "@respin/config";
+import { LlmUnavailableError } from "@respin/llm";
 import type { InferenceRequest, LlmProvider } from "@respin/llm";
 import { createProfile } from "../src/profiles";
 import { grantCredits } from "../src/ledger";
@@ -267,18 +268,26 @@ describe("inferVoice — R4: only the creator's OWN posts reach a vendor", () =>
     ).toBe(false);
   });
 
-  it("a reply that is not JSON writes NO brain document, and the spend record stands", async () => {
+  it("an unreadable reply is retried ONCE, on one attempt id, and still writes NO brain document", async () => {
     // R2's fail-closed half, driven through the composition rather than through
-    // the parser alone — the ordering the billing gate asked for: the refusal
-    // lands AFTER `runInference` has committed `model_usage`, so the tokens the
-    // vendor really charged for survive the refusal.
+    // the parser alone.
+    //
+    // THIS TEST ASSERTED `toHaveLength(1)` UNTIL 2026-09-18, and the number
+    // changed for a reason rather than to make a red test green: the parse used
+    // to run AFTER `runInference` returned, so an unreadable reply consumed the
+    // creator's one included build with no second attempt anywhere on the path.
+    // It is now `runInference`'s `validate` predicate, which buys exactly one
+    // more vendor call. Two calls really happened, so R13 requires two spend
+    // records — "the vendor was really paid" is now true twice.
     const rows = await paste([
       { content: OWN_A, inputClass: "own_post" },
       { content: OWN_B, inputClass: "own_post" },
       { content: OWN_C, inputClass: "own_post" },
     ]);
     expect(rows).toHaveLength(3);
-    const { provider } = capturing("I am terribly sorry, but here is some prose.");
+    const { provider, calls } = capturing(
+      "I am terribly sorry, but here is some prose."
+    );
     await expect(
       inferVoice(
         db,
@@ -296,10 +305,201 @@ describe("inferVoice — R4: only the creator's OWN posts reach a vendor", () =>
       await db.select().from(brainDocs),
       "a refused parse must never leave a partially-filled document"
     ).toHaveLength(0);
-    const { modelUsage } = await import("@respin/db");
+    // THE BOUND IS THE POINT. A predicate that never accepts must cost exactly
+    // one extra call, not a loop against a creator's balance.
     expect(
-      await db.select().from(modelUsage),
-      "the spend record must survive the refusal — the vendor was really paid"
+      calls,
+      "an unreadable reply buys ONE retry — never an unbounded loop"
+    ).toHaveLength(2);
+    expect(
+      new Set(calls.map((c) => c.attemptId)),
+      "the retry is the SAME attempt — a second id would take a second debit and break the REQ-G05 join"
+    ).toEqual(new Set(["att-parse"]));
+    const { modelUsage, creditLedger } = await import("@respin/db");
+    const usage = await db.select().from(modelUsage);
+    expect(
+      usage,
+      "both calls were really made and really charged to us — R13 records each one"
+    ).toHaveLength(2);
+    expect(
+      usage.map((u) => u.outcome).sort(),
+      "a reply we could not read is `schema_invalid`, which USAGE_OUTCOME_BILLABLE already classes billable"
+    ).toEqual(["schema_invalid", "schema_invalid"]);
+    // THE MONEY INVARIANT THE RETRY MUST NOT BREAK: two vendor calls, at most
+    // one debit. `credit_ledger_inference_debit_uq` keys on the attempt id, so
+    // sharing it is what makes the second call free to the creator.
+    expect(
+      (await db.select().from(creditLedger)).filter(
+        (e) => e.refType === "inference"
+      ),
+      "one attempt is at most one debit, however many HTTP calls it took"
+    ).toHaveLength(0);
+  });
+
+  it("a first reply that is unreadable and a second that is good writes the document, and charges once", async () => {
+    // The other half of the retry: the case it exists FOR. Without it this
+    // creator lost their included build to one drifted reply.
+    const rows = await paste([
+      { content: OWN_A, inputClass: "own_post" },
+      { content: OWN_B, inputClass: "own_post" },
+      { content: OWN_C, inputClass: "own_post" },
+    ]);
+    expect(rows).toHaveLength(3);
+    const good = replyCiting(rows[0].id, OWN_A.slice(0, 20));
+    const calls: InferenceRequest[] = [];
+    const provider: LlmProvider = {
+      vendor: "stub",
+      complete: async (req) => {
+        calls.push(req);
+        return {
+          // FIRST reply unreadable, SECOND good — the live `bad_shape` shape.
+          text: calls.length === 1 ? "not json at all" : good,
+          servedModel: "claude-sonnet-5",
+          usage: {
+            tokensIn: 10,
+            tokensOut: 10,
+            raw: { input_tokens: 10, output_tokens: 10 },
+          },
+        };
+      },
+    };
+    const result = await inferVoice(
+      db,
+      owner,
+      profileId,
+      provider,
+      anySlots(),
+      "att-recovered",
+      3,
+      VOICE_CORPUS_MAX_POSTS,
+      new Date()
+    );
+    expect(calls, "one retry was enough").toHaveLength(2);
+    expect(
+      await db.select().from(brainDocs),
+      "the recovered reply really does produce the document the creator paid for"
     ).toHaveLength(1);
+    expect(result.brainDocId).toBeTruthy();
+    const { modelUsage } = await import("@respin/db");
+    const usage = await db.select().from(modelUsage);
+    expect(usage, "both calls are recorded").toHaveLength(2);
+    expect(
+      usage.map((u) => u.outcome).sort(),
+      "the discarded attempt stays visible as `schema_invalid` — a recovered build must not hide what it cost us"
+    ).toEqual(["schema_invalid", "succeeded"]);
+    expect(
+      result.run.creditsCharged,
+      "this profile's included build covers the WHOLE attempt, retry included"
+    ).toBe(0);
+    const { firstBillableAttempts } = await import("@respin/db");
+    expect(
+      (await db.select().from(firstBillableAttempts)).map((r) => r.attemptId),
+      "two vendor calls, ONE claim on the included build"
+    ).toEqual(["att-recovered"]);
+  });
+
+  it("an unreadable reply then a VENDOR error leaves the included build UNCLAIMED", async () => {
+    // THE BLOCK THE BILLING GATE FOUND, pinned so it cannot come back.
+    //
+    // The discarded attempt used to claim the included build before the
+    // operation's outcome was known. When the retry then died on an
+    // `LlmError`, the claim was held permanently while the creator's screen
+    // said "this attempt did not use up your first run for this creator" — a
+    // false sentence on a money surface, and on Free with a zero balance the
+    // next press is priced as a paid build, i.e. locked out of onboarding.
+    //
+    // The entitlement is the invariant this whole change moved, and NOTHING
+    // asserted it until this test.
+    const rows = await paste([
+      { content: OWN_A, inputClass: "own_post" },
+      { content: OWN_B, inputClass: "own_post" },
+      { content: OWN_C, inputClass: "own_post" },
+    ]);
+    expect(rows).toHaveLength(3);
+    const calls: InferenceRequest[] = [];
+    const provider: LlmProvider = {
+      vendor: "stub",
+      complete: async (req) => {
+        calls.push(req);
+        // Call 1 answers unreadably; call 2 is a vendor outage — the exact
+        // interleaving that produced the false copy.
+        if (calls.length === 1) {
+          return {
+            text: "not json at all",
+            servedModel: "claude-sonnet-5",
+            usage: {
+              tokensIn: 10,
+              tokensOut: 10,
+              raw: { input_tokens: 10, output_tokens: 10 },
+            },
+          };
+        }
+        throw new LlmUnavailableError(null, "network");
+      },
+    };
+    await expect(
+      inferVoice(
+        db,
+        owner,
+        profileId,
+        provider,
+        anySlots(),
+        "att-vendor-died",
+        3,
+        VOICE_CORPUS_MAX_POSTS,
+        new Date()
+      )
+    ).rejects.toBeInstanceOf(LlmUnavailableError);
+    expect(calls, "the retry really was attempted").toHaveLength(2);
+    const { modelUsage, firstBillableAttempts } = await import("@respin/db");
+    const usage = await db.select().from(modelUsage);
+    expect(usage, "both calls are recorded — R13 does not care that we failed").toHaveLength(2);
+    // THE ASSERTION THAT WOULD HAVE CAUGHT THE BLOCK.
+    expect(
+      await db.select().from(firstBillableAttempts),
+      "a vendor outage after an unreadable reply must leave the creator's included build intact — the surfaced copy says exactly that"
+    ).toHaveLength(0);
+    expect(
+      usage.filter((u) => u.consumedIncludedBuild),
+      "no row may claim consumption when the surfaced refusal says nothing was consumed"
+    ).toHaveLength(0);
+  });
+
+  it("two unreadable replies DO consume the included build, matching what the screen says", async () => {
+    // The other side of the same rule: the operation ended having burnt the
+    // vendor's tokens twice, and `inference_unusable`'s copy tells the creator
+    // "Your run was still made, so it counted." That sentence has to be true,
+    // so the terminal attempt consumes — which is also what the pre-change
+    // single-call path did.
+    const rows = await paste([
+      { content: OWN_A, inputClass: "own_post" },
+      { content: OWN_B, inputClass: "own_post" },
+      { content: OWN_C, inputClass: "own_post" },
+    ]);
+    expect(rows).toHaveLength(3);
+    const { provider, calls } = capturing("still not json");
+    await expect(
+      inferVoice(
+        db,
+        owner,
+        profileId,
+        provider,
+        anySlots(),
+        "att-both-bad",
+        3,
+        VOICE_CORPUS_MAX_POSTS,
+        new Date()
+      )
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(2);
+    const { modelUsage, firstBillableAttempts } = await import("@respin/db");
+    expect(
+      (await db.select().from(modelUsage)).filter((u) => u.consumedIncludedBuild),
+      "exactly the TERMINAL attempt consumes — never the discarded one"
+    ).toHaveLength(1);
+    expect(
+      (await db.select().from(firstBillableAttempts)).map((r) => r.attemptId),
+      "one claim, on the attempt the creator actually pressed"
+    ).toEqual(["att-both-bad"]);
   });
 });

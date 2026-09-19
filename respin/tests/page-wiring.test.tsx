@@ -18,7 +18,11 @@
 // Scope, stated honestly: this covers `/usage` in depth. The first-login
 // concurrency seam executes `/settings/billing` in
 // `first-login-pages.test.tsx`; `/admin/config` is still not executed here.
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join, relative } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { redirect } from "next/navigation";
 
@@ -34,7 +38,13 @@ const scopeState = vi.hoisted(() => ({
   getBillingState: vi.fn(),
   usageRunwayFor: vi.fn(),
   selectedProfileForMember: vi.fn(),
+  hasGenerationForProfile: vi.fn(),
   brainAssetSummary: vi.fn(),
+}));
+
+vi.mock("next/navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/navigation")>()),
+  usePathname: () => "/studio",
 }));
 
 vi.mock("@respin/auth", () => ({
@@ -48,6 +58,7 @@ vi.mock("@respin/db", async (importOriginal) => ({
     ensureUserWorkspace: scopeState.ensureUserWorkspace,
     withWorkspace: scopeState.withWorkspace,
     selectedProfileForMember: scopeState.selectedProfileForMember,
+    hasGenerationForProfile: scopeState.hasGenerationForProfile,
     brainAssetSummary: scopeState.brainAssetSummary,
   },
 }));
@@ -65,8 +76,64 @@ const { WorkspaceAccessError } = await import("@respin/db");
 const { LedgerIntegrityError } = await import("@respin/credits/app-server");
 const { ConfigUnavailableError } = await import("@respin/config/app-server");
 const UsagePage = (await import("../app/(product)/usage/page")).default;
+const { ProductNav } = await import("../app/(product)/nav");
 
 const NOW = new Date("2026-08-17T00:00:00Z");
+
+type InitialStateWiring = {
+  initialStatePropDeclarations: number;
+  initialStateDestructures: number;
+  generationHooksForwardingInitialState: number;
+};
+
+function initialStateWiring(source: string): InitialStateWiring {
+  const file = ts.createSourceFile("panel.tsx", source, ts.ScriptTarget.Latest, true);
+  let initialStatePropDeclarations = 0;
+  let initialStateDestructures = 0;
+  let generationHooksForwardingInitialState = 0;
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text.endsWith("Panel")) {
+      const parameter = node.parameters[0];
+      if (parameter && ts.isObjectBindingPattern(parameter.name)) {
+        initialStateDestructures += parameter.name.elements.filter(
+          (element) => element.name.getText(file) === "initialState"
+        ).length;
+      }
+    }
+    if (
+      ts.isTypeAliasDeclaration(node) &&
+      node.name.text.endsWith("PanelProps") &&
+      ts.isTypeLiteralNode(node.type)
+    ) {
+      initialStatePropDeclarations += node.type.members.filter(
+        (member) =>
+          ts.isPropertySignature(member) && member.name?.getText(file) === "initialState"
+      ).length;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "useActionState" &&
+      node.arguments.length >= 2 &&
+      ts.isIdentifier(node.arguments[0]) &&
+      node.arguments[0].text === "action" &&
+      ts.isBinaryExpression(node.arguments[1]) &&
+      node.arguments[1].operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken &&
+      ts.isIdentifier(node.arguments[1].left) &&
+      node.arguments[1].left.text === "initialState"
+    ) {
+      generationHooksForwardingInitialState += 1;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return {
+    initialStatePropDeclarations,
+    initialStateDestructures,
+    generationHooksForwardingInitialState,
+  };
+}
 
 function okScope(role: "owner" | "editor" = "owner") {
   return {
@@ -103,6 +170,7 @@ beforeEach(() => {
     totalDebit: 0,
   });
   scopeState.selectedProfileForMember.mockResolvedValue({ id: "profile_1" });
+  scopeState.hasGenerationForProfile.mockResolvedValue(false);
   scopeState.brainAssetSummary.mockResolvedValue({
     brainVersions: 2,
     testedRules: 1,
@@ -225,5 +293,92 @@ describe("/usage page component: the wiring no test executed (round-3 NOTE)", ()
     // An ARRAY (?e=a&e=b) is the other shape a URL produces — it must not throw.
     const arrayShape = await renderUsage({ e: ["a", "b"] });
     expect(arrayShape).toContain('data-testid="balance-value"');
+  });
+});
+
+describe("Phase 1 T2: first-session navigation", () => {
+  it("places Brain between Onboarding and Trends, and the journey helper waits for onboarding", () => {
+    const nav = renderToStaticMarkup(<ProductNav />);
+    const labels = ["Onboarding", "Brain", "Trends", "Studio", "Results", "Usage", "Billing", "Account"];
+    const positions = labels.map((label) => nav.indexOf(`>${label}</a>`));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+
+    const authSupport = readFileSync(
+      new URL("../e2e/support/auth.ts", import.meta.url),
+      "utf8"
+    );
+    expect(authSupport).toContain('page.waitForURL("**/onboarding"');
+  });
+});
+
+describe("Phase 1 T7: injected panel state stays test-only", () => {
+  it("declares and destructures initialState only on the two panel roots, then forwards it to named generation hooks", () => {
+    const appRoot = fileURLToPath(new URL("../app/", import.meta.url));
+    const panelFiles = [
+      "(product)/studio/studio-panel.tsx",
+      "(product)/onboarding/first-ideas/first-ideas-panel.tsx",
+    ];
+    const allAppFiles: string[] = [];
+    const walk = (directory: string): void => {
+      for (const entry of readdirSync(directory)) {
+        const file = join(directory, entry);
+        if (statSync(file).isDirectory()) walk(file);
+        else if (/\.tsx?$/.test(file)) allAppFiles.push(file);
+      }
+    };
+    walk(appRoot);
+    const filesWithInitialState = allAppFiles
+      .filter((file) => readFileSync(file, "utf8").includes("initialState"))
+      .map((file) => relative(appRoot, file).replace(/\\/g, "/"))
+      .sort();
+    expect(filesWithInitialState).toEqual([...panelFiles].sort());
+    for (const file of panelFiles) {
+      const source = readFileSync(join(appRoot, file), "utf8");
+      expect(initialStateWiring(source), file).toEqual({
+        initialStatePropDeclarations: 1,
+        initialStateDestructures: 1,
+        generationHooksForwardingInitialState: 1,
+      });
+
+      const withoutForwarding = source.replace(
+        file.includes("studio-panel")
+          ? "initialState ?? IDLE_STUDIO_STATE"
+          : "initialState ?? IDLE",
+        file.includes("studio-panel") ? "IDLE_STUDIO_STATE" : "IDLE"
+      );
+      expect(initialStateWiring(withoutForwarding), `${file} isolated removal plant`).toEqual({
+        initialStatePropDeclarations: 1,
+        initialStateDestructures: 1,
+        generationHooksForwardingInitialState: 0,
+      });
+
+      const withoutDestructure = source.replace("  initialState,\n", "  testState,\n");
+      expect(initialStateWiring(withoutDestructure), `${file} isolated destructure plant`).toEqual({
+        initialStatePropDeclarations: 1,
+        initialStateDestructures: 0,
+        generationHooksForwardingInitialState: 1,
+      });
+    }
+  });
+
+  it("keeps native folds out of the complete two-panel render closure", () => {
+    const appRoot = fileURLToPath(new URL("../app/", import.meta.url));
+    const expectedDetails = new Map([
+      ["(product)/studio/studio-panel.tsx", 1],
+      ["(product)/studio/feedback-block.tsx", 0],
+      ["(product)/studio/generation-outcome.tsx", 0],
+      ["(product)/studio/lineage-view.tsx", 0],
+      ["(product)/onboarding/first-ideas/first-ideas-panel.tsx", 1],
+      ["(product)/onboarding/first-ideas/first-ideas-result.tsx", 0],
+      ["ui/banner.tsx", 0],
+      ["(product)/onboarding/submit-button.tsx", 0],
+    ]);
+    for (const [file, expected] of expectedDetails) {
+      const detailsCount = (source: string) => (source.match(/<details/g) ?? []).length;
+      const count = detailsCount(readFileSync(join(appRoot, file), "utf8"));
+      expect(count, file).toBe(expected);
+      expect(detailsCount("<details><summary>plant</summary></details>")).toBe(1);
+    }
   });
 });

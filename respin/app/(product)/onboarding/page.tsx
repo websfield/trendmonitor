@@ -31,8 +31,10 @@ import { requireUser } from "@respin/auth";
 import {
   DISPLAY_NAME_MAX,
   POST_CONTENT_MAX,
+  ProfileAccessError,
   REFERENCE_COUNT_MAX,
   respinDb,
+  WorkspaceAccessError,
 } from "@respin/db";
 // `onboardingBrainPrices` is a PURE function beside the facade, the same shape
 // `/admin/model-spend` imports `includedBuildPurposes` in: it takes the
@@ -59,6 +61,7 @@ import {
   OnboardingView,
   type PastedPost,
   type ReferencePost,
+  type OnboardingProgressStep,
 } from "./onboarding-view";
 import {
   addOwnPostAction,
@@ -82,6 +85,26 @@ export const dynamic = "force-dynamic";
  * 2026-08-27). Asserted in `tests/onboarding-ui.test.tsx`.
  */
 const PAGE_SIZE = 25;
+
+async function progressRead<T>(
+  label: string,
+  read: () => Promise<T>
+): Promise<
+  | { known: true; value: T }
+  | { known: false; refusal: { title: string; detail: string } }
+> {
+  try {
+    return { known: true, value: await read() };
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    if (err instanceof ProfileAccessError || err instanceof WorkspaceAccessError) {
+      logRefusal(`[onboarding] ${label} unavailable`, err);
+      const { title, detail } = billingErrorDisplay(err);
+      return { known: false, refusal: { title, detail } };
+    }
+    throw err;
+  }
+}
 
 export default async function OnboardingPage(props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -220,12 +243,14 @@ export default async function OnboardingPage(props: {
   // and could not be shown, never the old unbounded "the posts you saved
   // above".
   let corpusMax: number | null = null;
+  let minOwnPostsForVoice: number | null = null;
   try {
     const config = await getActiveConfigServer();
     const prices = onboardingBrainPrices(config.content);
     runIncludedCost = prices.included;
     runRebuildCost = prices.rebuild;
     corpusMax = config.content.onboarding.voiceCorpusMaxPosts;
+    minOwnPostsForVoice = config.content.onboarding.minOwnPostsForVoice;
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[onboarding] run price unavailable", err);
@@ -271,6 +296,73 @@ export default async function OnboardingPage(props: {
   const posts: PastedPost[] = fetched
     .slice(0, PAGE_SIZE)
     .map((r) => ({ id: r.id, createdAt: r.createdAt, content: r.content }));
+
+  let steps: OnboardingProgressStep[] | undefined;
+  if (selectedProfile) {
+    const minimumKnown =
+      step === "paste-posts" &&
+      typeof minOwnPostsForVoice === "number" &&
+      Number.isFinite(minOwnPostsForVoice) &&
+      !(fetched.length === PAGE_SIZE + 1 && minOwnPostsForVoice > PAGE_SIZE + 1);
+    const postsState = minimumKnown
+      ? fetched.length >= minOwnPostsForVoice!
+        ? "done"
+        : "next"
+      : "unknown";
+    const [voice, interview, firstIdeas] = await Promise.all([
+      progressRead("voice step", () =>
+        respinDb.readBrainHistory(scope, selectedProfile.id, "voice")
+      ),
+      progressRead("interview step", () =>
+        respinDb.getInterviewDraft(scope, selectedProfile.id)
+      ),
+      progressRead("first ideas step", () =>
+        respinDb.hasGenerationForProfile(scope, selectedProfile.id)
+      ),
+    ]);
+    const voiceState = !voice.known
+      ? "unknown"
+      : voice.value.some((item) => item.status === "active")
+        ? "done"
+        : postsState === "done"
+          ? "next"
+          : "todo";
+    const interviewState = !interview.known
+      ? "unknown"
+      : interview.value?.submittedAt
+        ? "done"
+        : voiceState === "done"
+          ? "next"
+          : "todo";
+    const firstIdeasState = !firstIdeas.known
+      ? "unknown"
+      : firstIdeas.value
+        ? "done"
+        : interviewState === "done"
+          ? "next"
+          : "todo";
+    steps = [
+      { id: "posts", label: "Own posts", state: postsState },
+      {
+        id: "voice",
+        label: "Voice",
+        state: voiceState,
+        ...(!voice.known ? { refusal: voice.refusal } : {}),
+      },
+      {
+        id: "interview",
+        label: "Interview",
+        state: interviewState,
+        ...(!interview.known ? { refusal: interview.refusal } : {}),
+      },
+      {
+        id: "first-ideas",
+        label: "First ideas",
+        state: firstIdeasState,
+        ...(!firstIdeas.known ? { refusal: firstIdeas.refusal } : {}),
+      },
+    ];
+  }
 
   // REFERENCE POSTS (slice 4) — read SEPARATELY, at a limit matching
   // `REFERENCE_COUNT_MAX`, class-filtered in the same query-predicate way.
@@ -386,6 +478,7 @@ export default async function OnboardingPage(props: {
         createBlock={createBlock}
         pasteBlock={pasteBlock}
         referenceBlock={referenceBlock}
+        steps={steps}
         pageSize={PAGE_SIZE}
         // NULL WITHOUT A PROFILE, so a control that spends money is never
         // rendered before the thing it would spend against exists. Bound the

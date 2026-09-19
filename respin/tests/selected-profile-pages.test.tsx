@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ProfileAccessError, WorkspaceAccessError } from "@respin/db";
 
 const mocks = vi.hoisted(() => ({
   requireUser: vi.fn(),
@@ -11,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   promotionProposalHistory: vi.fn(),
   promotionProposalReview: vi.fn(),
   brainAssetSummary: vi.fn(),
+  hasGenerationForProfile: vi.fn(),
   getBillingState: vi.fn(),
   getBalance: vi.fn(),
   getActiveConfigServer: vi.fn(),
@@ -33,6 +36,7 @@ vi.mock("@respin/db", async (importOriginal) => {
       promotionProposalHistory: mocks.promotionProposalHistory,
       promotionProposalReview: mocks.promotionProposalReview,
       brainAssetSummary: mocks.brainAssetSummary,
+      hasGenerationForProfile: mocks.hasGenerationForProfile,
     },
   };
 });
@@ -93,6 +97,11 @@ type OnboardingProps = {
   selectionRequired: boolean;
   candidateSafetyAction?: unknown;
   run: unknown;
+  steps?: Array<{
+    id: string;
+    state: string;
+    refusal?: { title: string; detail: string };
+  }>;
   pasteBlock: { reason: string } | null;
 };
 type NamedPageProps = {
@@ -129,6 +138,7 @@ beforeEach(() => {
     feedbackEvidence: [],
   });
   mocks.brainAssetSummary.mockResolvedValue({});
+  mocks.hasGenerationForProfile.mockResolvedValue(false);
   mocks.getBillingState.mockResolvedValue({
     tier: "creator",
     state: "active",
@@ -167,6 +177,7 @@ describe("persisted selected profile page wiring", () => {
     expect(props.profilePanel.selectedProfileId).toBe(PROFILE_B.id);
     expect(props.selectionRequired).toBe(false);
     expect(props.candidateSafetyAction).toBeTypeOf("function");
+    expect(mocks.hasGenerationForProfile).toHaveBeenCalledWith(scope, PROFILE_B.id);
   });
 
   it("switching selection to A switches the onboarding read cage", async () => {
@@ -183,6 +194,144 @@ describe("persisted selected profile page wiring", () => {
     );
     expect(props.profileName).toBe("Creator A");
     expect(props.profilePanel.selectedProfileId).toBe(PROFILE_A.id);
+  });
+
+  it("derives the four steps from the reads already made for the selected profile", async () => {
+    mocks.getActiveConfigServer.mockResolvedValue({
+      content: {
+        profileCaps: { creator: 4 },
+        creditCosts: { onboardingBrainRebuild: 1 },
+        onboarding: { voiceCorpusMaxPosts: 25, minOwnPostsForVoice: 3 },
+      },
+    });
+    mocks.listOnboardingInputs.mockImplementation(
+      async (_scope, _profileId, _page, inputClass) =>
+        inputClass === "own_post"
+          ? [
+              { id: "p1", content: "one", createdAt: new Date() },
+              { id: "p2", content: "two", createdAt: new Date() },
+            ]
+          : []
+    );
+    mocks.readBrainHistory.mockResolvedValue([{ status: "active" }]);
+    mocks.getInterviewDraft.mockResolvedValue({ submittedAt: new Date() });
+    mocks.hasGenerationForProfile.mockResolvedValue(true);
+
+    const props = onboardingProps(
+      await OnboardingPage({ searchParams: Promise.resolve({}) })
+    );
+
+    expect(props.steps).toEqual([
+      { id: "posts", label: "Own posts", state: "next" },
+      { id: "voice", label: "Voice", state: "done" },
+      { id: "interview", label: "Interview", state: "done" },
+      { id: "first-ideas", label: "First ideas", state: "done" },
+    ]);
+    expect(
+      mocks.listOnboardingInputs.mock.calls.filter((call) => call[3] === "own_post")
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    ["missing minimum", undefined],
+    ["non-finite minimum", Number.POSITIVE_INFINITY],
+  ])("marks posts unknown for a %s", async (_label, minimum) => {
+    mocks.getActiveConfigServer.mockResolvedValue({
+      content: {
+        profileCaps: { creator: 4 },
+        creditCosts: { onboardingBrainRebuild: 1 },
+        onboarding: {
+          voiceCorpusMaxPosts: 25,
+          ...(minimum === undefined ? {} : { minOwnPostsForVoice: minimum }),
+        },
+      },
+    });
+    const props = onboardingProps(
+      await OnboardingPage({ searchParams: Promise.resolve({}) })
+    );
+    expect(props.steps?.[0].state).toBe("unknown");
+  });
+
+  it("marks posts unknown when the config read rejects", async () => {
+    mocks.getActiveConfigServer.mockRejectedValue(new Error("config unavailable"));
+    const props = onboardingProps(
+      await OnboardingPage({ searchParams: Promise.resolve({}) })
+    );
+    expect(props.steps?.[0].state).toBe("unknown");
+  });
+
+  it("marks a clamped post read unknown when the minimum is beyond the clamp", async () => {
+    mocks.getActiveConfigServer.mockResolvedValue({
+      content: {
+        profileCaps: { creator: 4 },
+        creditCosts: { onboardingBrainRebuild: 1 },
+        onboarding: { voiceCorpusMaxPosts: 25, minOwnPostsForVoice: 30 },
+      },
+    });
+    mocks.listOnboardingInputs.mockImplementation(
+      async (_scope, _profileId, _page, inputClass) =>
+        inputClass === "own_post"
+          ? Array.from({ length: 26 }, (_, index) => ({
+              id: `p${index}`,
+              content: `post ${index}`,
+              createdAt: new Date(),
+            }))
+          : []
+    );
+    const props = onboardingProps(
+      await OnboardingPage({ searchParams: Promise.resolve({}) })
+    );
+    expect(props.steps?.[0].state).toBe("unknown");
+  });
+
+  it.each([
+    [
+      "profile",
+      new ProfileAccessError(),
+      "That creator profile is not available here",
+      "ask the workspace owner to check the profile list",
+    ],
+    [
+      "workspace",
+      new WorkspaceAccessError("workspace unavailable"),
+      "You do not have access to this workspace",
+      "ask its owner for access",
+    ],
+  ])(
+    "keeps a listed %s scoped-read refusal unknown and shows its safe remedy",
+    async (_label, failure, title, remedy) => {
+      mocks.readBrainHistory.mockRejectedValue(failure);
+      const element = await OnboardingPage({
+        searchParams: Promise.resolve({}),
+      });
+      const voice = onboardingProps(element).steps?.find(
+        (step) => step.id === "voice"
+      );
+      expect(voice?.state).toBe("unknown");
+      expect(voice?.refusal?.title).toBe(title);
+      expect(voice?.refusal?.detail).toContain(remedy);
+
+      const html = renderToStaticMarkup(element);
+      expect(html).toContain('data-testid="onboarding-step-refusal-voice"');
+      expect(html).toContain(title);
+      expect(html).toContain(remedy);
+    }
+  );
+
+  it("rethrows an unexpected TypeError from a step read", async () => {
+    const failure = new TypeError("driver exploded");
+    mocks.hasGenerationForProfile.mockRejectedValue(failure);
+    await expect(
+      OnboardingPage({ searchParams: Promise.resolve({}) })
+    ).rejects.toBe(failure);
+  });
+
+  it("keeps a post-read rejection on the whole-page access-refusal path", async () => {
+    mocks.listOnboardingInputs.mockRejectedValue(new ProfileAccessError());
+    const element = await OnboardingPage({ searchParams: Promise.resolve({}) });
+    expect(renderToStaticMarkup(element)).toContain(
+      'data-testid="workspace-access-error"'
+    );
   });
 
   it("keeps a concurrently selected profile in the selector snapshot", async () => {

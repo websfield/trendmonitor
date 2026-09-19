@@ -435,6 +435,7 @@ export {
   usageRunwayDebits,
   type UsageRunwayDebits,
   brainAssetSummary,
+  hasGenerationForProfile,
   type BrainAssetSummary,
 } from "./with-workspace";
 // Slice 2b's spend-record surface — the month truncation the rollup upsert

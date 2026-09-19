@@ -56,6 +56,29 @@ export type ModeChoiceView = {
   cost: number | null;
 };
 
+/** The confirmed document kinds this draft may draw from. */
+export type ActiveBrainKind = "Voice" | "Strategy" | "Kill test";
+
+/** Disclosure traceability findings are stored but not offered to creators. */
+export const DISCLOSURE_FIELD_PREFIX = "/disclosure/";
+
+export const DISCLOSURE_PROVENANCE =
+  "Any disclosure guidance is written by the product about the platform's policy, not from your material, so its names, numbers and dates are not listed here. It is checked against this product's list of concealment phrasings, which is a recall aid, not a complete check.";
+
+/** Say exactly which confirmed documents are available to this draft. */
+export function inForceSentence(
+  activeKinds: readonly ActiveBrainKind[] | null
+): string {
+  if (activeKinds === null) {
+    return "The documents in force could not be read. Reload this page.";
+  }
+  if (activeKinds.length === 0) return "No documents are in force.";
+  return `${listOf(activeKinds)} ${activeKinds.length === 1 ? "is" : "are"} in force.`;
+}
+
+export const VOICE_DOCUMENT_NEEDED =
+  "A voice document is needed before this creator can be written in their voice. Confirm a voice document on the brain page and activate it, then come back.";
+
 /**
  * What the picker says about the modes it is NOT offering.
  *
@@ -455,8 +478,9 @@ export function checkOffer(token: string): string {
  *
  * WHY SHOWING THE PHRASE IS HONEST RATHER THAN A CLAIM. A `flag` finding sits
  * in text the creator is already reading — the hook, the disclosure — because
- * `HARD_CLAIM_FIELD_PREFIXES` is `/whyThisPerforms/` alone and a hard finding
- * refuses the draft outright, so a shown draft's claims are all soft. Quoting a
+ * `HARD_CLAIM_FIELD_PREFIXES` covers `/whyThisPerforms/` and `/disclosure/`.
+ * Hard findings refuse the draft; a shown flag remains a finding the creator
+ * can inspect. Quoting a
  * line to say "this is a claim we cannot back" adds no word to the page that
  * was not already on it, and labelling it is the opposite of making it.
  */
@@ -538,19 +562,16 @@ export function claimFamilyNote(family: string): string {
  * IT IS NOT ANY MORE, and the compliance fix that changed it is the reason:
  * `traceability.ts` demoted `plain-number` to `flag` (a listicle's "The 5
  * mistakes…" was being REFUSED, and a refusal is debited), and the whole
- * `/disclosure/` section is flag-only whatever the shape, because the product
- * wrote that guidance and the creator's corpus can never vouch for it. So the
- * flag bucket now holds bare numbers and disclosure dates as well as names —
- * and this screen would have told a creator that the number `5` was "1 name
- * that was not found". A comment claiming a property is not the property
- * (2026-07-30), and neither is a sentence: both were wrong, so both changed.
+ * `/disclosure/` traceability stays stored at flag level, but its product-written
+ * guidance is not listed with creator-specific offers. The displayed flag bucket
+ * therefore holds bare numbers and names from creator fields.
  *
  * The hard bucket is the shapes that are unambiguously a claim about an amount
  * or a time: `currency`, `percent`, `multiplier`, `iso-date`, `month-date`.
  */
 export function traceabilityHeading(hard: number, flagged: number): string {
   if (hard === 0 && flagged === 0) {
-    return "Every number, date and name in this draft was found in your brain or in what you typed in.";
+    return "Every number, date and name outside the disclosure guidance in this draft was found in your brain or in what you typed in.";
   }
   const parts: string[] = [];
   if (hard > 0) {
@@ -560,7 +581,7 @@ export function traceabilityHeading(hard: number, flagged: number): string {
   }
   if (flagged > 0) {
     parts.push(
-      `${flagged} other ${flagged === 1 ? "specific was" : "specifics were"} not found either — a plain number, a name, or something in the disclosure guidance, where an ordinary word can land, so these are a prompt to look, never a fault`
+      `${flagged} other ${flagged === 1 ? "specific was" : "specifics were"} not found either — a plain number or a name, where an ordinary word can land, so these are a prompt to look, never a fault`
     );
   }
   return `${parts.join("; ")}. Nothing was changed in your draft; a ${CHECK_MARKER} marker is offered beside each one so you can decide.`;
@@ -577,16 +598,10 @@ export function traceabilityHeading(hard: number, flagged: number): string {
  * them.
  *
  * THREE BRANCHES, STATED AS THE POPULATION they cover (CLAUDE.md, 2026-08-29):
- * `enforcementFor` in `@respin/modes` flags a finding for exactly two reasons —
- * the shape is soft (`plain-number`, `proper-noun`), or the field is under a
- * flag-only prefix (`/disclosure/`) whatever the shape. The field test comes
- * FIRST because it overrides the shape. A `kind` this screen does not know
- * falls back to the neutral sentence rather than to a guess.
- */
-export function traceabilityFlagNote(kind: string, field: string): string {
-  if (field.startsWith("/disclosure/")) {
-    return "(this is in the disclosure guidance, which the product wrote rather than you — nothing there can be traced to your material, so it is never a rule violation)";
-  }
+ * creator-field findings are soft because their shape is a `plain-number` or
+ * `proper-noun`. Disclosure traceability findings are filtered before this
+ * note; a kind this screen does not know falls back to neutral words. */
+export function traceabilityFlagNote(kind: string): string {
   if (kind === "proper_noun") {
     return "(a name, not a rule violation — ordinary words land here)";
   }

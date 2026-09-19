@@ -53,6 +53,7 @@ import {
   monthlySpend,
   burnByMode,
   brainAssetSummary,
+  hasGenerationForProfile,
   ProfileScope,
   writeCapabilities,
   type ActivateBrainDocCoherentResult,
@@ -600,6 +601,11 @@ export const respinDb = {
     profileId: string
   ): Promise<BrainAssetSummary> =>
     brainAssetSummary(getServerDb(), scope, profileId),
+  hasGenerationForProfile: (
+    scope: WorkspaceScope,
+    profileId: string
+  ): Promise<boolean> =>
+    hasGenerationForProfile(getServerDb(), scope, profileId),
   // Slice 9a, R5-R9. `params` is the capability's own param type, the
   // `recordFeedback` line above: validation (the closed vocabularies, the
   // lever pairs, the window, the note rules and the R8 declared-metric

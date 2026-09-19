@@ -1,6 +1,7 @@
 // Fills Stripe's hosted TEST-MODE checkout page with Stripe's documented test
-// card. Only ever called after the caller has verified STRIPE_SECRET_KEY is a
-// sk_test_ key — see each spec's own guard before importing this.
+// card. Reached only from a paid chapter, and every paid chapter runs only
+// under `E2E_PAID_TIERS=1` (creator-ready Phase 2) — that gate is the real
+// guard; no spec inspects STRIPE_SECRET_KEY itself.
 import type { Page } from "@playwright/test";
 
 export const STRIPE_TEST_CARD = {

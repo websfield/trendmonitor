@@ -1,0 +1,54 @@
+
+ RUN  v3.2.7 C:/projects/ai.playground/trendMonitor/respin
+
+ ✓ tests/studio-ui.test.tsx (178 tests) 582ms
+ ✓ packages/llm/tests/assemble-kinds.test.ts (108 tests) 106059ms
+   ✓ canonical quote location > folds exactly the independently pinned table over every Unicode scalar value  12047ms
+   ✓ mapper containment > permits only the internal forwarding call and test injection  2857ms
+   ✓ mapper containment > rejects the credits override plant  2551ms
+   ✓ mapper containment > rejects the namespace override plant  2348ms
+   ✓ mapper containment > rejects the parenthesized namespace override plant  2329ms
+   ✓ mapper containment > rejects the parenthesized alias override plant  2234ms
+   ✓ mapper containment > rejects the as-wrapped alias override plant  2311ms
+   ✓ mapper containment > rejects the non-null alias override plant  2205ms
+   ✓ mapper containment > rejects the satisfies-wrapped alias override plant  2190ms
+   ✓ mapper containment > rejects the template namespace override plant  2428ms
+   ✓ mapper containment > rejects the dynamic namespace override plant  2381ms
+   ✓ mapper containment > rejects the namespace object alias escape plant  2483ms
+   ✓ mapper containment > rejects the relative namespace object alias escape plant  2168ms
+   ✓ mapper containment > rejects the namespace object destructure escape plant  2289ms
+   ✓ mapper containment > rejects the namespace object argument escape plant  2170ms
+   ✓ mapper containment > rejects the namespace reference escape plant  2251ms
+   ✓ mapper containment > rejects the imported reference escape plant  2319ms
+   ✓ mapper containment > rejects the third argument plant  2496ms
+   ✓ mapper containment > rejects the parenthesized third argument plant  2415ms
+   ✓ mapper containment > rejects the template namespace third argument plant  2447ms
+   ✓ mapper containment > rejects the aliased override plant  2366ms
+   ✓ mapper containment > rejects the spread override plant  2493ms
+   ✓ mapper containment > rejects the quoted-key override plant  2260ms
+   ✓ mapper containment > rejects the dynamic-key override plant  2354ms
+   ✓ mapper containment > rejects the getter-defined override plant  2577ms
+   ✓ mapper containment > rejects the setter-bearing override plant  2327ms
+   ✓ mapper containment > rejects the method override plant  2290ms
+   ✓ mapper containment > rejects the method-shaped field plant  2294ms
+   ✓ mapper containment > rejects the prototype override plant  2253ms
+   ✓ mapper containment > rejects the quoted prototype override plant  2156ms
+   ✓ mapper containment > rejects the defaulted mapper binding plant  2148ms
+   ✓ mapper containment > rejects the writable mapper binding plant  2143ms
+   ✓ mapper containment > rejects the local mapper replacing the parameter-derived binding plant  2083ms
+   ✓ mapper containment > rejects the parameter reassignment before binding plant  2079ms
+   ✓ mapper containment > rejects the parameter property mutation before binding plant  1883ms
+   ✓ mapper containment > rejects the parameter computed-property mutation before binding plant  1839ms
+   ✓ mapper containment > rejects the parameter alias before binding plant  1873ms
+   ✓ mapper containment > rejects the parameter escape before binding plant  1943ms
+   ✓ mapper containment > rejects the parameter closure escape before binding plant  1880ms
+   ✓ mapper containment > rejects the wrapped forwarding call plant  1880ms
+   ✓ mapper containment > rejects the different forwarding content plant  1994ms
+   ✓ mapper containment > rejects the different forwarding quote plant  1880ms
+   ✓ mapper containment > rejects the extra forwarding argument plant  2051ms
+
+ Test Files  2 passed (2)
+      Tests  286 passed (286)
+   Start at  16:11:48
+   Duration  107.37s (transform 1.71s, setup 0ms, collect 6.51s, tests 106.64s, environment 0ms, prepare 556ms)
+

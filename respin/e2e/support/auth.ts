@@ -18,14 +18,14 @@ export function freshIdentity(label: string): TestIdentity {
   };
 }
 
-/** Fills and submits the sign-up form, landing on /studio (the app's own redirect). */
+/** Fills and submits the sign-up form, landing on /onboarding (the app's own redirect). */
 export async function signUp(page: Page, identity: TestIdentity): Promise<void> {
   await page.goto("/sign-up");
   await page.getByLabel("Name").fill(identity.name);
   await page.getByLabel("Email").fill(identity.email);
   await page.getByLabel("Password").fill(identity.password);
   await page.getByRole("button", { name: "Sign up" }).click();
-  await page.waitForURL("**/studio", { timeout: 30_000 });
+  await page.waitForURL("**/onboarding", { timeout: 30_000 });
 }
 
 export async function signIn(

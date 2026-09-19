@@ -170,7 +170,7 @@ export default async function ResultsPage() {
       : paused
         ? { kind: "view_only", reason: "This paid workspace is paused. Results and proposal history remain available, but proposal refresh and decisions resume only after the pause ends." }
         : entitlement === "view_only"
-          ? { kind: "view_only", reason: "This workspace has Free view-only performance-record access. Results and proposal history remain available; logging results and brain-update proposals require full access." }
+          ? { kind: "view_only", reason: "Brain-update proposals also require full access." }
           : { kind: "full" };
   } catch (err) {
     rethrowNextControlFlow(err);

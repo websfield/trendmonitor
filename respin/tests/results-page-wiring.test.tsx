@@ -220,6 +220,26 @@ describe("/results page component: the gate", () => {
 });
 
 describe("/results page component: the happy path", () => {
+  it("renders the shared Free view-only notice once across the real result children", async () => {
+    credits.performanceLearningEntitlementFor.mockResolvedValue("view_only");
+
+    const out = await render();
+    expect(out.match(/Free view-only performance-record access/g)).toHaveLength(1);
+    expect(out).toContain("logging a result requires full access.");
+    expect(out).toContain("Brain-update proposals also require full access.");
+  });
+
+  it("keeps the free proposal boundary distinct from result logging", () => {
+    const pageSource = readFileSync(
+      new URL("../app/(product)/results/page.tsx", import.meta.url),
+      "utf8"
+    );
+    expect(pageSource).toContain("Brain-update proposals also require full access.");
+    expect(pageSource).not.toContain(
+      "logging results and brain-update proposals require full access"
+    );
+  });
+
   it("binds every promotion mutation on the server and passes them into the client panel", () => {
     const pageSource = readFileSync(
       new URL("../app/(product)/results/page.tsx", import.meta.url),

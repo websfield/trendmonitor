@@ -46,6 +46,8 @@ export type FirstIdeasPanelProps = {
   costSentence: string;
   /** Why the control is unavailable, if it is. Role, pause, plan, or no brain. */
   block: { reason: string } | null;
+  /** @internal Static-render fixture state; no app call site passes this. */
+  initialState?: StudioRunState;
   refusalCopy: Readonly<Record<string, { title: string; detail: string }>>;
   fallbackCopy: { title: string; detail: string };
 };
@@ -56,14 +58,21 @@ export function FirstIdeasPanel({
   action,
   costSentence,
   block,
+  initialState,
   refusalCopy,
   fallbackCopy,
 }: FirstIdeasPanelProps) {
-  const [state, formAction, isPending] = useActionState(action, IDLE);
+  const [state, formAction, isPending] = useActionState(
+    action,
+    initialState ?? IDLE
+  );
 
   return (
     <div data-testid="first-ideas-panel">
-      <p data-testid="first-ideas-intro">{FIRST_IDEAS_INTRO}</p>
+      <details>
+        <summary>How this works and what it costs</summary>
+        <p data-testid="first-ideas-intro">{FIRST_IDEAS_INTRO}</p>
+      </details>
       <p className="muted" data-testid="first-ideas-cost">
         {costSentence}
       </p>

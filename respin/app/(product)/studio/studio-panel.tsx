@@ -45,7 +45,9 @@ import {
   REVISION_NOTE_HELP,
   REVISION_SAME_MODE_NOTE,
   lineageChoiceLabel,
+  inForceSentence,
   modeAvailabilityNote,
+  type ActiveBrainKind,
   type ModeChoiceView,
 } from "./run-copy";
 import {
@@ -109,6 +111,13 @@ export type StudioPanelProps = {
   noteMax: number;
   /** Why the control is unavailable, if it is. Role, pause, or no brain. */
   block: { reason: string } | null;
+  /** Confirmed brain document kinds, or null when that courtesy read failed. */
+  activeKinds: readonly ActiveBrainKind[] | null;
+  brainHref: string;
+  usageHref: string;
+  frameworksHref: string;
+  /** @internal Static-render fixture state; no app call site passes this. */
+  initialState?: StudioActionState;
   refusalCopy: RefusalCopyByCode;
   fallbackCopy: { title: string; detail: string };
 };
@@ -123,12 +132,17 @@ export function StudioPanel({
   reactions,
   noteMax,
   block,
+  activeKinds,
+  brainHref,
+  usageHref,
+  frameworksHref,
+  initialState,
   refusalCopy,
   fallbackCopy,
 }: StudioPanelProps) {
   const [state, formAction, isPending] = useActionState(
     action,
-    IDLE_STUDIO_STATE
+    initialState ?? IDLE_STUDIO_STATE
   );
   const [feedback, feedbackFormAction, feedbackPending] = useActionState(
     feedbackAction,
@@ -180,15 +194,29 @@ export function StudioPanel({
 
   return (
     <div data-testid="studio-panel">
+      <details>
+        <summary>How this works and what it costs</summary>
+        <p className="muted" data-testid="studio-intro">
+          Every draft is written from the brain you confirmed and activated for
+          this creator on the <a href={brainHref}>brain page</a>, plus what you
+          type in below, plus the frameworks this creator can draw on — the
+          shared library and any of your own, on the{" "}
+          <a href={frameworksHref}>frameworks page</a>. Every charge appears in
+          your credit history on the <a href={usageHref}>usage page</a>.
+        </p>
+        <p className="muted" data-testid="studio-revision-cost">
+          {revisionCostSentence}
+        </p>
+      </details>
+      <p className="muted" data-testid="studio-in-force">
+        {inForceSentence(activeKinds)}
+      </p>
       <p className="muted" data-testid="studio-mode-note">
         {modeAvailabilityNote(modes)}
       </p>
       {/* R18's price, stated BEFORE the press (the `runCostSentence` rule). */}
       <p className="muted" data-testid="studio-cost">
         {costSentence}
-      </p>
-      <p className="muted" data-testid="studio-revision-cost">
-        {revisionCostSentence}
       </p>
       {/* R21's n = 0 sentence. It sits above the control, not under the
           result: the claim it forecloses is one a reader would otherwise form

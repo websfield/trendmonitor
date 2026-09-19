@@ -40,9 +40,9 @@ import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { requireUser } from "@respin/auth";
 import { respinDb } from "@respin/db";
-import { respinCredits } from "@respin/credits/app-server";
+import { AssemblyError, respinCredits } from "@respin/credits/app-server";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
-import { logRefusal, logSpend } from "../safe-log";
+import { logRefusal, logSpend, schemaIssueFields } from "../safe-log";
 import type { BillingErrorCode } from "../billing-errors";
 import type { VoiceInferenceState } from "./run-state";
 import type { CandidateSafetyState } from "./candidate-safety-state";
@@ -320,13 +320,26 @@ export async function runVoiceInferenceAction(
     };
   } catch (err) {
     rethrowNextControlFlow(err);
+    const assemblyKind = err instanceof AssemblyError ? err.kind : undefined;
     return {
       status: "refused",
       code: logRefusal("[onboarding-action] voice inference refused", err, {
         ...(scope ? { workspaceId: scope.workspaceId } : {}),
         profileId,
         attemptId,
+        ...(assemblyKind ? { assemblyKind } : {}),
+        // WHERE a `bad_shape` happened, clamped in `schemaIssueFields` (live
+        // walk, 2026-09-18). Without it the line said `assemblyKind:
+        // 'bad_shape'` and nothing else, which named the class and hid the
+        // cause on every occurrence — two review passes recorded the failing
+        // field as unknown because this was the only place it could have been
+        // written and it was not. Absent for every other kind, which have no
+        // location to report.
+        ...(err instanceof AssemblyError
+          ? schemaIssueFields(err.schemaIssue)
+          : {}),
       }) as BillingErrorCode,
+      ...(assemblyKind ? { assemblyKind } : {}),
     };
   }
 }

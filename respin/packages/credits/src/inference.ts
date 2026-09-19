@@ -202,6 +202,37 @@ export type RunInferenceParams = {
    * new operation a compile error instead of a wrong row.
    */
   promptBundleVersion: string;
+  /**
+   * Is this reply USABLE? Throw if not, and this runs ONE more vendor call.
+   *
+   * WHY IT LIVES HERE AND NOT IN THE CALLER (live walk, 2026-09-18). The voice
+   * build's parse ran AFTER this function returned, so a reply the vendor
+   * produced but we could not read — `bad_shape`, a strict-schema rejection
+   * caused by the model adding a key we never asked for — consumed the
+   * creator's ONE included build, paid the vendor, and left them a sentence
+   * with no way forward. There was no retry anywhere on this path. A caller
+   * cannot add one: by the time it sees the text, step 8b has committed the
+   * usage row and claimed the included build, and step 9 has taken the debit.
+   * The only place a second attempt can happen without a second debit is
+   * BEFORE those steps, which is inside this function.
+   *
+   * THE BOUND IS ONE EXTRA CALL, and it is deliberately not configurable. The
+   * failure this exists for is the model drifting off a shape it is asked for
+   * in prose; if a second pass does not fix it, a third is buying the same
+   * lottery ticket with the creator's money and the right answer is the
+   * refusal, which is now diagnosable (`AssemblySchemaIssue`).
+   *
+   * WHAT IT MUST NOT DO: succeed for a reply the caller will later reject. It
+   * is the SAME predicate the caller applies, or the retry protects nothing.
+   *
+   * ONE ATTEMPT ID, TWO `model_usage` ROWS, ONE DEBIT — which is what the
+   * schema already describes ("One logical build may span several HTTP calls
+   * (a bounded retry writes two rows)") and what `attemptId`'s own comment
+   * above promises. The discarded attempt is recorded `schema_invalid`, which
+   * `USAGE_OUTCOME_BILLABLE` already classes as billable: the vendor really
+   * was paid for it.
+   */
+  validate?: (text: string) => void;
 };
 
 export type RunInferenceResult = {
@@ -750,8 +781,20 @@ export async function runInference(
     let tokensOut = 0;
     let usageRaw: Record<string, number> = {};
     let text: string;
+    // ONE DEADLINE FOR THE WHOLE OPERATION, THE `validate` RETRY INCLUDED.
+    //
+    // Hoisted out of the attempt below deliberately. A per-attempt signal would
+    // give a retried build TWICE `overallDeadlineMs` inside a single server
+    // action, which is the exact failure the comment on `signal` describes —
+    // a proxy cuts the browser's connection while this process keeps going,
+    // commits `model_usage` and charges. The bound is on the OPERATION, so a
+    // second attempt spends what the first one left, or does not happen.
+    const deadline = AbortSignal.timeout(content.llm.overallDeadlineMs);
+    // At most ONE extra call, and only when a caller supplied the predicate.
+    let callsLeft = params.validate ? 2 : 1;
+    for (;;) {
+    callsLeft -= 1;
     try {
-      const deadline = AbortSignal.timeout(content.llm.overallDeadlineMs);
       const result = await withDeadline(
         provider.complete({
         attemptId: params.attemptId,
@@ -852,6 +895,98 @@ export async function runInference(
         if (e instanceof Error && e.cause === undefined) e.cause = bookkeeping;
       }
       throw e;
+    }
+
+    // 7b. IS THE REPLY USABLE? The vendor answered and was paid; whether we can
+    //     READ the answer is a separate question, and it is asked HERE — before
+    //     step 8b claims the included build and step 9 takes the debit — so
+    //     that one unreadable reply does not cost a creator their one free
+    //     build with no way forward. See `validate` on the params type.
+    if (!params.validate) break;
+    try {
+      params.validate(text);
+      break;
+    } catch (unusable) {
+      // NO `rethrowNextControlFlow` HERE, DELIBERATELY. It lives in `app/**`,
+      // which this package must not import (see 8a's note on `safe-log`), and
+      // it would be answering a question `validate`'s contract already closes:
+      // the predicate is a PURE reply check — `parseVoiceReply` — not a place
+      // a redirect can originate. A validator that navigates would be the
+      // defect, and hiding it behind a rethrow here would make it silent.
+      //
+      // IS THIS THE END OF THE OPERATION? Asked ONCE, and used for both the
+      // entitlement below and the throw at the bottom, because the two must
+      // never disagree: a row saying "your free build is gone" beside a screen
+      // saying it is not is the defect the billing gate BLOCKED this change
+      // for.
+      //
+      // `deadline.aborted` is half of it (billing gate CHANGE, 2026-09-18).
+      // `withDeadline` throws `LlmUnavailableError(null, "timeout")` the
+      // instant an already-aborted signal is passed, and the seeded config
+      // sets `timeoutMs === overallDeadlineMs` — so when call 1 eats the
+      // budget the "retry" is zero work that FABRICATES a timeout and throws
+      // away the `AssemblyError` this whole change exists to deliver. Refuse
+      // with the real cause instead of buying a fake one.
+      const terminal = callsLeft <= 0 || deadline.aborted;
+      //  THE DISCARDED ATTEMPT IS STILL A SPEND RECORD (R13), and it is
+      //  `schema_invalid`, which `USAGE_OUTCOME_BILLABLE` already classes
+      //  billable: the vendor produced these tokens and charged for them.
+      //
+      //  BUT BILLABLE IS NOT CONSUMING, and conflating them was this change's
+      //  BLOCK. `consumedIncludedBuild` drives the `first_billable_attempts`
+      //  claim (`with-workspace.ts`), which is permanent and which NO writer
+      //  removes. Claiming it on an attempt that is about to be RETRIED means
+      //  a retry that then dies on a vendor error leaves the claim held while
+      //  the creator's screen says "this attempt did not use up your first
+      //  run for this creator" — false, and on Free with a zero balance it
+      //  locks them out of onboarding having never received a document.
+      //  `generate.ts` already decides this pair the right way for the same
+      //  outcome (`consumedIncludedBuild: usable`).
+      //
+      //  SO IT IS THE OPERATION, NOT THE CALL, THAT CONSUMES. A non-terminal
+      //  attempt records its spend and claims nothing; the terminal one
+      //  consumes, which is what the pre-change single-call path did and what
+      //  `inference_unusable`'s copy ("your run was still made, so it
+      //  counted") states. Every branch's row now agrees with its screen.
+      const consumedIncludedBuild = terminal;
+      //  BOOKKEEPING MUST NOT MASK THE REFUSAL, same rule as 8a: `unusable` is
+      //  what the creator's screen is rendered from.
+      try {
+        await recordUsage(scope, {
+          db,
+          params,
+          purpose: ONBOARDING_BRAIN_PURPOSE,
+          model: servedModel,
+          tokensIn,
+          tokensOut,
+          usageRaw,
+          outcome: "schema_invalid",
+          consumedIncludedBuild,
+          promptBundleVersion: params.promptBundleVersion,
+          resolvedTier: billing.tier,
+          content,
+          configVersion,
+        });
+      } catch (bookkeeping) {
+        if (unusable instanceof Error && unusable.cause === undefined) {
+          unusable.cause = bookkeeping;
+        }
+        // A LOST SPEND RECORD ENDS THE OPERATION — it never silently buys
+        // another call (billing gate CHANGE, 2026-09-18). On the terminal
+        // attempt `unusable` leaves with the cause attached, exactly like 8a.
+        // On a NON-terminal one the old code discarded `unusable` and retried,
+        // so the cause reached no logger and call 1's R13 row was missing with
+        // nothing anywhere recording it — the margin rollup understating cost
+        // in silence, which is CLAUDE.md's 2026-09-09 lesson verbatim. Stop
+        // instead: we cannot record what we spend, so we stop spending.
+        throw unusable;
+      }
+      // OUT OF ATTEMPTS, or out of deadline: the caller's own refusal leaves
+      // this function, so the screen names what was wrong (and `AssemblyError`
+      // now carries WHERE).
+      if (terminal) throw unusable;
+      // Otherwise: one more call, on the SAME attempt id and the SAME deadline.
+    }
     }
 
     // 8b. `model_usage` IN ITS OWN COMMITTED TRANSACTION (R11 — the A-7

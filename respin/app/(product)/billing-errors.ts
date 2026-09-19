@@ -1165,9 +1165,9 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
       "Reading a voice from one or two posts would be reading one post twice, so nothing was sent to a model and nothing was spent. Paste a few more posts you wrote yourself and run it again — the page shows how many you have and how many are needed.",
   },
   inference_unusable: {
-    title: "The model's answer could not be used",
+    title: "This voice draft could not be used",
     detail:
-      "The reply did not come back in a form we could check — most often a quote that is not actually in any of your posts. Rather than store a rule we cannot show you the evidence for, nothing was saved. Your run was still made, so it counted; try again, and if it keeps happening it is our problem to fix, not yours.",
+      "The reply did not pass one of the product's voice-draft checks, so nothing was saved. Your run was still made, so it counted. Any charge for this run is in your credit history on the usage page.",
   },
   brain_pointer_divergence: {
     title: "We could not line the evidence up with the fields",

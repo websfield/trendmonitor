@@ -381,9 +381,13 @@ export async function reconcileSpend(
   // keyed on `attempt_id`, so grouping here keeps the two sides speaking about
   // the same object. `bool_or(outcome = 'succeeded')` because a debit is only
   // ever expected for an attempt that ultimately succeeded, whichever of its
-  // rows carries that outcome. NOT LIVE-REACHABLE TODAY — every server-action
-  // caller mints one fresh `attemptId` per press — but the table's own schema
-  // was built to anticipate the shape.
+  // rows carries that outcome. LIVE SINCE 2026-09-18, on the onboarding voice
+  // path: `inference.ts`'s `validate` retry makes a second vendor call on the
+  // SAME `attemptId` when the first reply cannot be parsed, so one attempt
+  // really does produce two rows (a `schema_invalid` one and the terminal
+  // one). Every server-action caller still mints one fresh `attemptId` per
+  // press; it is the retry INSIDE one press that writes the second row. This
+  // comment read "NOT LIVE-REACHABLE TODAY" until that change made it false.
   //
   // WHICH (PURPOSE, VERSION) PAIRS THE CLAIM CAN EXEMPT AT ALL (R-81/R-85).
   //

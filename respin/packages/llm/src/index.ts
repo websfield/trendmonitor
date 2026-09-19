@@ -37,15 +37,22 @@ export {
 } from "./anthropic";
 export {
   assembleVoicePrompt,
+  acceptCanonicalMatch,
+  ASSEMBLY_KINDS,
+  ASSEMBLY_KINDS_PRE_VENDOR,
+  CANON_CODE_POINT_TABLE,
+  canon,
   locateQuote,
   parseVoiceReply,
   stripFence,
   AssemblyError,
   NotEnoughPostsError,
   CHECK,
+  type AssemblyKind,
   type AssembledField,
   type AssembledPrompt,
   type AssembledValue,
   type ClaimSpec,
+  type MapBack,
   type OwnPost,
 } from "./assemble";

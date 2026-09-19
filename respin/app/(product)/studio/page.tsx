@@ -94,6 +94,7 @@ export default async function StudioPage(props: {
         brainHref="/brain"
         usageHref="/usage"
         frameworksHref="/studio/frameworks"
+        brainActiveWithoutVoice={false}
       />
     );
   }
@@ -128,23 +129,23 @@ export default async function StudioPage(props: {
   // the control and `generate` refuses it with `BrainNotActivatedError` before
   // anything is spent, with copy. A wrong signpost, never a wrong charge, and
   // never the superseded voice the deleted entrypoint could produce.
-  let brainActivated = false;
+  let brainActivated: boolean | null = null;
+  let activeKinds: Array<"Voice" | "Strategy" | "Kill test"> | null = null;
   try {
     const [voice, strategy, killtest] = await Promise.all([
       respinDb.readBrainHistory(scope, profile.id, "voice"),
       respinDb.readBrainHistory(scope, profile.id, "strategy"),
       respinDb.readBrainHistory(scope, profile.id, "killtest"),
     ]);
-    brainActivated = [voice, strategy, killtest].some((history) =>
-      history.some((v) => v.status === "active")
-    );
+    activeKinds = [];
+    if (voice.some((v) => v.status === "active")) activeKinds.push("Voice");
+    if (strategy.some((v) => v.status === "active")) activeKinds.push("Strategy");
+    if (killtest.some((v) => v.status === "active")) activeKinds.push("Kill test");
+    brainActivated = activeKinds.length > 0;
   } catch (err) {
     rethrowNextControlFlow(err);
-    // A courtesy read's failure must not take the page down. Left `false`, the
-    // screen says "activate a brain first" to somebody who may already have
-    // one — which is a wrong signpost and not a wrong action, and the control
-    // returns on the next load. The alternative (assume activated) would offer
-    // a spend control on a page whose reads are failing.
+    // A failed courtesy read remains unknown so the screen does not call an
+    // unreadable brain inactive.
     logRefusal("[studio] brain state unavailable", err);
   }
 
@@ -289,6 +290,10 @@ export default async function StudioPage(props: {
           paused,
           brainActivated,
         }),
+        activeKinds,
+        brainHref: "/brain",
+        usageHref: "/usage",
+        frameworksHref: "/studio/frameworks",
         refusalCopy,
         fallbackCopy: refusalCopy.unknown,
       }}
@@ -297,6 +302,9 @@ export default async function StudioPage(props: {
       brainHref="/brain"
       usageHref="/usage"
       frameworksHref="/studio/frameworks"
+      brainActiveWithoutVoice={
+        activeKinds !== null && activeKinds.length > 0 && !activeKinds.includes("Voice")
+      }
     />
   );
 }

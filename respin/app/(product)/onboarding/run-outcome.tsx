@@ -11,11 +11,20 @@
 import type { ReactNode } from "react";
 import { Banner } from "../../ui/banner";
 import {
+  ASSEMBLY_KIND_COPY,
   corpusBoundSentence,
   runChargeSentence,
   voiceOutcomeSentence,
 } from "./run-copy";
 import type { VoiceInferenceState } from "./run-state";
+
+function isPreVendorKind(kind: string): boolean {
+  return (
+    kind === "no_fields_supplied" ||
+    kind === "duplicate_post" ||
+    kind === "duplicate_field_request"
+  );
+}
 
 export type RunOutcomeProps = {
   state: VoiceInferenceState;
@@ -36,6 +45,12 @@ export function RunOutcome({
     // corrected for: a refused spend that renders no explanation leaves the
     // creator unable to tell a refusal from a hang.
     const copy = refusalCopy[state.code] ?? fallbackCopy;
+    const kindCopy = state.assemblyKind
+      ? ASSEMBLY_KIND_COPY[state.assemblyKind]
+      : null;
+    const preVendor = state.assemblyKind
+      ? isPreVendorKind(state.assemblyKind)
+      : false;
     return (
       // `role="alert"` with NO focus island, and the difference from the page's
       // redirect refusal is real rather than an inconsistency: this node MOUNTS
@@ -46,9 +61,12 @@ export function RunOutcome({
         title={copy.title}
         role="alert"
         data-testid="run-refusal"
+        data-code={state.code}
+        data-assembly-kind={state.assemblyKind}
         style={{ marginTop: "1rem" }}
       >
-        <p className="muted">{copy.detail}</p>
+        {preVendor ? null : <p className="muted">{copy.detail}</p>}
+        {kindCopy ? <p className="muted">{kindCopy}</p> : null}
       </Banner>
     );
   }

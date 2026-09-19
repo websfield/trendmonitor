@@ -1,0 +1,1075 @@
+{
+  "phase": "creator-ready Phase1 / service-quality Phase1",
+  "batch": 4,
+  "base": "79de2dbb14944f2f3089c621dc8bc9d31e0c1882",
+  "checkpoint": "Explicitly waived by owner; no new stash or commit",
+  "contract": "docs/plans/respin-service-quality-phase-1.md",
+  "contractSha256": "76C5DB33E0DA2BE2701046162E8B8FA6124302748DABA128C7DD724140C85326",
+  "lockfileSha256": "54E684B5E9EB581775FA2F0841110674CA4E3444937E7D4BF9B18A0A8483BD4D",
+  "validation": "docs/progress/creator-ready/entry-gate-phase-1-batch4.txt",
+  "tests": "Fresh seven-command gate exit0;5260 tests passed/101 Docker skipped,212 files passed/23 skipped. Prior live5354 result retained, not rerun.",
+  "mutations": [
+    "docs/progress/creator-ready/phase-1-mutations-core.txt",
+    "docs/progress/creator-ready/phase-1-mutations-presentation.txt",
+    "docs/progress/creator-ready/phase-1-batch4-shadow-red.txt"
+  ],
+  "limits": "Retained live journey and five screenshots available. Current Docker API access denied. bad_shape live observation unresolved. Independent cross-model Codex unavailable; manual evidence bridge.",
+  "repairPaths": [
+    "respin/packages/llm/tests/assemble-kinds.test.ts"
+  ],
+  "files": [
+    {
+      "path": "docs/initial/decisions.md",
+      "sha256": "9EEA2897C992A92E7D5B1348EBA13EAF3C65700E21EA1761DCE0BD5152931B7A"
+    },
+    {
+      "path": "respin/app/(auth)/auth-form.tsx",
+      "sha256": "DD352A537191A64A28791960FB4B6A0456706B039B0516DB7B93461D0A68441C"
+    },
+    {
+      "path": "respin/app/(product)/billing-errors.ts",
+      "sha256": "F0AE4A7AF8714BCA322435E51D028FD819E8F2B94BD675F4EA668450A9439374"
+    },
+    {
+      "path": "respin/app/(product)/brain/brain-view.tsx",
+      "sha256": "AE314058062943B8E5FF66901F4ACCDDB923AE80534F734EC071B30DCD391F93"
+    },
+    {
+      "path": "respin/app/(product)/nav.tsx",
+      "sha256": "E4D122BB7ACD472611DDECA2E48FDDA190658AC908BBEDC7A88C778D2331D05E"
+    },
+    {
+      "path": "respin/app/(product)/onboarding/actions.ts",
+      "sha256": "19E6F50D23614D27E0241AAD544D0BBEB8B39C38306810A50219FD18DDEE1091"
+    },
+    {
+      "path": "respin/app/(product)/onboarding/first-ideas/copy.ts",
+      "sha256": "01DD8C9AD97FC8D83F84C7EA21DD314283C6EEAC8586852A63565853DC669942"
+    },
+    {
+      "path": "respin/app/(product)/onboarding/first-ideas/first-ideas-panel.tsx",
+      "sha256": "4F5D64A801C7FBBA58AC7330C6D448B2387CE673ED0484896B27BE813F1D64F3"
+    },
+    {
+      "path": "respin/app/(product)/onboarding/first-ideas/page.tsx",
+      "sha256": "DB03072EDD6F5D5547AF85DEBA63CB5047C8B00D4DC0C6E3639C45B2CA045D32"
+    },
+    {
+      "path": "respin/app/(product)/onboarding/onboarding-view.tsx",
+      "sha256": "A71B152F365C8354EBAC55141F6C27930BFE2B9FF0B953502F0E8C73D8EDBB46"
+    },
+    {
+      "path": "respin/app/(product)/onboarding/page.tsx",
+      "sha256": "7C7C1DE74180BD75E1252B2EADEC826356BB8C70E3D23C27BBC21B94206206E4"
+    },
+    {
+      "path": "respin/app/(product)/onboarding/run-copy.ts",
+      "sha256": "AD63333D6D6231A63AD22AC56DD8EBF75369F8026C92842E412F63854D637D22"
+    },
+    {
+      "path": "respin/app/(product)/onboarding/run-outcome.tsx",
+      "sha256": "2953B1585A6B40C183D2A5084332285247B706F33AC98185FED817A250CB76EF"
+    },
+    {
+      "path": "respin/app/(product)/onboarding/run-state.ts",
+      "sha256": "A631D4697D48013EE906F4772AF7AB0C88C6D2CA6120C2C60F2EAD5C4DD37093"
+    },
+    {
+      "path": "respin/app/(product)/results/page.tsx",
+      "sha256": "96C49978E119D23E7B5553F4A7EBB3792D2856F09FC6900ABCB088FF90F194D9"
+    },
+    {
+      "path": "respin/app/(product)/studio/copy.ts",
+      "sha256": "274270A9FFD02AA41E6302994DFB92C65CDE720850D79AC2F2529F7625DFE0D1"
+    },
+    {
+      "path": "respin/app/(product)/studio/generation-outcome.tsx",
+      "sha256": "A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE"
+    },
+    {
+      "path": "respin/app/(product)/studio/page.tsx",
+      "sha256": "643841A3D99432173AA4F9B19F0E85D882AB11D56AE9DB937986560A6FB34EE7"
+    },
+    {
+      "path": "respin/app/(product)/studio/run-copy.ts",
+      "sha256": "E02082BC23C3431D76D628E0C66C494AFB9619B6E4D322461ECADE21E427F7D3"
+    },
+    {
+      "path": "respin/app/(product)/studio/studio-panel.tsx",
+      "sha256": "50F60C547088C4C905136A63CC81F3AD811E10190777AE44B1D625DE656BE42C"
+    },
+    {
+      "path": "respin/app/(product)/studio/studio-view.tsx",
+      "sha256": "719D1CC92039DE15CD0BA6B489CFE51FE457043CC280C97651E41DA9DC551F55"
+    },
+    {
+      "path": "respin/app/(product)/trends/page.tsx",
+      "sha256": "8AB7F7949670E347AE6BB97EEE7CDCDBA8487645A2A0E349882613C7BB3F19AC"
+    },
+    {
+      "path": "respin/app/(product)/trends/track-niche-panel.tsx",
+      "sha256": "E3B79A6D9C74C05DDB42C3AAF1386EC5020902F18DA9FD02359167E7B03DE5D5"
+    },
+    {
+      "path": "respin/e2e/journeys/solo-creator.spec.ts",
+      "sha256": "9D45CED0CD27628EDD534D74DBFEDD76E1BE34C3779081F23D4E1F272F7E3298"
+    },
+    {
+      "path": "respin/e2e/support/auth.ts",
+      "sha256": "4FE2775C9768A47DEC3866502572DF87F3F395C845E04DEA3727E5717BD8E2DA"
+    },
+    {
+      "path": "respin/packages/credits/src/app-server.ts",
+      "sha256": "EE75017589130BE510E61DCB57AE9F9C900E9B96DBF996A19B0994BABDFF9E8A"
+    },
+    {
+      "path": "respin/packages/credits/tests/voice-build-tolerance.test.ts",
+      "sha256": "EFABBFE7EB8055F2D54D7AB2FBE790741030F5AF2EEAAFB5205FB7D9AACEFDE5"
+    },
+    {
+      "path": "respin/packages/db/src/app-server.ts",
+      "sha256": "6A4EAA922F2CA5701D5F24578628935195619F7D0BEB01C56908480F3B60F4C4"
+    },
+    {
+      "path": "respin/packages/db/src/index.ts",
+      "sha256": "94DDB5EB058132DA599B9BE18CBAB612FE0DF874BC5CE1AD1FF0E45AC32CA740"
+    },
+    {
+      "path": "respin/packages/db/src/with-workspace.ts",
+      "sha256": "304AE2C8A0D4725480A60A2826EA699EDDFD6D5BB3E2183551635D8676400AAC"
+    },
+    {
+      "path": "respin/packages/db/tests/profile-scope.test.ts",
+      "sha256": "5921347CBC7EBCB56CDBD6811B7D028E0FDB2218C8A4A275648C219843AAE69C"
+    },
+    {
+      "path": "respin/packages/llm/src/assemble.ts",
+      "sha256": "ED42B7FB1A5D9FF12D1D4A563FCC21F478CFD46591BEC473995B2F773BC71387"
+    },
+    {
+      "path": "respin/packages/llm/src/index.ts",
+      "sha256": "4C1F283E8A4BAC2BC3BB3084D542E2FDC7B76811D5B191CC71C0464E38EBF863"
+    },
+    {
+      "path": "respin/packages/llm/tests/assemble-kinds.test.ts",
+      "sha256": "B986967A465EB00046F15FDA94D8D2DE4252F930EF3A02309F10E3E63033017B"
+    },
+    {
+      "path": "respin/tests/auth-form.test.tsx",
+      "sha256": "12706D709B9DAAEF3B5817E33DC42B5F8A51B1B2A4996D97262E50A002AE9755"
+    },
+    {
+      "path": "respin/tests/brain-ui.test.tsx",
+      "sha256": "61F88B280CCC1CEFA45DC1E9437643BB57F75D0F7973D6B7881C6BB9B7638946"
+    },
+    {
+      "path": "respin/tests/claims-vocabulary-agreement.test.ts",
+      "sha256": "8719EE91BA2A2B2E17930704ACDC6EDDFF1C0935C6630647F9363BF006CC67F0"
+    },
+    {
+      "path": "respin/tests/first-ideas-ui.test.tsx",
+      "sha256": "2AA1C5B5D9826EDD14958C12358F1BCEEFA5A50FC9B2D2AE734E388D5354BBD3"
+    },
+    {
+      "path": "respin/tests/first-login-pages.test.tsx",
+      "sha256": "682FBE417E76B3F7B3FDD4835AB45C3A3BBC6758BC81C0D461C82224EA0A6EF1"
+    },
+    {
+      "path": "respin/tests/onboarding-refusal-log.test.ts",
+      "sha256": "AB7AD4FE4EBB1055FB3B06BA790DDE6F22FC3664E45CB2C1EC15858A071E2012"
+    },
+    {
+      "path": "respin/tests/onboarding-ui.test.tsx",
+      "sha256": "98CC206F4C0397DE3E565DCB091E8E02F7ADC5E512405222FF2C91C049D3DC9A"
+    },
+    {
+      "path": "respin/tests/page-wiring.test.tsx",
+      "sha256": "57CF46CBA25C1DDA7E95C50BDB5F0B96DB39CF92674933E0F096E9A8B1975A71"
+    },
+    {
+      "path": "respin/tests/profile-cage.test.ts",
+      "sha256": "CFC03816DFCF31CC002509C5B6DA760EA46B78EBE21FF6DCAFDBE97A8FB7D85A"
+    },
+    {
+      "path": "respin/tests/results-page-wiring.test.tsx",
+      "sha256": "6734E5705753EEC792CC5D299D66901A6F170BC3CB68181A8F44D133DBFEE435"
+    },
+    {
+      "path": "respin/tests/selected-profile-pages.test.tsx",
+      "sha256": "294A0BAF8289FFD99AD94875BD630DF3C0E4C570ADBC808992ED126D756F932D"
+    },
+    {
+      "path": "respin/tests/studio-ui.test.tsx",
+      "sha256": "A123759A1F8224F67026EC229C871EE33FC9D68810121BC50665B70E9E9CC417"
+    },
+    {
+      "path": "respin/tests/trends-niche-ui.test.tsx",
+      "sha256": "A9646DA67E881F17DFC5E09F53A8233DA56B5C41623615D9C1C7F094D14C2E0E"
+    },
+    {
+      "path": "respin/tests/trends-page.test.tsx",
+      "sha256": "E1DBDE3B01DED5256C8CBCCA7A0D275147EAD29939440A14FCBEEF17AD1C2954"
+    }
+  ],
+  "history": [
+    {
+      "phase": "creator-ready Phase1 / service-quality Phase1",
+      "batch": 0,
+      "base": "79de2dbb14944f2f3089c621dc8bc9d31e0c1882",
+      "checkpoint": "Explicitly waived by owner; no new stash or commit",
+      "contract": "docs/plans/respin-service-quality-phase-1.md",
+      "contractSha256": "76C5DB33E0DA2BE2701046162E8B8FA6124302748DABA128C7DD724140C85326",
+      "lockfileSha256": "54E684B5E9EB581775FA2F0841110674CA4E3444937E7D4BF9B18A0A8483BD4D",
+      "validation": "docs/progress/creator-ready/entry-gate-phase-1.txt",
+      "tests": "5203 passed;101 skipped;212 files passed;23 Docker files skipped",
+      "mutations": [
+        "docs/progress/creator-ready/phase-1-mutations-core.txt",
+        "docs/progress/creator-ready/phase-1-mutations-presentation.txt"
+      ],
+      "limits": "No live journey/screenshots; Docker unavailable and live environment variables absent. Independent cross-model Codex unavailable. Manual evidence bridge.",
+      "files": [
+        {
+          "path": "docs/initial/decisions.md",
+          "sha256": "9EEA2897C992A92E7D5B1348EBA13EAF3C65700E21EA1761DCE0BD5152931B7A"
+        },
+        {
+          "path": "respin/app/(auth)/auth-form.tsx",
+          "sha256": "DD352A537191A64A28791960FB4B6A0456706B039B0516DB7B93461D0A68441C"
+        },
+        {
+          "path": "respin/app/(product)/billing-errors.ts",
+          "sha256": "F0AE4A7AF8714BCA322435E51D028FD819E8F2B94BD675F4EA668450A9439374"
+        },
+        {
+          "path": "respin/app/(product)/brain/brain-view.tsx",
+          "sha256": "AE314058062943B8E5FF66901F4ACCDDB923AE80534F734EC071B30DCD391F93"
+        },
+        {
+          "path": "respin/app/(product)/nav.tsx",
+          "sha256": "E4D122BB7ACD472611DDECA2E48FDDA190658AC908BBEDC7A88C778D2331D05E"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/actions.ts",
+          "sha256": "19E6F50D23614D27E0241AAD544D0BBEB8B39C38306810A50219FD18DDEE1091"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/copy.ts",
+          "sha256": "01DD8C9AD97FC8D83F84C7EA21DD314283C6EEAC8586852A63565853DC669942"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/first-ideas-panel.tsx",
+          "sha256": "4F5D64A801C7FBBA58AC7330C6D448B2387CE673ED0484896B27BE813F1D64F3"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/page.tsx",
+          "sha256": "DB03072EDD6F5D5547AF85DEBA63CB5047C8B00D4DC0C6E3639C45B2CA045D32"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/onboarding-view.tsx",
+          "sha256": "86D76CBDB7D56660849FAA4283D75596AE505F177D7210056C2BD84817E93B55"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/page.tsx",
+          "sha256": "210F302ADF6B4E283F28B29E6A393EDB743316E30036B8A692E7B0A2394F4720"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-copy.ts",
+          "sha256": "AD63333D6D6231A63AD22AC56DD8EBF75369F8026C92842E412F63854D637D22"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-outcome.tsx",
+          "sha256": "2953B1585A6B40C183D2A5084332285247B706F33AC98185FED817A250CB76EF"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-state.ts",
+          "sha256": "A631D4697D48013EE906F4772AF7AB0C88C6D2CA6120C2C60F2EAD5C4DD37093"
+        },
+        {
+          "path": "respin/app/(product)/results/page.tsx",
+          "sha256": "AC1E054F0A70140491967DE42864A85F8DE6BAC4FC7DA58B0391C7E609484684"
+        },
+        {
+          "path": "respin/app/(product)/studio/copy.ts",
+          "sha256": "274270A9FFD02AA41E6302994DFB92C65CDE720850D79AC2F2529F7625DFE0D1"
+        },
+        {
+          "path": "respin/app/(product)/studio/generation-outcome.tsx",
+          "sha256": "A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE"
+        },
+        {
+          "path": "respin/app/(product)/studio/page.tsx",
+          "sha256": "643841A3D99432173AA4F9B19F0E85D882AB11D56AE9DB937986560A6FB34EE7"
+        },
+        {
+          "path": "respin/app/(product)/studio/run-copy.ts",
+          "sha256": "E02082BC23C3431D76D628E0C66C494AFB9619B6E4D322461ECADE21E427F7D3"
+        },
+        {
+          "path": "respin/app/(product)/studio/studio-panel.tsx",
+          "sha256": "50F60C547088C4C905136A63CC81F3AD811E10190777AE44B1D625DE656BE42C"
+        },
+        {
+          "path": "respin/app/(product)/studio/studio-view.tsx",
+          "sha256": "719D1CC92039DE15CD0BA6B489CFE51FE457043CC280C97651E41DA9DC551F55"
+        },
+        {
+          "path": "respin/app/(product)/trends/page.tsx",
+          "sha256": "8AB7F7949670E347AE6BB97EEE7CDCDBA8487645A2A0E349882613C7BB3F19AC"
+        },
+        {
+          "path": "respin/app/(product)/trends/track-niche-panel.tsx",
+          "sha256": "E3B79A6D9C74C05DDB42C3AAF1386EC5020902F18DA9FD02359167E7B03DE5D5"
+        },
+        {
+          "path": "respin/e2e/journeys/solo-creator.spec.ts",
+          "sha256": "9D45CED0CD27628EDD534D74DBFEDD76E1BE34C3779081F23D4E1F272F7E3298"
+        },
+        {
+          "path": "respin/e2e/support/auth.ts",
+          "sha256": "4FE2775C9768A47DEC3866502572DF87F3F395C845E04DEA3727E5717BD8E2DA"
+        },
+        {
+          "path": "respin/packages/credits/src/app-server.ts",
+          "sha256": "EE75017589130BE510E61DCB57AE9F9C900E9B96DBF996A19B0994BABDFF9E8A"
+        },
+        {
+          "path": "respin/packages/credits/tests/voice-build-tolerance.test.ts",
+          "sha256": "EFABBFE7EB8055F2D54D7AB2FBE790741030F5AF2EEAAFB5205FB7D9AACEFDE5"
+        },
+        {
+          "path": "respin/packages/db/src/app-server.ts",
+          "sha256": "6A4EAA922F2CA5701D5F24578628935195619F7D0BEB01C56908480F3B60F4C4"
+        },
+        {
+          "path": "respin/packages/db/src/index.ts",
+          "sha256": "94DDB5EB058132DA599B9BE18CBAB612FE0DF874BC5CE1AD1FF0E45AC32CA740"
+        },
+        {
+          "path": "respin/packages/db/src/with-workspace.ts",
+          "sha256": "304AE2C8A0D4725480A60A2826EA699EDDFD6D5BB3E2183551635D8676400AAC"
+        },
+        {
+          "path": "respin/packages/db/tests/profile-scope.test.ts",
+          "sha256": "5921347CBC7EBCB56CDBD6811B7D028E0FDB2218C8A4A275648C219843AAE69C"
+        },
+        {
+          "path": "respin/packages/llm/src/assemble.ts",
+          "sha256": "ED42B7FB1A5D9FF12D1D4A563FCC21F478CFD46591BEC473995B2F773BC71387"
+        },
+        {
+          "path": "respin/packages/llm/src/index.ts",
+          "sha256": "4C1F283E8A4BAC2BC3BB3084D542E2FDC7B76811D5B191CC71C0464E38EBF863"
+        },
+        {
+          "path": "respin/packages/llm/tests/assemble-kinds.test.ts",
+          "sha256": "B358DB2C9A79B19096E91585B58AB9CBF90C7209E684E143CCF79FBD2224B6B7"
+        },
+        {
+          "path": "respin/tests/auth-form.test.tsx",
+          "sha256": "12706D709B9DAAEF3B5817E33DC42B5F8A51B1B2A4996D97262E50A002AE9755"
+        },
+        {
+          "path": "respin/tests/brain-ui.test.tsx",
+          "sha256": "61F88B280CCC1CEFA45DC1E9437643BB57F75D0F7973D6B7881C6BB9B7638946"
+        },
+        {
+          "path": "respin/tests/claims-vocabulary-agreement.test.ts",
+          "sha256": "8719EE91BA2A2B2E17930704ACDC6EDDFF1C0935C6630647F9363BF006CC67F0"
+        },
+        {
+          "path": "respin/tests/first-ideas-ui.test.tsx",
+          "sha256": "AA90D560117568987A6E8A595236DE650554A95A8B0DA7BEE4A8B0020FF9D82C"
+        },
+        {
+          "path": "respin/tests/first-login-pages.test.tsx",
+          "sha256": "682FBE417E76B3F7B3FDD4835AB45C3A3BBC6758BC81C0D461C82224EA0A6EF1"
+        },
+        {
+          "path": "respin/tests/onboarding-refusal-log.test.ts",
+          "sha256": "AB7AD4FE4EBB1055FB3B06BA790DDE6F22FC3664E45CB2C1EC15858A071E2012"
+        },
+        {
+          "path": "respin/tests/onboarding-ui.test.tsx",
+          "sha256": "D1BF6323CE8CD0067FFEEFBDDC8897E202D7C9374FC4B79A1B192615A052785E"
+        },
+        {
+          "path": "respin/tests/page-wiring.test.tsx",
+          "sha256": "3DCCAA5F763B67CA2F146EDA6978F5ADB175931A7F7C2A855CCE3A5E9A710830"
+        },
+        {
+          "path": "respin/tests/profile-cage.test.ts",
+          "sha256": "CFC03816DFCF31CC002509C5B6DA760EA46B78EBE21FF6DCAFDBE97A8FB7D85A"
+        },
+        {
+          "path": "respin/tests/results-page-wiring.test.tsx",
+          "sha256": "07926DD80F141C748B72DA6EFD433CBD8718D9E66FA8960440E6C94310108186"
+        },
+        {
+          "path": "respin/tests/selected-profile-pages.test.tsx",
+          "sha256": "45F32F428663202B3F5FA1F12D1642CED6A6DBC05F2E7ECC2AEDF28DCAF83204"
+        },
+        {
+          "path": "respin/tests/studio-ui.test.tsx",
+          "sha256": "58ACB35DDC7C96BDE344BE559697DBBCCBE3E4753A7B94814CEED1C0D01D5C49"
+        },
+        {
+          "path": "respin/tests/trends-niche-ui.test.tsx",
+          "sha256": "A9646DA67E881F17DFC5E09F53A8233DA56B5C41623615D9C1C7F094D14C2E0E"
+        },
+        {
+          "path": "respin/tests/trends-page.test.tsx",
+          "sha256": "E1DBDE3B01DED5256C8CBCCA7A0D275147EAD29939440A14FCBEEF17AD1C2954"
+        }
+      ]
+    },
+    {
+      "phase": "creator-ready Phase1 / service-quality Phase1",
+      "batch": 1,
+      "base": "79de2dbb14944f2f3089c621dc8bc9d31e0c1882",
+      "checkpoint": "Explicitly waived by owner; no new stash or commit",
+      "contract": "docs/plans/respin-service-quality-phase-1.md",
+      "contractSha256": "76C5DB33E0DA2BE2701046162E8B8FA6124302748DABA128C7DD724140C85326",
+      "lockfileSha256": "54E684B5E9EB581775FA2F0841110674CA4E3444937E7D4BF9B18A0A8483BD4D",
+      "validation": "docs/progress/creator-ready/entry-gate-phase-1.txt",
+      "tests": "5221 passed;101 skipped;212 files passed;23 Docker files skipped",
+      "mutations": [
+        "docs/progress/creator-ready/phase-1-mutations-core.txt",
+        "docs/progress/creator-ready/phase-1-mutations-presentation.txt"
+      ],
+      "limits": "No live journey/screenshots; Docker unavailable and live environment variables absent. Independent cross-model Codex unavailable. Manual evidence bridge.",
+      "repairPaths": [
+        "respin/app/(product)/onboarding/onboarding-view.tsx",
+        "respin/app/(product)/onboarding/page.tsx",
+        "respin/app/(product)/results/page.tsx",
+        "respin/packages/llm/tests/assemble-kinds.test.ts",
+        "respin/tests/first-ideas-ui.test.tsx",
+        "respin/tests/onboarding-ui.test.tsx",
+        "respin/tests/page-wiring.test.tsx",
+        "respin/tests/results-page-wiring.test.tsx",
+        "respin/tests/selected-profile-pages.test.tsx",
+        "respin/tests/studio-ui.test.tsx"
+      ],
+      "files": [
+        {
+          "path": "docs/initial/decisions.md",
+          "sha256": "9EEA2897C992A92E7D5B1348EBA13EAF3C65700E21EA1761DCE0BD5152931B7A"
+        },
+        {
+          "path": "respin/app/(auth)/auth-form.tsx",
+          "sha256": "DD352A537191A64A28791960FB4B6A0456706B039B0516DB7B93461D0A68441C"
+        },
+        {
+          "path": "respin/app/(product)/billing-errors.ts",
+          "sha256": "F0AE4A7AF8714BCA322435E51D028FD819E8F2B94BD675F4EA668450A9439374"
+        },
+        {
+          "path": "respin/app/(product)/brain/brain-view.tsx",
+          "sha256": "AE314058062943B8E5FF66901F4ACCDDB923AE80534F734EC071B30DCD391F93"
+        },
+        {
+          "path": "respin/app/(product)/nav.tsx",
+          "sha256": "E4D122BB7ACD472611DDECA2E48FDDA190658AC908BBEDC7A88C778D2331D05E"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/actions.ts",
+          "sha256": "19E6F50D23614D27E0241AAD544D0BBEB8B39C38306810A50219FD18DDEE1091"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/copy.ts",
+          "sha256": "01DD8C9AD97FC8D83F84C7EA21DD314283C6EEAC8586852A63565853DC669942"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/first-ideas-panel.tsx",
+          "sha256": "4F5D64A801C7FBBA58AC7330C6D448B2387CE673ED0484896B27BE813F1D64F3"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/page.tsx",
+          "sha256": "DB03072EDD6F5D5547AF85DEBA63CB5047C8B00D4DC0C6E3639C45B2CA045D32"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/onboarding-view.tsx",
+          "sha256": "A71B152F365C8354EBAC55141F6C27930BFE2B9FF0B953502F0E8C73D8EDBB46"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/page.tsx",
+          "sha256": "7C7C1DE74180BD75E1252B2EADEC826356BB8C70E3D23C27BBC21B94206206E4"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-copy.ts",
+          "sha256": "AD63333D6D6231A63AD22AC56DD8EBF75369F8026C92842E412F63854D637D22"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-outcome.tsx",
+          "sha256": "2953B1585A6B40C183D2A5084332285247B706F33AC98185FED817A250CB76EF"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-state.ts",
+          "sha256": "A631D4697D48013EE906F4772AF7AB0C88C6D2CA6120C2C60F2EAD5C4DD37093"
+        },
+        {
+          "path": "respin/app/(product)/results/page.tsx",
+          "sha256": "96C49978E119D23E7B5553F4A7EBB3792D2856F09FC6900ABCB088FF90F194D9"
+        },
+        {
+          "path": "respin/app/(product)/studio/copy.ts",
+          "sha256": "274270A9FFD02AA41E6302994DFB92C65CDE720850D79AC2F2529F7625DFE0D1"
+        },
+        {
+          "path": "respin/app/(product)/studio/generation-outcome.tsx",
+          "sha256": "A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE"
+        },
+        {
+          "path": "respin/app/(product)/studio/page.tsx",
+          "sha256": "643841A3D99432173AA4F9B19F0E85D882AB11D56AE9DB937986560A6FB34EE7"
+        },
+        {
+          "path": "respin/app/(product)/studio/run-copy.ts",
+          "sha256": "E02082BC23C3431D76D628E0C66C494AFB9619B6E4D322461ECADE21E427F7D3"
+        },
+        {
+          "path": "respin/app/(product)/studio/studio-panel.tsx",
+          "sha256": "50F60C547088C4C905136A63CC81F3AD811E10190777AE44B1D625DE656BE42C"
+        },
+        {
+          "path": "respin/app/(product)/studio/studio-view.tsx",
+          "sha256": "719D1CC92039DE15CD0BA6B489CFE51FE457043CC280C97651E41DA9DC551F55"
+        },
+        {
+          "path": "respin/app/(product)/trends/page.tsx",
+          "sha256": "8AB7F7949670E347AE6BB97EEE7CDCDBA8487645A2A0E349882613C7BB3F19AC"
+        },
+        {
+          "path": "respin/app/(product)/trends/track-niche-panel.tsx",
+          "sha256": "E3B79A6D9C74C05DDB42C3AAF1386EC5020902F18DA9FD02359167E7B03DE5D5"
+        },
+        {
+          "path": "respin/e2e/journeys/solo-creator.spec.ts",
+          "sha256": "9D45CED0CD27628EDD534D74DBFEDD76E1BE34C3779081F23D4E1F272F7E3298"
+        },
+        {
+          "path": "respin/e2e/support/auth.ts",
+          "sha256": "4FE2775C9768A47DEC3866502572DF87F3F395C845E04DEA3727E5717BD8E2DA"
+        },
+        {
+          "path": "respin/packages/credits/src/app-server.ts",
+          "sha256": "EE75017589130BE510E61DCB57AE9F9C900E9B96DBF996A19B0994BABDFF9E8A"
+        },
+        {
+          "path": "respin/packages/credits/tests/voice-build-tolerance.test.ts",
+          "sha256": "EFABBFE7EB8055F2D54D7AB2FBE790741030F5AF2EEAAFB5205FB7D9AACEFDE5"
+        },
+        {
+          "path": "respin/packages/db/src/app-server.ts",
+          "sha256": "6A4EAA922F2CA5701D5F24578628935195619F7D0BEB01C56908480F3B60F4C4"
+        },
+        {
+          "path": "respin/packages/db/src/index.ts",
+          "sha256": "94DDB5EB058132DA599B9BE18CBAB612FE0DF874BC5CE1AD1FF0E45AC32CA740"
+        },
+        {
+          "path": "respin/packages/db/src/with-workspace.ts",
+          "sha256": "304AE2C8A0D4725480A60A2826EA699EDDFD6D5BB3E2183551635D8676400AAC"
+        },
+        {
+          "path": "respin/packages/db/tests/profile-scope.test.ts",
+          "sha256": "5921347CBC7EBCB56CDBD6811B7D028E0FDB2218C8A4A275648C219843AAE69C"
+        },
+        {
+          "path": "respin/packages/llm/src/assemble.ts",
+          "sha256": "ED42B7FB1A5D9FF12D1D4A563FCC21F478CFD46591BEC473995B2F773BC71387"
+        },
+        {
+          "path": "respin/packages/llm/src/index.ts",
+          "sha256": "4C1F283E8A4BAC2BC3BB3084D542E2FDC7B76811D5B191CC71C0464E38EBF863"
+        },
+        {
+          "path": "respin/packages/llm/tests/assemble-kinds.test.ts",
+          "sha256": "2F2D3D80B326B18512C573ABCB0E65A7610874B576710BE6BBEDE832845E7CAB"
+        },
+        {
+          "path": "respin/tests/auth-form.test.tsx",
+          "sha256": "12706D709B9DAAEF3B5817E33DC42B5F8A51B1B2A4996D97262E50A002AE9755"
+        },
+        {
+          "path": "respin/tests/brain-ui.test.tsx",
+          "sha256": "61F88B280CCC1CEFA45DC1E9437643BB57F75D0F7973D6B7881C6BB9B7638946"
+        },
+        {
+          "path": "respin/tests/claims-vocabulary-agreement.test.ts",
+          "sha256": "8719EE91BA2A2B2E17930704ACDC6EDDFF1C0935C6630647F9363BF006CC67F0"
+        },
+        {
+          "path": "respin/tests/first-ideas-ui.test.tsx",
+          "sha256": "2AA1C5B5D9826EDD14958C12358F1BCEEFA5A50FC9B2D2AE734E388D5354BBD3"
+        },
+        {
+          "path": "respin/tests/first-login-pages.test.tsx",
+          "sha256": "682FBE417E76B3F7B3FDD4835AB45C3A3BBC6758BC81C0D461C82224EA0A6EF1"
+        },
+        {
+          "path": "respin/tests/onboarding-refusal-log.test.ts",
+          "sha256": "AB7AD4FE4EBB1055FB3B06BA790DDE6F22FC3664E45CB2C1EC15858A071E2012"
+        },
+        {
+          "path": "respin/tests/onboarding-ui.test.tsx",
+          "sha256": "98CC206F4C0397DE3E565DCB091E8E02F7ADC5E512405222FF2C91C049D3DC9A"
+        },
+        {
+          "path": "respin/tests/page-wiring.test.tsx",
+          "sha256": "57CF46CBA25C1DDA7E95C50BDB5F0B96DB39CF92674933E0F096E9A8B1975A71"
+        },
+        {
+          "path": "respin/tests/profile-cage.test.ts",
+          "sha256": "CFC03816DFCF31CC002509C5B6DA760EA46B78EBE21FF6DCAFDBE97A8FB7D85A"
+        },
+        {
+          "path": "respin/tests/results-page-wiring.test.tsx",
+          "sha256": "6734E5705753EEC792CC5D299D66901A6F170BC3CB68181A8F44D133DBFEE435"
+        },
+        {
+          "path": "respin/tests/selected-profile-pages.test.tsx",
+          "sha256": "294A0BAF8289FFD99AD94875BD630DF3C0E4C570ADBC808992ED126D756F932D"
+        },
+        {
+          "path": "respin/tests/studio-ui.test.tsx",
+          "sha256": "B0E7C1B5691FD38473D31460ACA6E407C54C20F096D8BBE047A6FD6462C3703D"
+        },
+        {
+          "path": "respin/tests/trends-niche-ui.test.tsx",
+          "sha256": "A9646DA67E881F17DFC5E09F53A8233DA56B5C41623615D9C1C7F094D14C2E0E"
+        },
+        {
+          "path": "respin/tests/trends-page.test.tsx",
+          "sha256": "E1DBDE3B01DED5256C8CBCCA7A0D275147EAD29939440A14FCBEEF17AD1C2954"
+        }
+      ]
+    },
+    {
+      "phase": "creator-ready Phase1 / service-quality Phase1",
+      "batch": 2,
+      "base": "79de2dbb14944f2f3089c621dc8bc9d31e0c1882",
+      "checkpoint": "Explicitly waived by owner; no new stash or commit",
+      "contract": "docs/plans/respin-service-quality-phase-1.md",
+      "contractSha256": "76C5DB33E0DA2BE2701046162E8B8FA6124302748DABA128C7DD724140C85326",
+      "lockfileSha256": "54E684B5E9EB581775FA2F0841110674CA4E3444937E7D4BF9B18A0A8483BD4D",
+      "validation": "docs/progress/creator-ready/entry-gate-phase-1-resume.txt",
+      "tests": "5246 passed;101 skipped;212 files passed;23 Docker files skipped",
+      "mutations": [
+        "docs/progress/creator-ready/phase-1-mutations-core.txt",
+        "docs/progress/creator-ready/phase-1-mutations-presentation.txt"
+      ],
+      "limits": "No live journey/screenshots; Docker unavailable and live environment variables absent. Independent cross-model Codex unavailable. Manual evidence bridge.",
+      "repairPaths": [
+        "respin/packages/llm/tests/assemble-kinds.test.ts"
+      ],
+      "files": [
+        {
+          "path": "docs/initial/decisions.md",
+          "sha256": "9EEA2897C992A92E7D5B1348EBA13EAF3C65700E21EA1761DCE0BD5152931B7A"
+        },
+        {
+          "path": "respin/app/(auth)/auth-form.tsx",
+          "sha256": "DD352A537191A64A28791960FB4B6A0456706B039B0516DB7B93461D0A68441C"
+        },
+        {
+          "path": "respin/app/(product)/billing-errors.ts",
+          "sha256": "F0AE4A7AF8714BCA322435E51D028FD819E8F2B94BD675F4EA668450A9439374"
+        },
+        {
+          "path": "respin/app/(product)/brain/brain-view.tsx",
+          "sha256": "AE314058062943B8E5FF66901F4ACCDDB923AE80534F734EC071B30DCD391F93"
+        },
+        {
+          "path": "respin/app/(product)/nav.tsx",
+          "sha256": "E4D122BB7ACD472611DDECA2E48FDDA190658AC908BBEDC7A88C778D2331D05E"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/actions.ts",
+          "sha256": "19E6F50D23614D27E0241AAD544D0BBEB8B39C38306810A50219FD18DDEE1091"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/copy.ts",
+          "sha256": "01DD8C9AD97FC8D83F84C7EA21DD314283C6EEAC8586852A63565853DC669942"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/first-ideas-panel.tsx",
+          "sha256": "4F5D64A801C7FBBA58AC7330C6D448B2387CE673ED0484896B27BE813F1D64F3"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/page.tsx",
+          "sha256": "DB03072EDD6F5D5547AF85DEBA63CB5047C8B00D4DC0C6E3639C45B2CA045D32"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/onboarding-view.tsx",
+          "sha256": "A71B152F365C8354EBAC55141F6C27930BFE2B9FF0B953502F0E8C73D8EDBB46"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/page.tsx",
+          "sha256": "7C7C1DE74180BD75E1252B2EADEC826356BB8C70E3D23C27BBC21B94206206E4"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-copy.ts",
+          "sha256": "AD63333D6D6231A63AD22AC56DD8EBF75369F8026C92842E412F63854D637D22"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-outcome.tsx",
+          "sha256": "2953B1585A6B40C183D2A5084332285247B706F33AC98185FED817A250CB76EF"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-state.ts",
+          "sha256": "A631D4697D48013EE906F4772AF7AB0C88C6D2CA6120C2C60F2EAD5C4DD37093"
+        },
+        {
+          "path": "respin/app/(product)/results/page.tsx",
+          "sha256": "96C49978E119D23E7B5553F4A7EBB3792D2856F09FC6900ABCB088FF90F194D9"
+        },
+        {
+          "path": "respin/app/(product)/studio/copy.ts",
+          "sha256": "274270A9FFD02AA41E6302994DFB92C65CDE720850D79AC2F2529F7625DFE0D1"
+        },
+        {
+          "path": "respin/app/(product)/studio/generation-outcome.tsx",
+          "sha256": "A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE"
+        },
+        {
+          "path": "respin/app/(product)/studio/page.tsx",
+          "sha256": "643841A3D99432173AA4F9B19F0E85D882AB11D56AE9DB937986560A6FB34EE7"
+        },
+        {
+          "path": "respin/app/(product)/studio/run-copy.ts",
+          "sha256": "E02082BC23C3431D76D628E0C66C494AFB9619B6E4D322461ECADE21E427F7D3"
+        },
+        {
+          "path": "respin/app/(product)/studio/studio-panel.tsx",
+          "sha256": "50F60C547088C4C905136A63CC81F3AD811E10190777AE44B1D625DE656BE42C"
+        },
+        {
+          "path": "respin/app/(product)/studio/studio-view.tsx",
+          "sha256": "719D1CC92039DE15CD0BA6B489CFE51FE457043CC280C97651E41DA9DC551F55"
+        },
+        {
+          "path": "respin/app/(product)/trends/page.tsx",
+          "sha256": "8AB7F7949670E347AE6BB97EEE7CDCDBA8487645A2A0E349882613C7BB3F19AC"
+        },
+        {
+          "path": "respin/app/(product)/trends/track-niche-panel.tsx",
+          "sha256": "E3B79A6D9C74C05DDB42C3AAF1386EC5020902F18DA9FD02359167E7B03DE5D5"
+        },
+        {
+          "path": "respin/e2e/journeys/solo-creator.spec.ts",
+          "sha256": "9D45CED0CD27628EDD534D74DBFEDD76E1BE34C3779081F23D4E1F272F7E3298"
+        },
+        {
+          "path": "respin/e2e/support/auth.ts",
+          "sha256": "4FE2775C9768A47DEC3866502572DF87F3F395C845E04DEA3727E5717BD8E2DA"
+        },
+        {
+          "path": "respin/packages/credits/src/app-server.ts",
+          "sha256": "EE75017589130BE510E61DCB57AE9F9C900E9B96DBF996A19B0994BABDFF9E8A"
+        },
+        {
+          "path": "respin/packages/credits/tests/voice-build-tolerance.test.ts",
+          "sha256": "EFABBFE7EB8055F2D54D7AB2FBE790741030F5AF2EEAAFB5205FB7D9AACEFDE5"
+        },
+        {
+          "path": "respin/packages/db/src/app-server.ts",
+          "sha256": "6A4EAA922F2CA5701D5F24578628935195619F7D0BEB01C56908480F3B60F4C4"
+        },
+        {
+          "path": "respin/packages/db/src/index.ts",
+          "sha256": "94DDB5EB058132DA599B9BE18CBAB612FE0DF874BC5CE1AD1FF0E45AC32CA740"
+        },
+        {
+          "path": "respin/packages/db/src/with-workspace.ts",
+          "sha256": "304AE2C8A0D4725480A60A2826EA699EDDFD6D5BB3E2183551635D8676400AAC"
+        },
+        {
+          "path": "respin/packages/db/tests/profile-scope.test.ts",
+          "sha256": "5921347CBC7EBCB56CDBD6811B7D028E0FDB2218C8A4A275648C219843AAE69C"
+        },
+        {
+          "path": "respin/packages/llm/src/assemble.ts",
+          "sha256": "ED42B7FB1A5D9FF12D1D4A563FCC21F478CFD46591BEC473995B2F773BC71387"
+        },
+        {
+          "path": "respin/packages/llm/src/index.ts",
+          "sha256": "4C1F283E8A4BAC2BC3BB3084D542E2FDC7B76811D5B191CC71C0464E38EBF863"
+        },
+        {
+          "path": "respin/packages/llm/tests/assemble-kinds.test.ts",
+          "sha256": "E15C2B5831062126101D799F54F24309BEACE12BF2B12FB48EDC1D465714311F"
+        },
+        {
+          "path": "respin/tests/auth-form.test.tsx",
+          "sha256": "12706D709B9DAAEF3B5817E33DC42B5F8A51B1B2A4996D97262E50A002AE9755"
+        },
+        {
+          "path": "respin/tests/brain-ui.test.tsx",
+          "sha256": "61F88B280CCC1CEFA45DC1E9437643BB57F75D0F7973D6B7881C6BB9B7638946"
+        },
+        {
+          "path": "respin/tests/claims-vocabulary-agreement.test.ts",
+          "sha256": "8719EE91BA2A2B2E17930704ACDC6EDDFF1C0935C6630647F9363BF006CC67F0"
+        },
+        {
+          "path": "respin/tests/first-ideas-ui.test.tsx",
+          "sha256": "2AA1C5B5D9826EDD14958C12358F1BCEEFA5A50FC9B2D2AE734E388D5354BBD3"
+        },
+        {
+          "path": "respin/tests/first-login-pages.test.tsx",
+          "sha256": "682FBE417E76B3F7B3FDD4835AB45C3A3BBC6758BC81C0D461C82224EA0A6EF1"
+        },
+        {
+          "path": "respin/tests/onboarding-refusal-log.test.ts",
+          "sha256": "AB7AD4FE4EBB1055FB3B06BA790DDE6F22FC3664E45CB2C1EC15858A071E2012"
+        },
+        {
+          "path": "respin/tests/onboarding-ui.test.tsx",
+          "sha256": "98CC206F4C0397DE3E565DCB091E8E02F7ADC5E512405222FF2C91C049D3DC9A"
+        },
+        {
+          "path": "respin/tests/page-wiring.test.tsx",
+          "sha256": "57CF46CBA25C1DDA7E95C50BDB5F0B96DB39CF92674933E0F096E9A8B1975A71"
+        },
+        {
+          "path": "respin/tests/profile-cage.test.ts",
+          "sha256": "CFC03816DFCF31CC002509C5B6DA760EA46B78EBE21FF6DCAFDBE97A8FB7D85A"
+        },
+        {
+          "path": "respin/tests/results-page-wiring.test.tsx",
+          "sha256": "6734E5705753EEC792CC5D299D66901A6F170BC3CB68181A8F44D133DBFEE435"
+        },
+        {
+          "path": "respin/tests/selected-profile-pages.test.tsx",
+          "sha256": "294A0BAF8289FFD99AD94875BD630DF3C0E4C570ADBC808992ED126D756F932D"
+        },
+        {
+          "path": "respin/tests/studio-ui.test.tsx",
+          "sha256": "B0E7C1B5691FD38473D31460ACA6E407C54C20F096D8BBE047A6FD6462C3703D"
+        },
+        {
+          "path": "respin/tests/trends-niche-ui.test.tsx",
+          "sha256": "A9646DA67E881F17DFC5E09F53A8233DA56B5C41623615D9C1C7F094D14C2E0E"
+        },
+        {
+          "path": "respin/tests/trends-page.test.tsx",
+          "sha256": "E1DBDE3B01DED5256C8CBCCA7A0D275147EAD29939440A14FCBEEF17AD1C2954"
+        }
+      ]
+    },
+    {
+      "phase": "creator-ready Phase1 / service-quality Phase1",
+      "batch": 3,
+      "base": "79de2dbb14944f2f3089c621dc8bc9d31e0c1882",
+      "checkpoint": "Explicitly waived by owner; no new stash or commit",
+      "contract": "docs/plans/respin-service-quality-phase-1.md",
+      "contractSha256": "76C5DB33E0DA2BE2701046162E8B8FA6124302748DABA128C7DD724140C85326",
+      "lockfileSha256": "54E684B5E9EB581775FA2F0841110674CA4E3444937E7D4BF9B18A0A8483BD4D",
+      "validation": "docs/progress/creator-ready/phase-1-execution.md#resumption-and-batch-3-schedule--2026-09-18",
+      "tests": "Fresh focused 286/286 (2 files); fresh typecheck/lint exit0. Retained live full suite 5354/5354 (235 files), not rerun this session.",
+      "mutations": [
+        "docs/progress/creator-ready/phase-1-mutations-core.txt",
+        "docs/progress/creator-ready/phase-1-mutations-presentation.txt"
+      ],
+      "limits": "Retained live journey and five screenshots available. Current Docker API access denied. bad_shape live observation unresolved. Independent cross-model Codex unavailable; manual evidence bridge.",
+      "repairPaths": [
+        "respin/packages/llm/tests/assemble-kinds.test.ts",
+        "respin/tests/studio-ui.test.tsx"
+      ],
+      "files": [
+        {
+          "path": "docs/initial/decisions.md",
+          "sha256": "9EEA2897C992A92E7D5B1348EBA13EAF3C65700E21EA1761DCE0BD5152931B7A"
+        },
+        {
+          "path": "respin/app/(auth)/auth-form.tsx",
+          "sha256": "DD352A537191A64A28791960FB4B6A0456706B039B0516DB7B93461D0A68441C"
+        },
+        {
+          "path": "respin/app/(product)/billing-errors.ts",
+          "sha256": "F0AE4A7AF8714BCA322435E51D028FD819E8F2B94BD675F4EA668450A9439374"
+        },
+        {
+          "path": "respin/app/(product)/brain/brain-view.tsx",
+          "sha256": "AE314058062943B8E5FF66901F4ACCDDB923AE80534F734EC071B30DCD391F93"
+        },
+        {
+          "path": "respin/app/(product)/nav.tsx",
+          "sha256": "E4D122BB7ACD472611DDECA2E48FDDA190658AC908BBEDC7A88C778D2331D05E"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/actions.ts",
+          "sha256": "19E6F50D23614D27E0241AAD544D0BBEB8B39C38306810A50219FD18DDEE1091"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/copy.ts",
+          "sha256": "01DD8C9AD97FC8D83F84C7EA21DD314283C6EEAC8586852A63565853DC669942"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/first-ideas-panel.tsx",
+          "sha256": "4F5D64A801C7FBBA58AC7330C6D448B2387CE673ED0484896B27BE813F1D64F3"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/first-ideas/page.tsx",
+          "sha256": "DB03072EDD6F5D5547AF85DEBA63CB5047C8B00D4DC0C6E3639C45B2CA045D32"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/onboarding-view.tsx",
+          "sha256": "A71B152F365C8354EBAC55141F6C27930BFE2B9FF0B953502F0E8C73D8EDBB46"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/page.tsx",
+          "sha256": "7C7C1DE74180BD75E1252B2EADEC826356BB8C70E3D23C27BBC21B94206206E4"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-copy.ts",
+          "sha256": "AD63333D6D6231A63AD22AC56DD8EBF75369F8026C92842E412F63854D637D22"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-outcome.tsx",
+          "sha256": "2953B1585A6B40C183D2A5084332285247B706F33AC98185FED817A250CB76EF"
+        },
+        {
+          "path": "respin/app/(product)/onboarding/run-state.ts",
+          "sha256": "A631D4697D48013EE906F4772AF7AB0C88C6D2CA6120C2C60F2EAD5C4DD37093"
+        },
+        {
+          "path": "respin/app/(product)/results/page.tsx",
+          "sha256": "96C49978E119D23E7B5553F4A7EBB3792D2856F09FC6900ABCB088FF90F194D9"
+        },
+        {
+          "path": "respin/app/(product)/studio/copy.ts",
+          "sha256": "274270A9FFD02AA41E6302994DFB92C65CDE720850D79AC2F2529F7625DFE0D1"
+        },
+        {
+          "path": "respin/app/(product)/studio/generation-outcome.tsx",
+          "sha256": "A706A13A6FB690F8916C7172FF9B18C2A736821FAE3A191B5ED0FABFF7DD65EE"
+        },
+        {
+          "path": "respin/app/(product)/studio/page.tsx",
+          "sha256": "643841A3D99432173AA4F9B19F0E85D882AB11D56AE9DB937986560A6FB34EE7"
+        },
+        {
+          "path": "respin/app/(product)/studio/run-copy.ts",
+          "sha256": "E02082BC23C3431D76D628E0C66C494AFB9619B6E4D322461ECADE21E427F7D3"
+        },
+        {
+          "path": "respin/app/(product)/studio/studio-panel.tsx",
+          "sha256": "50F60C547088C4C905136A63CC81F3AD811E10190777AE44B1D625DE656BE42C"
+        },
+        {
+          "path": "respin/app/(product)/studio/studio-view.tsx",
+          "sha256": "719D1CC92039DE15CD0BA6B489CFE51FE457043CC280C97651E41DA9DC551F55"
+        },
+        {
+          "path": "respin/app/(product)/trends/page.tsx",
+          "sha256": "8AB7F7949670E347AE6BB97EEE7CDCDBA8487645A2A0E349882613C7BB3F19AC"
+        },
+        {
+          "path": "respin/app/(product)/trends/track-niche-panel.tsx",
+          "sha256": "E3B79A6D9C74C05DDB42C3AAF1386EC5020902F18DA9FD02359167E7B03DE5D5"
+        },
+        {
+          "path": "respin/e2e/journeys/solo-creator.spec.ts",
+          "sha256": "9D45CED0CD27628EDD534D74DBFEDD76E1BE34C3779081F23D4E1F272F7E3298"
+        },
+        {
+          "path": "respin/e2e/support/auth.ts",
+          "sha256": "4FE2775C9768A47DEC3866502572DF87F3F395C845E04DEA3727E5717BD8E2DA"
+        },
+        {
+          "path": "respin/packages/credits/src/app-server.ts",
+          "sha256": "EE75017589130BE510E61DCB57AE9F9C900E9B96DBF996A19B0994BABDFF9E8A"
+        },
+        {
+          "path": "respin/packages/credits/tests/voice-build-tolerance.test.ts",
+          "sha256": "EFABBFE7EB8055F2D54D7AB2FBE790741030F5AF2EEAAFB5205FB7D9AACEFDE5"
+        },
+        {
+          "path": "respin/packages/db/src/app-server.ts",
+          "sha256": "6A4EAA922F2CA5701D5F24578628935195619F7D0BEB01C56908480F3B60F4C4"
+        },
+        {
+          "path": "respin/packages/db/src/index.ts",
+          "sha256": "94DDB5EB058132DA599B9BE18CBAB612FE0DF874BC5CE1AD1FF0E45AC32CA740"
+        },
+        {
+          "path": "respin/packages/db/src/with-workspace.ts",
+          "sha256": "304AE2C8A0D4725480A60A2826EA699EDDFD6D5BB3E2183551635D8676400AAC"
+        },
+        {
+          "path": "respin/packages/db/tests/profile-scope.test.ts",
+          "sha256": "5921347CBC7EBCB56CDBD6811B7D028E0FDB2218C8A4A275648C219843AAE69C"
+        },
+        {
+          "path": "respin/packages/llm/src/assemble.ts",
+          "sha256": "ED42B7FB1A5D9FF12D1D4A563FCC21F478CFD46591BEC473995B2F773BC71387"
+        },
+        {
+          "path": "respin/packages/llm/src/index.ts",
+          "sha256": "4C1F283E8A4BAC2BC3BB3084D542E2FDC7B76811D5B191CC71C0464E38EBF863"
+        },
+        {
+          "path": "respin/packages/llm/tests/assemble-kinds.test.ts",
+          "sha256": "F070192362085AFD743C098E12E388706CF85133EAA3F9AD84CB408C3D15E1BD"
+        },
+        {
+          "path": "respin/tests/auth-form.test.tsx",
+          "sha256": "12706D709B9DAAEF3B5817E33DC42B5F8A51B1B2A4996D97262E50A002AE9755"
+        },
+        {
+          "path": "respin/tests/brain-ui.test.tsx",
+          "sha256": "61F88B280CCC1CEFA45DC1E9437643BB57F75D0F7973D6B7881C6BB9B7638946"
+        },
+        {
+          "path": "respin/tests/claims-vocabulary-agreement.test.ts",
+          "sha256": "8719EE91BA2A2B2E17930704ACDC6EDDFF1C0935C6630647F9363BF006CC67F0"
+        },
+        {
+          "path": "respin/tests/first-ideas-ui.test.tsx",
+          "sha256": "2AA1C5B5D9826EDD14958C12358F1BCEEFA5A50FC9B2D2AE734E388D5354BBD3"
+        },
+        {
+          "path": "respin/tests/first-login-pages.test.tsx",
+          "sha256": "682FBE417E76B3F7B3FDD4835AB45C3A3BBC6758BC81C0D461C82224EA0A6EF1"
+        },
+        {
+          "path": "respin/tests/onboarding-refusal-log.test.ts",
+          "sha256": "AB7AD4FE4EBB1055FB3B06BA790DDE6F22FC3664E45CB2C1EC15858A071E2012"
+        },
+        {
+          "path": "respin/tests/onboarding-ui.test.tsx",
+          "sha256": "98CC206F4C0397DE3E565DCB091E8E02F7ADC5E512405222FF2C91C049D3DC9A"
+        },
+        {
+          "path": "respin/tests/page-wiring.test.tsx",
+          "sha256": "57CF46CBA25C1DDA7E95C50BDB5F0B96DB39CF92674933E0F096E9A8B1975A71"
+        },
+        {
+          "path": "respin/tests/profile-cage.test.ts",
+          "sha256": "CFC03816DFCF31CC002509C5B6DA760EA46B78EBE21FF6DCAFDBE97A8FB7D85A"
+        },
+        {
+          "path": "respin/tests/results-page-wiring.test.tsx",
+          "sha256": "6734E5705753EEC792CC5D299D66901A6F170BC3CB68181A8F44D133DBFEE435"
+        },
+        {
+          "path": "respin/tests/selected-profile-pages.test.tsx",
+          "sha256": "294A0BAF8289FFD99AD94875BD630DF3C0E4C570ADBC808992ED126D756F932D"
+        },
+        {
+          "path": "respin/tests/studio-ui.test.tsx",
+          "sha256": "A123759A1F8224F67026EC229C871EE33FC9D68810121BC50665B70E9E9CC417"
+        },
+        {
+          "path": "respin/tests/trends-niche-ui.test.tsx",
+          "sha256": "A9646DA67E881F17DFC5E09F53A8233DA56B5C41623615D9C1C7F094D14C2E0E"
+        },
+        {
+          "path": "respin/tests/trends-page.test.tsx",
+          "sha256": "E1DBDE3B01DED5256C8CBCCA7A0D275147EAD29939440A14FCBEEF17AD1C2954"
+        }
+      ]
+    }
+  ]
+}
