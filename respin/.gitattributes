@@ -1,0 +1,33 @@
+# Byte-pin every file a source scanner reads.
+#
+# `.cjs` is here because tests/support/app-surface.ts declares it scannable,
+# and `.sql` because the lifecycle/deletion registry scanners read the
+# migrations (54 of 62 are CRLF in the worktree today). Both were missing
+# while this file claimed to cover "every file a source scanner reads".
+#
+# This project's scanners match multi-line source literals — the catch scan in
+# tests/action-gate.test.ts, the null-mapping pin in tests/shell-rail.test.tsx,
+# the route and label pins in tests/page-wiring.test.tsx, the bootstrap pin in
+# tests/theme.test.ts. `core.autocrlf` is true on this machine, so without an
+# attribute those files' worktree bytes are not the bytes git stores, and any
+# operation that re-materialises them — a stash apply, a checkout, a branch
+# switch, a merge, even an editor save — can flip the line endings underneath a
+# scanner. A positive match then goes red on a phantom change, and a negative
+# match goes silently GREEN on a real violation.
+#
+# CLAUDE.md records this twice (2026-09-04, recurred 2026-09-18) and names the
+# only two acceptable remedies: pin the bytes here, or normalise \r\n inside
+# every scanner. A note to re-check is explicitly not one of them. The repo root
+# already pins *.sh, *.md and *.json; the phase-1 reviewer gate found that the
+# TypeScript, CSS and SVG this workspace scans were never covered.
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.mts   text eol=lf
+*.cts   text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.sql   text eol=lf
+*.css   text eol=lf
+*.svg   text eol=lf
