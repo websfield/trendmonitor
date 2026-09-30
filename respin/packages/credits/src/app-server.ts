@@ -87,7 +87,11 @@ import {
   getAutoTopupProtocolState,
   type AutoTopupProtocolState,
 } from "./stripe/auto-topup-rollout";
-import { TierCheckoutRolloutError } from "./stripe/tier-checkout-rollout";
+import {
+  getTierCheckoutProtocolState,
+  TierCheckoutRolloutError,
+  type TierCheckoutProtocolState,
+} from "./stripe/tier-checkout-rollout";
 import { TierCheckoutAuthorityError } from "./stripe/tier-checkout-authority";
 import { CustomerMappingLostError } from "./stripe/customers";
 import { createProfile } from "./profiles";
@@ -217,6 +221,14 @@ export type { BurnPeriod, BurnPeriodKind, BurnPeriodTier } from "./burn-period";
 // Pure, and the ONLY route from `app/**` to `MODE_SPECS[…].label` — see
 // `mode-label.ts` for why the label does not live in the view.
 export { modeLabel } from "./mode-label";
+// P1-R1 (audit R3-1) — THE DISCLOSURE SUBSTITUTION, here for the same reason
+// `modeLabel` one line up is: `@respin/modes` is denied to `app/**`, so a
+// screen cannot reach a generation's output units or its disclosure directly.
+// Pure, no query. `PresentedDisclosure` is the facade's OWN type (kind only, no
+// text member), not a re-export of a modes type, so a screen can name it
+// without crossing the boundary the eslint rule draws.
+export { presentedDisclosure, presentedTextUnits } from "./presented-output";
+export type { PresentedDisclosure } from "./presented-output";
 // Slice 7, R1/R13/R14 (stage D) — THE MODE PICKER'S DATA, and it is here for
 // the reason `modeLabel` one line up is: `@respin/modes` is denied to `app/**`
 // (R-64), so a screen cannot read `IMPLEMENTED_MODES`, and `mode-access.ts`
@@ -470,6 +482,7 @@ export type {
   // method — a params type for a call app/** can no longer make.
   RunInferenceResult,
   AutoTopupProtocolState,
+  TierCheckoutProtocolState,
 };
 
 export const respinCredits = {
@@ -477,6 +490,19 @@ export const respinCredits = {
    * preference staged during expansion/drain. */
   getAutoTopupProtocolState: (): Promise<AutoTopupProtocolState> =>
     getAutoTopupProtocolState(getServerDb()),
+  /**
+   * The v1 tier-checkout rollout state.
+   *
+   * A SECOND FENCE, AND A SEPARATE ONE (batch-5 billing gate). Both
+   * `createTierCheckoutUrl` and `createPackCheckoutUrl` call
+   * `assertTierCheckoutProtocolActive` BEFORE they consult the auto-top-up
+   * rollout, and the two rollouts live in different tables with different
+   * revisions. They are both seeded `expanded` today, which is exactly why
+   * a screen must not read one as a proxy for the other: the day an
+   * operator activates one, the proxy silently starts lying.
+   */
+  getTierCheckoutProtocolState: (): Promise<TierCheckoutProtocolState> =>
+    getTierCheckoutProtocolState(getServerDb()),
   /**
    * Slice 1's profile creation. On THIS facade rather than on `respinDb`, and
    * the reason is the layering R-30 constraint 2 fixes: the cap is priced off

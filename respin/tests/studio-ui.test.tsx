@@ -39,6 +39,7 @@ import {
   PERFORMANCE_CLAIMS,
   STUDIO_POSITIVE_ASSERTIONS,
 } from "./support/forbidden-claims";
+import { claimHits, specimensFor } from "./support/claim-scan";
 import {
   GENERATION_SCREEN_DIRS,
   STREAM_SHAPES,
@@ -1208,17 +1209,16 @@ describe("REQ-I04/REQ-I05: what the draft says about itself reaches the creator"
       "What the draft says about itself",
     ];
     for (const text of ours) {
-      for (const [label, re] of [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS]) {
-        expect(text.toLowerCase(), `"${label}" in /studio's own claims copy`).not.toMatch(re);
-      }
+      expect(
+        claimHits(text, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS),
+        `/studio's own claims copy: ${text}`
+      ).toEqual([]);
     }
     // NON-VACUITY: the same loop catches a planted sentence, so a scan over an
     // accidentally-empty list would be visible.
     expect(
-      [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS].some(([, re]) =>
-        re.test("this one will get more views, guaranteed")
-      )
-    ).toBe(true);
+      claimHits("this one will get more views, guaranteed", FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)
+    ).toEqual(expect.arrayContaining(["more views", "guarantee"]));
   });
 
 });
@@ -1379,12 +1379,7 @@ describe("R17: the creator is told when their OWN frameworks did not fit", () =>
     expect(text).toContain("curated library is offered first");
     expect(text).not.toContain("shared library was unaffected");
     // The whole canon, on a sentence that ships to a creator.
-    for (const [label, re] of FORBIDDEN_CLAIMS) {
-      expect(text, `"${label}" appears`).not.toMatch(re);
-    }
-    for (const [label, re] of PERFORMANCE_CLAIMS) {
-      expect(text, `"${label}" appears`).not.toMatch(re);
-    }
+    expect(claimHits(text, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toEqual([]);
   });
 
   it("the RESULT screen renders it, and only when there is something to say", () => {
@@ -2180,7 +2175,7 @@ describe("R20/R21: what /studio may and may not claim", () => {
     const planted = visibleCopy(
       renderView({ profileName: "We guarantee more views and it improves over time." })
     ).toLowerCase();
-    expect(FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toEqual(
+    expect(claimHits(planted, FORBIDDEN)).toEqual(
       expect.arrayContaining(["guarantee", "views", "improve"])
     );
   });
@@ -2191,7 +2186,7 @@ describe("R20/R21: what /studio may and may not claim", () => {
     ).toLowerCase();
     expect(planted).toContain("<p>this will go viral</p>");
     expect(planted).not.toContain("var x");
-    expect(FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toEqual(
+    expect(claimHits(planted, FORBIDDEN)).toEqual(
       expect.arrayContaining(["viral"])
     );
   });
@@ -3670,21 +3665,16 @@ describe("R10/R12: feedback is captured, and the screen says what it does NOT do
         feedbackRecordedSentence(c, false),
       ]),
     ];
-    for (const [label, pattern] of [
-      ...FORBIDDEN_CLAIMS,
-      ...PERFORMANCE_CLAIMS,
-    ] as [string, RegExp][]) {
-      for (const surface of surfaces) {
-        expect(
-          pattern.test(surface.toLowerCase()),
-          `${label} in: ${surface.slice(0, 80)}`
-        ).toBe(false);
-      }
+    for (const surface of surfaces) {
+      expect(
+        claimHits(surface, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS),
+        `in: ${surface.slice(0, 80)}`
+      ).toEqual([]);
     }
     // NON-VACUITY, per word: the specimen for each banned claim really matches
     // its own pattern, so a typo in one pattern cannot leave a word sayable.
-    for (const [label, pattern] of FORBIDDEN_CLAIMS) {
-      expect(pattern.test(CLAIM_SPECIMENS[label]), label).toBe(true);
+    for (const [label, specimen] of specimensFor(FORBIDDEN_CLAIMS)) {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS), label).toContain(label);
     }
   });
 

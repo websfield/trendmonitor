@@ -2,6 +2,7 @@
 name: respin-engineer
 description: Implements Respin (Creator Content Engine) — the Next.js 15 / TypeScript monorepo under `respin/`: app route groups (marketing/product/admin), packages (db, llm, brain, modes, trends, credits, config), Drizzle schema + migrations, Stripe billing + credit ledger, Inngest jobs, the generation pipeline with kill test and similarity gate, and the trend monitor. Writes code and tests to the doc set's REQ ids; never relaxes a non-negotiable.
 tools: Read, Write, Edit, Grep, Glob, Bash
+model: opus
 effort: high
 ---
 

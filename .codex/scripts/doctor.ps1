@@ -62,13 +62,16 @@ try {
     }
     Invoke-Diagnostic 'Codex routing configuration is exact' {
         $config = Get-Content -LiteralPath '.codex\config.toml' -Raw
+        # Asserted against the committed .codex/config.toml, which deliberately pins no top-level
+        # `model`/`model_reasoning_effort` ("Keep the main model selected in Codex", config.toml:11).
+        # The orchestrator's own model is therefore not a routing fact this check can state.
+        # `default_subagent_model` is matched with its key prefix: a bare `model = "..."` literal
+        # also matches inside `default_subagent_model = "..."` and would pass by accident.
         foreach ($pair in @(
-            @('model = "gpt-5.6-sol"', 'Sol orchestrator'),
-            @('model_reasoning_effort = "xhigh"', 'orchestrator effort'),
             @('hooks = true', 'hook feature'),
-            @('default_subagent_model = "gpt-5.6-terra"', 'default subagent'),
+            @('default_subagent_model = "gpt-5.6-sol"', 'default subagent'),
             @('default_subagent_reasoning_effort = "high"', 'default subagent effort'),
-            @('max_concurrent_threads_per_session = 4', 'thread ceiling')
+            @('max_concurrent_threads_per_session = 12', 'thread ceiling')
         )) { Assert-ContainsLiteral -Text $config -Expected $pair[0] -Label $pair[1] }
     }
     Invoke-Diagnostic 'Codex hooks are restored and point only to Codex hook scripts' {

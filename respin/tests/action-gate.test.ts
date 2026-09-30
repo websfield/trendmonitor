@@ -13,11 +13,12 @@
 //
 // Three levels, deliberately: the primitive, the two real actions, and a source
 // scan over every catch in app/** and lib/** so the NEXT one cannot regress.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { scratchDir } from "./support/scratch-dir";
+import ts from "typescript";
 import { notFound, redirect } from "next/navigation";
 import { rethrowNextControlFlow } from "../lib/next-control-flow";
 import { SCAN_ROOTS, blankComments, walkCodeFiles } from "./support/app-surface";
@@ -159,39 +160,78 @@ describe("the billing server actions propagate their gate's refusal", () => {
  * A binding-less `catch {` is reported too: it cannot re-throw what it cannot
  * name, so it may not exist in this tree.
  *
- * The walk and the comment blanking come from `./support/app-surface`, shared
+ * The walk comes from `./support/app-surface`, shared
  * with gate-completeness.test.ts (round-3 meta-finding): this file used to
  * define its own `SCAN_ROOTS = ["app","lib"]` — one root short of the
  * import-boundary suite's, so a swallowing catch in `middleware.ts` was
  * unscanned — and its own `CODE_FILE = /\.tsx?$/`, so a `.js`/`.jsx` file in
- * `app/` was unscanned too.
+ * `app/` was unscanned too. Syntax traversal ignores string contents while
+ * still visiting executable expressions inside template interpolations.
+ *
+ * The AST rewrite introduced two fail-OPEN holes that the regex did not have,
+ * both caught by the phase-1 gate and both fixed here. `ScriptKind` was picked
+ * with `endsWith("x")`, so `.js` — which `CODE_EXTENSIONS` includes and which
+ * Next accepts as a page — parsed as `ScriptKind.TS`, and TS cannot parse JSX:
+ * idiomatic React in a `.js` file yielded ZERO catches and three discarded
+ * parse errors. And `ts.createSourceFile` never throws, so any file the parser
+ * chokes on was scanned as clean. `scriptKindFor` below maps every extension
+ * in `CODE_EXTENSIONS`, and an unparseable file is now an OFFENDER, not a pass:
+ * a scanner that did not read a file must say so rather than report success
+ * (the 2026-08-26 lesson). Both shapes are planted in the matrix below.
  */
+function scriptKindFor(file: string): ts.ScriptKind {
+  if (file.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (file.endsWith(".jsx") || file.endsWith(".js") || file.endsWith(".mjs") || file.endsWith(".cjs")) return ts.ScriptKind.JSX;
+  return ts.ScriptKind.TS;
+}
+
 export function findSwallowingCatches(root: string): string[] {
   const offenders: string[] = [];
   for (const file of walkCodeFiles(root)) {
-    const src = blankComments(readFileSync(file, "utf8"));
+    const src = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true,
+      scriptKindFor(file));
     const rel = relative(root, file).split(sep).join("/") || basename(file);
-    const re = /\bcatch\s*(?:\(\s*([A-Za-z_$][\w$]*)[^)]*\)\s*)?\{/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(src)) !== null) {
-      const binding = m[1];
-      const body = src.slice(m.index + m[0].length);
-      if (!binding) {
-        offenders.push(`${rel}: catch with no binding cannot re-throw`);
-        continue;
-      }
-      const first = body.replace(/^\s+/, "");
-      if (!first.startsWith(`rethrowNextControlFlow(${binding})`)) {
-        offenders.push(
-          `${rel}: catch (${binding}) does not re-throw Next control flow first`
-        );
-      }
+    // A truncated tree hides every catch below the syntax error. Report the
+    // file instead of silently scanning nothing.
+    const parseErrors = (src as unknown as { parseDiagnostics?: readonly unknown[] }).parseDiagnostics;
+    if (parseErrors && parseErrors.length > 0) {
+      offenders.push(`${rel}: did not parse — the catch scan is not evidence for this file`);
+      continue;
     }
+    function visit(node: ts.Node): void {
+      if (ts.isCatchClause(node)) {
+        const name = node.variableDeclaration?.name;
+        if (!name || !ts.isIdentifier(name)) {
+          offenders.push(`${rel}: catch with no binding cannot re-throw`);
+        } else {
+          const first = node.block.statements[0];
+          const call = first && ts.isExpressionStatement(first) && ts.isCallExpression(first.expression)
+            ? first.expression : undefined;
+          if (!call || !ts.isIdentifier(call.expression) || call.expression.text !== "rethrowNextControlFlow"
+            || call.arguments.length !== 1 || !ts.isIdentifier(call.arguments[0]) || call.arguments[0].text !== name.text) {
+            offenders.push(`${rel}: catch (${name.text}) does not re-throw Next control flow first`);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(src);
   }
   return offenders;
 }
 
 describe("no catch in app/, lib/ or middleware.ts can swallow a Next signal (source scan)", () => {
+  it("ignores quoted code but still detects a swallowing catch inside a template interpolation", () => {
+    const root = scratchDir("respin-catch-literals-");
+    writeFileSync(join(root, "literals.ts"), [
+      'export const text = "try {} catch {}";',
+      'export const template = `example catch {}`;',
+      'export const active = `prefix ${(() => { try { f(); } catch (err) { handle(err); } })()}`;',
+    ].join("\n"));
+    expect(findSwallowingCatches(root)).toEqual([
+      "literals.ts: catch (err) does not re-throw Next control flow first",
+    ]);
+  });
   it("every catch re-throws control flow as its FIRST statement", () => {
     const offenders = SCAN_ROOTS.flatMap((r) =>
       findSwallowingCatches(resolve(respinRoot, r))
@@ -212,6 +252,28 @@ describe("no catch in app/, lib/ or middleware.ts can swallow a Next signal (sou
       .join("\n")
       .match(/\bcatch\s*\(/g);
     expect(catchCount?.length ?? 0).toBeGreaterThan(8);
+    // The count above is a REGEX over the same files — it cannot tell whether
+    // findSwallowingCatches itself read anything, so a scanner that saw zero
+    // catch clauses used to leave this test green (phase-1 gate, BLOCK). Count
+    // what the REAL function's own parser sees, and require it to agree.
+    const astCatches = seen.reduce((total, f) => {
+      const src = ts.createSourceFile(f, readFileSync(f, "utf8"), ts.ScriptTarget.Latest, true, scriptKindFor(f));
+      expect(
+        (src as unknown as { parseDiagnostics?: readonly unknown[] }).parseDiagnostics ?? [],
+        `${f} does not parse under the ScriptKind the scanner picks — every catch below the error is invisible to it`
+      ).toEqual([]);
+      let count = 0;
+      const visit = (node: ts.Node): void => {
+        if (ts.isCatchClause(node)) count += 1;
+        ts.forEachChild(node, visit);
+      };
+      visit(src);
+      return total + count;
+    }, 0);
+    expect(
+      astCatches,
+      "the scanner's own AST walk must see the catches the regex sees — if this is 0 while the regex count is not, the scan is vacuous"
+    ).toBeGreaterThan(8);
   });
 
   it("PLANTED SHAPES: the REAL findSwallowingCatches reports every swallow, in every extension it must scan", () => {
@@ -220,7 +282,7 @@ describe("no catch in app/, lib/ or middleware.ts can swallow a Next signal (sou
     // comparison shipped silently — an in-memory mutation making
     // findSwallowingCatches return [] unconditionally left this 7/7 GREEN
     // (round-3 CHANGE 2). This writes a tree and runs the real function.
-    const root = mkdtempSync(join(tmpdir(), "respin-catch-"));
+    const root = scratchDir("respin-catch-");
     const write = (p: string, body: string) => {
       const full = join(root, ...p.split("/"));
       mkdirSync(dirname(full), { recursive: true });
@@ -235,6 +297,27 @@ describe("no catch in app/, lib/ or middleware.ts can swallow a Next signal (sou
     // ...and the extensions the old `/\.tsx?$/` filter skipped entirely.
     write("legacy.js", "const d = () => { try { f(); } catch (err) { console.error(err); } };\n");
     write("legacy.jsx", "const e = () => { try { f(); } catch (err) { console.error(err); } };\n");
+    // .mjs/.cjs — absent from CODE_EXTENSIONS until batch 1, so nothing walked
+    // them and a swallowing catch here was never reported by any scanner.
+    write("esm.mjs", "export const m = () => { try { f(); } catch (err) { console.error(err); } };\n");
+    write("cjs.cjs", "const n = () => { try { f(); } catch (err) { console.error(err); } };\n");
+    // JSX inside a `.js` file. Next accepts `.js` as a page extension and
+    // `CODE_EXTENSIONS` includes it, but `endsWith("x")` sent it to
+    // ScriptKind.TS, which cannot parse JSX: this exact shape returned ZERO
+    // catches and three discarded parse errors (phase-1 gate, BLOCK). The
+    // JSX-free `legacy.js` above passes either way, so it never covered this.
+    write(
+      "jsx-in-js.js",
+      "export default function P({ items }) {\n" +
+        "  return <ul>{items.map((i) => { try { return <li>{i}</li>; } catch (err) { log(err); } })}</ul>;\n" +
+        "}\n"
+    );
+    // A file the parser cannot lex. `ts.createSourceFile` never throws, so this
+    // used to be scanned as clean; it must now name itself instead.
+    write(
+      "unlexable.ts",
+      "export const s = `unterminated\nexport const t = () => { try { f(); } catch (err) { console.error(err); } };\n"
+    );
     // The COMPLIANT shape, which must NOT be reported (not a blanket ban).
     write(
       "good.ts",
@@ -245,10 +328,14 @@ describe("no catch in app/, lib/ or middleware.ts can swallow a Next signal (sou
 
     expect(findSwallowingCatches(root).sort()).toEqual([
       "bare.ts: catch (err) does not re-throw Next control flow first",
+      "cjs.cjs: catch (err) does not re-throw Next control flow first",
       "commentfirst.ts: catch (e) does not re-throw Next control flow first",
+      "esm.mjs: catch (err) does not re-throw Next control flow first",
+      "jsx-in-js.js: catch (err) does not re-throw Next control flow first",
       "legacy.js: catch (err) does not re-throw Next control flow first",
       "legacy.jsx: catch (err) does not re-throw Next control flow first",
       "nested/nobinding.tsx: catch with no binding cannot re-throw",
+      "unlexable.ts: did not parse — the catch scan is not evidence for this file",
     ]);
   });
 });

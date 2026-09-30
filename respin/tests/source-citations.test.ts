@@ -32,38 +32,15 @@
 // `tests/symbol-citations.test.ts`, built the same way and measured the same
 // way; the two are siblings, not one file, because their populations and
 // their false-positive filters are different.
-import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { ROOT_DIRS, sourceFilesUnder } from "./support/source-files";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/**
- * The trees scanned, as a LIST.
- *
- * A population written as one path narrows silently the day a second appears
- * (CLAUDE.md 2026-08-29), so adding a tree is a deliberate edit here.
- *
- * THESE FIVE TREES ARE NOT THE WHOLE POPULATION, AND SAYING SO WAS THIS FILE'S
- * OWN INSTANCE OF THE LESSON IT CITES (billing gate round 2, 2026-09-02). The
- * docblock claimed they were "every tree that holds hand-written TypeScript in
- * this workspace" — and `middleware.ts`, `next.config.ts` and
- * `vitest.config.ts` sit at the workspace ROOT, in no tree at all. That was
- * not hypothetical: `vitest.config.ts` carries a paragraph that exists BECAUSE
- * an earlier version of it cited a key that does not exist, i.e. a live
- * instance of this class sitting outside the guard written to close it. The
- * root files are scanned by `rootSources` below; the population is these
- * trees PLUS that one non-recursive pass.
- */
-const SCANNED_ROOTS: readonly string[] = [
-  "packages",
-  "app",
-  "tests",
-  "lib",
-  "scripts",
-];
 
 /**
  * Root-level files that are GENERATED, not hand-written.
@@ -74,14 +51,6 @@ const SCANNED_ROOTS: readonly string[] = [
  * so a hand-written declaration file at the root would still be scanned.
  */
 const SKIP_ROOT_FILES = new Set(["next-env.d.ts"]);
-
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".next",
-  "dist",
-  "coverage",
-  "migrations",
-]);
 
 /**
  * Citations this pass did NOT fix, each with its owner and the reason.
@@ -217,68 +186,21 @@ function resolves(
   return pkg !== null && existsSync(join(ROOT, pkg, citation.cited));
 }
 
-function sources(dir: string, acc: Map<string, string> = new Map()) {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return acc;
-    throw err;
-  }
-  for (const name of entries) {
-    if (SKIP_DIRS.has(name)) continue;
-    const full = join(dir, name);
-    let entry;
-    try {
-      entry = statSync(full);
-    } catch (err) {
-      // Sibling suites write and delete probe files and vitest runs files in
-      // parallel — the reason `table-writers.test.ts` swallows ENOENT and
-      // nothing else.
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw err;
-    }
-    if (entry.isDirectory()) sources(full, acc);
-    else if (/\.(ts|tsx)$/.test(name)) {
-      try {
-        acc.set(relative(ROOT, full).split(sep).join("/"), readFileSync(full, "utf8"));
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw err;
-      }
-    }
-  }
-  return acc;
-}
 
-/**
- * The workspace root's OWN TypeScript files, NON-RECURSIVELY.
- *
- * Non-recursive because the directories below the root are either already in
- * `SCANNED_ROOTS` or deliberately skipped (`node_modules`, `.next`), and a
- * recursive pass here would silently re-scan both.
- */
-function rootSources(acc: Map<string, string>): Map<string, string> {
-  for (const name of readdirSync(ROOT)) {
-    if (SKIP_ROOT_FILES.has(name)) continue;
-    if (!/\.(ts|tsx)$/.test(name)) continue;
-    const full = join(ROOT, name);
-    try {
-      if (!statSync(full).isFile()) continue;
-      acc.set(name, readFileSync(full, "utf8"));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw err;
-    }
-  }
-  return acc;
-}
-
-const allSources = () => {
-  const acc = new Map<string, string>();
-  for (const root of SCANNED_ROOTS) sources(join(ROOT, root), acc);
-  return rootSources(acc);
-};
+// THE SHARED ROOT LIST, AND ITS OWN ROOT-LEVEL PASS (P1-R3). This scan read
+// five of the seven roots — `worker` and `e2e` were absent, with no reason a
+// citation scan should skip the worker — and hand-rolled the non-recursive
+// root-level pass that `sourceFilesUnder` already makes. `ROOT_DIRS` is
+// asserted against disk in `claim-scan.test.ts`, so the population is a
+// measurement rather than five names somebody typed.
+const allSources = () =>
+  new Map(
+    sourceFilesUnder(ROOT_DIRS)
+      // Generated root files are still skipped BY NAME, one at a time, so a
+      // hand-written declaration file at the root is still scanned.
+      .filter(({ file }) => !SKIP_ROOT_FILES.has(file))
+      .map(({ file, text }): [string, string] => [file, text])
+  );
 
 describe("the citation scan is not vacuous", () => {
   const basenames = new Set(
@@ -352,8 +274,8 @@ describe("the citation scan is not vacuous", () => {
 
   it("THE POPULATION really includes the workspace ROOT (billing gate round 2)", () => {
     // The five trees are not the whole population, and the docblock used to
-    // say they were. Read from the real tree: if `rootSources` stops running,
-    // or the root files move, this fails rather than the guard silently
+    // say they were. Read from the real tree: if the root-level pass stops
+    // running, or the root files move, this fails rather than the guard silently
     // narrowing back to where it started.
     const files = allSources();
     for (const rootFile of ["middleware.ts", "next.config.ts", "vitest.config.ts"]) {

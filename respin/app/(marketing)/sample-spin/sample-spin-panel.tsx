@@ -13,6 +13,7 @@
 import { useId, useRef, useState } from "react";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { buttonClass } from "../../ui/button";
+import { SAMPLE_SPIN_RETENTION } from "./disclosure";
 
 export type SampleSpinOriginal = Readonly<{ title: string; lines: readonly string[] }>;
 
@@ -104,7 +105,7 @@ export function SampleSpinPanel({ original, maxCodePoints }: { original: SampleS
             ) : (
               <form className="sample-spin-form" onSubmit={submit}>
                 <label htmlFor={ideaId} className="sample-spin-label">
-                  Type an idea for the sample creator, a chair restorer. Nothing you type is kept.
+                  Type an idea for the sample creator, a chair restorer. {SAMPLE_SPIN_RETENTION}
                 </label>
                 <textarea
                   id={ideaId}
@@ -143,7 +144,7 @@ export function SampleSpinPanel({ original, maxCodePoints }: { original: SampleS
         </div>
         <div className="demo-foot">
           <span>
-            SAMPLE SPIN &middot; FICTIONAL SAMPLE BRAIN AND REFERENCE &middot; THE PRODUCTION ANALYSE-AND-SPIN PIPELINE &middot; EVERY MODEL CALL METERED &middot; NOTHING YOU TYPE IS KEPT &middot; DISCLOSURE: CHECK YOUR PLATFORM&rsquo;S CURRENT POLICY BEFORE POSTING
+            SAMPLE SPIN &middot; FICTIONAL SAMPLE BRAIN AND REFERENCE &middot; THE PRODUCTION ANALYSE-AND-SPIN PIPELINE &middot; EVERY MODEL CALL METERED &middot; NOTHING YOU TYPE IS KEPT HERE, THOUGH IT DOES GO TO A THIRD-PARTY MODEL PROVIDER &middot; DISCLOSURE: CHECK YOUR PLATFORM&rsquo;S CURRENT POLICY BEFORE POSTING
           </span>
         </div>
       </div>

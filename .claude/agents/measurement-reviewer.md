@@ -2,6 +2,7 @@
 name: measurement-reviewer
 description: Read-only reviewer for any diff touching metrics, engagement rates, creator baselines, provenance, calibration, the eval plan, holdout splits, the trend subsystem, or VPS/AWS composition. Verifies provenance labelling, the denominator rule, median/MAD statistics, temporal holdouts, calibration-window resets, and that trends never enter VPS. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

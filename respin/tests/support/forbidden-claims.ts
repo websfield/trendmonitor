@@ -320,6 +320,118 @@ export const NOT_BUILT_YET: readonly ForbiddenClaim[] = [
 ];
 
 /**
+ * Additional bans for the MARKETING surfaces, which sell to a visitor who has
+ * no account and therefore no way to check.
+ *
+ * SEPARATE FROM THE CANON for a structural reason, not an editorial one.
+ * `PERFORMANCE_CLAIMS` is bound id-for-id and source-for-source to
+ * `packages/modes/src/claims.ts`' `performance` family, asserted from both
+ * sides by `tests/claims-vocabulary-agreement.test.ts`; adding a pattern there
+ * changes the scanner that reads MODEL-AUTHORED text on `/studio`, which is a
+ * different Critical Path. A word that is only dangerous in a sales sentence
+ * belongs here, where the marketing scan is its one reader.
+ *
+ * THIS LIST WAS BUILT FROM ONE CITATION AND WAS IMMEDIATELY NON-DISCRIMINATING
+ * AGAINST ITS OWN CLASS (batch-3 gate, 2026-09-20). Its first version held one
+ * entry, `proven`, taken from the single sentence a reviewer had quoted. The
+ * landing FOOTER — rendered on all four marketing routes — said "built on
+ * mechanisms that perform", and the site-wide `metadata.description` said the
+ * same; the scan rendered both and returned clean, measured with controls. The
+ * identical string had ALREADY been recorded as HIGH the previous day (audit
+ * 2026-09-19 D6, remediation P6-R5) and the list was written without reading
+ * it. That is CLAUDE.md 2026-07-30 in its recorded shape: fix the CLASS, not
+ * the field — "grep every sibling id" is the version of this rule that already
+ * failed. So the entries below name the SHAPES a sales page uses to assert
+ * measured performance.
+ *
+ * WHAT THIS LIST IS, CORRECTED (2026-09-20, remediation P1-R4). The paragraph
+ * above used to end "and are derived from the marketing vocabulary rather than
+ * from what a reviewer happened to cite", and `decisions.md` R-131 said the
+ * same. THAT WAS NOT TRUE and the correction is the point of this block: the
+ * three entries are three morphological variants of the two sentences the
+ * batch-3 reviewer quoted, and nothing about them was derived from a read of
+ * the marketing surface. Measured rather than argued — 17 plausible sales
+ * sentences run through `FORBIDDEN_CLAIMS` + `PERFORMANCE_CLAIMS` +
+ * `MARKETING_CLAIMS` on 2026-09-20: **17 of 17 pass**, including
+ * "Audiences punish it.", which was live on all four marketing routes while a
+ * docblock four lines up called this list derived. Writing "the class is
+ * closed" is the failure this repo has now recorded four times.
+ *
+ * SO THIS IS A RECALL AID WITH MEASURED GAPS, NOT A COMPLETE CONTROL — the
+ * doctrine `packages/modes/src/claims.ts:138-149` already states for the
+ * product's own vocabulary, applied here. `MARKETING_CLAIM_GAPS` below names
+ * the shapes that were measured to escape, and `tests/claim-scan.test.ts`
+ * asserts each one still does, so the gap list cannot rot: closing one with a
+ * new pattern turns that assertion red and the list has to be edited in the
+ * same change. The control that does NOT depend on this vocabulary is
+ * `tests/landing-pricing.test.ts`'s pin table, which asks what a line depends
+ * on rather than which words it uses.
+ *
+ * `proven` — the landing shipped "built on mechanisms proven by posted
+ * results". No posted result has ever been measured against a mechanism:
+ * result-sourced proposals come from `packages/brain` at n >= 3 comparable
+ * CONNECTOR-VERIFIED results (R-10, non-negotiable 4), and manual or
+ * self-reported logs never drive a numerical claim at all (R-115). The canon
+ * bans `proven to` in the model's text; the landing said `proven by` — the
+ * same claim, in the one place no model wrote it. The pattern is the BARE word
+ * because a sales page has no honest use for it: this product's evidence
+ * vocabulary is "reviewed", "cited" and "[check]".
+ *
+ * `that performs` / `high-performing` — the assertive predicate, and NOT the
+ * bare verb. `PERFORMANCE_CLAIMS` deliberately leaves `perform` alone because
+ * `whyThisPerforms` is a section every mode emits and `/studio` has to label
+ * it; `app/(marketing)/sample-spin/sample-spin-panel.tsx:35` renders that
+ * label as "Why this could perform", which is hedged and stays sayable. What
+ * is banned is a SUBJECT asserted to perform — "mechanisms that perform",
+ * "content which consistently performs", "high-performing hooks" — because on
+ * a page with no account behind it that is a measured claim with no
+ * denominator, no population and no period.
+ */
+export const MARKETING_CLAIMS: readonly ForbiddenClaim[] = [
+  ["proven", /\bproven\b/],
+  ["that performs", /\b(that|which)\s+(\w+\s+)?perform/],
+  ["high-performing", /\bhigh[- ]perform/],
+];
+
+/**
+ * Sales sentences this vocabulary was MEASURED not to catch (2026-09-20).
+ *
+ * NOT A TODO LIST AND NOT AN EXEMPTION LIST. It is the honest scope of the
+ * three patterns above, written down so nobody reads a green marketing scan as
+ * "this page makes no unevidenced claim". Each entry is a shape a sales page
+ * reaches for, and every one of them asserts an outcome this product has
+ * logged no evidence about — which is REQ-I04's actual subject.
+ *
+ * `tests/claim-scan.test.ts` drives every entry and asserts it STILL escapes.
+ * That is deliberate and it is the opposite of a snooze: the day somebody adds
+ * a pattern that catches one, the assertion goes red and this list must be
+ * edited in the same change, so the recorded gap and the shipped vocabulary
+ * can never disagree. The first entry was live copy when it was measured.
+ *
+ * WHY THEY ARE NOT SIMPLY BANNED. A pattern per sentence is the instance fix
+ * that this file's own history shows failing: three entries built from two
+ * quoted sentences looked like a class and were not. Closing these needs a
+ * generator over {subject} x {outcome} x {hedge}, the same conclusion the
+ * audit's round 3 reached for `claims.ts` — recorded in the phase card as the
+ * next mechanism, not attempted in a copy pass.
+ */
+export const MARKETING_CLAIM_GAPS: readonly string[] = [
+  // An asserted audience reaction. LIVE on all four marketing routes until
+  // 2026-09-20 (`page.tsx:29`, `audiences.ts:47,75,103`).
+  "Audiences punish it.",
+  // An outcome with a population and a period, and no denominator.
+  "Most creators see a difference in the first week.",
+  // A comparative outcome about users of the product.
+  "Creators who use this ship more often.",
+  // Performance asserted through a metaphor rather than a metric noun.
+  "The difference between a post that dies and one that travels.",
+  // Social proof as a stand-in for evidence.
+  "Join thousands of creators already doing this.",
+  // The bare assertion, which no pattern over vocabulary can reach.
+  "It works.",
+];
+
+/**
  * A specimen that MUST match each claim, so the scan is proved non-vacuous per
  * word rather than as a whole.
  *
@@ -342,6 +454,11 @@ export const CLAIM_SPECIMENS: Readonly<Record<string, string>> = {
   script: "your script is ready",
   hook: "ten hooks per batch",
   analyse: "we analyse your posts",
+  // MARKETING_CLAIMS. The specimen is the sentence the landing actually
+  // shipped, so the pattern is measured against the defect it exists for.
+  proven: "built on mechanisms proven by posted results",
+  "that performs": "built on mechanisms that perform",
+  "high-performing": "a high-performing hook shape",
   // PERFORMANCE_CLAIMS (slice 6, R20/R21). Each specimen is the sentence the
   // pattern exists to stop appearing on the one screen that hands a creator
   // something to publish — every one of them is a claim about a future this

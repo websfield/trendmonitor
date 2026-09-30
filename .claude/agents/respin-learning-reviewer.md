@@ -2,6 +2,7 @@
 name: respin-learning-reviewer
 description: Read-only reviewer for any Respin diff touching results entry, verification flags, baselines, north-star metrics, promotion proposals, minimum-n enforcement, `packages/brain`, reach-vs-conversion reporting, confounder flags, or success-metric and pilot claims. Verifies the sole-emitter rule for proposals, n ≥ 3 verified-comparable enforcement, unverified-never-learns, paid/organic never pooling, reach/conversion never collapsing, own-baseline comparison, and engineering-vs-evidence claim separation. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

@@ -4,7 +4,7 @@ Decisions that engineering cannot make for itself: owner inputs, product definit
 
 Convention: a decision that is settled here graduates to `docs/video-editing/decisions.md` as a numbered D-row. This file holds only what is *open*.
 
-Last updated: 2026-09-19 (T-19, T-20 added — Phase 2 deploy-side acceptance and CI-scanner hardening deferred by the owner until cloud deployment).
+Last updated: 2026-09-21 (T-22 added — manual screen-reader verification, demoted to lowest priority and made permanently non-blocking by decisions.md R-133).
 
 ---
 
@@ -157,5 +157,19 @@ Task 5 built the enablement decision and it is reachable through `pnpm -C respin
 **Blocks:** nothing. The vendor key's control is the GitHub Environment branch policy (T-19), never the scanner; the scanner is PR-time drift detection. Five review rounds found the live controls intact every time.
 **Decider / owner:** owner. **Deferred by owner: 2026-09-19** (same instruction as T-19).
 **Items** (card residual register, all Low/Info, none applied): R-1 escape-balanced quoted fold / explicit `? run` key evade the block opener; R-2 non-plain keys (`"uses":`, `uses :`, `"environment":`) absent to the readers B3-TEN-1 did not touch — the class fix is one set-wide refusal of non-plain keys on YAML lines; R-3 deeper `outputs`-read spellings; R-4 per-token `pnpm -C respin` check; R-5 `scan-journey-notes.ts` tolerates an absent `artifactsDir` (refuse instead); R-10/11/12 one-token regex widenings. Recommended handling when T-19 is picked up: one batch, ~1.5 h, plants for each, one lean tenancy re-check + billing affected re-check for R-5. Alternative on record: amend the plan to allow a `yaml` dev-dependency and rewrite `checkWorkflowSet` on a parsed AST — only if a further reach finding appears.
+
+### T-21 · First GitHub run of `respin-visual.yml` (deferred with T-19/T-20)
+**Blocks:** nothing local. The workflow is proven on this machine — the three-engine matrix is 348 passed, and the client-rendered shell duplicate it exists to catch was planted in `app/(product)/nav.tsx` and produced 18 Chromium failures while the whole vitest suite stayed green. What is unproven is the RUNNER, not the guard.
+**Decider / owner:** owner. **Deferred by owner: 2026-09-20** — "delay github, we need to sort out the main features before we worry about deploy or github".
+**Unverified until a push or pull request touching `respin/**` runs it:** (1) `pnpm exec playwright install --with-deps chromium firefox webkit` on ubuntu-latest — WebKit's system libraries are the likely first failure, and the step has never executed outside Windows; (2) the `actions/upload-artifact` failure-trace path, including that `.tmp/respin-v2-results/**` resolves from the workspace root while the job's `run` steps default to `respin/` (deliberate: `outputDir` is `../.tmp/...` relative to the config); (3) wall-clock against the 30-minute ceiling on a cold runner. None of the three can be checked locally. Nothing about the workflow's secret-free property waits on this: `tests/journeys-workflow-triggers.test.ts`'s `checkVisualWorkflow` proves it from the file text on every local run.
+
+### T-22 · Manual screen-reader verification (lowest priority, never a blocker)
+**Blocks:** nothing, permanently. Ruled by the owner on 2026-09-21 and recorded as **decisions.md R-133**: this is the programme's lowest-priority item, and its absence never makes a phase, an acceptance criterion or a gate verdict Not yet. It is not deferred pending a trigger — it is demoted.
+**Decider / owner:** owner. **Ruled 2026-09-21** — "move nvda to lowest priority, and don't make it a blocker ever".
+**Rationale on record:** solo-founder micro-enterprise, so the EU European Accessibility Act's service exemption applies; no accessibility claim appears in any marketing copy, and the claims canon prevents one being added silently.
+**Already covered without it, on Chromium/Firefox/WebKit:** keyboard order, accessibility-tree order, 200% text enlargement, 320-CSS-pixel reflow, contrast, forced colors, reduced motion, and the 799/800/801 navigation bracket. None of that is demoted by R-133.
+**What stays unverified, named rather than hidden:** live-region behaviour for pending/result/refusal states (an `aria-live` region that reads correctly in the DOM can speak twice or not at all), and how a screen reader maps `<summary>`'s implicit expanded state and its virtual buffer on Enter. Reports say **not obtained**, never that it passed, and **no accessibility conformance is claimed on any surface**.
+**Related:** A11Y-1 (mobile product nav reading order vs visual order, WCAG 1.3.2) is **accepted as a known defect** by the same ruling — not fixed, not closed; the two-sided assertion in `respin/e2e/visual/visual.spec.ts` stays so a future shell change must re-rule on it.
+**Revisit trigger:** a procurement, enterprise or public-sector customer asking for an accessibility statement; staff reaching 10 or turnover €2M; or any marketing copy that claims accessibility.
 
 > **Not in this file:** Task 5 also left seven *engineering* residuals — the journal-PUT/Postgres-COMMIT orphan window, the absent `schemaVersion → reader` registry, four unwitnessed refusal codes, the dynamic-`import()` bypass of the `scripts/**` writer deny, and the fake not enforcing the IAM prefix grant. Those are code, not decisions, and live in [`10b1-task5-review-manifest.md`](docs/progress/respin-finish/10b1-task5-review-manifest.md) and `docs/progress/respin-finish-open-items.md`. This file holds only what engineering cannot settle for itself.

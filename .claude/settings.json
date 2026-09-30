@@ -1,10 +1,13 @@
 {
-  "_README": "claude-jig settings. The hook entries below configure the four portable engines: guardrails.js (pre-write blocking/warning), post-edit-check.js (post-write typecheck/lint/build), session-start.js (read-only orientation — prints the pack status + recommended next step at session start so anyone knows what to do; fail-open, never blocks), and workflow-stop.js (a dormant, read-only Stop-event check — it can only ever ask Claude to finish one already-owed, already-authorized check obligation on a goal that explicitly registered for this; nothing in this release can turn it on — so it silently does nothing, by design; fail-open on every other input, exactly like the other three). The permission allow/deny lists are a conservative starting point — widen `allow` to match your toolchain (the bootstrap command will suggest entries from your repo). Two things to know before you widen it. First, an `allow` entry matches a command PREFIX, so it cannot exclude a destructive flag: `Bash(find:*)` would also permit `find -delete` and `find -exec <anything>`, and `Bash(git branch:*)` would permit `git branch -D`. That is why the shipped list stops at plain inspection commands and leaves anything with an obvious mutating mode to the prompt — treat an allow entry as convenience, never as a safety guarantee (`cat` can still write via a redirect, and `git diff`, `git log` and `git show` accept the diff option `--output=<file>`). Second, `deny` filters enumerated dangerous patterns and is NOT a contract gate: it cannot enforce a project rule like \"only the fixed check command may run, no arbitrary shell\" — a command that simply drops the matched token passes, and adding more deny patterns does not close that gap. The permission prompt you answer is the real boundary; a command `deny` did not block is not thereby sanctioned. NOTE: `permissions.defaultMode` is set to `plan` as the requested starting mode — remove that key if you don't want it. If this project already had a settings.json, the installer left it untouched and these settings landed as settings.pack.json: proposed configuration that can coexist with already configured hooks. Run /go or /bootstrap-claude-pack to compare live settings and propose only missing hook entries and permissions, preserving existing hooks and custom settings. If merging by hand, add missing entries only; do not replace the `hooks` block. The sidecar proves neither active nor dormant hooks. Configured wiring and direct engine probes do not establish host dispatch; runtime dispatch remains unknown without actual host evidence. Project-specific tuning lives in .claude/guardrails.rules.json and .claude/workspaces.json, not here.",
+  "_README": "claude-jig settings. The hook entries below configure the three portable engines: guardrails.js (pre-write blocking/warning), post-edit-check.js (post-write typecheck/lint/build), and session-start.js (read-only orientation — prints the pack status + recommended next step at session start so anyone knows what to do; fail-open, never blocks). The pre-2.0 Stop hook and its workflow-stop.js/workflow-state.js/workflow-evidence.js engine were retired by the 2026-09-21 /sync-pack move to the 2.0 lean workflow; the pre-2.0 files are preserved in git history and the old canon at .claude/_pre-2.0/. The permission allow/deny lists are a conservative starting point — widen `allow` to match your toolchain (the bootstrap command will suggest entries from your repo). Two things to know before you widen it. First, an `allow` entry matches a command PREFIX, so it cannot exclude a destructive flag: `Bash(find:*)` would also permit `find -delete` and `find -exec <anything>`, and `Bash(git branch:*)` would permit `git branch -D`. That is why the shipped list stops at plain inspection commands and leaves anything with an obvious mutating mode to the prompt — treat an allow entry as convenience, never as a safety guarantee (`cat` can still write via a redirect, and `git diff`, `git log` and `git show` accept the diff option `--output=<file>`). Second, `deny` filters enumerated dangerous patterns and is NOT a contract gate: it cannot enforce a project rule like \"only the fixed check command may run, no arbitrary shell\" — a command that simply drops the matched token passes, and adding more deny patterns does not close that gap. The permission prompt you answer is the real boundary; a command `deny` did not block is not thereby sanctioned. NOTE: `permissions.defaultMode` is set to `plan` as the requested starting mode — remove that key if you don't want it. If this project already had a settings.json, the installer left it untouched and these settings landed as settings.pack.json: proposed configuration that can coexist with already configured hooks. Run /go or /bootstrap-claude-pack to compare live settings and propose only missing hook entries and permissions, preserving existing hooks and custom settings. If merging by hand, add missing entries only; do not replace the `hooks` block. The sidecar proves neither active nor dormant hooks. Configured wiring and direct engine probes do not establish host dispatch; runtime dispatch remains unknown without actual host evidence. Project-specific tuning lives in .claude/guardrails.rules.json and .claude/workspaces.json, not here.",
+  "_MODEL_POLICY": "Owner setting 2026-09-21, REVISED the same day after the Fable usage limit was reached (HTTP 429 mid-gate). Everything now runs on Opus: main session, and every agent in .claude/agents/ pinned `model: opus`. Gates and critics carry `effort: max` (26 agents); implementer agents carry `effort: high` (5) because producers ship better at high and max over-engineers. `effortLevel: xhigh` below is the session default for unpinned work (a settings file cannot hold `max`; that is frontmatter or --effort only). `CLAUDE_CODE_SUBAGENT_MODEL=opus` remains the rank-3 fallback for unpinned agents, and now agrees with every pin. Gate fallbacks that spawn `general-purpose` (gate-rules missing-reviewer rule) and every merged run under `Gate intensity: lean` MUST pass `model: opus` at dispatch. Codex cross-checks are unaffected: `gpt-6-astra` at xhigh (.claude/codex-review.md). The superseded Fable policy: gates `model: fable` + `effort: xhigh`, implementers `model: fable` + `effort: high`, Opus as the read/gather fallback. Configured requests only — effective runtime model/effort stay unknown unless exposed by evidence.",
+  "effortLevel": "xhigh",
   "env": {
     "BASH_DEFAULT_TIMEOUT_MS": "120000",
     "BASH_MAX_TIMEOUT_MS": "300000",
     "BASH_MAX_OUTPUT_LENGTH": "150000",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "true"
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "true",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "opus"
   },
   "permissions": {
     "allow": [
@@ -31,18 +34,19 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guardrails.js\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guardrails.js\"",
+            "timeout": 10
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
@@ -59,18 +63,6 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.js\"",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/workflow-stop.js\"",
             "timeout": 15
           }
         ]

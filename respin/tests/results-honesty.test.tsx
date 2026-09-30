@@ -88,6 +88,7 @@ import {
   FORBIDDEN_CLAIMS,
   PERFORMANCE_CLAIMS,
 } from "./support/forbidden-claims";
+import { claimHits } from "./support/claim-scan";
 import {
   BILLING_ERROR_COPY,
   type BillingErrorCode,
@@ -551,7 +552,7 @@ describe("/results claims nothing this product cannot support", () => {
     ];
     for (const plant of plants) {
       expect(
-        FORBIDDEN.some(([, re]) => re.test(plant.toLowerCase())),
+        claimHits(plant, FORBIDDEN).length > 0,
         `the shared canon missed planted copy: ${plant}`
       ).toBe(true);
     }

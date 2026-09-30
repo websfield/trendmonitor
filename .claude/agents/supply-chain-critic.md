@@ -2,6 +2,7 @@
 name: supply-chain-critic
 description: Read-only supply-chain auditor — the dependency floor nobody else owns. Use to pressure-test whether ANYTHING is watching this project's dependencies: is there a vulnerability scan anywhere (CI audit step, dependabot/renovate, an audit script), does a lockfile pin the tree, are there risky dependency shapes (git/URL deps, wildcard ranges, postinstall scripts) — and the license floor: is there a LICENSE file, does it match the project's posture, and do copyleft signals clash with a commercial product. Checklist framing, explicitly NOT legal advice. An auditor (whole-tree ranked findings), not a per-change gate — where security-reviewer checks a diff's deps "if discoverable", this sweeps the whole tree's supply chain. Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

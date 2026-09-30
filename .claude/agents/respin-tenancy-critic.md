@@ -2,6 +2,7 @@
 name: respin-tenancy-critic
 description: Read-only auditor for Respin's tenancy surface as it exists today — workspace and creator-profile isolation through the single scoping helper, append-only brain_docs with provenance and approval, mechanism-level-only library contributions, complete export and real deletion, seat roles and the admin boundary, and the PII/secrets posture. The audit-posture counterpart to the per-diff respin-tenancy-reviewer gate: the gate fires only on diffs classified as touching tenancy, while this hunts the whole isolation path for drift that accumulated through unclassified changes — the absences no diff review can see. An auditor (ranked findings), not a gate. Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

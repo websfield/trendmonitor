@@ -51,14 +51,15 @@
 // while the list held 41 — the arithmetic was a measurement of one day and the
 // list has grown since (the root-level pass of R-82 added `poolOptions`), so a
 // number derived by subtraction here rots the first time an entry is added.
-// It holds 39 entries, and that count is BOUND: the case "the header's count
+// It holds 41 entries, and that count is BOUND: the case "the header's count
 // is the list's own length" reads this sentence out of this file and compares
 // it to `KNOWN_ABSENT.length`, exactly as `packages/llm/tests/no-text.test.ts`
 // binds its own header count. Each entry is a name this workspace deliberately
 // does not declare.
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { ROOT_DIRS, sourceFilesUnder } from "./support/source-files";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
@@ -74,16 +75,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * `vitest.config.ts` are hand-written TypeScript at the workspace ROOT, in no
  * tree at all — and `vitest.config.ts` holds a paragraph that exists BECAUSE
  * an earlier version of it cited a key that does not exist, which is a live
- * instance of exactly this class sitting outside the guard. They are scanned
- * by `rootSources` below, non-recursively.
+ * instance of exactly this class sitting outside the guard. `sourceFilesUnder`
+ * reads them as part of the shared root population.
  */
-const SCANNED_ROOTS: readonly string[] = [
-  "packages",
-  "app",
-  "tests",
-  "lib",
-  "scripts",
-];
 
 /**
  * Root-level files that are GENERATED, not hand-written.
@@ -95,14 +89,6 @@ const SCANNED_ROOTS: readonly string[] = [
  * corpus.
  */
 const SKIP_ROOT_FILES = new Set(["next-env.d.ts"]);
-
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".next",
-  "dist",
-  "coverage",
-  "migrations",
-]);
 
 /**
  * THIS FILE IS EXCLUDED FROM THE PRESENCE CORPUS, AND THAT IS THE WHOLE REASON
@@ -142,10 +128,21 @@ const PRESENCE_EXCLUDED = "tests/symbol-citations.test.ts";
  *     names.
  *   `allowImportNames` — an ESLint `no-restricted-imports` option key; it
  *     lives in `eslint.config.mjs`, which is not TypeScript and not scanned.
- *   `getIPFromHeader`, `parseCIDR`, `isDevelopment` — Better Auth internals
- *     (`isTest` left this list on 2026-09-03 when `tests/no-scraping.test.ts`
- *     declared one of its own).
+ *   `getIPFromHeader`, `parseCIDR`, `isDevelopment`, `isTest` — Better Auth
+ *     internals. `isTest` LEFT this list on 2026-09-03, when
+ *     `tests/no-scraping.test.ts` happened to declare one of its own inside
+ *     its private tree walker, and REJOINED it on 2026-09-21 when P1-R3
+ *     deleted that walker in favour of the shared root population. The symbol
+ *     was never this workspace’s: it was kept resolvable by an incidental
+ *     local declaration, which is precisely the fragility this registry
+ *     records rather than hides.
  *   `onTaskUpdate` — vitest/birpc internal.
+ *   `ariaSnapshot` — Playwright’s own locator API. Cited by
+ *     `e2e/visual/visual.spec.ts` to say why it is NOT used (it carries no
+ *     geometry, and geometry is half of what that test compares). Surfaced
+ *     2026-09-21 when P1-R3 widened this scan onto the shared root list: `e2e`
+ *     had never been in its population, so the workspace’s only stale symbol
+ *     outside the five old trees was invisible to the guard written for it.
  *   `updateQueue` left this registry when the lifecycle writer scan began
  *     enumerating pg-boss mutator names locally. It remains vendor-owned, but
  *     words inside workspace string literals count as present by this scan's
@@ -180,7 +177,11 @@ const PRESENCE_EXCLUDED = "tests/symbol-citations.test.ts";
  *     2026-09-02): that paragraph exists because an earlier version of it
  *     cited the key as if the block were there, so the workspace's one live
  *     instance of this class was sitting outside the guard's population until
- *     `rootSources` was added.
+ *     the root-level pass was added. (That pass is no longer a function of this
+ *     file's own: P1-R3 moved the whole population onto `sourceFilesUnder`,
+ *     which reads the root-level modules itself — and this very line was a
+ *     stale citation of the deleted helper, caught by this scan in the same
+ *     change that deleted it.)
  *   `trustGenerationId`, `reactivateProfile` — one asserted never to exist,
  *     one owed by a future slice.
  *   `fullScrpit` — a deliberate misspelling, the cautionary tale in a comment
@@ -200,6 +201,7 @@ const KNOWN_ABSENT: readonly string[] = [
   "acquireWorkspaceExportLock",
   "activeBrainDocs",
   "allowImportNames",
+  "ariaSnapshot",
   "assertStoredConfigKeys",
   "burnPeriodStart",
   "collectQueryObjects",
@@ -213,6 +215,7 @@ const KNOWN_ABSENT: readonly string[] = [
   "isDevelopment",
   "isPaused",
   "isQueryApiRead",
+  "isTest",
   "markdownFor",
   "onTaskUpdate",
   "onboardingInputsForExport",
@@ -317,75 +320,18 @@ export function scanSymbolCitations(
   return out;
 }
 
-function sources(dir: string, acc: Map<string, string> = new Map()) {
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return acc;
-    throw err;
-  }
-  for (const name of entries) {
-    if (SKIP_DIRS.has(name)) continue;
-    const full = join(dir, name);
-    let entry;
-    try {
-      entry = statSync(full);
-    } catch (err) {
-      // Sibling suites write and delete probe files while vitest runs files in
-      // parallel — the same ENOENT tolerance `source-citations.test.ts` keeps.
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw err;
-    }
-    if (entry.isDirectory()) sources(full, acc);
-    else if (/\.(ts|tsx)$/.test(name)) {
-      try {
-        acc.set(
-          relative(ROOT, full).split(sep).join("/"),
-          readFileSync(full, "utf8")
-        );
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw err;
-      }
-    }
-  }
-  return acc;
-}
-
-// MEMOISED, not because parsing is expensive to write but because it is
-// expensive to repeat: six readers plus five presence passes over five trees
-// cost 12s unmemoised, and a guard that slows the suite is a guard somebody
-// eventually skips.
-/**
- * The workspace root's OWN TypeScript files, NON-RECURSIVELY.
- *
- * Non-recursive because the directories below the root are either already in
- * `SCANNED_ROOTS` or deliberately skipped (`node_modules`, `.next`), and a
- * recursive pass here would silently re-scan both.
- */
-function rootSources(acc: Map<string, string>): Map<string, string> {
-  for (const name of readdirSync(ROOT)) {
-    if (SKIP_ROOT_FILES.has(name)) continue;
-    if (!/\.(ts|tsx)$/.test(name)) continue;
-    const full = join(ROOT, name);
-    try {
-      if (!statSync(full).isFile()) continue;
-      acc.set(name, readFileSync(full, "utf8"));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw err;
-    }
-  }
-  return acc;
-}
-
 let sourcesCache: Map<string, string> | null = null;
 const allSources = () => {
   if (sourcesCache) return sourcesCache;
-  const acc = new Map<string, string>();
-  for (const root of SCANNED_ROOTS) sources(join(ROOT, root), acc);
-  sourcesCache = rootSources(acc);
+  // THE SHARED ROOT LIST (P1-R3). This scan read five of the seven roots —
+  // `worker` and `e2e` absent — and hand-rolled the non-recursive root-level
+  // pass that `sourceFilesUnder` already makes. `ROOT_DIRS` is asserted
+  // against disk in `claim-scan.test.ts`.
+  sourcesCache = new Map(
+    sourceFilesUnder(ROOT_DIRS)
+      .filter(({ file }) => !SKIP_ROOT_FILES.has(file))
+      .map(({ file, text }): [string, string] => [file, text])
+  );
   return sourcesCache;
 };
 

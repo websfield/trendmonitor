@@ -1,0 +1,49 @@
+/* Shared production shell. Navigation remains native and available without JS. */
+.shell { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); min-height: 100vh; }
+.shell-sidebar { background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-6) var(--sp-4); position: sticky; top: 0; height: 100dvh; overflow-y: auto; }
+.shell-wordmark { color: var(--text-1); padding: 0 var(--sp-2); }
+.brand { display: inline-flex; align-items: center; gap: var(--sp-3); font: 800 26px/1 var(--font-sans); letter-spacing: -0.05em; color: var(--text-1); }
+.brand-mark { position: relative; display: inline-block; width: 31px; height: 42px; flex: none; }
+.brand-mark i { position: absolute; border-radius: 7px 11px 11px 7px; width: 20px; height: 27px; }
+.brand-mark i:first-child { top: 0; left: 10px; background: var(--brand-top); }
+.brand-mark i:nth-child(2) { top: 17px; left: 0; background: var(--brand-middle); }
+.brand-mark i:last-child { top: 26px; left: 10px; width: 21px; height: 16px; border-radius: 7px 7px 5px 7px; background: var(--brand-bottom); }
+.icon { width: 20px; height: 20px; display: inline-block; flex: none; }
+.shell-nav { display: flex; flex-direction: column; gap: var(--sp-1); flex: 1; }
+/* One drawer node, in the flow on desktop and an overlay on mobile. */
+.shell-nav-drawer { display: flex; flex-direction: column; flex: 1; gap: var(--sp-1); }
+.shell-nav-primary, .shell-nav-secondary { display: grid; gap: var(--sp-1); }
+.shell-nav-secondary { margin-top: var(--sp-6); }
+.shell-nav-more { display: none; }
+.nav-item { display: flex; align-items: center; gap: var(--sp-3); min-height: 44px; padding: var(--sp-3); border: 1px solid transparent; border-radius: var(--radius); color: var(--text-3); font: 500 var(--fs-ui)/1.4 var(--font-sans); }
+.nav-item:hover { color: var(--text-1); background: var(--surface-2); text-decoration: none; }
+.nav-label { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.nav-item[aria-current="page"] { color: var(--accent-text); background: var(--accent-surface-2); border-color: var(--accent-border); font-weight: 700; }
+.shell-foot { margin-top: auto; border-top: 1px solid var(--border); padding-top: var(--sp-4); display: grid; gap: var(--sp-3); }
+.shell-workspace { font: 600 var(--fs-ui)/1.4 var(--font-sans); color: var(--text-2); overflow-wrap: anywhere; }
+.shell-credits { font: 600 var(--fs-meta)/1.5 var(--font-mono); color: var(--text-1); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-3); }
+.shell-main { padding: var(--sp-8) var(--sp-8) var(--sp-12); max-width: var(--content-width); width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.skip-link { position: fixed; top: var(--sp-2); left: var(--sp-2); z-index: 100; transform: translateY(-200%); background: var(--surface-1); padding: var(--sp-3); border: 2px solid var(--accent-text); border-radius: var(--radius); }
+.skip-link:focus { transform: translateY(0); }
+@media (max-width: 799px) {
+  .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .shell-sidebar { position: static; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); padding: var(--sp-4); gap: var(--sp-3); }
+  .shell-sidebar { position: relative; padding-top: var(--sp-4); padding-bottom: var(--sp-3); }
+  .shell-wordmark { margin-right: 90px; }
+  .shell-nav { gap: 0; }
+  .shell-nav-primary { position: fixed; bottom: 0; left: 0; right: 0; z-index: 30; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; background: var(--surface-1); border-top: 1px solid var(--border); padding: var(--sp-2) var(--sp-1) calc(var(--sp-2) + env(safe-area-inset-bottom)); }
+  .shell-nav-primary .nav-item { flex-direction: column; gap: var(--sp-1); font-size: var(--fs-meta); padding: var(--sp-2) 0; text-align: center; min-width: 0; }
+  .shell-nav-more { display: block; position: absolute; top: var(--sp-4); right: var(--sp-4); z-index: 40; }
+  .shell-nav-more summary { display: flex; align-items: center; gap: var(--sp-2); min-height: 44px; padding: var(--sp-2); cursor: pointer; border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--text-1); background: var(--surface-1); }
+  .shell-nav-more summary::-webkit-details-marker { display: none; }
+  /* The drawer is the details' SIBLING, so the disclosure governs it without a
+     second copy of its contents. See the note in nav.tsx. */
+  .shell-nav-more:not([open]) ~ .shell-nav-drawer { display: none; }
+  .shell-nav-more[open] ~ .shell-nav-drawer { position: absolute; top: calc(var(--sp-4) + 44px + var(--sp-2)); right: var(--sp-4); z-index: 40; width: min(320px, calc(100vw - 32px)); max-height: calc(100dvh - 170px); overflow-y: auto; padding: var(--sp-3); gap: var(--sp-3); border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-1); box-shadow: var(--shadow); }
+  .shell-nav-drawer .shell-nav-secondary { margin-top: 0; }
+  .shell-foot { margin-top: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; }
+  .theme-switch { grid-column: 1 / -1; }
+  .shell-main { padding: var(--sp-6) var(--sp-4) calc(8 * var(--fs-meta) + 48px + env(safe-area-inset-bottom)); }
+  html { scroll-padding-bottom: calc(8 * var(--fs-meta) + 48px); }
+}
+@media (forced-colors: active) { .nav-item[aria-current="page"] { border: 2px solid Highlight; } }

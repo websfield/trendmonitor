@@ -17,6 +17,7 @@ import {
   MonthlyEventBudget,
   POSTHOG_MONTHLY_EVENT_BUDGET,
   deriveActivationCohorts,
+  originPinnedFetch,
   parsePosthogSink,
   posthogActivationCapture,
   sendOutbound,
@@ -80,10 +81,15 @@ export function activationEmitterPorts(
   env: Readonly<Record<string, string | undefined>>,
   fetchImpl: typeof fetch = fetch,
 ): ActivationEmitterPorts {
+  const sink = parsePosthogSink(env);
   return {
     cohorts: (now) => deriveActivationCohorts(db, exclusions, now),
-    sink: parsePosthogSink(env),
+    sink,
     budget: new MonthlyEventBudget(POSTHOG_MONTHLY_EVENT_BUDGET),
-    fetchImpl,
+    // ORIGIN-PINNED, NOT BARE (P1-R2 / R-141). Every capture this emitter posts
+    // goes to the configured PostHog host, so that host is the only origin it
+    // may reach. With no sink configured the emitter sends nothing, so there is
+    // no fetch to pin and the pin never defaults to "any origin".
+    fetchImpl: sink === null ? fetchImpl : originPinnedFetch(sink.host, fetchImpl),
   };
 }

@@ -29,6 +29,20 @@ import { uploadPathLines, workflowText, WORKFLOW_PATH } from "./journeys-upload-
 const execFileAsync = promisify(execFile);
 const workflowsDir = resolve(__dirname, "../../.github/workflows");
 const JOURNEYS_FILE = "respin-journeys.yml";
+/** The secret-free Playwright workflow; see `checkVisualWorkflow`. */
+const VISUAL_FILE = "respin-visual.yml";
+
+/**
+ * Every workflow file this repository has, as a LIST (non-negotiable 7).
+ *
+ * The directory sweep below is a search; this is the population it searches.
+ * Before, the check was `arrayContaining([...three names])` plus `length >= 3`,
+ * which a fourth workflow satisfied by existing — so a new file entered the
+ * repository with no statement of what it is allowed to do. Adding one is now
+ * an edit here, and that edit is where somebody has to say which clauses the
+ * new file answers to.
+ */
+const EVERY_WORKFLOW = ["cutdown.yml", JOURNEYS_FILE, VISUAL_FILE, "respin.yml"];
 
 // ---------------------------------------------------------------------------
 // The line reader.
@@ -170,6 +184,31 @@ const RUNNER_RELAY = /GITHUB_(ENV|OUTPUT|STATE|PATH)|::set-output|::save-state/;
 /** YAML anchors, aliases and merge keys on a YAML line — after whitespace, `:`, `,`, `[` or `{` too (flow mappings, B3-TEN-4): a line reader cannot follow them, so the file refuses them (B2-TEN-4). */
 const YAML_INDIRECTION = /(^|[\s:,[{])[&*][\w-]+|<<:/;
 /** The third-party actions this file may use — a list, so a forked `x/upload-artifact` after cleanup is a violation, not a miss (B3 NOTE). */
+/**
+ * `environment:` under ANY key spelling GitHub accepts.
+ *
+ * WAS `environment:` LITERALLY, AND WAS EVADED BY ONE QUOTE CHARACTER
+ * (batch-3 gate, security HIGH, proven by execution against this file's own
+ * regexes). `"environment": journeys`, `'environment': journeys`,
+ * `? environment / : journeys` and a flow-mapping job all produced ZERO
+ * violations from both the directory-wide clause and the visual one, while
+ * `environment: journeys` and `environment: staging` were caught — so the
+ * class was open in exactly the shapes this file's own plant list already
+ * knew GitHub accepts for JOB names (`"leak":`, `'leak':`, `leak :`, a flow
+ * one-liner). The plants covered a quoted VALUE and never a quoted KEY, so
+ * the hole sat in the gap between two plants that looked like they covered it.
+ *
+ * CLAUDE.md 2026-08-18: prove the property against the class, never against a
+ * list of counterexamples.
+ *
+ * BUILT WITH `String.raw`, DELIBERATELY. The first draft used a plain template
+ * literal, in which `\s` is not an escape and collapses to a bare `s` — the
+ * silent fail-open shape CLAUDE.md records at 2026-08-26 ("one lost backslash
+ * turns `\s` into `s`"). `String.raw` keeps every backslash, and the plants
+ * below prove the assembled pattern still catches its controls.
+ */
+const ENV_KEY = String.raw`["']?environment["']?[ \t]*:`;
+
 const ALLOWED_ACTIONS = ["actions/checkout", "actions/setup-node", "actions/upload-artifact", "pnpm/action-setup"];
 
 export type StepRecord = { id: string | null; start: number; end: number; lines: string[] };
@@ -364,10 +403,115 @@ export function checkWorkflowSet(files: Record<string, string>): WorkflowViolati
     const code = lines.filter((_, i) => kinds[i] !== "comment").join("\n");
     if (/anthropic_api_key/i.test(code)) v.push(`${name} names ANTHROPIC_API_KEY`);
     // block form `environment: journeys`, quoted, flow mapping `{name: journeys}`, and mapping form `environment:` + `name: journeys` (B2 Info; B3-TEN-3)
-    if (/environment:\s*["']?journeys["']?\s*(#.*)?$|environment:\s*\{[^}]*name:\s*["']?journeys|environment:[ \t]*\n(?:[ \t]+[\w-]+:.*\n)*?[ \t]+name:\s*["']?journeys/m.test(code)) v.push(`${name} declares environment: journeys`);
+    if (new RegExp(String.raw`${ENV_KEY}\s*["']?journeys["']?\s*(#.*)?$|${ENV_KEY}\s*\{[^}]*name:\s*["']?journeys|${ENV_KEY}[ \t]*\n(?:[ \t]+[\w-]+:.*\n)*?[ \t]+name:\s*["']?journeys`, "m").test(code)) v.push(`${name} declares environment: journeys`);
     if (/tojson\s*\(\s*secrets\s*\)|fromjson\s*\([^)]*secrets|secrets\s*\[|secrets\.\*/i.test(code)) v.push(`${name} dumps or indexes the secrets context`);
   }
   if (files["respin.yml"] && /playwright/i.test(files["respin.yml"])) v.push("respin.yml contains a journeys job (playwright)");
+  // THE CLAUSE THAT MAKES EVERY CLAUSE ABOVE REACHABLE (batch-3 gate, security
+  // HIGH). This whole invariant is enforced by ONE vitest file, which runs in
+  // CI only inside `respin.yml`'s gate job. That job's `paths:` filter named
+  // `respin/**` and `.github/workflows/respin.yml` — so a pull request that
+  // added `.github/workflows/leak.yml` with the vendor key, or that weakened
+  // this file, touched nothing under the filter and ran NO guard at all. The
+  // population list a few lines up made that sharper rather than safer: the
+  // fifth workflow would have reddened on some later, unrelated `respin/**`
+  // change, attributing the failure to the wrong pull request.
+  if (files["respin.yml"] && !/^ {6}- "\.github\/workflows\/\*\*"$/m.test(files["respin.yml"])) {
+    v.push("respin.yml does not run on workflow-file changes, so nothing in this file gates a workflow-only pull request");
+  }
+  v.push(...checkVisualWorkflow(files));
+  return v;
+}
+
+/**
+ * The SECRET-FREE Playwright workflow (visual-v2 phase-1 gate, 2026-09-20).
+ *
+ * THE PROBLEM IT ANSWERS. A client-rendered duplicate of the shell foot
+ * survives the whole vitest suite — `renderToStaticMarkup` never runs effects,
+ * so two `shell-credits` in the live DOM leave 5,445 tests green. The only
+ * automated guard is the visual matrix, and nothing in CI ran it. Adding the
+ * step to `respin.yml` trips the clause directly above, because Playwright in
+ * the push/pull_request code gate is how the vendor-SPENDING journeys job
+ * would arrive on every PR.
+ *
+ * SO THE INVARIANT IS RESTATED RATHER THAN WEAKENED: the thing forbidden
+ * outside `respin-journeys.yml` is the SECRET and the SPEND, never the
+ * browser. `respin-visual.yml` may run Playwright precisely because the
+ * clauses below hold it to neither — and they are clauses, not a comment, so
+ * a later edit that gives that file a key, an environment, or any read of the
+ * secrets context is a red test rather than a reviewer's catch.
+ *
+ * The last clause is the POSITIVE half, and it is the one the CLAUDE.md
+ * 2026-08-26 lesson exists for: without it, deleting the `pnpm
+ * test:e2e:visual` step leaves every ban above satisfied by a workflow that
+ * guards nothing at all.
+ */
+export function checkVisualWorkflow(files: Record<string, string>): WorkflowViolation[] {
+  const v: WorkflowViolation[] = [];
+  const visual = files[VISUAL_FILE];
+  if (!visual) return [`${VISUAL_FILE} is missing — no CI step runs the visual matrix`];
+  const lines = visual.split("\n");
+  const kinds = classifyLines(lines);
+  const code = lines.filter((_, i) => kinds[i] !== "comment").join("\n");
+  // NOT just the vendor key: this file reads NOTHING from the secrets context,
+  // so there is no value in it for a later edit to widen.
+  if (/secrets\s*[.[]|secrets\s*\*|tojson\s*\(\s*secrets|fromjson\s*\([^)]*secrets/i.test(code)) {
+    v.push(`${VISUAL_FILE} reads the secrets context; it is the secret-free Playwright workflow`);
+  }
+  // ANY key spelling. `/^\s+environment:/m` was evaded by `"environment":`.
+  if (new RegExp(String.raw`^\s*(- )?${ENV_KEY}`, "m").test(code)) {
+    v.push(`${VISUAL_FILE} declares an environment; GitHub would issue it that environment's secrets`);
+  }
+  // THE JOB POPULATION IS A LIST, exactly as the journeys file's is and for
+  // the same reason (non-negotiable 7). Without it a SECOND job — including a
+  // flow-mapping one-liner the line reader cannot parse, which is how the
+  // environment ban was bypassed — answers to none of the clauses here.
+  const jobNames = topLevelJobNames(visual);
+  if (!jobNames) v.push(`${VISUAL_FILE}: no \`jobs:\` block`);
+  else if ([...jobNames].sort().join("|") !== "visual") {
+    v.push(`${VISUAL_FILE}: jobs are [${jobNames.join(", ")}]; allowed exactly [visual]`);
+  }
+  // ...and the shapes a line reader cannot follow are refused outright here
+  // too, which is what closes the flow-mapping and anchor classes rather than
+  // the individual spellings.
+  for (const l of yamlIndirectionLines(visual)) v.push(`${VISUAL_FILE}: YAML anchor/alias/merge key is not readable here: ${l.trim()}`);
+  for (const l of unbalancedQuoteLines(visual)) v.push(`${VISUAL_FILE}: a quoted scalar continuing past its line is not readable here: ${l.trim()}`);
+  // The actions are a list, and each is pinned by a 40-hex SHA — the same two
+  // rules the journeys file carries. A floating `@v4` in the one workflow that
+  // executes untrusted fork code is a supply-chain path (tj-actions, 2025).
+  for (const a of usedActions(visual)) if (!ALLOWED_ACTIONS.includes(a)) v.push(`${VISUAL_FILE} uses an action outside the allowed list: ${a}`);
+  for (const l of visual.split("\n").filter((l) => /^\s+-?\s*uses:/.test(l))) {
+    if (!/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40}( #.*)?$/.test(l)) v.push(`${VISUAL_FILE}: action is not pinned by a 40-hex commit SHA: ${l.trim()}`);
+  }
+  // A job-level `uses:` points at a reusable workflow whose text is OUTSIDE
+  // the directory this guard reads — the guard's whole population model. It is
+  // refused rather than inspected.
+  if (/^ {4}uses:/m.test(code)) v.push(`${VISUAL_FILE} calls a reusable workflow; its text is outside the swept directory`);
+  // The token floor, pinned. Deleting the block reads as cleanup in review and
+  // silently reverts to whatever the repository default grants.
+  if (!/^permissions:\n {2}contents: read\n/m.test(code)) {
+    v.push(`${VISUAL_FILE} does not pin \`permissions: contents: read\``);
+  }
+  const on = topLevelBlockEntries(visual, "on");
+  if (!on) v.push(`${VISUAL_FILE}: \`on:\` is not a readable block`);
+  else if ([...on].sort().join("|") !== "pull_request|push") {
+    v.push(`${VISUAL_FILE}: \`on:\` is [${on.join(", ")}]; it is the PR gate and must be exactly [push, pull_request]`);
+  }
+  // THE TRIGGER SCOPE, not just the trigger names. `on:` staying [push,
+  // pull_request] while `paths:` became `docs/**` would leave every clause
+  // here green with the matrix never running on a code change — which is
+  // precisely what the positive half below exists to prevent.
+  const pathEntries = visual.split("\n").filter((l) => /^ {6}- "/.test(l)).map((l) => l.trim());
+  const expectedPaths = ['- "respin/**"', '- ".github/workflows/respin-visual.yml"'];
+  if (pathEntries.join("|") !== [...expectedPaths, ...expectedPaths].join("|")) {
+    v.push(`${VISUAL_FILE}: \`paths:\` is [${pathEntries.join(", ")}]; both triggers must scope to exactly ${expectedPaths.join(" + ")}`);
+  }
+  if (!/pnpm test:e2e:visual/.test(code)) {
+    v.push(`${VISUAL_FILE} does not run \`pnpm test:e2e:visual\` — every ban above is satisfied by a workflow that guards nothing`);
+  }
+  if (!/playwright install/.test(code)) {
+    v.push(`${VISUAL_FILE} installs no browser; the matrix would fail for an environment reason, not a product one`);
+  }
   return v;
 }
 
@@ -388,9 +532,17 @@ describe("respin-journeys.yml: manual-or-nightly only, environment-protected key
   const files = readWorkflowSet();
   const text = files[JOURNEYS_FILE];
 
-  it("the directory read is not vacuous: respin.yml, cutdown.yml and the journeys file are all present", () => {
-    expect(Object.keys(files).sort()).toEqual(expect.arrayContaining(["cutdown.yml", "respin.yml", JOURNEYS_FILE]));
-    expect(Object.keys(files).length).toBeGreaterThanOrEqual(3);
+  it("the directory read is not vacuous, and the file population is exactly the declared list", () => {
+    expect(Object.keys(files).sort()).toEqual([...EVERY_WORKFLOW].sort());
+  });
+
+  it("the visual workflow is Playwright with no secret, no environment and a matrix step that really runs", () => {
+    expect(checkVisualWorkflow(files)).toEqual([]);
+    // Non-vacuous from the other side: the file really is the Playwright one.
+    expect(files[VISUAL_FILE]).toMatch(/playwright/i);
+    // ...and `respin.yml` is still NOT, which is the clause this file exists
+    // beside rather than instead of.
+    expect(files["respin.yml"]).not.toMatch(/playwright/i);
   });
 
   it("the real directory satisfies every clause", () => {
@@ -566,12 +718,49 @@ describe("respin-journeys.yml: manual-or-nightly only, environment-protected key
       ["the key anchored inside a flow mapping on vendor-key and aliased onto Install", (f: Record<string, string>) => (f[JOURNEYS_FILE] = text.replace("        id: vendor-key\n        env:\n          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}\n", '        id: vendor-key\n        env: {"ANTHROPIC_API_KEY":&v "${{ secrets.ANTHROPIC_API_KEY }}"}\n').replace("        id: install\n", '        id: install\n        env: {"K":*v}\n'))],
       ["a forked upload-artifact action", (f: Record<string, string>) => (f[JOURNEYS_FILE] = text.replace("uses: actions/upload-artifact@", "uses: foo/upload-artifact@"))],
       ["a bare `pnpm install` at the repo root (no package.json there — G-1)", (f: Record<string, string>) => (f[JOURNEYS_FILE] = text.replace("          pnpm -C respin install --frozen-lockfile\n", "          pnpm install --frozen-lockfile\n"))],
-    ])("%s", (_name, mutate) => {
+      // The secret-free Playwright workflow. Both halves are planted: the bans
+      // that keep a key out of it, and the steps whose absence would leave it
+      // green and useless.
+      ["the visual workflow given the vendor key", (f: Record<string, string>) => (f[VISUAL_FILE] = `${f[VISUAL_FILE]}\n      - run: echo \${{ secrets.ANTHROPIC_API_KEY }}\n`)],
+      ["the visual workflow reading SOME OTHER secret (the ban is the whole context)", (f: Record<string, string>) => (f[VISUAL_FILE] = `${f[VISUAL_FILE]}\n      - run: echo \${{ secrets.GITHUB_TOKEN }}\n`)],
+      ["the visual workflow reading the secrets context in bracket form", (f: Record<string, string>) => (f[VISUAL_FILE] = `${f[VISUAL_FILE]}\n      - run: echo \${{ secrets['SOME_KEY'] }}\n`)],
+      ["the visual workflow given an environment other than journeys", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    environment: staging\n"))],
+      ["the visual matrix step deleted (every ban still satisfied, nothing guarded)", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace("        run: pnpm test:e2e:visual\n", "        run: echo skipped\n"))],
+      ["the browser install deleted", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace(/ *run: pnpm exec playwright install.*\n/, "        run: echo skipped\n"))],
+      ["the visual workflow made manual-dispatch only, so no PR runs it", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace(/^on:\n(?: {2}.*\n| {4,}.*\n|\n)*/m, "on:\n  workflow_dispatch:\n"))],
+      // THE SHAPES THE BATCH-3 SECURITY REVIEW PROVED BYPASSED, each row
+      // naming the message ITS OWN clause emits. Every one of these produced
+      // ZERO violations before this round, measured by executing the shipped
+      // regexes against the real file text.
+      ["the visual workflow given a DOUBLE-QUOTED environment key", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace("    runs-on: ubuntu-latest\n", '    runs-on: ubuntu-latest\n    "environment": journeys\n')), /declares an environment/],
+      ["the visual workflow given a SINGLE-QUOTED environment key", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    'environment': staging\n")), /declares an environment/],
+      ["a THIRD workflow with a double-quoted environment key naming journeys", (f: Record<string, string>) => (f["quotedkey.yml"] = 'on:\n  push:\njobs:\n  x:\n    runs-on: ubuntu-latest\n    "environment": journeys\n    steps:\n      - run: env\n'), /declares environment: journeys/],
+      ["a THIRD workflow with a single-quoted environment key naming journeys", (f: Record<string, string>) => (f["quotedkey2.yml"] = "on:\n  push:\njobs:\n  x:\n    runs-on: ubuntu-latest\n    'environment': journeys\n    steps:\n      - run: env\n"), /declares environment: journeys/],
+      ["a flow-mapping job in the visual workflow", (f: Record<string, string>) => (f[VISUAL_FILE] = `${f[VISUAL_FILE]}\n  leak: {runs-on: ubuntu-latest, environment: journeys, steps: [{run: "env"}]}\n`), /jobs are \[|declares an environment/],
+      ["a SECOND job in the visual workflow", (f: Record<string, string>) => (f[VISUAL_FILE] = `${f[VISUAL_FILE]}\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n`), /jobs are \[/],
+      ["the visual workflow calling a reusable workflow with secrets: inherit", (f: Record<string, string>) => (f[VISUAL_FILE] = `${f[VISUAL_FILE]}\n  leak:\n    uses: evil/repo/.github/workflows/x.yml@main\n    secrets: inherit\n`), /reusable workflow|jobs are \[/],
+      ["a floating action tag in the visual workflow", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace(/uses: actions\/checkout@[0-9a-f]{40}[^\n]*/, "uses: actions/checkout@v4")), /not pinned by a 40-hex commit SHA/],
+      ["an action outside the allowed list in the visual workflow", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace(/uses: actions\/checkout@[0-9a-f]{40}[^\n]*/, "uses: some-random/exfil-action@0000000000000000000000000000000000000000")), /outside the allowed list/],
+      ["permissions widened to write-all", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace("permissions:\n  contents: read\n", "permissions: write-all\n")), /does not pin `permissions: contents: read`/],
+      ["the permissions block deleted outright", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace("permissions:\n  contents: read\n", "")), /does not pin `permissions: contents: read`/],
+      ["the paths filter narrowed to docs", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace(/ {6}- "respin\/\*\*"/g, '      - "docs/**"')), /`paths:` is/],
+      ["a YAML anchor in the visual workflow", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace("permissions:\n  contents: read\n", "permissions: &p\n  contents: read\n")), /anchor\/alias\/merge key/],
+      ["respin.yml's path filter narrowed back to its own file only", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace(/ {6}- "\.github\/workflows\/\*\*"/g, '      - ".github/workflows/respin.yml"')), /workflow-file changes/],
+      ["the visual workflow deleted outright", (f: Record<string, string>) => { delete f[VISUAL_FILE]; }],
+    ])("%s", (_name, mutate, expected?: RegExp) => {
       const before = { ...files };
       mutate(before);
       // the plant must have changed something, or the "failure" is vacuous
       expect(JSON.stringify(before)).not.toBe(JSON.stringify(files));
-      expect(plant(mutate).length).toBeGreaterThan(0);
+      const violations = plant(mutate);
+      expect(violations.length).toBeGreaterThan(0);
+      // ATTRIBUTION, where the row supplies it (batch-3 gate, security LOW).
+      // `length > 0` cannot tell a plant that reddens for ITS OWN clause from
+      // one reddening on somebody else's — two of the eight visual plants were
+      // measured to be redundant that way. Rows added since carry the message
+      // their clause emits; the older rows keep the weaker assertion rather
+      // than being given expectations nobody verified.
+      if (expected) expect(violations.join(" | "), violations.join(" | ")).toMatch(expected);
     });
   });
 

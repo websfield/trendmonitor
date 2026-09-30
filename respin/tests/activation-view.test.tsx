@@ -4,6 +4,8 @@
 // and the day-90 target reads as a target.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS } from "./support/forbidden-claims";
+import { claimHits, specimensFor } from "./support/claim-scan";
 import {
   ACTIVATION_TARGET_SENTENCE,
   AdminActivationView,
@@ -11,7 +13,6 @@ import {
   SMALL_CELL_LABEL,
   WINDOW_OPEN_LABEL,
 } from "../app/(admin)/admin/activation/activation-view";
-import { FORBIDDEN_CLAIMS } from "./support/forbidden-claims";
 
 const LIMITATION = "emailVerified is read as of capture; Better Auth stores no verification timestamp, so late verifiers are counted as activated";
 
@@ -54,12 +55,21 @@ describe("AdminActivationView", () => {
     expect(renderToStaticMarkup(<AdminActivationView ok={false} />)).toContain("could not be loaded");
   });
 
-  it("claims nothing the canon forbids", () => {
-    const text = html.toLowerCase();
-    for (const claim of FORBIDDEN_CLAIMS) {
-      const pattern = typeof claim === "string" ? claim : (claim as { pattern?: RegExp | string }).pattern ?? String(claim);
-      const hit = pattern instanceof RegExp ? pattern.test(text) : text.includes(String(pattern).toLowerCase());
-      expect(hit, `forbidden claim: ${String(pattern)}`).toBe(false);
-    }
+  it("claims nothing the canon forbids, and the scan is proved live on this screen", () => {
+    // WAS STRUCTURALLY VACUOUS (audit 2026-09-19 finding 27). This screen's
+    // scan re-invented the predicate and stringified the canon tuples, so no
+    // banned word could ever be caught and `/admin/activation` was 100% open.
+    // The predicate now lives in ONE place and the specimen loop below is the
+    // witness this file never had.
+    expect(claimHits(html, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toEqual([]);
   });
+
+  it.each(specimensFor(FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS))(
+    "PLANTED: %s would be caught in this screen's own markup",
+    (label, specimen) => {
+      // The plant goes through the rendered HTML, not through a bare string,
+      // so a scan that reads the wrong text is as red as a weakened pattern.
+      expect(claimHits(`${html}<p>${specimen}</p>`, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toContain(label);
+    }
+  );
 });

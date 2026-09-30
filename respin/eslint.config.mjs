@@ -47,6 +47,10 @@ function appRestrictedImports({
             "MonthlyEventBudget",
             "SENTRY_MONTHLY_EVENT_BUDGET",
             "parseSentryDsn",
+            // P1-R1/R-141: the origin-pinning wrapper the two telemetry senders are
+            // handed instead of a bare fetch, so "a submitted URL is never fetched"
+            // is structural for them (decisions.md R-141).
+            "originPinnedFetch",
             "sendOutbound",
             "sentryEnvelope",
             "tightenOnlySampleRate",
@@ -175,6 +179,10 @@ function appRestrictedImports({
                   "posthogActivationCapture",
                   "activationCohortEventUuid",
                   "ACTIVATION_COHORT_EVENT",
+                  // P1-R1/R-141: the origin-pinning wrapper the two telemetry senders are
+                  // handed instead of a bare fetch, so "a submitted URL is never fetched"
+                  // is structural for them (decisions.md R-141).
+                  "originPinnedFetch",
                   "sendOutbound",
                   "ActivationCohort",
                   "ActivationExclusions",

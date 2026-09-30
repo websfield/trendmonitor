@@ -36,6 +36,7 @@ import { PASTED_REFERENCE_INPUT_FIELDS, REVISION_PARENT_REFUSALS } from "@respin
 // all until the slice-8c review (C12). Same import every other screen suite
 // uses, so a word added there reaches the refusal map too.
 import { FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS } from "./support/forbidden-claims";
+import { claimHits, specimensFor } from "./support/claim-scan";
 
 /** This file's own directory — the anchor for the source reads below. */
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -179,6 +180,10 @@ function billingProps(over: Partial<BillingViewProps> = {}): BillingViewProps {
       protocolState: "active",
       monthlyCapCents: null,
     },
+    // The DEFAULT is an open fence, so every pre-existing case keeps
+    // measuring what it was written to measure; the closed states are
+    // exercised explicitly by the charge-authority cases below.
+    checkout: { protocolState: "active" as const },
     config: CONFIG_OK,
     stripe: { configured: true, remedy: STRIPE_REMEDY },
     error: null,
@@ -1419,6 +1424,92 @@ describe("audit #26: the auto-top-up control explains WHEN it applies", () => {
     expect(out).not.toContain("saved and pending activation");
   });
 
+  // BOTH FENCES, EACH ON ITS OWN. The page reads two rollout states from two
+  // tables, and a case that only varied one would pass while the other was
+  // read as a proxy — which is the defect, not the fix.
+  it.each([
+    ["auto-top-up", "expanded", "active"],
+    ["auto-top-up", "draining", "active"],
+    ["auto-top-up", "unavailable", "active"],
+    ["tier-checkout", "active", "expanded"],
+    ["tier-checkout", "active", "draining"],
+    ["tier-checkout", "active", "unavailable"],
+  ] as const)(
+    "the %s rollout alone (auto-top-up %s / checkout %s) makes both controls say the charge cannot run",
+    (_which, protocolState, checkoutState) => {
+      // THE FENCE THE BUTTONS DID NOT NAME (batch-5 billing gate, HIGH).
+      //
+      // `createTierCheckoutUrl` and `createPackCheckoutUrl` each pass TWO
+      // gates before Stripe is called — `assertTierCheckoutProtocolActive`,
+      // then `isAutoTopupProtocolActive` — and migrations 0049 and 0048 seed
+      // BOTH rollouts `'expanded'`. So on any freshly migrated database with
+      // prices mapped, an owner could click Subscribe and be told about
+      // "top-up reconciliation", which is not what they were doing. The panel
+      // below the buttons had always named its own rollout; the buttons named
+      // neither, and a reader meets the button first.
+      //
+      // THE FIRST VERSION OF THIS COMMENT NAMED A CHECKOUT FUNCTION THIS
+      // WORKSPACE DOES NOT HAVE, and `tests/symbol-citations.test.ts` caught
+      // it on the full run — the symbol is not repeated here, because that
+      // guard reads comments and would catch it again. It also asserted the
+      // auto-top-up rollout was the only fence, which is wrong: reading one
+      // state as a proxy for the other is correct only while both are seeded
+      // the same. CLAUDE.md, 2026-07-30 — the comment that explains a fix is
+      // written when you believe the property most and have verified it least.
+      const autoTopup = {
+        enabled: false,
+        legacyEnabled: false,
+        staged: false,
+        protocolState,
+        monthlyCapCents: 5000,
+      };
+      // The default fixture holds a LIVE subscription, so only the pack
+      // control renders. That is one of the two branches and it is checked
+      // first.
+      const checkout = { protocolState: checkoutState };
+      const subscribed = html(<BillingView {...billingProps({ autoTopup, checkout })} />);
+      expect(subscribed).toContain("Card charges are held until an operator finishes");
+
+      // ...and the branch where the three Subscribe buttons render is the one
+      // the finding was actually about: a workspace on Free, with every price
+      // mapped, so nothing else would block the click.
+      const onFree = html(
+        <BillingView
+          {...billingProps({
+            autoTopup,
+            checkout,
+            state: { tier: "free", state: "free" },
+            hasLiveSubscription: false,
+            hasStripeCustomer: false,
+          })}
+        />
+      );
+      expect(
+        onFree.match(/Card charges are held until an operator finishes/g)?.length ?? 0,
+        "the fence reached fewer controls than consult it (3 tiers + the pack)"
+      ).toBeGreaterThanOrEqual(4);
+    }
+  );
+
+  it("NON-VACUITY: BOTH rollouts active removes the fence rather than cementing it", () => {
+    // The other direction, so the sentence above cannot become permanent copy
+    // that survives the rollout it describes.
+    const out = html(
+      <BillingView
+        {...billingProps({
+          autoTopup: {
+            enabled: false,
+            legacyEnabled: false,
+            staged: false,
+            protocolState: "active",
+            monthlyCapCents: 5000,
+          },
+        })}
+      />
+    );
+    expect(out).not.toContain("Card charges are held until an operator finishes");
+  });
+
   it("shows the remembered opt-in as pending while the drain fence is closed", () => {
     const out = html(
       <BillingView
@@ -1898,7 +1989,11 @@ describe("audit #16: the admin config error summary is reachable and tied to the
  * outside every sweep; a derived population makes naming them unnecessary.
  */
 describe("no refusal copy in the shared map makes a forbidden or performance claim (R23)", () => {
-  const CANON = [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS];
+  // THE PREDICATE IS `claimHits`, NOT A LOOP HERE (P1-R4, applied 2026-09-21
+  // after the batch-5 compliance gate counted six survivors). This file had
+  // `const CANON = [...]` and a bare `.test()` — correctly shaped, so no
+  // scanner could see it, but a seventh copy of the decision the shared helper
+  // exists to own, and one that skips its `lastIndex` reset.
   const CODES = Object.keys(BILLING_ERROR_COPY) as BillingErrorCode[];
 
   it("the sweep's population is the WHOLE map, and it is not empty", () => {
@@ -1913,15 +2008,25 @@ describe("no refusal copy in the shared map makes a forbidden or performance cla
 
   it.each(CODES)("%s: title + detail are clean against every canon pattern", (code) => {
     const copy = BILLING_ERROR_COPY[code];
-    const text = `${copy.title} ${copy.detail}`.toLowerCase();
-    for (const [label, re] of CANON) {
-      expect(text, `"${label}" in BILLING_ERROR_COPY.${code}`).not.toMatch(re);
-    }
+    expect(
+      claimHits(`${copy.title} ${copy.detail}`, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS),
+      `BILLING_ERROR_COPY.${code}`
+    ).toEqual([]);
   });
 
-  it("NON-VACUITY: a planted claim in a copy entry is caught by the same loop", () => {
-    const planted = "We guarantee this will perform and get you more views.".toLowerCase();
-    const hits = CANON.filter(([, re]) => re.test(planted)).map(([label]) => label);
+  it.each(specimensFor(FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS))(
+    "PLANTED: %s would be caught in a refusal's copy",
+    (label, specimen) => {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toContain(label);
+    }
+  );
+
+  it("NON-VACUITY: a planted claim in a copy entry is caught by the shipped predicate", () => {
+    const hits = claimHits(
+      "We guarantee this will perform and get you more views.",
+      FORBIDDEN_CLAIMS,
+      PERFORMANCE_CLAIMS
+    );
     expect(hits).toEqual(expect.arrayContaining(["guarantee", "will perform", "more views"]));
   });
 

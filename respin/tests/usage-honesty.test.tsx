@@ -37,6 +37,7 @@ import {
   FORBIDDEN_CLAIMS,
   PERFORMANCE_CLAIMS,
 } from "./support/forbidden-claims";
+import { claimHits } from "./support/claim-scan";
 import {
   BURN_PERIOD_COPY,
   UNCHARGED_CAP_WINDOW_CLAUSE,
@@ -319,7 +320,7 @@ describe("/usage claims nothing this product cannot support", () => {
       // Each entry really does violate the canon, so none of them is a
       // decoration that quietly exempts clean copy.
       expect(
-        FORBIDDEN.some(([, re]) => re.test(f.sentence.toLowerCase())),
+        claimHits(f.sentence, FORBIDDEN).length > 0,
         `${f.where} is on the list but breaks no rule`
       ).toBe(true);
     }
@@ -353,7 +354,7 @@ describe("/usage claims nothing this product cannot support", () => {
     expect(planted).toContain("[open finding]");
     // ...and a SECOND occurrence of the same banned word elsewhere still fires,
     // so this is not a word-level allowlist wearing a sentence's clothes.
-    expect(FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toContain(
+    expect(claimHits(planted, FORBIDDEN)).toContain(
       "accurate"
     );
   });
@@ -499,14 +500,12 @@ describe("/usage claims nothing this product cannot support", () => {
         },
       })
     ).toLowerCase();
-    expect(FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toEqual(
+    expect(claimHits(planted, FORBIDDEN)).toEqual(
       expect.arrayContaining(["improve", "views", "more reach"])
     );
     // ...and the clean label produces NO findings, so the probe above is
     // measuring the plant rather than the page.
-    expect(
-      FORBIDDEN.filter(([, re]) => re.test(visibleCopy(render()).toLowerCase()))
-    ).toEqual([]);
+    expect(claimHits(visibleCopy(render()), FORBIDDEN)).toEqual([]);
   });
 
   it("NON-VACUITY, per word: every pattern catches its OWN specimen", () => {

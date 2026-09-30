@@ -11,6 +11,7 @@ import {
   MonthlyEventBudget,
   SENTRY_MONTHLY_EVENT_BUDGET,
   parseSentryDsn,
+  originPinnedFetch,
   sendOutbound,
   sentryEnvelope,
   sentryEnvironmentTag,
@@ -41,7 +42,17 @@ export function createTelemetry(
   const budget = new MonthlyEventBudget(SENTRY_MONTHLY_EVENT_BUDGET);
   const now = deps.now ?? (() => new Date());
   const random = deps.random ?? Math.random;
-  const fetchImpl = deps.fetchImpl ?? fetch;
+  // ORIGIN-PINNED, NOT BARE (P1-R2 / R-141). Every envelope this sender posts
+  // goes to `dsn.envelopeUrl`, so the DSN's own origin is the only one it may
+  // reach — and pinning it here makes "a submitted URL is never fetched"
+  // structural rather than a property of whoever next edits `sentryEnvelope`.
+  // `dsn === null` means the sender is disabled and `captureError` returns
+  // "disabled" before any send, so no fetch is constructed and the pin never
+  // has to default to "any origin".
+  const fetchImpl =
+    dsn === null
+      ? (deps.fetchImpl ?? fetch)
+      : originPinnedFetch(dsn.envelopeUrl, deps.fetchImpl ?? fetch);
   const eventFor = (err: unknown, context: Readonly<{ route?: string }>): SafeErrorEvent => {
     const fields = safeLogFields(err);
     const route = context.route && ROUTE_PATTERN.test(context.route) ? context.route : undefined;

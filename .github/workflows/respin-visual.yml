@@ -1,0 +1,103 @@
+# The Respin visual matrix as a PR gate — the browser half of the code gate.
+#
+# WHY IT IS A SEPARATE FILE, AND WHY IT IS THIS FILE RATHER THAN A STEP IN
+# `respin.yml` (visual-v2 phase-1 gate, 2026-09-20). A client-rendered
+# duplicate of the shell foot survives the entire vitest suite: an effect-
+# mounted second `{children}` puts two `shell-credits` in the live DOM and
+# `pnpm test` still returns exit 0, because `renderToStaticMarkup` never runs
+# effects. The only automated guard that sees it is
+# `respin/playwright.visual.config.ts`, and until now no CI step ran it.
+#
+# Adding that step to `respin.yml` trips a deliberate invariant:
+# `respin/tests/journeys-workflow-triggers.test.ts` fails on ANY `playwright`
+# in `respin.yml`, because Playwright in the push/pull_request code gate is how
+# the vendor-spending journeys job would arrive on every PR. The invariant is
+# about SPEND AND SECRETS, not about browsers, so the answer is a third
+# workflow that has neither.
+#
+# WHAT MAKES THIS FILE SAFE, stated so it can be checked rather than believed:
+#
+#   - It names NO secret. There is no `secrets.` reference anywhere in it, no
+#     `environment:` line, and therefore nothing GitHub can issue to it. The
+#     same test's directory-wide clauses enforce all three from the outside,
+#     and its file population lists this workflow by name so it cannot drop out
+#     of that sweep unnoticed.
+#   - It spends NOTHING. `respin/e2e/visual/harness.ts` serves static fixtures
+#     on 127.0.0.1:8137 with no database, no auth and no model provider, and
+#     `visual.spec.ts` installs a route guard that ABORTS any request leaving
+#     that origin — with a planted case proving the guard fires. A vendor call
+#     from this job is not merely unconfigured, it is unreachable.
+#
+# Fork pull requests get a read-only `GITHUB_TOKEN` and no secrets at all,
+# which costs this workflow nothing because it wants neither.
+name: respin-visual
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "respin/**"
+      - ".github/workflows/respin-visual.yml"
+  pull_request:
+    paths:
+      - "respin/**"
+      - ".github/workflows/respin-visual.yml"
+
+permissions:
+  contents: read
+
+# One matrix per ref. Without this every force-push to an open PR starts a
+# fresh three-engine run and nothing cancels the superseded one.
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    # The matrix is ~360 checks across three engines and the observed local
+    # run is ~3.5 minutes. The ceiling is generous enough for a cold browser
+    # download and tight enough that a hung fixture server fails rather than
+    # idles. The figure is deliberately approximate: an exact count here goes
+    # stale every time a check is added, and three stale copies of one number
+    # is what the batch-3 gate found across the certifying artefacts.
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: respin
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Nothing here pushes, so the token has no reason to sit in
+          # .git/config while `pnpm install` runs dependency lifecycle scripts.
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        # version comes from respin/package.json "packageManager"
+        with:
+          package_json_file: respin/package.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: respin/pnpm-lock.yaml
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      # ALL THREE ENGINES, not just Chromium. The phase-1 matrix is defined
+      # across Chromium, Firefox and WebKit, and the two defects this gate
+      # found by engine — the Firefox screenshot timeout under default motion,
+      # and the dark-theme label wrap — were both invisible in the other two.
+      # `--with-deps` installs the system libraries WebKit needs on the runner.
+      - name: Install browsers
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Visual matrix
+        run: pnpm test:e2e:visual
+      # Traces are retained on failure by the config; without them a red run
+      # here is a line of text and a guess.
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: visual-traces-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/respin-v2-results/**
+          if-no-files-found: ignore
+          retention-days: 7

@@ -6,6 +6,7 @@
 // not yet published rather than pretending a link exists.
 import type { Metadata } from "next";
 import { LandingFooter, LandingHeader } from "../landing-sections";
+import { SAMPLE_SPIN_RETENTION } from "../sample-spin/disclosure";
 
 export const metadata: Metadata = {
   title: "Respin terms and privacy",
@@ -24,7 +25,7 @@ export default function LegalPage() {
         </p>
         <h2>What is true today</h2>
         <ul className="legal-list">
-          <li>The Sample Spin on the landing page keeps neither the idea you type nor the output it shows you. It records the cost of the model calls, with the request&rsquo;s random id, as a financial record kept for the period the law requires, and a keyed hash of your connection address for twenty-four hours, to allow one run per day.</li>
+          <li>The Sample Spin on the landing page keeps neither the idea you type nor the output it shows you &mdash; {SAMPLE_SPIN_RETENTION.toLowerCase()} That provider receives the text in order to answer; this product stores none of it. It records the cost of the model calls, with the request&rsquo;s random id, as a financial record kept for the period the law requires, and a keyed hash of your connection address for twenty-four hours, to allow one run per day.</li>
           <li>A signed-in creator&rsquo;s brain is context handed to the model with each request; it is never used to build or update a model, and nothing in it changes without an explicit confirmation.</li>
           <li>Account deletion has a recovery window, after which erasure is irreversible; financial records are kept pseudonymously for the period the law requires.</li>
         </ul>

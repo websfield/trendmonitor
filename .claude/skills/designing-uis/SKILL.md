@@ -100,9 +100,10 @@ rounds — never silently degrade to prose-only judgment.
 
 Before "done":
 - **Looks:** screenshot the built UI and compare against the `DESIGN.md` intent, the chosen
-  reference/family, and the anti-slop bans; check 2–3 viewport widths. Use a screenshot tool (e.g. a
-  `browse`/Playwright skill) if one is available; if not, describe the gap and ask the person to paste a
-  screenshot. Don't skip this step just because no tool is wired up.
+  reference/family, and the anti-slop bans; check 2–3 viewport widths. Browser checks follow the
+  `verifying-webapps` skill (discover the project's harness, assert — never sleep, one evidence line per
+  check); no tool wired → say so and ask the person to paste a screenshot. Don't skip this step just
+  because no tool is wired up.
 - **Access:** contrast, focus, keyboard path, reduced-motion, target sizes (Tier 1).
 - **States:** empty, loading, error, and long-content all render sensibly.
 - Report readiness in plain words (Ready / Almost / Not yet) earned by what you found — a Tier-1 miss

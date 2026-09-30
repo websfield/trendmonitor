@@ -65,6 +65,26 @@ export default async function BillingSettingsPage(props: {
     logRefusal("[billing] auto-top-up rollout state unavailable", err);
   }
 
+  // THE CHECKOUT FENCE IS A SECOND ROLLOUT, NOT THIS ONE (batch-5 billing
+  // gate). `createTierCheckoutUrl` and `createPackCheckoutUrl` both call
+  // `assertTierCheckoutProtocolActive` BEFORE they reach
+  // `isAutoTopupProtocolActive`, and the two states live in different
+  // tables — `tier_checkout_protocol_rollouts` (migration 0049) and
+  // `auto_topup_protocol_rollouts` (migration 0048). Both are seeded
+  // `expanded`, which is precisely why the page reads BOTH: reading one as a
+  // proxy works only until an operator activates one of them.
+  //
+  // UNREADABLE MEANS FENCED, not open. A button that says nothing and then
+  // refuses is the shape this whole finding is about.
+  let tierCheckoutProtocolState: BillingViewProps["checkout"]["protocolState"] =
+    "unavailable";
+  try {
+    tierCheckoutProtocolState = await respinCredits.getTierCheckoutProtocolState();
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[billing] tier-checkout rollout state unavailable", err);
+  }
+
   // ONE liveness definition, four readers. The other three are inside
   // packages/credits (checkout's F1 guard, auto-top-up arming, maybeAutoTopup);
   // this is the fourth, and it is the same function — not a page-local idea of
@@ -140,6 +160,7 @@ export default async function BillingSettingsPage(props: {
         protocolState: autoTopupProtocolState,
         monthlyCapCents: subscription?.autoTopupMonthlyCapCents ?? null,
       }}
+      checkout={{ protocolState: tierCheckoutProtocolState }}
       config={config}
       stripe={{ configured: isStripeConfigured(), remedy: STRIPE_REMEDY }}
       error={billingErrorFromCode(

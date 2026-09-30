@@ -2,6 +2,7 @@
 name: respin-billing-reviewer
 description: Read-only reviewer for any Respin diff touching billing, the credit ledger, metering, Stripe objects or webhooks, tiers/pricing/allowances, overage packs, auto-top-up, pause/resume, expiry semantics, `packages/credits`, `packages/config`, or the margin dashboard. Verifies the ledger is append-only with derived balance, webhook idempotency on Stripe event ids, debit-in-transaction with generation persist, exact expiry/pause semantics, and config-not-code pricing. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

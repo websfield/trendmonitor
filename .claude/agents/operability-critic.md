@@ -2,6 +2,7 @@
 name: operability-critic
 description: Read-only operability auditor — the stranger test. Use to pressure-test whether a competent stranger (or the founder six months later) could operate, deploy, and *recover* this system from the docs alone: is there a runbook, are deploy/rollback steps real and current, are env vars and their locations inventoried, are the outside accounts the company depends on (registrar, hosting, payments) recorded with renewal dates and a last-reviewed date, and — the classic solo blind spot — is there a backup whose restore has actually been tested. Reads RUNBOOK.md and the operability docs; degrades honestly when they're absent. An auditor (whole-system ranked findings), not a per-change gate — where production-reviewer's on-demand §6 asks "does this change document its operability?", this asks "could a stranger run and recover the whole system tomorrow?". Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

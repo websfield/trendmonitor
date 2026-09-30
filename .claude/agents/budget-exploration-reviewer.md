@@ -2,6 +2,7 @@
 name: budget-exploration-reviewer
 description: Read-only reviewer for any diff touching amplification budget allocation, the exploration budget ε, arm tags, Thompson sampling, AWS weights, or spend recommendations. Verifies the ε floor (0.10, never zero), arm-tag propagation, exact budget arithmetic, equal explore-arm weighting, and human sign-off before anything reaches a client. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

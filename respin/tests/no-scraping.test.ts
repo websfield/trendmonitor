@@ -18,6 +18,8 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { originPinnedFetch } from "@respin/db";
+import { PRODUCTION_ROOTS, sourceFilesUnder } from "./support/source-files";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PACKAGES_DIR = join(ROOT, "packages");
@@ -30,18 +32,6 @@ const PACKAGES_DIR = join(ROOT, "packages");
  */
 const PACKAGES = ["auth", "brain", "config", "credits", "db", "llm", "modes", "trends"] as const;
 
-/** Source files (`.ts`/`.tsx`) under `dir`, excluding tests and build output. */
-function walk(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) {
-      return name === "node_modules" || name === "tests" || name === ".next" ? [] : walk(full);
-    }
-    const isSource = name.endsWith(".ts") || name.endsWith(".tsx");
-    const isTest = /\.test\.tsx?$/.test(name);
-    return isSource && !isTest ? [full] : [];
-  });
-}
 
 type Manifest = {
   dependencies?: Record<string, string>;
@@ -72,14 +62,112 @@ function manifestDependencyNames(file: string): string {
   return dependencyNamesOf(JSON.parse(readFileSync(file, "utf8")) as Manifest);
 }
 
+/**
+ * OUTBOUND HTTP, AS A MEASURED POPULATION (P1-R2 / R-141).
+ *
+ * R-4 forbids ingesting from closed platforms, and the sharpest form of that
+ * rule is "a URL somebody submitted is never fetched" — `trend_sources.source_url`
+ * is a column holding exactly such a URL. The scan therefore finds every
+ * outbound call in production source and asserts the set EQUALS the list below,
+ * BOTH WAYS: a call the list lacks is red, and a list entry the scan no longer
+ * finds is equally red, so the allowlist cannot rot into names nothing reaches.
+ *
+ * The callee tokens are the measured ones, not "the two permitted ports": the
+ * repo's outbound calls go through `fetch`, an injected `fetchImpl`, a bound
+ * `doFetch`, and the `underlying` of an origin-pinning wrapper. The two SDK
+ * constructors are listed separately because the call shape cannot see inside
+ * them — saying what the allowlist does NOT cover is part of the allowlist.
+ */
+const OUTBOUND_CALL = /(?:\bglobalThis\s*\.\s*fetch|\bfetch|\bfetchImpl|\bdoFetch|\bunderlying)\s*\(/g;
+const SDK_CONSTRUCTOR = /new\s+(?:Stripe|S3Client)\s*\(/g;
+
+/**
+ * Every outbound call site, keyed by FILE AND CALLEE rather than by line.
+ *
+ * A line number rots on the next edit above it; the pair "which file, which
+ * callee" is the thing the rule is actually about. Measured 2026-09-21 over
+ * `PRODUCTION_ROOTS` minus the `tests/` segment: seven sites, five fetch-shaped
+ * and two SDK-borne.
+ */
+const OUTBOUND_ALLOWLIST: Readonly<Record<string, string>> = {
+  "packages/llm/src/anthropic.ts underlying(":
+    "pinnedFetch's one call — the URL was just compared to ANTHROPIC_ORIGIN (a constant) and anything else threw",
+  "packages/db/src/telemetry-sinks.ts underlying(":
+    "originPinnedFetch's one call — the URL was just compared to the pinned origin, which is built from the env-derived DSN or sink host",
+  "packages/db/src/telemetry-sinks.ts fetchImpl(":
+    "sendOutbound posts payload.url, built by sentryEnvelope(dsn) or posthogActivationCapture(sink) — both env-derived, and both senders are handed an originPinnedFetch",
+  "packages/auth/src/resend-mail.ts doFetch(":
+    "the mail port — a template over the constant RESEND_ORIGIN, redirect: \"error\"",
+  "app/(marketing)/sample-spin/sample-spin-panel.tsx fetch(":
+    "a relative path (\"/api/demo\") in a client component — same origin, no origin to pin",
+  "packages/credits/src/stripe/adapter.ts new Stripe(":
+    "SDK-BORNE: the call shape cannot see inside it. The assertion is the import boundary below",
+  "packages/db/src/deletion-journal-s3.ts new S3Client(":
+    "SDK-BORNE: endpoint guarded https-or-loopback at its construction. The assertion is the import boundary below",
+};
+
+/** The modules whose outbound HTTP is SDK-borne, and therefore proved by imports. */
+const SDK_BORNE = [
+  "packages/credits/src/stripe/adapter.ts",
+  "packages/db/src/deletion-journal-s3.ts",
+] as const;
+
+/** Every outbound call site the scan can see, as `<file> <callee>(`. */
+function outboundSites(sources: readonly { name: string; text: string }[]): string[] {
+  const found: string[] = [];
+  for (const { name, text } of sources) {
+    const code = blankComments(text);
+    for (const re of [OUTBOUND_CALL, SDK_CONSTRUCTOR]) {
+      re.lastIndex = 0;
+      for (let m = re.exec(code); m !== null; m = re.exec(code)) {
+        found.push(`${name} ${m[0].replace(/\s+/g, " ").trim()}`);
+      }
+    }
+  }
+  return [...new Set(found)].sort();
+}
+
 const FORBIDDEN = [
   { id: "scraping dependency", pattern: /\b(?:puppeteer|playwright|cheerio|selenium|scrapy|yt-dlp)\b/i, specimen: 'import "puppeteer";' },
   { id: "caption endpoint", pattern: /\/youtube\/v3\/captions\b/i, specimen: 'const path = "/youtube/v3/captions?key=fixture";' },
   { id: "media download endpoint", pattern: /\/(?:media|download)\b/i, specimen: 'const path = "/media/download?key=fixture";' },
 ] as const;
 
+/**
+ * The BROWSER TEST RUNNER's own configuration, exempt BY EXACT NAME.
+ *
+ * The same exemption `dependencyNamesOf` already makes for `@playwright/test`,
+ * and for the same stated reason: Playwright is a local verification tool, not
+ * a production scraper. It is spelled as two exact filenames rather than a
+ * `playwright.*` pattern, so a `playwright-scraper.ts` is still scanned.
+ *
+ * Both files entered this scan's population on 2026-09-21, when P1-R3 widened
+ * it from four hand-listed trees onto the shared root list — they sit at the
+ * workspace root, which no walked tree covered.
+ */
+const RUNNER_CONFIGS = new Set(["playwright.config.ts", "playwright.visual.config.ts"]);
+
+/**
+ * Source with its comments blanked — the scan reads CODE.
+ *
+ * A dependency NAMED IN PROSE is not a dependency: `scripts/scan-journey-notes.ts:3`
+ * explains why a green Playwright run does not mean the journeys passed, and
+ * that sentence is not a scraper. It was this scan's first false positive the
+ * moment `scripts/` joined the population. One alternation rather than two
+ * passes, so a `/**` inside a `//` line cannot open a phantom block that
+ * swallows the code after it (the shape `claim-scan.test.ts` pins).
+ */
+function blankComments(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/[^\n]*/g, (_m, before?: string) =>
+    before === undefined ? " " : `${before} `
+  );
+}
+
 function offenders(pattern: RegExp, sources: readonly { name: string; text: string }[]): string[] {
-  return sources.filter((source) => pattern.test(source.text)).map((source) => source.name);
+  return sources
+    .filter((source) => !RUNNER_CONFIGS.has(source.name))
+    .filter((source) => pattern.test(blankComments(source.text)))
+    .map((source) => source.name);
 }
 
 describe("R1/R3: no scraper or caption/media download route in any package, the worker, lib, the app, or any manifest", () => {
@@ -88,19 +176,27 @@ describe("R1/R3: no scraper or caption/media download route in any package, the 
   // transitive installations). Every workspace manifest is read: the root and
   // each package's own, because each package declares its own runtime
   // dependencies (compliance gate round 2, 2026-09-03).
-  const sourceFiles = [
-    ...PACKAGES.flatMap((name) => walk(join(PACKAGES_DIR, name, "src"))),
-    ...walk(join(ROOT, "lib")),
-    ...walk(join(ROOT, "worker")),
-    ...walk(join(ROOT, "app")),
-  ];
+  //
+  // THE SHARED ROOT LIST (P1-R3). This walked `packages/*/src`, `lib`,
+  // `worker` and `app` until 2026-09-21 — `scripts/` and the workspace's own
+  // root-level modules were outside it, and `middleware.ts` runs on every
+  // request. `PRODUCTION_ROOTS` is asserted against `ROOT_DIRS` in
+  // `claim-scan.test.ts`, so the population is a measurement rather than four
+  // paths somebody typed.
+  const sourceFiles = sourceFilesUnder(PRODUCTION_ROOTS).filter(
+    ({ file }) =>
+      !file.split("/").includes("tests") && !/\.test\.tsx?$/.test(file)
+  );
   const manifests = [
     join(ROOT, "package.json"),
     ...PACKAGES.map((name) => join(PACKAGES_DIR, name, "package.json")),
   ];
   const sources = [
-    ...sourceFiles.map((file) => ({ name: relative(ROOT, file), text: readFileSync(file, "utf8") })),
-    ...manifests.map((file) => ({ name: `${relative(ROOT, file)} (dependency names)`, text: manifestDependencyNames(file) })),
+    ...sourceFiles.map(({ file, text }) => ({ name: file, text })),
+    ...manifests.map((file) => ({
+      name: `${relative(ROOT, file).split(sep).join("/")} (dependency names)`,
+      text: manifestDependencyNames(file),
+    })),
   ];
 
   it("the package list is the directory: a package on disk that is not in PACKAGES fails here", () => {
@@ -112,30 +208,139 @@ describe("R1/R3: no scraper or caption/media download route in any package, the 
 
   it("scans the real population: every package src, lib, worker, app server files, and every manifest", () => {
     const names = sources.map((source) => source.name);
-    expect(names).toContain(join("packages", "trends", "src", "sources.ts"));
+    expect(names).toContain("packages/trends/src/sources.ts");
     // The package where outbound HTTP to the vendor lives — the round-2 gap.
-    expect(names).toContain(join("packages", "llm", "src", "index.ts"));
-    expect(names).toContain(join("packages", "credits", "src", "generate.ts"));
-    expect(names).toContain(join("lib", "routes.ts"));
-    expect(names).toContain(join("worker", "production.ts"));
-    expect(names).toContain(join("app", "(product)", "trends", "actions.ts"));
-    expect(names).toContain(join("app", "(product)", "trends", "spin-panel.tsx"));
+    expect(names).toContain("packages/llm/src/index.ts");
+    expect(names).toContain("packages/credits/src/generate.ts");
+    expect(names).toContain("lib/routes.ts");
+    expect(names).toContain("worker/production.ts");
+    expect(names).toContain("app/(product)/trends/actions.ts");
+    expect(names).toContain("app/(product)/trends/spin-panel.tsx");
+    // THE ROOTS THE OLD FOUR-PATH LIST MISSED — `middleware.ts` runs on every
+    // request and belonged to no walked tree until 2026-09-21.
+    expect(names).toContain("middleware.ts");
+    expect(names.some((name) => name.startsWith("scripts/"))).toBe(true);
     expect(names).toContain("package.json (dependency names)");
     for (const name of PACKAGES) {
-      expect(names).toContain(`${join("packages", name, "package.json")} (dependency names)`);
+      expect(names).toContain(`packages/${name}/package.json (dependency names)`);
     }
     expect(names.some((name) => /\.test\.tsx?$/.test(name))).toBe(false);
-    expect(names.some((name) => name.split(sep).includes("tests"))).toBe(false);
+    expect(names.some((name) => name.split("/").includes("tests"))).toBe(false);
     // A shrinking population is a weakened guard: the count is asserted, not
-    // merely logged. 2026-09-03 (round 2): 102 package src + 2 lib + 17 worker
-    // + 102 app = 223 source files, + 8 manifests (root + 7 packages).
-    expect(sourceFiles.length).toBeGreaterThanOrEqual(218);
+    // merely logged. RE-MEASURED 2026-09-21 on the shared roots: 175 packages
+    // + 137 app + 20 worker + 8 root-level + 5 scripts + 3 lib = 348 source
+    // files, + 9 manifests (root + 8 packages). The previous figure was 223
+    // over four hand-listed trees.
+    expect(sourceFiles.length).toBeGreaterThanOrEqual(340);
     expect(manifests).toHaveLength(1 + PACKAGES.length);
     expect(sources.map((source) => source.text).join("\n").length).toBeGreaterThan(100_000);
   });
 
   it.each(FORBIDDEN)("NON-VACUITY: finds planted $id in a source file", ({ pattern, specimen }) => {
     expect(offenders(pattern, [{ name: "planted.ts", text: specimen }])).toEqual(["planted.ts"]);
+  });
+
+  it("R-141: every outbound call site is on the allowlist, and every entry is still reached", () => {
+    // TWO-WAY. A site the list lacks is a new outbound producer nobody
+    // reviewed; an entry the scan no longer finds is an allowlist rotting into
+    // names nothing reaches. Both are red.
+    const measured = outboundSites(sources.filter(({ name }) => !name.endsWith("(dependency names)")));
+    expect(measured).toEqual(Object.keys(OUTBOUND_ALLOWLIST).sort());
+    for (const [site, reason] of Object.entries(OUTBOUND_ALLOWLIST)) {
+      expect(reason.length, `${site} is allowlisted with no stated origin`).toBeGreaterThan(20);
+    }
+  });
+
+  it("R-141: SDK-borne outbound modules cannot reach a submitted URL", () => {
+    // The call shape cannot see inside an SDK constructor, so for those two
+    // modules the assertion is the IMPORT BOUNDARY: neither reads the trends
+    // tables, so `trend_sources.source_url` cannot arrive in one.
+    for (const file of SDK_BORNE) {
+      const source = sources.find(({ name }) => name === file);
+      expect(source, `${file} is not in the scanned population`).toBeDefined();
+      const code = blankComments(source!.text);
+      expect(code, `${file} imports the trends schema`).not.toMatch(/trends-schema|trends-storage/);
+    }
+  });
+
+  it("NON-VACUITY: a planted outbound call to a submitted URL is red, in every callee shape", () => {
+    // THE SHAPE THE RULE EXISTS FOR — a row's own URL, fetched.
+    for (const planted of [
+      'await fetch(row.sourceUrl);',
+      'await fetchImpl(row.sourceUrl);',
+      'await underlying(row.sourceUrl);',
+      'await globalThis.fetch(row.sourceUrl);',
+      'await doFetch(row.sourceUrl);',
+      'const s = new Stripe(row.sourceUrl);',
+      'const c = new S3Client({ endpoint: row.sourceUrl });',
+    ]) {
+      expect(
+        outboundSites([{ name: "worker/planted.ts", text: planted }]),
+        planted
+      ).not.toEqual([]);
+      // ...and it is red precisely because it is not on the allowlist.
+      expect(
+        outboundSites([{ name: "worker/planted.ts", text: planted }]).every(
+          (site) => !(site in OUTBOUND_ALLOWLIST)
+        )
+      ).toBe(true);
+    }
+    // A call named in PROSE is not a call site.
+    expect(outboundSites([{ name: "worker/planted.ts", text: "// await fetch(row.sourceUrl);\n" }])).toEqual([]);
+  });
+
+  it("R-141: the origin-pinned wrapper refuses another origin before any fetch", async () => {
+    // The pin is a CONTROL, not a comment: it is observed refusing. AWAITED,
+    // because an unawaited `.rejects` assertion can resolve after the test has
+    // already passed — a test that cannot fail on the defect it guards.
+    let reached = false;
+    const pinned = originPinnedFetch("https://a.example", async () => {
+      reached = true;
+      return new Response("");
+    });
+    await expect(pinned("https://b.example/x")).rejects.toThrow(
+      /may only reach https:\/\/a\.example/
+    );
+    expect(reached, "the underlying fetch ran despite the refusal").toBe(false);
+    // ...and an unparseable URL is refused rather than passed through.
+    await expect(pinned("not a url")).rejects.toThrow(/unparseable/);
+    expect(reached).toBe(false);
+    // ...while the pinned origin itself goes through, so the wrapper is not
+    // simply refusing everything.
+    await expect(pinned("https://a.example/ok")).resolves.toBeInstanceOf(Response);
+    expect(reached).toBe(true);
+  });
+
+  it("NON-VACUITY: the comment blanking and the runner exemption are both real", () => {
+    const [scraping] = FORBIDDEN;
+    // A dependency named in PROSE is not a dependency...
+    expect(
+      offenders(scraping.pattern, [
+        { name: "prose.ts", text: "// a green Playwright run does not mean the journeys passed\n" },
+        { name: "block.ts", text: "/* puppeteer is not used here */\n" },
+      ])
+    ).toEqual([]);
+    // ...but the same word in CODE is, in the very same file shape.
+    expect(
+      offenders(scraping.pattern, [
+        { name: "prose.ts", text: '// a green Playwright run\nimport "puppeteer";\n' },
+      ])
+    ).toEqual(["prose.ts"]);
+    // The runner's config is exempt BY EXACT NAME, and a look-alike is not.
+    expect(
+      offenders(scraping.pattern, [
+        { name: "playwright.config.ts", text: 'import { defineConfig } from "@playwright/test";' },
+      ])
+    ).toEqual([]);
+    expect(
+      offenders(scraping.pattern, [
+        { name: "playwright-scraper.ts", text: 'import { chromium } from "playwright";' },
+      ])
+    ).toEqual(["playwright-scraper.ts"]);
+    // ...and the exemption is a LIVE one: both named files are in the scanned
+    // population, so the list cannot rot into two names nothing reaches.
+    const names = sources.map((source) => source.name);
+    for (const config of RUNNER_CONFIGS) expect(names).toContain(config);
   });
 
   it("NON-VACUITY: finds a planted scraping dependency by NAME in a manifest's dependency list", () => {

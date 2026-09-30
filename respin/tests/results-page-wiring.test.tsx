@@ -36,6 +36,7 @@ import {
   FORBIDDEN_CLAIMS,
   PERFORMANCE_CLAIMS,
 } from "./support/forbidden-claims";
+import { claimHits, specimensFor } from "./support/claim-scan";
 
 /** A uuid a refusal message might carry. It must never reach the page. */
 const LOT_UUID = "0195aa11-2222-7333-8444-555566667777";
@@ -146,7 +147,12 @@ function comparisonGroup() {
 const render = async (): Promise<string> =>
   renderToStaticMarkup(await ResultsPage());
 
-const RESULTS_CLAIM_CANON = [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS];
+// THE PREDICATE IS `claimHits` (P1-R4, applied 2026-09-21). This file held
+// `const RESULTS_CLAIM_CANON = [...]` and a bare `.test()` — correctly
+// shaped, so no re-invention scanner could see it, and one of six the
+// batch-5 compliance gate counted. The LISTS are still named here, because
+// which lists apply to a screen is that screen's decision; what may not be
+// re-invented is the thing that DECIDES whether a string matches.
 
 const entitlementStates = [
   {
@@ -382,12 +388,21 @@ describe("/results page component: the happy path", () => {
     "the actual rendered $label state is clean under the shared claim canon",
     async ({ label, arrange }) => {
       arrange();
-      const html = (await render()).toLowerCase();
-      for (const [claim, pattern] of RESULTS_CLAIM_CANON) {
-        expect(html, `"${claim}" appears in the ${label} page state`).not.toMatch(
-          pattern
-        );
-      }
+      const html = await render();
+      expect(
+        claimHits(html, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS),
+        `the ${label} page state`
+      ).toEqual([]);
+    }
+  );
+
+  // The plant this file was recorded as owing (`PLANT_OWED`): per ENTRY, so a
+  // typo in one pattern cannot hide behind another pattern matching the same
+  // sentence.
+  it.each(specimensFor(FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS))(
+    "PLANTED: %s would be caught in a rendered /results state",
+    (label, specimen) => {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toContain(label);
     }
   );
 

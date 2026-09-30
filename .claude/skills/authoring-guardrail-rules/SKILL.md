@@ -5,7 +5,7 @@ description: Use when adding or editing rules in .claude/guardrails.rules.json, 
 
 # Authoring Guardrail Rules
 
-`.claude/hooks/guardrails.js` is a generic, config-driven PreToolUse engine. It contains no rules of its own — it evaluates the rules in `.claude/guardrails.rules.json` against every Edit/Write/MultiEdit before the write lands.
+`.claude/hooks/guardrails.js` is a generic, config-driven PreToolUse engine. It contains no rules of its own — it evaluates the rules in `.claude/guardrails.rules.json` against every Edit/Write/MultiEdit/NotebookEdit before the write lands.
 
 ## Rule schema
 
@@ -13,17 +13,18 @@ description: Use when adding or editing rules in .claude/guardrails.rules.json, 
 {
   "id": "kebab-case-id",            // required — shown in the hook message, for diagnostics
   "severity": "block" | "warn",     // required — block exits 2 (Claude must change course); warn exits 0 + message
-  "tools": ["Edit","Write","MultiEdit"], // optional — defaults to all three
+  "tools": ["Edit","Write","MultiEdit"], // optional — defaults to those three plus NotebookEdit
   "filePattern": "regex",           // optional — path (forward-slash normalized) must match for the rule to fire
   "notFilePattern": "regex",        // optional — a path matching this is exempt (use for .env.example, tests, fixtures)
   "bodyPattern": "regex",           // optional — the written content must match
   "absentPattern": "regex",         // optional — rule fires ONLY when this is NOT in the body
+  "maxLines": 800,                  // optional — fires when the RESULTING file exceeds N lines and grew; "{lines}" in message = the count
   "flags": "i",                     // optional — regex flags applied to file/body patterns
   "message": "guidance shown to Claude" // required — say what's wrong AND what to do instead
 }
 ```
 
-A rule fires when **all present conditions** hold: tool matches AND `filePattern` matches AND `notFilePattern` does not match AND `bodyPattern` matches AND (`absentPattern` is absent from the body). A rule with no `bodyPattern`/`absentPattern` is a **pure path rule** — fires on any write to a matching path (e.g. "never edit this generated directory").
+A rule fires when **all present conditions** hold: tool matches AND `filePattern` matches AND `notFilePattern` does not match AND `bodyPattern` matches AND (`absentPattern` is absent from the body). A rule with no `bodyPattern`/`absentPattern`/`maxLines` is a **pure path rule** — fires on any write to a matching path (e.g. "never edit this generated directory"). **Size rules stay `warn`:** `maxLines` is a split signal for the person, never a reason to block a write or a reviewer must-fix; the shipped `max-source-file-lines` (800) and `max-test-file-lines` (500) are the baseline — change the threshold and the matching line in `CLAUDE.md`'s coding standards together.
 
 ## Patterns by intent
 

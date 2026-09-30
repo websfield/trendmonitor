@@ -1,0 +1,317 @@
+/* Full-bleed section bands give the scroll a rhythm (surface shifts between
+   sections); the inner .landing-section keeps the content column. */
+.band-steps {
+  background: var(--surface-1);
+}
+
+.band-refuses {
+  background: var(--accent-hover);
+}
+
+.section-title {
+  font: 600 clamp(26px, 3.6vw, 40px) / 1.15 var(--font-sans);
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--sp-6);
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  border-top: 1px solid var(--border);
+}
+
+.steps-cta {
+  margin-top: var(--sp-8);
+}
+
+.steps-photo {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: var(--sp-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.step {
+  padding: 28px 28px 0;
+}
+
+.step:first-child {
+  padding-left: 0;
+}
+
+.step:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+.step:last-child {
+  padding-right: 0;
+}
+
+.step-num {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: var(--radius-sm);
+  font: 600 var(--fs-meta) / 1 var(--font-mono);
+}
+
+.step h3 {
+  font: 600 18px / 1.35 var(--font-sans);
+  margin: 10px 0 0;
+}
+
+.step p {
+  font: 400 14px / 1.6 var(--font-sans);
+  color: var(--text-3);
+  margin: var(--sp-2) 0 0;
+  max-width: 40ch;
+}
+
+.refuses h2 {
+  font: 600 clamp(26px, 3.6vw, 40px) / 1.15 var(--font-sans);
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--on-accent);
+}
+
+.refuses-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-4) var(--sp-10);
+  margin-top: var(--sp-6);
+  font: 400 15px / 1.6 var(--font-sans);
+  color: var(--on-accent-body);
+}
+
+.pricing-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+}
+
+.pricing-head h2 {
+  font: 600 26px / 1.2 var(--font-sans);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.pricing-head .pricing-note {
+  font: 400 13px / 1.4 var(--font-mono);
+  color: var(--text-4);
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-top: var(--sp-5);
+}
+
+.price-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  transition:
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+.price-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-soft);
+}
+
+.price-card.price-featured {
+  background: var(--accent-surface);
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-soft);
+}
+
+.price-card.price-featured:hover {
+  box-shadow: var(--shadow);
+}
+
+.price-name-row {
+  display: flex;
+  align-items: center;
+}
+
+.price-name {
+  font: 600 14px / 1 var(--font-sans);
+  color: var(--text-1);
+}
+
+.price-flag {
+  margin-left: auto;
+  white-space: nowrap;
+  font: 600 9px / 1 var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--accent-text-strong);
+  background: var(--accent-surface-2);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) 6px;
+}
+
+.price-amount {
+  font: 600 30px / 1 var(--font-mono);
+  color: var(--text-1);
+  margin-top: 14px;
+}
+
+.price-amount .price-period {
+  font: 400 13px / 1 var(--font-mono);
+  color: var(--text-4);
+}
+
+.price-lines {
+  display: grid;
+  gap: 7px;
+  margin-top: var(--sp-4);
+  font: 400 13px / 1.5 var(--font-sans);
+  color: var(--text-3);
+}
+
+.price-card .btn {
+  margin-top: var(--sp-5);
+  width: 100%;
+}
+
+.pricing-fine {
+  font: 400 13px / 1.6 var(--font-sans);
+  color: var(--text-4);
+  margin: var(--sp-4) 0 0;
+  max-width: 70ch;
+}
+
+/* Closing move: a small centered card over the night photo, so the page
+   ends on an invitation instead of pricing fine print. */
+.band-close {
+  background: url("/marketing/night.png") center / cover no-repeat
+    var(--surface-1);
+}
+
+.closing {
+  display: grid;
+  place-items: center;
+  padding-top: 84px;
+  padding-bottom: 84px;
+}
+
+.close-card {
+  width: min(100%, 380px);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+  padding: 34px 30px;
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-4);
+  text-align: center;
+}
+
+.close-card p {
+  font: 600 18px / 1.4 var(--font-sans);
+  margin: 0;
+  color: var(--text-1);
+}
+
+.close-signin {
+  font: 400 13px / 1.4 var(--font-sans);
+  color: var(--text-3);
+}
+
+.landing-footer {
+  border-top: 1px solid var(--border);
+  padding: var(--sp-6) var(--sp-12);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-5);
+}
+
+.landing-footer .landing-wordmark {
+  font-size: 15px;
+}
+
+.landing-footer .footer-tag {
+  font: 400 12.5px / 1.4 var(--font-sans);
+  color: var(--text-4);
+}
+
+.landing-footer nav {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-4);
+  font: 500 12.5px / 1 var(--font-sans);
+}
+
+@media (max-width: 900px) {
+  .pricing-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .steps {
+    grid-template-columns: 1fr;
+  }
+
+  .step,
+  .step:first-child,
+  .step:last-child {
+    padding: 28px 0 0;
+    border-right: none;
+  }
+
+  .demo-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .demo-before {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 560px) {
+  .landing-header,
+  .landing-footer {
+    padding-left: var(--sp-5);
+    padding-right: var(--sp-5);
+  }
+
+  .hero {
+    padding: 56px var(--sp-5) 120px;
+  }
+
+  .hero .hero-turn {
+    margin-left: 0;
+  }
+
+  .demo-section {
+    margin-top: -72px;
+  }
+
+  .landing-section {
+    padding-left: var(--sp-5);
+    padding-right: var(--sp-5);
+  }
+
+  .pricing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .refuses-grid {
+    grid-template-columns: 1fr;
+  }
+}

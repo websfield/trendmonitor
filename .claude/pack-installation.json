@@ -1,15 +1,33 @@
 {
   "schemaVersion": 1,
   "generatorMarker": "claude-jig",
-  "sourceRelease": "1.61.0",
-  "at": "2026-09-14T12:53:01.471Z",
+  "sourceRelease": "2.0.0+wt.78e35d3",
+  "at": "2026-09-21T05:18:55.502Z",
   "selectedModules": [],
   "actions": [
     {
       "path": ".claude/agents/code-reviewer.md",
-      "action": "copied",
-      "sourceHash": "d3d68242ed66e2830cb2c73344e1c8c2c4b613926ccc4c93cbebc812b302c2cc",
-      "targetHash": "efbf1021211d9105a6361871bd4ec23f2799ea92bf798d4e4a0d87653c39083c"
+      "action": "customized-merged",
+      "sourceHash": "504610e4122cbcf872f24b0faf82e9339d706d459fc07aac095b82490affdaa7",
+      "targetHash": "a038c2d84d804807c4131a1e1075d3f3d309022bdbef7824d3384689196273a4"
+    },
+    {
+      "path": ".claude/agents/plan-reviewer.md",
+      "action": "customized-merged",
+      "sourceHash": "f26162ae195e600ed294bf5f69cdc5fe356889795aa407b045b0ae17ac98493a",
+      "targetHash": "be200027c7df4eb3c028acf0a3d54a50c144b4631b6aac0ae626b7d958b95294"
+    },
+    {
+      "path": ".claude/agents/production-reviewer.md",
+      "action": "customized-merged",
+      "sourceHash": "8970e39cd29460ecaecb2b19a66e1b22cdca688f21425ea933e5942da7c33639",
+      "targetHash": "0578ada529e1519acd298468ccdb9ab177f5c11f54fbd509fd2dff3904964176"
+    },
+    {
+      "path": ".claude/agents/security-reviewer.md",
+      "action": "customized-merged",
+      "sourceHash": "a614c1dcf280f560c2d410fe257cc21ae0acabc9c6950c3af8e10302c0c15264",
+      "targetHash": "dd7d0fcb17ac5da4ec61056f0b99e11ccdfff9d906f5e18c2edc7373783412ac"
     },
     {
       "path": ".claude/codex-review.md",
@@ -18,10 +36,16 @@
       "targetHash": "ed41a623abaee8e2e9864b7a3ad4e333c06149ba7199bdad5b29432309b280f9"
     },
     {
-      "path": ".claude/commands/bootstrap-claude-pack.md",
+      "path": ".claude/commands/audit.md",
       "action": "customized-merged",
-      "sourceHash": "e1ac9078f132a3fddf7b9633278b08513343dea8d2e19aad179bc5b341b699ff",
-      "targetHash": "8478e04d6e812b17b350d7420d94708a71e548e44a0ab0cdc811592674f8e529"
+      "sourceHash": "28249a7dd21b49e12e1c3310fa84377c61a902f208d87bb216076cc09fbe3f48",
+      "targetHash": "89cb74c66345914df9b315d9928d721d0528ae984408526fda7d35e412935fe6"
+    },
+    {
+      "path": ".claude/commands/bootstrap-claude-pack.md",
+      "action": "copied",
+      "sourceHash": "f6e14bde2bcc4706108bb2bb635d546dbba9215b6e443ee1fdbe66f418630222",
+      "targetHash": "f6e14bde2bcc4706108bb2bb635d546dbba9215b6e443ee1fdbe66f418630222"
     },
     {
       "path": ".claude/commands/bootstrap-critics.md",
@@ -32,26 +56,38 @@
     {
       "path": ".claude/commands/create-plan.md",
       "action": "copied",
-      "sourceHash": "97c6446df545d597b4b23e6b146fa07cbeea67026ac4192e53fb2df62dd1c381",
-      "targetHash": "97c6446df545d597b4b23e6b146fa07cbeea67026ac4192e53fb2df62dd1c381"
+      "sourceHash": "7a031c3ee0be45c8010ddea0c1d24c3518bbac5190de15a318cafac9a07fe6b5",
+      "targetHash": "7a031c3ee0be45c8010ddea0c1d24c3518bbac5190de15a318cafac9a07fe6b5"
+    },
+    {
+      "path": ".claude/commands/design.md",
+      "action": "customized-merged",
+      "sourceHash": "1d0fae079f1d60b6f5a38f45569eb5851e72389b09f426809e617928b179f381",
+      "targetHash": "41dfeb42388d5c91dbae577d61a82b2413476b60bcd3296edb458b0a75a08d60"
     },
     {
       "path": ".claude/commands/doctor.md",
-      "action": "copied",
-      "sourceHash": "8ddbc8e98bee7a6738fc332162486a951119e37e85b499d939ca4d48137873b1",
-      "targetHash": "8ddbc8e98bee7a6738fc332162486a951119e37e85b499d939ca4d48137873b1"
+      "action": "customized-merged",
+      "sourceHash": "5e6a1d262ee0759d22bde216bcc7baf2788ce66b3b35cc1ecaffdce0da5e879a",
+      "targetHash": "68168fefa2288947fc5c4b0914aa8ed4357aba51b0fa0c9f9f425168e513caad"
     },
     {
       "path": ".claude/commands/go.md",
       "action": "copied",
-      "sourceHash": "a901ae1c79aff9f600851032442f176daca2d28e31e709969b9f7ae448ed98a9",
-      "targetHash": "a901ae1c79aff9f600851032442f176daca2d28e31e709969b9f7ae448ed98a9"
+      "sourceHash": "699ac8cedbadbf140ede3133d7db32e9e7c170a67e91e2af42973b13420141ef",
+      "targetHash": "699ac8cedbadbf140ede3133d7db32e9e7c170a67e91e2af42973b13420141ef"
     },
     {
       "path": ".claude/commands/implement.md",
       "action": "copied",
-      "sourceHash": "c76264c39dc66ee596d4ce71d6f7e13f62b388ec13cd3664ce30624f14239674",
-      "targetHash": "c76264c39dc66ee596d4ce71d6f7e13f62b388ec13cd3664ce30624f14239674"
+      "sourceHash": "13588ab28b008ed02b2d7c7c3758c95b170e4eb8f90ebd5bc17bed6e18ac768f",
+      "targetHash": "13588ab28b008ed02b2d7c7c3758c95b170e4eb8f90ebd5bc17bed6e18ac768f"
+    },
+    {
+      "path": ".claude/commands/incident.md",
+      "action": "copied",
+      "sourceHash": "945750731e5af75abb0c4f1d947e207c1aa0a51acc82f52c508b5f12d8500e73",
+      "targetHash": "945750731e5af75abb0c4f1d947e207c1aa0a51acc82f52c508b5f12d8500e73"
     },
     {
       "path": ".claude/commands/interrogate.md",
@@ -60,16 +96,34 @@
       "targetHash": "ae96a875cbfed321d2ef4ad82f949b282fb4195a36ceac708008a55d692abd80"
     },
     {
+      "path": ".claude/commands/recap.md",
+      "action": "copied",
+      "sourceHash": "7f7076474baff640c97a010d42bf6dc8f481993a41ecb9c5b124e45a06f48549",
+      "targetHash": "7f7076474baff640c97a010d42bf6dc8f481993a41ecb9c5b124e45a06f48549"
+    },
+    {
+      "path": ".claude/commands/release.md",
+      "action": "copied",
+      "sourceHash": "6cc95c90bb16e8135513a53f267c9c609ef4474dcc981615b8de750f60c809be",
+      "targetHash": "6cc95c90bb16e8135513a53f267c9c609ef4474dcc981615b8de750f60c809be"
+    },
+    {
       "path": ".claude/commands/review-phase.md",
       "action": "copied",
-      "sourceHash": "28b6c08ffa6bca0407649c448e503520bcfb1f644ee4648a5d34a41e6711a604",
-      "targetHash": "28b6c08ffa6bca0407649c448e503520bcfb1f644ee4648a5d34a41e6711a604"
+      "sourceHash": "8df6321d8ffdc508a4527d1852587c03c4dd80493a97d812fc085a4e54681167",
+      "targetHash": "8df6321d8ffdc508a4527d1852587c03c4dd80493a97d812fc085a4e54681167"
+    },
+    {
+      "path": ".claude/commands/shape.md",
+      "action": "copied",
+      "sourceHash": "5b7b34de35c090829a7b4ffc3704b3dc5925190e8e808b5dfd046d6f75c3512f",
+      "targetHash": "5b7b34de35c090829a7b4ffc3704b3dc5925190e8e808b5dfd046d6f75c3512f"
     },
     {
       "path": ".claude/commands/start-teams.md",
-      "action": "customized-merged",
-      "sourceHash": "b2ed50172e55c7bad682fc75374f3309bc0ac5a0014f9c1482220d9e135d8fbb",
-      "targetHash": "43a13a108cf22bf755389062b8548f823f5cec2f53bbee9f967e8a34afd5a380"
+      "action": "copied",
+      "sourceHash": "211aa6e08581f116a1fbca1a9f096caca0f45e9617a465b2d87b7bdf29297a9a",
+      "targetHash": "211aa6e08581f116a1fbca1a9f096caca0f45e9617a465b2d87b7bdf29297a9a"
     },
     {
       "path": ".claude/commands/sync-pack.md",
@@ -78,46 +132,448 @@
       "targetHash": "8afc2deac934edb6fa4036c2fec584e8bbdaa0664dd190538ee8b2c982623c4f"
     },
     {
-      "path": ".claude/gate-rules.md",
+      "path": ".claude/commands/triage.md",
       "action": "copied",
-      "sourceHash": "3a89ab998a2f7d196b4d1ec54865530d6901da1a620466e501ebac436539fce2",
-      "targetHash": "3a89ab998a2f7d196b4d1ec54865530d6901da1a620466e501ebac436539fce2"
+      "sourceHash": "660d853a80269d7431baffca4f49241f86493ba403ef33242a8c5ca985c478c6",
+      "targetHash": "660d853a80269d7431baffca4f49241f86493ba403ef33242a8c5ca985c478c6"
+    },
+    {
+      "path": ".claude/commands/user-docs.md",
+      "action": "copied",
+      "sourceHash": "98be25b31bc83f04544ebb494c86747ece03271004944813066a4809824f0a4d",
+      "targetHash": "98be25b31bc83f04544ebb494c86747ece03271004944813066a4809824f0a4d"
+    },
+    {
+      "path": ".claude/gate-rules.md",
+      "action": "customized-merged",
+      "sourceHash": "2968dbbc79a4d2c17f07e601b2ad0026cf835c314a206c4fb0dbba5c3763ed1d",
+      "targetHash": "695d2828d074abe53f0f4e9d752654ae8691312a142b7baf00fe9243f02a3756"
+    },
+    {
+      "path": ".claude/guardrails.rules.json",
+      "action": "customized-merged",
+      "sourceHash": "c07303c194838bbeb106cff0370fba85ed92370744bcac2cf676194f040fd8f3",
+      "targetHash": "2a11a0d711b27195d90522c5ddb7da2f75f67e46a9db4bc465e4ba7857b407f1"
+    },
+    {
+      "path": ".claude/hooks/guardrails.js",
+      "action": "customized-merged",
+      "sourceHash": "d66d6501aef63c4ec7ff9adf6c6c6b7f762fddd832bcf517eb93e838f1975306",
+      "targetHash": "d66d6501aef63c4ec7ff9adf6c6c6b7f762fddd832bcf517eb93e838f1975306"
+    },
+    {
+      "path": ".claude/hooks/post-edit-check.js",
+      "action": "customized-merged",
+      "sourceHash": "f100c203d41244916556cefbc8ad46e88d8843fda1c84b18ae2f1c9e3ad89104",
+      "targetHash": "f100c203d41244916556cefbc8ad46e88d8843fda1c84b18ae2f1c9e3ad89104"
     },
     {
       "path": ".claude/hooks/session-start.js",
       "action": "copied",
-      "sourceHash": "3b10fee19c53f8f39fb52292e4ab3aa48e9842405f556a4cfebfce9807106ac5",
-      "targetHash": "3b10fee19c53f8f39fb52292e4ab3aa48e9842405f556a4cfebfce9807106ac5"
+      "sourceHash": "97b8fdc145f341990218577325f2c60288d321e41bf074ef81046d16870d7866",
+      "targetHash": "97b8fdc145f341990218577325f2c60288d321e41bf074ef81046d16870d7866"
     },
     {
       "path": ".claude/hooks/workflow-stop.js",
-      "action": "copied",
-      "sourceHash": "2cba1401ddc7abfcb9dc49b5a8486c91739fa1471a51df9436559681b1eac19b",
-      "targetHash": "2cba1401ddc7abfcb9dc49b5a8486c91739fa1471a51df9436559681b1eac19b"
+      "action": "missing",
+      "sourceHash": null,
+      "targetHash": null
     },
     {
       "path": ".claude/lib/workflow-evidence.js",
-      "action": "copied",
-      "sourceHash": "6294c6e353a38b7b80aaac17c90dd9a816e668d806dd6abdcc33f5dd616dc6f0",
-      "targetHash": "6294c6e353a38b7b80aaac17c90dd9a816e668d806dd6abdcc33f5dd616dc6f0"
+      "action": "missing",
+      "sourceHash": null,
+      "targetHash": null
     },
     {
       "path": ".claude/scripts/workflow-state.js",
-      "action": "copied",
-      "sourceHash": "85fd812be77c6eb4f67fc14e1a765c70f4176d369b2493039696b7751dee4a5b",
-      "targetHash": "85fd812be77c6eb4f67fc14e1a765c70f4176d369b2493039696b7751dee4a5b"
+      "action": "missing",
+      "sourceHash": null,
+      "targetHash": null
     },
     {
       "path": ".claude/settings.json",
       "action": "customized-merged",
-      "sourceHash": "b6cf74a5aca60684d0431c91ac1eb35d135cf63e315ce60876e168ddac969c30",
-      "targetHash": "bacba42a7a307a840e9521a322647a26a83a749b08eb41622cf9afd9945f8e96"
+      "sourceHash": "f2163d3ba3917f37acd0b1bf9df6dee730aea26edae8c912cf93a4424a409ad0",
+      "targetHash": "91fa6bda01a2e28afd9d7bff1fa703ad800ab38d0fd3f54bf58fa670eabf1c01"
+    },
+    {
+      "path": ".claude/skills/authoring-guardrail-rules/SKILL.md",
+      "action": "customized-merged",
+      "sourceHash": "b5fd8ff71bd6c09315702b9bd0016e8f69259e294446aa23456f2cdebe3c7a65",
+      "targetHash": "b5fd8ff71bd6c09315702b9bd0016e8f69259e294446aa23456f2cdebe3c7a65"
+    },
+    {
+      "path": ".claude/skills/designing-uis/SKILL.md",
+      "action": "customized-merged",
+      "sourceHash": "e0d4034950ce32c7dca696f9b45eabb9e28acbb2b8b0ea3a34a9b12605bb3e10",
+      "targetHash": "e0d4034950ce32c7dca696f9b45eabb9e28acbb2b8b0ea3a34a9b12605bb3e10"
     },
     {
       "path": ".claude/skills/using-the-pack/SKILL.md",
       "action": "copied",
-      "sourceHash": "0ff1c0778862b0d54eceb49cf2f9f9cb7ea01c5daa05abef7fc29c7fb213a530",
+      "sourceHash": "9ca5c4f807a5e49e9161e964194ac8858e3558c63c3131b00cce21a8dff1fa05",
+      "targetHash": "9ca5c4f807a5e49e9161e964194ac8858e3558c63c3131b00cce21a8dff1fa05"
+    },
+    {
+      "path": "CLAUDE.md",
+      "action": "customized-merged",
+      "sourceHash": null,
+      "targetHash": "521e389c40684e72f7790ad3a90bf195c6369723954b6b2d51b24266620e659c"
+    },
+    {
+      "path": "agents/_critic-template.md",
+      "action": "skipped-existing",
+      "sourceHash": "4a5f635c064acefc451d0a53f522a66459bbf962387f2bb6e42b8c1f9ae5ecf1",
+      "targetHash": "6fed0194d8aaff734e27ca13aaa20ac620a9e38888e14af89efe4814e18caa3d"
+    },
+    {
+      "path": "agents/accessibility-critic.md",
+      "action": "skipped-existing",
+      "sourceHash": "168bcfbbbe9e227bd0812e69ea842c3db427724bad4c3f0f6017c6d68506fe8d",
+      "targetHash": "c78162bd957bacd89f5fe81fbe03b638bf4ba1c79ecfb55939af10fc354a6948"
+    },
+    {
+      "path": "agents/architecture-critic.md",
+      "action": "skipped-existing",
+      "sourceHash": "cac025e0b15dd6ab2fb54b1c17ddf771714a9fe7e4ccbd339183a9fc1fae3f3b",
+      "targetHash": "c6fe5484bec641adfcce92581c22be035448498f6da57dee71c324ed9df1cb93"
+    },
+    {
+      "path": "agents/code-reviewer.md",
+      "action": "skipped-existing",
+      "sourceHash": "504610e4122cbcf872f24b0faf82e9339d706d459fc07aac095b82490affdaa7",
+      "targetHash": "91eaf68c8b2f66ce1b63ea8e1e94938c9543f15ad542d6f02cff56bfb9b56253"
+    },
+    {
+      "path": "agents/correctness-critic.md",
+      "action": "skipped-existing",
+      "sourceHash": "7696e72cbdd5ce9559dc10de64a63ba9d352a2f43689916434c82416cb5662ab",
+      "targetHash": "ad8f5ebf17540e02ee13eac3bbf30857383ff58c06b6454aead9cfece5b2ca81"
+    },
+    {
+      "path": "agents/operability-critic.md",
+      "action": "skipped-existing",
+      "sourceHash": "c86e633af789d5886bf17a09fc051989736a6fafae19c9e1e610664461644790",
+      "targetHash": "e9099dc22e2544a9e7ffd196116c45cd1d90fbb0b1a7929d8d0ac9e3cb6c4f6c"
+    },
+    {
+      "path": "agents/outbound-truth-critic.md",
+      "action": "skipped-existing",
+      "sourceHash": "de0ba5704aba2c3db71dd6c2edd5d5f4d9adde4e1f596bd617130fdd172439b9",
+      "targetHash": "5365cf1919670d308ed6f10272dbb9830d4ea46b3f790b398fb04e7282a98c9b"
+    },
+    {
+      "path": "agents/plan-reviewer.md",
+      "action": "skipped-existing",
+      "sourceHash": "f26162ae195e600ed294bf5f69cdc5fe356889795aa407b045b0ae17ac98493a",
+      "targetHash": "cc4e1052395b366ebbc84b5434e01aab916b73d7735608afa1317badc903e9eb"
+    },
+    {
+      "path": "agents/production-reviewer.md",
+      "action": "skipped-existing",
+      "sourceHash": "8970e39cd29460ecaecb2b19a66e1b22cdca688f21425ea933e5942da7c33639",
+      "targetHash": "3c991f50f7812b7f76d24b08fa387e5aca9f472789d4e07a022b5952d775bd8f"
+    },
+    {
+      "path": "agents/security-reviewer.md",
+      "action": "skipped-existing",
+      "sourceHash": "a614c1dcf280f560c2d410fe257cc21ae0acabc9c6950c3af8e10302c0c15264",
+      "targetHash": "7b48dccfcce350d9df55c7eca910aae6b67c9596f7c8c5336c4fa9ef083ffb71"
+    },
+    {
+      "path": "agents/simplification-reviewer.md",
+      "action": "skipped-existing",
+      "sourceHash": "0b64239c088cac0ba13d0743b959e9d3c201e3eab5b142d6109447aa86a85686",
+      "targetHash": "ef8df4939b69ce1046f5ebd7dd719fde0de1813b97c36225e4c7bed5b2486a39"
+    },
+    {
+      "path": "agents/supply-chain-critic.md",
+      "action": "skipped-existing",
+      "sourceHash": "a02713050dea835114d6a064398a8e7be14db8ef3b0acc5ad160fd6cfc58bed2",
+      "targetHash": "0eee57a5071313c9ca4b4bc37150be2e0dff09574ce89342485af823489c6583"
+    },
+    {
+      "path": "codex-review.md",
+      "action": "skipped-existing",
+      "sourceHash": "b592b82f4314eeb1cdccbc605e39e409c9c8f424662493e15b7fa55e922cdc32",
+      "targetHash": "4f5407268a0b2798c891e44512c9112620a0efd34ae769425d660f871404408c"
+    },
+    {
+      "path": "commands/audit.md",
+      "action": "skipped-existing",
+      "sourceHash": "28249a7dd21b49e12e1c3310fa84377c61a902f208d87bb216076cc09fbe3f48",
+      "targetHash": "68bd3bcae308bcc97a55fe682d2a21c776bf6233576bd3f5fd7557d2aeb4923a"
+    },
+    {
+      "path": "commands/bootstrap-claude-pack.md",
+      "action": "skipped-existing",
+      "sourceHash": "f6e14bde2bcc4706108bb2bb635d546dbba9215b6e443ee1fdbe66f418630222",
+      "targetHash": "8478e04d6e812b17b350d7420d94708a71e548e44a0ab0cdc811592674f8e529"
+    },
+    {
+      "path": "commands/bootstrap-critics.md",
+      "action": "skipped-existing",
+      "sourceHash": "0bc5225d502b144663399d9aeaece2b84ee54dc0b8992c02df3f581f6b64c654",
+      "targetHash": "97a694009d107027c8faa001efd0813b8f26d132b7a4b20d728483dd9fb90174"
+    },
+    {
+      "path": "commands/create-plan.md",
+      "action": "skipped-existing",
+      "sourceHash": "7a031c3ee0be45c8010ddea0c1d24c3518bbac5190de15a318cafac9a07fe6b5",
+      "targetHash": "97c6446df545d597b4b23e6b146fa07cbeea67026ac4192e53fb2df62dd1c381"
+    },
+    {
+      "path": "commands/design.md",
+      "action": "skipped-existing",
+      "sourceHash": "1d0fae079f1d60b6f5a38f45569eb5851e72389b09f426809e617928b179f381",
+      "targetHash": "192c6b7f0cfbd11438f39aee08caaa070328ed255e371d11775e07e3af2b6eda"
+    },
+    {
+      "path": "commands/doctor.md",
+      "action": "skipped-existing",
+      "sourceHash": "5e6a1d262ee0759d22bde216bcc7baf2788ce66b3b35cc1ecaffdce0da5e879a",
+      "targetHash": "8ddbc8e98bee7a6738fc332162486a951119e37e85b499d939ca4d48137873b1"
+    },
+    {
+      "path": "commands/go.md",
+      "action": "skipped-existing",
+      "sourceHash": "699ac8cedbadbf140ede3133d7db32e9e7c170a67e91e2af42973b13420141ef",
+      "targetHash": "a901ae1c79aff9f600851032442f176daca2d28e31e709969b9f7ae448ed98a9"
+    },
+    {
+      "path": "commands/implement.md",
+      "action": "skipped-existing",
+      "sourceHash": "13588ab28b008ed02b2d7c7c3758c95b170e4eb8f90ebd5bc17bed6e18ac768f",
+      "targetHash": "c76264c39dc66ee596d4ce71d6f7e13f62b388ec13cd3664ce30624f14239674"
+    },
+    {
+      "path": "commands/incident.md",
+      "action": "skipped-existing",
+      "sourceHash": "945750731e5af75abb0c4f1d947e207c1aa0a51acc82f52c508b5f12d8500e73",
+      "targetHash": "19de58ca0d01b9e56f193297d21ead5c6fb1f018e53f90fff643fc03fa3f92df"
+    },
+    {
+      "path": "commands/interrogate.md",
+      "action": "skipped-existing",
+      "sourceHash": "d2116042befbf7d10c8be3cc3e15ea1f69889fd6127b4c1a6461dfe32e982303",
+      "targetHash": "ae96a875cbfed321d2ef4ad82f949b282fb4195a36ceac708008a55d692abd80"
+    },
+    {
+      "path": "commands/recap.md",
+      "action": "skipped-existing",
+      "sourceHash": "7f7076474baff640c97a010d42bf6dc8f481993a41ecb9c5b124e45a06f48549",
+      "targetHash": "2a86f327e794b1ac5101919fcd10d6d7076d23f47fbf335bc9dfc8c740a48775"
+    },
+    {
+      "path": "commands/release.md",
+      "action": "skipped-existing",
+      "sourceHash": "6cc95c90bb16e8135513a53f267c9c609ef4474dcc981615b8de750f60c809be",
+      "targetHash": "23918a1622cad41ce97e7ac01d05dfb3e00acc314413eea87c9758a72d64eb41"
+    },
+    {
+      "path": "commands/review-phase.md",
+      "action": "skipped-existing",
+      "sourceHash": "8df6321d8ffdc508a4527d1852587c03c4dd80493a97d812fc085a4e54681167",
+      "targetHash": "28b6c08ffa6bca0407649c448e503520bcfb1f644ee4648a5d34a41e6711a604"
+    },
+    {
+      "path": "commands/shape.md",
+      "action": "skipped-existing",
+      "sourceHash": "5b7b34de35c090829a7b4ffc3704b3dc5925190e8e808b5dfd046d6f75c3512f",
+      "targetHash": "f573bed553f8b56d3a8fd04be5ad48df20ac108f004bec0eb35c6a2b72c7c37d"
+    },
+    {
+      "path": "commands/shortcut-ledger.md",
+      "action": "skipped-existing",
+      "sourceHash": "af53940dab3d24e0df4bc3d3c92600710795fadaff11dfa9e950f99e930871dc",
+      "targetHash": "af53940dab3d24e0df4bc3d3c92600710795fadaff11dfa9e950f99e930871dc"
+    },
+    {
+      "path": "commands/start-teams.md",
+      "action": "skipped-existing",
+      "sourceHash": "211aa6e08581f116a1fbca1a9f096caca0f45e9617a465b2d87b7bdf29297a9a",
+      "targetHash": "43a13a108cf22bf755389062b8548f823f5cec2f53bbee9f967e8a34afd5a380"
+    },
+    {
+      "path": "commands/sync-docs.md",
+      "action": "skipped-existing",
+      "sourceHash": "cbdb0e72bf4d41bbdb8504fa947d2087d619ff4f0d7d0ef1d801150f403581d3",
+      "targetHash": "631e1eef658edd6f6d8fd604a7e0d02133fb808f9ae2d30877870f66ea9ee4c7"
+    },
+    {
+      "path": "commands/sync-pack.md",
+      "action": "skipped-existing",
+      "sourceHash": "7e9c1056a46b347c58a24d529f67fd8da4604806b50e52179c6b6375fec1da00",
+      "targetHash": "8afc2deac934edb6fa4036c2fec584e8bbdaa0664dd190538ee8b2c982623c4f"
+    },
+    {
+      "path": "commands/triage.md",
+      "action": "skipped-existing",
+      "sourceHash": "660d853a80269d7431baffca4f49241f86493ba403ef33242a8c5ca985c478c6",
+      "targetHash": "854abe594d2231bc7b60c03bb1d129954c14f9040b368735c30023fae03a981c"
+    },
+    {
+      "path": "commands/user-docs.md",
+      "action": "skipped-existing",
+      "sourceHash": "98be25b31bc83f04544ebb494c86747ece03271004944813066a4809824f0a4d",
+      "targetHash": "94c68e36ce45dfda79e24e3b85b229239ea09cd696461f0dcb202184010a6c9d"
+    },
+    {
+      "path": "gate-rules.md",
+      "action": "skipped-existing",
+      "sourceHash": "2968dbbc79a4d2c17f07e601b2ad0026cf835c314a206c4fb0dbba5c3763ed1d",
+      "targetHash": "78a16ae61e428a2d29cb2b157e599cc67cea1946d8c027d81c95e9c35075cda4"
+    },
+    {
+      "path": "guardrails.rules.json",
+      "action": "skipped-existing",
+      "sourceHash": "c07303c194838bbeb106cff0370fba85ed92370744bcac2cf676194f040fd8f3",
+      "targetHash": "324371b6d6a220aea90dd2ae343cb691630626142045a5949b021aed0c1fcafc"
+    },
+    {
+      "path": "hooks/guardrails.js",
+      "action": "skipped-existing",
+      "sourceHash": "d66d6501aef63c4ec7ff9adf6c6c6b7f762fddd832bcf517eb93e838f1975306",
+      "targetHash": "bd8fef95395f8ef17162a379df795e89f365a588b5303e5de52ad12f598154f6"
+    },
+    {
+      "path": "hooks/post-edit-check.js",
+      "action": "skipped-existing",
+      "sourceHash": "f100c203d41244916556cefbc8ad46e88d8843fda1c84b18ae2f1c9e3ad89104",
+      "targetHash": "324c538431264bd023fe901649502204c2f40b5b37bb5f1e6013bb187f25bc4d"
+    },
+    {
+      "path": "hooks/session-start.js",
+      "action": "skipped-existing",
+      "sourceHash": "97b8fdc145f341990218577325f2c60288d321e41bf074ef81046d16870d7866",
+      "targetHash": "3b10fee19c53f8f39fb52292e4ab3aa48e9842405f556a4cfebfce9807106ac5"
+    },
+    {
+      "path": "scripts/plan-ready.js",
+      "action": "skipped-existing",
+      "sourceHash": "810d62336bbc88b6f0470da6105f98e47fd1e9b6901c60ddb3657a4cbca6eea1",
+      "targetHash": "810d62336bbc88b6f0470da6105f98e47fd1e9b6901c60ddb3657a4cbca6eea1"
+    },
+    {
+      "path": "settings.json",
+      "action": "settings-sidecar",
+      "sourceHash": "f2163d3ba3917f37acd0b1bf9df6dee730aea26edae8c912cf93a4424a409ad0",
+      "targetHash": "f2163d3ba3917f37acd0b1bf9df6dee730aea26edae8c912cf93a4424a409ad0"
+    },
+    {
+      "path": "skills/auditing-with-critics/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "e67ec8c2b7b20be7d664dab348645ee6ed8b5245cf82210255e76606652e80ee",
+      "targetHash": "af21c9b718a8f02e85e4a2889a4f670d7a0e72e6808bd3403fc53ae2416b9d8e"
+    },
+    {
+      "path": "skills/authoring-guardrail-rules/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "b5fd8ff71bd6c09315702b9bd0016e8f69259e294446aa23456f2cdebe3c7a65",
+      "targetHash": "73e4d497ad29d3b9c93b52fe18f3675a6f181ac976bb07a7954d6d597de2e5f1"
+    },
+    {
+      "path": "skills/authoring-project-skills/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "2f377723906453a4b35bf47c9ad2d86f8abb0d09779a138172af81f0c46599ef",
+      "targetHash": "2f377723906453a4b35bf47c9ad2d86f8abb0d09779a138172af81f0c46599ef"
+    },
+    {
+      "path": "skills/designing-uis/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "e0d4034950ce32c7dca696f9b45eabb9e28acbb2b8b0ea3a34a9b12605bb3e10",
+      "targetHash": "e250447786697bcc4a5e8b3a7f47b6fe8032aff1c40e3ec9baa39fa912ec5c4d"
+    },
+    {
+      "path": "skills/designing-uis/resources/aesthetic-families.md",
+      "action": "skipped-existing",
+      "sourceHash": "54658a5791555d461a0340b1a08a11bc03cd5daf44bc8cdb03383df721ae8646",
+      "targetHash": "54658a5791555d461a0340b1a08a11bc03cd5daf44bc8cdb03383df721ae8646"
+    },
+    {
+      "path": "skills/designing-uis/resources/anti-slop.md",
+      "action": "skipped-existing",
+      "sourceHash": "9b3c036ec5670546abb18eb740ab2594ed97f38250991e75fe444901b75bf7f9",
+      "targetHash": "9b3c036ec5670546abb18eb740ab2594ed97f38250991e75fe444901b75bf7f9"
+    },
+    {
+      "path": "skills/designing-uis/resources/design-md-template.md",
+      "action": "skipped-existing",
+      "sourceHash": "551d7aa20e6ac1b0c05a13a70edb009f17e3f19e0fce2799776ef2adf27a2c25",
+      "targetHash": "551d7aa20e6ac1b0c05a13a70edb009f17e3f19e0fce2799776ef2adf27a2c25"
+    },
+    {
+      "path": "skills/discovering-project-skills/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "31eb9d38d5ea4d980ba6623a4604bcfcf9551a54f6fa9b1f1478b2243054563f",
+      "targetHash": "31eb9d38d5ea4d980ba6623a4604bcfcf9551a54f6fa9b1f1478b2243054563f"
+    },
+    {
+      "path": "skills/keeping-it-lean/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "e791e007da091919cb2a32db714b96f1a5b18fc8c2a09aa73395aec00a3799a5",
+      "targetHash": "849ac02ddd896d208cc5dfbd7bdd20a63a0cb1d5fe97c899b846ea71e2d12947"
+    },
+    {
+      "path": "skills/keeping-it-lean/resources/platform-native.md",
+      "action": "skipped-existing",
+      "sourceHash": "4248b692a5b5c873fe491f50c654d5b6ffbe15f03a034fdeca5f532a4238b742",
+      "targetHash": "4248b692a5b5c873fe491f50c654d5b6ffbe15f03a034fdeca5f532a4238b742"
+    },
+    {
+      "path": "skills/outbound-truth/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "138245ddaf09b04cdd1642f995c67cbc908e0bd73626e5af25f91982dbf7f92b",
+      "targetHash": "138245ddaf09b04cdd1642f995c67cbc908e0bd73626e5af25f91982dbf7f92b"
+    },
+    {
+      "path": "skills/ui-design-tools/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "a8ddf6f1071bf761dfceb2fe987a5a05b1585942c9086e37041c9fa803707061",
+      "targetHash": "a8ddf6f1071bf761dfceb2fe987a5a05b1585942c9086e37041c9fa803707061"
+    },
+    {
+      "path": "skills/ui-design-tools/resources/canva.md",
+      "action": "skipped-existing",
+      "sourceHash": "40fcf9b47e6457adcd87fdc5ad675bf050d29563eeec22ce025aaeb3a59ef5ec",
+      "targetHash": "40fcf9b47e6457adcd87fdc5ad675bf050d29563eeec22ce025aaeb3a59ef5ec"
+    },
+    {
+      "path": "skills/ui-design-tools/resources/claude-design.md",
+      "action": "skipped-existing",
+      "sourceHash": "3c0164a347cfb1165ded741f1cc4e6beddb0ebe88353e7b4c3ee8aa819cccb5a",
+      "targetHash": "3c0164a347cfb1165ded741f1cc4e6beddb0ebe88353e7b4c3ee8aa819cccb5a"
+    },
+    {
+      "path": "skills/ui-design-tools/resources/openai-images.md",
+      "action": "skipped-existing",
+      "sourceHash": "f21a99a9d7375cb4c3048b8e0e98d4c5ceeec448800307c9ab2afe05719d2725",
+      "targetHash": "f21a99a9d7375cb4c3048b8e0e98d4c5ceeec448800307c9ab2afe05719d2725"
+    },
+    {
+      "path": "skills/ui-design-tools/resources/stitch.md",
+      "action": "skipped-existing",
+      "sourceHash": "34e104224076a12a1d2ec5c2800257529c2aa19c9821ecea469327c765b99a2b",
+      "targetHash": "34e104224076a12a1d2ec5c2800257529c2aa19c9821ecea469327c765b99a2b"
+    },
+    {
+      "path": "skills/using-the-pack/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "9ca5c4f807a5e49e9161e964194ac8858e3558c63c3131b00cce21a8dff1fa05",
       "targetHash": "0ff1c0778862b0d54eceb49cf2f9f9cb7ea01c5daa05abef7fc29c7fb213a530"
+    },
+    {
+      "path": "skills/verifying-webapps/SKILL.md",
+      "action": "skipped-existing",
+      "sourceHash": "e12790ef3c10465c340bf8b12fe4f52020f196a913564c4fe7c546773de8e493",
+      "targetHash": "e12790ef3c10465c340bf8b12fe4f52020f196a913564c4fe7c546773de8e493"
+    },
+    {
+      "path": "workspaces.json",
+      "action": "skipped-existing",
+      "sourceHash": "37ba12bb53eb344668093e8e47502053485f80c1e24835636415874025adb87b",
+      "targetHash": "13955d3e87818288e89aa431c54ec95f9bd365c31dc6ff1293298a5e8767329d"
     }
   ]
 }

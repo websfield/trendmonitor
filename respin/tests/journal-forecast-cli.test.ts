@@ -6,10 +6,11 @@
 // public launch would have been authorised by a file of zeroes that no human
 // ever priced. So the template is excluded BY NAME, and that exclusion is
 // asserted here against the real file on disk rather than against a fixture.
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { scratchDir } from "./support/scratch-dir";
 
 import { forecastDeletionJournalCost, journalEnablementDecision } from "@respin/db";
 
@@ -51,7 +52,7 @@ describe("price snapshot loading", () => {
   });
 
   it("loads a recorded snapshot and ignores unrelated files", () => {
-    const dir = mkdtempSync(join(tmpdir(), "respin-price-"));
+    const dir = scratchDir("respin-price-");
     writeFileSync(
       join(dir, "price-snapshot.eu-west-2.json"),
       JSON.stringify({ region: "eu-west-2", currency: "USD" })

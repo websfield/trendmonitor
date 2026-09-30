@@ -2,6 +2,7 @@
 name: architecture-critic
 description: Read-only architecture auditor. Use to pressure-test system decomposition, module/service boundaries, coupling, source-of-truth duplication, adapter discipline, and scaling shape - including seams not yet built. An auditor (ranked findings), not a per-change code gate. Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

@@ -1,0 +1,191 @@
+/* ---- panels & banners ---------------------------------------------------- */
+
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--sp-5);
+  margin-bottom: var(--sp-4);
+}
+
+.panel-1 {
+  box-shadow: var(--shadow-soft);
+}
+
+.panel-2 {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+
+/* The refusal component: strong neutral border and plain words. No alarm red
+   anywhere (tokens file, honesty-state rule). */
+.banner {
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  padding: var(--sp-5);
+  margin-bottom: var(--sp-4);
+}
+
+.banner strong {
+  color: var(--text-1);
+}
+
+/* ---- text utilities ------------------------------------------------------ */
+
+.muted {
+  color: var(--text-3);
+  font-size: var(--fs-ui);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.meta {
+  font: 400 var(--fs-meta) / 1.5 var(--font-mono);
+  color: var(--text-4);
+}
+
+.label {
+  font: 600 var(--fs-label) / 1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+/* ---- badges -------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  font: 600 var(--fs-label) / 1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+}
+
+.badge-filled {
+  background: var(--accent-surface-2);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-text-strong);
+}
+
+.badge-outline {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+}
+
+.badge-dashed {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-3);
+}
+
+/* ---- fields -------------------------------------------------------------- */
+
+.field {
+  display: grid;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
+}
+
+.field > label {
+  font: 500 var(--fs-ui) / 1.4 var(--font-sans);
+  color: var(--text-2);
+}
+
+.field .field-limit {
+  color: var(--text-3);
+  font-size: var(--fs-ui);
+  margin: 0;
+}
+
+/* ---- pasted-post rows ---------------------------------------------------- */
+
+.posts-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.post-row {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-2);
+}
+
+.post-meta {
+  font: 400 var(--fs-meta) / 1.5 var(--font-mono);
+  color: var(--text-4);
+}
+
+/* ---- meter --------------------------------------------------------------- */
+
+.meter {
+  position: relative;
+  height: 8px;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  overflow: visible;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+.meter-baseline {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--text-1);
+}
+
+/* ---- ledger table -------------------------------------------------------- */
+
+.ledger-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ledger-table th {
+  font: 600 var(--fs-label) / 1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+  text-align: left;
+  background: var(--surface-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.ledger-table td {
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-ui);
+}
+
+.ledger-table td.num {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+
+.ledger-table td.num-delta {
+  text-align: right;
+}
+
+.ledger-table .delta-pos {
+  color: var(--accent-text-strong);
+}
+
+.balance-num {
+  font: 600 var(--fs-display) / var(--lh-tight) var(--font-mono);
+  color: var(--text-1);
+}

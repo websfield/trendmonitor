@@ -95,10 +95,19 @@ export function DemoPanel({ demo }: { demo: DemoCopy }) {
           </div>
         </div>
         <div className="demo-foot">
+          {/*
+            ILLUSTRATIVE, AND IT HAS TO SAY SO. This foot read "REAL OUTPUT
+            SHAPE" over a hand-written before/after — a claim the page then
+            contradicted three sections below with "it never fakes a number"
+            (audit 2026-09-19 item 30, and D13: `page.tsx`'s own header told
+            the next engineer this foot "says it is not product output" while
+            it said the opposite). The shape listed after the colon IS real —
+            every mode's output carries it — so the sentence separates the two.
+          */}
           <span>
-            REAL OUTPUT SHAPE: THESIS &middot; HOOKS &middot; TIMED SCRIPT
-            &middot; SHOT MAP &middot; CAPTION &middot; WEAKEST POINT, ALWAYS
-            DISCLOSED
+            ILLUSTRATION, NOT PRODUCT OUTPUT. THE SHAPE IS REAL: THESIS
+            &middot; HOOKS &middot; TIMED SCRIPT &middot; SHOT MAP &middot;
+            CAPTION &middot; WEAKEST POINT, ALWAYS DISCLOSED
           </span>
         </div>
       </div>
@@ -114,28 +123,31 @@ export function StepsBand() {
         <div className="steps">
           <div className="step">
             <span className="step-num">01</span>
-            <h3>Build your brain in 20 minutes</h3>
+            <h3>Build your brain</h3>
             <p>
-              A short interview plus 5 to 10 of your own posts. You confirm
-              every inferred field before it activates; nothing is assumed
-              silently.
+              A short interview plus at least 3 of your own posts, up to 50.
+              You confirm every inferred field before it activates; nothing is
+              assumed silently.
             </p>
           </div>
           <div className="step">
             <span className="step-num">02</span>
             <h3>Generate, kill-test, film</h3>
             <p>
-              Seven modes, one output shape: hooks, a timed script with the
-              turn marked, and every beat mapped to a clip you have or a shot
-              to film.
+              Seven modes. The four script modes give you a timed script with
+              the turn marked and every beat mapped to a shot, described for
+              you to match or film. Hooks, captions and ideas are their own
+              shapes.
             </p>
           </div>
           <div className="step">
             <span className="step-num">03</span>
-            <h3>Log results. It learns you.</h3>
+            <h3>Log results. Approve every change.</h3>
             <p>
-              Post, log the numbers, and approve or reject what the data
-              proposes. The brain never updates behind your back.
+              Post and log the numbers, and read them beside your own
+              history. Nothing you log can change your brain until verified
+              analytics connectors exist, and this product does not hold one
+              yet. Every brain change needs your approval.
             </p>
           </div>
         </div>
@@ -164,16 +176,18 @@ export function RefusesBand() {
           <h2>What Respin refuses to do</h2>
           <div className="refuses-grid">
             <span>
-              It never promises virality. Every concept ships with its weakest
-              point disclosed.
+              It never promises a video will take off. Every concept ships with
+              its weakest point disclosed.
             </span>
             <span>
-              It never pads. If all candidates die your kill-test, it says so
-              and digs again.
+              It never pads. A draft that fails the kill test is rewritten
+              once; a second failure is refused with its reason, and the run
+              still costs its credits.
             </span>
             <span>
-              It never fakes a number. Unverifiable specifics render as [check]
-              tokens for you to fill.
+              It checks where every number, date and name came from, and
+              offers a [check] marker instead of changing your words. The
+              check is about provenance, not about whether a specific is true.
             </span>
             <span>
               It never scores you against other creators. Every baseline is
@@ -192,8 +206,10 @@ export function PricingSection() {
       <div className="pricing-head">
         <h2>Pricing</h2>
         <span className="pricing-note">
-          CREDITS ARE THE ONLY METER. EVERY RUN STATES ITS PRICE BEFORE IT
-          SPENDS.
+          CREDITS METER EVERY RUN, AND EVERY RUN STATES ITS PRICE BEFORE IT
+          SPENDS. YOUR PLAN ALSO SETS HOW MANY CREATOR PROFILES AND TRACKED
+          NICHES YOU GET, HOW MANY RUNS GO AT ONCE, WHICH MODES ARE OPEN, AND
+          WHETHER BRAIN PROPOSALS ARE YOURS TO ACCEPT OR ONLY TO READ.
         </span>
       </div>
       <div className="pricing-grid">
@@ -207,7 +223,7 @@ export function PricingSection() {
             <div className="price-name-row">
               <span className="price-name">{tier.name}</span>
               {tier.featured ? (
-                <span className="price-flag">MOST CREATORS</span>
+                <span className="price-flag">RECOMMENDED</span>
               ) : null}
             </div>
             <div className="price-amount">
@@ -221,8 +237,15 @@ export function PricingSection() {
                 <span key={line}>{line}</span>
               ))}
             </div>
+            {/*
+              THE TIER TRAVELS. "Start Creator" used to render a bare
+              `/sign-up`, and `sign-up/page.tsx` read no search params — so a
+              button labelled with a purchase performed a free signup and
+              dropped the choice silently (audit 2026-09-19 D5, P6-R4). One
+              parameter, validated against `PLAN_KEYS` on arrival.
+            */}
             <a
-              href="/sign-up"
+              href={`/sign-up?plan=${tier.plan}`}
               className={buttonClass(tier.featured ? "primary" : "secondary")}
             >
               {tier.cta}
@@ -231,9 +254,13 @@ export function PricingSection() {
         ))}
       </div>
       <p className="pricing-fine">
-        Cancelling always offers a pause first: 1 to 3 months, no charges,
-        everything frozen and readable. Unused monthly credits expire; packs
-        last 12 months. No plan promises reach, and none of them ever will.
+        Cancelling here offers a pause first: 1 to 3 months, no charges,
+        everything frozen and readable. Stripe&rsquo;s own billing portal stays
+        open and has no pause, so a cancellation started there is just a
+        cancellation. On a paid plan, unused monthly credits stay spendable for one more
+        month, then expire; on Free they expire at the end of the calendar
+        month; packs last 12 months. No
+        plan promises reach, and none of them ever will.
       </p>
     </section>
   );
@@ -263,7 +290,7 @@ export function LandingFooter() {
     <footer className="landing-footer">
       <span className="landing-wordmark">Respin</span>
       <span className="footer-tag">
-        Scripts in your voice, built on mechanisms that perform.
+        Scripts in your voice, built on reviewed mechanisms.
       </span>
       <nav aria-label="Footer">
         {AUDIENCES.map((a) => (

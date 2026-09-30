@@ -49,11 +49,11 @@ variant count, anti-slop pass, build rules, screenshot cadence, real-state check
 Use the `ui-design-tools` decision tree. Default is **hand-write against `DESIGN.md`** — often the best path.
 Reach for a tool when it genuinely accelerates a step, and confirm the choice with the person if it adds a
 dependency or an external account:
-- **First-draft screens / multi-screen flow fast** → Google Stitch (`resources/stitch.md`).
-- **Visual prototype / round-trip with the team** → Claude Design (`resources/claude-design.md`) — *detect
+- **First-draft screens / multi-screen flow fast** → Google Stitch (`.claude/skills/ui-design-tools/resources/stitch.md`).
+- **Visual prototype / round-trip with the team** → Claude Design (`.claude/skills/ui-design-tools/resources/claude-design.md`) — *detect
   it first; fall back if absent.*
-- **Generated icons / illustrations / hero images** → OpenAI gpt-image (`resources/openai-images.md`).
-- **Marketing / brand-template assets** → Canva Connect (`resources/canva.md`).
+- **Generated icons / illustrations / hero images** → OpenAI gpt-image (`.claude/skills/ui-design-tools/resources/openai-images.md`).
+- **Marketing / brand-template assets** → Canva Connect (`.claude/skills/ui-design-tools/resources/canva.md`).
 
 Whatever a tool emits is a **starting layout, not the finished UI**: re-normalize its tokens to `DESIGN.md`,
 land assets in a versioned repo folder (never a temporary URL), keep API keys in env vars.

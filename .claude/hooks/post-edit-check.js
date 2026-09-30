@@ -50,7 +50,8 @@ try {
 }
 
 const ti = input.tool_input || {};
-const rawPath = ti.file_path || ti.path || "";
+// NotebookEdit shares the Edit matcher but names its file notebook_path.
+const rawPath = ti.file_path || ti.path || ti.notebook_path || "";
 if (typeof rawPath !== "string" || !rawPath) failOpen();
 const p = rawPath.replace(/\\/g, "/");
 
@@ -367,15 +368,24 @@ for (const [checkIndex, check] of config.checks.entries()) {
     // command killed after launch with a signal. A string error code with neither, and no
     // captured output, is evidence that the process never started. ENOBUFS is excluded:
     // it means the command ran and exceeded maxBuffer, so it remains a real failure.
+    // On the shell path a missing executable is reported by the shell itself: POSIX sh exits
+    // 127 ("command not found"); cmd.exe's process exit is 1 (9009 is only its in-batch
+    // ERRORLEVEL), so on win32 the specific cmd.exe phrase is what makes status 1 safe to trust.
+    const lastLine = ((e && e.stderr) || out).trim().split(/\r?\n/).pop() || "";
+    const shellSaidMissing =
+      (status === 127 && /not found|No such file/i.test(lastLine)) ||
+      (process.platform === "win32" && (status === 1 || status === 9009) &&
+        /is not recognized as an internal or external command/i.test(out));
     const didNotStart =
-      typeof code === "string" &&
+      shellSaidMissing ||
+      (typeof code === "string" &&
       code !== "ENOBUFS" &&
       status === null &&
       !(e && e.signal) &&
-      !out.trim();
+      !out.trim());
     if (didNotStart) {
       process.stderr.write(
-        `post-edit-check SKIPPED: "${label}" could not start (${code}). Check the command's ` +
+        `post-edit-check SKIPPED: "${label}" could not start (${shellSaidMissing ? "command not found" : code}). Check the command's ` +
           `permissions and system resources, correct command/cwd in .claude/workspaces.json if needed, then retry.\n`
       );
       process.exit(0);

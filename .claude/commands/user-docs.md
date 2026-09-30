@@ -22,7 +22,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite
 Use `TodoWrite` to track the steps.
 
 ### Step 1 — Establish what shipped and is user-visible
-From the records and the code: ledger `complete` lines (`docs/progress/**/ledger.md`), release records (`docs/progress/release/*.md`), briefs/plans for context — then verify against the **actual surfaces a user can touch** (routes/screens/CLI commands/API endpoints). The docs describe only what a user can reach; internals stay out. Absence-safe: nothing user-visible shipped yet → say so honestly ("nothing to document yet") and stop — **don't create `docs/help/` with nothing to put in it.**
+From the records and the code: record `complete` lines (`docs/progress/*/progress-and-log.md`), release records (`docs/progress/release/*.md`), briefs/plans for context — then verify against the **actual surfaces a user can touch** (routes/screens/CLI commands/API endpoints). The docs describe only what a user can reach; internals stay out. Absence-safe: nothing user-visible shipped yet → say so honestly ("nothing to document yet") and stop — **don't create `docs/help/` with nothing to put in it.**
 
 ### Step 2 — Inventory the existing doc set
 Read what's already under `docs/help/` (if anything): `getting-started.md`, per-feature how-tos (`docs/help/<feature>.md`), `faq.md`. The default shape is plain markdown in those three forms — voice and venue (docs site, in-app help) are product-specific, so the files are the deliverable and publishing is the person's move.
@@ -34,7 +34,7 @@ Create or update pages, in the customer's language:
 - **Honest about edges** — if a flow has a known limitation, the doc says it plainly; hiding it converts into a support ticket.
 
 ### Step 4 — Drift pass (on re-runs)
-The comparison basis is **records + surfaces vs the page set**: diff the ledger `complete` lines and release records since the docs were last touched — plus the real user-visible surfaces from Step 1 — against the pages under `docs/help/`:
+The comparison basis is **records + surfaces vs the page set**: diff the records' `complete` lines and release records since the docs were last touched — plus the real user-visible surfaces from Step 1 — against the pages under `docs/help/`:
 - **Shipped, no page** → offer a new how-to.
 - **Changed, page exists** → flag the stale sections (auto-fix the mechanical facts; ask before rewording — the `/sync-docs` split).
 - **Removed, page remains** → offer to retire the page; never delete silently.
@@ -47,5 +47,5 @@ List pages written / updated / flagged / offered-to-retire, each with the eviden
 - **Outbound-truth governs (pointer, not paraphrase).** The canon lives in the `outbound-truth` skill; this command applies it. Overclaim = the draft isn't offered — no exceptions for "it'll ship next week".
 - **The reader has never seen the repo.** If a sentence needs the code to make sense, it's a developer doc — move it to `/sync-docs`' territory.
 - **Lane split with `/sync-docs`:** this command owns `docs/help/**` (customer voice); `/sync-docs` owns developer docs and only *flags* drift it notices in help pages.
-- **Absence-safe.** No ledgers, no releases, no user-visible surface → an honest "nothing to document yet", not scaffolding for its own sake.
+- **Absence-safe.** No records, no releases, no user-visible surface → an honest "nothing to document yet", not scaffolding for its own sake.
 - **Never publishes.** No pushing, posting, or deploying docs anywhere (golden rule 8). Respect the git policy — no commits unless asked.

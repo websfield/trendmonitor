@@ -16,11 +16,11 @@
 // probes exist for, and that is the same fail-open shape one level up.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { scratchDir } from "./support/scratch-dir";
 import { walkCodeFiles } from "./support/app-surface";
 import {
   PLANTED_PROBE_PATHS,
@@ -38,7 +38,7 @@ const execFileAsync = promisify(execFile);
 
 /** A throwaway tree with one real file, one probe DIRECTORY and one probe FILE. */
 function plantTree(): { root: string; real: string; inDir: string; file: string } {
-  const root = mkdtempSync(join(tmpdir(), "respin-probe-"));
+  const root = scratchDir("respin-probe-");
   const write = (rel: string, body: string) => {
     const full = join(root, ...rel.split("/"));
     mkdirSync(dirname(full), { recursive: true });

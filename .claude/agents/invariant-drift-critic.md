@@ -2,6 +2,7 @@
 name: invariant-drift-critic
 description: Read-only auditor that sweeps the whole codebase for drift against the CLAUDE.md non-negotiable invariants — model-never-decides, no auto-approval, one-way call-graph and sole authorities, fail-closed degradation, measurement discipline (Proxy/Measured, denominators, median/MAD, temporal holdouts), mechanisms-carry-no-numbers, ε floor and arm tags, and tenancy. The audit-posture counterpart to the four per-diff Critical-Path gates: gates fire only on diffs classified as touching a path; this critic hunts the code as it exists today for violations that accumulated through unclassified changes and for invariants tests/Architecture does not yet encode. An auditor (ranked findings), not a gate. Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

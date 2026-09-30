@@ -1,31 +1,30 @@
 ---
-description: Create an implementation plan (codebase review + master plan + per-phase plans with project conventions pinned), then gate it through a multi-agent plan review before handing off to /start-teams. Do NOT use for a small, clear change — /shape (or /go) routes it to /implement's fast lane, no plan documents.
+description: Create an implementation plan (codebase review + master plan + short per-phase plans), then gate it through one plan-reviewer round before handing off to /implement or /start-teams. Do NOT use for a small, clear change — /shape (or /go) routes it to /implement's fast lane, no plan documents.
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, TodoWrite, Agent
 ---
 
 # Create Implementation Plan
 
-Create a comprehensive implementation plan **with this project's conventions pinned into every phase plan**, so whichever orchestrator implements it cannot drift onto patterns from other projects or onto generic AI defaults — and **gate the finished draft through a multi-agent plan review (Step 6)** so gaps are caught at authoring time, not during implementation.
+Create an implementation plan that an implementer can build from **with only the plan text** — and gate the finished draft through one **plan-reviewer** round (Step 6) so gaps are caught at authoring time, not during implementation.
 
-> The plan is the contract every downstream agent obeys. Never rely on a spawned agent auto-reading your `CLAUDE.md` — whether it does is unsettled, and pinning is correct either way; the orchestrator pastes the phase plan into the agent's prompt. So every convention a phase depends on must live in the phase plan itself (Step 5).
+> The plan is the contract every downstream agent obeys. It says *what* will be built and *how you will know*; it does not restate the rulebook — the build lanes paste `CLAUDE.md`'s conventions into each spawn prompt themselves.
 
 ## Where this command learns the project
 
 This command is project-agnostic. It learns the specifics at run time from:
-- **`CLAUDE.md`** at the repo root — the non-negotiable rules, Critical Paths, Definition of Done, and "where things live". This is the top of the precedence stack.
-- **`NORTH_STAR.md`** at the repo root if filled — the single outcome the project exists for. Drives the alignment check (Stop Condition 5): a feature that hits a Non-goal or doesn't advance the Goal is flagged before planning.
-- **`DECISIONS.md`** at the repo root **if it exists** — the decision journal (see the `using-the-pack` skill). A trade-off already settled there is *context, not a fresh debate*: honor it in the plan rather than re-deriving it, and if this feature would reverse a load-bearing decision, surface that as a Stop-Condition-style flag for the person, don't silently overturn it.
-- **`.claude/project-context.md`** if present — the longer context bible produced by `/bootstrap-claude-pack`.
-- **`.claude/agents/`** and **`.claude/skills/`** — the available specialist agents and Critical-Path reviewer skills. **Only request named agents/skills that actually exist here; the runtime's separate general-purpose reviewer fallback under canon §10 is the explicit exception.**
-- The **docs tree** the project uses for requirements (e.g. `docs/`, `PRD.md`, issue tracker). Discover it; do not assume a fixed path.
+- **`CLAUDE.md`** at the repo root — the non-negotiable rules, Critical Paths, Definition of Done, and "where things live". The top of the precedence stack.
+- **`NORTH_STAR.md`** if filled — drives the alignment check (Stop Condition 4).
+- **`DECISIONS.md`** if it exists — the decision journal. A trade-off already settled there is *context, not a fresh debate*: honor it, and if this feature would reverse a load-bearing decision, flag it for the person.
+- **`.claude/project-context.md`** if present — the longer context bible from `/bootstrap-claude-pack`.
+- **`.claude/agents/`** and **`.claude/skills/`** — the available specialist agents and Critical-Path reviewer skills. **Only name agents/skills that actually exist here.**
+- The **docs tree** the project uses for requirements (`docs/`, `PRD.md`, an issue tracker). Discover it; do not assume a fixed path.
 
-If `CLAUDE.md` is absent or thin, say so and recommend running `/bootstrap-claude-pack` first — the plan quality depends on the project contract existing.
+If `CLAUDE.md` is absent or thin, say so and recommend `/bootstrap-claude-pack` first — plan quality depends on the project contract existing.
 
 ## Usage
 ```
 /create-plan [feature-name-or-description]
 ```
-- `$ARGUMENTS`: feature name, description, or requirement reference.
 
 ---
 
@@ -33,11 +32,10 @@ If `CLAUDE.md` is absent or thin, say so and recommend running `/bootstrap-claud
 
 Do not proceed past Step 2 if any of the following is true. Surface the blocker; do not bluff past it.
 
-1. **The feature does not map to any tracked requirement.** If the project tracks requirements (REQ-IDs, issues, a PRD), the feature must bind to ≥1. If none and the project tracks them, stop and ask: "no requirement binding — in scope, or add one first?".
-2. **The feature depends on a capability that has not shipped.** Verify against ground-truth progress artefacts (status docs, CI, the actual code), not against optimistic plan tables.
-3. **Required independent review cannot be supplied.** A missing named reviewer uses a separate `general-purpose` context with the same Critical-Path checklist under canon §10. If the checklist or independent capacity cannot be established, disclose the missing assurance and stop before calling the plan ready. Never fabricate a reviewer, checklist or PASS.
-4. **A new core dependency would be introduced with no decision record** where the project requires one (see `CLAUDE.md` §Conventions / ADR policy).
-5. **The feature contradicts the North Star.** If `NORTH_STAR.md` is filled, check the request against it: a feature matching a **Non-goal**, or that does not advance the **Goal** / **Current focus**, is possible scope creep. Surface it plainly — name the specific Non-goal or the gap — and ask whether to proceed anyway, reshape the feature, or update the North Star. (If `NORTH_STAR.md` is missing or still the template, skip this check — do not invent a goal to judge against.)
+1. **The feature does not map to any tracked requirement.** If the project tracks requirements (REQ-IDs, issues, a PRD), the feature must bind to ≥1; otherwise stop and ask.
+2. **The feature depends on a capability that has not shipped.** Verify against ground-truth artefacts (status docs, CI, the code), not optimistic plan tables.
+3. **A new core dependency would be introduced with no decision record** where the project requires one (`CLAUDE.md` §Conventions / ADR policy).
+4. **The feature contradicts the North Star.** A feature matching a **Non-goal**, or not advancing the **Goal** / **Current focus**, is possible scope creep: name the specific Non-goal or gap and ask whether to proceed, reshape, or update the North Star. (Missing or template `NORTH_STAR.md` → skip; do not invent a goal.)
 
 If a stop condition fires, document it in the Step 7 summary and ask how to proceed.
 
@@ -45,16 +43,14 @@ If a stop condition fires, document it in the Step 7 summary and ask how to proc
 
 ## Guiding Principles (apply to every step)
 
-- **Traceability** — every phase lists the requirement IDs it satisfies. A phase with no requirement is platform plumbing (rare, justify it) or out of scope.
-- **Respect the project's hard rules** — read them from `CLAUDE.md` and pin them verbatim into each phase plan. If a convention here conflicts with a habit from another project, the project's convention wins.
-- **Derive, don't hand-enumerate** — any list that gates something (a spec's coverage scope, an event dispatch list, an audit's page list) is *derived* from its defining set and checked for count parity (Step 5.5).
-- **Failure paths are first-class** — every handled lifecycle event has its inverse/teardown counterpart; every recovery mechanism has a stated double-failure behavior; every external dependency has a degraded mode.
-- **Numbers have provenance** — every quantitative target is cited to a doc:line or derived in a Derived Budgets table. Recurring spend is a number too: every new external service or paid dependency carries its estimated monthly cost and free-tier ceiling (an employee spends company money; a solo founder spends their own).
-- **Goal-driven execution** — every phase ends with verifiable PASS/FAIL acceptance criteria backed by file:line, test name, or screenshot — never "improvement".
-- **Surgical changes** — phase plans list exact file paths within the existing structure. Do not invent new top-level directories or frameworks.
-- **Simplicity first (minimal *scope*, not minimal *completeness*)** — the minimum number of phases and the smallest surface that satisfy the request. No speculative phases; no abstractions until ≥2 callers exist. This governs *scope* — it never licenses a half-built version of what is in scope (see *Boil the lake*).
-- **Boil the lake (complete the right thing)** — within the agreed scope, plan the *complete* implementation: every edge case, every error path, every teardown, and the tests that prove them. AI-assisted implementation makes the marginal cost of completeness near-zero, so a phase that knowingly ships "90% for now" is under-planned, not lean. The boundary is **lake vs ocean** — a *lake* is boilable now (all branches of this feature, full error handling, the spec the behaviour needs): boil it in the same phase. An *ocean* is a genuinely larger undertaking (a rewrite, a new product surface, a speculative abstraction): that is *scope*, so record it as a Non-Goal with a receiving phase — never half-start it. Deferring completable work, or its tests, to "a later PR" is the anti-pattern. Leanness never overrides this: when the shortest means would drop a branch or its test, coverage wins (see *Economy of means*).
-- **Economy of means (least new code, full coverage)** — express the agreed scope with the *fewest new* lines, dependencies, and abstractions: reach for an existing helper, the standard library, or a native platform feature before writing new code, adding a dependency, or introducing an abstraction (see the `keeping-it-lean` skill and its platform-native cheatsheet). This is a *second axis, orthogonal to Boil the lake*: economy governs **how** you build, coverage governs **how much behaviour you cover** — maximise both, never trade one for the other. It never licenses dropping an edge case, error path, teardown, test, or requirement to shrink a diff. **Never apply "fewer lines" to:** validation at trust boundaries, data-loss / error handling, security, accessibility, edge cases, tests, or anything explicitly requested. When economy and completeness ever appear to conflict, **completeness wins** — full coverage first, then the leanest means that delivers it.
+- **Traceability** — every phase's *Goal* line names the requirement IDs it satisfies.
+- **Respect the project's hard rules** — read them from `CLAUDE.md`; the project's convention wins over any habit from elsewhere.
+- **Failure paths are first-class** — every handled lifecycle event has its inverse/teardown; every recovery mechanism has a stated double-failure behaviour; every external dependency has a degraded mode. These become acceptance criteria, not prose.
+- **Goal-driven execution** — every phase ends with PASS/FAIL acceptance criteria backed by a test name, a command, or `file:line` — never "improvement".
+- **Surgical changes** — exact file paths within the existing structure. No new top-level directories or frameworks.
+- **Simplicity first (minimal *scope*, not minimal *completeness*)** — the fewest phases and the smallest surface that satisfy the request; no speculative phases; no abstractions until ≥2 callers exist.
+- **Boil the lake (complete the right thing)** — within the agreed scope, plan the *complete* implementation: every edge case, error path and teardown, and the tests that prove them, in the same phase. A *lake* is boilable now; an *ocean* (a rewrite, a new product surface) is scope — record it as a Non-goal with a receiving phase, never half-start it.
+- **Economy of means (least new code, full coverage)** — reach for an existing helper, the standard library, or a native platform feature before new code, a dependency, or an abstraction (`keeping-it-lean` skill). Economy governs *how*, coverage governs *how much*: never trade one for the other. One test per behaviour, at the seam, in the project's existing harness; a plan that names a new harness says why the existing one cannot do the job.
 - **No requirement substitution** — implement what was asked, not a generic stand-in.
 
 ---
@@ -62,115 +58,63 @@ If a stop condition fires, document it in the Step 7 summary and ask how to proc
 ## Process
 
 ### Step 0: Pre-flight — clarify scope
-**If a shaping brief exists** at `docs/plans/<feature>-brief.md` (written by `/shape` or `/go`), read it first and treat its **Chosen scope** + **Real job** as the starting contract — the "are we building the right thing?" question is already answered, so do not re-litigate it; carry its Non-goals and any 10-star sketch into the master plan. Then restate the request in your own words and resolve any *remaining* ambiguity. If the request (or brief) is precise and unambiguous and names the surface + requirement IDs and fits one phase, skip the rest of this step. If genuinely ambiguous and no documented default applies, use `AskUserQuestion` for the **highest-leverage** ambiguity only — at most two questions, never trivia. Bias toward proceeding with a documented assumption recorded in the master plan.
+**If a shaping brief exists** at `docs/plans/<feature>-brief.md` (written by `/shape` or `/go`), read it first: its **Chosen scope** + **Real job** are the starting contract — do not re-litigate them; carry its Non-goals into the master plan. Restate the request in your own words and resolve any *remaining* ambiguity. If the request is precise and fits one phase, skip the rest of this step. If genuinely ambiguous and no documented default applies, ask the **highest-leverage** ambiguity only — at most two questions. Bias toward proceeding with a documented assumption recorded in the master plan.
 
 ### Step 1: Determine workflow type
-- "refactor / improve / fix / upgrade / migrate / harden" → Refactoring/Hardening workflow (audit first; write `docs/progress/<feature>-audit.md` before the plan).
-- Otherwise → Feature Development workflow.
+- "refactor / improve / fix / upgrade / migrate / harden" → **Refactoring/Hardening**: audit first; write `docs/progress/<feature>-audit.md` before the plan. The audit opens with a **behaviour contract** (≤ one screen): the user journeys and inputs the code serves, their visible outcomes, and side effects (writes, calls, events). Run the existing tests first and record the result; add only the characterization tests the contract needs and no test covers. Browser checks follow the `verifying-webapps` skill.
+- Otherwise → **Feature Development**.
 
 ### Step 2: Load project context + reviewer skills
-Read in parallel (skip what you've read this session):
-- `CLAUDE.md` and `.claude/project-context.md` (if present).
-- `docs/plans/<feature>-brief.md` (if present) — the shaping brief; its Chosen scope and Non-goals are the contract for what to plan.
-- `NORTH_STAR.md` (if filled) — run the Stop Condition 5 alignment check against the request before drafting.
-- `DECISIONS.md` (if it exists) — the decision journal; a settled trade-off is context to honor, not to re-derive.
-- The requirements source for this feature (PRD / issue / spec).
-- Ground-truth status artefacts for any dependency.
-- The Critical-Path reviewer **skills** in `.claude/skills/` whose path this feature touches (read only the matching ones).
-
-For a broad multi-area sweep, optionally spawn **one read-only `Explore` agent** and keep only its conclusions, then verify the key claims yourself. The sweep may run **one model tier cheaper than the session** when the account exposes one — never a more expensive one; unsure → inherit (canon: the `using-the-pack` skill's token-economy dials). A sub-agent never drafts plan text.
+Read in parallel (skip what you've read this session): `CLAUDE.md` and `.claude/project-context.md`; the brief; `NORTH_STAR.md` (run Stop Condition 4); `DECISIONS.md`; the requirements source; ground-truth status artefacts for any dependency; the Critical-Path reviewer **skills** whose path this feature touches. For a broad sweep, optionally spawn **one read-only `Explore` agent** and keep only its conclusions, then verify the key claims yourself. A sub-agent never drafts plan text.
 
 ### Step 3: Codebase review
-**Create `docs/progress/<feature>-codebase-review.md`:**
-- Requirement IDs satisfied (with links).
-- Where this fits in the roadmap and what must already be shipped (cite the artefact that proves each dependency shipped).
-- Modules/areas touched and which owns each new entity.
-- Cross-boundary reach — every place this needs another module's data and how it will reach it (service call / event / API). If a foreign-key reach is the answer in a project that forbids it, redesign before writing the plan.
-- **Entry-point trace** — for each new capability, the concrete path from a user-reachable entry point (a route, screen, job, or CLI command) to it. When a required row, scope, or token can only be produced by tests or seeds, say so plainly — that capability has no live caller yet. Read every feature's `docs/progress/*/deferred-findings.md` that exists — a finding deferred as unreachable re-enters scope when this plan builds the capability its `activates with:` field names; list each such entry here; mark its line `— re-entered <date>` when a phase of this plan absorbs it, and `— done` once that phase's review closes it.
-- Critical-Path triggers — list each that applies (read from `CLAUDE.md`'s Critical-Path table).
-- **Inherited stopgaps** — grep the flows this feature extends for env-var defaults, hardcoded IDs, `TODO`/`FIXME`, `demo`/`placeholder`, single-tenant assumptions. Each hit gets a verdict: retire here (cite task #) or keep (reason + the phase that retires it). Empty section requires an explicit "none found" with the grep commands as evidence.
-- Exact file paths this work will touch (new vs modified).
-- Existing patterns to follow verbatim (name the closest existing implementation as the pattern to replicate).
-- Risks — anything shared this could break.
-
-For each material risk, name the invariant that must hold, a short stable `invariant-id` slug for it (e.g. `no-raw-secrets-in-logs`), and one negative acceptance example that would disprove it. The slug is assigned once and carried unchanged through amendments — if the project's workflow engine is in use, `record-finding` binds recurrence of the same invariant by exact string match on this ID, so renaming it silently breaks that binding. Keep these inside the existing risk/coverage analysis, tied to an acceptance check; they are preparation for the current plan gate, not another planning round.
+**Create `docs/progress/<feature>-codebase-review.md`** (short — it feeds the plan, it is not the plan):
+- Requirement IDs satisfied (with links); what must already be shipped, citing the artefact that proves it.
+- Modules/areas touched and which owns each new entity; cross-boundary reach (service call / event / API).
+- **Entry-point trace** — for each new capability, the concrete path from a user-reachable entry point (route, screen, job, CLI) to it. A capability only tests or seeds can reach has no live caller yet — say so.
+- **Deferred findings** — read every `## Deferred` list in `docs/progress/*/progress-and-log.md`; an entry whose `activates with:` capability this plan builds re-enters scope: list it here and give it a phase.
+- Critical-Path triggers (from `CLAUDE.md`'s table); inherited stopgaps in the flows this extends (`TODO`/`FIXME`, hardcoded IDs, single-tenant assumptions) with a retire-or-keep verdict each.
+- Exact file paths this work will touch (new vs modified); the closest existing implementation to replicate.
+- Risks — for each material risk, the invariant that must hold and one negative example that would disprove it; each becomes an acceptance criterion somewhere.
 
 ### Step 4: Master plan
-Create `docs/plans/<feature>-master-plan.md` with: Objective (one sentence, no scope expansion) · Requirement IDs · Non-Goals · **Critical Paths touched** table (drives Step 6 reviewer selection) · Project Conventions Pinned (reference Step 5 block) · Open-question decisions baked in · Dependencies (each citing its proof-of-shipped artefact) · Deferral Ledger (every "a later phase will…" promise → a row with a resolvable receiving task — including **deferred-wiring rows**: a phase whose *Reachability* line names no in-phase caller records the receiving phase here; this tracks *plan-level* deferrals — *code-level* shortcuts are marked inline with a `SHORTCUT:` comment naming a ceiling + upgrade trigger and harvested by `/shortcut-ledger`, see the `keeping-it-lean` skill) · Derived Budgets (every uncited number — and a **recurring-cost row** per new external service or paid dependency the plan introduces: estimated monthly cost + the free-tier ceiling it outgrows) · Risk Assessment (seeded from the brief's *How this fails* section when present) · Phase Plans table (Phase / Description / **Depends on** / Primary Agent(s) / Plan File — named owner agents MUST exist in `.claude/agents/`; reviewer fallback follows canon §10; *Depends on* names the earlier phase(s) this phase builds on — lower-numbered only — or `none` if it can start independently, defined per phase in Step 5) · Progress Tracking · Plan Review Log (filled by Step 6) · Exit Demonstration (drawn verbatim from the project's phase exit-gate doc).
+Create `docs/plans/<feature>-master-plan.md` with six sections:
+- **Objective** — one sentence, no scope expansion.
+- **Non-goals** — including every *ocean* deferred.
+- **Critical Paths touched** — table (`Path | Reviewer | Full gates?`); selects the reviewers that run on the *code* in the build lanes.
+- **Phases** — `N | Title | Depends on | Makes live | Status | File`. *Depends on* names lower-numbered phases or `none`; *Makes live* is the route/screen/job/command a person can use when the phase lands, or the later phase that makes it live; *Status* is `planned` / `in progress` / `Ready`, set by the build lanes and `/review-phase` (a claim — the record's phase section is the proof).
+- **Risks and decisions** — the brief's *How this fails* bullets and the review's risks with their invariants; any decision baked in; every new external service or paid dependency with its estimated monthly cost and free-tier ceiling.
+- **Plan Review Log** — `| Date | Round | Reviewer | Reviewed ref | Verdict | Notes |`, filled by Step 6.
 
-### Step 5: Phase plans (CRITICAL — anti-drift section)
-For each phase create `docs/plans/<feature>-phase-<N>.md`. The phase plan is pasted verbatim into each specialist's prompt, so **every convention this phase depends on must live in the phase plan itself**. Each phase plan contains:
+### Step 5: Phase plans
+For each phase create `docs/plans/<feature>-phase-<N>.md` with six sections — nothing else:
+- **Goal** — one sentence: what a user can do when this phase lands, plus the requirement IDs it satisfies.
+- **Files** — `path | new/modified | owner agent | why`; **at most 10 rows** — more means the phase splits. Owner agents must exist in `.claude/agents/`. The *why* cell names the pattern to replicate or the stopgap to retire (from the codebase review); the build lanes let the implementer read the codebase review and audit themselves.
+- **Acceptance criteria** — `AC-n | criterion | the test name or command that proves it | expected result`. "It works" is forbidden; a row with no test or command is not a criterion yet. Every edge case, failure path and risk invariant from Step 3 lands here as a row that can fail.
+- **Least confident** — one line: the bet in this phase you'd expect to fail first. Never "none".
+- **Out of scope** — adjacent code the implementer must not touch.
+- **Depends on** — earlier phase number(s), or `none`.
 
-- **Project Conventions Pinned (READ FIRST)** — paste verbatim from `CLAUDE.md`: the golden rules, the relevant non-negotiable rules, and any **Lessons** entries that touch this phase's ground (they exist because something already went wrong here once — an implementer who never sees them repeats them); plus the stack and package manager, the module/boundary rules, the financial/security/isolation rules that apply, the anti-patterns from other projects to avoid, and the list of available specialist agents (from `.claude/agents/`, with a "do NOT request" line for agents that don't exist).
-- **Requirements Checklist (functional)** — derived directly from the requirement IDs; no expansion.
-- **Requirements Checklist (technical)** — the project's non-negotiables that apply to this phase.
-- **Edge Cases & Failure Paths** — answer the three derivation questions (inverse events, double failure, degraded mode); each answer becomes a task, a spec, or an explicit out-of-scope row with a receiving phase.
-- **Failure Modes & Degraded Behavior** — one row per external boundary crossing (interaction / failure / degraded behavior / reconciliation / spec that proves it). "Throws an exception" is not a degraded behavior.
-- **Handoff Contracts** — any artifact consumed by a later phase has its interface pinned here and cited by the consuming phase.
-- **Reachability (one line)** — *"A ⟨user⟩ can ⟨do this thing⟩"*, plus the **named caller** — the route, screen, job, or CLI entry point — that ships **in this same phase** and makes that sentence true. A phase that builds a capability with no caller of its own names the receiving phase in the master plan's *Deferral Ledger* instead; "a later phase will call it" without that row is a silent drop, and a package nothing can reach is not done, it is inventory. Never "N/A" — a phase that genuinely wires nothing user-facing (a migration, a build-tool change) states which user-visible behaviour it unblocks and in which phase that behaviour lands — and still writes its *Deferral Ledger* row. Example: *"A signed-in shop owner can export orders as CSV — via `GET /orders/export`, shipped in this phase."*
-- **Depends on** — the earlier phase(s) whose completed work this phase builds on (the producers of every artifact this phase reads in *Handoff Contracts*), or `none` if it can start independently; default is the immediately preceding phase. The orchestrator gates on this line: a phase whose predecessor is not *proven* complete on disk is un-startable (see `/start-teams` / `/implement`), so it must name only lower-numbered phases.
-- **Implementation Tasks** — table of `# | Task | Owner agent | File(s)`; Owner agent drives `/start-teams` selection.
-- **Files to Create / Modify** — exact paths, new vs modified, owner, notes.
-- **Migration Steps** (if entities changed) — generate, run on a fresh DB, seed updates.
-- **Verification Steps** — paper-dry-run rule: each step names the exact command, the state it requires, and the numbered prior step that establishes that state.
-- **Acceptance Criteria (verifiable PASS/FAIL)** — each cites evidence (file:line / test name / screenshot). Weak criteria like "it works" are forbidden.
-- **Risk coverage within those criteria** — carry each material invariant and its negative example from the codebase review into a meaningful check, naming the expected failure. A check that cannot fail on that example does not prove the invariant; do not substitute an assertion that mirrors the implementation.
-- **Least confident (one line)** — the single judgment in this phase plan its author would bet fails first (an interface guess, an untested assumption, a dependency's behavior). Never "none" — every plan has a weakest point, and only the author knows where they guessed. Reviewers are briefed to probe this line first (Step 6b); naming it is what turns that private knowledge into review depth instead of leaving it for production to find.
-- **Out of Scope (Surgical Changes)** — adjacent code the agent must not touch.
-- **Completion Criteria (Definition of Done)** — from `CLAUDE.md`.
+### Step 5.5: Author self-check (you, no reviewer, no round)
+1. Every `file:line` the plan cites was opened in this session — re-open each now; a stale cite is a wrong plan.
+2. Every "every X" claim (all callers, all routes, all handlers, the whole population a guard covers) lists the sites, with the grep command that produced the list shown beside it.
+3. Every acceptance criterion names the test or command that goes red if the behaviour is broken. For each, imagine one planted violation and name the test that catches it; none → not testable yet.
+4. Each phase's *Files* table has at most 10 rows; each *Depends on* names a lower phase or `none`; the master plan's *Phases* table and the phase files agree.
+5. Each phase has a non-empty *Least confident* line and a real *Makes live* entry.
+Fix what fails, then Step 6.
 
-### Step 5.5: Mechanical consistency audit (derivations, not judgment)
-Cross-check the plan's own artifacts: (1) coverage parity — every gating enumeration names its defining set and matches it 1:1; (2) closure — every file in Tasks appears in Files-to-Modify and vice versa, every Owner agent exists, every criterion has an evidence pointer, requirement lists reconcile, and every phase's *Depends on* names only existing lower-numbered phases (no forward or cyclic dependency; the master-plan table column and the phase plan's line agree), and every phase plan carries a non-empty *Least confident* line, and every phase plan carries a non-empty *Reachability* line in the form *"A ⟨user⟩ can ⟨do this thing⟩"* plus a caller shipping in that same phase — a phase whose line names no in-phase caller has a matching *Deferral Ledger* row naming the receiving phase (this includes migration and build-tool phases — the in-line "unblocks X in phase N" still needs its ledger row); (3) deferral ledger closed — and each deferral is a genuine *ocean*, not a completable *lake* punted to "later"; (4) handoff contracts pinned; (5) every claimed invariant names mechanism + same-phase migration + test; (6) budget provenance; (7) paper dry-run of every verification step; (8) completeness (boil-the-lake) — every edge case and failure path named in a phase's *Edge Cases & Failure Paths* maps to a task, every behaviour has its test in the **same** phase, and nothing in scope ships knowingly partial. Fix every failure before Step 6.
+### Step 6: Plan review gate (one round)
 
-**Plan-size finding (raise and record; do not treat as a fix-before-gate audit failure).** Apply `.claude/gate-rules.md` §11 now. Count each phase’s *Files to Create / Modify* rows: more than 25 raises a finding in the plan-review report and Plan Review Log. Also flag the document-size signal when the final `plan-reviewer` says it cannot simulate the plan faithfully at its present size. The disposition is split the plan, or record that the person accepts the round-budget risk; acceptance never pre-authorises retry batch 3.
+<!-- canon: .claude/gate-rules.md#1-8 -->
+**Before running this gate, read `.claude/gate-rules.md` and follow it.** This is the plan lane: one `plan-reviewer` run over the frozen draft (Critical-Path reviewers run on the code later, not on the plan); a finding that changes *what will be built* earns one re-run; a finding that changes only *how the plan reads* is fixed without one.
 
-**Codex cross-check (optional, cross-model).** After your own audit passes, run the Codex cross-check in **Mode 2 (Plan documents)** per `.claude/codex-review.md`, feeding it this feature's master plan, phase plans, and codebase review. It is an independent second model auditing the same mechanical-consistency dimensions; treat every `[P1]` it raises as a Step 5.5 failure to fix or explicitly dismiss before Step 6. If Codex is not installed/authenticated the cross-check skips with a note and this step proceeds on your audit alone — do not block on its absence.
+**Brief the reviewer** — never rely on a spawned agent reading anything automatically. The spawn prompt contains: the file paths (master plan, all phase plans, codebase review) with "Read these fully before judging"; "You are reviewing PLAN DOCUMENTS, not a code diff — simulate executing each phase from the plan text alone as the implementer, then run your pre-mortem"; "probe each phase's *Least confident* line first"; "report every finding with its location and say whether it changes what will be built"; and the verdict format READY / NOT READY. A missing `plan-reviewer` agent → `general-purpose` with `plan-reviewer.md`'s checklist pasted verbatim (§8).
 
-### Step 6: Plan review gate (sub-agents — mandatory)
-**6a. Select reviewers** — one reviewer per "yes" row in the master plan's Critical-Paths table, mapped to the reviewer agents in `.claude/agents/`, plus a generalist plan-integrity reviewer (`plan-reviewer`, or `workflow-manager` if the project defines one) **always, last**.
+**Run, then converge** — append one row to the Plan Review Log per run (`| <date> | 0 | plan-reviewer | <commit or "working tree"> | READY/NOT READY | <one line> |`). Fix every finding that changes what will be built, re-run Step 5.5 if a table changed, then re-run `plan-reviewer` **once** (round 1). Wording-only findings are fixed and noted in the row, no re-run. If NOT READY survives round 1, stop and surface the residual to the person. **Amending a READY plan:** if you change any phase's *Files* or *Acceptance criteria* after READY, first append `| <date> | – | – | – | STALE | <what changed> |` to the log — `plan-ready.js` then refuses the build until one more `plan-reviewer` run appends a new READY row.
 
-<!-- canon: .claude/gate-rules.md#1-16 -->
-**Before running this gate, read `.claude/gate-rules.md` §§1–§16 and follow it.** This is the plan lane: per-path reviewers are selected from the plan, the final `plan-reviewer` stays separate and last under lean, and only a finding that changes what will be built earns a re-review. A missing named reviewer uses a separate independent `general-purpose` context with the same checklist; unavailable independent capacity remains unverified. Zero touched paths still receives the independent plan generalist. The plan author cannot supply that final verdict, and risk acceptance is not PASS.
-
-**Reserve the batch before 6b.** Read the existing Plan Review Log and reserve every required specialist and the separate final plan generalist in initial batch 0, even though the generalist runs later. Freeze the assessed contract for those slots; material fixes require affected evaluation in a retry batch, not a free changed-input consolidation. Retry batches are 1 and 2. Record each actual evaluation, including a new verdict requested from a continued agent and failed/interrupted attempts; clarification without a new verdict is not an evaluation. Preserve the allowance across sessions, renamed checks, command/model changes and material amendments to the same contract. Unknown history is not unused allowance; inspect it before another evaluation. Acceptance of a plan-size risk does not authorize another retry.
-
-Write this complete reservation to the Plan Review Log (reuse it, or create it if absent).
-Under canon §2, mark the selected slot pending launch and explicitly **Read** the saved log
-after its last reservation edit **before dispatching 6b or the final generalist**. A Write/Edit
-hint saying no Read is needed does not perform this checkpoint; never claim read-back from
-the write acknowledgment alone. Keep unassessed verdicts pending, and reconcile interrupted
-or uncertain launches before another dispatch. An absent log on an existing goal does not establish
-batch 0: retain **review history unknown** until existing evidence or the user's history
-confirmation establishes the consumed allowance. If saving the reservation fails or history
-remains unknown, hold reviewer dispatch and ask the specific question needed; independently
-authorized plan inspection and local checks may continue. Naming batch 0 in a reviewer prompt
-does not satisfy this step.
-
-**6b. Brief each reviewer** — never rely on a spawned agent reading anything automatically. Every spawn prompt contains: the file paths (master plan, all phase plans, codebase review) with "Read these fully before judging"; the reframing line "You are reviewing PLAN DOCUMENTS, not a code diff — your verdict is about whether the PLAN will produce code that passes your gate"; the per-reviewer dimension brief; the depth instruction "think hard before rendering your verdict — reason through the plan's weakest points before concluding"; the probe instruction "each phase plan declares a *Least confident* line — the author's own weakest bet; probe it first and render evidence it holds or fails"; the recall instruction "Report every finding including low-severity/uncertain ones with a confidence + severity; do not self-filter"; and the verdict format `PASS / NEEDS CHANGES / BLOCK` with each finding naming the plan file + section. The final `plan-reviewer` brief also says: "Apply gate canon §11: if this plan is too large to simulate faithfully, report that as a plan-size finding rather than bluffing coverage."
-
-**6c. Run** — spawn the Critical-Path reviewers in parallel (read-only over the same frozen draft); when all return, spawn the generalist reviewer last with their verdicts attached and the brief: "Simulate executing this plan phase-by-phase as each Owner agent. Flag every task an implementer could not complete from the plan text alone. Then run your pre-mortem: assume the plan shipped and failed in production — every likely cause must map to an existing task/spec in some phase, else it's a finding. Think hard through the simulation and the pre-mortem before rendering the verdict. Consolidate all findings, write `docs/progress/<feature>-plan-review.md`, verdict READY / NOT READY."
-
-Include the material invariants and negative acceptance examples in each affected reviewer brief. Ask the reviewer to challenge whether the named check can detect the failure and whether all affected callers/boundaries are covered; use the already-reserved reviewers, with no additional council. The final verdict must cover the current contract after material fixes; a former READY cannot approve amended work.
-
-**Paste-fidelity self-check — before sending each spawn prompt (6b, the 6c generalist, and a lean merged spawn alike):** check every pinned block against its source — a phase-plan contract block byte-for-byte, a standard brief intact — nothing summarized or trimmed to fit. A paraphrased contract is a broken contract.
-
-**6d. Fix and converge** — fix every confirmed finding; re-run Step 5.5 if a table changed. Record every spawn in the Plan Review Log. The canon’s §§2–§6 round, severity, spend, and convergence rules bound this loop — here the "report card" is the plan-review report and its Plan Review Log, and a BLOCK/High finding, in plan terms, is one that changes what will be built. Apply §16 to any finding/fix list with at least five items: the completion entry enumerates every item with its plan `file:line`, or states why it remains undone, plus the total and done/undone split. This accounting does not change severity or earn another round.
-
-**Boundary** — this gate verifies the *plan*. The same reviewers re-run against shipped code in `/start-teams` and `/review-phase`. A plan-gate PASS discharges nothing at code time.
+**Boundary** — this gate verifies the *plan*. The Critical-Path reviewers run against shipped code in the build lanes and `/review-phase`. A plan-gate READY discharges nothing at code time.
 
 ### Step 7: Summary
+Report the plan files created, the Critical Paths touched, the Plan Review Log's last verdict, any fired Stop Conditions, and the handoff: `/implement <feature>` by default, `/start-teams <feature>` when a phase's *Files* Owner column names two or more different specialist agents; both run `node .claude/scripts/plan-ready.js docs/plans/<feature>-master-plan.md` first.
 
-**Solo evidence handoff.** When handing the reviewed plan to `/implement`, include the original
-acceptance IDs, accepted contract and source paths, authorization reference/scope, phase/gate
-relationships, every required check/review/acceptance/integration/production/docs/DoD obligation,
-owner lineage, and the actual plan-review reservation/report history. This is the source for
-`/implement`'s `init` request, not a replacement plan or a successful execution receipt. Preserve
-unknown history as unknown; neither a newly created snapshot nor a new build lane grants more
-plan-review allowance. If this goal already has `docs/progress/<feature>/workflow.json`, read its
-current status through the compatible helper and retain its IDs; amend the same goal for an accepted
-material change. Do not overwrite it or import an old READY label as current proof. `/start-teams`
-keeps the explicit manual bridge until team evidence is supported; missing Node or either helper
-file leaves the same independent review and manual checklist owed.
-Report the plan files created, the Critical Paths touched, the plan-review verdict, any fired Stop Conditions, and the handoff: "Run `/start-teams <feature>` to implement."
-
-**Offer to journal a load-bearing plan decision** if the plan settled a real trade-off — an approach chosen over a named alternative, a deferral accepted, a Stop Condition resolved a particular way. Offer **once**, never silently: *"Record this choice in `DECISIONS.md`?"* — one line per the decision-journal convention (`using-the-pack`): `- <today, YYYY-MM-DD> — <chose X over Y> for <feature> — because <why>` (a pointer to the plan, never a copy of it). Skip it when the plan raised no genuine fork.
+**Offer to journal a load-bearing plan decision** if the plan settled a real trade-off — an approach chosen over a named alternative, a deferral accepted, a Stop Condition resolved a particular way. Offer **once**, never silently: *"Record this choice in `DECISIONS.md`?"* — one line per the decision-journal convention (`using-the-pack`): `- <today, YYYY-MM-DD> — <chose X over Y> for <feature> — because <why>`. Skip it when the plan raised no genuine fork.

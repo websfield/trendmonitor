@@ -297,12 +297,28 @@ describe("/usage page component: the wiring no test executed (round-3 NOTE)", ()
 });
 
 describe("Phase 1 T2: first-session navigation", () => {
-  it("places Brain between Onboarding and Trends, and the journey helper waits for onboarding", () => {
+  it("retains every first-session route in the v2 navigation, and the journey helper waits for onboarding", () => {
     const nav = renderToStaticMarkup(<ProductNav />);
-    const labels = ["Onboarding", "Brain", "Trends", "Studio", "Results", "Usage", "Billing", "Account"];
-    const positions = labels.map((label) => nav.indexOf(`>${label}</a>`));
-    expect(positions.every((position) => position >= 0)).toBe(true);
-    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    const hrefs = (html: string) => [...html.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map((match) => match[1]);
+    // NOT de-duplicated. The first v2 cut rendered the secondary links and the
+    // shell foot twice and hid one copy with a media query; a `new Set(...)`
+    // here made that invisible to this suite. Every route must appear EXACTLY
+    // once in the served markup, so a second copy fails right here.
+    expect([...hrefs(nav)].sort()).toEqual([
+      "/brain", "/onboarding", "/results", "/settings/account", "/settings/billing", "/studio", "/trends", "/usage",
+    ]);
+    const primary = nav.match(/<div class="shell-nav-primary">([\s\S]*?)<\/div>/)?.[1] ?? "";
+    expect(hrefs(primary)).toEqual(["/studio", "/trends", "/brain", "/results"]);
+    // The visible LABELS, pinned. The rename of /trends to "References" landed
+    // in the same change that deleted the only label assertion, so nothing
+    // caught that the destination is still headed "Trends" (phase-1 gate).
+    // `/trends` keeps the "References" label by the owner's 2026-09-20
+    // decision; the heading and docs/initial/decisions.md were updated to match.
+    const labels = [...nav.matchAll(/<span class="nav-label">([^<]+)<\/span>/g)].map((match) => match[1]);
+    expect(labels).toEqual([
+      "Studio", "References", "Brain", "Results",
+      "Onboarding", "Usage", "Billing", "Account",
+    ]);
 
     const authSupport = readFileSync(
       new URL("../e2e/support/auth.ts", import.meta.url),

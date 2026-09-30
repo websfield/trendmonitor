@@ -30,9 +30,9 @@ Detect, in parallel:
 - **Decisions journaled?** Note whether `DECISIONS.md` exists at the repo root (the decision journal — see the `using-the-pack` skill). If it does and the current ask reopens a question a past entry already settled, surface that prior decision in plain words before proceeding — a team of one shouldn't relitigate their own settled trade-offs by accident. Absent file → nothing to check.
 - **Feedback captured?** Note whether `FEEDBACK.md` exists at the repo root (the feedback ledger — user asks/complaints, one line each; see the `using-the-pack` skill). It's the evidence for "what should I build next?" — action 1 ranks its open asks against the North Star. Absent file → nothing to check.
 - **Pause points?** Check `CLAUDE.md` for a `Pause points:` line (e.g. `Pause points: plan approval, before each phase`). Each named point is a **mandatory stop** in this project — pause there and wait for a go-ahead, even where you would otherwise proceed on a stated assumption.
-- **Gate intensity?** Before routing a gate, read `.claude/gate-rules.md` §§7–§9 and follow it. Check `CLAUDE.md` for the recorded intensity and determine any `Full gates?` or plain-language escalation. If intensity is absent, unresolved, or unrecognised, say once on the report card: *"Gate intensity not set — running full; add `Gate intensity: lean` to `CLAUDE.md` to combine eligible review runs while preserving every checklist; `Full gates?` paths stay full either way."* Otherwise report the effective choice; the gate-running command owns execution.
+- **Gate intensity?** Read `CLAUDE.md`'s `Gate intensity:` line and any `Full gates?` column (canon §1). If intensity is absent, unresolved, or unrecognised, say once on the report card: *"Gate intensity not set — running full; add `Gate intensity: lean` to `CLAUDE.md` to combine eligible review runs while preserving every checklist; `Full gates?` paths stay full either way."* Otherwise report the effective choice; the gate-running command owns execution.
 - **Checkpoint consent?** Check `CLAUDE.md` for a `Checkpoints:` line. `on` = the person asked for an announced git snapshot before each build phase — the build commands carry the mechanics (`implement.md` Step 2, "Checkpoint snapshot"). No line = the first build step asks once (in a git repo) and records the answer — until then, never snapshot at all; with the line, every snapshot is still announced.
-- **Existing goals and evidence?** Read retained plans, briefs, progress records and review history. Preserve the original accepted goal, scope, decisions, authorization and next action. A Complete table cell, old Ready headline or recent filename is a claim, not current proof. Inspect contradictory/reopened records and the final assessed source/check inputs before calling any phase complete. Keep stable goal/gate identity and consumed review batches across sessions. An absent review file or empty search does not prove unused allowance: report **review history unknown**, including during status and pause, until retained evidence or the user's history confirmation establishes it. Never write an assumed zero or "untouched" allowance into an existing goal's record.
+- **Existing goals and evidence?** Read retained plans and briefs, and each goal's `docs/progress/<feature>/progress-and-log.md` — its last section is where things stopped; its `## Review log` says how many reviewer runs each phase has had. Preserve the original accepted goal, scope, decisions, authorization and next action. A `Complete` cell in a plan table, an old Ready headline or a recent filename is a claim, not proof — the proof is a phase section whose `Overall: Ready` sits above its acceptance proof lines.
 - **The goal — build goal, support signal, or live fire?** `$ARGUMENTS` is usually a new outcome to build. Two exceptions read differently:
   - A **pasted bug report or customer email** — a description of something *already broken*, with a symptom to reproduce, often in a reporter's voice — is a different job: reproduce-and-fix, not plan-and-build. Read it as a support signal only when it clearly reports a defect (not a request for something new, which is a build goal); when genuinely unclear, treat it as a build goal and let `/shape` sort it out — misreading a feature request as a bug wastes a reproduction, so bias toward shaping. This routes to the triage intent branch before the build lifecycle.
   - An **active outage** — the site is down, users are locked out, payments are failing *right now* — is a **fire**, and it pre-empts everything (see the pre-emptive branch at the top of Step 2). Read it as an outage **only on an explicit active-outage signal** (down / broken / failing *now*, for real users) — the highest bar of the three, because the firefight offers a state-changing rollback. When it's unclear whether the system is truly down, do **not** default into the fire: treat a reported defect as a support signal (triage) and anything else as a build goal, and let those routes sort it out.
@@ -74,10 +74,10 @@ fixes, checks and required docs unless the user changes it or a real project pau
 | Bare `/go` and one active goal with persisted, still-valid authorization for remaining work | Inspect its state and continue via action 6. |
 | Otherwise: a bare `/go` without the authorized active goal above, or no actionable selected goal | Action 1: status and one next step. |
 
-A change to the active goal is an explicit amendment retaining original scope, prior decisions and
-review history; never overwrite the old contract. A plan-only request authorizes planning only.
-An explicit new goal remains separate. Missing or contradictory completion/budget records require
-inspection before dispatch or closure; manual checks do not manufacture an unknown allowance.
+A change to the active goal is an explicit amendment retaining original scope and prior decisions;
+never overwrite the old contract. A plan-only request authorizes planning only. An explicit new goal
+remains separate. A contradictory record (a `Complete` cell over a phase section that says otherwise)
+is inspected before any completion claim.
 
 1. **Orientation without authorized remaining work.** Report setup, North Star and recorded work,
    with one recommended next action. If nothing is mid-build, use open `FEEDBACK.md` asks to
@@ -107,97 +107,45 @@ inspection before dispatch or closure; manual checks do not manufacture an unkno
    `create-plan.md` and its independent plan review, then action 7 only if implementation is
    authorized. A plan request alone ends with the reviewed plan and next action.
 
-6. **Resume the selected goal from real evidence.** Inspect contracts, remaining phases, prior
-   decisions, current source/check inputs and consumed review batches. Planned/in-progress work
-   with valid authorization goes to action 7 at the first actual outstanding obligation.
-   All-complete records go through action 8's evidence inspection before any completion claim.
-   Missing authorization gets status and one concrete decision, not an invented go-ahead.
+6. **Resume the selected goal from real evidence.** Read its record (`progress-and-log.md`): the
+   last section, the `## Review log`, any `## Deferred` lines. Planned/in-progress work with valid
+   authorization goes to action 7 at the first phase without an `Overall: Ready` section. A record whose
+   top line says `Status: done` goes through action 8's inspection before any completion claim. Missing
+   authorization gets status and one concrete decision, not an invented go-ahead.
 
-7. **Build within the authorized scope.** Choose `implement.md` for a coherent single owner;
-   use `start-teams.md` for genuinely independent specialist boundaries. Make routine choices
-   without a workflow menu. Both planned lanes require a current independently reviewed contract.
-   UI/visual work follows `design.md` as the appropriate portion of the build. Preserve the
-   project's explicit pause points. Finish the usable slice and its required docs; then action 8.
+7. **Build within the authorized scope.** First, `node .claude/scripts/plan-ready.js
+   docs/plans/<feature>-master-plan.md`: `READY:` → build; `NOT READY:` → `create-plan.md` (it resumes at its
+   Step 6 review gate); `UNCHECKED: cannot read …` → there is no plan yet, `create-plan.md`; any other
+   `UNCHECKED:` → read the plan's Plan Review Log yourself: its last row must say READY. Then route by
+   ownership: **`implement.md` by default; `start-teams.md` when the phase's *Files* table names two or
+   more different specialist agents in its Owner column** (the plan already split anything bigger than ten
+   files into phases). Make that choice yourself, without a workflow menu; the person can override in plain words. A clear-and-contained
+   brief with a `Surface:` line takes `implement.md`'s fast lane instead (no plan needed). UI/visual work
+   follows `design.md` as the appropriate portion of the build. Preserve the project's pause points.
+   Finish the usable slice; then action 8.
 
-8. **Complete the independent coverage and final check.** Follow `review-phase.md` for planned
-   work, retaining every entry/path/acceptance/integration/DoD obligation and any production-intent
-   trigger. Inspect prior assessments before deciding what remains owed; do not skip this step
-   merely because a build reviewer returned PASS. Remove duplicate evaluations only when identical
-   current independent coverage is demonstrated; until then use the manual coverage checklist.
-   Recheck source/assertion/config/contract edits after assessment within the same remaining
-   allowance. A failed or accepted-risk verdict is never PASS. If phases remain in an authorized
-   whole-goal build, continue at action 7; a Ready slice is not a Ready whole goal.
+8. **Independent check.** Follow `review-phase.md` for planned work: every touched Critical Path gets one
+   verdict, the four DoD items are walked, the 8-row card is written into the record. A reviewer run the
+   build lane already recorded for this exact snapshot counts; do not repeat it. Canon §5 bounds the
+   follow-up: one re-run at most, then the residual goes to the person. If phases remain in an authorized
+   whole-goal build, continue at action 7; a Ready phase is not a Ready goal.
 
-9. **Close with evidence and required docs complete.** Required documentation is part of DoD and
-   is finished before Ready. Report outcome, proof, remaining original scope and next action;
-   distinguish local readiness from release/deployment. Optional expanded help via `user-docs.md`,
-   broad `sync-docs.md`, milestone `audit.md` (bootstrap critics if absent), or `release.md`
-   remains a compact follow-up offer where useful. None substitutes for required docs or authorizes
-   commits, deployment, messages or publication. If an audit risk is accepted, preserve the actual
-   finding and offer the existing decision-journal entry once.
-
-## Reference — review dispatch and resume mechanics
-
-These apply while running actions 6–9 above; read them when you reach a review dispatch or a
-solo/fast/team resume, not before.
-
-**Before any review dispatch, including a plan review while resuming:** the command running
-the gate must save the complete batch reservation in that goal's brief/card, Plan Review Log
-or retry notes (reuse the record, or create it if absent). Under canon §2, mark each selected
-slot pending launch and explicitly **Read** the saved reservation after its last edit before
-invoking that reviewer. A Write/Edit hint saying no Read is needed does not perform this
-checkpoint; never claim a read-back from the write acknowledgment alone. Record the
-known consumed batches, all specialist/final slots and fixed assessment inputs. A prompt
-saying "batch 0" is not a persisted reservation. If existing allowance is unknown or the
-reservation cannot be saved, ask the one history/capability question needed for that review;
-continue independently authorized inspection and checks while it is pending. Do not launch
-an evaluation to discover whether its allowance exists. Keep working results pending under
-canon §1 and reconcile interrupted or uncertain launches before any redispatch under §2;
-creating a missing record never resets an existing gate's unknown or consumed allowance.
-
-**Solo/fast evidence recovery.** For a selected solo/fast goal, follow canon §1's compatible-helper
-check and `/implement`'s durable-evidence steps. If its `workflow.json` exists, call
-`node .claude/scripts/workflow-state.js status` with JSON stdin
-`{"projectRoot":"<actual absolute project path>","goalDirectory":"docs/progress/<selected goal>"}`.
-Inspect the returned state, scope, obligations, findings and attempts alongside the accepted brief/
-plans. That call needs a permission the shipped inspection-only allow list does not cover, so say in
-one line what it is before the prompt appears: **this one only reads the progress record — it changes
-nothing, runs no check and starts no reviewer.** Later steps that record results do write to that same
-file; say so when they come. A declined prompt is an expected path, not a failure — fall back to the
-manual checklist per canon §1, preserve every existing record, say which record could not be read or
-written, and reassure them in one line: *"no problem — every check and review still runs exactly the
-same, I'll just track progress in the written notes instead of the saved record."* A phase-only Ready or older card cannot close the whole goal; request whole-goal status
-without `phaseId` before claiming it complete. Read-only status never grants build authorization.
-
-Resume the same goal/gate and reconcile pending attempts before any new review. For each pending
-attempt, call the same read-only `status` with its `attemptId`; inspect `attemptAssessment` and
-record actual interrupted/unverified evidence through `/implement`'s terminal recovery shape.
-Unknown lineage stays unknown and consumed. A null current digest or missing query retains the
-manual hold; neither permits guessed evidence or a new gate. Once actual
-remaining authorization and observed session identity are established, the single writer records
-session/disposition changes with `amend` and
-`{reason,change:{type:"execution",execution:{sessionId,disposition}}}`. Use `paused` for an explicit
-pause, `waiting` for a required decision, and `running` only for authorized continuing work;
-status questions alone do not change disposition or cancel the goal. A new constructor context
-also appends its owner lineage under `/implement`; never relabel it as an independent reviewer.
-When authorized work actually enters its next planned phase after dependencies pass, follow
-`/implement`'s (or, for a team goal, `/start-teams`'s) `amend` phase-entry shape. Inspect the
-returned activated finding IDs and route their owner/proof work under the original gate's retained
-allowance. A deferred later-phase finding still belongs to the whole goal; a status question or
-earlier scoped Ready does not activate or finish it. If no snapshot exists, initialize only via that
-command's inspected contract/history procedure. Missing/partial/unsupported helpers and unavailable
-provenance retain the manual checklist, scope and consumed budget; team review/build evidence stays
-on the manual bridge (`gate-rules.md` §1). A helper hold cannot be bypassed with another command.
+9. **Close with evidence.** Report outcome, proof, remaining original scope and next action; distinguish
+   local readiness from release/deployment. Update the record's top line to `Status: done` only when
+   every phase section reads Ready. Offer once, where useful: `sync-docs.md` (behaviour or config
+   changed), `user-docs.md`, milestone `audit.md`, or `release.md`. None authorizes commits, deployment,
+   messages or publication. If a BLOCK was overridden or an audit risk accepted, preserve the actual
+   finding and offer the decision-journal entry once.
 
 ## How to behave (this is what makes it work for anyone)
 
 - **Plain language, always.** Narrate as *set up → plan → build → check*, not as command names. You may name the underlying command once in parentheses for the curious, but never require the person to know it.
 - **Do the work; don't describe it.** Run the tests — don't say "you could run the tests." The person came to the front door to get the thing done, not to receive a to-do list. That includes verification: never end a step *offering* to run a check the step requires — run it in the same turn and report the result.
-- **One decision at a time, only when it's real.** Stop only for: confirming Critical Paths (during setup), a scope/alignment conflict, team-vs-solo when truly unclear, plan approval if they want it, any stop the project's `Pause points:` line declares, an exhausted review allowance, unavailable capability/permission, or a reviewer residual that needs a real human decision. Everything else: proceed with a stated assumption and tell them what you assumed. If someone asks mid-run for a pause you'd normally skip ("show me the plan before you build"), honor it — and offer **once** to record it as a standing `Pause points:` line in `CLAUDE.md`, so they never have to ask again.
+- **One decision at a time, only when it's real.** Stop only for: confirming Critical Paths (during setup), a scope/alignment conflict, team-vs-solo when truly unclear, plan approval if they want it, any stop the project's `Pause points:` line declares, a BLOCK/High that survived its one re-run, or a reviewer residual that needs a real human decision. Everything else: proceed with a stated assumption and tell them what you assumed. If someone asks mid-run for a pause you'd normally skip ("show me the plan before you build"), honor it — and offer **once** to record it as a standing `Pause points:` line in `CLAUDE.md`, so they never have to ask again.
 - **Always resumable.** If a session was interrupted, re-detect state in Step 1 and pick up from the true next step — never assume where things stand.
-- **Right-size to the person's time.** When their words carry a time signal, pick the next step that can *finish* — gates included — inside that window: answering a question, a doc sync, one reviewer fix-round, a fast-lane fix, or a single phase. Say honestly what won't fit ("phase 3 won't fit in half an hour — its review alone is longer; here's what will"). Duration estimates are rough, so promise **completable units, never wall-clock times** — and never shrink a gate to fit a window: if the gates don't fit, the unit doesn't start. If the window closes early anyway, stop at a clean boundary — the progress records (the ledger — or, in the fast lane, the compact card plus diff) and any `Checkpoints: on` snapshot make the stop safe, and the next `/go` resumes from the true state.
-<!-- canon: .claude/gate-rules.md#1-16 -->
-- **Follow the gate canon.** Before routing any reviewer gate, read `.claude/gate-rules.md` §§1–§16 and follow it. `/go` preserves every touched-path verdict, batch 0 plus retries 1–2 with persistent history, semantic freshness, independent fallback, spend disclosure, intensity, and complete acceptance/DoD coverage; it routes the gate rather than weakening it.
+- **Right-size to the person's time.** When their words carry a time signal, pick the next step that can *finish* — gates included — inside that window: answering a question, a doc sync, one reviewer fix-round, a fast-lane fix, or a single phase. Say honestly what won't fit ("phase 3 won't fit in half an hour — its review alone is longer; here's what will"). Duration estimates are rough, so promise **completable units, never wall-clock times** — and never shrink a gate to fit a window: if the gates don't fit, the unit doesn't start. If the window closes early anyway, stop at a clean boundary — the record (`progress-and-log.md`) and any `Checkpoints: on` snapshot make the stop safe, and the next `/go` resumes from the true state.
+<!-- canon: .claude/gate-rules.md#1-8 -->
+- **Follow the gate canon.** Before routing any reviewer gate, read `.claude/gate-rules.md` and follow it. `/go` routes the gate rather than weakening it: every touched path gets its verdict, reviewers judge code — a finding about docs, tables or counts is dropped from the grade and said so — and one re-run is the limit before the person decides.
 
 - **Fail honest.** If a step can't proceed (a Stop Condition fired, a required reviewer is missing, tests fail in a way you can't fix), say so plainly and offer concrete options — don't bluff past it.
 - **Remember expensive mistakes.** When a reviewer gate, the person, or a failed run catches a mistake that could plausibly recur — not a one-off typo — offer **once** to record it as a one-line entry in `CLAUDE.md` → *Lessons* (and, if a diff pattern can catch it, as a guardrail rule too). Never append silently: a person okays every entry, which is what keeps the log high-value. If `CLAUDE.md` has no Lessons section yet, offer to add it.

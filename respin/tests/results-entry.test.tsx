@@ -17,12 +17,12 @@
 //      finding — and the modules that can raise one are named below rather
 //      than derived from whichever file happened to exist when this was
 //      written.
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { scratchDir } from "./support/scratch-dir";
 
 import {
   RESULT_AUDIENCE_CLASSES,
@@ -798,7 +798,7 @@ describe("nothing on the results surface can spend a credit or reach a model", (
       expect(specimen, `"${label}" matches nothing`).toMatch(re);
     }
     // ...and the scan itself reports a file that carries one.
-    const dir = mkdtempSync(join(tmpdir(), "results-spend-scan-"));
+    const dir = scratchDir("results-spend-scan-");
     writeFileSync(
       join(dir, "planted.ts"),
       "respinCredits.generate(scope, id, {});"

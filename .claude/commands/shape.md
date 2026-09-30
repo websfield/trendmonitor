@@ -67,6 +67,7 @@ Write `docs/plans/<feature>-brief.md` (create `docs/plans/` if needed):
 **10-star sketch (aim, not commitment):** <bullets — the magical version, for later phases>
 **North Star alignment:** advances <Goal/Current focus> | flagged: <non-goal/drift> | N/A (no North Star yet)
 **Non-goals (now):** <what we are deliberately not doing in this scope>
+**Size (rough):** ~<N> files — <one clause on why>
 **How this fails (pre-mortem):** <top 3 failure modes + must-answer ambiguities — omit on the clear-and-contained path>
 ```
 
@@ -89,7 +90,7 @@ If you drafted or updated `NORTH_STAR.md`, do it now (merge, never clobber) and 
 Tell the person, in plain language, what the chosen scope is and what happens next:
 
 - **Clear-and-contained brief (has a `Surface:` line)** → the next step is the **fast lane**: `/implement`'s Fast lane section builds it with no plan documents but every gate (or `/go` continues automatically). Its admission test governs — if the change turns out bigger than the surface, it upgrades to planning.
-- **Everything else** → the next step is planning it (`/create-plan <feature>`, or `/go` will continue automatically). `/create-plan` reads this brief as the starting contract.
+- **Everything else** → the next step is planning it (`/create-plan <feature>`, or `/go` will continue automatically). `/create-plan` reads this brief as the starting contract. The *Size* line is the first hint of how many phases the plan will need (a phase holds at most ten files).
 
 ## Hard rules
 - **Proportional.** Small clear asks pass straight through. Don't manufacture a product epic from a one-line change.

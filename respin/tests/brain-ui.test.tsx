@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FORBIDDEN_CLAIMS } from "./support/forbidden-claims";
+import { claimHits, specimensFor } from "./support/claim-scan";
 import {
   BRAIN_CONTENT_SCHEMAS,
   BrainDocumentLimitError,
@@ -1361,10 +1362,6 @@ describe("G4: a section intro never claims an origin the version does not have",
 describe("non-negotiable 6 / R10: this screen claims no accuracy, learning, verification or measurement", () => {
   // The hardest place in the product for this rule, because every sentence is
   // about the reader. Scanned over the states that render the most copy.
-  const FORBIDDEN: [string, RegExp][] = FORBIDDEN_CLAIMS.map(
-    ([l, re]) => [l, re] as [string, RegExp]
-  );
-
   // R10's OWN two words, LOCAL to this suite rather than added to the shared
   // canon: "measurement" is legitimate product vocabulary on THIS SAME
   // screen (the declared metric's own "measurement window" field, R7) — a
@@ -1606,29 +1603,36 @@ describe("non-negotiable 6 / R10: this screen claims no accuracy, learning, veri
   ];
 
   it.each(STATES)("%s claims nothing this product does not do", (_label, props) => {
-    const html = visibleCopy(render(props)).toLowerCase();
-    for (const [label, re] of FORBIDDEN) {
-      expect(html, `"${label}" appears on /brain`).not.toMatch(re);
-    }
-    for (const [label, re] of LOCAL_FORBIDDEN) {
-      expect(html, `"${label}" appears on /brain`).not.toMatch(re);
-    }
+    const html = visibleCopy(render(props));
+    // ONE PREDICATE, TWO LISTS (P1-R4, applied 2026-09-21 after the batch-5
+    // compliance gate found this file running its own loop). `LOCAL_FORBIDDEN`
+    // stays local — it is a screen-scoped EXTENSION with its own reasoning,
+    // not a re-invention of the canon — but what DECIDES is `claimHits` for
+    // both, so this screen cannot drift from the shared semantics (the
+    // `lastIndex` reset in particular).
+    expect(claimHits(html, FORBIDDEN_CLAIMS, LOCAL_FORBIDDEN), "/brain").toEqual([]);
   });
+
+  it.each(specimensFor(FORBIDDEN_CLAIMS))(
+    "PLANTED: %s would be caught on this screen",
+    (label, specimen) => {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS, LOCAL_FORBIDDEN)).toContain(label);
+    }
+  );
 
   it("NON-VACUITY: a planted claim in a rendered state IS caught", () => {
     const planted = visibleCopy(
       render({ profileName: "We will learn your voice and improve it" })
-    ).toLowerCase();
-    expect(FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toEqual(
+    );
+    expect(claimHits(planted, FORBIDDEN_CLAIMS)).toEqual(
       expect.arrayContaining(["learn", "improve", "we will"])
     );
   });
 
   it("NON-VACUITY: the LOCAL verified/measured scan would catch a planted claim", () => {
-    const planted = "this declaration was verified and measured by us".toLowerCase();
-    expect(LOCAL_FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toEqual(
-      expect.arrayContaining(["verified", "measured"])
-    );
+    expect(
+      claimHits("this declaration was verified and measured by us", LOCAL_FORBIDDEN)
+    ).toEqual(expect.arrayContaining(["verified", "measured"]));
   });
 
   // G5 — the narrowing is a NARROWING, measured against the installed engine.
@@ -1682,19 +1686,15 @@ describe("non-negotiable 6 / R10: this screen claims no accuracy, learning, veri
     expect(BRAIN_ERROR_CODES.length).toBeGreaterThan(5);
     for (const code of BRAIN_ERROR_CODES) {
       const copy = brainErrorFor(code)!;
-      const text = `${copy.title} ${copy.detail}`.toLowerCase();
-      for (const [label, re] of FORBIDDEN) {
-        expect(text, `"${label}" appears in /brain's copy for "${code}"`).not.toMatch(re);
-      }
+      const text = `${copy.title} ${copy.detail}`;
+      expect(claimHits(text, FORBIDDEN_CLAIMS), `/brain's copy for "${code}"`).toEqual([]);
     }
   });
 
   it("NON-VACUITY: the refusal-copy scan would catch a planted claim", () => {
-    const planted =
-      "That was not recorded — we will learn from this and improve.".toLowerCase();
-    expect(FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toEqual(
-      expect.arrayContaining(["learn", "improve", "we will"])
-    );
+    expect(
+      claimHits("That was not recorded — we will learn from this and improve.", FORBIDDEN_CLAIMS)
+    ).toEqual(expect.arrayContaining(["learn", "improve", "we will"]));
   });
 });
 

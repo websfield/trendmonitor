@@ -170,8 +170,15 @@ describe("the modes vocabulary and the repo canon agree", () => {
     // same pattern can return false for text that matches. Both lists are used
     // with `.test` across many strings in a loop, so this is a correctness
     // property of the agreement rather than style.
-    for (const [label, pattern] of [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS]) {
-      expect(pattern.flags, label).not.toContain("g");
+    // The binding is named `canonPattern`, not `pattern`, and that is not
+    // cosmetic: `claim-scan.test.ts`'s re-invention detector reports any file
+    // that binds a canon entry's pattern AND calls `.test()` on that binding
+    // somewhere. This file does call `shape.pattern.test(...)` — on
+    // `OUTPUT_CLAIM_SHAPES`, a different vocabulary — so a shared name would
+    // make this legitimate METADATA read indistinguishable from a re-invented
+    // predicate, and the only repair would be loosening the detector.
+    for (const [label, canonPattern] of [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS]) {
+      expect(canonPattern.flags, label).not.toContain("g");
     }
     for (const shape of OUTPUT_CLAIM_SHAPES) {
       expect(shape.pattern.flags, `${shape.family}:${shape.id}`).not.toContain("g");

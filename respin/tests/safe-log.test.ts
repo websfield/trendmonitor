@@ -16,11 +16,12 @@
 // version actually installed, and the live browser walk that first "confirmed"
 // this module threw one of OUR classes, so the branch that matters was never
 // exercised.
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { isProbeArtifactSegment } from "./support/probe-artifacts";
+import { PRODUCTION_ROOTS, sourceFilesUnder } from "./support/source-files";
 import {
   createTestDb,
   onboardingInputs,
@@ -169,33 +170,147 @@ describe("the rule is enforced, not merely conventional (source scan)", () => {
   // free-text, so it was a control gap rather than a live leak — but nothing
   // kept the next one out, and this repo already owns the instrument shape
   // (`tests/action-gate.test.ts` scans `app/**` for a sibling rule).
-  const walk = (dir: string): string[] =>
-    readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-      if (isProbeArtifactSegment(e.name)) return [];
-      const full = resolve(dir, e.name);
-      if (e.isDirectory()) return walk(full);
-      return /\.tsx?$/.test(e.name) ? [full] : [];
-    });
-
   /**
    * An error OBJECT passed as a logged argument.
    *
-   * `[^;]{0,200}?` rather than `[^)]*`: the first argument is often a template
-   * literal, and `(${code})` inside it closes the character class early — the
-   * shape this repo's own billing action used, so the first version of this
-   * scan missed the real call site it was written for. Bounded and
-   * semicolon-stopped so it cannot span statements.
+   * NOT A REGEX OVER THE ARGUMENT TEXT, and that is a measured correction
+   * rather than a preference. This scan read
+   * `console\.(?:error|warn|log)\s*\([^;]{0,200}?,\s*(?:err|error|e)\s*[,)]`
+   * until 2026-09-21. `[^;]` was chosen so the match could not span statements
+   * — but a semicolon inside the FIRST ARGUMENT stops it just as dead, so
+   *
+   *     console.warn("[x] threw; ignoring", err)
+   *
+   * was invisible to a scan written to catch exactly that call. A character
+   * class cannot tell a statement terminator from a semicolon inside a string,
+   * so the bound is not tightened here; the argument list is READ instead.
+   *
+   * Reading the call's own parentheses cannot fail open on any character: the
+   * scan finds `console.error(`, walks to its matching `)` through strings,
+   * templates and nested calls, splits the arguments at top-level commas, and
+   * asks whether any argument is a BARE error identifier. `{ digest:
+   * error.digest }` is a property read and stays sanctioned; `err` alone is
+   * the leak (a DrizzleQueryError's message embeds the bound query parameters,
+   * which on the intake path is the creator's post text).
    */
-  const LOGS_AN_ERROR =
-    /console\.(?:error|warn|log)\s*\([^;]{0,200}?,\s*(?:err|error|e)\s*[,)]/;
+  const ERROR_IDENTIFIER = /^(?:err|error|e)$/;
 
-  const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "app");
+  /** The index just past the `)` that closes the `(` at `open`, or -1. */
+  const closingParen = (src: string, open: number): number => {
+    let depth = 0;
+    for (let i = open; i < src.length; i += 1) {
+      const c = src[i];
+      if (c === '"' || c === "'" || c === "`") {
+        // Skip the whole literal — a `)` or `,` inside it is text, not syntax.
+        const quote = c;
+        i += 1;
+        for (; i < src.length; i += 1) {
+          if (src[i] === "\\") i += 1;
+          else if (src[i] === quote) break;
+          else if (quote === "`" && src[i] === "$" && src[i + 1] === "{") {
+            const end = closingBrace(src, i + 1);
+            if (end < 0) return -1;
+            i = end;
+          }
+        }
+        continue;
+      }
+      if (c === "(") depth += 1;
+      else if (c === ")") {
+        depth -= 1;
+        if (depth === 0) return i;
+      }
+    }
+    return -1;
+  };
 
-  it("no file in app/** logs a raw error object", () => {
-    const offenders = walk(appDir)
-      .filter((f) => !f.endsWith("safe-log.ts"))
-      .filter((f) => LOGS_AN_ERROR.test(readFileSync(f, "utf8")))
-      .map((f) => relative(appDir, f).split(sep).join("/"));
+  /** The index of the `}` closing the `${` whose `{` is at `open`. */
+  const closingBrace = (src: string, open: number): number => {
+    let depth = 0;
+    for (let i = open; i < src.length; i += 1) {
+      if (src[i] === "{") depth += 1;
+      else if (src[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return i;
+      }
+    }
+    return -1;
+  };
+
+  /** The call's arguments, split at commas that are not inside anything. */
+  const topLevelArgs = (args: string): string[] => {
+    const out: string[] = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < args.length; i += 1) {
+      const c = args[i];
+      if (c === '"' || c === "'" || c === "`") {
+        const quote = c;
+        i += 1;
+        for (; i < args.length; i += 1) {
+          if (args[i] === "\\") i += 1;
+          else if (args[i] === quote) break;
+          else if (quote === "`" && args[i] === "$" && args[i + 1] === "{") {
+            const end = closingBrace(args, i + 1);
+            if (end < 0) break;
+            i = end;
+          }
+        }
+        continue;
+      }
+      if (c === "(" || c === "[" || c === "{") depth += 1;
+      else if (c === ")" || c === "]" || c === "}") depth -= 1;
+      else if (c === "," && depth === 0) {
+        out.push(args.slice(start, i));
+        start = i + 1;
+      }
+    }
+    out.push(args.slice(start));
+    return out;
+  };
+
+  /**
+   * Source with its comments blanked.
+   *
+   * THE SCAN READS CODE. A `console.warn(…, err)` quoted in a docblock that
+   * EXPLAINS this rule is prose about the rule, not an instance of it — and it
+   * is the first thing to appear once anybody documents the fix, which is
+   * exactly what happened when `packages/credits/src/metrics.ts` gained the
+   * comment naming its own repair. One alternation rather than two passes, so a
+   * `/**` inside a `//` line cannot open a phantom block that swallows the code
+   * after it (the shape `claim-scan.test.ts` pins for the same reason).
+   */
+  const blankComments = (text: string): string =>
+    text.replace(/\/\*[\s\S]*?\*\/|(^|[^:])\/\/[^\n]*/g, (_m, before?: string) =>
+      before === undefined ? " " : `${before} `
+    );
+
+  const logsRawError = (raw: string): boolean => {
+    const src = blankComments(raw);
+    const call = /console\s*\.\s*(?:error|warn|log)\s*\(/g;
+    for (let m = call.exec(src); m !== null; m = call.exec(src)) {
+      const open = call.lastIndex - 1;
+      const close = closingParen(src, open);
+      if (close < 0) continue;
+      const args = topLevelArgs(src.slice(open + 1, close));
+      // The FIRST argument is the prefix; an error identifier anywhere after it
+      // is the leak. `console.error(err)` alone is one too.
+      if (args.some((arg) => ERROR_IDENTIFIER.test(arg.trim()))) return true;
+    }
+    return false;
+  };
+
+  it("no production file logs a raw error object", () => {
+    // THE SHARED ROOT LIST, NOT `app/` ALONE (P1-R6). This walked `app/` until
+    // 2026-09-21, so `packages/`, `worker/`, `lib/` and `scripts/` were outside
+    // a scan whose failure mode is a creator's post text in stdout.
+    // `PRODUCTION_ROOTS` is asserted against `ROOT_DIRS` in
+    // `claim-scan.test.ts`.
+    const offenders = sourceFilesUnder(PRODUCTION_ROOTS)
+      .filter(({ file }) => !file.endsWith("safe-log.ts"))
+      .filter(({ file }) => !file.split("/").some(isProbeArtifactSegment))
+      .filter(({ text }) => logsRawError(text))
+      .map(({ file }) => file);
     expect(
       offenders,
       "a raw error object reaches the log — a DrizzleQueryError's message embeds the bound query parameters, which on the intake path is the creator's post text. Use logRefusal from app/(product)/safe-log.ts"
@@ -210,16 +325,36 @@ describe("the rule is enforced, not merely conventional (source scan)", () => {
       "console.error(`[x] refused (${code})`, err);",
       'console.error("[x]", error);',
       'console.warn("[x] odd", e);',
+      // THE SEMICOLON CASE (P1-R6, AC4). The old `[^;]` bound stopped at the
+      // `;` inside this prefix and reported the file clean.
+      'console.warn("[x] threw; ignoring", err);',
+      // ...and the same semicolon inside a TEMPLATE, plus a nested call and a
+      // multi-line argument list — each of which the bounded class also lost.
+      "console.error(`[x] threw; ignoring (${fmt(code)})`, err);",
+      'console.error(\n  "[x] failed",\n  err\n);',
+      // A single bare argument is a leak too.
+      "console.error(err);",
     ]) {
-      expect(LOGS_AN_ERROR.test(planted), planted).toBe(true);
+      expect(logsRawError(planted), planted).toBe(true);
     }
     // ...and does not flag the sanctioned shapes.
     for (const fine of [
       'logRefusal("[x] failed", err);',
       'console.error("[x] failed", { digest: error.digest });',
       'console.error("[x] no args");',
+      // A property read off the error is what the sanctioned shape looks like,
+      // even when the identifier appears inside a nested call or a template.
+      'console.error("[x]", String(err));',
+      "console.error(`[x] ${err.message}`);",
+      // An argument merely CONTAINING the identifier's letters is not it.
+      'console.error("[x]", errors);',
+      'console.error("[x]", err.digest);',
+      // A COMMENT QUOTING THE VIOLATION IS NOT THE VIOLATION — and it is the
+      // shape that appears the moment somebody documents this rule's own fix.
+      '// console.error("[x] failed", err);',
+      '/** …the identical `console.warn("… threw; ignoring", err)` line. */',
     ]) {
-      expect(LOGS_AN_ERROR.test(fine), fine).toBe(false);
+      expect(logsRawError(fine), fine).toBe(false);
     }
   });
 });
@@ -327,8 +462,8 @@ describe("a spend log names WHO it happened to (production gate, 2026-08-28)", (
       '{"mode":"hooks"}',
       "../../etc/passwd",
       "<script>alert(1)</script>",
-      "hooks ",
-      "hooks[31m",
+      "hooks\u0000",
+      "hooks\u001b[31m",
       "モード",
     ]) {
       expect(wireLabel(hostile), JSON.stringify(hostile)).toBe(NOT_A_LABEL);
@@ -359,27 +494,22 @@ describe("a spend log names WHO it happened to (production gate, 2026-08-28)", (
     // "every .ts/.tsx under app/", DERIVED by walking the tree rather than
     // listed, and the shape refused is a bare `mode,` shorthand inside any
     // logRefusal/logSpend context — which is exactly the shape the defect had.
-    const walk = (dir: string, acc: string[] = []): string[] => {
-      for (const name of readdirSync(dir, { withFileTypes: true })) {
-        const full = resolve(dir, name.name);
-        if (name.isDirectory()) walk(full, acc);
-        else if (/\.tsx?$/.test(name.name)) acc.push(full);
-      }
-      return acc;
-    };
     // REGEXP LITERALS, never assembled from strings: one lost backslash turns
     // `\s` into `s` and the scan silently matches nothing (2026-08-21).
     const CALL = /log(?:Refusal|Spend)\([\s\S]*?\n\s*\}\)/g;
     const BARE_MODE = /^\s*mode,\s*$/m;
 
-    const files = walk(resolve(root, "app"));
+    // THE SHARED ROOT LIST (P1-R3). `logRefusal`/`logSpend` are exported from
+    // `app/(product)/safe-log.ts`, but nothing stops a worker or a package from
+    // calling them, and this walk read `app/` alone until 2026-09-21.
+    const files = sourceFilesUnder(PRODUCTION_ROOTS);
     expect(files.length).toBeGreaterThan(20);
     const offenders: string[] = [];
     let callsSeen = 0;
-    for (const file of files) {
-      for (const m of readFileSync(file, "utf8").matchAll(CALL)) {
+    for (const { file, text } of files) {
+      for (const m of text.matchAll(CALL)) {
         callsSeen += 1;
-        if (BARE_MODE.test(m[0])) offenders.push(relative(root, file));
+        if (BARE_MODE.test(m[0])) offenders.push(file);
       }
     }
     expect(

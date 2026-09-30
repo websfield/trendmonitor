@@ -2,6 +2,7 @@
 name: respin-tenancy-reviewer
 description: Read-only reviewer for any Respin diff touching workspace or creator-profile isolation, query scoping, brain documents (versioning, provenance, confidence), onboarding inference, shared-library contributions from creator sessions, brain export or deletion, seats/roles, or the admin surface. Verifies structural isolation through the single scoping helper, mechanism-level-only library contributions, append-only brain versions with per-field provenance and approval-gated updates, complete export/deletion, and role boundaries. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

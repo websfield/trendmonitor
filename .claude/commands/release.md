@@ -21,7 +21,7 @@ The Definition of Done ends at reviewed code + synced docs. But for a one-person
 Use `TodoWrite` to track these steps.
 
 ### Step 1 — Confirm readiness (ride on top of the readiness gate, never replace it)
-Establish that the code going out has **already** been judged ready — `/release` ships proven work, it doesn't re-prove it. Look for recorded readiness proof on disk: the shipped phases' reviews (`docs/progress/<feature>-phase-<N>-review.md` marked Ready), or a fast-lane report card (`docs/progress/quick/<yyyy-mm-dd>-<slug>.md`); and, for a **production target** (CLAUDE.md / NORTH_STAR.md declares it, or the person signals production intent), a `production-reviewer` verdict of Ready.
+Establish that the code going out has **already** been judged ready — `/release` ships proven work, it doesn't re-prove it. Look for recorded readiness proof on disk: each shipped phase's `## Phase N — review` section in `docs/progress/<feature>/progress-and-log.md` reading `Overall: Ready` (a fast-lane goal has one such section); and, for a **production target** (CLAUDE.md / NORTH_STAR.md declares it, or the person signals production intent), a `production-reviewer` verdict of Ready.
 - **Recorded and Ready** → proceed.
 - **No readiness proof, or it's Almost / Not yet** → **stop and run the readiness gate first**: read `.claude/commands/review-phase.md` and follow it (or, for a production target, dispatch the `production-reviewer` on the diff), get to Ready, *then* return here. `/release` gates *shipping*, not *readiness* — it never ships code that hasn't cleared its own gate.
 
@@ -30,12 +30,12 @@ First, bound the release — what's new **since the last one**:
 - Prefer the **last release marker**: the most recent prior record at `docs/progress/release/<date>.md`, or (if the repo tags releases) the last git tag.
 - **No prior release** → this is the first; the boundary is "all completed work to date."
 
-Aggregate what shipped inside that window from the per-feature **progress ledgers** (`docs/progress/<feature>/ledger.md` `complete` lines, across every feature closed since the boundary) plus any `DECISIONS.md` entries in the window, and write a plain-language changelog to `docs/progress/release/<yyyy-mm-dd>.md` — grouped by feature, in words a *user* understands, not a diff reader. That file **is** the next release's boundary marker, so the window advances on its own.
+Aggregate what shipped inside that window from the per-feature records (`docs/progress/<feature>/progress-and-log.md` `complete` lines, across every feature closed since the boundary) plus any `DECISIONS.md` entries in the window, and write a plain-language changelog to `docs/progress/release/<yyyy-mm-dd>.md` — grouped by feature, in words a *user* understands, not a diff reader. That file **is** the next release's boundary marker, so the window advances on its own.
 
-Changelog lines obey the **outbound-truth** discipline (canon: the `outbound-truth` skill): every line traces to a ledger `complete` entry or the window's actual diff — a release note never announces what didn't ship, and a number without a recorded source doesn't go in.
+Changelog lines obey the **outbound-truth** discipline (canon: the `outbound-truth` skill): every line traces to a record's `complete` entry or the window's actual diff — a release note never announces what didn't ship, and a number without a recorded source doesn't go in.
 
 ### Step 3 — Migration & config checklist (what must happen, in what order)
-List every operational precondition the deploy needs, from the diff/ledger and `RUNBOOK.md`'s **Configuration** section (written by `/bootstrap-claude-pack`):
+List every operational precondition the deploy needs, from the diff, the records and `RUNBOOK.md`'s **Configuration** section (written by `/bootstrap-claude-pack`):
 - **New env / config** — any env var or config key this release requires, cross-referenced to the runbook's Configuration inventory (names and *locations*, **never values** — golden rule 2). A key the release needs that the runbook doesn't list is a gap to close *before* deploy.
 - **Data migrations** — any schema/data migration (a change to the database's shape or contents), whether it's **reversible**, and the order it runs relative to the code deploy (migrate-then-deploy vs deploy-then-migrate). An irreversible migration is a stop-and-confirm, not a checklist tick.
 

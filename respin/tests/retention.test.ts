@@ -30,9 +30,10 @@
 // new page, route or job selecting the column, and a `select()` with no argument
 // returns every column including this one — which no type would flag.
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { PRODUCTION_ROOTS, sourceFilesUnder } from "./support/source-files";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -63,32 +64,6 @@ const ALLOWED = new Map<string, string>([
   ],
 ]);
 
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".next",
-  "dist",
-  "migrations",
-  "coverage",
-]);
-
-function sourceFiles(dir: string, acc: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    if (SKIP_DIRS.has(name)) continue;
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) sourceFiles(full, acc);
-    // PRODUCT SOURCE ONLY. D-AUDIT-2's constraint is that no new *product
-    // surface* may read the payload — a suite asserting what the dispatcher
-    // wrote to `stripe_events` is not a surface, ships to nobody, and is how
-    // the write is verified at all. Excluding tests is the constraint's own
-    // scope, not a loophole: the four read shapes below are checked against
-    // every file a user can reach.
-    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.(ts|tsx)$/.test(name)) {
-      acc.push(full);
-    }
-  }
-  return acc;
-}
-
 /** Blank comments first — a comment naming the column is not a reader. */
 function stripComments(src: string): string {
   return src
@@ -97,18 +72,28 @@ function stripComments(src: string): string {
 }
 
 describe("audit #21: nothing new reads stripe_events.payload before the M6 redaction receiver", () => {
-  const scanned = [
-    ...sourceFiles(join(ROOT, "packages")),
-    ...sourceFiles(join(ROOT, "app")),
-    ...sourceFiles(join(ROOT, "lib")),
-  ];
+  // THE SHARED ROOT LIST, NOT THREE OF SIX (P1-R3/P1-R7). This scan read
+  // `packages`, `app` and `lib` until 2026-09-21 and was therefore blind to a
+  // payload reader landing in `worker/` or `scripts/` — half the production
+  // tree, in the suite whose whole job is "no NEW product surface reads this
+  // column". `PRODUCTION_ROOTS` is asserted against `ROOT_DIRS` in
+  // `claim-scan.test.ts`, so the population is now a measurement.
+  //
+  // PRODUCT SOURCE ONLY is preserved: D-AUDIT-2's constraint is about surfaces
+  // a user can reach, and a suite asserting what the dispatcher wrote ships to
+  // nobody. (The old local walker also skipped `migrations/`; measured
+  // 2026-09-21, neither migrations directory holds a `.ts` file, so reading
+  // them through the shared walker widens this population by nothing.)
+  const scanned = sourceFilesUnder(PRODUCTION_ROOTS).filter(
+    ({ file }) => !/\.test\.(ts|tsx)$/.test(file)
+  );
 
   it("the scan is NOT vacuous: it sees the files it is supposed to police", () => {
     // The failure mode this catches is a broken path making the whole scan
     // sweep zero files and pass, which is the shape of a guard that guards
     // nothing (CLAUDE.md, 2026-08-10).
     expect(scanned.length).toBeGreaterThan(20);
-    const rels = scanned.map((f) => relative(ROOT, f).replace(/\\/g, "/"));
+    const rels = scanned.map(({ file }) => file);
     for (const allowed of ALLOWED.keys()) {
       expect(rels, `${allowed} must be inside the scanned tree`).toContain(
         allowed
@@ -118,25 +103,14 @@ describe("audit #21: nothing new reads stripe_events.payload before the M6 redac
 
   it("every file naming the payload column is on the allowlist, with a reason", () => {
     const offenders: string[] = [];
-    for (const file of scanned) {
-      const rel = relative(ROOT, file).replace(/\\/g, "/");
+    for (const { file: rel, text } of scanned) {
       if (ALLOWED.has(rel)) continue;
-      // ENOENT ONLY, and narrowly. `import-boundary.test.ts` writes a probe
-      // file into `respin/lib/` and deletes it, and vitest runs suites
-      // concurrently — so this scan can glob a path that is gone by the time it
-      // reads it, and the whole scan died with ENOENT. A file that no longer
-      // exists is not in the committed tree and cannot be a violation of it.
-      // Every OTHER read error still throws: a scan that swallowed them would
-      // report "no violations" because it could not read the files, which is
-      // the 2026-08-21 fail-open shape this suite exists to avoid.
-      let raw: string;
-      try {
-        raw = readFileSync(file, "utf8");
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw err;
-      }
-      const src = stripComments(raw);
+      // The ENOENT race this loop used to handle itself now lives in
+      // `sourceFilesUnder` — `import-boundary.test.ts` writes a probe file into
+      // `respin/lib/` and deletes it while vitest runs suites concurrently, and
+      // the walk drops a path that vanished between listing and reading. Every
+      // other read error still throws there, for the reason it did here.
+      const src = stripComments(text);
       // FOUR shapes, not one (tenancy gate 2026-08-18). The header of this file
       // says the scan is source-level precisely because "a `select()` with no
       // argument returns every column including this one — which no type would

@@ -1,12 +1,12 @@
 ---
-description: The weekly founder brief. Come back after days away and get one page — what shipped, what's stuck, what was decided, what users asked for, and the one thing to do next — assembled from the records the pack already keeps (progress ledgers, report cards, DECISIONS.md, FEEDBACK.md, git log). Read-only; offers (never silently writes) to save the brief so the next recap starts where this one ended. Do NOT use for a shipping changelog — that's /release. Do NOT use to check whether the pack is healthy — that's /doctor — or for a risk ranking of the codebase — that's /audit. Do NOT use to start work — that's /go, which /recap's closing recommendation points you at.
+description: The weekly founder brief. Come back after days away and get one page — what shipped, what's stuck, what was decided, what users asked for, and the one thing to do next — assembled from the records the pack already keeps (each feature's progress-and-log.md, DECISIONS.md, FEEDBACK.md, git log). Read-only; offers (never silently writes) to save the brief so the next recap starts where this one ended. Do NOT use for a shipping changelog — that's /release. Do NOT use to check whether the pack is healthy — that's /doctor — or for a risk ranking of the codebase — that's /audit. Do NOT use to start work — that's /go, which /recap's closing recommendation points you at.
 argument-hint: [optional: "since <date>" — defaults to since the last recap, release, or 7 days]
 allowed-tools: Read, Glob, Grep, Bash, Write, AskUserQuestion, TodoWrite
 ---
 
 # /recap — what happened while I was away?
 
-A solo founder wears every hat, and a week of sales calls or day-job fires erases the build context completely. The answer to "where was I?" already exists — the pack records everything as it works — but it's scattered across ledgers, report cards, journals, and git history. `/recap` assembles it into **one page**: shipped / stuck / decided / heard / the one thing next. Context recovery in one read, not an hour of archaeology.
+A solo founder wears every hat, and a week of sales calls or day-job fires erases the build context completely. The answer to "where was I?" already exists — the pack records everything as it works — but it's scattered across progress records, journals, and git history. `/recap` assembles it into **one page**: shipped / stuck / decided / heard / the one thing next. Context recovery in one read, not an hour of archaeology.
 
 **Read-only, with one offered write.** This command builds and edits nothing, runs no mutating command, and launches no work. Its only write — saving the brief — is offered, never silent.
 
@@ -25,9 +25,8 @@ Newest `docs/progress/recap/<yyyy-mm-dd>.md` → the window starts there. None �
 
 ### Step 2 — SHIPPED (what actually landed)
 Aggregate, in-window and cited to disk:
-- `complete` lines across every `docs/progress/<feature>/ledger.md`;
-- fast-lane report cards (`docs/progress/quick/*.md`) and release records;
-- then cross-check `git log` (read-only) for in-window work with **no** ledger trace — list it plainly as *"shipped outside the pack's records"* with the commit subjects. Never upgrade a bare commit into a feature claim: every line here traces to something on disk (the `outbound-truth` discipline applies to your own brief too).
+- `complete` lines and Ready cards across every `docs/progress/<feature>/progress-and-log.md` (planned and fast-lane goals alike) and release records;
+- then cross-check `git log` (read-only) for in-window work with **no** record trace — list it plainly as *"shipped outside the pack's records"* with the commit subjects. Never upgrade a bare commit into a feature claim: every line here traces to something on disk (the `outbound-truth` discipline applies to your own brief too).
 
 ### Step 3 — STUCK (what's waiting, and on what)
 - Phases blocked on an unproven predecessor: walk in-progress master plans (`docs/plans/*-master-plan.md`) with the proof-on-disk rule — a `Complete` cell without its evidence is *unproven*, not done.
@@ -59,6 +58,6 @@ Then **offer once** to save it to `docs/progress/recap/<yyyy-mm-dd>.md` — that
 
 ## Hard rules
 - **Every claim traces to disk.** Ledger line, report card, journal entry, commit — cite it. A brief that flatters is worse than no brief (`outbound-truth` governs here too).
-- **Absence-safe, honestly.** No ledgers, no journal, no feedback file, not a git repo — each section says "none found" and moves on. A brand-new repo gets one honest line: *"Nothing recorded yet — run `/go <what you want>` and the records this command reads will start existing."*
+- **Absence-safe, honestly.** No records, no journal, no feedback file, not a git repo — each section says "none found" and moves on. A brand-new repo gets one honest line: *"Nothing recorded yet — run `/go <what you want>` and the records this command reads will start existing."*
 - **Read-only except the one offered save.** No builds, no edits, no commits, nothing launched — the Next recommendation is an offer that hands off to `/go`.
 - **One page.** If a busy week overflows the shape, tighten the lines — never spill to a second page; detail lives in the records the brief cites.

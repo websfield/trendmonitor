@@ -24,6 +24,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FORBIDDEN_CLAIMS } from "../../../tests/support/forbidden-claims";
+import { claimHits, specimensFor } from "../../../tests/support/claim-scan";
 import {
   CLAIM_CONTEXT_GUARDS,
   HARD_CLAIM_FIELD_PREFIXES,
@@ -652,11 +653,21 @@ describe("the remedy copy", () => {
           family + " remedy trips " + shape.id + ": " + remedy
         ).toBe(false);
       }
-      for (const [label, pattern] of FORBIDDEN_CLAIMS) {
-        expect(pattern.test(remedy.toLowerCase()), family + " / " + label).toBe(
-          false
-        );
-      }
+      // ONE PREDICATE (P1-R4, applied 2026-09-21). This loop was the sixth
+      // survivor the batch-5 compliance gate counted, and the only one OUTSIDE
+      // `tests/` — which is why the re-invention scan, when it walked `tests/`
+      // alone, could never have seen it.
+      expect(claimHits(remedy, FORBIDDEN_CLAIMS), family).toEqual([]);
     }
   });
+
+  // The plant this file was recorded as owing (`PLANT_OWED`). Per ENTRY: a
+  // remedy scan that goes green because one pattern matched everything is the
+  // same vacuity one layer down.
+  it.each(specimensFor(FORBIDDEN_CLAIMS))(
+    "PLANTED: %s would be caught in a remedy sentence",
+    (label, specimen) => {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS)).toContain(label);
+    }
+  );
 });

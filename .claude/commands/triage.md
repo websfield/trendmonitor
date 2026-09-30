@@ -44,7 +44,7 @@ That `Surface:` line is exactly what admits the change to `/implement`'s fast la
 ### Step 5 — Draft the customer reply (never send)
 Draft a plain-language reply for the person to review and send themselves: **acknowledge** the report, **what was wrong** (from the reproduced failure in Step 2), **what's fixed**, and the **next step** (deploy timing, a workaround until then, or "please confirm it's resolved on your end").
 - **Constrain every claim to the verified diff.** "What's fixed" may state only what the reproduced fix and its passing gates actually establish — never promise a fix the evidence doesn't back, a timeline you don't control, or a capability that didn't ship. An unverifiable claim in outbound copy is exactly the overclaim the pack refuses in its own docs.
-- **Draft only — it is never sent** (golden rule 8: anything leaving the repo waits for the person). Present the draft inline and save it alongside the fast-lane report card at `docs/progress/quick/<yyyy-mm-dd>-<slug>-reply.md`, so the person can copy, edit, and send it on their own channel.
+- **Draft only — it is never sent** (golden rule 8: anything leaving the repo waits for the person). Present the draft inline and save it alongside the fast-lane record as `docs/progress/<slug>/reply.md`, so the person can copy, edit, and send it on their own channel.
 - **No reporter to reply to** (an internal bug, no contact) → skip the reply; say so.
 
 ### Step 6 — Report

@@ -2,6 +2,7 @@
 name: security-critic
 description: Read-only security auditor for this repo's trust boundaries. Sweeps the attacker-controlled-content path end-to-end — public media ingestion through the Untrusted[T] fence into model prompts — plus the source allowlist, tenant isolation, de-identification/minors exclusion, the Knowledge API's read-only surface, and secrets hygiene. The audit-posture counterpart to the per-diff security-reviewer gate: it audits the whole system as it exists today, not a change. An auditor (ranked findings), not a gate. Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

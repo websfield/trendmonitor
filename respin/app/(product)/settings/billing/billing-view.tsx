@@ -64,6 +64,14 @@ export type BillingViewProps = {
     protocolState: "expanded" | "draining" | "active" | "unavailable";
     monthlyCapCents: number | null;
   };
+  /**
+   * The v1 TIER-CHECKOUT rollout, which is a different table from the
+   * auto-top-up one above (migrations 0049 and 0048) and is the fence both
+   * `createTierCheckoutUrl` and `createPackCheckoutUrl` hit FIRST.
+   */
+  checkout: {
+    protocolState: "expanded" | "draining" | "active" | "unavailable";
+  };
   /** null when config could not be read — nothing is guessed. */
   config:
     | {
@@ -205,6 +213,7 @@ export function BillingView(props: BillingViewProps) {
     canArmAutoTopup,
     hasStripeCustomer,
     autoTopup,
+    checkout,
     config,
     stripe,
     error,
@@ -223,6 +232,33 @@ export function BillingView(props: BillingViewProps) {
   const noConfig = config.ok
     ? null
     : "Prices and allowances come from the versioned runtime config, which this server cannot read — so no plan can be started until that is fixed.";
+  // THE CHARGE-AUTHORITY FENCES, NAMED WHERE THE READER MEETS THEM (batch-5
+  // billing gate, HIGH).
+  //
+  // `createTierCheckoutUrl` and `createPackCheckoutUrl` each pass TWO gates
+  // before Stripe is called: `assertTierCheckoutProtocolActive` first, then
+  // `isAutoTopupProtocolActive`. So a Subscribe click on a workspace whose
+  // prices ARE mapped is refused — and the refusal a creator saw was
+  // whichever gate bit, one of which `billing-errors.ts` maps to
+  // `topup_reconciliation_required`: an owner starting a SUBSCRIPTION told
+  // about auto-top-up reconciliation.
+  //
+  // BOTH STATES ARE READ, NOT ONE AS A PROXY FOR THE OTHER. They live in
+  // different tables with different revisions —
+  // `tier_checkout_protocol_rollouts` (migration 0049) and
+  // `auto_topup_protocol_rollouts` (migration 0048) — and both are seeded
+  // `expanded`, which is exactly the condition under which a proxy looks
+  // correct and stops being correct the day an operator activates one.
+  //
+  // THE POPULATION IS A LIST, NOT A GREP (non-negotiable 7). The controls on
+  // this page whose server action passes either gate are: the three
+  // Subscribe buttons (`createTierCheckoutUrl`), Buy pack
+  // (`createPackCheckoutUrl`), and the auto-top-up control, which reports
+  // its own rollout in its own panel below. Every one of them names a fence.
+  const checkoutFence =
+    checkout.protocolState === "active" && autoTopup.protocolState === "active"
+      ? null
+      : "Card charges are held until an operator finishes the signed charge-authority rollout. Starting a plan or buying a pack will be refused until then, and nothing here can be charged in the meantime.";
   const baseBlock = notOwner ?? noStripe ?? noConfig;
 
   /**
@@ -409,6 +445,7 @@ export function BillingView(props: BillingViewProps) {
                     hidden={<input type="hidden" name="tier" value={t.tier} />}
                     blockedBy={
                       baseBlock ??
+                      checkoutFence ??
                       (t.priceMapped
                         ? null
                         : `No Stripe price is mapped for ${t.label}. An operator needs to run \`pnpm stripe:setup\` and paste the printed price ids into /admin/config as \`stripePriceMap\`.`)
@@ -445,6 +482,7 @@ export function BillingView(props: BillingViewProps) {
                 // workspace is paused the pack is refused whatever the config
                 // says, so that is the reason the reader is owed.
                 pausedBlock ??
+                checkoutFence ??
                 (config.pack.mapped
                   ? null
                   : "No Stripe price is mapped for the credit pack. An operator needs to run `pnpm stripe:setup` and paste the printed price ids into /admin/config as `stripePriceMap`.")

@@ -7,10 +7,8 @@ import { requireUser } from "@respin/auth";
 import { respinDb } from "@respin/db";
 import { respinCredits } from "@respin/credits/app-server";
 import { rethrowNextControlFlow } from "../../lib/next-control-flow";
-import { SignOutButton } from "./sign-out-button";
-import { ProductNav } from "./nav";
-import { ShellRail } from "./shell-rail";
 import { logRefusal } from "./safe-log";
+import { ProductShell } from "./product-shell";
 
 export const dynamic = "force-dynamic";
 
@@ -42,19 +40,8 @@ export default async function ProductLayout({
   }
 
   return (
-    <div className="shell">
-      <aside className="shell-sidebar">
-        <span className="shell-wordmark">Respin</span>
-        {/* The three M1 pages were reachable only by typed URL — the evidence
-            runbook said "from /settings/billing" without saying how one gets
-            there (round-2 NOTE 6). Same links, now the Signal rail. */}
-        <ProductNav />
-        <div className="shell-foot">
-          <ShellRail workspaceName={workspace.name} credits={credits} />
-          <SignOutButton />
-        </div>
-      </aside>
-      <main className="shell-main">{children}</main>
-    </div>
+    <ProductShell workspaceName={workspace.name} credits={credits}>
+      {children}
+    </ProductShell>
   );
 }

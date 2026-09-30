@@ -297,7 +297,7 @@ function TrendsFeed({ state }: { state: TrendsFeedState }) {
   if (state.kind === "unavailable") {
     return (
       <StatePanel>
-        <h1>Trends</h1>
+        <h1>References</h1>
         <p>{state.reason}</p>
       </StatePanel>
     );
@@ -306,7 +306,7 @@ function TrendsFeed({ state }: { state: TrendsFeedState }) {
   if (state.kind === "empty") {
     return (
       <StatePanel>
-        <h1>Trends</h1>
+        <h1>References</h1>
         <p>{state.reason}</p>
       </StatePanel>
     );
@@ -328,7 +328,7 @@ function TrendsFeed({ state }: { state: TrendsFeedState }) {
   return (
     <section aria-labelledby="trends-heading">
       <header>
-        <p className="label">Trends</p>
+        <p className="label">References</p>
         <h1 id="trends-heading">Reference-led trend feed</h1>
       </header>
       {state.kind === "stale" ? (

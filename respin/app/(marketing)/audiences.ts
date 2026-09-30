@@ -33,18 +33,18 @@ export const AUDIENCES: Audience[] = [
     navLabel: "For women creators",
     metaTitle: "Respin for women creators",
     metaDescription:
-      "Scripts that sound like you, mapped to shots you can film solo. Respin learns your voice from your own posts and nothing activates until you confirm it.",
+      "Scripts that sound like you, mapped to shots you can film solo. Respin builds your voice rules from your own posts and nothing activates until you confirm it.",
     heroClass: "hero-women",
     h1Lead: "A script that sounds like you,",
     h1Turn: "not like the feed.",
-    sub: "Respin learns your voice from your own posts and turns every idea into shots you can film solo. Nothing activates until you confirm it.",
+    sub: "Respin builds your voice rules from your own posts and turns every idea into shots you can film solo. Nothing activates until you confirm it.",
     demo: {
       slop: [
         "“Hey besties! Today I’m spilling my number one glow-up secret that will literally change your life…”",
         "“Make sure you follow for more girl talk! Okay so basically…”",
       ],
       critique:
-        "No timestamps. No shots. Sounds like everyone. Audiences punish it.",
+        "No timestamps. No shots. Nothing in it could only have come from you.",
       hook: {
         tc: "00:00",
         text: "The product that finally cleared my skin is the one nobody films.",
@@ -72,7 +72,7 @@ export const AUDIENCES: Audience[] = [
         "“Smash that follow button and let’s grow together! First up…”",
       ],
       critique:
-        "No timestamps. No shots. Sounds like everyone. Audiences punish it.",
+        "No timestamps. No shots. Nothing in it could only have come from you.",
       hook: {
         tc: "00:00",
         text: "We bin every croissant left at 4pm. On purpose.",
@@ -89,18 +89,18 @@ export const AUDIENCES: Audience[] = [
     navLabel: "For coaches",
     metaTitle: "Respin for coaches",
     metaDescription:
-      "Scripts built from what you already know works with clients, in your voice, with every unverifiable claim marked for you to check.",
+      "Scripts built from what you already know works with clients, in your voice, with every number, date and name checked for where it came from.",
     heroClass: "hero-coaches",
     h1Lead: "Turn what you coach into content,",
     h1Turn: "without sounding like an ad.",
-    sub: "Respin builds scripts from what you already know works with clients, in your voice. Anything it cannot verify is marked for you to check.",
+    sub: "Respin builds scripts from what you already know works with clients, in your voice. It checks where every number, date and name came from, and offers a [check] marker instead of changing your words.",
     demo: {
       slop: [
         "“What’s up team! Today we’re covering the top 5 mistakes beginners make that are killing your progress…”",
         "“Drop a comment if you’re ready to level up! Number one…”",
       ],
       critique:
-        "No timestamps. No shots. Sounds like everyone. Audiences punish it.",
+        "No timestamps. No shots. Nothing in it could only have come from you.",
       hook: {
         tc: "00:00",
         text: "My most consistent client ate more, not less.",

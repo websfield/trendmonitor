@@ -1,0 +1,176 @@
+/* ---- landing ------------------------------------------------------------- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.landing {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text-1);
+  min-height: 100vh;
+}
+
+.landing-stripe {
+  height: 3px;
+  background: var(--accent);
+}
+
+.landing-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: var(--sp-4) var(--sp-12);
+  border-bottom: 1px solid var(--border);
+}
+
+.landing-wordmark {
+  font: 700 19px / 1 var(--font-sans);
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+}
+
+.landing-header nav {
+  display: flex;
+  gap: var(--sp-5);
+  font: 500 var(--fs-ui) / 1 var(--font-sans);
+}
+
+.landing-header nav a,
+.landing-footer nav a {
+  color: var(--text-3);
+}
+
+.landing-header-cta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* Hero: a dark photo band. The scrim keeps the left third quiet for the
+   headline; text uses the theme-stable over-photo inks because the photo
+   stays dark in both themes. Falls back to plain scrim-over-bg if the
+   image is missing. */
+.hero {
+  --hero-photo: url("/marketing/hero.png");
+  padding: 96px var(--sp-12) 150px;
+  background:
+    linear-gradient(90deg, var(--scrim) 0%, var(--scrim) 36%, transparent 72%),
+    linear-gradient(0deg, var(--scrim) 0%, transparent 34%),
+    var(--hero-photo) center / cover no-repeat,
+    var(--bg);
+}
+
+/* Audience variants (/for/<slug>) swap only the photo. */
+.hero.hero-women {
+  --hero-photo: url("/marketing/hero-women.png");
+}
+
+.hero.hero-business {
+  --hero-photo: url("/marketing/hero-business.png");
+}
+
+.hero.hero-coaches {
+  --hero-photo: url("/marketing/hero-coaches.png");
+}
+
+.hero-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.hero h1 {
+  font: 700 clamp(40px, 7.5vw, 88px) / var(--lh-tight) var(--font-sans);
+  letter-spacing: -0.03em;
+  margin: 0;
+  max-width: 15ch;
+  color: var(--on-accent);
+  animation: rise 0.5s var(--ease) both;
+}
+
+.hero .hero-turn {
+  display: block;
+  margin-left: clamp(0px, 9vw, 150px);
+  color: var(--on-photo-accent);
+}
+
+.hero-sub {
+  font: 400 17px / 1.55 var(--font-sans);
+  color: var(--on-accent-body);
+  margin: var(--sp-5) 0 0;
+  max-width: 46ch;
+  animation: rise 0.5s var(--ease) 0.08s both;
+}
+
+.hero-ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-top: var(--sp-6);
+  animation: rise 0.5s var(--ease) 0.16s both;
+}
+
+/* Overlap: the demo panel rides up over the hero photo's bottom edge. */
+.demo-section {
+  position: relative;
+  z-index: 2;
+  margin-top: -92px;
+  padding-top: 0;
+}
+
+.marquee {
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.marquee-track {
+  display: flex;
+  gap: 10px;
+  width: max-content;
+  padding: var(--sp-3) 0;
+  animation: marquee 28s linear infinite;
+}
+
+.mech-tag {
+  font: 500 var(--fs-meta) / 1 var(--font-mono);
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+
+.mech-tag.mech-hot {
+  color: var(--accent-text-strong);
+  background: var(--accent-surface-2);
+  border-color: var(--accent-border);
+}
+
+.landing-section {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--sp-12) var(--sp-12) 72px;
+}
+
+.landing-section + .landing-section {
+  padding-top: 0;
+}

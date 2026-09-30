@@ -19,18 +19,22 @@
  *   {
  *     "id":            "kebab-case-id",            // required, for diagnostics
  *     "severity":      "block" | "warn",           // required
- *     "tools":         ["Edit","Write","MultiEdit"],// optional; default = all three
+ *     "tools":         ["Edit","Write","MultiEdit"],// optional; default = those three plus NotebookEdit
  *     "filePattern":   "regex",                    // optional; path must match to fire
  *     "notFilePattern":"regex",                    // optional; path matching this is exempt
  *     "bodyPattern":   "regex",                    // optional; written content must match
  *     "absentPattern": "regex",                    // optional; fires only if body LACKS this
+ *     "maxLines":      800,                        // optional; fires when the RESULTING file exceeds N lines and is not shrinking
  *     "flags":         "i",                        // optional; regex flags for body/file patterns
  *     "message":       "guidance shown to Claude"  // required
  *   }
  *
  * A rule fires when ALL present conditions hold:
  *   tool matches  AND  filePattern matches path  AND  notFilePattern does NOT match path
- *   AND  bodyPattern matches body  AND  (absentPattern is missing OR not found in body).
+ *   AND  bodyPattern matches body  AND  (absentPattern is missing OR not found in body)
+ *   AND  (maxLines is missing OR the resulting file has more than maxLines lines and grew).
+ *   "{lines}" in a message is replaced with the resulting line count. Keep maxLines rules at
+ *   severity "warn": size is a split signal, never a reason to block a write.
  * A rule with neither bodyPattern nor absentPattern is a pure path rule (fires on any
  * write to a matching path) — handy for "never edit this directory".
  *
@@ -51,6 +55,9 @@ const path = require("path");
 function failOpen() {
   process.exit(0);
 }
+function writeErr(text) {
+  try { fs.writeSync(2, text); } catch (e) { try { process.stderr.write(text); } catch (e2) { /* ignore */ } }
+}
 
 // Keep every fallible operation below one ultimate fail-open boundary. Individual
 // diagnostics stay narrow; an unexpected engine error exits silently.
@@ -64,13 +71,15 @@ try {
 
 const tool = input.tool_name || "";
 const ti = input.tool_input || {};
-const rawFilePath = ti.file_path || ti.path || "";
+// NotebookEdit shares the "Edit" matcher but names its file notebook_path and its body new_source.
+const rawFilePath = ti.file_path || ti.path || ti.notebook_path || "";
 if (typeof rawFilePath !== "string" || !rawFilePath) failOpen();
 const filePath = rawFilePath.replace(/\\/g, "/");
 
 // Collect every body chunk this call would write/edit.
 const bodies = [];
 if (typeof ti.new_string === "string") bodies.push(ti.new_string);
+if (typeof ti.new_source === "string") bodies.push(ti.new_source);
 if (typeof ti.content === "string") bodies.push(ti.content);
 if (Array.isArray(ti.edits)) {
   for (const e of ti.edits) {
@@ -97,7 +106,7 @@ for (const c of candidates) {
     // Malformed config -> fail open (never block on a broken rule file), but say so
     // loudly: with the rules unparseable, ALL write-time protection (secret-blocking
     // included) is OFF until the file is fixed. This is the one signal the user gets.
-    process.stderr.write(
+    writeErr(
       `guardrails: ENFORCEMENT DISABLED — could not parse ${c} (${e.message}). ` +
         `All guardrail rules are OFF until you fix this file. ` +
         `Validate with: node -e "JSON.parse(require('fs').readFileSync('${c.replace(/\\/g, "/")}','utf8'))"\n`
@@ -109,7 +118,7 @@ if (!config || !Array.isArray(config.rules)) failOpen();
 
 function safeRegex(src, flags, ruleId, field) {
   if (typeof src !== "string") {
-    process.stderr.write(
+    writeErr(
       `guardrails: rule "${ruleId}" has non-string ${field} in ` +
         `.claude/guardrails.rules.json; this rule did not run. Fix the pattern before retrying.\n`
     );
@@ -118,7 +127,7 @@ function safeRegex(src, flags, ruleId, field) {
   try {
     return new RegExp(src, flags || "");
   } catch (e) {
-    process.stderr.write(
+    writeErr(
       `guardrails: rule "${ruleId}" has invalid ${field} pattern /${src}/ in ` +
         `.claude/guardrails.rules.json; this rule did not run. Fix the pattern before retrying.\n`
     );
@@ -128,7 +137,7 @@ function safeRegex(src, flags, ruleId, field) {
 
 function safeFlags(flags, ruleId) {
   if (typeof flags !== "string") {
-    process.stderr.write(
+    writeErr(
       `guardrails: rule "${ruleId}" has non-string shared flags in ` +
         `.claude/guardrails.rules.json; this rule did not run. Fix flags before retrying.\n`
     );
@@ -138,7 +147,7 @@ function safeFlags(flags, ruleId) {
     new RegExp("", flags);
     return flags;
   } catch (e) {
-    process.stderr.write(
+    writeErr(
       `guardrails: rule "${ruleId}" has invalid shared flags "${flags}" in ` +
         `.claude/guardrails.rules.json; this rule did not run. Fix flags before retrying.\n`
     );
@@ -218,7 +227,7 @@ for (const rule of config.rules) {
   const tools =
     Array.isArray(rule.tools) && rule.tools.length
       ? rule.tools
-      : ["Edit", "Write", "MultiEdit"];
+      : ["Edit", "Write", "MultiEdit", "NotebookEdit"];
   // Skip the rule unless this tool is in its list. A missing/empty tool name
   // therefore matches nothing and fails open (never evaluates Edit/Write rules).
   if (!tools.includes(tool)) continue;
@@ -252,7 +261,7 @@ for (const rule of config.rules) {
     // surviving token and removal of the only token are evaluated against final content.
     const contentAfterWrite = tool === "Write" ? body : resultingFileContent();
     if (contentAfterWrite === null) {
-      process.stderr.write(
+      writeErr(
         `guardrails: rule "${id}" could not evaluate resulting content after ${tool}; ` +
           `this rule did not run. Retry with an unambiguous edit.\n`
       );
@@ -260,19 +269,37 @@ for (const rule of config.rules) {
     }
     if (re.test(contentAfterWrite)) continue;
   }
-  // A rule with no body/absent pattern is a pure path rule — it has already passed
+  let lineCount = null;
+  if (Object.prototype.hasOwnProperty.call(rule, "maxLines")) {
+    const max = rule.maxLines;
+    if (!Number.isInteger(max) || max <= 0) {
+      writeErr(`guardrails: rule "${id}" has an invalid maxLines (positive integer required); this rule did not run.\n`);
+      continue;
+    }
+    // Only Write and Edit/MultiEdit can be modelled; an unreadable or ambiguous edit is
+    // nothing to judge — skip silently (a size warn is never worth a diagnostic).
+    const after = tool === "Write" ? body : resultingFileContent();
+    if (after === null) continue;
+    lineCount = after.split("\n").length - (after.endsWith("\n") ? 1 : 0);
+    if (lineCount <= max) continue;
+    // Not-shrinking guard: an edit that reduces (or holds) the count is the split in
+    // progress — nagging it would punish exactly the fix the rule asks for.
+    const before = existingFileContent();
+    if (before !== null && lineCount <= before.split("\n").length) continue;
+  }
+  // A rule with no body/absent/size pattern is a pure path rule — it has already passed
   // the file gates above, so it fires.
 
-  const msg = rule.message || "guardrail triggered";
+  const msg = (rule.message || "guardrail triggered").replace("{lines}", lineCount === null ? "" : String(lineCount));
   if (sev === "block") {
-    process.stderr.write(`guardrail BLOCK [${id}]: ${msg}\n`);
+    writeErr(`guardrail BLOCK [${id}]: ${msg}\n`);
     blocked = true;
   } else {
     warnings.push(`guardrail WARN [${id}]: ${msg}`);
   }
 }
 } catch (e) {
-  process.stderr.write(
+  writeErr(
     `guardrails: ENFORCEMENT SKIPPED after an evaluation error ` +
       `(${(e && e.message) || String(e)}). Your edit continued without complete guardrail protection. ` +
       `Run /doctor before the next edit; if this repeats, inspect .claude/guardrails.rules.json.\n`
@@ -280,8 +307,9 @@ for (const rule of config.rules) {
   failOpen();
 }
 
-// Emit warnings (non-fatal) then decide exit code.
-for (const w of warnings) process.stderr.write(w + "\n");
+// Emit warnings (non-fatal) then decide exit code. writeSync: process.exit() right after an
+// async pipe write can truncate the reason the person needs to see.
+for (const w of warnings) writeErr(w + "\n");
 process.exit(blocked ? 2 : 0);
 }
 

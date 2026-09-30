@@ -2,6 +2,7 @@
 name: accessibility-critic
 description: Read-only WCAG 2.2 AA auditor for any repo with a UI. Use to audit semantic structure, keyboard operability, focus, contrast, touch-target size, status announcements, and colour-not-alone. An auditor (ranked findings), not a per-change gate. Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

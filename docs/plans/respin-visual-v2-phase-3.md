@@ -1,6 +1,6 @@
-# Phase 3 — supporting surfaces and final walkthrough
+# Phase 3 — Creator Brain and complete setup
 
-Depends on: 2, with current Ready proof on disk. Owner: main orchestrator.
+Depends on: 2, with current Ready proof on disk. Owner: main orchestrator; independently delegated files have exclusive ownership.
 
 ## Project Conventions Pinned (READ FIRST)
 
@@ -45,19 +45,18 @@ Stack: Next.js 15 App Router, TypeScript, React 19, pnpm 10.28.2. App imports sa
 
 ## Requirements and tasks
 
-Functional: REQ-B01–B04, E01–E07, F01–F04, H01–H03, A02–A04, G01/G04/G05/G07/G08, I01–I05. Technical: no new backend decisions, full existing form/confirmation flow, no invented numbers or evidence; reuse phase 1/2 shared design.
+Functional: REQ-A02–A04, B01–B04, I01–I05. Technical: preserve the complete interview, per-field evidence, approval and bound actions; contain all editable/action state within its actual workspace/profile and immutable source document. Existing Frameworks presentation is owned by phase 4, not this Brain/setup phase.
 
 | Task | Work | File rows |
 |---|---|---|
-| 1 | Extract Brain claim/edit/history rendering into focused files; add coloured, accurately qualified overview and section anchors | 1–5, 13 |
-| 2 | Reference source/breakdown/adapt visual hierarchy using existing records/forms; preserve autopsy/source and withheld-state qualifications | 6–8, 13 |
-| 3 | Style complete guided intake/interview/first-ideas, Results and billing/usage surfaces with existing fields/actions and evidence | 9–13 |
-| 4 | Apply wordmark/theme/art treatment to landing and its shared sections; keep section order, pricing authority and labelled demo | 14–16 |
-| 5 | Verify all surfaces in both themes and all required states; update relevant index/docs and final evidence | 17–23 |
+| 1 | Extract Brain claims/edit/history; coloured qualified overview and anchors; preserve every evidence/approval/history state | 1–5, 12 |
+| 2 | Style complete intake/interview/first-ideas; retain all existing questions, fields and actions | 6–8, 12 |
+| 3 | Key full Brain, onboarding and interview page subtrees by their verified scope; key Brain editable descendants by source version | 1, 3, 9–11 |
+| 4 | Verify scope transitions, source-version changes, theme/layout states and source scanner closure; update design documentation | 13–19 |
 
 ## Files to Create / Modify
 
-Relative to `respin/` except the final map entry; main-owned.
+Relative to `respin/`; main-owned unless delegated explicitly.
 
 | # | Path | Kind |
 |---|---|---|
@@ -66,58 +65,62 @@ Relative to `respin/` except the final map entry; main-owned.
 | 3 | `app/(product)/brain/brain-edit-forms.tsx` | N |
 | 4 | `app/(product)/brain/brain-history.tsx` | N |
 | 5 | `app/(product)/brain/brain-overview.tsx` | N |
-| 6 | `app/(product)/trends/trends-view.tsx` | M |
-| 7 | `app/(product)/trends/paste-panel.tsx` | M |
-| 8 | `app/(product)/trends/pasted-references.tsx` | M |
-| 9 | `app/(product)/onboarding/onboarding-view.tsx` | M |
-| 10 | `app/(product)/onboarding/interview/interview-view.tsx` | M |
-| 11 | `app/(product)/onboarding/first-ideas/first-ideas-panel.tsx` | M |
-| 12 | `app/(product)/results/results-view.tsx` | M |
-| 13 | `app/styles/product-surfaces.css` | N |
-| 14 | `app/(marketing)/page.tsx` | M |
-| 15 | `app/(marketing)/landing-sections.tsx` | M |
-| 16 | `app/styles/landing-sections.css` | M |
-| 17 | `tests/brain-ui.test.tsx` | M |
-| 18 | `tests/visual-surfaces.test.tsx` | N |
-| 19 | `e2e/visual/fixtures.tsx` | M |
-| 20 | `e2e/visual/entry.tsx` | M |
-| 21 | `e2e/visual/visual.spec.ts` | M |
-| 22 | `DESIGN.md` | M |
-| 23 | `../.codebase-map/SUMMARY.md` | M |
+| 6 | `app/(product)/onboarding/onboarding-view.tsx` | M |
+| 7 | `app/(product)/onboarding/interview/interview-view.tsx` | M |
+| 8 | `app/(product)/onboarding/first-ideas/first-ideas-panel.tsx` | M |
+| 9 | `app/(product)/brain/page.tsx` | M |
+| 10 | `app/(product)/onboarding/page.tsx` | M |
+| 11 | `app/(product)/onboarding/interview/page.tsx` | M |
+| 12 | `app/styles/product-surfaces.css` | N |
+| 13 | `tests/brain-ui.test.tsx` | M |
+| 14 | `tests/visual-surfaces.test.tsx` | N |
+| 15 | `tests/selected-profile-pages.test.tsx` | M |
+| 16 | `e2e/visual/fixtures.tsx` | M |
+| 17 | `e2e/visual/entry.tsx` | M |
+| 18 | `e2e/visual/visual.spec.ts` | M |
+| 19 | `DESIGN.md` | M |
 
 ## Handoff and reachability
 
-Consumes phase 1 semantic tokens/controls and phase 2 artwork/illustration component. Reuse existing view props; no new query, table or backend operation. Brain overview displays active and proposed separately, derives all values from existing scoped props, never substitutes sample audience/goals. Voice/Strategy/Kill Test/performance/history remain separately inspectable. Any semantic schema mismatch is labelled absence, not guessed prose.
+Consumes phase 1 tokens/Icon/Brand/static art and phase 2 result workspace/harness. Reuse existing scoped readers, props and actions; no new query, data model or backend operation. Brain overview derives content from actual scoped props, with active and proposed distinct. Voice/Strategy/Kill Test/performance/history stay separately inspectable; absent schema fields are labelled absent.
 
-Retain native confirmation/edit/activate forms and all current names/bound actions, evidence beside fields, per-kind refusal isolation, version history, complete export links and proposal approval. Overview navigation uses anchors/disclosures instead of changing persistence or adding an unsupported editor. Extracted components share existing types; no duplicate schema.
+Retain confirmation/edit/activate forms, every name and bound action, field evidence, per-kind refusal isolation, complete export links and proposal approval. Extracted components share existing types. Expand fixed-file source guards to the complete extracted population; plant a violation outside the old filename.
 
-References keep real public-source/pasted-transcript forms and distinct original/adapted output, with existing stale/saturation/baseline qualification. Decorative concept icons are not frames. No invented analysis, causal performance claim or feed availability.
+The Brain, onboarding and interview server pages key their FULL returned scope-bearing subtree with `JSON.stringify([scope.workspaceId, profileIdOrNull])`, using the already-resolved selected profile that produced their data/actions. Onboarding's boundary includes sibling CandidateSafetyPanel/RunInferencePanel/profile-selection/intake controls, not only OnboardingView. Use a keyed Fragment where needed so all siblings share the identity without altering layout. No extra shell query; labels/action function identity are not keys. Profile-only/workspace-only changes discard unsaved native inputs, inference/candidate feedback and Brain refusal/edit state; delayed old actions cannot populate the new subtree. Missing-profile/error states cannot preserve the prior owner. Same-scope theme and local disclosure controls preserve work; no cross-route draft persistence is introduced.
 
-Setup preserves the full production interview and inference/confirmation journey. Visual progress describes real steps without pretending that the prototype's four-step sample is the contract. Results keeps self-reported labels, unavailable explanations, separate reach/conversion, paid/organic, confounders and approval. Billing/usage retain existing views/actions and inherit quiet shared surfaces from phases 1/3; no new financial wrapper or counter.
+Within Brain, key every editable or confirmation form subtree by the immutable source brainDocId and document kind at its current caller: BrainEditForm, strategy/metric inputs, claim pointers and plain native confirmation checkboxes. A replacement source version resets old uncontrolled inputs, checked confirmations and refusal spans even within the same profile. Test document A checked → document B unconfirmed, including equal claim pointers. Unchanged source IDs retain edits. History's existing brainDocId keys remain. No content or identity is persisted in localStorage.
 
-A creator can navigate the updated Brain, references, complete setup, Results, billing/usage and account views from the live product shell; visitors can use the themed landing/auth routes. No entity migration. Final code-map edits describe only source verified during this action.
+Setup keeps every production interview question and real inference/confirmation/activation step; the prototype tour never replaces them. Product surfaces stylesheet is imported by the owned views and extends the established tokens. Phase 4 extends this same stylesheet and fixture suite.
+
+A creator can review/edit/confirm a Brain and complete real setup from the live shell, with state belonging to the displayed profile/source version.
 
 ## Edge cases / failures
 
-| Boundary / inverse | Behavior | Task/check |
+| Boundary / inverse | Behavior | Task / acceptance |
 |---|---|---|
-| Active version absent, proposal present, evidence missing, approval blocked | Distinct labelled states, no automatic activation; existing recovery links | 1 / P1 |
-| Cancel edit/navigation, inference failure | Existing saved/unsaved semantics; never report a draft activated | 1,3 / P1 |
-| Reference unavailable/stale/restricted, failed Spin | Preserve reasons, costs and source attribution; never display rejected candidate | 2 / P2 |
-| Results absent, comparison unavailable, self-reported numeric values | No fake zero/verification or collapsed metrics; existing no-comparison explanation | 3 / P3 |
-| Billing unavailable, long ledger, paused account | Existing null/error distinction and readonly access; local table scrolling | 3 / P3 |
-| Long claims/labels, narrow screens, keyboard/zoom, reduced motion | Wrap correctly; controls and provenance remain reachable in both themes | 1–4 / P4 |
+| Active absent, proposal present, evidence missing, approval blocked | Distinct truthful states and existing recovery links | 1 / B1 |
+| Viewer/editor on /brain — the R-118 owner-only refusal | `brain/page.tsx` computes an owner-only refusal (REQ-A02, R-118); splitting `brain-view.tsx` into four files must not drop it. The witnesses are `tests/brain-ui.test.tsx` and `tests/selected-profile-pages.test.tsx` — both files are M in this phase, so the extraction keeps them green or the refusal is gone silently (a missing role gate is one of the module-logic mutations that survived in the 2026-08-26 lesson) | 1-3 / B1,B2 |
+| Onboarding confirmation card, per field | The inferred value renders with its SOURCE EVIDENCE quote block and its own Confirm/Edit; evidence is never summarised away (REQ-B02, DESIGN.md "Named states this system owes") | 1 / B1 |
+| Page-level "N of M confirmed" sticky bar | The counter renders the enumerated claim positions, not the content keys or the evidence list | 1 / B1 |
+| Activation blocked until every position is confirmed | The blocked state names what is unconfirmed; enforcement is `packages/db/src/with-workspace.ts` `activateBrainDoc` AC-26 and the screen never implies activation is available (REQ-B02) | 1 / B1 |
+| Proposal approve/reject is explicit, never silent | Both outcomes are creator-initiated and visible; no brain update renders as having happened without an approval (REQ-C05, R-8) | 1 / B1 |
+| A→B same-name profile or workspace change; late old result | No prior private inputs, inference/candidate results, edit refusal or content beneath new identity | 3 / B2 |
+| Same profile, new source brainDocId with same claim pointers | Every edited value/refusal resets to the new source; unchanged ID retains work | 3 / B2 |
+| Cancel edit, inference failure, no selected profile | Existing saved/unsaved/recovery semantics; never claim activation | 1–3 / B1,B2 |
+| Long content, keyboard/zoom/reduced motion | Evidence and controls remain reachable in both themes | 1–2 / B3 |
 
 ## Verification and acceptance
 
-1. Read phase 2 Ready evidence and checkpoint current dirty worktree before edits. Source inspection precedes extraction. No source mutation before its current plan gate.
-2. P1–P3: `pnpm -C respin exec vitest run tests/brain-ui.test.tsx tests/onboarding-ui.test.tsx tests/onboarding-interview-ui.test.tsx tests/first-ideas-ui.test.tsx tests/trends-page.test.tsx tests/trends-ui.test.tsx tests/landing-pricing.test.ts tests/auth-form.test.tsx tests/visual-surfaces.test.tsx`. Then `pnpm -C respin exec vitest run tests/results-entry.test.tsx tests/results-honesty.test.tsx tests/results-comparison.test.tsx tests/results-comparison-contract.test.ts tests/results-verification-unavailable.test.tsx tests/billing-ui.test.tsx tests/usage-honesty.test.tsx tests/usage-burn-by-mode.test.ts tests/pause-authority.test.tsx tests/brain-usage-9b-ui.test.tsx`. Tasks 1–5 establish code; phase 1/2 evidence establishes shared foundation. Full test gate in step 4 covers the complete population.
-3. P4: `pnpm -C respin exec playwright test --config playwright.visual.config.ts`. After step 2, add real-component fixtures for populated/empty/blocked/error Brain, intake/interview, references, Results and financial surfaces. Exercise in both themes at 390/768/1024/1440; verify no page overflow, keyboard access, contrast, long-content resilience and two screenshot critique iterations. Do not change real journey/provider tests or invoke paid operations for visual evidence.
-4. Run the canonical Respin typecheck/lint/test/build gate once stable. Use the existing per-path tests without weakening assertions. Record build/env limitations honestly. Check available running product routes read-only (marketing/auth; authenticated routes only if an already-authorized session exists), recording separately from fixture checks. Missing session/environment remains an explicit live-integration gap, never a fixture-derived PASS.
-5. Final review: separate billing/tenancy plus lean compliance/learning/general correctness, with frozen manifest, actual commands/results, current checks and negative witnesses. Follow reservation/budget canon. Compare source/assertions/docs against reviewed inputs after fixes. Finish DESIGN/index updates and one phase report/ledger entry; whole redesign is complete only when all three phase obligations are evidenced.
+1. Read phase 2 Ready evidence, checkpoint current tree and inspect exact sources before edits.
+2. B1/B2: `pnpm -C respin exec vitest run tests/brain-ui.test.tsx tests/onboarding-ui.test.tsx tests/onboarding-interview-ui.test.tsx tests/first-ideas-ui.test.tsx tests/selected-profile-pages.test.tsx tests/visual-surfaces.test.tsx`. Execute actual server pages with established module mocks and verify keys from the same IDs as displayed props/actions, including workspace-only/profile-only changes, same names, no-profile/error branches and all sibling state owners. Include current source-version form identity in renderer assertions. Retain phase-2 corrected copy; preserve valid invariants and scanner negative witnesses.
+3. B2/B3: `pnpm -C respin exec playwright test --config playwright.visual.config.ts`. Real-component fixtures exercise Brain, intake, interview and first-ideas, plus inherited matrix. Same-name A→B tests cover all stateful/native form owners listed above; delayed actions and new source-doc IDs discard private prior state, while same-scope/version theme changes preserve it. Verify active/proposed/missing-evidence and applicable empty/blocked/error/long states in both themes at 390/768/1024/1440, keyboard/focus/contrast/no overflow, two screenshot critique iterations. Page wiring and component transitions are separately evidenced, never claimed as live authentication.
 
-PASS: P1–P4 plus applicable entry/review/DoD current; `brain-remains-explicit`, `evidence-remains-qualified`, `scoped-data-stays-scoped`, `checks-never-cleared-by-view` retain all negative witnesses from codebase review. Static fixture tests cannot certify production provider, billing or pilot usefulness.
+   Run all three browser projects. Require ≥90% Brain conformance per theme against the frozen D1–D10 checklist; the prototype's shortened setup never removes production questions. The phase-local V2-R7 screen-reader walkthrough (evidence, proposed/active distinctions, confirmation, validation/refusal announcements, retained answers) is optional and non-blocking (R-133). Include keyboard/zoom/long-content witnesses and the source-version checkbox reset. Preserve phase 1's baseline for phase 5's comparative tasks; real setup/approval integration remains a mandatory phase-5 obligation.
+4. Run the canonical Respin typecheck/lint/test/build gate once stable, as phase 1 specifies. Record actual failures/skips and denied-env limits. Separate billing and tenancy reviews plus lean compliance/learning/general correctness, reservation first, frozen manifest and exact results. Do not invoke live generation to obtain visual evidence.
+5. Update DESIGN and phase evidence/ledger, perform final diff/freshness check and all applicable DoD before Ready. Phase 4 completes remaining secondary surfaces; phase 5 completes whole-goal acceptance.
 
-Least confident: extracting the already-large Brain view without breaking a hidden source scanner or losing per-field confirmation/evidence in a secondary state. Preserve full existing assertions and exercise proposed plus active plus missing-evidence states.
+PASS: B1–B3 plus current entry/review/DoD; `brain-remains-explicit`, `scoped-data-stays-scoped`, `evidence-remains-qualified`, `checks-never-cleared-by-view`. Fixture/pilot/production evidence remain distinct.
 
-Out of scope: new onboarding question model, Brain schema, metric computation, proposal creation, ledger operations, analytics connectors, platform integrations, deployment. Completion is the applicable CLAUDE.md Definition of Done plus the master plan's end-to-end design walkthrough, with all evidence gaps named and no premature Ready claim.
+Least confident: complete scope/source-version lifetime coverage across Brain's extracted forms and onboarding's siblings. Test real page keys AND client/native form state; an unchanged markup snapshot cannot prove resets.
+
+Out of scope: question/schema changes, new queries, metric computation, proposals, billing mutations, analytics integrations. No partial state claimed Ready.

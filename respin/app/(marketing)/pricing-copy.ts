@@ -7,11 +7,48 @@
 // import shipped Pro at "1,800 credits / 3 creator profiles" and Studio at
 // "7,000 / 10" plus a "priority generation queue" that exists nowhere — sold
 // allowances `createProfile` would refuse (billing gate BLOCK, 2026-08-29).
-// Niche counts come from REQ-E05 (Free: digest only; Creator 1; Pro 3), seats
-// from REQ-A02 (Studio: 3 seats).
+// Niche counts come from REQ-E05 (Free: digest only; Creator 1; Pro 3).
+//
+// EVERY LINE, NOT EVERY NUMBER (audit 2026-09-19 item 28; remediation P6-R2,
+// applied 2026-09-20). `landing-pricing.test.ts` now pins each entry in
+// `lines` to a config key or a shipped path, both ways: a line with no pin and
+// a pin with no line both fail. Three lines had neither and were removed in
+// that pass:
+//
+//   - Creator's "Results log and approval-gated brain proposals" implied that
+//     logged results produce proposals. They cannot: `buildResultProposalDraft`
+//     refuses any evidence a platform connector did not verify (R-115,
+//     packages/brain/src/proposal.ts:229-232), and no writer in this product can
+//     reach that state — `/results` says so to creators in its own words.
+//     Proposals from SESSION FEEDBACK do ship, so the line names that source.
+//   - Studio's "3 seats with roles" and "For teams running several accounts"
+//     sold a capability with NO authority anywhere: no seat key in config, and
+//     the only two `insert(memberships)` sites are `bootstrap.ts:132` (the
+//     signed-in person) and `seed.ts:237`. There is no invite, so a Studio
+//     workspace holds exactly one person. `app-server.ts:35` says as much.
+//     They are replaced by two Studio facts that do have authorities —
+//     `trackedNiches.studio` (with the same hedge Pro's line carries, because
+//     `worker/refresh.ts:72-76`'s discovery port is a blocker) and
+//     `concurrencyLimits.studio`. That the tier reads thinner is a product
+//     consequence of an unbuilt capability, not a reason to keep selling it.
+
+/**
+ * The four plan keys, and the ONE place the marketing surface spells them.
+ *
+ * They are the entitlement tier keys, lowercase, because `/sign-up` validates
+ * the plan it is handed against this list and a second spelling would be a
+ * second answer.
+ */
+export const PLAN_KEYS = ["free", "creator", "pro", "studio"] as const;
+export type PlanKey = (typeof PLAN_KEYS)[number];
+
+export const isPlanKey = (value: unknown): value is PlanKey =>
+  typeof value === "string" && (PLAN_KEYS as readonly string[]).includes(value);
 
 export type PricingTier = {
   name: string;
+  /** The key the card's CTA carries to `/sign-up`. */
+  plan: PlanKey;
   amount: string;
   period: string | null;
   featured: boolean;
@@ -22,53 +59,57 @@ export type PricingTier = {
 export const PRICING: PricingTier[] = [
   {
     name: "Free",
+    plan: "free",
     amount: "$0",
     period: null,
     featured: false,
     lines: [
       "25 credits each month",
       "1 creator profile",
-      "Weekly trend digest",
-      "Your data stays readable, always",
+      "Hooks, captions and ideas",
+      "Your data stays readable",
     ],
     cta: "Start free",
   },
   {
     name: "Creator",
+    plan: "creator",
     amount: "$10",
     period: " /mo",
     featured: true,
     lines: [
       "250 credits each month",
       "1 creator profile",
-      "Spin from the Trends feed",
-      "Results loop and brain proposals",
+      "Spin from any reference you paste",
+      "Brain proposals from your feedback, approval-gated",
     ],
     cta: "Start Creator",
   },
   {
     name: "Pro",
+    plan: "pro",
     amount: "$60",
     period: " /mo",
     featured: false,
     lines: [
       "2,000 credits each month",
       "1 creator profile",
-      "3 tracked trend niches",
-      "Auto-top-up with a spend cap",
+      "3 tracked niches, once a source connects",
+      "Auto-top-up with a spend cap, once activation completes",
     ],
     cta: "Start Pro",
   },
   {
     name: "Studio",
+    plan: "studio",
     amount: "$200",
     period: " /mo",
     featured: false,
     lines: [
       "8,000 credits each month",
       "5 creator profiles",
-      "3 seats with roles",
-      "For teams running several accounts",
+      "10 tracked niches, once a source connects",
+      "8 generations in flight at once",
     ],
     cta: "Start Studio",
   },

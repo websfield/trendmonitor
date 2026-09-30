@@ -2,6 +2,7 @@
 name: outbound-truth-critic
 description: Read-only outbound-truth auditor. Use to pressure-test whether what customers and outsiders READ matches what the code actually DOES — README feature claims, changelogs/release notes, announcement copy, user-facing help docs, pricing/landing copy, privacy-policy capability claims. Applies the outbound-truth skill's trace rule: every capability claim must trace to shipped code or recorded evidence; an unverifiable claim is a finding; an invented capability forces Not yet. An auditor (whole-system ranked findings), not a per-change gate — where /sync-docs fixes drift as it edits, this hunts the claims already in the wild. Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

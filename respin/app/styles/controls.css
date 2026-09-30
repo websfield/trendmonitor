@@ -1,0 +1,164 @@
+/* ---- controls ------------------------------------------------------------ */
+
+input,
+textarea,
+select {
+  font: 400 var(--fs-body) / var(--lh-body) var(--font-sans);
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--sp-2) var(--sp-3);
+  min-height: 44px;
+  max-width: 100%;
+  /* A form control's automatic minimum size is its intrinsic width — for a
+     textarea that is its `cols` default, which grows with the font size. At
+     200% text on a 390px viewport that made the control 474px wide and pushed
+     the document to 511px, overflowing the viewport and failing WCAG 2.2
+     SC 1.4.10 reflow. `max-width: 100%` above cannot catch it: it resolves
+     against a grid track that the control itself is sizing. Firefox reddened
+     (121px over) while Chromium and WebKit did not, so this only surfaced once
+     all three engines ran. The rule belongs here, on every control, rather
+     than on the one panel that exposed it. */
+  min-inline-size: 0;
+}
+
+textarea {
+  min-height: unset;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+}
+
+button {
+  font: 500 var(--fs-ui) / 1 var(--font-sans);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  min-width: 44px;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font: 500 var(--fs-ui) / 1 var(--font-sans);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+a.btn:hover {
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: var(--primary-gradient);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-2);
+  border-color: var(--border-strong);
+}
+
+.btn-secondary:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.btn-quiet {
+  background: transparent;
+  color: var(--text-3);
+}
+
+.btn-quiet:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+/* Disabled is a stated refusal, not a color change alone: the reason text sits
+   beside the control, linked by aria-describedby. */
+.btn[disabled],
+.btn[aria-disabled="true"] {
+  background: var(--surface-3);
+  color: var(--text-4);
+  border-color: transparent;
+  cursor: not-allowed;
+}
+
+/* Toggle (auto-top-up). The knob is the one sanctioned pill (DESIGN.md).
+   Semantics stay a plain checkbox; the wrapping label is the 44px target. */
+input[type="checkbox"].toggle {
+  appearance: none;
+  width: 40px;
+  height: 24px;
+  min-height: unset;
+  padding: 0;
+  border-radius: 12px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  position: relative;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background var(--dur) var(--ease);
+}
+
+input[type="checkbox"].toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition:
+    transform var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+
+input[type="checkbox"].toggle:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type="checkbox"].toggle:checked::after {
+  transform: translateX(16px);
+  background: var(--on-accent);
+}
+
+input[type="checkbox"].toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+.theme-switch { display: flex; flex-wrap: wrap; gap: var(--sp-1); padding: var(--sp-1); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+/* `white-space: nowrap` because the SELECTED button gets font-weight 700, which
+   made "After Hours" wider than its flex basis and wrapped it onto two lines in
+   the dark theme only — the segmented control changed shape depending on which
+   option was active. The re-score after the phase-1 repairs caught it (dark
+   scored 86.7%, under the 90% bar, on D4). The container keeps `flex-wrap:
+   wrap`, so at large text sizes the BUTTONS wrap onto separate rows instead of
+   their labels breaking, which is what keeps 200% text from overflowing. */
+.theme-switch button { flex: 1; min-width: 44px; min-height: 44px; padding: var(--sp-2); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-3); background: transparent; cursor: pointer; white-space: nowrap; }
+.theme-switch button[aria-pressed="true"] { color: var(--accent-text); background: var(--surface-1); border-color: var(--accent-border); font-weight: 700; }
+@media (forced-colors: active) { .theme-switch button[aria-pressed="true"] { border: 2px solid Highlight; } }

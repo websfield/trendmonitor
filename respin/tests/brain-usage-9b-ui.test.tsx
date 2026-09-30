@@ -31,6 +31,7 @@ import {
   FORBIDDEN_CLAIMS,
   PERFORMANCE_CLAIMS,
 } from "./support/forbidden-claims";
+import { claimHits, specimensFor } from "./support/claim-scan";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const AS_OF = new Date("2026-09-05T12:00:00.000Z");
@@ -232,17 +233,28 @@ describe("9b Brain asset and Performance Meta UI", () => {
     const productMarkdown = markdown
       .replace(/^Creator-authored metric label:.*$/m, "")
       .toLowerCase();
-    for (const [label, pattern] of [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS]) {
-      expect(productMarkdown, label).not.toMatch(pattern);
-    }
+    // ONE PREDICATE (P1-R4, applied 2026-09-21). This ran its own loop over
+    // the shared module-level RegExp objects — correctly shaped, so invisible
+    // to every scanner, and one of six the batch-5 compliance gate counted.
+    expect(claimHits(productMarkdown, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toEqual([]);
     for (const specimen of ["this draft will perform", "it outperforms your last post"]) {
       expect(
-        [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS].some(([, pattern]) =>
-          pattern.test(`${productMarkdown} ${specimen}`)
-        )
-      ).toBe(true);
+        claimHits(`${productMarkdown} ${specimen}`, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS).length
+      ).toBeGreaterThan(0);
     }
   });
+
+  // PER ENTRY, NOT TWO SENTENCES. The two specimens above prove the scan is
+  // live; they do not prove it is live PER PATTERN, and a typo in one entry
+  // leaves that word sayable here while both of them still go red on some
+  // other pattern. This is the `CLAIM_SPECIMENS` loop the sixteen working
+  // consumers carry and this file was recorded as owing (`PLANT_OWED`).
+  it.each(specimensFor(FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS))(
+    "PLANTED: %s would be caught in this screen's exported markdown",
+    (label, specimen) => {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toContain(label);
+    }
+  );
 
   it("renders exact asset counts, immutable membership, and accepted activation", () => {
     const html = renderToStaticMarkup(<BrainView {...brainProps} />);
@@ -311,15 +323,13 @@ describe("9b Brain asset and Performance Meta UI", () => {
       // confidence claim still fails the shared canon scan.
       .replace(/Evidence strength describes the recorded evidence, not confidence or probability\./g, "")
       .toLowerCase();
-    for (const [label, pattern] of [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS]) {
-      expect(productCopy, label).not.toMatch(pattern);
-    }
+    expect(claimHits(productCopy, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toEqual([]);
     expect(html).toContain("Creator-authored metric label: This will perform and get more views");
     for (const specimen of ["this draft will perform", "it outperforms your last post"]) {
       const planted = `${productCopy} ${specimen}`;
       expect(
-        [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS].some(([, pattern]) => pattern.test(planted))
-      ).toBe(true);
+        claimHits(planted, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS).length
+      ).toBeGreaterThan(0);
     }
   });
 });

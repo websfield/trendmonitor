@@ -19,41 +19,29 @@
 // one table that does NOT, by design). Scanning for a DELETE against
 // `workspaces` is therefore the widest true signal available today, without
 // guessing the executor's eventual name or shape.
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join, relative, resolve, sep } from "node:path";
+
+import { PRODUCTION_ROOTS, sourceFilesUnder } from "./support/source-files";
 import { describe, expect, it } from "vitest";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "migrations", "coverage"]);
-
-function productSources(dir: string, acc: Map<string, string> = new Map()) {
-  for (const name of readdirSync(dir)) {
-    if (SKIP_DIRS.has(name)) continue;
-    const full = join(dir, name);
-    let entry;
-    try {
-      entry = statSync(full);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw err;
-    }
-    if (entry.isDirectory()) {
-      if (name === "tests") continue;
-      productSources(full, acc);
-    } else if (/\.(ts|tsx)$/.test(name) && !/\.test\.(ts|tsx)$/.test(name)) {
-      let src: string;
-      try {
-        src = readFileSync(full, "utf8");
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw err;
-      }
-      acc.set(relative(ROOT, full).split(sep).join("/"), src);
-    }
-  }
-  return acc;
+// THE SHARED ROOT LIST, NOT THREE OF SIX (P1-R3). This scan read
+// `packages`, `app` and `lib` until 2026-09-21, so a workspace-deletion
+// executor landing in `worker/` or `scripts/` was outside the tripwire that
+// exists to catch exactly that. `PRODUCTION_ROOTS` is asserted against
+// `ROOT_DIRS` in `claim-scan.test.ts`; the ENOENT race the local walker
+// handled now lives in `sourceFilesUnder`.
+//
+// PRODUCT SOURCE ONLY, as before: no `tests/` directory and no `.test.ts`
+// file — a suite that deletes a workspace in a fixture is not an executor.
+function productSources(): Map<string, string> {
+  return new Map(
+    sourceFilesUnder(PRODUCTION_ROOTS)
+      .filter(
+        ({ file }) =>
+          !file.split("/").includes("tests") &&
+          !/.test.(ts|tsx)$/.test(file)
+      )
+      .map(({ file, text }) => [file, text])
+  );
 }
 
 function stripComments(src: string): string {
@@ -104,16 +92,12 @@ function findViolations(files: Map<string, string>): string[] {
 
 describe("R-30.5/R-54 tripwire: a workspace-deletion executor must pseudonymise workspace_spend_monthly", () => {
   it("the scan is NOT vacuous: it sees the files it is supposed to police", () => {
-    const scanned = productSources(join(ROOT, "packages"));
-    productSources(join(ROOT, "app"), scanned);
-    productSources(join(ROOT, "lib"), scanned);
+    const scanned = productSources();
     expect(scanned.size).toBeGreaterThan(20);
   });
 
   it("the real deletion executor is SEEN by the scan (not vacuous) and calls the instrument", () => {
-    const scanned = productSources(join(ROOT, "packages"));
-    productSources(join(ROOT, "app"), scanned);
-    productSources(join(ROOT, "lib"), scanned);
+    const scanned = productSources();
     // Round-1 billing NOTE: the port deletes through `relation()`, a shape the
     // first two regexes cannot see; a green here was vacuous until the third.
     const port = scanned.get("packages/db/src/lifecycle-sql-port.ts");

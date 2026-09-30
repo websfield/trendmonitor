@@ -2,6 +2,7 @@
 name: respin-money-critic
 description: Read-only auditor for Respin's money surface as it exists today — the append-only credit ledger and its derived balance, Stripe webhook idempotency, debit-in-transaction, expiry/pause/top-up arithmetic, and config-not-code pricing. The audit-posture counterpart to the per-diff respin-billing-reviewer gate: the gate fires only on diffs classified as touching billing, while this hunts the whole money path for drift that accumulated through unclassified changes. An auditor (ranked findings), not a gate. Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

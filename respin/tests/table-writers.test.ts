@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { PRODUCTION_ROOTS } from "./support/source-files";
 import {
   APP_TABLES,
   EXTERNAL_WRITER_AUTHORITIES,
@@ -350,7 +351,12 @@ function productSources(dir: string, acc: Map<string, string> = new Map()) {
   return acc;
 }
 
-const PRODUCTION_ROOTS = ["packages", "app", "worker", "scripts", "lib", "ops"] as const;
+// THE ROOT LIST IS SHARED, NOT COPIED (P1-R3). This file declared its own until
+// 2026-09-21; the list now lives in `tests/support/source-files.ts` beside
+// `ROOT_DIRS`, with the relation between the two asserted in
+// `tests/claim-scan.test.ts`. The self-pin below (`the scan is non-empty`) moved
+// onto the shared copy in the same edit — a move that drops that assertion
+// silently removes a control.
 
 function allProductionSources(): Map<string, string> {
   const files = new Map<string, string>();

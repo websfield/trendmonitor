@@ -50,10 +50,10 @@ import { TIER_PRIVATE_FRAMEWORKS } from "@respin/credits";
 // unchanged. The rule is the AUTHORITY on how certain this screen may sound.
 import { MECHANISM_CONTENT_RULES } from "../packages/db/src/frameworks";
 import {
-  CLAIM_SPECIMENS,
   FORBIDDEN_CLAIMS,
   PERFORMANCE_CLAIMS,
 } from "./support/forbidden-claims";
+import { claimHits, specimensFor } from "./support/claim-scan";
 import {
   CODE_FOR_ERROR_CLASS,
   ERROR_CLASS_COVERED_BY_BASE,
@@ -841,19 +841,14 @@ describe("honesty: this screen claims nothing the product cannot support", () =>
 
   it.each(STATES)("%s makes no forbidden claim", (_label, props) => {
     const text = visibleCopy(render(props)).toLowerCase();
-    for (const [label, pattern] of [
-      ...FORBIDDEN_CLAIMS,
-      ...PERFORMANCE_CLAIMS,
-    ] as [string, RegExp][]) {
-      expect(pattern.test(text), label).toBe(false);
-    }
+    expect(claimHits(text, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toEqual([]);
   });
 
   it("NON-VACUITY: every banned claim's specimen matches its own pattern", () => {
     // A typo in one pattern would otherwise leave that word sayable while the
     // suite stayed green, because some OTHER pattern matched the probe.
-    for (const [label, pattern] of FORBIDDEN_CLAIMS) {
-      expect(pattern.test(CLAIM_SPECIMENS[label]), label).toBe(true);
+    for (const [label, specimen] of specimensFor(FORBIDDEN_CLAIMS)) {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS), label).toContain(label);
     }
   });
 

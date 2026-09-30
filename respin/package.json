@@ -42,7 +42,8 @@
     "proposals:audit": "pnpm --filter @respin/db proposals:audit",
     "sample-spin:keyring": "pnpm --filter @respin/db sample-spin:keyring",
     "preflight": "tsx scripts/preflight.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:visual": "playwright test --config playwright.visual.config.ts"
   },
   "dependencies": {
     "@respin/auth": "workspace:*",

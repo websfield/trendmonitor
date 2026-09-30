@@ -1315,6 +1315,7 @@ export {
   TELEMETRY_SYSTEM_IDENTITY,
   activationCohortEventUuid,
   assertSafeErrorEvent,
+  originPinnedFetch,
   parsePosthogSink,
   parseSentryDsn,
   posthogActivationCapture,

@@ -2,6 +2,7 @@
 name: cutdown-boundary-reviewer
 description: Read-only reviewer for any Cutdown diff touching contract authority or versioning (`packages/contracts/schemas/**`, `contract-set.ts`, generated trees), delivered-artefact immutability, `decisions.md`, artefact paths and job containment, the skills registry or `.claude/skills/cutdown-*` mirror, the workspace boundary to `src/`, or — from Stage 2 — the Review Studio and workspace/tenant isolation. Verifies that a semantic schema change adds a new file, delivered packages stay readable and countable, readers dispatch on major before writers move, path-building ids are validated at the artefact boundary, decisions are superseded by appending, and no surface becomes a second source of truth. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

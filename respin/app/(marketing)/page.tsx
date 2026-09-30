@@ -23,19 +23,19 @@ import { SampleSpinOrMockup } from "./sample-spin/sample-spin-section";
 
 const MAIN_DEMO: DemoCopy = {
   slop: [
-    "“Hey guys! Today we’re going to talk about a game-changing training secret that will take your gains to the next level…”",
+    "“Hey guys! Today we’re going to talk about a game-changing workout secret that will take your gains to the next level…”",
     "“Make sure you like and follow for more amazing fitness content! Let’s dive in…”",
   ],
-  critique: "No timestamps. No shots. Sounds like everyone. Audiences punish it.",
+  critique: "No timestamps. No shots. Nothing in it could only have come from you.",
   hook: {
     tc: "00:00",
-    text: "Every program you have ever bought is wrong about training to failure.",
+    text: "Every program you have ever bought is wrong about lifting to failure.",
   },
   turn: {
     tc: "00:14",
     text: "Failure was never the stimulus. Volume you can recover from is.",
   },
-  shot: "Your March clip 0451: the 315 for three set, phone angle. Receipt on screen at 00:22.",
+  shot: "Your clip [check]: the heavy triple, phone angle. Receipt on screen at 00:22.",
 };
 
 export default function LandingPage() {
@@ -52,7 +52,7 @@ export default function LandingPage() {
           </h1>
           <p className="hero-sub">
             Respin turns your idea into a shot-mapped script in your voice,
-            built on mechanisms proven by posted results.
+            built on reviewed mechanisms.
           </p>
           <div className="hero-ctas">
             <a href="/sign-up" className={buttonClass("primary")}>

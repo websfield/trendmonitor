@@ -31,7 +31,7 @@ Once users are back (or you've confirmed you can't stabilize), and only then, co
 
 ### Step 2 — Diagnose (what changed?)
 With the bleeding stopped, find the cause — evidence, not guessing. Check the most specific, most likely symptom first, not the whole system — don't confirm your favorite theory, rule the alternatives out.
-- **"What shipped last?"** — the single highest-yield question. Read the recent **progress ledgers** (`docs/progress/<feature>/ledger.md` `complete` lines) and recent git history: an outage minutes after a deploy is almost always that deploy.
+- **"What shipped last?"** — the single highest-yield question. Read the recent progress records (`docs/progress/<feature>/progress-and-log.md` `complete` lines) and recent git history: an outage minutes after a deploy is almost always that deploy.
 - **Read the signal** — `RUNBOOK.md`'s Observability section points at the logs / dashboard / error tracker; go there for the actual error, don't theorize from the symptom.
 - Name the cause with evidence (the error, the commit, the config change) before you touch anything — a fix for a cause you haven't confirmed is another guess shipped into a fire.
 

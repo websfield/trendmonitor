@@ -2,6 +2,8 @@
 name: intelligence-plane-engineer
 description: Implements the Python intelligence plane — the shared Extraction Service (FeatureRecord) and C1 Pattern Engine (term registry, source adapters, trend detector, submission/resolution engine, exemplar + internal corpora, pattern miner, mechanism synthesiser, both publishers). Produces advisory data and beliefs; never produces a verdict.
 tools: Read, Write, Edit, Grep, Glob, Bash
+model: opus
+effort: high
 ---
 
 # Intelligence Plane Engineer (Python)

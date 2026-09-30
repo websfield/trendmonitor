@@ -2,6 +2,7 @@
 name: cutdown-measurement-reviewer
 description: Read-only reviewer for any Cutdown diff touching counting, exit criteria, `status --phase0`, baselines, cohorts, denominators, uplift or performance claims, QA pass rates, latency percentiles, cache-hit or accuracy rates, `packages/evaluation`, `PerformanceObservation`/`Experiment` contracts, `output-counting-policy.md`, or PRD §14/§15 numbers. Verifies that absence is never a zero, an unproven criterion is never met, every rate names its denominator/population/period, provenance labels survive aggregation, and engineering and data exits stay separate claims. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

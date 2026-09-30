@@ -13,8 +13,8 @@ import { type GenerationContext } from "../src/assemble";
 
 import {
   FORBIDDEN_CLAIMS,
-  CLAIM_SPECIMENS,
 } from "../../../tests/support/forbidden-claims";
+import { claimHits, specimensFor } from "../../../tests/support/claim-scan";
 import {
   OUTPUT_CLAIM_SHAPES,
   claimRemedyFor,
@@ -570,18 +570,16 @@ describe("every creator-facing string in this package is honest", () => {
   });
 
   it("makes none of the forbidden claims", () => {
-    for (const [label, pattern] of FORBIDDEN_CLAIMS) {
-      for (const copy of CREATOR_FACING) {
-        expect(pattern.test(copy.toLowerCase()), label + " in: " + copy).toBe(false);
-      }
+    for (const copy of CREATOR_FACING) {
+      expect(claimHits(copy, FORBIDDEN_CLAIMS), "in: " + copy).toEqual([]);
     }
   });
 
   it("NON-VACUITY: every pattern catches its own specimen", () => {
     // A scan that finds nothing is indistinguishable from a scan that is
     // broken, and a typo in one pattern otherwise hides behind another's match.
-    for (const [label, pattern] of FORBIDDEN_CLAIMS) {
-      expect(pattern.test(CLAIM_SPECIMENS[label]), label).toBe(true);
+    for (const [label, specimen] of specimensFor(FORBIDDEN_CLAIMS)) {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS), label).toContain(label);
     }
   });
 

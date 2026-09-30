@@ -50,10 +50,10 @@ const B04_OFFER = modeOffers("studio").find(
   (m) => m.id === ONBOARDING_FIRST_IDEAS_MODE
 );
 import {
-  CLAIM_SPECIMENS,
   FORBIDDEN_CLAIMS,
   PERFORMANCE_CLAIMS,
 } from "./support/forbidden-claims";
+import { claimHits, specimensFor } from "./support/claim-scan";
 import {
   GENERATION_SCREEN_DIRS,
   STREAM_SHAPES,
@@ -901,12 +901,7 @@ describe("R16/R21: it does not stream, and it claims no evidence about the creat
     ];
     for (const [label, props] of STATES) {
       const text = visibleCopy(render(props)).toLowerCase();
-      for (const [claim, pattern] of [
-        ...FORBIDDEN_CLAIMS,
-        ...PERFORMANCE_CLAIMS,
-      ] as [string, RegExp][]) {
-        expect(pattern.test(text), `${label}: ${claim}`).toBe(false);
-      }
+      expect(claimHits(text, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS), label).toEqual([]);
     }
   });
 
@@ -940,12 +935,7 @@ describe("R16/R21: it does not stream, and it claims no evidence about the creat
       // NON-VACUITY PER STATE: an empty render passes every ban trivially, and
       // that is exactly how the previous version of this test passed.
       expect(text.length, `${label}: nothing rendered`).toBeGreaterThan(80);
-      for (const [claim, pattern] of [
-        ...FORBIDDEN_CLAIMS,
-        ...PERFORMANCE_CLAIMS,
-      ] as [string, RegExp][]) {
-        expect(pattern.test(text), `${label}: ${claim}`).toBe(false);
-      }
+      expect(claimHits(text, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS), label).toEqual([]);
     }
     // ...and the result really does carry the paragraph that only a usable run
     // renders, so this is a scan over the result and not over an empty tag.
@@ -991,12 +981,7 @@ describe("R16/R21: it does not stream, and it claims no evidence about the creat
     ).toEqual(Object.keys(firstIdeasCopy).sort());
     for (const [name, values] of Object.entries(EVERY_SENTENCE)) {
       for (const value of values) {
-        for (const [claim, pattern] of [
-          ...FORBIDDEN_CLAIMS,
-          ...PERFORMANCE_CLAIMS,
-        ] as [string, RegExp][]) {
-          expect(pattern.test(value.toLowerCase()), `${name}: ${claim}`).toBe(false);
-        }
+        expect(claimHits(value, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS), name).toEqual([]);
       }
     }
     // NON-VACUITY: the registry holds real sentences, not empty strings.
@@ -1008,8 +993,8 @@ describe("R16/R21: it does not stream, and it claims no evidence about the creat
   });
 
   it("NON-VACUITY: every banned claim's specimen matches its own pattern", () => {
-    for (const [label, pattern] of FORBIDDEN_CLAIMS) {
-      expect(pattern.test(CLAIM_SPECIMENS[label]), label).toBe(true);
+    for (const [label, specimen] of specimensFor(FORBIDDEN_CLAIMS)) {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS), label).toContain(label);
     }
     // ...and the scan reads REAL copy rather than an empty string.
     expect(visibleCopy(render()).length).toBeGreaterThan(300);

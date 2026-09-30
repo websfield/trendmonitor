@@ -88,8 +88,41 @@ export function emitFoldMetric(m: FoldMetric): void {
   try {
     sink(m);
   } catch (err) {
-    console.warn("[respin-metric] fold metric sink threw; ignoring", err);
+    warnSinkThrew("fold", err);
   }
+}
+
+/**
+ * The one way this module reports a sink throwing.
+ *
+ * NEVER THE ERROR OBJECT ITSELF (P1-R6, audit REG-13). A sink is arbitrary
+ * caller code, so its throw can carry anything: a `DrizzleQueryError`'s message
+ * embeds the bound query parameters, which on the intake path is the creator's
+ * own post text. The closed-alphabet CLASS LABEL is the whole safe payload —
+ * the same field `app/(product)/safe-log.ts`'s `errorName` emits, spelled here
+ * because `packages/**` cannot import from `app/**`.
+ *
+ * ONE HELPER, NOT THREE CALL SITES. All three metric emitters below carried the
+ * identical `console.warn("… threw; ignoring", err)` line, and all three were
+ * invisible to the scan that guards this rule: it bounded its match with
+ * `[^;]`, so the `;` in "threw; ignoring" ended the match before the `, err`.
+ * Fixing one and leaving two is how this defect class comes back, so the shape
+ * now exists in exactly one place. The scan reads the call's arguments instead
+ * of bounding a character class (`tests/safe-log.test.ts`).
+ */
+function warnSinkThrew(which: string, err: unknown): void {
+  console.warn(
+    `[respin-metric] ${which} metric sink threw; ignoring errorName=${sinkErrorName(err)}`
+  );
+}
+
+/** Closed-alphabet class label — constructor metadata is attacker-controlled too. */
+function sinkErrorName(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return typeof err === "object" && err !== null ? "UnknownObject" : typeof err;
+  }
+  const candidate = err.constructor?.name ?? err.name;
+  return /^[A-Za-z][A-Za-z0-9]*$/.test(candidate) ? candidate : "Error";
 }
 
 // ---------------------------------------------------------------------------
@@ -206,10 +239,7 @@ export function emitUnchargedAttemptCapMetric(
   try {
     capSink(m);
   } catch (err) {
-    console.warn(
-      "[respin-metric] uncharged-attempt cap metric sink threw; ignoring",
-      err
-    );
+    warnSinkThrew("uncharged-attempt cap", err);
   }
 }
 
@@ -305,9 +335,6 @@ export function emitFrameworkOfferDroppedMetric(
   try {
     offerSink(m);
   } catch (err) {
-    console.warn(
-      "[respin-metric] framework offer metric sink threw; ignoring",
-      err
-    );
+    warnSinkThrew("framework offer", err);
   }
 }

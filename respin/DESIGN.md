@@ -1,126 +1,100 @@
-# Respin DESIGN.md — "Signal" system
+# Respin design system — Colour Pop / After Hours
 
-Direction chosen 2026-08-28 from three candidates (editorial print, dark studio tool, warm minimal).
-Signal: a calm, information-dense dark studio tool. Graphite surfaces, one cobalt accent,
-Geist for words, Geist Mono for anything that counts. Copy this file to `respin/DESIGN.md`;
-tokens live in `respin-tokens.css` (drop into `app/` and import from the root layout, or fold
-into Tailwind v4 `@theme` as below).
+Approved direction: docs/design/v2/Respin_Visual_Refinement_Handoff.md v5, its prototype and four mockups. The v2 master plan governs production qualifications. Colour Pop is the default; html[data-theme="dark"] selects After Hours. Both themes use the same components and state.
 
-## Point of view
+## Reference contract, frozen before styling
 
-- Content-first: the script document IS the interface. Type does the hierarchy; chrome stays quiet.
-- One accent (#4066E0 dark / #3556C4 light, sat < 80%). Cobalt means: confirmed, outperforming, or the primary action. Nothing else is colored.
-- Honesty is a component class, not an afterthought: refusals use strong neutral borders and plain words. No alarm red, no fake zeros, status never color-only.
-- Every comparison is against the creator's own baseline, rendered as a tick on a meter.
-- Mono carries every number: timestamps, credits, multipliers, ledger rows, [check] tokens.
+Reference captures: .tmp/respin-v2-reference/manifest.json (48 prototype screenshots: start, brief, script, filming, references and Brain; light/dark at 390/768/1024/1440). Compare the real prototype DOM and supplied mockups, not an imagined redesign. .tmp/respin-v2-baseline/manifest.json retains the previous UI, synthetic tasks, revision/source hashes and interactive Studio/limited Brain stimuli. These are comparison materials, not authenticated-route or human-trial evidence.
+
+Production differences: retain Geist; use authoritative offers and real charges; omit prototype search/history, mock credit meter and sample plan/profile selectors; preserve complete onboarding; route reference work through Trends; join shots by beatIndex and retain independent timed cues. Mockups supply art direction, never evidence, permissions or pricing. These differences do not excuse missing layout structure.
+
+| Dimension | Weight | Applicable reference |
+|---|---|---|
+| D1 palette, contrast and quiet evidence | 15 | Every core surface/state |
+| D2 shell proportions and responsive navigation | 15 | Shell and every core surface/state |
+| D3 typography and reading density | 10 | Every core surface/state |
+| D4 spacing, cards, borders and selection | 10 | Every core surface/state |
+| D5 brand, icons, illustration and annotation | 10 | Shell and every core surface/state; artwork stays decorative |
+| D6 action hierarchy, access and actual cost | 10 | Every core surface/state; shell uses derived balance instead of sample meter |
+| D7 task, tabs, source stages and Brain sections | 10 | Start/brief, script/checks, filming, references and Brain; N/A for shell-only fixture |
+| D8 persistent findings and evidence navigation | 10 | Script/checks, filming, references and Brain; N/A for shell and unsubmitted start/brief |
+| D9 scene/detail relationship | 5 | Filming, references and Brain; N/A for shell, start/brief and script/checks |
+| D10 mobile order and long-content resilience | 5 | Every core surface/state |
+
+Applicability is fixed across both themes and widths. Document any additional state-level N/A before changing that surface, citing its reference and actual prop contract. Shell's denominator is 75; start/brief and script/checks are 85 and 95 respectively; filming/references/Brain are 100. Met=1, partial=0.5 for nonfunctional spacing/art differences only, absent/reversed structure=0. Score = 100 × earned weight / applicable weight. Require ≥90 for each core surface and theme, with width-level observations and two critique passes. Never average a failed surface away. Functional, honesty, scope or accessibility failure fails irrespective of score. Supporting pages without a prototype counterpart receive full functional/accessibility checks, not invented conformance scores.
 
 ## Tokens
 
-Source of truth: `respin-tokens.css`. Dark is `:root` (default); light overrides under
-`[data-theme="light"]` / `.theme-light`. Key names:
+app/respin-tokens.css is the implementation authority. Existing semantic names remain available.
 
-- Surfaces: `--bg, --surface-1..3` (page, panel, nested row, pressed/table-head)
-- Lines: `--border` (hairline seam), `--border-strong` (emphasis: refusals, weakest point, unverified)
-- Ink: `--text-1..4` (ink, body, secondary, meta). Never #000/#fff.
-- Accent: `--accent, --accent-hover, --accent-text, --accent-text-strong, --accent-surface, --accent-surface-2, --accent-border, --on-accent`
-- Effects: `--shadow, --shadow-soft` (tinted to bg hue), `--scrim`, `--focus-ring`
-- Motion: `--dur-fast 120ms, --dur 200ms, --dur-slow 360ms, --ease cubic-bezier(0.2,0,0,1)`
-- Radius: `--radius 6px` (panels/buttons/inputs), `--radius-sm 4px` (chips/badges). Toggle knobs are the only pills.
-- Spacing: `--sp-1..16` = 4 8 12 16 20 24 32 40 48 64. Panel padding 20; page gutter 36; desktop sidebar 224.
-- Implementation additions (app/globals.css, from the shell/landing specs): `--sidebar-bg` (#121419 dark / `--surface-2` light — the product rail), `--blueprint-line` (rgba(148,166,238,0.05) — the hero grid), `--on-accent-body` (#DDE3F9 — body ink on the accent-hover refusal panel), `--on-photo-accent` (#94A6EE — theme-stable accent ink over the landing's dark photo bands, where `--accent-text` would flip dark in light theme).
-- Landing photo bands (marketing page only): AI-generated atmospheric photography in `public/marketing/` (hero.png, filming.png, night.png) — dark graphite scenes, one cobalt light source, environments/hands/silhouettes only, never an identifiable face posed as a customer (no invented social proof, REQ-I03). Full-bleed `.band-*` wrappers alternate surfaces for scroll rhythm; the demo panel overlaps the hero photo's bottom edge; the page closes on a small centered card over night.png. Audience variants at `/for/<slug>` (women, business, coaches; copy in `app/(marketing)/audiences.ts`, sections shared via `landing-sections.tsx`) swap only the hero photo (`--hero-photo`, hero-women/business/coaches.png), headline, and illustrative demo — pricing renders once from `pricing-copy.ts` under its test pin, and each demo's SHOT line carries a rendered `[check]` token (`.check-token`).
+Brand-only top/middle/bottom gradients reproduce the prototype capsule mark: 150deg #ff63b3→#d42de5, 120deg #5559ff→#7637f5, 145deg #a57cffad→#6638ff. They carry no text or status.
 
-## Type scale (Geist / Geist Mono)
+| Role | Colour Pop | After Hours |
+|---|---|---|
+| bg | #FAFBFF | #090F22 |
+| surface-1 | #FFFFFF | #121B33 |
+| surface-2 | #F3F2FB | #1A2442 |
+| surface-3 | #E9E7F6 | #25314E |
+| border / border-strong | #E0E3F0 / #74728C | #2E3A5B / #8E9CBD |
+| text-1 | #15152E | #F6F4FF |
+| text-2 | #46415F | #D6D9EB |
+| text-3 | #595571 | #BAC2DB |
+| text-4 | #67657F | #A5AEC8 |
+| accent / accent-hover | #6337E8 / #5127C4 | #6337E8 / #5127C4 |
+| accent-text / strong | #6337E8 / #5127C4 | #B99AFF / #D4C2FF |
+| accent-surface / surface-2 | #F3EDFF / #EEE7FF | #201C3A / #251E43 |
+| accent-border | #7B61B7 | #A18AE0 |
+| on-accent / body | #FFFFFF / #F5EFFF | #FFFFFF / #F5EFFF |
+| lavender / ink | #EEE7FF / #5830B5 | #251E43 / #CFBAFF |
+| peach / ink | #FFF0E6 / #9A3C17 | #35251F / #FFB99A |
+| mint / ink | #DDF9F1 / #09634E | #123831 / #86E0CA |
+| blue / ink | #E7F0FF / #2558A3 | #172F4A / #A9CCFF |
+| check surface / ink / border | #FFF3D6 / #825100 / #A46500 | #302719 / #FFD58A / #C59440 |
 
-- display fluid 40-88 / 700 / -0.03em (landing hero only; second line staggered right, Patreon-style type-as-hero)
-- h1 28 / 600 / -0.02em; h2 20 / 600; h3 16 / 600
-- body & script 15.5 / 400 / 1.6, max 66ch (script text is the product; keep it readable)
-- ui 13.5 / 500 (buttons, chips, nav); meta 12 mono; label 10-11 mono 600 +0.12em uppercase
-- Numbers, timestamps, credits, multipliers: always mono.
+Primary actions use a gradient from accent to #7931CA with white text; the pale dark-theme accent text is never the primary fill. Shadows are subtle violet/navy tints; financial/evidence panels remain quiet. Focus uses an outline plus contrasting ring. Sidebar uses surface-1. Dark photo bands retain a fixed dark scrim, pale #D4C2FF accent and on-accent ink in both themes.
 
-## Component inventory (states in parentheses)
+Spacing retains the 4px base: 4/8/12/16/20/24/32/40/48/64. Control radius 12px; card radius 24px; chip radius 8px. Rail width 232px; desktop content max-width 1280px. Navigation changes below 800px. Controls target 44×44px. Sidebar and mobile disclosure scroll when their contents exceed the viewport; data tables and later scene strips retain their own scroll regions. Long text wraps.
 
-- Button: primary cobalt / secondary outline / quiet (hover darkens or fills; disabled = surface-3 + linked reason text; pending = label swaps to in-flight words, never "Saving")
-- Input, Textarea, Select (default, focus ring, error = strong border + words; limits stated up front, refuse never truncate)
-- Toggle (auto-top-up), with spend-cap field
-- Panel/Card (level 0 border; level 1 soft shadow: proposals, spin results; level 2 floating: modals, cancel interstitial)
-- Table: ledger (mono numerics right-aligned, append-only note, clamp note "showing N of M")
-- Badge: VERIFIED / EMERGING (cobalt fill) · ESTABLISHED / SATURATED (solid border) · UNVERIFIED / STALE-KEPT (dashed border) — words always
-- Mechanic tag: `[consensus break]` mono cobalt text
-- [check] token: mono, cobalt tint, dashed border — the only dashed cobalt element
-- THE TURN block: accent-surface panel + diamond node on the timecode rail
-- Timecode rail: 2px line + circle nodes; turn = cobalt diamond
-- Meter: reach / conversion bars with baseline tick; never merged into one score
-- Refusal banner (kill-test, blocked run): strong border, plain words, a way forward, no red
-- Empty state: dashed border, says why empty + what fills it
-- Skeleton: surface-3 bars, 1.6s pulse, static under reduced motion
-- Mode picker: chip row (active = accent-surface-2 + accent-border)
-- Confirmation card (onboarding): inferred value + SOURCE EVIDENCE quote block + Confirm/Edit; page-level "N of M confirmed" sticky bar; activation blocked until all confirmed
+## Type and motion
 
-## Honesty states (each designed, see screens)
+Keep self-hosted Geist / Geist Mono. Display 44px (landing fluid 40–88), h1 28px, h2 20px, h3 16px, body 15.5px/1.6, UI 13.5px, meta 12px, label 11px. Numbers, timestamps, credit values and checking markers use mono. Script measure max 66ch. Decorative annotation uses a local cursive fallback; never put essential instructions or prices in it.
 
-kill-test failure (Studio) · zero credits (Studio) · generating skeleton (Studio) ·
-empty feed (Trends) · saturation + stale (Trends) · unverified + degraded "unavailable + why" +
-exploratory n<3 (Results) · proposal approve/reject, never silent (Results) ·
-paused read-only + cancel-offers-pause-first + brain-as-asset (Usage & billing)
+Motion durations 120/200/300ms; decorative transform/opacity only; reduced motion disables animation/transition. Density 4–6, motion 2, variance 5. The supplied violet gradient and three task cards are intentional exceptions to generic anti-slop defaults. Restrict expressive art to entry/brand areas; avoid nested ornamental panels and fabricated metrics.
 
-## Density dials (1-10)
+## Components and state
 
-App screens: layout variance 5-6, motion 3-4, density 4-6. Landing: variance 7-8, motion 5-7,
-density 3-4 (hero: 2-line headline, subtext under 20 words, CTA above fold, max 4 stacked elements).
+- Shared Brand/Icon, native theme buttons and navigation; visible selected state plus text/ARIA.
+- Buttons retain primary/secondary/quiet and explicit disabled/pending reasons. Theme controls always type=button.
+- Inputs keep labels, validation, minimum touch height and visible focus in forced colors.
+- Panels use card radius and quiet surfaces; refusal remains plain language plus a strong border and recovery.
+- Badges keep VERIFIED/UNVERIFIED/STALE and other actual labels; color never creates an evidence status.
+- Checking markers use amber, preserving literal [check] text. Tabs/exports never resolve findings.
+- Ledger values remain derived; null is unavailable, never zero. No invented capacity meter.
+- Existing landing photography/section order and auth behavior remain until the owning phase changes presentation. Pricing remains in pricing-copy.ts under its config assertions. Photography stays environments, hands and silhouettes only — never an identifiable face posed as a customer, which would be invented social proof (REQ-I03).
+- Empty, loading, blocked/refused/error and long-content states are first-class. Self-reported results never imply verified learning.
 
-## Copy rules
+### Named states this system owes (a list, not a category)
 
-Sentence case; mono uppercase for labels only. No em-dashes. No hype verbs, no virality promises;
-weakest point always disclosed. Refusals name the remedy. Numbers exact, in mono. Body max 66ch.
+The first v2 draft replaced the named states below with the generic sentence above, and three of them then appeared nowhere in any v2 phase plan. A category is not a population: these are enumerated so the phase that styles each surface cannot quietly omit one (CLAUDE.md non-negotiable rule 7).
 
-## Tailwind v4 mapping
+- **Money (REQ-G)** — the zero-credit block (REQ-G03); paused read-only and the pause-first cancel interstitial, where cancelling offers pause before it offers cancellation, with brain-as-asset on that path (REQ-G08, R-12 — **not** R-7, which is tiers and prices); plan, pack and auto-top-up states, including **auto-top-up's monthly spend-cap field** (REQ-G03 [Must], live today at `app/(product)/settings/billing/billing-view.tsx` whose value arrives as the mapped `autoTopup.monthlyCapCents` prop from `settings/billing/page.tsx`). The ledger table states that it is **append-only** and carries its **"showing N of M" clamp note** when the view is truncated (REQ-G04, R-6 — the ledger is the balance). The **payment-failed grace state** (REQ-G06: grace, then downgrade) and the **unpaid-first-invoice `incomplete` state** are their own surfaces, as are the usage runway refusals `runway-paused` and `runway-no-spend` (REQ-G07 — no spending rate to estimate from is said, never estimated). Real zero and unavailable are always distinct surfaces, never one.
+- **Brain (REQ-B02, REQ-C05, R-8)** — the onboarding confirmation card: the inferred value, its SOURCE EVIDENCE quote block, and per-field Confirm/Edit; the page-level "N of M confirmed" sticky bar; **activation stays blocked until every enumerated position is confirmed** (enforced at `packages/db/src/with-workspace.ts`, `activateBrainDoc` AC-26, which compares `enumerateClaimFields` against `confirmedFields` and refuses citing REQ-B02; `activateBrainCoherent` is `/brain`'s entrypoint and proposal acceptance reaches the same gated capability at `packages/db/src/promotion-ops.ts:803`, both running AC-26; `brain-ops.ts`'s `claimsFor` comment about R9 is prose, not the gate). Proposal approve/reject is always explicit, **never silent**. Active, proposed and missing Brain evidence stay visually distinct.
+- **Studio (REQ-E, REQ-I)** — the kill-test failure state, which surfaces honestly rather than padding, and the generating skeleton. Output stays marked "checking" until finalised.
+- **References (REQ-E)** — the empty feed with its reason, and saturation plus stale, whose labels stay visible rather than hiding the retained item. Trend badges keep EMERGING / ESTABLISHED / SATURATED as actual labels.
+- **Results (REQ-F, R-10)** — the meter renders reach and conversion as separate bars with a baseline tick, and they are **never merged into one score**. Every comparison is against the creator's own baseline, rendered as that tick. Unverified entries, degraded "unavailable + why" panels, and exploratory n<3 are three separate states and none of them is a result.
 
-```css
-@theme {
-  --font-sans: "Geist", system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, monospace;
-  --color-bg: var(--bg);
-  --color-surface-1: var(--surface-1);
-  --color-surface-2: var(--surface-2);
-  --color-surface-3: var(--surface-3);
-  --color-border: var(--border);
-  --color-border-strong: var(--border-strong);
-  --color-ink-1: var(--text-1);
-  --color-ink-2: var(--text-2);
-  --color-ink-3: var(--text-3);
-  --color-ink-4: var(--text-4);
-  --color-accent: var(--accent);
-  --color-on-accent: var(--on-accent);
-  --radius-panel: 6px;
-  --radius-chip: 4px;
-}
-```
+### Copy rules (REQ-I03, REQ-I04)
 
-Theme switch: `data-theme="light"` on `<html>`; default (no attribute) is dark.
-`prefers-reduced-motion` globally disables animation/transition (already in tokens file).
+Sentence case throughout; mono uppercase for labels only; no em-dashes. No hype verbs and no virality promises; the weakest point is always disclosed. Refusals name the remedy. Unknown personal details render as literal `[check]` placeholders and are never invented. These bind every surface this design system reaches. **Enforcement is narrower than that, and the gap is stated rather than implied:** the no-hype/no-guarantee bans are enforced in code by the shared claims canon in `tests/support/forbidden-claims.ts`, whose consumers are the shell chrome, `sample-spin-panel`, `legal/page`, `changelog/entries` and — since R-130 — **every marketing route**, through `tests/marketing-claims.test.tsx`. That test renders the landing, all three `/for/<slug>` variants *and* their `generateMetadata` output, `/changelog` and `/legal`, in both branches of the public Sample Spin flag, and applies `FORBIDDEN_CLAIMS` + `PERFORMANCE_CLAIMS` + the marketing-scoped `MARKETING_CLAIMS`. Its population is a **directory read** of `app/(marketing)/**/page.tsx` asserted equal to the set it rendered, so a new marketing route is a red test rather than an unscanned surface — the phase-1 gate found the previous shape of this paragraph describing two files that carried live "learns your voice" copy the canon's own `learn` pattern bans (R-8, non-negotiable 3: a brain is context, never weights), with the suite green because nothing read them. What the canon still does **not** enforce: "the weakest point is disclosed" (that is `STUDIO_POSITIVE_ASSERTIONS`, a different mechanism on one screen), and the Phase-4 marketing qualifications V2-R5 / V2-MKT-01 — fixture labelling, the `[check]` placeholder for `MAIN_DEMO`'s clip, the setup-duration and one-output-shape claims — which are not claims any pattern here matches. Naming both stops this paragraph from claiming more coverage than exists.
 
-## Screens → components (implementation map)
+## Theme and state lifetime
 
-- `Respin Studio.dc.html` → app/(product)/studio: mode picker chips, run header, output doc
-  (thesis, framework, hooks, script + rail + turn, shot map, on-screen text, caption, why +
-  weakest point), kill-test refusal, zero-credit block, skeleton, 360px column
-- `Respin Trends.dc.html` → trends feed: outlier card (autopsy grid, badges, Spin), spin
-  side-by-side (original vs yours), empty feed
-- `Respin Onboarding.dc.html` → app/(product)/onboarding: step header, confirmation cards with
-  evidence, banned-words chips, sticky activation bar (blocked with reason), first-three-ideas
-- `Respin Results.dc.html` → results: log entry card (two meters + confounder chips + verify badge),
-  degraded state, proposal card, exploratory card, baseline panel, empty state
-- `Respin Usage.dc.html` → app/(product)/usage + settings/billing: balance (ledger-derived),
-  burn-by-mode bars, brain-as-asset, ledger table, plan/pack/auto-top-up, pause-first cancel
-  interstitial, paused read-only
-- `Respin Landing.dc.html` → app/(marketing): hero (thesis + real-output demo), 3 numbered steps,
-  "what Respin refuses to do", pricing (Free $0 / Creator $10 / Pro $60 / Studio $200)
+theme.ts owns the sole key respin.theme.v1, light/dark validation and pre-paint bootstrap. Guard storage getters and writes; malformed/unreadable storage falls back to light. Switching applies to the current session even when storage fails. Persist only the appearance value, never creator content. No system theme, account sync, router refresh or state-key change. Without JavaScript use light CSS and native navigation.
 
-## Next.js notes
+Root bootstrap and browser fixtures share the exact implementation. The server initially renders light; hydration handles only the root theme-attribute difference. A switch does not submit forms, clear inputs or remount product content.
 
-Server-rendered pages + server actions: every mutating control gets a pending label that is true
-on all paths ("Working on your run…"), a linked disabled reason, and a refusal rendered as the
-banner component (focus island on redirect refusals, live region on in-place ones — the existing
-a11y patterns in app/(product) carry over unchanged). Skeletons only for generation runs; ordinary
-navigations render full server HTML.
+## Verification and evidence
+
+Full surface/state population and human-comparison protocol live in the v2 master plan. Browser matrix uses Chromium/Firefox/WebKit, both themes, 390/768/1024/1440, plus 320px reflow, 200% text enlargement, 799/800/801 navigation, forced colors and reduced motion. Contrast targets: 4.5:1 normal text, 3:1 large text and essential controls. Verify actual rendered combinations; token ratios alone are insufficient.
+
+Manual screen-reader observations are lowest priority and never block a phase (decisions.md R-133); announcement behaviour is recorded as not obtained, never as passing. Phase 5 executes the real isolated app and five-creator comparison. Missing prerequisites remain pending; no visual, accessibility, usability or production completion is claimed by this design contract.

@@ -2,6 +2,7 @@
 name: respin-compliance-reviewer
 description: Read-only reviewer for any Respin diff touching trend ingestion (`packages/trends`, `TrendSource` adapters), the autopsy pipeline, the Spin action, the similarity gate, the kill test's honesty behaviour, or the integrity guardrails (REQ-I01–I05). Verifies compliant-sources-only ingestion, the similarity gate as a hard pre-display gate, honest kill-test failure, the [check] placeholder convention, no-guarantee language, and the absence of engagement automation. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

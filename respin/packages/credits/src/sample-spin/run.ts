@@ -49,11 +49,11 @@ import {
   ScriptOutputError,
   SpinSimilarityError,
   assembleGenerationPrompt,
-  outputTextUnits,
   runGeneration,
   type GenerationRun,
 } from "@respin/modes";
 import { withDeadline } from "../inference";
+import { presentedTextUnits, type PresentedDisclosure } from "../presented-output";
 import { loadSampleSpinFixture, sampleSpinContext, type SampleSpinFixture } from "./fixture";
 import { parseSampleSpinIdea, type SampleSpinIdea, type Untrusted } from "./idea";
 
@@ -127,12 +127,22 @@ export const SAMPLE_SPIN_NEXT_ACTION: Readonly<Record<SampleSpinRefusalReason, s
   concurrency_exhausted: "Two Sample Spins are running right now. Try again in a minute.",
   budget_exhausted: "The Sample Spin has spent today's budget. Try again tomorrow, or start free.",
   prompt_too_large: "Shorten the idea and try again.",
-  gate_refused: "Both drafts were withheld: one failed a hard rule or stayed too close to the reference. Try a different idea.",
-  draft_unusable: "A draft came back that could not be checked, so nothing was shown. Nothing you typed was kept. Try again.",
+  // THE SIX BELOW ARE POST-ADMISSION, AND THAT IS WHY NONE OF THEM SAYS "TRY
+  // AGAIN". Measured against the order in `runPublicSampleSpin` (2026-09-20):
+  // `idea_invalid` and `prompt_too_large` are refused at :230-249, BEFORE
+  // `admitPublicSampleSpin` at :258, so their remedies are real. Everything
+  // from here on happens after the window opened — and a window is opened with
+  // its one admission already spent (`packages/db/src/public-sample-spin.ts`,
+  // `admitted: 1` on insert), so this connection has no second run for 24
+  // hours. A remedy the limiter refuses is the outage (CLAUDE.md, 2026-07-30:
+  // never make a refusal fatal without a way forward), so each one names the
+  // way forward that exists: an account.
+  gate_refused: "Both drafts were withheld: one failed a hard rule or stayed too close to the reference. That was this connection's one Sample Spin for today. Start free to try another idea with your own brain.",
+  draft_unusable: "A draft came back that could not be checked, so nothing was shown. Nothing you typed was kept, and this connection's one Sample Spin for today is spent. Start free to keep going.",
   in_progress: "This request is still running. Wait for it to finish.",
-  already_completed: "This request already finished. Enter the idea again to run a new Sample Spin.",
-  service_unavailable: "The model provider did not answer. Nothing you typed was kept. Try again later.",
-  could_not_complete: "This request could not complete. Nothing you typed was kept. Enter the idea again to run a new Sample Spin.",
+  already_completed: "This request already finished, and it was this connection's one Sample Spin for today. Start free to run another.",
+  service_unavailable: "The model provider did not answer. Nothing you typed was kept, and this connection's one Sample Spin for today is spent — come back tomorrow, or start free now.",
+  could_not_complete: "This request could not complete. Nothing you typed was kept, and this connection's one Sample Spin for today is spent — come back tomorrow, or start free now.",
 };
 
 export type SampleSpinAccepted = Readonly<{
@@ -145,7 +155,7 @@ export type SampleSpinAccepted = Readonly<{
   /** Fixture rule ids the gate evidence says the accepted draft satisfied, with their text. */
   highlightedRules: readonly Readonly<{ id: string; text: string }>[];
   /** Deterministic and neutral until 10c's dated platform registry replaces it. */
-  disclosure: Readonly<{ kind: "policy_check_required" }>;
+  disclosure: PresentedDisclosure;
   versions: Readonly<{ fixture: string; promptBundle: string; model: string; configVersion: number }>;
   rewritten: boolean;
 }>;
@@ -359,12 +369,16 @@ export async function runPublicSampleSpin(deps: SampleSpinDeps, input: SampleSpi
     status: "accepted",
     requestId,
     original: fixture.original,
-    spin: outputTextUnits(run.output)
-      // The model-authored disclosure section is IGNORED (R-121): the neutral
-      // object below is the only disclosure a visitor sees. The weakest point
-      // travels once, on its own field below (it is still a gate input).
-      .filter((unit) => !unit.field.startsWith("/disclosure/") && unit.field !== "/whyThisPerforms/weakestPoint")
-      .map((unit) => ({ field: unit.field, text: unit.text })),
+    // ONE SUBSTITUTION, NOT TWO (P1-R1). The `/disclosure/*` filter this line
+    // used to carry is now `presentedTextUnits`, which the product surfaces
+    // consume as well — a rule spelled once in one presenter is a rule the next
+    // presenter does not have, and that is exactly how `/studio` and `/trends`
+    // came to render the model's guidance. The weakest point is dropped HERE
+    // and not there: it travels once on its own field of this response shape,
+    // which is a property of this response rather than of the disclosure rule.
+    spin: presentedTextUnits(run.output).filter(
+      (unit) => unit.field !== "/whyThisPerforms/weakestPoint"
+    ),
     weakestPoint: run.output.whyThisPerforms.weakestPoint,
     highlightedRules: fixture.creatorRules
       .filter((rule) => passed.has(rule.id))

@@ -21,12 +21,26 @@ export function authDestination(mode: "sign-in" | "sign-up"): "/studio" | "/onbo
 // Styling comes from the Signal primitives: Field (label + control + stated
 // rule) and buttonClass (app/ui/), backed by app/globals.css.
 
+/**
+ * What the form says when a pricing CTA carried a paid plan here.
+ *
+ * It states the tier AND what signing up actually does, because the honest
+ * failure of the bare `/sign-up` link was not the lost parameter — it was that
+ * a button labelled "Start Pro" produced a Free account with no word about it
+ * (audit 2026-09-19 D5). This makes no promise about a charge: signup creates
+ * a Free workspace, and the plan is chosen on the billing screen afterwards.
+ */
+export const planNoteFor = (plan: "creator" | "pro" | "studio"): string =>
+  `You picked ${plan[0]!.toUpperCase()}${plan.slice(1)}. Creating the account is free — you choose the plan on the billing screen once you are in.`;
+
 export function AuthForm({
   mode,
   googleEnabled,
+  plan = null,
 }: {
   mode: "sign-in" | "sign-up";
   googleEnabled: boolean;
+  plan?: "creator" | "pro" | "studio" | null;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -54,6 +68,7 @@ export function AuthForm({
   return (
     <div className="auth-card">
       <h1>{isSignUp ? "Create your account" : "Sign in"}</h1>
+      {isSignUp && plan ? <p className="auth-plan-note">{planNoteFor(plan)}</p> : null}
       {/* VISIBLE LABELS, not placeholders (audit 2026-08-17 #15, WCAG 3.3.2
           Level A) — and this is the product's ONLY entry point, so it is the
           one form nobody can route around.

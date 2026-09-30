@@ -17,6 +17,7 @@ import {
   FORBIDDEN_CLAIMS,
   NOT_BUILT_YET,
 } from "./support/forbidden-claims";
+import { claimHits } from "./support/claim-scan";
 import {
   BrainDocumentLimitError,
   BrainVersionLimitError,
@@ -676,7 +677,7 @@ describe("honesty (R12) — this screen spends a credit and does nothing else it
         step="paste-posts"
       />
     ).toLowerCase();
-    expect(FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toEqual(
+    expect(claimHits(planted, FORBIDDEN)).toEqual(
       expect.arrayContaining(["learn", "improve", "we will"])
     );
   });
@@ -689,7 +690,7 @@ describe("honesty (R12) — this screen spends a credit and does nothing else it
     expect(planted).toContain("<p>we will learn your voice</p>");
     // ...and the script's copy of it does not.
     expect(planted).not.toContain("var x");
-    expect(FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l)).toEqual(
+    expect(claimHits(planted, FORBIDDEN)).toEqual(
       expect.arrayContaining(["learn", "we will"])
     );
   });
@@ -1212,12 +1213,10 @@ describe("the PENDING labels are covered too — the state no renderer can reach
 
   it("no pending label says a forbidden word", () => {
     for (const label of [...pendingLabels(submitSrc), ...pendingLabels(panelSrc)]) {
-      for (const [name, re] of FORBIDDEN) {
-        expect(
-          re.test(label.toLowerCase()),
-          `the pending label "${label}" says "${name}" — a creator reads this while their money is in flight`
-        ).toBe(false);
-      }
+      expect(
+        claimHits(label, FORBIDDEN),
+        `the pending label "${label}" makes a claim a creator reads while their money is in flight`
+      ).toEqual([]);
     }
   });
 
@@ -1913,7 +1912,7 @@ describe("R12 reaches the OUTCOME states too, and the vendor's words are quarant
     );
     const scanned = productCopy(html).toLowerCase();
     expect(
-      FORBIDDEN.filter(([, re]) => re.test(scanned)).map(([l]) => l)
+      claimHits(scanned, FORBIDDEN)
     ).toEqual(expect.arrayContaining(["learn", "we will", "generate"]));
   });
 

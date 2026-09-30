@@ -1,93 +1,98 @@
-/* Respin design tokens — "Signal" system.
-   Dark is the default theme; light overrides under [data-theme="light"] / .theme-light.
-   Fonts: Geist (UI), Geist Mono (timestamps, credits, metrics, meta).
-   Pull into Tailwind v4 via @theme, or use as plain CSS variables. */
-
+/* Colour Pop / After Hours. Semantic roles are documented in DESIGN.md. */
 :root {
-  /* type */
   --font-sans: "Geist", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
-  --fs-display: 44px;   /* landing hero only */
+  --font-note: "Segoe Print", "Bradley Hand", cursive;
+  --brand-top: linear-gradient(150deg, #ff63b3, #d42de5);
+  --brand-middle: linear-gradient(120deg, #5559ff, #7637f5);
+  --brand-bottom: linear-gradient(145deg, #a57cffad, #6638ff);
+  --fs-display: 44px;
   --fs-h1: 28px;
   --fs-h2: 20px;
   --fs-h3: 16px;
-  --fs-body: 15.5px;    /* script text, long-form reading */
-  --fs-ui: 13.5px;      /* controls, dense UI */
-  --fs-meta: 12px;      /* mono meta, table numerics */
-  --fs-label: 11px;     /* mono section labels, letter-spacing 0.12em */
+  --fs-body: 15.5px;
+  --fs-ui: 13.5px;
+  --fs-meta: 12px;
+  --fs-label: 11px;
   --lh-tight: 1.15;
   --lh-heading: 1.3;
   --lh-body: 1.6;
-
-  /* spacing (4px base) */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px;
   --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px; --sp-16: 64px;
-
-  /* radius — one system */
-  --radius: 6px;      /* panels, buttons, inputs */
-  --radius-sm: 4px;   /* chips, badges */
-
-  /* motion — every animation states something; all gated by prefers-reduced-motion */
-  --dur-fast: 120ms;  /* hovers, presses */
-  --dur: 200ms;       /* state changes, reveals */
-  --dur-slow: 360ms;  /* panel entrances (generation results) */
+  --radius: 12px;
+  --radius-card: 24px;
+  --radius-sm: 8px;
+  --rail-width: 232px;
+  --content-width: 1280px;
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 300ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
-
-  /* dark theme (default) */
-  --bg: #0F1013;
-  --surface-1: #14161B;         /* panels */
-  --surface-2: #181B22;         /* nested rows, hover fills */
-  --surface-3: #1E222A;         /* pressed, table header */
-  --border: #23272F;            /* hairline seams */
-  --border-strong: #3A3F4B;     /* emphasis panels (refusals, weakest point) */
-  --text-1: #E8E9ED;            /* primary ink (off-white, never #fff) */
-  --text-2: #C6CAD3;            /* body */
-  --text-3: #9AA0AC;            /* secondary */
-  --text-4: #6B7280;            /* meta, labels */
-  --accent: #4066E0;            /* the one accent. buttons, links, outperformance */
-  --accent-hover: #3556C4;
-  --accent-text: #94A6EE;       /* accent-colored text on dark */
-  --accent-text-strong: #B8C4F4;
-  --accent-surface: #171C2B;    /* cobalt-tinted panel (THE TURN, active mode) */
-  --accent-surface-2: #1C2130;
-  --accent-border: #34406B;
-  --on-accent: #F2F4FB;
-  --shadow: 0 8px 28px rgba(8, 10, 16, 0.5);      /* tinted to bg hue, never pure black */
-  --shadow-soft: 0 2px 10px rgba(8, 10, 16, 0.35);
-  --scrim: rgba(10, 11, 15, 0.72);
-  --focus-ring: 0 0 0 2px #0F1013, 0 0 0 4px #4066E0;
+  --on-accent: #FFFFFF;
+  --on-accent-body: #F5EFFF;
+  --on-photo-accent: #D4C2FF;
+  --primary-end: #7931CA;
+  --scrim: rgba(9, 15, 34, 0.84);
 }
-
-[data-theme="light"], .theme-light {
-  --bg: #F3F4F6;
-  --surface-1: #FBFBFC;         /* off-white, never #fff */
-  --surface-2: #F1F2F5;
-  --surface-3: #E9EBF0;
-  --border: #E2E4EA;
-  --border-strong: #B9BDC7;
-  --text-1: #1B1D22;
-  --text-2: #3A3F4B;
-  --text-3: #666C78;
-  --text-4: #8A8F9B;
-  --accent: #3556C4;
-  --accent-hover: #2A45A3;
-  --accent-text: #3050B8;
-  --accent-text-strong: #24409E;
-  --accent-surface: #EBEFFB;
-  --accent-surface-2: #E1E7F8;
-  --accent-border: #C4D0F0;
-  --on-accent: #F7F9FE;
-  --shadow: 0 8px 28px rgba(27, 30, 40, 0.12);
-  --shadow-soft: 0 2px 10px rgba(27, 30, 40, 0.07);
-  --scrim: rgba(27, 30, 40, 0.4);
-  --focus-ring: 0 0 0 2px #F3F4F6, 0 0 0 4px #3556C4;
+:root, [data-theme="light"] {
+  color-scheme: light;
+  --bg: #FAFBFF;
+  --surface-1: #FFFFFF;
+  --surface-2: #F3F2FB;
+  --surface-3: #E9E7F6;
+  --border: #E0E3F0;
+  --border-strong: #74728C;
+  --text-1: #15152E;
+  --text-2: #46415F;
+  --text-3: #595571;
+  --text-4: #67657F;
+  --accent: #6337E8;
+  --accent-hover: #5127C4;
+  --accent-text: #6337E8;
+  --accent-text-strong: #5127C4;
+  --accent-surface: #F3EDFF;
+  --accent-surface-2: #EEE7FF;
+  --accent-border: #7B61B7;
+  --category-lavender: #EEE7FF; --category-lavender-ink: #5830B5;
+  --category-peach: #FFF0E6; --category-peach-ink: #9A3C17;
+  --category-mint: #DDF9F1; --category-mint-ink: #09634E;
+  --category-blue: #E7F0FF; --category-blue-ink: #2558A3;
+  --check-surface: #FFF3D6; --check-ink: #825100; --check-border: #A46500;
+  --shadow: 0 12px 32px rgba(65, 43, 112, 0.12);
+  --shadow-soft: 0 3px 12px rgba(65, 43, 112, 0.07);
+  --blueprint-line: rgba(99, 55, 232, 0.05);
+  --sidebar-bg: var(--surface-1);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent-text);
+  --primary-gradient: linear-gradient(115deg, var(--accent), var(--primary-end));
 }
-
-/* Honesty-state rule: no alarm red anywhere. Refusals, kill-test deaths, degraded
-   data and unverified badges use --border-strong + plain words. Outperformance
-   and confirmation use the accent. Status is never color-only; every state
-   carries a text label. */
-
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #090F22;
+  --surface-1: #121B33;
+  --surface-2: #1A2442;
+  --surface-3: #25314E;
+  --border: #2E3A5B;
+  --border-strong: #8E9CBD;
+  --text-1: #F6F4FF;
+  --text-2: #D6D9EB;
+  --text-3: #BAC2DB;
+  --text-4: #A5AEC8;
+  --accent: #6337E8;
+  --accent-hover: #5127C4;
+  --accent-text: #B99AFF;
+  --accent-text-strong: #D4C2FF;
+  --accent-surface: #201C3A;
+  --accent-surface-2: #251E43;
+  --accent-border: #A18AE0;
+  --category-lavender: #251E43; --category-lavender-ink: #CFBAFF;
+  --category-peach: #35251F; --category-peach-ink: #FFB99A;
+  --category-mint: #123831; --category-mint-ink: #86E0CA;
+  --category-blue: #172F4A; --category-blue-ink: #A9CCFF;
+  --check-surface: #302719; --check-ink: #FFD58A; --check-border: #C59440;
+  --shadow: 0 12px 32px rgba(3, 7, 20, 0.45);
+  --shadow-soft: 0 3px 12px rgba(3, 7, 20, 0.3);
+  --blueprint-line: rgba(185, 154, 255, 0.05);
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

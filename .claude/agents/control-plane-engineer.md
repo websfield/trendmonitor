@@ -2,6 +2,8 @@
 name: control-plane-engineer
 description: Implements the C#/.NET control plane — C2 (compliance gate, scoring lanes, verdict engine, Gate B ranker/allocator), C3 (calibration monitor, breaker, LibraryVerdict), C4 (Knowledge API), and the shared Contracts/Events/Artefacts libraries. Owns every deterministic decision in the system. Writes code and tests; never relaxes an invariant.
 tools: Read, Write, Edit, Grep, Glob, Bash
+model: opus
+effort: high
 ---
 
 # Control Plane Engineer (C#/.NET)

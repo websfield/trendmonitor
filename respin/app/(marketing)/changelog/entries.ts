@@ -24,9 +24,9 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
   },
   {
     date: "2026-09-05",
-    title: "Proposals from results and feedback",
+    title: "Proposals from your feedback",
     summary:
-      "The Creator Brain proposes Performance Meta rules from result evidence and repeated structured feedback; nothing changes without an explicit accept.",
+      "The Creator Brain proposes voice rules and Kill Test rules from repeated structured feedback; nothing changes without an explicit accept. Proposals from logged results wait on a platform analytics connection this product does not hold.",
   },
   {
     date: "2026-09-03",
@@ -38,6 +38,6 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
     date: "2026-08-31",
     title: "Studio modes and the Creator Brain",
     summary:
-      "Seven Studio modes, the Kill Test, traceability and the [check] marker for specifics the product will not invent; a versioned, confirmable Creator Brain with export.",
+      "Six Studio modes — the seventh, Spin, lives on Trends — plus the Kill Test, traceability and the [check] marker for specifics the product will not invent; a versioned, confirmable Creator Brain with export.",
   },
 ];

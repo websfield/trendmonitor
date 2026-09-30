@@ -2,6 +2,7 @@
 name: veto-integrity-reviewer
 description: Read-only reviewer for any diff touching vetoes (V1–V6), the verdict engine, submission approval, model prompt/output handling, rubric-v1.json lanes, or compliance-notes.md. Verifies that vetoes and verdicts stay in deterministic code, the model never clears a veto, no auto-approval path exists, and failure modes fail closed. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

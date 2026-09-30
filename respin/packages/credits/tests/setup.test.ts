@@ -7,7 +7,7 @@
 // /admin/config — the sanctioned deploy-free path (B5) — left manual pack
 // checkout charging $10 while auto-top-up charged $15 for the same credits, a
 // price the user was never shown.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 const productsList = vi.fn(async () => ({ data: [{ id: "prod_1", name: "Respin" }] }));
 const productsCreate = vi.fn(async () => ({ id: "prod_1", name: "Respin" }));
@@ -268,10 +268,12 @@ describe("stripe:setup CLI degraded path (Verification Step 6 — by running it)
     "READS the env file: a variable present ONLY in the file is not reported missing",
     { timeout: 60_000 },
     async () => {
-      const { mkdtempSync, writeFileSync } = await import("node:fs");
+      const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
       const { tmpdir } = await import("node:os");
       const { join } = await import("node:path");
-      const envFile = join(mkdtempSync(join(tmpdir(), "respin-env-")), ".env.local");
+      const dir = mkdtempSync(join(tmpdir(), "respin-env-"));
+      onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+      const envFile = join(dir, ".env.local");
       writeFileSync(envFile, "DATABASE_URL=postgres://from-the-file/db\n");
 
       const { code, out } = await runKeyless({

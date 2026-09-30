@@ -2,6 +2,7 @@
 name: _critic-template
 description: TEMPLATE, not a runnable critic. Copy this to author a read-only critic for one lens; the generator (/bootstrap-critics) fills it from a repo's real layout. Ignore in normal use.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

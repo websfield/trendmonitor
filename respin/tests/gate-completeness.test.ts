@@ -6,11 +6,11 @@
 // "Entrypoint" is DERIVED, not enumerated (round-3 meta-finding): see
 // tests/support/app-surface.ts for the three holes a filename list left open
 // and for why `layout` is deliberately not in the served set.
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { scratchDir } from "./support/scratch-dir";
 import { PROTECTED_PREFIXES, isProtectedPath } from "../lib/routes";
 import {
   METADATA_ROUTE_BASENAMES,
@@ -256,7 +256,7 @@ describe("the entrypoint definition is DERIVED (round-3 meta-finding)", () => {
   });
 
   it("classifies by PROPERTY: page.ts / route.js are entrypoints, a `use server` module by ANY name is one, a layout is not", () => {
-    const root = mkdtempSync(join(tmpdir(), "respin-classify-"));
+    const root = scratchDir("respin-classify-");
     const write = (p: string, body: string) => {
       const full = join(root, ...p.split("/"));
       mkdirSync(dirname(full), { recursive: true });
@@ -323,7 +323,7 @@ describe("gate completeness (derived from PROTECTED_PREFIXES)", () => {
   });
 
   it("fails when a protected page lacks the gate helper (fixture proof)", () => {
-    const root = mkdtempSync(join(tmpdir(), "respin-gate-"));
+    const root = scratchDir("respin-gate-");
     const bad = join(root, "(product)", "studio", "rogue");
     mkdirSync(bad, { recursive: true });
     writeFileSync(
@@ -559,7 +559,7 @@ describe("named gate fixture (M1 phase 4, AC-1)", () => {
   });
 
   it("fails when a product page is added at an UNLISTED url — INCLUDING as page.ts (fixture proof)", () => {
-    const root = mkdtempSync(join(tmpdir(), "respin-prefix-"));
+    const root = scratchDir("respin-prefix-");
     // The exact probes the tenancy gate ran. `page.tsx` was caught; `page.ts`
     // and the admin `page.ts` were NOT, because the walk matched filenames.
     for (const [dir, file] of [
@@ -589,7 +589,7 @@ describe("named gate fixture (M1 phase 4, AC-1)", () => {
   });
 
   it("fails when an UNGATED server-action module is added under a protected prefix, WHATEVER it is called (fixture proof)", () => {
-    const root = mkdtempSync(join(tmpdir(), "respin-action-"));
+    const root = scratchDir("respin-action-");
     const dir = join(root, "(product)", "settings", "profile");
     mkdirSync(dir, { recursive: true });
     // The M2 shape the walk could not see: a mutation invocable by POST with a
@@ -639,7 +639,7 @@ describe("app/api default-deny (round-3 NOTE: the walk excluded it entirely)", (
   });
 
   it("fails when a NEW api route is added with no gate and no allowlist entry (fixture proof)", () => {
-    const root = mkdtempSync(join(tmpdir(), "respin-api-"));
+    const root = scratchDir("respin-api-");
     // The tenancy gate's probe: a cross-workspace reader at a URL nothing
     // covers. It passed 29/29 green with lint exit 0.
     const dir = join(root, "api", "zzbrain");
@@ -660,7 +660,7 @@ describe("app/api default-deny (round-3 NOTE: the walk excluded it entirely)", (
   });
 
   it("...and a GATED api route is NOT reported (the deny is default-deny, not a blanket ban)", () => {
-    const root = mkdtempSync(join(tmpdir(), "respin-api-ok-"));
+    const root = scratchDir("respin-api-ok-");
     const dir = join(root, "api", "zzreport");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -671,7 +671,7 @@ describe("app/api default-deny (round-3 NOTE: the walk excluded it entirely)", (
   });
 
   it("the gate must REFUSE: getSessionUser returns null, so importing (or even calling) it is not a gate", () => {
-    const root = mkdtempSync(join(tmpdir(), "respin-api-ghost-"));
+    const root = scratchDir("respin-api-ghost-");
     const write = (p: string, body: string) => {
       const full = join(root, "api", ...p.split("/"));
       mkdirSync(dirname(full), { recursive: true });
@@ -706,7 +706,7 @@ describe("app/api default-deny (round-3 NOTE: the walk excluded it entirely)", (
   });
 
   it("resolves the IMPORT BINDING, not the name: an aliased non-gate is caught, an aliased real gate is not", () => {
-    const root = mkdtempSync(join(tmpdir(), "respin-api-alias-"));
+    const root = scratchDir("respin-api-alias-");
     const write = (p: string, body: string) => {
       const full = join(root, "api", ...p.split("/"));
       mkdirSync(dirname(full), { recursive: true });
@@ -769,7 +769,7 @@ describe("ALL of app/ is default-deny (phase-4 round-3 CHANGE 1)", () => {
   });
 
   it("catches a page at a NEW TOP-LEVEL URL outside every route group — the M2 `app/brain/page.tsx` shape", () => {
-    const root = mkdtempSync(join(tmpdir(), "respin-toplevel-"));
+    const root = scratchDir("respin-toplevel-");
     // The tenancy gate's probe: 22/22 green, and `next build` served /zzbrain5.
     for (const p of ["zzbrain5/page.tsx", "zzbrain6/page.ts", "zztools/mutations.ts"]) {
       const full = join(root, ...p.split("/"));
@@ -793,7 +793,7 @@ describe("ALL of app/ is default-deny (phase-4 round-3 CHANGE 1)", () => {
     // (lib/metadata/is-metadata-route.js), so an exact-basename list missed
     // `opengraph-image2` — planted, it classified as "module" while a keyless
     // build served /usage/opengraph-image2-1m8hwu (round-3 CHANGE 2).
-    const root = mkdtempSync(join(tmpdir(), "respin-metadata-"));
+    const root = scratchDir("respin-metadata-");
     const write = (p: string) => {
       const full = join(root, ...p.split("/"));
       mkdirSync(dirname(full), { recursive: true });

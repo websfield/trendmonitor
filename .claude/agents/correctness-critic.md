@@ -2,6 +2,7 @@
 name: correctness-critic
 description: Read-only defect-hunt auditor. Reads the code itself for bugs - logic errors, inverted or off-by-one conditions, unhandled null/error paths, async and race hazards, resource leaks, boundary conditions, config/code mismatches. The audit-posture counterpart to the per-change code-reviewer gate - it sweeps the highest-risk code as it exists today, not a diff. An auditor (ranked findings), not a gate. Returns findings with file:line evidence.
 tools: Read, Grep, Glob
+model: opus
 effort: max
 ---
 

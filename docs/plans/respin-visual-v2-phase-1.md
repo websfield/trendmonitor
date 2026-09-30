@@ -49,11 +49,11 @@ Functional: preserve the existing reachable product, auth and marketing flows wh
 
 | Task | Work | File rows below |
 |---|---|---|
-| 1 | Document Colour Pop/After Hours palette, type/space/radius/motion, category/amber states and component rules; replace token values, retain names | 1–3 |
-| 2 | Extract existing CSS by responsibility before styling; retain cascade and existing class API; cover quiet financial/evidence surfaces | 3, 12–17 |
-| 3 | Bootstrap validated local preference before paint; add visible theme control; no remount/reload/router refresh or action | 4, 10–11 |
-| 4 | Wordmark, icon navigation, workspace/balance rail, compact mobile navigation and skip link | 5–9, 14 |
-| 5 | Build deterministic browser harness using actual UI components, installed Playwright and tsx's installed esbuild; verify both themes and shell | 18–25 |
+| 1 | Freeze master's D1–D10 reference checklist, permitted production differences and applicable rows; document tokens/type/space/radius/motion, then replace values retaining names | 1–3 |
+| 2 | Extract existing CSS by responsibility before styling; retain cascade and existing class API; cover quiet financial/evidence surfaces | 3, 11–16 |
+| 3 | Bootstrap validated local preference before paint; add visible theme control; no remount/reload/router refresh or action | 4, 9–10 |
+| 4 | Wordmark/Icon in one small visual-primitives module; static prototype art sprite; navigation, workspace/balance rail, mobile navigation and skip link | 5–8, 13 |
+| 5 | Build real-component browser harness; preserve current-UI comparison baseline before styling; configure Chromium/Firefox/WebKit, verify shell and begin scored/accessibility evidence | 17–25 |
 
 ## Files to Create / Modify
 
@@ -67,29 +67,37 @@ All files owned by main; M = modify, N = new. Paths below are relative to `respi
 | 4 | `app/layout.tsx` | M |
 | 5 | `app/(product)/layout.tsx` | M |
 | 6 | `app/(product)/nav.tsx` | M |
-| 7 | `app/(product)/shell-rail.tsx` | M |
-| 8 | `app/ui/brand.tsx` | N |
-| 9 | `app/ui/icon.tsx` | N |
-| 10 | `app/ui/theme-switch.tsx` | N |
-| 11 | `app/ui/theme.ts` | N |
-| 12 | `app/styles/controls.css` | N |
-| 13 | `app/styles/surfaces.css` | N |
-| 14 | `app/styles/shell.css` | N |
-| 15 | `app/styles/landing-base.css` | N |
-| 16 | `app/styles/landing-sections.css` | N |
-| 17 | `app/styles/landing-demo.css` | N |
-| 18 | `tests/theme.test.ts` | N |
-| 19 | `tests/shell-rail.test.tsx` | M |
-| 20 | `e2e/visual/fixtures.tsx` | N |
-| 21 | `e2e/visual/entry.tsx` | N |
-| 22 | `e2e/visual/visual.spec.ts` | N |
-| 23 | `playwright.visual.config.ts` | N |
-| 24 | `e2e/visual/harness.ts` | N |
-| 25 | `e2e/visual/navigation.ts` | N |
+| 7 | `public/illustrations/studio.svg` | N |
+| 8 | `app/ui/icons.tsx` | N |
+| 9 | `app/ui/theme-switch.tsx` | N |
+| 10 | `app/ui/theme.ts` | N |
+| 11 | `app/styles/controls.css` | N |
+| 12 | `app/styles/surfaces.css` | N |
+| 13 | `app/styles/shell.css` | N |
+| 14 | `app/styles/landing-base.css` | N |
+| 15 | `app/styles/landing-sections.css` | N |
+| 16 | `app/styles/landing-demo.css` | N |
+| 17 | `tests/theme.test.ts` | N |
+| 18 | `tests/shell-rail.test.tsx` | M |
+| 19 | `e2e/visual/fixtures.tsx` | N |
+| 20 | `e2e/visual/entry.tsx` | N |
+| 21 | `e2e/visual/visual.spec.ts` | N |
+| 22 | `playwright.visual.config.ts` | N |
+| 23 | `e2e/visual/harness.ts` | N |
+| 24 | `tests/action-gate.test.ts` | M |
+| 25 | `tests/page-wiring.test.tsx` | M |
+
+Implementation corrections (2026-09-20): use plural `ui/icons.tsx` because singular `icon.tsx` creates a Next metadata route. `ShellRail` remains inspected but unchanged; shell CSS owns its restyle. Co-locate test-only framework adapters in `fixtures.tsx` instead of a separate navigation module. The resulting 25-file manifest includes the two integration repairs revealed by the full suite: syntax-aware catch scanning (retain all existing planted violations and add a template-interpolation witness) and replacing the superseded navigation-order assertion while retaining every route and onboarding handoff check. No production auth, scope, offer or evidence authority changes.
 
 ## Handoff and reachability
 
-Phase 2/3 consume existing token names plus documented category/check/gradient tokens, shared Brand/Icon/ThemeSwitch, and browser harness. `theme.ts` owns the key, validation and bootstrap string; root layout and harness consume the same implementation. A creator can select Colour Pop or After Hours through the product shell; shared root tokens also style marketing/auth. No entity migration.
+Phases 2–5 consume existing token names plus documented category/check/gradient tokens, shared Brand/Icon/ThemeSwitch, and browser harness. `theme.ts` owns the key, validation and bootstrap string; root layout and harness consume the same implementation. A creator can select Colour Pop or After Hours through the product shell; shared root tokens also style marketing/auth. No entity migration.
+
+Task 5 has an initial baseline stage before tasks 1–4 change production styling: render current production components/CSS with fixed synthetic task data, preserve captures and an interactive baseline bundle with source revision/dirty-diff identity in this phase's evidence, and freeze the master's V2-R6 task script. The archived bundle is only the human comparison stimulus; implementation validation always runs on the actual current tree. Then extend that same harness for v2, rather than maintaining a second application. Record browser-engine and disposable-database prerequisites for final V2-R2/R6/R7; their availability is not assumed. The screen-reader prerequisite is struck by R-133.
+
+DESIGN.md records D1–D10 weights/applicability and reference captures before implementation. Compare core surfaces against both the actual v5 prototype and supplied image art direction, using the master's ≥90% per-surface/per-theme threshold and non-compensable functional/accessibility failures. Freeze the current UI baseline before any change to its tokens, global CSS or shell. For supporting surfaces without a prototype counterpart, use the same token/component rules and preserve the current functionality; do not fabricate a mockup score.
+
+Brand and Icon are small exports in ui/icons.tsx. One-time extraction reads only the prototype's embedded asset JSON and produces studio.svg with the used light/dark entry illustrations and mascot, collision-free IDs and no active/script/external references. Record the extraction/validation command; no maintained generator or prototype runtime. Phases 2–4 consume this static sprite. Decorative art never represents generated footage or evidence.
 
 ## Edge cases and external failures
 
@@ -101,19 +109,22 @@ Phase 2/3 consume existing token names plus documented category/check/gradient t
 | Balance unavailable vs zero | Preserve null omission and real zero; no percentage bar without denominator | 4 / V2 |
 | Narrow viewport/long workspace name/zoom | Wrapping/scroll limited to intended regions, reachable mobile links, visible focus | 4 / V3 |
 | Forced colors/reduced motion | Visible outline and selected text/state cues; no essential decorative motion | 2–4 / V3 |
+| Browser engine or reproducible baseline unavailable | Record missing evidence and affected acceptance as pending; no silent browser skips or invented before/after comparison. Screen-reader absence is **not** in this row — R-133 makes it non-blocking | 5 / V3, V2-R6/R7 |
 
 No external service is introduced. Auth/credit failures retain the existing page and shell handling.
 
 ## Verification Steps and acceptance
 
-1. Before source edits save the canon-required checkpoint, record baseline dirty paths and scan file line endings. Read each source before editing. State: inspected repository; no prior verification dependency.
-2. V1: `pnpm -C respin exec vitest run tests/theme.test.ts tests/shell-rail.test.tsx`. State established by tasks 1–5. Test theme validation/storage failure, real zero/null rail and production root bootstrap wiring.
-3. V2: `pnpm -C respin exec vitest run tests/landing-pricing.test.ts tests/auth-form.test.tsx tests/brain-ui.test.tsx tests/onboarding-ui.test.tsx tests/studio-ui.test.tsx tests/client-bundle-boundary.test.ts tests/import-boundary.test.ts`. State: step 2 complete; preserve existing semantic assertions, not just class snapshots.
-4. V3: `pnpm -C respin exec playwright test --config playwright.visual.config.ts`. State: step 2 establishes code and browser harness; installed Chromium already launched during reference inspection. Fixture harness imports actual components and CSS, bundles with esbuild resolved through installed tsx; no credentialed service/generation. Intercept unexpected network, test theme retention/keyboard/mobile links, take screenshots at 390/768/1024/1440 in both themes. Contrast, 44px controls, no page horizontal overflow, no hydration/page errors. Two render/critique/fix rounds until no observed fixes remain. Label fixture evidence distinctly from live route evidence.
+1. Before source edits save the canon-required checkpoint, record baseline dirty paths and scan file line endings. Read each source before editing. Establish Task 5's current-UI baseline stage and Task 1's reference checklist before changing production styling. Record test prerequisites and the exact baseline task data. State: inspected repository; no prior verification dependency.
+
+   Browser provisioning uses the installed Playwright version: inspect `pnpm -C respin exec playwright install --list`; where installation is permitted, provision with `pnpm -C respin exec playwright install chromium firefox webkit --no-remove` before V3. No browser download is claimed performed by this plan. Unavailable installation/network permissions keep the affected engine check pending; do not downgrade the required project list. No screen-reader pairing is required (R-133).
+2. V1: `pnpm -C respin exec vitest run tests/theme.test.ts tests/shell-rail.test.tsx`. State established by tasks 1–5. Test theme validation/storage failure, real zero/null rail and production root bootstrap wiring. Also run `pnpm -C respin exec vitest run tests/action-gate.test.ts tests/gate-completeness.test.ts tests/page-wiring.test.tsx`: preserve first-statement signal rethrow for actual catches, reject missing gates and retain the complete native route set. The separately evaluated static bootstrap is tested by V1, including unavailable storage; it has no Next/server calls.
+3. V2: `pnpm -C respin exec vitest run tests/landing-pricing.test.ts tests/auth-form.test.tsx tests/brain-ui.test.tsx tests/onboarding-ui.test.tsx tests/studio-ui.test.tsx tests/client-bundle-boundary.test.ts tests/import-boundary.test.ts`. State: step 2 complete; preserve valid product invariants, not just class snapshots. Existing false no-results/no-feedback-consumer claims are a recorded pre-existing baseline, explicitly corrected with their tests in phase 2; their current green assertions are not honesty evidence.
+4. V3: `pnpm -C respin exec playwright test --config playwright.visual.config.ts`. State: step 2 establishes code and browser harness. Define and run all three projects: `chromium`, `firefox`, `webkit`; an absent engine blocks its evidence, never silently narrows the run. Fixture harness imports actual components and CSS, bundles with esbuild resolved through installed tsx; no credentialed service/generation. Use server-rendered fixture markup and hydrate the same components; share production theme bootstrap. Intercept unexpected network, test theme retention/keyboard/mobile links, and cover shell, landing/shared audience sections, sign-in and sign-up at 390/768/1024/1440 in both themes. Use the master's defining surface/state table; later phases extend it. Verify contrast, 44px targets, no overflow/hydration/page errors, plus targeted 320px reflow, 200% text enlargement, 799/800/801px navigation, forced-colors and reduced-motion checks. Record D1–D10 reference comparisons and ≥90% shell score for each theme; perform at least two critique passes and close every mandatory failure. Manual screen-reader verification of shell/theme/auth announcements is optional and non-blocking (R-133); its absence is recorded as not obtained. Label fixture evidence distinctly from actual-app evidence, which is mandatory at phase 5 Tasks 1–3.
 5. Entry gate once stable: `pnpm -C respin typecheck`, `pnpm -C respin lint`, `pnpm -C respin test`, `pnpm -C respin build`, in that order, capture actual outputs. Do not read local env files. Build/tool failures remain unverified. If a command implicitly needs denied local env material, record the blocker rather than copying it elsewhere. Retain existing loud skipped Docker/provider tests as skipped, not passed live.
 6. Review all four touched paths: separate billing/tenancy plus lean compliance/learning/general correctness. Reserve and read back slots first; reviewers see exact results and this phase manifest. Record final docs/map/DoD evidence; phase Ready is required before phase 2.
 
-PASS criteria: V1–V3 and entry/reviews have current evidence; both exact handoff palettes render on the actual components; `theme-preserves-work`, `scoped-data-stays-scoped`, `server-offer-authority` hold. Counterexamples are a theme switch submitting a form, localStorage containing creator data, null balance rendered as zero or a shell gate disappearing. Browser fixture coverage cannot claim authenticated route verification.
+PASS criteria: V1–V3 and entry/reviews have current evidence, including baseline preservation, scored shell comparison and all three engines (phase-local screen-reader observation is **not** a PASS input — R-133); both exact handoff palettes render on the actual components; `theme-preserves-work`, `scoped-data-stays-scoped`, `server-offer-authority` hold. Counterexamples are a theme switch submitting a form, localStorage containing creator data, null balance rendered as zero or a shell gate disappearing. Phase-local Ready cannot discharge the mandatory assembled-app/comparative-UX proof received by phase 5 Tasks 1–3.
 
 Least confident: first-paint preference and responsive shell correctness across existing server-rendered routes; probe hydration and long labels, not just empty fixtures.
 

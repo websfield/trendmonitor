@@ -2,6 +2,7 @@
 name: boundary-reviewer
 description: Read-only reviewer for any diff touching the component call-graph (C1/C2/C3), the OutcomeEvent log or events-v1.json, the circuit breaker, pattern-library publishing/promotion, the version triple, the Extraction Service, or tenant isolation. Verifies the one-way call-graph, sole-writer and sole-authority rules, fail-closed semantics, immutability, and tenancy. Reports findings with file:line evidence and a PASS / NEEDS CHANGES / BLOCK verdict; does not edit code.
 tools: Read, Grep, Glob, Bash
+model: opus
 effort: max
 ---
 

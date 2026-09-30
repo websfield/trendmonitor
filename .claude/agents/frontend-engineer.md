@@ -2,6 +2,8 @@
 name: frontend-engineer
 description: Implements the React/TypeScript manager surface — the triage-sorted submission queue, the verdict + override panel with evidence display, degraded/advisory banners, the amplification recommendation and sign-off screen, and the operator calibration dashboard. Renders honesty; never invents a number.
 tools: Read, Write, Edit, Grep, Glob, Bash
+model: opus
+effort: high
 ---
 
 # Frontend Engineer (React / TypeScript)

@@ -170,6 +170,21 @@
       "filePattern": "(^|\\/)(tests?|scripts)\\/.*\\.(ts|mjs|js)$|(^|\\/)[^/]*(scan|guard|lint|check)[^/]*\\.(ts|mjs|js)$",
       "bodyPattern": "new\\s+RegExp\\(\\s*['\"`]",
       "message": "A scanner regex assembled from a string literal fails OPEN when an escape is lost — one dropped backslash turns \\s into s and the scan silently matches nothing, so \"zero violations\" becomes indistinguishable from a broken scan (CLAUDE.md lesson 2026-08-21). Use a regex literal, and assert the scanner finds a PLANTED violation of each shape it claims to cover."
+    },
+    {
+      "id": "max-source-file-lines",
+      "severity": "warn",
+      "maxLines": 800,
+      "filePattern": "(^|/)[^/]+\\.(js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|kt|cs|php|swift|vue|svelte)$",
+      "notFilePattern": "((^|/)[^/]*(\\.test\\.|\\.spec\\.|[._-]mock|[._-]fixture)|(^|/)(__tests__|tests?|specs?|mocks?|fixtures?|migrations?|generated|__generated__|node_modules|vendor|dist|build)/|\\.(d\\.ts|min\\.js|g\\.cs)$)",
+      "message": "This file is now {lines} lines (warn above 800; never a blocker). Move one cohesive group of functions or types into its own module and import it — split by responsibility, not by line count."
+    },
+    {
+      "id": "max-test-file-lines",
+      "severity": "warn",
+      "maxLines": 500,
+      "filePattern": "((^|/)[^/]*\\.(test|spec)(\\.[^/]*)?\\.(js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|kt|cs|php|swift|vue|svelte)$|(^|/)(__tests__|tests?|specs?)/.*\\.(js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|kt|cs|php|swift|vue|svelte)$)",
+      "message": "This test file is now {lines} lines (warn above 500; never a blocker). Split by the behaviour under test — one file per module or user journey, never one giant suite."
     }
   ]
 }

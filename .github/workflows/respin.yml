@@ -7,11 +7,18 @@ on:
     branches: [main]
     paths:
       - "respin/**"
-      - ".github/workflows/respin.yml"
+      # EVERY workflow file, not just this one. `pnpm test` below runs
+      # `tests/journeys-workflow-triggers.test.ts`, which is the ONLY
+      # enforcement of the vendor-key invariant over this directory — and
+      # `respin-journeys.yml` is workflow_dispatch-only, so it never fires on
+      # a PR. With the filter naming one file, a PR that added
+      # `.github/workflows/leak.yml` with the key, or weakened the guard
+      # itself, ran no CI at all (batch-3 gate, security HIGH).
+      - ".github/workflows/**"
   pull_request:
     paths:
       - "respin/**"
-      - ".github/workflows/respin.yml"
+      - ".github/workflows/**"
 
 jobs:
   gate:

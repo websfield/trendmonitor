@@ -231,6 +231,46 @@ export function tightenOnlySampleRate(raw: string | undefined): number {
   return rate;
 }
 
+/**
+ * A `fetch` that refuses any origin but the one it was built for.
+ *
+ * THE SAME CONTROL `packages/llm/src/anthropic.ts:74` ALREADY CARRIES, GENERAL.
+ * That function pins the vendor client to `ANTHROPIC_ORIGIN`; this is the same
+ * default-parameter wrapper with the origin supplied, so the two telemetry
+ * senders get the socket-level half of their pin instead of a bare `fetch`.
+ *
+ * WHY IT MATTERS HERE (P1-R2 / R-141). `sendOutbound` posts to `payload.url`,
+ * which is built from an env-derived DSN or sink host. Nothing in the type
+ * system stops a future payload builder from putting a DB column there — and
+ * `trend_sources.source_url` is a column holding a URL somebody submitted. With
+ * the wrapper in place, "a submitted URL is never fetched" is STRUCTURAL for
+ * these senders rather than a property of whoever last edited the builder.
+ *
+ * An unparseable URL is refused rather than passed through, for the reason
+ * `pinnedFetch` gives: "we could not tell where this was going" is not a reason
+ * to let it go.
+ *
+ * Its single `underlying(` call is the one outbound call site this module adds,
+ * and it is entry 7 of `tests/no-scraping.test.ts`'s measured allowlist.
+ */
+export function originPinnedFetch(origin: string, underlying: typeof fetch = fetch): typeof fetch {
+  const pinned = new URL(origin).origin;
+  return async (input, init) => {
+    const raw =
+      typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    let target: string;
+    try {
+      target = new URL(raw).origin;
+    } catch {
+      throw new Error(`telemetry refused an unparseable URL; this sender may only reach ${pinned}`);
+    }
+    if (target !== pinned) {
+      throw new Error(`telemetry refused ${target}; this sender may only reach ${pinned}`);
+    }
+    return underlying(input, init);
+  };
+}
+
 /** POST one built payload. Never throws — a telemetry failure is never an application failure. */
 export async function sendOutbound(fetchImpl: typeof fetch, payload: OutboundJson): Promise<"sent" | "failed"> {
   try {

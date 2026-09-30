@@ -11,15 +11,15 @@
 // printed remedy was impossible to satisfy.
 //
 // It shipped because this script had no test at all. This is that test.
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { scratchDir } from "./support/scratch-dir";
 
 import { readRestoredOperations } from "../scripts/restore-verify";
 
 function operationsFile(rows: readonly unknown[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "respin-restore-verify-"));
+  const dir = scratchDir("respin-restore-verify-");
   const path = join(dir, "operations.json");
   writeFileSync(path, JSON.stringify(rows));
   return path;
@@ -49,7 +49,7 @@ describe("readRestoredOperations — absence of an answer is not an empty answer
     // "no operations" and "could not read the operations" must never reach the
     // same conclusion: the first permits serving, the second is an unknown.
     for (const rows of [{ not: "an array" }, [{ state: "grace" }], [{ id: "op-1" }]]) {
-      const dir = mkdtempSync(join(tmpdir(), "respin-restore-verify-"));
+      const dir = scratchDir("respin-restore-verify-");
       const path = join(dir, "operations.json");
       writeFileSync(path, JSON.stringify(rows));
       expect(() => readRestoredOperations(path), JSON.stringify(rows)).toThrow();

@@ -2,6 +2,8 @@
 name: eval-harness-engineer
 description: Implements the eval plan's test suites — the adversarial prompt-injection suite, the provenance/reachability suite, the mechanisms schema suite, the forbidden-verb lexicon, the architecture reference-graph assertions, the calibration harness (temporal holdouts, Spearman, n>=60 refusal), the fairness audit, and the naive-baseline counterfactual. Writes tests that can fail.
 tools: Read, Write, Edit, Grep, Glob, Bash
+model: opus
+effort: high
 ---
 
 # Eval Harness Engineer

@@ -65,7 +65,9 @@ boundary verbatim to the prompt in Step C:
 
 ## Step C — Run Codex (pick the mode that matches the input)
 
-Run with a **300000 ms timeout**. Closed stdin is required because it prevents a known Codex
+Every invocation pins `-m gpt-6-astra -c 'model_reasoning_effort="xhigh"'` (owner setting,
+2026-09-21: Codex runs Astra at xhigh; do not fall back to `~/.codex/config.toml`'s default
+`medium`). Run with a **300000 ms timeout**. Closed stdin is required because it prevents a known Codex
 stdin deadlock: Bash uses `< /dev/null`; PowerShell pipes `$null`. Both forms below preserve
 that requirement. Capture stderr so a non-zero exit is visible, not read as a silent stall.
 
@@ -82,7 +84,7 @@ Review the changes on this branch against the base branch <base>. Run
 \`git diff <base>...HEAD\` (fall back to \`git diff origin/<base>...HEAD\`) and review ONLY
 those changes. Mark each finding [P1] for a must-fix correctness/security defect or [P2]
 for advisory. End with one PASS/FAIL line: FAIL if any [P1], else PASS." \
-  -c 'model_reasoning_effort="high"' < /dev/null 2>codex-err.txt
+  -m gpt-6-astra -c 'model_reasoning_effort="xhigh"' < /dev/null 2>codex-err.txt
 echo "exit=$?"
 ```
 
@@ -96,7 +98,7 @@ Review the changes on this branch against the base branch <base>. Run
 those changes. Mark each finding [P1] for a must-fix correctness/security defect or [P2]
 for advisory. End with one PASS/FAIL line: FAIL if any [P1], else PASS.
 '@
-$null | codex review $prompt -c 'model_reasoning_effort="high"' 2> codex-err.txt
+$null | codex review $prompt -m gpt-6-astra -c 'model_reasoning_effort="xhigh"' 2> codex-err.txt
 "exit=$LASTEXITCODE"
 ```
 
@@ -120,7 +122,7 @@ Audit ONLY for mechanical consistency — derivations, not taste:
 - handoff contracts pinned; every quantitative budget has provenance
 Mark each finding [P1] (a real inconsistency) or [P2] (advisory). End with one PASS/FAIL
 line: FAIL if any [P1], else PASS." \
-  -c 'model_reasoning_effort="high"' < /dev/null 2>codex-err.txt
+  -m gpt-6-astra -c 'model_reasoning_effort="xhigh"' < /dev/null 2>codex-err.txt
 echo "exit=$?"
 ```
 
@@ -141,7 +143,7 @@ Audit ONLY for mechanical consistency — derivations, not taste:
 Mark each finding [P1] (a real inconsistency) or [P2] (advisory). End with one PASS/FAIL
 line: FAIL if any [P1], else PASS.
 '@
-$null | codex exec -s read-only $prompt -c 'model_reasoning_effort="high"' 2> codex-err.txt
+$null | codex exec -s read-only $prompt -m gpt-6-astra -c 'model_reasoning_effort="xhigh"' 2> codex-err.txt
 "exit=$LASTEXITCODE"
 ```
 
@@ -162,7 +164,7 @@ that the code breaks. For each finding give file:line, what is wrong, and the co
 way it fails. Mark each [P1] for a real defect/risk or [P2] for advisory. Do not
 describe or summarize the codebase; report only findings. End with one line: the count
 of P1 and P2 findings." \
-  -c 'model_reasoning_effort="high"' < /dev/null 2>codex-err.txt
+  -m gpt-6-astra -c 'model_reasoning_effort="xhigh"' < /dev/null 2>codex-err.txt
 echo "exit=$?"
 ```
 
@@ -180,7 +182,7 @@ way it fails. Mark each [P1] for a real defect/risk or [P2] for advisory. Do not
 describe or summarize the codebase; report only findings. End with one line: the count
 of P1 and P2 findings.
 '@
-$null | codex exec -s read-only $prompt -c 'model_reasoning_effort="high"' 2> codex-err.txt
+$null | codex exec -s read-only $prompt -m gpt-6-astra -c 'model_reasoning_effort="xhigh"' 2> codex-err.txt
 "exit=$LASTEXITCODE"
 ```
 

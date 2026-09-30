@@ -38,10 +38,10 @@ import {
   type PastedReferenceState,
 } from "../app/(product)/trends/pasted-references";
 import {
-  CLAIM_SPECIMENS,
   FORBIDDEN_CLAIMS,
   PERFORMANCE_CLAIMS,
 } from "./support/forbidden-claims";
+import { claimHits, specimensFor } from "./support/claim-scan";
 
 const UNSAFE_REFERENCE: OriginalReferenceSummary = {
   source: "YouTube",
@@ -378,7 +378,9 @@ describe("TrendsView honesty states", () => {
     const html = renderToStaticMarkup(
       <TrendsView state={{ kind: "empty", reason: "No eligible trend items are available for this feed yet." }} />
     );
-    expect(html).toContain("Trends");
+    // "References" since R-128: the creator-facing label for this surface.
+    // The route, the subsystem and the REQ-E ids keep the name "Trends".
+    expect(html).toContain("References");
     expect(html).toContain("No eligible trend items are available for this feed yet.");
     expect(html).toContain("trends-state");
   });
@@ -704,7 +706,10 @@ describe("no state of the Trends surface makes a forbidden or performance claim 
   // divergence that file's header records as the reason it exists. Every
   // other creator-facing screen sweeps with the canon; this one now does too,
   // over every rendered state named in `RENDERED_STATES`.
-  const CANON = [...FORBIDDEN_CLAIMS, ...PERFORMANCE_CLAIMS];
+  // THE LISTS ARE NAMED HERE; THE PREDICATE IS `claimHits` (P1-R4, applied
+  // 2026-09-21). A private `CANON` array plus a bare `.test()` is a second
+  // place where "does this string make this claim" gets decided, and it skips
+  // the `lastIndex` reset the shared helper exists to guarantee.
 
   it("the sweep covers every state, and the idle outcome renders nothing", () => {
     // THE COUNT IS NOT THE GUARD. It used to be the only one
@@ -775,22 +780,17 @@ describe("no state of the Trends surface makes a forbidden or performance claim 
   });
 
   it.each(RENDERED_STATES)("%s is clean against every canon pattern", (_label, html) => {
-    const text = html.toLowerCase();
-    for (const [label, re] of CANON) {
-      expect(text, `"${label}" on the trends surface`).not.toMatch(re);
-    }
+    expect(claimHits(html, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS), "the trends surface").toEqual([]);
   });
 
   // NON-VACUITY, per pattern: each canon entry catches its own planted
   // specimen, so a typo in one pattern cannot hide behind a neighbour that
   // happened to match. Copied from the discipline `forbidden-claims.ts`
   // records for `/onboarding` (2026-08-27).
-  it.each(CANON.map(([label, re]) => [label, re] as const))(
+  it.each(specimensFor(FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS))(
     "NON-VACUITY: the canon pattern for %s catches its planted specimen",
-    (label, re) => {
-      const specimen = CLAIM_SPECIMENS[label];
-      expect(specimen, `no specimen for "${label}"`).toBeTypeOf("string");
-      expect(specimen!.toLowerCase()).toMatch(re);
+    (label, specimen) => {
+      expect(claimHits(specimen, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toContain(label);
     }
   );
 
@@ -801,7 +801,7 @@ describe("no state of the Trends surface makes a forbidden or performance claim 
         originalReference={ORIGINAL_REFERENCE}
       />
     ).toLowerCase();
-    const hits = CANON.filter(([, re]) => re.test(planted)).map(([label]) => label);
+    const hits = claimHits(planted, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS);
     expect(hits).toEqual(expect.arrayContaining(["will perform", "more views", "views"]));
   });
 

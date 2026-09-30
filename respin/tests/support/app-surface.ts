@@ -130,8 +130,17 @@ export function isMetadataRoute(file: string): boolean {
 /** Roots both guard suites scan. ONE definition, both readers (round-3 meta). */
 export const SCAN_ROOTS = ["app", "lib", "middleware.ts"] as const;
 
-/** Every extension that can carry code in this tree (superset of the routable set). */
-export const CODE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"] as const;
+/**
+ * Every extension that can carry code in this tree (superset of the routable set).
+ *
+ * `.mjs`/`.cjs` were missing, so no scanner walked them — including the catch
+ * scan that keeps `requireUser()`'s NEXT_REDIRECT from being swallowed. Two
+ * batch-1 reviewers confirmed by probe that a swallowing catch in `c.mjs` was
+ * never reported, and `respin/.gitattributes` pins `*.mjs`, so one of the two
+ * lists was wrong. Latent today (no such file exists under app/ or lib/) and
+ * closed here rather than left as a shaped hole.
+ */
+export const CODE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"] as const;
 
 export type AppFileKind =
   | "url-entrypoint"

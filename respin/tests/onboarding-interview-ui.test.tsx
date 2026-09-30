@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { INTERVIEW_FIELDS, type InterviewFieldKey } from "@respin/db";
 import { CLAIM_SPECIMENS, FORBIDDEN_CLAIMS, NOT_BUILT_YET } from "./support/forbidden-claims";
+import { claimHits } from "./support/claim-scan";
 import {
   buildInterviewPatch,
   fieldState,
@@ -612,7 +613,7 @@ describe("honesty (R10/R12-style): this screen never claims the creator's own an
         }}
       />
     ).toLowerCase();
-    const caught = FORBIDDEN.filter(([, re]) => re.test(planted)).map(([l]) => l);
+    const caught = claimHits(planted, FORBIDDEN);
     expect(caught).toEqual(expect.arrayContaining(["learn", "verified"]));
   });
 });

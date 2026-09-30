@@ -1,7 +1,7 @@
 ---
 name: create-plan
 description: >-
-  Use $create-plan for the migrated Claude /create-plan workflow. Create an implementation plan (codebase review + master plan + per-phase plans with project conventions pinned), then gate it through a multi-agent plan...
+  Use $create-plan for the migrated Claude /create-plan workflow. Create an implementation plan (codebase review + master plan + short per-phase plans), then gate it through one plan-reviewer round before handing off to...
 ---
 
 # create-plan
