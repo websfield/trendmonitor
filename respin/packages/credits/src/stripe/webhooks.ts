@@ -6,10 +6,9 @@
 // Refusal log lines carry event id + outcome only — NEVER payloads.
 // This file is a sanctioned trustWorkspaceId import site (webhook resolution).
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import {
   creditLedger,
-  lockWorkspaceMembershipGraph,
   stripeEvents,
   subscriptions,
   workspaces,
@@ -17,10 +16,14 @@ import {
   type TxLike,
   type VerifiedWorkspaceId,
   AUTO_TOPUP_DISARMED_FIELDS,
+  erasedWorkspaceOperationIdInTx,
+  stripeMoneyAmount,
+  trustWorkspaceId,
+  type HeldMoneyReplaySummary,
 } from "@respin/db";
 import { getActiveConfig } from "@respin/config";
 import type Stripe from "stripe";
-import { CLOCK_SKEW_MS, getDbNow, takeWorkspaceLock } from "../clock";
+import { CLOCK_SKEW_MS, getDbNow, takeWorkspaceLockInOrder } from "../clock";
 import { addMonthsUtc } from "../months";
 import {
   hasLiveStripeSubscription,
@@ -69,7 +72,52 @@ export type StripeEventOutcome =
   | "processed"
   | "refused_unknown_customer"
   | "refused_identity_mismatch"
-  | "ignored";
+  | "ignored"
+  // R-165 (migration 0064): money on a tombstoned workspace, held for replay.
+  // The ONE non-final outcome; `replayHeldStripeEvents` is its only settler.
+  | "held_tombstoned"
+  // R-165 (0065): a held receipt whose workspace was ERASED — the durable
+  // refund-owed record, written only by the erasure transaction.
+  | "refund_owed";
+
+/**
+ * THE MONEY-BEARING EVENTS (R-165) — the types whose handlers below reach a
+ * mint, as a LIST (Respin rule 7), with the predicate each one's handler uses
+ * to decide that THIS event carries money. A sixth mint site is an edit here
+ * (and in audit Phase 4's pause gate on the same five sites, when it lands),
+ * never an automatic inclusion:
+ *   - `checkout.session.completed` / `checkout.session.async_payment_succeeded`
+ *     — the pack branch (`mode === "payment"`, `respin_kind === "pack"`,
+ *     `payment_status === "paid"`); both settle the same session;
+ *   - `invoice.paid` — the allowance grant (renewal, first invoice);
+ *   - `payment_intent.succeeded` — auto-top-up (`respin_kind === "auto_topup"`).
+ */
+export const HELD_MONEY_EVENT_TYPES = [
+  "checkout.session.completed",
+  "checkout.session.async_payment_succeeded",
+  "invoice.paid",
+  "payment_intent.succeeded",
+] as const;
+
+export function isHeldMoneyEvent(event: Stripe.Event): boolean {
+  switch (event.type) {
+    case "checkout.session.completed":
+    case "checkout.session.async_payment_succeeded": {
+      const session = event.data.object as Stripe.Checkout.Session;
+      return (
+        session.mode === "payment" &&
+        session.metadata?.respin_kind === "pack" &&
+        session.payment_status === "paid"
+      );
+    }
+    case "invoice.paid":
+      return true;
+    case "payment_intent.succeeded":
+      return (event.data.object as Stripe.PaymentIntent).metadata?.respin_kind === "auto_topup";
+    default:
+      return false;
+  }
+}
 
 export type StripeEventHandlingOptions = Readonly<{ recovery?: boolean }>;
 
@@ -252,6 +300,10 @@ const DEAD_SUBSCRIPTION_FIELDS = {
   // date, and whatever this row says after it dies is inherited forever.
   cancelAt: null,
   graceExpiresAt: null,
+  // THE EPISODE ENDS WITH THE SUBSCRIPTION (audit P3-R4, R-159): a dead
+  // subscription has no unpaid episode, and a marker left behind would make a
+  // re-subscribed workspace's first failure look like a continuation.
+  dunningStartedAt: null,
   // The auto-top-up charge authority, shared with the deletion executor's
   // fence (Phase 10b-1 Task 4, round-1 billing BLOCK): one set, two sites.
   ...AUTO_TOPUP_DISARMED_FIELDS,
@@ -283,48 +335,56 @@ const DEAD_SUBSCRIPTION_FIELDS = {
 // owner's resume path. `clearPauseMirror` refuses while a pause is genuinely
 // open, so the pair cannot desynchronise the two truths in either direction.
 
+// The deadline-LIVENESS predicates billing rounds 6 and 7 added were RETIRED by
+// audit P3-R4 (R-159). Their only two callers were the deadline writers below,
+// and both now gate on the episode marker instead: a deadline's liveness cannot
+// tell "a second failure in the same unpaid episode" from "a new episode",
+// which is how a lapsed deadline re-opened grace (REG-3). Round 7's case — a
+// recovery seen only as `subscription.updated -> active` leaving a stale
+// deadline behind for the next episode — is now `dunningEndedBy`'s clear.
+
 /**
- * Is there a grace window still RUNNING? The never-EXTEND rule keys on this
- * rather than on "a deadline column is non-null" (billing round-6 CHANGE): a
- * LAPSED deadline from a previous dunning episode is not a window, and reading
- * it as one made the next episode inherit an expired date — state.ts then
- * derives `free` immediately, skipping REQ-G06's window entirely. Scoping the
- * rule this way also means nothing ever has to CLEAR the deadline to make the
- * next episode work, which is what removed the race the same gate found.
+ * THE EPISODE RULE (audit P3-R4, decisions R-159): an open episode never
+ * receives a new deadline; a NULL marker opens one.
+ *
+ * Deadline liveness was REG-3's defect: a second `invoice.payment_failed`
+ * inside one unpaid episode, arriving after the first deadline lapsed, read
+ * the lapsed deadline as "no episode" and opened a fresh window — so a
+ * non-payer stayed on the paid tier for as long as failures kept arriving. The
+ * marker (`subscriptions.dunning_started_at`) is the episode's identity.
+ *
+ * THE POPULATION, by list (CLAUDE.md rule 7) — every site in this file that
+ * writes or clears the marker:
+ *   (1) `customer.subscription.updated` — opens on `past_due` with a NULL
+ *       marker; clears on `active` only when the event is NEWER than the
+ *       marker (`dunningEndedBy`);
+ *   (2) `invoice.payment_failed` — opens on a NULL marker, otherwise writes
+ *       `past_due` alone;
+ *   (3) `invoice.paid` — clears it with the deadline;
+ *   (4) `DEAD_SUBSCRIPTION_FIELDS` — every death writer clears it.
  */
-function hasLiveGrace(deadline: Date | null | undefined, now: Date): boolean {
-  return deadline != null && deadline.getTime() > now.getTime();
+function opensDunningEpisode(
+  mirror: { dunningStartedAt: Date | null } | undefined
+): boolean {
+  return (mirror?.dunningStartedAt ?? null) === null;
 }
 
-/** The statuses a running dunning episode leaves on the mirror. */
-const DUNNING_STATUSES = new Set(["past_due"]);
-
 /**
- * Does the deadline on the mirror belong to the CURRENT dunning episode — i.e.
- * is this failure a continuation rather than a new one? (billing round-7 NOTE.)
- *
- * "Never EXTEND a live deadline" is right WITHIN an episode and wrong ACROSS
- * two: a recovery seen only as `customer.subscription.updated → active`
- * (Stripe voided the failed invoice, so no `invoice.paid` ever arrives) leaves
- * the old deadline behind, and the next dunning episode then inherited whatever
- * was left of it — the customer gets less than the `graceDays` REQ-G06
- * promises, possibly minutes. Keying "is this the same episode" on the mirror's
- * STATUS rather than on the deadline's mere existence fixes that without
- * reintroducing the clear round 6 removed: an `active`/`trialing` mirror means
- * the previous episode ended, whoever ended it, so a fresh window opens; a
- * `past_due` mirror with a live deadline means we are still inside the episode
- * that opened it, so it is never extended. Nothing has to be cleared and there
- * is no cross-writer race to lose — which is exactly why round 6 removed the
- * clear in the first place.
+ * Does this `active` snapshot end the open episode? Only when it is NEWER than
+ * the episode's own start (Stripe's clock on both sides). An OLDER `active`
+ * snapshot — the round-6 hazard — fails the comparison and leaves the marker
+ * and the deadline standing.
  */
-function inheritsGrace(
-  mirror: { status: string; graceExpiresAt: Date | null } | undefined,
-  now: Date
+function dunningEndedBy(
+  status: string,
+  eventAt: Date,
+  mirror: { dunningStartedAt: Date | null } | undefined
 ): boolean {
+  const started = mirror?.dunningStartedAt ?? null;
   return (
-    mirror !== undefined &&
-    DUNNING_STATUSES.has(mirror.status) &&
-    hasLiveGrace(mirror.graceExpiresAt, now)
+    status === "active" &&
+    started !== null &&
+    eventAt.getTime() > started.getTime()
   );
 }
 
@@ -991,7 +1051,19 @@ export async function handleStripeEventInTransaction(
       // needing to remember it. Consequences worth stating:
       //
       //  - The lifecycle graph lock is first and the billing lock is second,
+      //    through the ONE ordered helper (`takeWorkspaceLockInOrder`, R-177),
       //    matching deletion, restore, and request-time charge creation. The
+      //    graph lock is the SHARED form (audit Phase 8, P8-A3): this path reads
+      //    the lifecycle and changes no membership, so a page reader's shared
+      //    request is granted beside it and is not queued behind the Stripe
+      //    calls below, while a deletion writer (the exclusive form) is. ONE
+      //    EXCEPTION, which Postgres's lock queue creates: once a deletion
+      //    writer is WAITING behind this hold, a new shared request queues
+      //    behind that writer — so a page would wait for these Stripe calls
+      //    after all. The page path's reads are therefore bounded (gate M2:
+      //    READ ONLY, `lock_timeout = 5000`, `@respin/db` `render-transaction.ts`)
+      //    and refuse with a named state instead; this transaction is never
+      //    under that bound. The
       //    lifecycle row and customer mapping are then re-read under both
       //    locks. A tombstoned/detached workspace still receives an immutable
       //    financial receipt, but no billing mirror, allowance, pack, or
@@ -1013,9 +1085,12 @@ export async function handleStripeEventInTransaction(
       //    write nothing — they can only refuse — so there is nothing to
       //    serialize.
       let lifecycleAllowsDispatch = true;
+      // Held, not ignored (R-165): the workspace exists, is tombstoned, and
+      // the customer still maps to it — so the money is that workspace's and
+      // its deletion may yet be cancelled.
+      let lifecycleHoldsMoney = false;
       if (workspaceId) {
-        await lockWorkspaceMembershipGraph(tx, workspaceId);
-        await takeWorkspaceLock(tx, workspaceId);
+        await takeWorkspaceLockInOrder(tx, { workspaceId });
         const [workspace] = await tx
           .select({ state: workspaces.lifecycleState })
           .from(workspaces)
@@ -1026,6 +1101,8 @@ export async function handleStripeEventInTransaction(
           : null;
         lifecycleAllowsDispatch =
           workspace?.state === "active" && reboundWorkspace === workspaceId;
+        lifecycleHoldsMoney =
+          workspace?.state === "tombstoned" && reboundWorkspace === workspaceId;
       }
 
       if (existing) {
@@ -1066,14 +1143,38 @@ export async function handleStripeEventInTransaction(
       const receiptContext: StripeReceiptContext = {
         tierInvoiceAuthority: null,
       };
-      const outcome = await dispatch(
-        tx,
-        event,
-        workspaceId,
-        lifecycleAllowsDispatch,
-        options,
-        receiptContext
-      );
+      const money = isHeldMoneyEvent(event);
+      // LATE MONEY (R-166, billing follow-up): after an erasure the workspace
+      // survives under its pseudonymous id, tombstoned, and the retained
+      // subscription still maps the customer to it — so money that settles
+      // after the erasure lands here. Holding it would hold it forever (no
+      // cancellation can come), silently: it is refund owed, against the
+      // erasure that completed.
+      const erasedBy =
+        lifecycleHoldsMoney && money && workspaceId
+          ? await erasedWorkspaceOperationIdInTx(tx, workspaceId)
+          : null;
+      const outcome: StripeEventOutcome = lifecycleAllowsDispatch
+        ? await dispatch(tx, event, workspaceId, options, receiptContext)
+        : erasedBy !== null
+          ? "refund_owed"
+          : lifecycleHoldsMoney && money
+            ? "held_tombstoned"
+            : // A detached or unattributable workspace cannot gain credits or
+              // mutate billing authority; its immutable receipt is still written.
+              "ignored";
+      // MONEY NO WORKSPACE TOOK needs an operator (R-166): a late refund
+      // owed, money for an unknown or mismatched customer, or money for a
+      // detached workspace. Flagged here, paged once by the money sweep
+      // (`pageStripeMoneyNeedingOperator`), listed by
+      // `listStripeMoneyNeedingOperator`. `ignored` from `dispatch` itself is
+      // its own converge-to-ignored rule, not lost money, and is not flagged.
+      const moneyNeedsOperator =
+        money &&
+        (outcome === "refund_owed" ||
+          outcome === "refused_unknown_customer" ||
+          outcome === "refused_identity_mismatch" ||
+          (!lifecycleAllowsDispatch && outcome === "ignored"));
       if (outcome !== "processed") {
         // Payload-free refusal log (D-M1-6): ids + type + outcome only, never
         // payload fields. `event.type` joins it per audit 2026-08-17 #27 —
@@ -1098,8 +1199,239 @@ export async function handleStripeEventInTransaction(
         receiptAttribution,
         outcome,
         processedAt: now,
+        moneyNeedsOperator,
+        ...(outcome === "refund_owed"
+          ? { refundOwedOperationId: erasedBy, ...refundOwedAmountColumns(event) }
+          : {}),
       });
       return outcome;
+}
+
+function refundOwedAmountColumns(event: Stripe.Event) {
+  const { amount, currency } = stripeMoneyAmount(event.type, event);
+  return { refundOwedAmount: amount, refundOwedCurrency: currency };
+}
+
+/** A seam for the replay's dispatch, so a test can plant the outcome it returns. */
+export type HeldEventDispatch = (
+  tx: TxLike,
+  event: Stripe.Event,
+  workspaceId: VerifiedWorkspaceId,
+  receiptContext: StripeReceiptContext
+) => Promise<StripeEventOutcome>;
+
+const DISPATCH_HELD_EVENT: HeldEventDispatch = (tx, event, workspaceId, receiptContext) =>
+  dispatch(tx, event, workspaceId, {}, receiptContext);
+
+/**
+ * REPLAY THE MONEY HELD WHILE A WORKSPACE WAS TOMBSTONED (R-165, P5-A1).
+ *
+ * Run by the worker's deletion tick for every active workspace with held rows
+ * (`replayHeldStripeEventsForActiveWorkspaces`) — the production replayer —
+ * and by `cancelScopedDeletion` when its caller passes the held-money port
+ * (the app facade cannot: R-165). Never through `handleStripeEvent`: a held
+ * event already HAS its `stripe_events` row, and that handler refuses an event
+ * id with a row as `DuplicateStripeEvent`.
+ *
+ * ONE TRANSACTION PER EVENT, in P8-A1's lock order: the workspace membership
+ * graph, then the billing lock — the same two `handleStripeEventInTransaction`
+ * takes, so a replay and a new webhook for the same workspace serialise.
+ *
+ * THE IDEMPOTENCY GATE is the row itself, locked FIRST:
+ * `SELECT … WHERE id = $1 AND outcome = 'held_tombstoned' FOR UPDATE`. No row
+ * means another replay settled it, and this transaction mints nothing. With
+ * the row locked, the workspace's lifecycle and customer mapping are re-read
+ * under both locks; then `dispatch` runs, and the row is updated to the
+ * outcome `dispatch` RETURNED — `processed`, `ignored` or a `refused_*` code —
+ * never a presumed `processed`. The update is conditional on the held outcome
+ * too, and 0064's trigger refuses any other outcome change.
+ *
+ * A failure is caught PER EVENT, so one poisoned row cannot strand the rest,
+ * and is COUNTED (`failed`): the worker raises an alert on it (CLAUDE.md
+ * 2026-09-09). A failed row stays held and is retried on the next tick.
+ */
+export async function replayHeldStripeEvents(
+  db: DbLike,
+  workspaceId: string,
+  seams: Readonly<{ dispatch?: HeldEventDispatch }> = {}
+): Promise<HeldMoneyReplaySummary> {
+  const held = await db
+    .select({ id: stripeEvents.id })
+    .from(stripeEvents)
+    .where(
+      and(
+        eq(stripeEvents.workspaceId, workspaceId),
+        eq(stripeEvents.outcome, "held_tombstoned")
+      )
+    )
+    .orderBy(asc(stripeEvents.receivedAt), asc(stripeEvents.id));
+  let replayed = 0;
+  let alreadySettled = 0;
+  let failed = 0;
+  let stillHeld = 0;
+  // THE ATTEMPT MARKER (R-166): stamped before any attempt and in its own
+  // statement, so a failed or still-held attempt is recorded too. The sweep
+  // takes the least recently tried workspace first.
+  if (held.length > 0) {
+    await db
+      .update(stripeEvents)
+      .set({ heldReplayAttemptedAt: sql`clock_timestamp()` })
+      .where(and(eq(stripeEvents.workspaceId, workspaceId), eq(stripeEvents.outcome, "held_tombstoned")));
+  }
+  // The lock key only. The AUTHORITY for this id is re-derived per event under
+  // both locks below — the row's stored customer must still map to exactly
+  // this workspace (`workspaceForCustomer`, the same stored mapping the live
+  // webhook resolves through), or nothing is dispatched.
+  const lockKey = trustWorkspaceId(workspaceId);
+  for (const { id } of held) {
+    try {
+      const settled = await db.transaction(async (tx) => {
+        await takeWorkspaceLockInOrder(tx, { workspaceId: lockKey });
+        const [row] = await tx
+          .select()
+          .from(stripeEvents)
+          .where(and(eq(stripeEvents.id, id), eq(stripeEvents.outcome, "held_tombstoned")))
+          .limit(1)
+          .for("update");
+        if (!row) return "already_settled" as const;
+        const [workspace] = await tx
+          .select({ state: workspaces.lifecycleState })
+          .from(workspaces)
+          .where(eq(workspaces.id, workspaceId))
+          .limit(1);
+        const rebound = row.stripeCustomerId
+          ? await workspaceForCustomer(tx, row.stripeCustomerId)
+          : null;
+        if (workspace?.state !== "active" || rebound === null || rebound !== workspaceId) {
+          // Still tombstoned (or remapped): it stays held. Not a failure.
+          return "still_held" as const;
+        }
+        const event = row.payload as unknown as Stripe.Event;
+        if (!event || typeof event !== "object" || event.id !== id || !event.data?.object) {
+          // No payload producer clears a held row (R-165, gate H1:
+          // `HELD_PAYLOAD_PRODUCERS`), so this is a payload that is not this
+          // event — counted as a failure and paged, never guessed at.
+          throw new Error(`held stripe event ${id} has no replayable payload`);
+        }
+        const receiptContext: StripeReceiptContext = { tierInvoiceAuthority: null };
+        const outcome = await (seams.dispatch ?? DISPATCH_HELD_EVENT)(
+          tx,
+          event,
+          rebound,
+          receiptContext
+        );
+        const [updated] = await tx
+          .update(stripeEvents)
+          .set({
+            outcome,
+            processedAt: await getDbNow(tx),
+            tierInvoiceAuthority: receiptContext.tierInvoiceAuthority,
+          })
+          .where(and(eq(stripeEvents.id, id), eq(stripeEvents.outcome, "held_tombstoned")))
+          .returning({ id: stripeEvents.id });
+        if (!updated) throw new Error(`held stripe event ${id} changed under its row lock`);
+        if (outcome !== "processed") {
+          console.warn(`[stripe-held-replay] ${id} type=${event.type} → ${outcome}`);
+        }
+        return "replayed" as const;
+      });
+      if (settled === "replayed") replayed += 1;
+      else if (settled === "already_settled") alreadySettled += 1;
+      else stillHeld += 1;
+    } catch (error) {
+      failed += 1;
+      // Ids and a class name only — never a payload (D-M1-6).
+      console.warn(
+        `[stripe-held-replay] ${id} → failed (${error instanceof Error ? error.name : "unknown"})`
+      );
+    }
+  }
+  return { replayed, alreadySettled, failed, stillHeld };
+}
+
+/**
+ * The worker's sweep (R-165): every ACTIVE workspace that still has held
+ * rows, NEVER-TRIED FIRST, THEN LEAST RECENTLY TRIED, then oldest money
+ * (R-166). Oldest-first alone let `limit` stuck workspaces — failing, or still
+ * held — take every tick while a newer one waited forever; the attempt marker
+ * (`held_replay_attempted_at`, stamped by every attempt) rotates them instead.
+ * A cancellation whose own replay was lost to a crash, or failed, is finished
+ * here. `stillHeld` here is a workspace that is active yet whose customer no
+ * longer maps to it — the worker pages on it, as it does on
+ * `moneyNeedsOperator`, the rows this sweep pages for the first time
+ * (`pageStripeMoneyNeedingOperator`).
+ */
+export async function replayHeldStripeEventsForActiveWorkspaces(
+  db: DbLike,
+  limit = 20
+): Promise<HeldMoneyReplaySummary & Readonly<{ workspaces: number; moneyNeedsOperator: number }>> {
+  const rows = await db
+    .select({ workspaceId: stripeEvents.workspaceId })
+    .from(stripeEvents)
+    .innerJoin(workspaces, eq(workspaces.id, stripeEvents.workspaceId))
+    .where(
+      and(
+        eq(stripeEvents.outcome, "held_tombstoned"),
+        eq(workspaces.lifecycleState, "active")
+      )
+    )
+    .groupBy(stripeEvents.workspaceId)
+    .orderBy(
+      sql`max(${stripeEvents.heldReplayAttemptedAt}) ASC NULLS FIRST`,
+      sql`min(${stripeEvents.receivedAt})`,
+      asc(stripeEvents.workspaceId)
+    )
+    .limit(limit);
+  const total = {
+    replayed: 0,
+    alreadySettled: 0,
+    failed: 0,
+    stillHeld: 0,
+    workspaces: rows.length,
+    moneyNeedsOperator: await pageStripeMoneyNeedingOperator(db),
+  };
+  for (const { workspaceId } of rows) {
+    if (!workspaceId) continue;
+    const summary = await replayHeldStripeEvents(db, workspaceId);
+    total.replayed += summary.replayed;
+    total.alreadySettled += summary.alreadySettled;
+    total.failed += summary.failed;
+    total.stillHeld += summary.stillHeld;
+  }
+  return total;
+}
+
+/**
+ * Pages each money-needs-operator receipt ONCE (R-166): stamps the unpaged
+ * ones and returns how many it stamped; the worker raises
+ * `deletion_alert_page_money_needs_operator` on a non-zero count. The list
+ * itself never empties on its own — `listStripeMoneyNeedingOperator` is the
+ * operator's view of all of them.
+ */
+export async function pageStripeMoneyNeedingOperator(db: DbLike): Promise<number> {
+  const paged = await db
+    .update(stripeEvents)
+    .set({ moneyNeedsOperatorPagedAt: sql`clock_timestamp()` })
+    .where(and(eq(stripeEvents.moneyNeedsOperator, true), sql`${stripeEvents.moneyNeedsOperatorPagedAt} IS NULL`))
+    .returning({ id: stripeEvents.id });
+  return paged.length;
+}
+
+/** The operator's unresolved-money list: ids, types, outcomes and amounts only — never a payload. */
+export async function listStripeMoneyNeedingOperator(db: DbLike) {
+  return db
+    .select({
+      id: stripeEvents.id,
+      type: stripeEvents.type,
+      outcome: stripeEvents.outcome,
+      refundOwedAmount: stripeEvents.refundOwedAmount,
+      refundOwedCurrency: stripeEvents.refundOwedCurrency,
+      receivedAt: stripeEvents.receivedAt,
+      pagedAt: stripeEvents.moneyNeedsOperatorPagedAt,
+    })
+    .from(stripeEvents)
+    .where(eq(stripeEvents.moneyNeedsOperator, true))
+    .orderBy(asc(stripeEvents.receivedAt), asc(stripeEvents.id));
 }
 
 export async function handleStripeEvent(
@@ -1135,19 +1467,24 @@ function isIdempotencyViolation(err: unknown): boolean {
   return IDEMPOTENCY_CONSTRAINTS.some((c) => message.includes(c));
 }
 
+/**
+ * The handler body. Called ONLY for a workspace that is active under both
+ * locks — by `handleStripeEventInTransaction`, and by the held-money replay
+ * once a cancelled deletion has restored the workspace. A non-active
+ * workspace never reaches here: the caller records `held_tombstoned` or
+ * `ignored` instead (R-165). Before R-165 this function took a boolean
+ * active-workspace flag and returned `ignored` for every event when it was
+ * false, so two later checks of the same flag in the invoice branch were
+ * dead, and a comment there claimed a deleted workspace "may still settle the
+ * exact paid invoice" — it settled nothing.
+ */
 async function dispatch(
   tx: TxLike,
   event: Stripe.Event,
   workspaceId: VerifiedWorkspaceId | null,
-  workspaceActive: boolean,
   options: StripeEventHandlingOptions,
   receiptContext: StripeReceiptContext
 ): Promise<StripeEventOutcome> {
-  if (!workspaceActive) {
-    // The outer handler still appends the immutable Stripe receipt, but a
-    // tombstoned workspace cannot gain credits or mutate billing authority.
-    return "ignored";
-  }
   switch (event.type) {
     case "checkout.session.completed":
     case "checkout.session.async_payment_succeeded": {
@@ -1580,11 +1917,14 @@ async function dispatch(
       // too makes both orders converge on ONE deadline; payment_failed's own
       // "never EXTEND an existing deadline" rule is what keeps it single.
       //
-      // Round 7 narrows the "already has one" test from "a deadline exists" to
-      // "we are still inside the episode it belongs to" (see inheritsGrace) —
-      // otherwise a recovery seen only as `updated → active` left a live
-      // deadline that the NEXT episode inherited, short.
-      const opensGrace = sub.status === "past_due" && !inheritsGrace(mirror, now);
+      // Round 7 narrowed the "already has one" test from "a deadline exists"
+      // to "a live deadline on a dunning mirror", so a recovery seen only as
+      // `updated → active` could not leave the NEXT episode a short deadline.
+      // REG-3 (audit P3-R4, R-159) replaces the liveness test with the episode
+      // marker: `past_due` opens grace only when no episode is open, so a
+      // lapsed deadline inside one unpaid episode is never renewed here.
+      const opensGrace = sub.status === "past_due" && opensDunningEpisode(mirror);
+      const endsEpisode = dunningEndedBy(sub.status, eventAt, mirror);
       const graceDays = opensGrace
         ? (await getActiveConfig(tx)).content.graceDays
         : null;
@@ -1641,7 +1981,19 @@ async function dispatch(
           ...(graceDays !== null
             ? {
                 graceExpiresAt: new Date(now.getTime() + graceDays * 86_400_000),
+                // The episode's start, on Stripe's clock (R-159).
+                dunningStartedAt: eventAt,
               }
+            : {}),
+          // THE ONE CLEAR ON `active`, WATERMARKED BY THE MARKER (R-159). The
+          // round-6 objection recorded above is that `mirrorEventAt` cannot
+          // order a deadline. The marker carries the episode's own time, so an
+          // `active` snapshot newer than it is a genuine recovery and ends the
+          // episode — without this, the next real failure would find a stale
+          // marker and get no grace at all — while an older snapshot fails
+          // `dunningEndedBy` and leaves both standing.
+          ...(endsEpisode
+            ? { dunningStartedAt: null, graceExpiresAt: null }
             : {}),
         })
         .where(eq(subscriptions.workspaceId, workspaceId));
@@ -1970,7 +2322,7 @@ async function dispatch(
             `invoice.paid ${event.id}: fenced workspace already observed subscription ${mirror.tierCheckoutFenceObservedSubscriptionId}, but this paid invoice names ${invoiceSubId}; refusing to hide a possible duplicate subscription`
           );
         }
-        if (!mirror.tierCheckoutFenceObservedSubscriptionId && workspaceActive) {
+        if (!mirror.tierCheckoutFenceObservedSubscriptionId) {
           await tx
             .update(subscriptions)
             .set({
@@ -1982,10 +2334,6 @@ async function dispatch(
             })
             .where(eq(subscriptions.workspaceId, workspaceId));
         }
-        // A deleted workspace may still settle the exact paid invoice that was
-        // already in flight, but must not recreate its billing mirror/fence.
-        // The durable attempt metadata above is sufficient identity authority
-        // for the financial row; only an active workspace may persist the bind.
         boundMirrorSubId = invoiceSubId;
       }
       if (invoiceIsForRetainedDeadGeneration) {
@@ -2205,9 +2553,8 @@ async function dispatch(
       // status never reaches. Asserted both ways in stripe.test.ts rather than
       // claimed here.
       if (
-        workspaceActive &&
         !invoiceIsForRetainedDeadGeneration &&
-        mirror?.graceExpiresAt &&
+        (mirror?.graceExpiresAt || mirror?.dunningStartedAt) &&
         !invoiceIsStale(mirror, event)
       ) {
         const revivable =
@@ -2216,6 +2563,8 @@ async function dispatch(
           .update(subscriptions)
           .set({
             graceExpiresAt: null,
+            // A paid invoice ends the unpaid episode (R-159).
+            dunningStartedAt: null,
             ...(revivable ? { status: "active" } : {}),
           })
           .where(eq(subscriptions.workspaceId, workspaceId));
@@ -2260,21 +2609,25 @@ async function dispatch(
         );
         return "ignored";
       }
-      // Idempotent: a second failure never EXTENDS the LIVE deadline of the
-      // episode it belongs to — but a LAPSED one (billing round-6 CHANGE), or
-      // one left behind by an episode that has since RECOVERED (billing
-      // round-7 NOTE), is not a window to extend; see inheritsGrace.
+      // ONE DEADLINE PER UNPAID EPISODE (audit P3-R4, R-159). A failure
+      // inside an open episode writes `past_due` alone, whether that
+      // episode's deadline is live or has LAPSED — gating on liveness was
+      // REG-3: a third failure after the first deadline lapsed re-opened grace
+      // and kept a non-payer on the paid tier. A NULL marker (the first
+      // failure, or one after a recovery cleared it) opens a fresh `graceDays`
+      // window stamped with Stripe's event time.
       await tx
         .update(subscriptions)
         .set({
           status: "past_due",
-          ...(inheritsGrace(mirror, now)
-            ? {}
-            : {
+          ...(opensDunningEpisode(mirror)
+            ? {
                 graceExpiresAt: new Date(
                   now.getTime() + content.graceDays * 86_400_000
                 ),
-              }),
+                dunningStartedAt: new Date(event.created * 1000),
+              }
+            : {}),
         })
         .where(eq(subscriptions.workspaceId, workspaceId));
       return "processed";

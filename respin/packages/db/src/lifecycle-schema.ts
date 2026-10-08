@@ -194,6 +194,23 @@ export const deletionOperations = pgTable(
     activationContributionState: activationContributionState("activation_contribution_state"),
     activationAppliedAt: timestamp("activation_applied_at", { withTimezone: true }),
     activationReceiptDigest: text("activation_receipt_digest"),
+    // R-166 (gate M4): WHO cancelled — any active owner may (R-162), so the
+    // requester is not the answer. Set in the transaction that reserves the
+    // cancellation's journal plan; scrubbed with the canceller's identity at
+    // erasure, like the requester.
+    cancelledByUserId: uuid("cancelled_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // R-166 (gate M4): the canceller's DIGEST, the way `requester_digest`
+    // records the requester — a receipt fact that outlives the canceller's
+    // identity erasure, which scrubs `cancelled_by_user_id`. Both written in
+    // the transaction that reserves the cancellation's journal plan.
+    cancelledByDigest: text("cancelled_by_digest"),
+    // R-166 (gate Low): the identity operation that CASCADED this workspace
+    // deletion (R-160) — server-owned, never inferred from a client key. No
+    // foreign key: the parent receipt expires on its own one-year clock, and
+    // a child row must not hold it.
+    cascadeParentOperationId: uuid("cascade_parent_operation_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { redirect } from "next/navigation";
 import { BILLING_ERROR_COPY, type BillingErrorCode } from "../app/(product)/billing-errors";
+import { NOT_AN_ID } from "../app/(product)/safe-log";
+import { SPIN_RESULT_EXCLUDED_FIELDS } from "../app/(product)/trends/spin-state";
+// By path: root tests may read `@respin/modes`, the screen may not.
+import { outputTextUnits } from "../packages/modes/src/output";
+import { NOT_PRESENTED_FIELD_PREFIXES } from "../packages/modes/src/claims";
+import { EVERY_SECTION } from "../packages/modes/tests/support/fixtures";
 
 const state = vi.hoisted(() => ({
   requireUser: vi.fn(),
@@ -44,7 +50,13 @@ vi.mock("@respin/db", async (importOriginal) => ({
     untrackNiche: state.untrackNiche,
   },
 }));
-vi.mock("../app/(product)/safe-log", () => ({ logSpend: state.logSpend, logRefusal: state.logRefusal }));
+// PARTIAL: the two log calls are spies, and `wireId` stays the REAL clamp, so
+// what these tests see logged is what production logs (audit P1-A3).
+vi.mock("../app/(product)/safe-log", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../app/(product)/safe-log")>()),
+  logSpend: state.logSpend,
+  logRefusal: state.logRefusal,
+}));
 
 const { pasteReferenceAction, spinAction, trackNicheAction, untrackNicheAction } = await import("../app/(product)/trends/actions");
 const SCOPE = { workspaceId: "ws_1", role: "owner" };
@@ -155,7 +167,23 @@ function usableResult() {
         },
         disclosure: { platform: "Short-form video", guidance: "Say a tool helped draft this, in your own words." },
       },
-      killTest: { outcome: "passed", finalAttempt: { hardRules: [] } },
+      killTest: {
+        outcome: "passed",
+        attempts: 1,
+        rewritten: false,
+        creatorRulesScored: false,
+        creatorRuleVerdicts: [],
+        traceabilityLimitNote: "LIMIT-NOTE",
+        finalAttempt: {
+          hardRules: [],
+          traceability: [],
+          claims: [
+            { family: "certainty", enforcement: "flag", token: "guarantee", field: "/caption/text", unit: "Nobody but you can guarantee it lands." },
+            // A disclosure-section finding is stored and never projected.
+            { family: "concealment", enforcement: "flag", token: "skip the label", field: "/disclosure/guidance", unit: "SENTINEL-DISCLOSURE-UNIT" },
+          ],
+        },
+      },
     },
     creditsChargedNow: 2,
     balanceAfter: 8,
@@ -214,23 +242,81 @@ function spinForm() {
 }
 
 describe("Trends Spin action projection (REQ-I04 / REQ-I05 / no candidate on refusal)", () => {
-  it("a usable run carries the weakest point and disclosure guidance, and never the rationale", async () => {
+  it("a usable run carries the weakest point, the disclosure KIND and the checks' findings — never the model's disclosure prose", async () => {
     state.generate.mockResolvedValue(usableResult());
     const result = await spinAction("profile_a", { status: "idle" }, spinForm());
     expect(result).toEqual({
       status: "result",
+      // EVERY PRESENTED FIELD but the weakest point, which renders on its own
+      // (audit Phase 2, P2-R6; R-172 put the rationale back: one refusal-scope
+      // authority, so the screen shows what the refusal scope covers).
       spinResult: [
         "Your own thesis, stated plainly",
+        "the footage supports it",
         "A fresh hook in your own words",
+        "contradiction",
         "open on the take that failed",
         "A caption in your own words.",
+        "filmmaking",
+        "SENTINEL-RATIONALE the model's own performance story",
       ].join("\n"),
       weakestPoint: "None of this has been checked against your own audience.",
-      disclosureGuidance: "Say a tool helped draft this, in your own words.",
+      // R-121, audit P1-R1: the fixture's model disclosure (the INPUT above)
+      // does not cross; the state carries the facade's kind and nothing else.
+      disclosure: { kind: "policy_check_required" },
+      killTest: {
+        outcome: "passed",
+        attempts: 1,
+        rewritten: false,
+        creatorRulesScored: false,
+        verdicts: [],
+        limitNote: "LIMIT-NOTE",
+        traceability: [],
+        claims: [{ family: "certainty", enforcement: "flag", token: "guarantee", field: "/caption/text", unit: "Nobody but you can guarantee it lands." }],
+      },
       chargedCredits: 2,
     });
-    expect(JSON.stringify(result)).not.toContain("SENTINEL-RATIONALE");
+    expect(JSON.stringify(result)).not.toContain("SENTINEL-DISCLOSURE-UNIT");
+    expect(JSON.stringify(result)).not.toContain("Say a tool helped draft this");
     expect(result).not.toHaveProperty("reasoning");
+  });
+
+  it("the rendered field set EQUALS outputTextUnits minus the facade's exclusions minus the surface's list (P2-R6)", async () => {
+    // A document carrying EVERY section, each text unique to its pointer, so
+    // the rendered lines map back to fields one to one. Root tests may import
+    // `@respin/modes`; the screen may not, which is why the screen consumes
+    // the facade's `presentedTextUnits` and this test checks it against the
+    // package's own population.
+    const doc = JSON.parse(JSON.stringify(EVERY_SECTION)) as Record<string, unknown>;
+    const units = outputTextUnits(doc as unknown as Parameters<typeof outputTextUnits>[0]);
+    const tagged = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+    for (const u of units) {
+      const path = u.field.split("/").slice(1);
+      let node = tagged as Record<string, unknown>;
+      for (const key of path.slice(0, -1)) node = node[key] as Record<string, unknown>;
+      node[path[path.length - 1]] = "TEXT" + u.field;
+    }
+    const base = usableResult();
+    state.generate.mockResolvedValue({ ...base, run: { ...base.run, output: tagged } });
+    const result = await spinAction("profile_a", { status: "idle" }, spinForm());
+    if (result.status !== "result") throw new Error("expected a result");
+    const rendered = result.spinResult.split("\n").map((l) => l.replace(/^TEXT/, ""));
+    const expected = units
+      .map((u) => u.field)
+      .filter((f) => !NOT_PRESENTED_FIELD_PREFIXES.some((p) => f.startsWith(p)))
+      .filter((f) => !Object.hasOwn(SPIN_RESULT_EXCLUDED_FIELDS, f));
+    expect(rendered).toEqual(expected);
+    // NON-VACUITY: the old list's absences are now present.
+    for (const f of ["/framework/name", "/shotMap/0/note", "/onScreenText/0/text", "/caption/hashtags/0", "/hooks/0/mechanic"]) {
+      expect(rendered, f).toContain(f);
+    }
+    // R-172: the screen renders exactly the presented scope — the draft block
+    // plus the weakest point under its own heading.
+    expect(rendered).toContain("/whyThisPerforms/reasoning");
+    expect([...rendered, "/whyThisPerforms/weakestPoint"].sort()).toEqual(
+      units.map((u) => u.field).filter((f) => !NOT_PRESENTED_FIELD_PREFIXES.some((p) => f.startsWith(p))).sort()
+    );
+    expect(rendered).not.toContain("/disclosure/guidance");
   });
 
   it("a non-similarity refusal carries rule ids, static remedies and the sharper angle — never candidate text", async () => {
@@ -291,6 +377,51 @@ describe("Trends Spin action projection (REQ-I04 / REQ-I05 / no candidate on ref
       ],
     });
     expect(JSON.stringify(result)).not.toContain(SENTINEL);
+  });
+
+  it("audit P3-A2: THREE outcomes on `replayed` alone — a replay charged nothing; `replayed: false, run: null` is a settled held draft that CHARGED", async () => {
+    const base = { ...usableResult(), run: null };
+    state.generate.mockResolvedValue({ ...base, replayed: true, creditsChargedNow: 0, balanceAfter: 9 });
+    expect(await spinAction("profile_a", { status: "idle" }, spinForm())).toEqual({ status: "replayed", balanceAfter: 9 });
+    state.generate.mockResolvedValue({ ...base, replayed: false, creditsChargedNow: 3, balanceAfter: 6 });
+    const settled = await spinAction("profile_a", { status: "idle" }, spinForm());
+    expect(settled).toEqual({ status: "settled_held", chargedCredits: 3, balanceAfter: 6 });
+    // PLANTED: the pre-fix predicate (`replayed || run === null`) would have
+    // answered "replayed" — no charge — for the same result.
+    const inverted = (r: { replayed: boolean; run: unknown }) => (r.replayed || r.run === null ? "replayed" : "other");
+    expect(inverted({ replayed: false, run: null })).toBe("replayed");
+    expect(settled.status).not.toBe("replayed");
+  });
+
+  // EVERY HELD REASON THAT CAN REACH THIS ACTION, BY LIST (audit Phase 3
+  // gate, 2026-10-06): `generate` throws `GenerationHeldError` with exactly
+  // the three `GenerationHeldReason` values (`heldReasonOf`), on any mode, so
+  // all three reach the Spin. The real `logRefusal` maps each one here, and
+  // the state carries the held copy, never "could not be started".
+  const HELD_REASONS = [
+    ["paused", "generation_held_paused"],
+    ["insufficient_balance", "generation_held_balance"],
+    ["transient", "generation_held_transient"],
+  ] as const;
+  it.each(HELD_REASONS)("a HELD Spin (%s) returns %s with the held copy — the draft is stored, and where to finish it", async (reason, code) => {
+    const real = await vi.importActual<typeof import("../app/(product)/safe-log")>("../app/(product)/safe-log");
+    state.logRefusal.mockImplementation(real.logRefusal);
+    const { GenerationHeldError } = await import("@respin/credits/app-server");
+    state.generate.mockRejectedValue(new GenerationHeldError("attempt-held", reason, new Date()));
+    const result = await spinAction("profile_a", { status: "idle" }, spinForm());
+    expect(result).toEqual({ status: "refused", code, copy: BILLING_ERROR_COPY[code] });
+    if (result.status !== "refused") throw new Error("unreached");
+    expect(result.copy.detail).toMatch(/Held drafts on Studio/);
+    expect(result.copy.detail).toMatch(/Finish this draft/);
+    expect(result.copy.detail).toMatch(/24 hours/);
+  });
+
+  it("a refusal code the map does not know is clamped to `unknown`, so the copy lookup is total", async () => {
+    state.logRefusal.mockReturnValue("not_a_code");
+    state.generate.mockRejectedValue(new Error("boom"));
+    expect(await spinAction("profile_a", { status: "idle" }, spinForm())).toEqual({
+      status: "refused", code: "unknown", copy: BILLING_ERROR_COPY.unknown,
+    });
   });
 
   it("a near-copy refusal still takes its own branch and carries no reasons or excerpt", async () => {
@@ -563,7 +694,9 @@ function refused(code: BillingErrorCode, field?: string) {
     expect(state.logSpend).toHaveBeenCalledWith(
       "[trends-paste] reference queued",
       {
-        workspaceId: SCOPE.workspaceId, profileId: "profile_a",
+        // The bound `profileId` is WIRE input and is clamped (audit P1-A3):
+        // "profile_a" is not an id shape, so the log carries the fixed token.
+        workspaceId: SCOPE.workspaceId, profileId: NOT_AN_ID,
         referenceInputId: "input_1", itemId: "item_1", claimId: "claim_1", claimStatus: "pending",
         creditsChargedNow: 4, balanceAfter: 16, configVersion: 3,
       }

@@ -36,7 +36,9 @@ import { eq } from "drizzle-orm";
 import type { RespinConfigV1 } from "@respin/config";
 import {
   LlmError,
+  LlmInputTooLargeError,
   LlmTruncatedError,
+  assertInputWithinCeiling,
   ModelPriceUnknownError,
   costMicroUsd,
   priceFor,
@@ -46,6 +48,7 @@ import {
 import {
   GenerationAssemblyError,
   KillTestError,
+  NOT_PRESENTED_FIELD_PREFIXES,
   ScriptOutputError,
   SpinSimilarityError,
   assembleGenerationPrompt,
@@ -53,7 +56,7 @@ import {
   type GenerationRun,
 } from "@respin/modes";
 import { withDeadline } from "../inference";
-import { presentedTextUnits, type PresentedDisclosure } from "../presented-output";
+import { presentedDisclosure, presentedTextUnits, type PresentedDisclosure } from "../presented-output";
 import { loadSampleSpinFixture, sampleSpinContext, type SampleSpinFixture } from "./fixture";
 import { parseSampleSpinIdea, type SampleSpinIdea, type Untrusted } from "./idea";
 
@@ -152,6 +155,14 @@ export type SampleSpinAccepted = Readonly<{
   /** Every creator-facing unit of the accepted Spin: the gate's inputs minus the model-authored disclosure (ignored, R-121) and the weakest point, which travels once on its own field. */
   spin: readonly Readonly<{ field: string; text: string }>[];
   weakestPoint: string;
+  /**
+   * Every claim flag on a presented unit (audit Phase 2 gate, R-172): the
+   * claim scan's flag-level findings, minus the model's disclosure section
+   * (not presented). A claim the analysis could not decide is flagged, never
+   * refused, so it is shown here as it is on `/studio`. The `unit` is text
+   * from a unit already in `spin` or `weakestPoint`.
+   */
+  claimFlags: readonly Readonly<{ family: string; token: string; field: string; unit: string }>[];
   /** Fixture rule ids the gate evidence says the accepted draft satisfied, with their text. */
   highlightedRules: readonly Readonly<{ id: string; text: string }>[];
   /** Deterministic and neutral until 10c's dated platform registry replaces it. */
@@ -238,15 +249,21 @@ export async function runPublicSampleSpin(deps: SampleSpinDeps, input: SampleSpi
   // 2. Assemble and bound BEFORE any money moves or any vendor is touched.
   const fixture = loadSampleSpinFixture();
   const context = sampleSpinContext(fixture, idea.idea);
+  // THE SHARED INPUT CEILING (audit P3-R2, R-158), at `min(config, the
+  // compiled R-123 ceiling)` — config may only tighten the public path. The
+  // throw is CAUGHT here and returned as the existing closed reason, so the
+  // refusal set a visitor can receive is unchanged.
+  const draftCeiling = Math.min(deps.content.llm.maxInputTokens, SAMPLE_SPIN_DRAFT_MAX_INPUT_TOKENS);
+  const scoreCeiling = Math.min(deps.content.llm.maxInputTokens, SAMPLE_SPIN_SCORE_MAX_INPUT_TOKENS);
   let draftPrompt: AssembledPrompt;
   try {
     draftPrompt = assembleGenerationPrompt({ mode: "analyseAndSpin", context });
+    assertInputWithinCeiling(draftPrompt, draftCeiling);
   } catch (error) {
-    if (error instanceof GenerationAssemblyError) return refused(requestId, "prompt_too_large");
+    if (error instanceof GenerationAssemblyError || error instanceof LlmInputTooLargeError) {
+      return refused(requestId, "prompt_too_large");
+    }
     throw error;
-  }
-  if (tokenUpperBound(draftPrompt.system + draftPrompt.prompt) > SAMPLE_SPIN_DRAFT_MAX_INPUT_TOKENS) {
-    return refused(requestId, "prompt_too_large");
   }
   const now = deps.now();
   const businessDate = utcBusinessDate(now);
@@ -281,8 +298,18 @@ export async function runPublicSampleSpin(deps: SampleSpinDeps, input: SampleSpi
     if (facts.length >= PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX) {
       throw new SampleSpinInvariantError(`a ${PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX + 1}th vendor call was requested`);
     }
-    if (tokenUpperBound(prompt.system + prompt.prompt) > maxInput) {
-      throw new SampleSpinBoundError("a later prompt exceeded its input bound");
+    // THE SECOND FENCE (audit P3-R2). The shared check honours the
+    // producer's exempt parts, so the rewrite and the scoring prompt are
+    // bounded on their creator-side parts only — a long ADMITTED draft is no
+    // longer refused here after it was paid for. Re-thrown as the bound error
+    // `classifyFailure` already maps.
+    try {
+      assertInputWithinCeiling(prompt, maxInput);
+    } catch (error) {
+      if (error instanceof LlmInputTooLargeError) {
+        throw new SampleSpinBoundError("a later prompt exceeded its input bound");
+      }
+      throw error;
     }
     const price = priceFor(deps.content.llm.prices, model);
     // The fact is appended BEFORE the call resolves, as an unknown; a
@@ -335,8 +362,8 @@ export async function runPublicSampleSpin(deps: SampleSpinDeps, input: SampleSpi
       context,
       creatorRules: fixture.creatorRules,
       spinSimilarity: { reference: fixture.gate, configuredStrictness: deps.content.similarity.strictness },
-      generate: (prompt) => metered(prompt, generationModel, SAMPLE_SPIN_DRAFT_MAX_INPUT_TOKENS, draftOutputCap),
-      scoreCreatorRules: (prompt) => metered(prompt, scoringModel, SAMPLE_SPIN_SCORE_MAX_INPUT_TOKENS, SAMPLE_SPIN_SCORE_MAX_OUTPUT_TOKENS),
+      generate: (prompt) => metered(prompt, generationModel, draftCeiling, draftOutputCap),
+      scoreCreatorRules: (prompt) => metered(prompt, scoringModel, scoreCeiling, SAMPLE_SPIN_SCORE_MAX_OUTPUT_TOKENS),
     });
   } catch (error) {
     failure = classifyFailure(error);
@@ -380,10 +407,15 @@ export async function runPublicSampleSpin(deps: SampleSpinDeps, input: SampleSpi
       (unit) => unit.field !== "/whyThisPerforms/weakestPoint"
     ),
     weakestPoint: run.output.whyThisPerforms.weakestPoint,
+    claimFlags: run.killTest.finalAttempt.claims
+      .filter((c) => !NOT_PRESENTED_FIELD_PREFIXES.some((prefix) => c.field.startsWith(prefix)))
+      .map((c) => ({ family: c.family, token: c.token, field: c.field, unit: c.unit })),
     highlightedRules: fixture.creatorRules
       .filter((rule) => passed.has(rule.id))
       .map((rule) => ({ id: rule.id, text: rule.text })),
-    disclosure: { kind: "policy_check_required" },
+    // The one owner of the R-121 substitution, shared with `/studio` and
+    // `/trends` (P1-R1); `sample-spin-spend.test.ts` pins its shape unchanged.
+    disclosure: presentedDisclosure(),
     versions: {
       fixture: fixture.version,
       promptBundle: run.promptBundleVersion,

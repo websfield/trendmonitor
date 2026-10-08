@@ -18,7 +18,7 @@
 import {
   assertJournalConfig,
   journalPurgeCandidates,
-  listJournalOperationIds,
+  listJournalOperations,
   loadJournalChain,
   type DeletionJournalConfig,
 } from "@respin/db";
@@ -27,6 +27,7 @@ import {
   s3JournalPurger,
   s3JournalVerifier,
 } from "@respin/db/deletion-journal-s3";
+import { isEntrypoint } from "./entrypoint";
 
 function configFromEnv(
   env: Readonly<Record<string, string | undefined>>
@@ -42,23 +43,49 @@ function configFromEnv(
   return assertJournalConfig({ bucket, region, environment });
 }
 
+/**
+ * What `main` reads and deletes through. The command line never passes this:
+ * it builds the real S3 verifier and purger from the environment.
+ * `tests/journal-purge.test.ts` passes the in-memory fake's, the same seam
+ * `restore-verify.ts` has, so the exit codes and the never-purged unparseable
+ * key are witnessed rather than described. Both types are derived from
+ * functions this script already imports, so the operator-script import
+ * allowlist does not widen.
+ */
+export type JournalPurgeDeps = Readonly<{
+  verifier?: Parameters<typeof loadJournalChain>[0];
+  purger?: ReturnType<typeof s3JournalPurger>;
+}>;
+
 export async function main(
   argv: readonly string[],
   env: Readonly<Record<string, string | undefined>>,
-  now: Date
+  now: Date,
+  deps: JournalPurgeDeps = {}
 ): Promise<number> {
   const apply = argv.includes("--apply");
   const config = configFromEnv(env);
-  const client = createS3JournalClient({
-    region: config.region,
-    ...(env.RESPIN_DELETION_JOURNAL_ENDPOINT
-      ? { endpoint: env.RESPIN_DELETION_JOURNAL_ENDPOINT }
-      : {}),
-  });
-  const verifier = s3JournalVerifier(client);
-  const purger = s3JournalPurger(client);
+  const client =
+    deps.verifier && deps.purger
+      ? null
+      : createS3JournalClient({
+          region: config.region,
+          ...(env.RESPIN_DELETION_JOURNAL_ENDPOINT
+            ? { endpoint: env.RESPIN_DELETION_JOURNAL_ENDPOINT }
+            : {}),
+        });
+  const verifier = deps.verifier ?? s3JournalVerifier(client!);
+  const purger = deps.purger ?? s3JournalPurger(client!);
 
-  const operationIds = await listJournalOperationIds(verifier, config);
+  const listing = await listJournalOperations(verifier, config);
+  const operationIds = listing.operationIds;
+  // A key the listing cannot parse belongs to no chain this script can verify,
+  // so it is never a purge candidate — and it is never silent either: each one
+  // is named here and the run exits 2 (register 2026-10-05 item 44). The
+  // remedy is the one `restore-verify.ts` prints for the same key.
+  for (const key of listing.unparseableKeys) {
+    process.stdout.write(`UNPARSEABLE ${key} — not a {environment}/deletion-journal/{operationId}/{version}.json key, so it is never purged here; find what wrote it and stop that writer, then delete its versions by versionId once their COMPLIANCE lock has expired\n`);
+  }
   let expired = 0;
   let deleted = 0;
   let blocked = 0;
@@ -108,17 +135,19 @@ export async function main(
   }
 
   process.stdout.write(
-    `\noperations=${operationIds.length} expired_versions=${expired} deleted=${deleted} refused=${refused} unknown=${unknown} blocked_chains=${blocked} mode=${apply ? "apply" : "dry-run"}\n`
+    `\noperations=${operationIds.length} unparseable_keys=${listing.unparseableKeys.length} expired_versions=${expired} deleted=${deleted} refused=${refused} unknown=${unknown} blocked_chains=${blocked} mode=${apply ? "apply" : "dry-run"}\n`
   );
-  // Three outcomes must not pass silently. A blocked chain means the journal is
+  // Four outcomes must not pass silently. A blocked chain means the journal is
   // not trustworthy. A refusal means the purge principal cannot do its job — an
   // IAM drift, say — so day-28 removal is quietly not happening. An unknown
   // means a delete may or may not have landed. Round 1 caught this exiting 0
-  // after every single delete had been refused (code CHANGE 11).
-  return blocked > 0 || refused > 0 || unknown > 0 ? 2 : 0;
+  // after every single delete had been refused (code CHANGE 11). An
+  // unparseable key is an object this script will never purge.
+  return blocked > 0 || refused > 0 || unknown > 0 || listing.unparseableKeys.length > 0 ? 2 : 0;
 }
 
-if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"))) {
+// Resolved paths, not URL-suffix matching: see ./entrypoint.ts (R-155).
+if (isEntrypoint(import.meta.url, process.argv[1])) {
   void main(process.argv.slice(2), process.env, new Date()).then(
     (code) => {
       process.exitCode = code;

@@ -63,6 +63,14 @@ export function isAdminPath(pathname: string): boolean {
  * here, which `tests/deletion-recover-route.test.ts` asserts.
  */
 export const RECOVER_DELETION_PATH = "/recover-deletion";
+/**
+ * R-166 (gate security Low): the identity-cancellation status receipt rides a
+ * short-lived cookie scoped to the recovery page, not the URL. Set by
+ * `POST /api/deletion/recover`, read by `/recover-deletion`; both import this.
+ */
+export const RECOVERY_RECEIPT_COOKIE = "respin_recovery_receipt";
+/** The receipt's own lifetime (ten minutes, R-162); the cookie never outlives it. */
+export const RECOVERY_RECEIPT_COOKIE_MAX_AGE_SECONDS = 600;
 
 /** The recovery link put in the mail. Built here so a test can hold it. */
 export function recoverDeletionUrl(base: string, operationId: string, secret: string): string {

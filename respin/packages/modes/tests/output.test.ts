@@ -17,12 +17,31 @@ import {
 } from "../src/modes";
 import {
   ScriptOutputError,
+  V2_SECTION_KEYS,
   assertUniversalSections,
+  outputTextPointers,
   outputTextUnits,
   parseScriptOutput,
+  pointerMatches,
+  readStoredScriptOutput,
+  renderDraft,
+  type OutputContract,
   type ScriptOutput,
 } from "../src/output";
+import { stampServerChecks } from "../src/mode-checks";
 import { CLEAN_HOOKS, EVERY_SECTION, asReply } from "./support/fixtures";
+import {
+  IDEATION_OUTPUT,
+  IDEATION_V2_MIXED,
+  NO_LIMITS,
+  OUTPUT_FOR,
+  REAL_EXCERPT,
+  SCRIPT_OUTPUT,
+  SOLO_KITCHEN_FILMING,
+  ideationV2,
+  premiseFor,
+  scriptV2,
+} from "./support/mode-fixtures";
 
 const parseHooks = (doc: unknown) =>
   parseScriptOutput({ text: asReply(doc), mode: "hooks" });
@@ -312,5 +331,348 @@ describe("the text population covers every section (CLAUDE.md 2026-08-29)", () =
   it("yields nothing for absent sections", () => {
     const units = outputTextUnits(parseHooks(CLEAN_HOOKS));
     expect(units.some((u) => u.field.startsWith("/beats"))).toBe(false);
+  });
+});
+
+// ------------------------------------------- OUTPUT CONTRACT v2 (R-148, L1)
+//
+// THE LEGACY/NEW ROUND TRIPS. A stored v1 document still reads as v1; a stored
+// document with NO version is never read as v2 (it carries v2 keys the strict v1
+// schema refuses); the model can never author the version; and a v2 document
+// survives its own jsonb round trip through the stored reader unchanged.
+
+const V2_AUTO = { version: 2, requestedForm: "auto" } as const;
+const parseV2 = (mode: ModeId, doc: unknown, contract: OutputContract = V2_AUTO) =>
+  parseScriptOutput({ text: asReply(doc), mode, contract });
+/** What a stored document looks like after a `jsonb` round trip. */
+const roundTrip = (doc: unknown): unknown => JSON.parse(JSON.stringify(doc));
+
+/** A parsed v2 output AS THE PIPELINE STORES IT: with the server's checks stamped. */
+const stamped = (output: ScriptOutput) => {
+  if (output.contractVersion !== 2) throw new Error("expected v2");
+  return stampServerChecks(output, NO_LIMITS);
+};
+
+describe("output contract v2: the server stamps the version, the model never does", () => {
+  it("a v2 concept batch parses and is STAMPED with the version and the requested form", () => {
+    const out = parseV2("ideation", IDEATION_V2_MIXED);
+    expect(out.contractVersion).toBe(2);
+    expect(out.requestedForm).toBe("auto");
+    if (out.contractVersion !== 2) throw new Error("narrowing");
+    expect(out.ideas?.map((i) => i.form)).toEqual([
+      "personal_story_observation",
+      "explain_opinion",
+      "demonstration_experiment",
+    ]);
+    expect(out.ideas?.[0].premise.basis).toEqual({
+      kind: "material",
+      excerpt: REAL_EXCERPT,
+    });
+  });
+
+  it("a reply that states the version itself is REFUSED — the stamp is the server's", () => {
+    expect(() =>
+      parseV2("ideation", { ...IDEATION_V2_MIXED, contractVersion: 2 })
+    ).toThrow(ScriptOutputError);
+    expect(() =>
+      parseV2("ideation", { ...IDEATION_V2_MIXED, requestedForm: "auto" })
+    ).toThrow(ScriptOutputError);
+  });
+
+  it("the stamp is the CONTRACT's form, not anything in the reply", () => {
+    const out = parseV2("ideation", ideationV2(["explain_opinion"]), {
+      version: 2,
+      requestedForm: "explain_opinion",
+    });
+    expect(out.requestedForm).toBe("explain_opinion");
+  });
+
+  it("a v2 reply parsed under the LEGACY contract is refused, never read as v1", () => {
+    // The default contract is v1, so a caller that forgets the contract gets a
+    // refusal — the safe direction `parseScriptOutput`'s docblock names.
+    expect(() =>
+      parseScriptOutput({ text: asReply(IDEATION_V2_MIXED), mode: "ideation" })
+    ).toThrow(ScriptOutputError);
+  });
+
+  it("a legacy reply parsed under v2 is refused — a concept with no premise is not v2", () => {
+    expect(() => parseV2("ideation", IDEATION_OUTPUT)).toThrow(ScriptOutputError);
+  });
+
+  it("a mode outside CREATIVE_FORM_MODES has no v2 contract at all", () => {
+    expect(() => parseV2("hooks", CLEAN_HOOKS)).toThrow(/no version-2 output contract/);
+  });
+
+  it("'Choose for me' resolves only to the three supported forms — anything else is refused at parse", () => {
+    const widened = {
+      ...IDEATION_V2_MIXED,
+      ideas: IDEATION_V2_MIXED.ideas.map((idea, i) =>
+        i === 0 ? { ...idea, form: "silent_asmr" } : idea
+      ),
+    };
+    expect(() => parseV2("ideation", widened)).toThrow(ScriptOutputError);
+  });
+
+  it("a v2 script requires its own form, premise and filming plan, and a concept batch forbids them at the top", () => {
+    const script = scriptV2("explain_opinion");
+    expect(parseV2("ideaToScript", script).contractVersion).toBe(2);
+    for (const key of ["form", "premise", "filming"]) {
+      expect(() =>
+        parseV2("ideaToScript", without(script as Record<string, unknown>, key))
+      ).toThrow(ScriptOutputError);
+    }
+    expect(() =>
+      parseV2("ideation", { ...IDEATION_V2_MIXED, premise: premiseFor("explain_opinion") })
+    ).toThrow(/on each idea/);
+  });
+
+  it("the pivot beat names its kind, and no other beat does", () => {
+    const script = scriptV2("demonstration_experiment");
+    const unnamed = {
+      ...script,
+      beats: script.beats.map((b) => ({ atSeconds: b.atSeconds, vo: b.vo, isTurn: b.isTurn })),
+    };
+    expect(() => parseV2("ideaToScript", unnamed)).toThrow(/turn or the reveal/);
+    const stray = {
+      ...script,
+      beats: script.beats.map((b, i) => (i === 0 ? { ...b, pivot: "turn" } : b)),
+    };
+    expect(() => parseV2("ideaToScript", stray)).toThrow(/exactly one pivot/);
+  });
+
+  it("a framework section without provenance is not a v2 framework", () => {
+    const script = scriptV2("explain_opinion");
+    expect(() =>
+      parseV2("ideaToScript", { ...script, framework: SCRIPT_OUTPUT.framework })
+    ).toThrow(ScriptOutputError);
+  });
+});
+
+describe("output contract v2: the STORED reader and the legacy reading", () => {
+  it("a stored LEGACY output (no version) still reads, as legacy, for every mode", () => {
+    for (const mode of MODE_IDS) {
+      const out = readStoredScriptOutput({ value: roundTrip(OUTPUT_FOR[mode]), mode });
+      expect(out.contractVersion, mode).toBeUndefined();
+    }
+  });
+
+  it("an UNVERSIONED output carrying v2 fields is NEVER read as v2 — it is refused", () => {
+    // The document a v2 reply would be BEFORE the server stamped it. With no
+    // version it is legacy by definition, and the legacy schema refuses it.
+    expect(() =>
+      readStoredScriptOutput({ value: roundTrip(IDEATION_V2_MIXED), mode: "ideation" })
+    ).toThrow(ScriptOutputError);
+    expect(() =>
+      readStoredScriptOutput({ value: roundTrip(scriptV2("explain_opinion")), mode: "ideaToScript" })
+    ).toThrow(ScriptOutputError);
+  });
+
+  it("a stored v2 output survives its jsonb round trip unchanged, stamp and server checks included", () => {
+    const parsed = stamped(parseV2("ideation", IDEATION_V2_MIXED));
+    const back = readStoredScriptOutput({ value: roundTrip(parsed), mode: "ideation" });
+    expect(back).toEqual(parsed);
+    const script = stamped(
+      parseV2("ideaToScript", scriptV2("personal_story_observation"), {
+        version: 2,
+        requestedForm: "personal_story_observation",
+      })
+    );
+    expect(readStoredScriptOutput({ value: roundTrip(script), mode: "ideaToScript" })).toEqual(script);
+  });
+
+  it("renderDraft shows the server's decisions as [check] on exactly the flagged units — and the stored text stays unmarked", () => {
+    const doc = ideationV2(["explain_opinion"]);
+    doc.ideas[0] = { ...doc.ideas[0], filming: { ...doc.ideas[0].filming, equipment: ["phone", "ring light"] } };
+    const parsed = parseV2("ideation", doc);
+    if (parsed.contractVersion !== 2) throw new Error("expected v2");
+    const out = stampServerChecks(parsed, { ...NO_LIMITS, equipment: ["phone"], locations: ["kitchen"] });
+    const draft = renderDraft(out);
+    expect(draft).toContain("/ideas/0/filming/equipment/1: ring light [check]");
+    expect(draft).toContain("/ideas/0/filming/equipment/0: phone\n");
+    expect(draft).toContain("/ideas/0/filming/location: kitchen\n");
+    // EXACTLY the one flagged item: the declared phone and kitchen in every
+    // concept, and this batch's explanations carry no marker of their own.
+    expect(draft.match(/\[check\]/g)?.length).toBe(1);
+    expect(JSON.stringify(out.ideas)).not.toContain("ring light [check]");
+  });
+
+  it("THE SERVER'S CHECKS ARE SERVER-OWNED (R-150 point 2): a reply cannot state them, and a stored v2 output must carry ones that fit", () => {
+    // A reply that tries to author the decision is refused, like a reply that
+    // states its own version.
+    expect(() =>
+      parseV2("ideation", {
+        ...IDEATION_V2_MIXED,
+        serverChecks: { filming: [], shotMap: [] },
+      })
+    ).toThrow(ScriptOutputError);
+    const good = roundTrip(stamped(parseV2("ideation", IDEATION_V2_MIXED))) as Record<string, unknown>;
+    const checks = good.serverChecks as { filming: { at: string; location: boolean; equipment: number[] }[]; shotMap: number[] };
+    // Absent: a document this build did not write.
+    expect(() =>
+      readStoredScriptOutput({ value: without(good, "serverChecks"), mode: "ideation" })
+    ).toThrow(/server checks/);
+    // Mis-shaped, extra keys, an index past the list it marks, a plan out of
+    // order, one plan too few: each refused.
+    for (const bad of [
+      { ...checks, filming: "all" },
+      { ...checks, extra: true },
+      { ...checks, filming: checks.filming.map((e, i) => (i === 0 ? { ...e, equipment: [9] } : e)) },
+      { ...checks, filming: [...checks.filming].reverse() },
+      { ...checks, filming: checks.filming.slice(1) },
+      { ...checks, shotMap: [0] },
+      { ...checks, shotMap: [{ index: 0, shot: true, note: false }] },
+      { ...checks, filming: checks.filming.map((e) => ({ ...e, location: "yes" })) },
+    ]) {
+      expect(
+        () => readStoredScriptOutput({ value: { ...good, serverChecks: bad }, mode: "ideation" }),
+        JSON.stringify(bad)
+      ).toThrow(ScriptOutputError);
+    }
+    // A SHOT-MAP entry is per line and per field: one past the list, or two
+    // for the same line, is not a decision this build wrote.
+    const script = roundTrip(
+      stamped(parseV2("ideaToScript", scriptV2("explain_opinion"), { version: 2, requestedForm: "explain_opinion" }))
+    ) as Record<string, unknown>;
+    const scriptChecks = script.serverChecks as Record<string, unknown>;
+    expect(() => readStoredScriptOutput({ value: script, mode: "ideaToScript" })).not.toThrow();
+    for (const shotMap of [
+      [{ index: 0, shot: true, note: false }, { index: 0, shot: false, note: true }],
+      [{ index: 2, shot: true, note: false }],
+      [{ index: 0, shot: true }],
+    ]) {
+      expect(
+        () => readStoredScriptOutput({ value: { ...script, serverChecks: { ...scriptChecks, shotMap } }, mode: "ideaToScript" }),
+        JSON.stringify(shotMap)
+      ).toThrow(ScriptOutputError);
+    }
+    // A LEGACY output is untouched: it carries none, and none is asked of it.
+    expect(() =>
+      readStoredScriptOutput({ value: roundTrip(IDEATION_OUTPUT), mode: "ideation" })
+    ).not.toThrow();
+  });
+
+  it("a stored version this build does not know is refused, and so is a version 1 written out loud", () => {
+    const parsed = roundTrip(parseV2("ideation", IDEATION_V2_MIXED)) as Record<string, unknown>;
+    expect(() =>
+      readStoredScriptOutput({ value: { ...parsed, contractVersion: 3 }, mode: "ideation" })
+    ).toThrow(/does not read/);
+    // ONLY ABSENCE means legacy: an explicit `1` is a document this product
+    // never writes, and it is refused rather than read.
+    expect(() =>
+      readStoredScriptOutput({
+        value: { ...(roundTrip(IDEATION_OUTPUT) as object), contractVersion: 1 },
+        mode: "ideation",
+      })
+    ).toThrow(ScriptOutputError);
+  });
+
+  it("a stored v2 output must name a requested form this product offers", () => {
+    const parsed = roundTrip(parseV2("ideation", IDEATION_V2_MIXED)) as Record<string, unknown>;
+    expect(() =>
+      readStoredScriptOutput({ value: { ...parsed, requestedForm: "silent_asmr" }, mode: "ideation" })
+    ).toThrow(/requested/);
+    expect(() =>
+      readStoredScriptOutput({ value: without(parsed, "requestedForm"), mode: "ideation" })
+    ).toThrow(/requested/);
+  });
+
+  it("a stored v2 output in a mode with no v2 contract is refused", () => {
+    expect(() =>
+      readStoredScriptOutput({
+        value: { ...(roundTrip(CLEAN_HOOKS) as object), contractVersion: 2, requestedForm: "auto" },
+        mode: "hooks",
+      })
+    ).toThrow(ScriptOutputError);
+  });
+});
+
+describe("the text population is derived from the schema at FIELD granularity (audit Phase 2, P2-R5)", () => {
+  // `SECTION_TEXT` makes a new section a compile error; a new `line()` INSIDE
+  // a section was a silent hole in the kill test, the traceability scan, the
+  // similarity gate and `renderDraft`. The expected set is now computed from
+  // the schemas' string leaves and asserted EQUAL — two-way — to what
+  // `outputTextUnits` yields on a full document of each contract.
+  const normalise = (field: string) => field.replace(/\/\d+(?=\/|$)/g, "/*");
+  const FULL_V1 = EVERY_SECTION as unknown as ScriptOutput;
+  const FULL_V2 = {
+    ...EVERY_SECTION,
+    framework: { ...EVERY_SECTION.framework, provenance: "offered" },
+    ideas: IDEATION_V2_MIXED.ideas,
+    form: "personal_story_observation",
+    premise: premiseFor("personal_story_observation"),
+    filming: SOLO_KITCHEN_FILMING,
+    contractVersion: 2,
+    requestedForm: "auto",
+  } as unknown as ScriptOutput;
+
+  it("the schema's string leaves EQUAL the pointers outputTextUnits yields", () => {
+    const fromUnits = new Set(
+      [...outputTextUnits(FULL_V1), ...outputTextUnits(FULL_V2)].map((u) => normalise(u.field))
+    );
+    expect([...fromUnits].sort()).toEqual([...outputTextPointers()]);
+  });
+
+  it("NON-VACUITY: every section contributes leaves, and the walk found a population at all", () => {
+    const pointers = outputTextPointers();
+    expect(pointers.length).toBeGreaterThan(25);
+    for (const key of [...SECTION_KEYS, ...V2_SECTION_KEYS]) {
+      expect(
+        pointers.filter((p) => p.startsWith("/" + key + "/")).length,
+        key + " has no string leaf the walk can see"
+      ).toBeGreaterThan(0);
+    }
+    // A closed value is never a leaf; an array index is a `*`.
+    expect(pointers.some((p) => /\/(form|people|minutes|atSeconds|isTurn|pivot|kind)$/.test(p))).toBe(false);
+    expect(pointers).toContain("/hooks/*/text");
+    expect(pointers).toContain("/ideas/*/premise/basis/excerpt");
+  });
+
+  it("pointerMatches reads `*` as one array index and nothing else", () => {
+    expect(pointerMatches("/hooks/*/text", "/hooks/12/text")).toBe(true);
+    expect(pointerMatches("/hooks/*/text", "/hooks/x/text")).toBe(false);
+    expect(pointerMatches("/hooks/*/text", "/hooks/0/text/extra")).toBe(false);
+    expect(pointerMatches("/caption/text", "/caption/text")).toBe(true);
+  });
+});
+
+describe("output contract v2: every new text field joins the scanned population", () => {
+  it("a v2 concept's premise, basis quote and filming plan are text units under the idea's pointer", () => {
+    const fields = outputTextUnits(parseV2("ideation", IDEATION_V2_MIXED)).map((u) => u.field);
+    for (const f of [
+      "/ideas/0/premise/whatHappens",
+      "/ideas/0/premise/interest",
+      "/ideas/0/premise/payoff",
+      "/ideas/0/premise/basis/excerpt",
+      "/ideas/0/filming/location",
+      "/ideas/0/filming/equipment/0",
+      "/ideas/2/premise/payoff",
+    ]) {
+      expect(fields, f).toContain(f);
+    }
+    // An unconfirmed or absent basis has no excerpt to scan.
+    expect(fields).not.toContain("/ideas/1/premise/basis/excerpt");
+    expect(fields).not.toContain("/ideas/2/premise/basis/excerpt");
+  });
+
+  it("every V2_SECTION_KEYS entry yields at least one unit on a full v2 script", () => {
+    const units = outputTextUnits(
+      parseV2("ideaToScript", scriptV2("personal_story_observation"))
+    );
+    for (const key of V2_SECTION_KEYS) {
+      expect(
+        units.some((u) => u.field.startsWith("/" + key + "/")),
+        key + " contributes no text unit, so no scan can ever read it"
+      ).toBe(true);
+    }
+  });
+
+  it("a closed value — the form, who films, the minutes — is NOT text a scan reads", () => {
+    const units = outputTextUnits(parseV2("ideaToScript", scriptV2("explain_opinion")));
+    expect(units.some((u) => /\/(form|people|minutes)$/.test(u.field))).toBe(false);
+  });
+
+  it("a legacy document's population is exactly what it was — no v2 pointer appears", () => {
+    const units = outputTextUnits(parseScriptOutput({ text: asReply(IDEATION_OUTPUT), mode: "ideation" }));
+    expect(units.some((u) => /premise|filming/.test(u.field))).toBe(false);
   });
 });

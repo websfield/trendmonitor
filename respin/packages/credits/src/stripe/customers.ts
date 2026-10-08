@@ -2,6 +2,7 @@
 // creation, BEFORE redirect, so by webhook time the stored mapping — the SOLE
 // resolution authority — always exists for legitimate events.
 // This file is a sanctioned trustWorkspaceId import site (webhook resolution).
+import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
   subscriptions,
@@ -11,7 +12,7 @@ import {
   type VerifiedUserId,
   type VerifiedWorkspaceId,
 } from "@respin/db";
-import { getStripe } from "./adapter";
+import { getStripe, STRIPE_MAX_RETRY_DELAY_MS } from "./adapter";
 import {
   getTierCheckoutProtocolState,
   TierCheckoutRolloutError,
@@ -43,6 +44,48 @@ export class CustomerMappingLostError extends Error {
     );
     this.name = "CustomerMappingLostError";
   }
+}
+
+/**
+ * THE DURABLE IDEMPOTENCY KEY for the one Stripe Customer a workspace's mapping
+ * names (audit Phase 8, P8-R5; register item 19, T-R2-4):
+ * `customer:<workspaceId>:<first 16 hex of sha256(email)>`.
+ *
+ * ONE KEY PER WORKSPACE AND PER PARAMETER SET, NO ATTEMPT ORDINAL. Stripe
+ * replays a key only for IDENTICAL parameters and answers a same-key call with
+ * different ones `400 idempotency_error` for the rest of its 24-hour window —
+ * so a key of the workspace alone would lock a creator out of Checkout for a
+ * day after editing their billing email between a crash and a retry. With the
+ * email's hash in the key:
+ *  - a retry with the same email inside the window gets the SAME customer
+ *    (a crash between the create and the mapping insert no longer orphans one);
+ *  - a retry with a changed email, or any retry after the window, is a new key
+ *    and a second customer, whose mapping insert then succeeds; the first is an
+ *    orphan findable by `metadata.workspace_id`, never a `400` the creator
+ *    cannot get past.
+ * The hash, not the address, so the key Stripe logs carries no email.
+ */
+export function customerIdempotencyKey(
+  workspaceId: VerifiedWorkspaceId,
+  email: string
+): string {
+  const emailDigest = createHash("sha256").update(email, "utf8").digest("hex").slice(0, 16);
+  return `customer:${workspaceId}:${emailDigest}`;
+}
+
+/**
+ * Stripe's in-flight answer for a second request carrying a key whose first
+ * request is still processing: `409 idempotency_key_in_use`. The SDK retries a
+ * 409 itself (`maxNetworkRetries`, with its own backoff); if it still
+ * surfaces, the create is tried ONCE more, after the SDK's own maximum retry
+ * delay (`STRIPE_MAX_RETRY_DELAY_MS`), with the same key and parameters —
+ * which replays the first request's customer if it has finished by then. If it
+ * has not, the 409 propagates: the checkout fails before any Session exists,
+ * nothing is charged, and a retry replays the same key.
+ */
+function isIdempotencyKeyInUse(error: unknown): boolean {
+  const e = error as { statusCode?: unknown; code?: unknown } | null;
+  return e?.statusCode === 409 || e?.code === "idempotency_key_in_use";
 }
 
 /** Resolve a Stripe customer id to its workspace via the stored mapping. */
@@ -98,11 +141,29 @@ export async function getOrCreateCustomer(
     );
   }
 
-  const customer = await getStripe().customers.create({
-    email,
-    metadata: { workspace_id: workspaceId },
-  });
-  const [row] = await db
+  // `email` stays on the create, so the customer carries the receipt address
+  // from its first second; its hash is in the key (`customerIdempotencyKey`).
+  const createParams = { email, metadata: { workspace_id: workspaceId } };
+  const requestOptions = { idempotencyKey: customerIdempotencyKey(workspaceId, email) };
+  let customer: { id: string };
+  try {
+    customer = await getStripe().customers.create(createParams, requestOptions);
+  } catch (error) {
+    if (!isIdempotencyKeyInUse(error)) throw error;
+    await new Promise((resolve) => setTimeout(resolve, STRIPE_MAX_RETRY_DELAY_MS));
+    customer = await getStripe().customers.create(createParams, requestOptions);
+  }
+  // AN ORPHAN MADE BY A FAILED MAPPING INSERT IS NAMED WHEN IT IS MADE (audit
+  // Phase 8, P8-R5, AC6). If the mapping insert fails after Stripe returned the
+  // customer, the customer exists unmapped. A retry with the same email inside
+  // Stripe's 24-hour window replays it under the same key and maps it; a retry
+  // with a changed email, or after the window, creates a second one and leaves
+  // this one an orphan. Which of the two happens is unknowable here, so the id
+  // is logged now (ids only), the error propagates unchanged, and the orphan
+  // stays findable by `metadata.workspace_id` either way. A process that dies
+  // between the create and the insert logs nothing; the metadata is what
+  // reconciles that case.
+  const insertMapping = () => db
     .insert(subscriptions)
     .values(
       tierCheckoutProtocolState === "active"
@@ -128,6 +189,15 @@ export async function getOrCreateCustomer(
     )
     .onConflictDoNothing({ target: subscriptions.workspaceId })
     .returning();
+  let row: Awaited<ReturnType<typeof insertMapping>>[number] | undefined;
+  try {
+    [row] = await insertMapping();
+  } catch (error) {
+    console.warn(
+      `[stripe-customers] unmapped Stripe customer ${customer.id} for workspace ${workspaceId}: the mapping insert failed after the create. A retry with the same billing email within Stripe's 24-hour idempotency window replays and maps it; otherwise it is an orphan (metadata.workspace_id=${workspaceId}) and should be deleted in the Stripe dashboard.`
+    );
+    throw error;
+  }
   if (row) return row.stripeCustomerId;
   // Lost a concurrent race — the winner's mapping is authoritative.
   const [winner] = await db

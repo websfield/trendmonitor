@@ -16,6 +16,7 @@ import type { UsageRunwayResult } from "@respin/credits/app-server";
 import { Banner } from "../../ui/banner";
 import { buttonClass } from "../../ui/button";
 import { LedgerTable } from "../../ui/ledger-table";
+import { unsettledChargeNote } from "../../support-copy";
 
 /** A server action, or a plain URL when a test renders this component. */
 export type FormAction = string | ((formData: FormData) => void | Promise<void>);
@@ -130,6 +131,11 @@ export type UsageViewProps = {
   /** Copy for a `?e=` code a refused action redirected back with. */
   error: { title: string; detail: string } | null;
   billingHref: string;
+  /**
+   * The support address, read on the server by `supportContact()` (R-176), or
+   * `null` when none is configured — then this screen promises no contact.
+   */
+  support: string | null;
 };
 
 // Panels, banners, muted text and the ledger table are Signal classes and
@@ -255,7 +261,13 @@ export function burnPeriodLine(period: BurnPeriodView): string {
  * and a period whose only charges were not generations. Inline, those would be
  * nested ternaries no test could name.
  */
-function BurnSplit({ burnByMode }: { burnByMode: BurnByMode }) {
+function BurnSplit({
+  burnByMode,
+  support,
+}: {
+  burnByMode: BurnByMode;
+  support: string | null;
+}) {
   if (!burnByMode.ok) {
     return (
       <p className="muted" data-testid="burn-by-mode-error">
@@ -319,9 +331,7 @@ function BurnSplit({ burnByMode }: { burnByMode: BurnByMode }) {
       </table>
       {nonTerminalClaim.debits > 0 ? (
         <p className="muted" data-testid="burn-non-terminal-note">
-          One or more charges name a draft that never finished settling, so we
-          cannot say which mode they belong to. Nothing is guessed into a mode.
-          Contact support with this page open.
+          {unsettledChargeNote(support)}
         </p>
       ) : null}
     </>
@@ -531,7 +541,7 @@ export function UsageView(props: UsageViewProps) {
             its `ref_id` names — never a division of `workspace_spend_monthly`,
             which is our vendor cost and carries no mode at all (mutation
             M13). `burnByModeNote` states that to the creator. */}
-        <BurnSplit burnByMode={burnByMode} />
+        <BurnSplit burnByMode={burnByMode} support={props.support} />
         <Note>{burnByModeNote()}</Note>
       </div>
 

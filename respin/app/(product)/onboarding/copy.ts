@@ -107,7 +107,8 @@ export function referenceCountSentence(used: number, max: number): string {
 // per-surface override, which is why it lives beside the surface.
 
 import {
-  BILLING_ERROR_COPY,
+  billingErrorCopy,
+  withSupportContactFor,
   type BillingErrorCode,
   type BillingErrorCopy,
 } from "../billing-errors";
@@ -212,12 +213,21 @@ export const ONBOARDING_ERROR_CODES = [
   // (`packages/db/src/echo.ts`), not guessed: `reference_echo` is the new
   // refusal this slice adds, and `provenance` / `brain_content_walk` /
   // `segmenter_unavailable` are that same file's other constructions the scan
-  // surfaced — latent since slice 3, unreachable on today's happy path, but
-  // real refusals `writeBrainDoc` has always been able to raise from here.
+  // surfaced — real refusals `writeBrainDoc` can raise from here. `provenance`
+  // WAS reachable on an ordinary run until audit P3-A1: a reply whose every
+  // value was `[check]` parsed, the debit committed, and the write then
+  // refused on empty evidence. That reply is now refused before the debit
+  // (an `AssemblyError`, which renders `inference_unusable`), and the write
+  // runs inside the debit's transaction, so any refusal here rolls the charge
+  // back and "no credits were spent" is true by construction (R-156).
   "reference_echo",
   "provenance",
   "brain_content_walk",
   "segmenter_unavailable",
+  // AUDIT P3-R2 (R-158): `runInference` bounds the assembled voice prompt
+  // before the slot, the claim and the call; that caller records no prompt
+  // parts, so its refusal is the posts branch, whose remedy names the posts.
+  "input_too_large_posts",
   "unknown",
 ] as const satisfies readonly BillingErrorCode[];
 
@@ -262,5 +272,6 @@ export function onboardingErrorFor(
   // rather than to nothing at all.
   const known = (ONBOARDING_ERROR_CODES as readonly string[]).includes(raw);
   const code = (known ? raw : "unknown") as BillingErrorCode;
-  return ONBOARDING_OVERRIDES[code] ?? BILLING_ERROR_COPY[code];
+  const override = ONBOARDING_OVERRIDES[code];
+  return override === undefined ? billingErrorCopy(code) : withSupportContactFor(code, override);
 }

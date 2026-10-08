@@ -7,16 +7,23 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@respin/auth";
 import {
+  presentedDisclosure,
+  presentedTextUnits,
   respinCredits,
   type GenerateResult,
 } from "@respin/credits/app-server";
 import { respinDb } from "@respin/db";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
-import { logRefusal, logSpend } from "../safe-log";
-import { BILLING_ERROR_COPY, isBillingErrorCode, type BillingErrorCode } from "../billing-errors";
+import { logRefusal, logSpend, wireId } from "../safe-log";
+import { billingErrorCopy, isBillingErrorCode, type BillingErrorCode } from "../billing-errors";
 import { scopeForUser } from "../workspace-scope";
+import { summariseKillTest } from "../studio/projection";
 import { pasteRefusedField, type PasteActionState } from "./paste-state";
-import { spinWithheldLocator, type SpinActionState } from "./spin-state";
+import {
+  SPIN_RESULT_EXCLUDED_FIELDS,
+  spinWithheldLocator,
+  type SpinActionState,
+} from "./spin-state";
 import type { TrackNicheActionState } from "./track-state";
 
 type SpinRun = NonNullable<GenerateResult["run"]>;
@@ -25,26 +32,43 @@ type RefusedSpinRun = Extract<SpinRun, { status: "refused" }>;
 type DisplayableSpin = Extract<SpinActionState, { status: "result" }>;
 
 function displayableSpin(
-  result: UsableSpinRun["output"]
-): Pick<DisplayableSpin, "spinResult" | "weakestPoint" | "disclosureGuidance"> | null {
+  run: UsableSpinRun
+): Pick<DisplayableSpin, "spinResult" | "weakestPoint" | "disclosure" | "killTest"> | null {
+  const result = run.output;
   // This is a projection of the parsed, similarity-gated output, not a render
-  // of a reference.  It deliberately omits the model's performance rationale
-  // (`whyThisPerforms.reasoning`) and carries the two honesty sections REQ-I04
-  // and REQ-I05 require on every output: the weakest point and the
-  // platform-specific disclosure guidance.  Every field below is one the
-  // similarity gate compared against the reference (`outputTextUnits`).
-  const lines = [
-    result.thesis?.statement,
-    ...(result.hooks?.map((hook) => hook.text) ?? []),
-    ...(result.ideas?.map((idea) => idea.hook) ?? []),
-    ...(result.beats?.map((beat) => beat.vo) ?? []),
-    result.caption?.text,
-  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  // of a reference, and it carries the two honesty sections REQ-I04 and
+  // REQ-I05 require on every output: the weakest point and the disclosure.
+  //
+  // DERIVED, NOT HAND-LISTED (audit Phase 2, P2-R6). This was a five-of-ten
+  // field list, so a paying Spin's framework, shot map, on-screen text,
+  // hashtags and hook mechanics were gated but never shown, and a new field
+  // was silently undisplayed. It is now the facade's `presentedTextUnits` —
+  // `outputTextUnits` minus the model's disclosure section — minus this
+  // surface's own commented exclusion (`SPIN_RESULT_EXCLUDED_FIELDS`: the
+  // weakest point, which renders on its own — R-172).
+  // Every unit is one the similarity gate compared against the reference,
+  // because the gate reads the same `outputTextUnits`. `tests/trends-actions
+  // .test.ts` asserts the rendered set equals that derivation on a document
+  // carrying every section.
+  //
+  // THE DISCLOSURE IS A KIND, NOT THE MODEL'S SECTION (R-121, audit P1-R1).
+  // The model's `disclosure.guidance` is model-authored prose about platform
+  // policy; the screen renders the product's sentence for the facade's kind
+  // (`DISCLOSURE_LINE`), so nothing is read off `result.disclosure` here.
+  const lines = presentedTextUnits(result)
+    .filter((unit) => !Object.hasOwn(SPIN_RESULT_EXCLUDED_FIELDS, unit.field))
+    .map((unit) => unit.text)
+    .filter((text) => text.trim().length > 0);
   if (lines.length === 0) return null;
   return {
     spinResult: lines.join("\n"),
     weakestPoint: result.whyThisPerforms.weakestPoint,
-    disclosureGuidance: result.disclosure.guidance,
+    disclosure: presentedDisclosure(),
+    // THE CHECKS' FINDINGS, PROJECTED THE STUDIO WAY (audit Phase 2 gate,
+    // R-172): traceability flags, the marker offers beside them, claim flags
+    // and the limit note. The Spin screen stated their omission; every flag a
+    // claim analysis cannot decide is now visible here too.
+    killTest: summariseKillTest(run.killTest),
   };
 }
 
@@ -56,7 +80,8 @@ function isNearCopyRefusal(result: GenerateResult): boolean {
 
 function withheldState(
   run: RefusedSpinRun,
-  chargedCredits: number
+  chargedCredits: number,
+  freeClaimRefusal: boolean
 ): Extract<SpinActionState, { status: "withheld" }> {
   // WHY AND A WAY FORWARD, NEVER THE CANDIDATE (compliance gate round 1,
   // 2026-09-03).  A finding's `excerpt` and the refusal's `why` lines quote the
@@ -82,7 +107,7 @@ function withheldState(
     if (locator !== null && !entry.locators.includes(locator)) entry.locators.push(locator);
   }
   const why = [...byRule.values()];
-  return { status: "withheld", chargedCredits, why, sharperAngle: run.refusal.sharperAngle };
+  return { status: "withheld", chargedCredits, freeClaimRefusal, why, sharperAngle: run.refusal.sharperAngle };
 }
 
 export async function trackNicheAction(
@@ -112,7 +137,7 @@ export async function trackNicheAction(
       status: "refused",
       code: logRefusal("[trends-track] niche refused", err, {
         ...(scope ? { workspaceId: scope.workspaceId } : {}),
-        profileId,
+        profileId: wireId(profileId),
       }) as BillingErrorCode,
     };
   }
@@ -142,7 +167,7 @@ export async function untrackNicheAction(
       status: "refused",
       code: logRefusal("[trends-track] removal refused", err, {
         ...(scope ? { workspaceId: scope.workspaceId } : {}),
-        profileId,
+        profileId: wireId(profileId),
       }) as BillingErrorCode,
     };
   }
@@ -183,7 +208,7 @@ export async function pasteReferenceAction(
     });
     logSpend("[trends-paste] reference queued", {
       workspaceId: scope.workspaceId,
-      profileId,
+      profileId: wireId(profileId),
       referenceInputId: result.referenceInputId,
       itemId: result.itemId,
       claimId: result.claimId,
@@ -218,7 +243,7 @@ export async function pasteReferenceAction(
     const field = pasteRefusedField((err as { field?: unknown } | null)?.field);
     const logged = logRefusal("[trends-paste] reference refused", err, {
       ...(scope ? { workspaceId: scope.workspaceId } : {}),
-      profileId,
+      profileId: wireId(profileId),
       ...(field ? { field } : {}),
     });
     // THE CLAMP, NOT A CAST (code review round 1, C8). `logRefusal` is typed
@@ -236,7 +261,7 @@ export async function pasteReferenceAction(
     return {
       status: "refused",
       code,
-      copy: BILLING_ERROR_COPY[code],
+      copy: billingErrorCopy(code),
       ...(field ? { field } : {}),
     };
   }
@@ -267,8 +292,8 @@ export async function spinAction(
     });
     logSpend("[trends-spin] generation completed", {
       workspaceId: scope.workspaceId,
-      profileId,
-      attemptId,
+      profileId: wireId(profileId),
+      attemptId: wireId(attemptId),
       generationId: result.generation.id,
       mode: result.generation.mode,
       outcome: result.generation.outcome,
@@ -282,25 +307,41 @@ export async function spinAction(
     if (isNearCopyRefusal(result)) {
       return { status: "near_copy_refused", chargedCredits: result.creditsChargedNow };
     }
-    if (result.replayed || result.run === null) {
+    // THREE OUTCOMES, DECIDED ON `replayed` ALONE (audit P3-A2, the Studio
+    // fix applied here). A replay charged nothing; `replayed: false` with
+    // `run: null` is a HELD draft this press settled — it charged, and saying
+    // "no new charge" over that debit was false.
+    if (result.replayed) {
       return { status: "replayed", balanceAfter: result.balanceAfter };
     }
-    if (result.run.status === "refused") {
-      return withheldState(result.run, result.creditsChargedNow);
+    if (result.run === null) {
+      return {
+        status: "settled_held",
+        chargedCredits: result.creditsChargedNow,
+        balanceAfter: result.balanceAfter,
+        freeClaimRefusal: result.freeClaimRefusal,
+      };
     }
-    const spin = displayableSpin(result.run.output);
+    if (result.run.status === "refused") {
+      return withheldState(result.run, result.creditsChargedNow, result.freeClaimRefusal);
+    }
+    const spin = displayableSpin(result.run);
     return spin === null
-      ? { status: "withheld", chargedCredits: result.creditsChargedNow, why: [], sharperAngle: null }
+      ? { status: "withheld", chargedCredits: result.creditsChargedNow, freeClaimRefusal: false, why: [], sharperAngle: null }
       : { status: "result", ...spin, chargedCredits: result.creditsChargedNow };
   } catch (err) {
     rethrowNextControlFlow(err);
-    return {
-      status: "refused",
-      code: logRefusal("[trends-spin] generation refused", err, {
-        ...(scope ? { workspaceId: scope.workspaceId } : {}),
-        profileId,
-        attemptId,
-      }) as BillingErrorCode,
-    };
+    const logged = logRefusal("[trends-spin] generation refused", err, {
+      ...(scope ? { workspaceId: scope.workspaceId } : {}),
+      profileId: wireId(profileId),
+      attemptId: wireId(attemptId),
+    });
+    // THE WORDS TRAVEL WITH THE CODE (audit Phase 3 gate, 2026-10-06), as the
+    // paste action's do. One fixed sentence ("could not be started") was
+    // FALSE for a held Spin: the model answered and the draft is stored,
+    // findable under Held drafts on Studio until its hold ends. The clamp is
+    // the paste action's, for the same reason.
+    const code: BillingErrorCode = isBillingErrorCode(logged) ? logged : "unknown";
+    return { status: "refused", code, copy: billingErrorCopy(code) };
   }
 }

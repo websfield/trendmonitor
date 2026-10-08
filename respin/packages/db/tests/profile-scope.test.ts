@@ -48,6 +48,7 @@ import {
   onboardingInterviewDrafts,
 } from "../src/onboarding-schema";
 import {
+  creativePieces,
   generationAttempts,
   generationFeedback,
   generations,
@@ -151,6 +152,18 @@ const ALL_INPUT_IDS: string[] = [];
  * args map asking for nothing and the test passing vacuously.
  */
 const ALL_BRAIN_DOC_IDS: string[] = [];
+
+/** EVERY seeded activation snapshot id, every profile's — what `brainActivationsByIds` is driven with. Mutated in place. */
+const ALL_ACTIVATION_IDS: string[] = [];
+
+/**
+ * EVERY seeded generation and feedback id, every profile's (launch L3) — what
+ * `recentContextPresent` is driven with, for `ALL_INPUT_IDS`' reason: it takes
+ * CALLER-SUPPLIED ids, so the question is what it does when asked about
+ * somebody else's. Mutated in place, for the same reason.
+ */
+const ALL_GENERATION_IDS: string[] = [];
+const ALL_FEEDBACK_IDS: string[] = [];
 
 /** One real proposal per profile, so the id-scoped review accessor is non-vacuous. */
 const PROPOSAL_ID_BY_PROFILE = new Map<string, string>();
@@ -256,6 +269,9 @@ describe("ProfileScope — the profile tenancy cage", () => {
     db = await createTestDb();
     ALL_INPUT_IDS.length = 0;
     ALL_BRAIN_DOC_IDS.length = 0;
+    ALL_ACTIVATION_IDS.length = 0;
+    ALL_GENERATION_IDS.length = 0;
+    ALL_FEEDBACK_IDS.length = 0;
     PROPOSAL_ID_BY_PROFILE.clear();
     RESULT_STRATUM.clear();
     await seedAuthUser(db, "user_a");
@@ -417,6 +433,7 @@ describe("ProfileScope — the profile tenancy cage", () => {
           workspaceId,
         })
         .returning();
+      ALL_ACTIVATION_IDS.push(snapshot.id);
       // Slice 6 (stage A): the claim and the record, for ALL THREE profiles,
       // so `exportPage("generations")`'s branch has something foreign to leak.
       // The lifecycle is walked rather than short-circuited — the attempt is
@@ -473,6 +490,21 @@ describe("ProfileScope — the profile tenancy cage", () => {
           candidate: null,
         })
         .where(eq(generationAttempts.id, attempt.id));
+      // Audit P3-A4: a HELD draft per profile — `vendor_complete`, candidate
+      // stored, inside the 24-hour window — so `heldGenerationAttempts` walks
+      // the P4 loops non-vacuously on both axes.
+      await db.insert(generationAttempts).values({
+        profileId,
+        workspaceId,
+        attemptId: `held_att_${profileId}`,
+        purpose: "generation",
+        mode: "hookSet",
+        payloadSha256: sha256(`held payload for ${profileId}`),
+        state: "vendor_complete",
+        vendorStartedAt: new Date(),
+        vendorCompletedAt: new Date(),
+        candidate: { v: 1, outcome: "usable", secret: `candidate bytes for ${profileId}` },
+      });
       // `confidence: "unsupported"` because `evidenceEntries` is `[]` —
       // slice 7's `frameworks_confidence_matches_evidence` CHECK ties the two,
       // so a fixture claiming a rung its evidence does not support is now
@@ -525,6 +557,18 @@ describe("ProfileScope — the profile tenancy cage", () => {
         reaction: "used_as_is",
         note: `feedback for ${profileId}`,
       }).returning();
+      ALL_GENERATION_IDS.push(generation.id);
+      ALL_FEEDBACK_IDS.push(feedbackRow.id);
+      // Launch L2 (R-151): one creative piece per profile, so the
+      // `creative_pieces` export branch has something foreign to leak. An OWN
+      // IDEA rather than a sourced one, so the `generations` re-parenting case
+      // below is not refused by the piece's same-tenant source FK.
+      await db.insert(creativePieces).values({
+        profileId,
+        workspaceId,
+        ownIdea: `piece for ${profileId}`,
+        quoteConfigVersion: 1,
+      });
       // Slice 9a (R5): one logged result per profile, so the `results`
       // accessor and the `results` export branch each have something foreign
       // to leak.
@@ -747,10 +791,21 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
   // asserted by the same case, which is the only one whose fixture makes either
   // accessor return a non-zero number.
   "sumUnchargedBillableCostMicroUsd",
+  // Audit P3-R3 (R-158): ALL billable spend in the window, successes
+  // included — a number, asserted BY VALUE in "the TOTAL billable sum sees a
+  // success and sums THIS profile only, on both axes".
+  "sumBillableCostMicroUsd",
   // Slice 4. Same shape as `countOwnPosts`: a number, so the row loops have
   // nothing to walk. Its both-axes isolation is asserted BY VALUE in
   // "countReferencePosts counts THIS profile's reference posts only".
   "countReferencePosts",
+  // Audit P6-R6: how many results this profile has logged. Its both-axes
+  // isolation is asserted BY VALUE in `results-schema-write.test.ts`
+  // ("countResults counts THIS profile's results only: a sibling in the same
+  // workspace and a foreign workspace both count zero for A"), and on the
+  // workspace axis by the cross-parented loop below, where a count is its
+  // `Array.from({ length })` and must be empty.
+  "countResults",
 ]);
 
   /** One breach validator per accessor: no row may name another profile. */
@@ -821,6 +876,22 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     sumUnchargedBillableCostMicroUsd: () => {
       // Scalar — asserted by value below.
     },
+    sumBillableCostMicroUsd: () => {
+      // Scalar — asserted by value below.
+    },
+    // Audit P3-A4. The rows carry NO scope columns (ids, modes, states and
+    // `vendor_completed_at` only), so ownership is asserted on the attempt id
+    // the fixture seeded for THIS profile — and the candidate never rides
+    // along.
+    heldGenerationAttempts: (rows, ownProfile) => {
+      for (const row of rows as Record<string, unknown>[]) {
+        expect(row.attemptId).toBe(`held_att_${ownProfile}`);
+        expect(row.state).toBe("vendor_complete");
+        expect(Object.keys(row).sort()).toEqual(
+          ["attemptId", "mode", "state", "vendorCompletedAt"]
+        );
+      }
+    },
     countOwnPosts: () => {
       // Scalar — the row loops have nothing to walk. Its isolation is asserted
       // by value in its own test below.
@@ -829,6 +900,10 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       // Scalar — the row loops have nothing to walk. Its isolation is asserted
       // by value in "countReferencePosts counts THIS profile's reference posts
       // only" below.
+    },
+    countResults: () => {
+      // Scalar — the row loops have nothing to walk. Its isolation is asserted
+      // by value in `results-schema-write.test.ts` (see SCALAR_ACCESSORS).
     },
     ownPostsNewest: (rows, ownProfile, ownWorkspace) => {
       for (const row of rows as {
@@ -852,6 +927,15 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // the only thing that keeps a stored generation from naming another
     // profile's snapshot — which makes both axes here the actual control.
     latestBrainActivation: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // Audit Phase 2 gate: the by-id activation read a promotion review uses.
+    // Driven with EVERY profile's snapshot id, so asking for somebody else's
+    // is the question.
+    brainActivationsByIds: (rows, ownProfile, ownWorkspace) => {
       for (const row of rows as { profileId: string; workspaceId: string }[]) {
         expect(row.profileId).toBe(ownProfile);
         expect(row.workspaceId).toBe(ownWorkspace);
@@ -905,6 +989,35 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     },
     // Slice 9a (R5). The creator's own outputs, for the result log's picker.
     // Both scope columns, like every profile-grained accessor here.
+    // Launch L3 (R-152). The composition read's rows — drafts, the notes and
+    // the drafts they are about, and pieces — normalised by `invoke` below;
+    // every one carries both scope columns.
+    recentContextCandidates: (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { profileId: string; workspaceId: string }[]) {
+        expect(row.profileId).toBe(ownProfile);
+        expect(row.workspaceId).toBe(ownWorkspace);
+      }
+    },
+    // ...and the presence read returns IDS, so each is looked up to its owner.
+    recentContextPresent: async (rows, ownProfile, ownWorkspace) => {
+      for (const row of rows as { table: "generations" | "generation_feedback"; id: string }[]) {
+        const owner =
+          row.table === "generations"
+            ? await db
+                .select({ profileId: generations.profileId, workspaceId: generations.workspaceId })
+                .from(generations)
+                .where(eq(generations.id, row.id))
+            : await db
+                .select({
+                  profileId: generationFeedback.profileId,
+                  workspaceId: generationFeedback.workspaceId,
+                })
+                .from(generationFeedback)
+                .where(eq(generationFeedback.id, row.id));
+        expect(owner[0]?.profileId).toBe(ownProfile);
+        expect(owner[0]?.workspaceId).toBe(ownWorkspace);
+      }
+    },
     generationsNewest: (rows, ownProfile, ownWorkspace) => {
       for (const row of rows as { profileId: string; workspaceId: string }[]) {
         expect(row.profileId).toBe(ownProfile);
@@ -1055,7 +1168,12 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     sumUnchargedBillableCostMicroUsd: [
       { purpose: "onboarding_brain", since: new Date(0) },
     ],
+    sumBillableCostMicroUsd: [
+      { purpose: "onboarding_brain", since: new Date(0) },
+    ],
+    heldGenerationAttempts: [],
     latestBrainActivation: [],
+    brainActivationsByIds: [ALL_ACTIVATION_IDS],
     countOnboardingInputs: [],
     modelUsage: [],
     // `settlement: "unsettled"` is the branch that may answer "no claim". The
@@ -1075,7 +1193,17 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // Slice 9a. Default page, like `generationFeedback` — the clamp itself is
     // the accessor's, and its own case drives it.
     results: [],
+    // Audit P6-R6: no argument but the optional transaction.
+    countResults: [],
     generationsNewest: [],
+    // Launch L3: the fixture's own mode string, every platform ranked equal.
+    recentContextCandidates: [
+      { modes: ["hookSet"], platform: "", currentPieceId: null, excludeGenerationIds: [] },
+    ],
+    // EVERY profile's ids — only this profile's may come back.
+    recentContextPresent: [
+      { generationIds: ALL_GENERATION_IDS, feedbackIds: ALL_FEEDBACK_IDS },
+    ],
     strategyMetricVersions: [],
     // NO STRATUM — the branch 9a actually walks, and the reason this accessor
     // can ride the shared loops at all: `[]` means "this profile's whole result
@@ -1154,6 +1282,29 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     // `{inputs}` above, for the reason that comment gives.
     const rowsShape = (result as { rows?: unknown }).rows;
     if (Array.isArray(rowsShape)) return rowsShape;
+    // Launch L3: the recent-context composition, flattened to its scoped rows
+    // (`draftReactions` are `{generationId, reaction}` facts about `drafts`,
+    // read under both scope columns, and carry no owner of their own).
+    const recent = result as {
+      drafts?: unknown[];
+      notes?: { feedback: unknown; about: unknown }[];
+      pieces?: unknown[];
+    };
+    if (Array.isArray(recent.drafts) && Array.isArray(recent.notes) && Array.isArray(recent.pieces)) {
+      return [
+        ...recent.drafts,
+        ...recent.notes.map((n) => n.feedback),
+        ...recent.notes.map((n) => n.about),
+        ...recent.pieces,
+      ];
+    }
+    const present = result as { generationIds?: unknown; feedbackIds?: unknown };
+    if (Array.isArray(present.generationIds) && Array.isArray(present.feedbackIds)) {
+      return [
+        ...(present.generationIds as string[]).map((id) => ({ table: "generations", id })),
+        ...(present.feedbackIds as string[]).map((id) => ({ table: "generation_feedback", id })),
+      ];
+    }
     const wrapped = (result as { inputs?: unknown }).inputs;
     expect(
       Array.isArray(wrapped),
@@ -1184,6 +1335,10 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         "countReferencePosts",
         "countUnchargedBillableAttempts",
         "sumUnchargedBillableCostMicroUsd",
+        // Audit P3-R3: the total billable sum (successes included), and P3-A4:
+        // the held-draft list — two accessors, two deliberate list edits.
+        "sumBillableCostMicroUsd",
+        "heldGenerationAttempts",
         // R-80: the durable per-(profile, purpose) included-build claim, which
         // replaced the derived `countBillableAttempts` ranking.
         "firstBillableAttempt",
@@ -1196,6 +1351,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // Slice 6: the newest coherent brain activation, which every
         // generation records the id of (R9a).
         "latestBrainActivation",
+        "brainActivationsByIds",
         "modelUsage",
         "onboardingInputs",
         "onboardingInputsByIds",
@@ -1227,6 +1383,14 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // exists: a new accessor is a decision somebody made, not a diff
         // nobody read.
         "results",
+        // Audit P6-R6: the count behind Studio's and first ideas' results
+        // sentence. One accessor, one deliberate list edit.
+        "countResults",
+        // Launch L3 (R-152): the bounded recent work a concept or script
+        // prompt carries, and the settlement's erased-context presence check.
+        // Composition reads, each with its own cross-workspace witness below.
+        "recentContextCandidates",
+        "recentContextPresent",
         "promotionResultInputs",
         "promotionFeedbackInputs",
         "promotionProposalReview",
@@ -1239,6 +1403,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       [
         "appendOnboardingInput",
         "recordModelUsage",
+        // Audit Phase 3 gate (billing note): the compensation that gives a
+        // refused free build's included-build claim back.
+        "releaseIncludedBuildClaim",
         "writeBrainDoc",
         "confirmBrainDocFields",
         "activateBrainDoc",
@@ -1261,6 +1428,21 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // cage-asserted, every scope column built from the scope, and the
         // closed reaction set checked at RUNTIME rather than only in the type.
         "recordGenerationFeedback",
+        // Audit P6-A1 (R-174): "Leave this out of future drafts" — the
+        // table's one UPDATE writer, owner/editor, one column, one way.
+        "excludeGenerationFeedbackFromHistory",
+        // Launch L2 (R-151): the creative piece — create (zero cost), read,
+        // "New generation" and cancel. Role-, pause- and lifecycle-gated; the
+        // operation id, state and version are database-derived.
+        "createCreativePiece",
+        "readCreativePiece",
+        "renewCreativePieceOperation",
+        "cancelCreativePiece",
+        // Launch L4 (R-153): the saved pack's scoped context read (every role,
+        // never pause-gated) and the zero-cost, version-guarded "use this
+        // version" move (owner/editor, pause-gated).
+        "readSavedGenerationContext",
+        "selectCreativePieceVersion",
         // Slice 9a (R5-R9): the append-only logged result. Role-gated,
         // cage-asserted, every scope column built from the scope, the closed
         // vocabularies checked at RUNTIME rather than only in the type, and
@@ -1364,6 +1546,8 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       workspace: row.workspaceId,
     }),
     generations: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
+    // Launch L2 (R-151): the creative piece — both scope columns on the row.
+    creative_pieces: (row) => ({ profile: row.profileId, workspace: row.workspaceId }),
     // `frameworks` names its owner differently, and library rows have NO
     // owner — which is exactly why R15's private-only rule is a property of
     // this branch and not of the `both()` helper the others share.
@@ -1575,9 +1759,15 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
           ["generation_feedback", "generation_feedback_generation_fk"],
           ["proposal_evidence_feedback", "proposal_evidence_feedback_feedback_fk"],
         ],
-        triggers: [],
+        // Migration 0069 (audit P6-A1, R-174): the event-immutability
+        // trigger refuses a change to `workspace_id` as well, and it must.
+        triggers: [["generation_feedback", "generation_feedback_event_immutable"]],
         column: "profile_id",
       },
+      // Launch L2 (R-151). The fixture's piece is an own idea, so its two
+      // same-tenant generation FKs hold NULLs and MATCH SIMPLE skips them; the
+      // profile FK is the one that refuses the re-parenting UPDATE.
+      { table: "creative_pieces", fks: [["creative_pieces", "creative_pieces_profile_workspace_fk"]], triggers: [], column: "profile_id" },
       { table: "trend_sources", fks: [["trend_sources", "trend_sources_profile_workspace_fk"]], triggers: [], column: "profile_id" },
       { table: "tracked_niches", fks: [["tracked_niches", "tracked_niches_profile_workspace_fk"]], triggers: [], column: "profile_id" },
       { table: "trend_items", fks: [["trend_items", "trend_items_profile_workspace_fk"]], triggers: [], column: "profile_id" },
@@ -1807,7 +1997,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       ],
       triggers: [],
       profileColumn: "profile_id",
-      accessors: ["latestBrainActivation"],
+      accessors: ["latestBrainActivation", "brainActivationsByIds"],
     },
     // `onboarding_interview_drafts` and `frameworks` USED TO HAVE ENTRIES
     // HERE, one accessor each. Those three
@@ -1836,7 +2026,8 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         ["generation_feedback", "generation_feedback_generation_fk"],
         ["proposal_evidence_feedback", "proposal_evidence_feedback_feedback_fk"],
       ],
-      triggers: [],
+      // Migration 0069 (R-174) refuses the re-parenting UPDATE too.
+      triggers: ["generation_feedback_event_immutable"],
       profileColumn: "profile_id",
       accessors: ["generationFeedback"],
     },
@@ -1915,7 +2106,9 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
       // only one that is non-vacuous for an arbitrary profile — a re-parented
       // row it returned would be a cross-workspace result inside a creator's
       // own comparison.
-      accessors: ["results", "comparableResults"],
+      // Audit P6-R6: `countResults` is the third — a re-parented row it
+      // counted would tell a creator they had logged a result they had not.
+      accessors: ["results", "comparableResults", "countResults"],
     },
     {
       table: "model_usage",
@@ -1934,6 +2127,8 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // Same table, same reason, in money: a dropped workspace predicate
         // here would let another workspace's spend exhaust this creator's cap.
         "sumUnchargedBillableCostMicroUsd",
+        // Audit P3-R3: the same table, every billable row.
+        "sumBillableCostMicroUsd",
       ],
     },
     // R-80. The durable included-build claim, and the sharpest money case on
@@ -2309,7 +2504,10 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         countReferencePosts: "onboarding_inputs",
         countUnchargedBillableAttempts: "model_usage",
         sumUnchargedBillableCostMicroUsd: "model_usage",
+        sumBillableCostMicroUsd: "model_usage",
+        heldGenerationAttempts: "generation_attempts",
         latestBrainActivation: "brain_activation_snapshots",
+        brainActivationsByIds: "brain_activation_snapshots",
         profile: "creator_profiles",
         // One accessor spans every included table, so it cannot be assigned
         // ONE table in this one-table completeness map. Its all-table
@@ -2324,6 +2522,7 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         // Slice 9a.
         strategyMetricVersions: "brain_docs",
         results: "results",
+        countResults: "results",
         generationsNewest: "generations",
         comparableResults: "results",
         // Composition accessors span more than one scoped table (and review
@@ -2334,6 +2533,13 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         promotionFeedbackInputs: undefined,
         promotionProposalReview: undefined,
         promotionProposalHistory: undefined,
+        // Launch L3: composition reads over `generations`,
+        // `generation_feedback` and `creative_pieces` — a one-table
+        // re-parenting cannot empty a read that also returns the OTHER
+        // tables' rows, so each of the three tables gets its own move in
+        // "L3: the recent-context reads refuse a cross-parented row" below.
+        recentContextCandidates: undefined,
+        recentContextPresent: undefined,
       };
       const namedTables = new Set<string>(CROSS_PARENTED.map((c) => c.table));
       const missing = Object.keys(scope.accessors).filter((a) => {
@@ -2425,6 +2631,118 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
         );
         expect(found.rows.length, `${fk} was not restored`).toBe(1);
       }
+    }
+  });
+
+  // Launch L3 (R-152): THE TWO RECENT-CONTEXT READS on the workspace axis. They
+  // are compositions (drafts, notes joined to their drafts, reactions, pieces),
+  // so the one-table harness above cannot drive them — re-parenting one table
+  // leaves the other's rows legitimately visible. Each table is re-parented on
+  // its own and together, and each time ONLY the moved rows must vanish.
+  it("L3: the recent-context reads refuse a cross-parented row, table by table", async () => {
+    const scopeA = await withWorkspace(db, { authUserId: "user_a" });
+    // ONE PIECE PER PROFILE THAT SELECTED ITS OWN DRAFT (L3 tenancy gate,
+    // T-L1), so the read's `creative_pieces` half has a row to return — the
+    // shared fixture's piece is an own idea that points at no draft, which
+    // left this half without a witness. Inserted HERE, not in the shared
+    // fixture, because a selected draft's composite FK would refuse every
+    // other test's `generations` re-parenting; `beforeEach` rebuilds the rows.
+    for (const pid of [p1, p2, p3]) {
+      const [own] = await db.select().from(generations).where(eq(generations.profileId, pid)).limit(1);
+      await db.insert(creativePieces).values({
+        profileId: pid,
+        workspaceId: own.workspaceId,
+        ownIdea: `selected piece for ${pid}`,
+        selectedGenerationId: own.id,
+        state: "scripted",
+        quoteConfigVersion: 1,
+      });
+    }
+    const query = {
+      modes: ["hookSet"],
+      platform: "",
+      currentPieceId: null,
+      excludeGenerationIds: [],
+    };
+    // `creative_pieces` has no `CROSS_PARENTED` entry (no single-table
+    // accessor reads it), so its own profile FK is named here. The
+    // selected-draft FK is held by the PIECE and refuses a move of EITHER
+    // side — the piece's `workspace_id`, or its draft's — so it is dropped
+    // whenever either table moves (the `CROSS_PARENTED` entry for
+    // `generations` names only the FKs its one-table move needs, and the
+    // shared fixture's piece selects no draft).
+    const OWN_FKS: Record<string, readonly (readonly [string, string])[]> = {
+      creative_pieces: [["creative_pieces", "creative_pieces_profile_workspace_fk"]],
+    };
+    const PIECE_SELECTION_FK = ["creative_pieces", "creative_pieces_selected_generation_fk"] as const;
+    const fksOf = (table: string) => {
+      const own = CROSS_PARENTED.find((c) => c.table === table)?.fks ?? OWN_FKS[table];
+      if (own === undefined) throw new Error(`no FK list for ${table}`);
+      return [
+        ...own,
+        ...(table === "generations" || table === "creative_pieces" ? [PIECE_SELECTION_FK] : []),
+      ];
+    };
+    const moves: { tables: string[]; drafts: number; notes: number; reactions: number; pieces: number; gens: number; fbs: number }[] = [
+      // Nothing moved: the non-vacuity baseline every other row compares to.
+      { tables: [], drafts: 1, notes: 1, reactions: 1, pieces: 1, gens: 1, fbs: 1 },
+      // The DRAFT moved: it vanishes, and so does the note ABOUT it (the join
+      // carries both scope columns of `generations` too).
+      { tables: ["generations"], drafts: 0, notes: 0, reactions: 1, pieces: 0, gens: 0, fbs: 1 },
+      // The REACTION moved: the note and the draft's reaction label vanish,
+      // the draft stays.
+      { tables: ["generation_feedback"], drafts: 1, notes: 0, reactions: 0, pieces: 1, gens: 1, fbs: 0 },
+      // THE PIECE moved (T-L1): the draft stays and is still asked about, but
+      // the piece that selected it is another workspace's row now, so the
+      // pieces half returns nothing — drop its `both(creativePieces)` and this
+      // row goes red.
+      { tables: ["creative_pieces"], drafts: 1, notes: 1, reactions: 1, pieces: 0, gens: 1, fbs: 1 },
+      { tables: ["generations", "generation_feedback", "creative_pieces"], drafts: 0, notes: 0, reactions: 0, pieces: 0, gens: 0, fbs: 0 },
+    ];
+    for (const move of moves) {
+      await expect(
+        db.transaction(async (tx) => {
+          for (const table of move.tables) {
+            for (const [fkTable, fk] of fksOf(table)) {
+              await tx.execute(sql.raw(`ALTER TABLE ${fkTable} DROP CONSTRAINT IF EXISTS ${fk}`));
+            }
+          }
+          for (const table of move.tables) {
+            // Migration 0069 (R-174): `generation_feedback`'s event trigger
+            // refuses the move by design; DISABLE, so the rollback restores it.
+            if (table === "generation_feedback") {
+              await tx.execute(
+                sql.raw("ALTER TABLE generation_feedback DISABLE TRIGGER generation_feedback_event_immutable")
+              );
+            }
+            await tx.execute(
+              sql.raw(`UPDATE ${table} SET workspace_id = '${bWorkspaceId}' WHERE profile_id = '${p1}'`)
+            );
+          }
+          const scope = await ProfileScope.mint(tx, scopeA, p1);
+          const read = await scope.accessors.recentContextCandidates(query, tx);
+          const present = await scope.accessors.recentContextPresent(
+            { generationIds: ALL_GENERATION_IDS, feedbackIds: ALL_FEEDBACK_IDS },
+            tx
+          );
+          const label = move.tables.join("+") || "nothing moved";
+          expect(read.drafts, label).toHaveLength(move.drafts);
+          expect(read.notes, label).toHaveLength(move.notes);
+          // A reaction row about a MOVED draft is still this workspace's row
+          // when only the draft moved — but `draftReactions` is read only for
+          // drafts that came back, so it is empty whenever the draft is gone.
+          expect(read.draftReactions, label).toHaveLength(move.drafts === 0 ? 0 : move.reactions);
+          // Pieces are read only for drafts that came back, like reactions.
+          expect(read.pieces, label).toHaveLength(move.drafts === 0 ? 0 : move.pieces);
+          expect(present.generationIds, label).toHaveLength(move.gens);
+          expect(present.feedbackIds, label).toHaveLength(move.fbs);
+          for (const row of [...read.drafts, ...read.pieces, ...read.notes.flatMap((n) => [n.feedback, n.about])]) {
+            expect(row.profileId).toBe(p1);
+            expect(row.workspaceId).toBe(aWorkspaceId);
+          }
+          throw new Error("rollback");
+        })
+      ).rejects.toThrow("rollback");
     }
   });
 
@@ -3265,6 +3583,67 @@ const SCALAR_ACCESSORS = new Set<keyof ProfileScope["accessors"]>([
     await expect(
       scope.accessors.sumUnchargedBillableCostMicroUsd(args)
     ).resolves.toBe(11);
+  });
+
+  it("the TOTAL billable sum sees a success and sums THIS profile only, on both axes (audit P3-R3)", async () => {
+    // `consumedIncludedBuild: TRUE` rows — the successes the uncharged sum
+    // filters out. Three magnitudes, so a leak in either direction moves the
+    // NUMBER, and the uncharged sum over the same rows reads 0.
+    const args0 = { purpose: usageInput("x").purpose, since: new Date(0) };
+    // THE FIXTURE ALREADY HOLDS billable rows for each profile; the witness is
+    // the DELTA each profile's own new row makes, and nothing else's.
+    const baseline = new Map<string, number>();
+    for (const [profileId, authUserId] of [[p1, "user_a"], [p2, "user_a"], [p3, "user_b"]] as const) {
+      const scope = await ProfileScope.mint(db, await withWorkspace(db, { authUserId }), profileId);
+      baseline.set(profileId, await scope.accessors.sumBillableCostMicroUsd(args0));
+    }
+    const charged = (profileId: string, workspaceId: string, cost: bigint) => ({
+      profileId,
+      workspaceId,
+      ...usageInput(`charged_${profileId}`),
+      consumedIncludedBuild: true,
+      outcome: "succeeded" as const,
+      costMicroUsd: cost,
+    });
+    await db.insert(modelUsage).values([
+      charged(p1, aWorkspaceId, 13n),
+      charged(p2, aWorkspaceId, 1700n),
+      charged(p3, bWorkspaceId, 190000n),
+    ]);
+    const args = { purpose: usageInput("x").purpose, since: new Date(0) };
+    for (const [profileId, authUserId, total] of [
+      [p1, "user_a", 13],
+      [p2, "user_a", 1700],
+      [p3, "user_b", 190000],
+    ] as const) {
+      const scope = await ProfileScope.mint(
+        db,
+        await withWorkspace(db, { authUserId }),
+        profileId
+      );
+      await expect(scope.accessors.sumBillableCostMicroUsd(args)).resolves.toBe(
+        baseline.get(profileId)! + total
+      );
+      // The uncharged sum cannot see the success at all.
+      await expect(scope.accessors.sumUnchargedBillableCostMicroUsd(args)).resolves.toBe(0);
+    }
+  });
+
+  it("heldGenerationAttempts lists THIS profile's held drafts only, without candidate bytes (audit P3-A4)", async () => {
+    for (const [profileId, authUserId] of [
+      [p1, "user_a"],
+      [p2, "user_a"],
+      [p3, "user_b"],
+    ] as const) {
+      const scope = await ProfileScope.mint(
+        db,
+        await withWorkspace(db, { authUserId }),
+        profileId
+      );
+      const held = await scope.accessors.heldGenerationAttempts();
+      expect(held.map((h) => h.attemptId)).toEqual([`held_att_${profileId}`]);
+      expect(JSON.stringify(held)).not.toContain("candidate bytes");
+    }
   });
 
   it("NON-VACUITY: the foreign rows this test plants are real and visible to their OWN scopes", async () => {

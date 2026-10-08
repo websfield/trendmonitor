@@ -25,6 +25,7 @@ export function SubmitButton({
   className,
   pendingLabel = "Saving…",
   formAction,
+  ariaDescribedBy,
 }: {
   children: React.ReactNode;
   style?: React.CSSProperties;
@@ -58,6 +59,11 @@ export function SubmitButton({
    * and nothing else had to change.
    */
   pendingLabel?: string;
+  /**
+   * The id(s) of the sentence that states what this press costs (launch L2,
+   * WCAG 1.3.1). Optional; absent renders no attribute.
+   */
+  ariaDescribedBy?: string;
 }) {
   const { pending } = useFormStatus();
   return (
@@ -85,6 +91,7 @@ export function SubmitButton({
         if (pending) e.preventDefault();
       }}
       style={style}
+      {...(ariaDescribedBy !== undefined ? { "aria-describedby": ariaDescribedBy } : {})}
       {...(formAction !== undefined ? { formAction } : {})}
     >
       {pending ? pendingLabel : children}

@@ -23,6 +23,13 @@
 // TYPE-ONLY, and it must stay type-only. `../billing-errors` imports
 // `@respin/credits/app-server` for its instanceof table, which reaches `pg`; a
 // VALUE import here would put a Postgres driver in the client bundle.
+//
+// ONE FACADE TYPE IS NAMED, and it is the exception the paragraph above
+// allows rather than breaks: `PresentedDisclosure` is a one-member plain value
+// (`{ kind }`), not a row or a run, and naming it is the control — the
+// disclosure a screen may present has no text member, so no projection can
+// put the model's disclosure prose on it (R-121, audit P1-R1).
+import type { PresentedDisclosure } from "@respin/credits/app-server";
 import type { BillingErrorCode } from "../billing-errors";
 
 /** One hook as the model wrote it, with the mechanic it says it is using. */
@@ -37,13 +44,81 @@ export type HookLine = { text: string; mechanic: string };
  * three and the screen renders all three. A view that showed only the hook
  * would turn the output back into a list of topics on its way to the page.
  */
-export type IdeaLine = { hook: string; thesis: string; framework: string };
+export type IdeaLine = {
+  hook: string;
+  thesis: string;
+  framework: string;
+  /**
+   * A version-2 concept's form, premise and filming plan (R-148), or ABSENT
+   * for a legacy idea — never an empty object. Absence is the legacy reading,
+   * so a v1 idea renders exactly as it did before L1.
+   */
+  creative?: CreativeLine;
+};
 
-/** One timestamped VO beat, with the turn marked (PRD §46). */
-export type BeatLine = { atSeconds: number; vo: string; isTurn: boolean };
+/** What a premise rests on, as stored (R-148 point 4). */
+export type BasisLine =
+  | { kind: "material"; excerpt: string }
+  | { kind: "unconfirmed" }
+  | { kind: "none" };
 
-/** One shot against the beat it covers. */
-export type ShotLine = { beatIndex: number; shot: string; note: string };
+/** A v2 premise: what happens, why it is interesting, the payoff, its basis. */
+export type PremiseLine = {
+  whatHappens: string;
+  interest: string;
+  payoff: string;
+  basis: BasisLine;
+};
+
+/** A v2 filming plan. `people` and `minutes` are closed values, not prose. */
+export type FilmingLine = {
+  location: FilmingItemLine;
+  equipment: FilmingItemLine[];
+  people: "solo" | "with_help";
+  minutes: number;
+};
+
+/**
+ * One place or piece of kit as the facade's `presentedFilming` presents it —
+ * the model's text with `[check]` appended where the server's stored decision
+ * says the creator did not list it — and whether it is unconfirmed. Never
+ * re-derived here (R-148 point 3; R-150 point 2).
+ */
+export type FilmingItemLine = { text: string; unconfirmed: boolean };
+
+/**
+ * One v2 concept's (or a v2 script's) creative half, PROJECTED.
+ *
+ * `formLabel` IS RESOLVED SERVER-SIDE from the facade's `CREATIVE_FORM_OPTIONS`,
+ * so the screen renders a label rather than holding a form vocabulary of its
+ * own; `frameworkProvenance` travels so a custom structure is never presented
+ * as a library framework.
+ */
+export type CreativeLine = {
+  formLabel: string;
+  frameworkProvenance: "offered" | "custom" | null;
+  premise: PremiseLine;
+  filming: FilmingLine;
+};
+
+/**
+ * One timestamped VO beat, with the turn marked (PRD §46). `pivot` names the
+ * pivot beat's kind on a version-2 script — a turn or a reveal (R-148) — and
+ * is absent on every legacy beat.
+ */
+export type BeatLine = {
+  atSeconds: number;
+  vo: string;
+  isTurn: boolean;
+  pivot?: "turn" | "reveal";
+};
+
+/**
+ * One shot against the beat it covers. `unconfirmed` is present on a version-2
+ * line only — the server's decision that the line names kit the creator did
+ * not list, read through the facade's `presentedShotMap` (R-150 point 2).
+ */
+export type ShotLine = { beatIndex: number; shot: string; note: string; unconfirmed?: boolean };
 
 /** One on-screen text cue. */
 export type OnScreenLine = { atSeconds: number; text: string };
@@ -59,13 +134,17 @@ export type OnScreenLine = { atSeconds: number; text: string };
  * `token` and `unit` are MODEL OUTPUT, never the creator's brain content: the
  * finding names the specific as it appears in the draft and the sentence around
  * it, which is the draft the reader is already looking at.
+ *
+ * `unit` IS NULL ON A REFUSED DRAFT (billing verification, 2026-10-07): that
+ * draft is not shown, so its sentences are not projected either — only the
+ * token and the field reach the client (`summariseKillTest`).
  */
 export type TraceabilityFlag = {
   kind: string;
   enforcement: "hard" | "flag";
   token: string;
   field: string;
-  unit: string;
+  unit: string | null;
 };
 
 /**
@@ -85,7 +164,8 @@ export type ClaimFlag = {
   enforcement: "hard" | "flag";
   token: string;
   field: string;
-  unit: string;
+  /** Null on a refused draft, as on `TraceabilityFlag`. */
+  unit: string | null;
 };
 
 /** One verdict on a criterion the CREATOR wrote. Advisory, and labelled so. */
@@ -116,9 +196,13 @@ export type KillTestSummary = {
    *
    * They were stored and unreachable: `runKillTest` records every performance,
    * certainty and concealment claim it finds in the model's own text, the hard
-   * ones surface through the refusal's `why`, and the flag-level ones — a
-   * concealment sentence in the disclosure guidance among them — reached
+   * ones surface through the refusal's `why`, and the flag-level ones reached
    * nobody. A capability nothing can reach is not done, it is inventory.
+   *
+   * EXCEPT THE DISCLOSURE SECTION'S. A finding in `/disclosure/*` stays stored
+   * on `generations.kill_test` and is dropped by `summariseKillTest` before it
+   * reaches this list: its `unit` is the model's disclosure prose, which no
+   * surface presents (R-121, audit P1-R1).
    */
   claims: ClaimFlag[];
 };
@@ -127,6 +211,8 @@ export type KillTestSummary = {
 export type GenerationCharge = {
   creditsChargedNow: number;
   balanceAfter: number;
+  /** R-173: `GenerateResult.freeClaimRefusal`, carried as the operation returned it. */
+  freeClaimRefusal: boolean;
 };
 
 /**
@@ -172,8 +258,24 @@ export type PrivateFrameworksNotUsed = number | null;
  * surface where "why this performs" is displayed.
  */
 export type ScriptDocument = {
+  /**
+   * PRESENT ONLY ON A VERSION-2 DOCUMENT (R-148): what the creator asked for,
+   * and — for a script — its own form, premise and filming plan. An absent
+   * value is the legacy reading; the projection never invents one for a
+   * document that carries no version.
+   */
+  creative?: {
+    requestedFormLabel: string;
+    script?: CreativeLine;
+    /**
+     * R-150 point 3: the server-authored confirmation item. The facade returns
+     * it for EVERY version-2 output (the only documents with a `creative`
+     * block); `null` is what it returns for a legacy one. Never model text.
+     */
+    eventConfirmation: string | null;
+  };
   thesis?: { statement: string; why: string };
-  framework?: { name: string; why: string };
+  framework?: { name: string; why: string; provenance?: "offered" | "custom" };
   hooks?: HookLine[];
   ideas?: IdeaLine[];
   beats?: BeatLine[];
@@ -181,7 +283,14 @@ export type ScriptDocument = {
   onScreenText?: OnScreenLine[];
   caption?: { text: string; hashtags: string[] };
   whyThisPerforms: { reasoning: string; weakestPoint: string };
-  disclosure: { platform: string; guidance: string };
+  /**
+   * A KIND, NEVER PROSE (R-121, audit P1-R1). The model's disclosure section
+   * is stored with the draft and is not presented: the screen renders the
+   * product sentence `DISCLOSURE_LINE[kind]`. The type has no text member, so
+   * a destructure, a bracket read or a pass-through of `output.disclosure`
+   * into this field is a compile error rather than a render.
+   */
+  disclosure: PresentedDisclosure;
 };
 
 /**
@@ -261,6 +370,12 @@ export type StudioRunState =
   | {
       status: "usable";
       generationId: string;
+      /**
+       * The attempt id this output settled under — the saved recording pack's
+       * address (`/studio/saved/<attemptId>`, launch L4). Optional because the
+       * screen only LINKS with it; a state without one renders no link.
+       */
+      attemptId?: string;
       modeId: string;
       modeLabel: string;
       document: ScriptDocument;
@@ -273,11 +388,14 @@ export type StudioRunState =
        * REQ-C03: an honest refusal IS the product working — "everything died,
        * here is why, here is a sharper angle" — so it is a first-class outcome
        * beside `usable`, not a member of `refused` below. It is CHARGED (the
-       * slice card's question-4 table) and it carries no draft, because the
-       * draft that died is not shown.
+       * slice card's question-4 table) — UNLESS its only cause was the claim
+       * scan, which is free (R-173, `charge.freeClaimRefusal`) — and it carries
+       * no draft, because the draft that died is not shown.
        */
       status: "honest_refusal";
       generationId: string;
+      /** The saved pack's address, as on `usable`. */
+      attemptId?: string;
       modeId: string;
       modeLabel: string;
       headline: string;
@@ -287,8 +405,8 @@ export type StudioRunState =
       charge: GenerationCharge;
       /**
        * CARRIED ON A REFUSAL TOO, and that is not symmetry for its own sake: an
-       * honest refusal is CHARGED, so the creator paid for a prompt that was
-       * missing frameworks they wrote. Omitting it here would surface the fact
+       * honest refusal is usually CHARGED (R-173's free claim refusal aside),
+       * so the creator paid for a prompt that was missing frameworks they wrote. Omitting it here would surface the fact
        * only when the draft came out well.
        */
       privateFrameworksNotUsed: PrivateFrameworksNotUsed;
@@ -306,12 +424,41 @@ export type StudioRunState =
        */
       status: "replayed";
       generationId: string;
+      /**
+       * The saved pack's address (launch L4): a replay does not re-render the
+       * stored document here, it links to the page that reads it back.
+       */
+      attemptId?: string;
       modeId: string;
       modeLabel: string;
       outcome: string;
       weakestPoint: string | null;
       refusalReason: string | null;
       balanceAfter: number;
+      /** R-173: the stored refusal was a free claim refusal, never paid for. */
+      freeClaimRefusal: boolean;
+    }
+  | {
+      /**
+       * A HELD DRAFT FINISHED BY THIS PRESS (audit P3-A2, R-157) — the third
+       * outcome `GenerateResult` documents: `replayed: false`, `run: null`.
+       * No model was called by this press, AND this press took the debit: the
+       * draft the model had already written was stored and charged now. It is
+       * NOT a replay, which charges nothing, and saying "nothing extra was
+       * spent" here was false on every charged settle.
+       *
+       * Like a replay it shows the stored row's own typed columns, not the
+       * jsonb document — and it links to the saved pack.
+       */
+      status: "settled_held";
+      generationId: string;
+      attemptId: string;
+      modeId: string;
+      modeLabel: string;
+      outcome: string;
+      weakestPoint: string | null;
+      refusalReason: string | null;
+      charge: GenerationCharge;
     }
   | { status: "refused"; code: BillingErrorCode };
 
@@ -348,7 +495,163 @@ export const IDLE_STUDIO_STATE: StudioActionState = {
  */
 export type FeedbackState =
   | { status: "idle" }
-  | { status: "recorded"; generationId: string; reaction: string; noteKept: boolean }
+  | {
+      status: "recorded";
+      generationId: string;
+      reaction: string;
+      noteKept: boolean;
+      /**
+       * The stored row's id (audit P6-A1, R-174): what "Leave this out of
+       * future drafts" posts. Optional only so a pre-change fixture still
+       * types; the action always sets it, and the control is not offered
+       * without it.
+       */
+      feedbackId?: string;
+    }
   | { status: "refused"; code: BillingErrorCode };
 
+/**
+ * "LEAVE THIS OUT OF FUTURE DRAFTS" (audit P6-A1, R-174) — what the press left
+ * behind. `excluded` names the reaction it stamped; it carries no creator text.
+ */
+export type ExcludeState =
+  | { status: "idle" }
+  | { status: "excluded"; feedbackId: string }
+  | { status: "refused"; code: BillingErrorCode };
+
+export const IDLE_EXCLUDE_STATE: ExcludeState = { status: "idle" };
+
 export const IDLE_FEEDBACK_STATE: FeedbackState = { status: "idle" };
+
+/**
+ * "REMEMBER THIS FOR FUTURE DRAFTS" (launch L3, R-152) — what the one press
+ * left behind. `proposed` names the Kill Test VERSION it wrote, which is a
+ * proposal and nothing more: the screen says it is not in force until the
+ * creator confirms and activates it on the Brain page. `already_held` is the
+ * press that wrote NOTHING because that version already holds the same rule
+ * (L3 gate, C-L1), and `active` says whether that version is the active one.
+ * Neither carries creator text — the words are in the version, where `/brain`
+ * shows them.
+ *
+ * `refused` CARRIES THE TYPED TEXT BACK, and only to the browser that sent it
+ * (L3 gate, D-L3): React 19 resets an uncontrolled form after its action, so
+ * without it a refusal wiped the rule the creator had just written. `attempt`
+ * counts consecutive refusals so the panel can key the form on it and remount
+ * the textarea with the text as its default value, even when two refusals in a
+ * row carry the same words.
+ */
+export type RememberState =
+  | { status: "idle" }
+  | { status: "proposed"; version: number }
+  | { status: "already_held"; version: number; active: boolean }
+  | { status: "refused"; code: BillingErrorCode; text: string; attempt: number };
+
+export const IDLE_REMEMBER_STATE: RememberState = { status: "idle" };
+
+// ------------------------------------------------------------------------
+// LAUNCH L4 (R-153): THE SAVED RECORDING PACK — plain values only.
+
+/** One version of a piece, as the saved page lists it. */
+export type SavedVersionLine = {
+  attemptId: string;
+  createdAt: string;
+  outcome: "usable" | "honest_refusal";
+  isSelected: boolean;
+  isThis: boolean;
+  parentAttemptId: string | null;
+};
+
+/**
+ * ONE STORED VERSION, PROJECTED for the saved page, the copied script and the
+ * Markdown export — all three read this value and nothing else, so a phone, a
+ * desktop and a pasted script show the same stored version.
+ *
+ * `document` is `null` for an honest refusal (no draft was stored), and its
+ * `disclosure` is a kind, as on every `ScriptDocument`; the PRODUCT's
+ * sentence for it travels as `disclosureGuidance`, never the model's. `checks` is `null`
+ * when the stored checks could not be read — said on screen, never shown as an
+ * empty list.
+ */
+export type SavedPackView = {
+  attemptId: string;
+  modeLabel: string;
+  createdAt: string;
+  platform: string;
+  outcome: "usable" | "honest_refusal";
+  document: ScriptDocument | null;
+  checks: KillTestSummary | null;
+  refusal: {
+    headline: string | null;
+    sharperAngle: string | null;
+    hardRules: { rule: string; field: string; excerpt: null; remedy: string }[];
+  } | null;
+  weakestPoint: string | null;
+  disclosureGuidance: string;
+  lineage: {
+    parent: { attemptId: string; modeLabel: string } | null;
+    source: { attemptId: string; ideaIndex: number } | null;
+  };
+  piece: {
+    pieceId: string;
+    version: number;
+    isSelected: boolean;
+    selectable: boolean;
+    selectedAttemptId: string | null;
+    versions: SavedVersionLine[];
+    versionsTruncated: boolean;
+  } | null;
+  /**
+   * What a Spin or a source reel was made from (R-153 amendment A2), or null
+   * for every other mode. `spin.summary` is null when the reference is not
+   * available here; `source.checkedAgainst` says which text the stored copy
+   * check compared this version with.
+   */
+  reference:
+    | {
+        kind: "spin";
+        summary: { source: "YouTube" | "Submitted"; title: string; mechanismSummary: string } | null;
+      }
+    | {
+        kind: "source";
+        text: string | null;
+        truncated: boolean;
+        checkedAgainst: "source" | "revised_draft";
+      }
+    | null;
+  /** This version's own direct revisions, newest first (R-153 amendment, M2). */
+  revisions: { attemptId: string; createdAt: string; outcome: "usable" | "honest_refusal" }[];
+  revisionsTruncated: boolean;
+  /**
+   * A stored HARD-rule finding pointed into the model's disclosure and is not
+   * shown (R-153 amendment A6) — the page says so instead of going silent.
+   */
+  disclosureAdviceWithheld: boolean;
+  revision: {
+    revisable: boolean;
+    blocked: "honest_refusal" | "reference_unavailable" | "source_to_reel" | null;
+    credits: number | null;
+    /** The config version `credits` was read under; the press sends it back. */
+    quoteConfigVersion: number | null;
+    inPlan: boolean | null;
+  };
+};
+
+/**
+ * What one saved-page revision press left behind. `done` names the new
+ * version's attempt id (its own saved page) and the money facts the operation
+ * returned; `refused` is a code, never prose.
+ */
+export type SavedReviseState =
+  | { status: "idle" }
+  | {
+      status: "done";
+      attemptId: string;
+      outcome: "usable" | "honest_refusal" | "replayed";
+      creditsChargedNow: number;
+      balanceAfter: number;
+      /** R-173: the operation's `freeClaimRefusal`. */
+      freeClaimRefusal: boolean;
+    }
+  | { status: "refused"; code: BillingErrorCode };
+
+export const IDLE_SAVED_REVISE_STATE: SavedReviseState = { status: "idle" };

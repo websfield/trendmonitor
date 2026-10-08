@@ -54,6 +54,10 @@ function result(
 ): ComparisonResultInput {
   return {
     profileId: "profile-1",
+    // NO DRAFT BY DEFAULT, so every row is its own post (R-170) and the cases
+    // written before n counted posts keep counting what they counted. Cases
+    // about one post observed more than once set it explicitly.
+    generationId: null,
     platform: "youtube_shorts",
     audienceClass: "organic",
     metricKey: "follows",
@@ -2088,5 +2092,68 @@ describe("C1 declaration identity", () => {
     const changed = new Map(same);
     changed.set("new", { ...same.get("new")!, label: "New follows" });
     expect(groups(rows, { declaredMetrics: changed })).toHaveLength(2);
+  });
+});
+
+// ------------------------------------------------------------------
+// R-170 (audit Phase 2, P2-A1): n counts DISTINCT POSTS, and no group is built
+// that nothing could ever fill.
+// ------------------------------------------------------------------
+describe("R-170: cohort n counts distinct posts, not observation rows", () => {
+  it("three rows of ONE generation over nested windows are n = 1, not 3", () => {
+    // The `results-schema-write.test.ts` shape, inverted: the database accepts
+    // three observations of one draft over nested windows, and they are one
+    // post. Before R-170 this treatment read `present`, n = 3.
+    const nested = [
+      reach("o1", 40, { treatmentKey: TREATMENT, generationId: "gen-1", observedFrom: new Date("2026-08-05T00:00:00Z"), observedTo: new Date("2026-08-06T00:00:00Z") }),
+      reach("o2", 50, { treatmentKey: TREATMENT, generationId: "gen-1", observedFrom: new Date("2026-08-05T00:00:00Z"), observedTo: new Date("2026-08-09T00:00:00Z") }),
+      reach("o3", 60, { treatmentKey: TREATMENT, generationId: "gen-1", observedFrom: new Date("2026-08-05T00:00:00Z"), observedTo: new Date("2026-08-12T00:00:00Z") }),
+      reach("b1", 10),
+      reach("b2", 20),
+      reach("b3", 30),
+    ];
+    const treatment = counted(reachOf(build(nested)).treatment);
+    expect(treatment.state).toBe("short");
+    expect(treatment.n).toBe(1);
+    // The most mature observation represents the post.
+    expect(treatment.resultIds).toEqual(["o3"]);
+  });
+
+  it("...and three DIFFERENT generations are n = 3, with one observation each", () => {
+    const rows = [
+      reach("o1", 40, { treatmentKey: TREATMENT, generationId: "gen-1" }),
+      reach("o1b", 99, { treatmentKey: TREATMENT, generationId: "gen-1", observedTo: new Date("2026-08-10T00:00:00Z") }),
+      reach("o2", 50, { treatmentKey: TREATMENT, generationId: "gen-2" }),
+      reach("o3", 60, { treatmentKey: TREATMENT, generationId: "gen-3" }),
+      reach("b1", 10),
+      reach("b2", 20),
+      reach("b3", 30),
+    ];
+    const treatment = reachOf(build(rows)).treatment;
+    expect(treatment.state).toBe("present");
+    expect(counted(treatment).n).toBe(3);
+    // `o1b` (an earlier, shorter window of gen-1) never enters the median.
+    expect(medianOrNull(treatment)).toBe(50);
+    expect(treatment.resultIds).not.toContain("o1b");
+  });
+
+  it("a population of ONLY self-reported rows builds NO group — nothing could fill it", () => {
+    const selfReported = (id: string, per1k: number, key: string | null) =>
+      reach(id, per1k, { treatmentKey: key, evidenceState: "quantified_self_reported", generationId: key ? `gen-${id}` : null });
+    expect(groups([
+      selfReported("t1", 40, TREATMENT),
+      selfReported("t2", 50, TREATMENT),
+      selfReported("t3", 60, TREATMENT),
+      selfReported("b1", 10, null),
+      selfReported("b2", 20, null),
+    ])).toEqual([]);
+    // NON-VACUITY: the same shape, verified, does build its group.
+    expect(groups([
+      reach("t1", 40, { treatmentKey: TREATMENT }),
+      reach("t2", 50, { treatmentKey: TREATMENT }),
+      reach("t3", 60, { treatmentKey: TREATMENT }),
+      reach("b1", 10),
+      reach("b2", 20),
+    ]).map((g) => g.treatmentKey)).toEqual([TREATMENT]);
   });
 });

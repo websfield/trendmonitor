@@ -11,7 +11,15 @@ import {
   assertProfileLifecycleTransactionAccess,
   assertWorkspaceLifecycleTransactionAccess,
 } from "./membership-lifecycle";
-import { assertScoped, type WorkspaceScope } from "./with-workspace";
+import { assertWorkspaceReadTransactionAccess } from "./read-grade-lifecycle";
+import { boundedReadOrJoin } from "./render-transaction";
+import {
+  assertReadScoped,
+  assertScoped,
+  isReadGradeScope,
+  type ReadGradeWorkspaceScope,
+  type WorkspaceScope,
+} from "./with-workspace";
 import type { DbLike, TxLike } from "./db-like";
 
 const UUID_RE =
@@ -36,11 +44,17 @@ const profileProjection = {
  */
 export async function selectedProfileForMember(
   db: DbLike | TxLike,
-  scope: WorkspaceScope
+  scope: WorkspaceScope | ReadGradeWorkspaceScope
 ): Promise<CreatorProfile | null> {
-  assertScoped(scope);
+  // A READER, so it takes either grade (R-163, fence 7): under a read-grade
+  // scope the direct lifecycle check is the read sibling — same locks, same
+  // epoch check, the tombstoned-but-readable workspace admitted.
+  assertReadScoped(scope);
+  const lifecycleCheck = isReadGradeScope(scope)
+    ? assertWorkspaceReadTransactionAccess
+    : assertWorkspaceLifecycleTransactionAccess;
   const read = async (tx: TxLike): Promise<CreatorProfile | null> => {
-    const authority = await assertWorkspaceLifecycleTransactionAccess(
+    const authority = await lifecycleCheck(
       tx,
       scope.userId as string,
       scope.workspaceId as string
@@ -69,10 +83,9 @@ export async function selectedProfileForMember(
       .limit(1);
     return profile ?? null;
   };
-  const transaction = (db as DbLike).transaction;
-  return typeof transaction === "function"
-    ? (db as DbLike).transaction(read)
-    : read(db as TxLike);
+  // BOUNDED on the pool (gate M2): READ ONLY, `lock_timeout = 5000`; joined
+  // unbounded when handed the caller's transaction.
+  return boundedReadOrJoin(db, read);
 }
 
 /**

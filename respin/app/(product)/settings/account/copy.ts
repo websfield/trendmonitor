@@ -13,9 +13,21 @@ export const ACCOUNT_TITLE = "Account and data";
 export const EXPORT_COPY =
   "Your brain export is available from the Brain page as JSON and Markdown. It streams directly to you; the server keeps no staged copy.";
 
-export const WORKSPACE_DELETE_COPY = `Deleting this workspace tombstones it at once and blocks access, then erases it after a ${DELETION_GRACE_DAYS}-day grace period. During grace the same owner can cancel from this page. Revoked keys and invites do not come back on cancel.`;
+// R-162: any active owner may cancel, not only the one who asked. R-163: the
+// export and the brain history stay readable during grace — through
+// `readScopeForUser`, which prefers an ACTIVE workspace, so only for a person
+// whose only workspace this is (R-166, gate M3: the old "your brain export
+// stays available" was false for anyone holding a second workspace).
+export const WORKSPACE_DELETE_COPY = `Deleting this workspace tombstones it at once and blocks access, then erases it after a ${DELETION_GRACE_DAYS}-day grace period. During grace any owner of the workspace can cancel from this page, and anyone for whom it is their only workspace can still export its brain and read its history. Revoked keys and invites do not come back on cancel.`;
 
-export const IDENTITY_DELETE_COPY = `Deleting your account signs you out everywhere, suspends your memberships, and sends one single-use recovery link by email. You can cancel within ${DELETION_GRACE_DAYS} days with that link plus your password. Shared workspace work stays with the other owners; you cannot delete your account while you are the last owner of a workspace, while you are the billing contact of a workspace that has a billing account, or while any workspace you belong to has a billing account whose contact has not been confirmed.`;
+// R-160: a workspace you are the last owner of is no longer a refusal — it is
+// scheduled for deletion with the account, and cancelling the account's
+// deletion leaves it cancellable from this page.
+export const IDENTITY_DELETE_COPY = `Deleting your account signs you out everywhere, suspends your memberships, and sends one single-use recovery link by email. You can cancel within ${DELETION_GRACE_DAYS} days with that link plus your password. Shared workspace work stays with the other owners. Every workspace you are the last owner of is scheduled for deletion with your account, on the same grace period; if you cancel your account's deletion, those workspace deletions stay pending until you cancel them from this page. You cannot delete your account while you are the billing contact of a workspace that is not being deleted, or while a workspace you belong to that is not being deleted has a billing account whose contact has not been confirmed.`;
+
+/** R-163: rendered in place of the request form while this workspace's own deletion is pending. */
+export const WORKSPACE_DELETION_PENDING_COPY =
+  "This workspace's deletion is already pending. Cancel it above to make changes again; until it erases, your brain export and its history stay available.";
 
 export const NO_REFUND_COPY =
   "Deletion itself creates no refund or credit. A paid period keeps its original schedule.";

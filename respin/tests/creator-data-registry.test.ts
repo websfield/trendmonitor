@@ -14,8 +14,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  APP_TABLES,
   CREATOR_DATA_REGISTRY,
   creatorDataEntry,
+  deriveCreatorDataRegistry,
+  LIFECYCLE_REGISTRY,
   NOT_CREATOR_DATA,
 } from "../packages/db/src/creator-data-registry";
 import { exportPlan } from "../packages/db/src/export";
@@ -136,17 +139,64 @@ describe("P9 — the creator-data registry covers every table M2a created", () =
     ).toBe(true);
   });
 
-  it("the tables holding creator CONTENT are all exported", () => {
-    // Non-vacuity in the direction that matters: an export that included
-    // nothing would satisfy every assertion above.
-    const content = CREATOR_DATA_REGISTRY.filter((e) => e.holdsCreatorContent);
+  // P5-R7: `holdsCreatorContent` is DERIVED (`export.included`), so the loop
+  // that used to sit here ("every content table is exported") became a
+  // tautology and is gone. What replaces it is a PIN — the derived list, so a
+  // new `profile(…, true)` registry entry shows up as a red diff rather than
+  // as a silent `false` — and the inverse witness.
+  const PINNED_CREATOR_CONTENT = [
+    "autopsies",
+    "autopsy_cache_claims",
+    // Decided as content (P5-R7): a `profile(…, true)` entry the registry
+    // already exported as `profile_creator` rows; the hand Set lagged it.
+    "brain_activation_snapshots",
+    "brain_docs",
+    "creative_pieces",
+    "creator_profiles",
+    "frameworks",
+    "generation_feedback",
+    "generations",
+    "onboarding_inputs",
+    "onboarding_interview_drafts",
+    "promotion_proposals",
+    // Decided as content (P5-R7): the creator's own feedback and results as
+    // a proposal's evidence.
+    "proposal_evidence_feedback",
+    "proposal_evidence_results",
+    "results",
+    "tracked_niches",
+    "trend_items",
+    "trend_sources",
+    "trend_transcripts",
+  ] as const;
+
+  it("the tables holding creator CONTENT are the pinned 19, derived from the lifecycle registry", () => {
+    const content = CREATOR_DATA_REGISTRY.filter((e) => e.holdsCreatorContent).map((e) => e.table);
+    // The non-vacuity floor stays: a derivation that found nothing would
+    // otherwise agree with an empty pin.
     expect(content.length).toBeGreaterThanOrEqual(4);
-    for (const entry of content) {
-      expect(
-        entry.export.included,
-        entry.table + " holds creator content but is excluded from the export"
-      ).toBe(true);
-    }
+    expect([...content].sort()).toEqual([...PINNED_CREATOR_CONTENT]);
+  });
+
+  it("PLANTED: a new profile(…, true) entry reddens the pin; a profile(…, false) entry is not content", () => {
+    const base = LIFECYCLE_REGISTRY.find((e) => e.table === "brain_docs" && e.scope === "profile")!;
+    const plantedIncluded = { ...base, table: "zz_planted_included" as never };
+    const plantedExcluded = {
+      ...base,
+      table: "zz_planted_excluded" as never,
+      export: "excluded_system" as const,
+      exportProjector: "none" as const,
+    };
+    const tables = [...APP_TABLES, "zz_planted_included", "zz_planted_excluded"];
+    const derived = deriveCreatorDataRegistry([...LIFECYCLE_REGISTRY, plantedIncluded, plantedExcluded], tables)
+      .filter((e) => e.holdsCreatorContent)
+      .map((e) => e.table)
+      .sort();
+    expect(derived).toContain("zz_planted_included");
+    expect(derived).not.toEqual([...PINNED_CREATOR_CONTENT]);
+    expect(derived).not.toContain("zz_planted_excluded");
+    // ...and the default derivation IS the exported constant, not a copy.
+    expect(deriveCreatorDataRegistry()).toEqual(CREATOR_DATA_REGISTRY);
   });
 
   // THE LIVE LOOP, not the one that used to be here. Until 2026-08-31 these

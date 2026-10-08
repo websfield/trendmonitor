@@ -21,7 +21,12 @@ vi.mock("better-auth/crypto", async (importOriginal) => {
 import { account, session } from "../src/auth-schema";
 import {
   assertReauthenticatedWorkspaceScopeInTx,
+  BILLING_REAUTHENTICATION_ARMS,
+  consumeGoogleReauthentication,
   reauthenticateSessionWithPassword,
+  recordedGoogleReauthentication,
+  reserveGoogleReauthentication,
+  stampGoogleReauthentication,
 } from "../src/auth-lifecycle";
 import { ensureUserWorkspace } from "../src/bootstrap";
 import type { DbLike, TxLike } from "../src/db-like";
@@ -182,5 +187,112 @@ describe("exact-session reauthentication locking", () => {
         assertReauthenticatedWorkspaceScopeInTx(tx, current.scope, proof)
       )
     ).rejects.toThrow("lifecycle_refused:scope_stale");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R-164 (audit P5-R8 amendment, row 39): billing reauthentication's arms are a
+// LIST — `credential` (password now) and `google` (a recorded challenge
+// stamp). A provider not listed is refused.
+// ---------------------------------------------------------------------------
+describe("R-164: the google arm of billing reauthentication", () => {
+  let db: TestDb;
+
+  beforeEach(async () => {
+    db = await createTestDb();
+  });
+
+  async function googleUser(authUserId: string, providerId = "google") {
+    await seedAuthUser(db, authUserId);
+    await ensureUserWorkspace(db, { authUserId, name: authUserId });
+    await db.insert(account).values({
+      id: `${providerId}-${authUserId}`,
+      accountId: `sub-${authUserId}`,
+      providerId,
+      userId: authUserId,
+    });
+    await db.insert(session).values({
+      id: `session-${authUserId}`,
+      token: `token-${authUserId}`,
+      userId: authUserId,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1_000),
+      updatedAt: new Date(),
+    });
+    return { authUserId, sessionId: `session-${authUserId}` };
+  }
+
+  it("the arm list is exactly credential and google", () => {
+    expect([...BILLING_REAUTHENTICATION_ARMS]).toEqual(["credential", "google"]);
+  });
+
+  it("admits a callback-stamped google session inside the window; refuses a stale stamp, no stamp, and no provider row", async () => {
+    const ref = await googleUser("google-arm-user");
+    // No stamp yet: ordinary Google sign-in does not qualify.
+    await expect(recordedGoogleReauthentication(db, ref)).rejects.toThrow("auth_lifecycle_refused");
+    const requestedAt = new Date(Date.now() - 1_000);
+    const stamped = await stampGoogleReauthentication(db, {
+      ...ref,
+      sub: "sub-google-arm-user",
+      authTime: Math.floor(Date.now() / 1000),
+      requestedAt,
+    });
+    expect(await recordedGoogleReauthentication(db, ref)).toEqual(stamped);
+    // Stale: outside R-118's ten-minute window.
+    await db
+      .update(session)
+      .set({ reauthenticatedAt: new Date(Date.now() - 11 * 60 * 1_000) })
+      .where(eq(session.id, ref.sessionId));
+    await expect(recordedGoogleReauthentication(db, ref)).rejects.toThrow("auth_lifecycle_refused");
+    // No provider row at all.
+    await db.delete(account).where(eq(account.userId, ref.authUserId));
+    await db.update(session).set({ reauthenticatedAt: new Date() }).where(eq(session.id, ref.sessionId));
+    await expect(recordedGoogleReauthentication(db, ref)).rejects.toThrow("auth_lifecycle_refused");
+  });
+
+  it("a PLANTED third provider is refused: a fresh stamp on a github-only session does not admit", async () => {
+    const ref = await googleUser("github-arm-user", "github");
+    await db.update(session).set({ reauthenticatedAt: new Date() }).where(eq(session.id, ref.sessionId));
+    await expect(recordedGoogleReauthentication(db, ref)).rejects.toThrow("auth_lifecycle_refused");
+  });
+
+  it("the stamp is the server's check, not the token's: a missing auth_time, an auth_time before the challenge, a mismatched sub, and another user's session all refuse", async () => {
+    const ref = await googleUser("stamp-checks-user");
+    const other = await googleUser("stamp-other-user");
+    const requestedAt = new Date();
+    const now = Math.floor(Date.now() / 1000) + 1;
+    const base = { ...ref, sub: "sub-stamp-checks-user", requestedAt };
+    await expect(stampGoogleReauthentication(db, { ...base, authTime: undefined })).rejects.toThrow("auth_lifecycle_refused");
+    await expect(
+      stampGoogleReauthentication(db, { ...base, authTime: Math.floor(requestedAt.getTime() / 1000) - 1 })
+    ).rejects.toThrow("auth_lifecycle_refused");
+    await expect(stampGoogleReauthentication(db, { ...base, authTime: now, sub: "sub-stamp-other-user" })).rejects.toThrow(
+      "auth_lifecycle_refused"
+    );
+    await expect(
+      stampGoogleReauthentication(db, { ...base, authTime: now, sessionId: other.sessionId })
+    ).rejects.toThrow("auth_lifecycle_refused");
+    // Nothing above stamped either session.
+    const sessions = await db.select({ at: session.reauthenticatedAt }).from(session);
+    expect(sessions.every((row) => row.at === null)).toBe(true);
+  });
+
+  it("the challenge state is single-use: consumed as it is read, refused on replay", async () => {
+    const ref = await googleUser("state-user");
+    const stateId = "A".repeat(43);
+    await reserveGoogleReauthentication(db, {
+      stateId,
+      ...ref,
+      codeVerifier: "v".repeat(64),
+      nonce: "n".repeat(32),
+      rateLimitKeyDigest: "c".repeat(64),
+    });
+    const consumed = await consumeGoogleReauthentication(db, stateId, "c".repeat(64));
+    expect(consumed.sessionDigest).toBe(sha(ref.sessionId));
+    await expect(consumeGoogleReauthentication(db, stateId, "c".repeat(64))).rejects.toThrow("auth_lifecycle_refused");
+    // A session with no Google account cannot even start a challenge.
+    const github = await googleUser("state-github-user", "github");
+    await expect(
+      reserveGoogleReauthentication(db, { stateId: "B".repeat(43), ...github, codeVerifier: "v".repeat(64), nonce: "n".repeat(32), rateLimitKeyDigest: "c".repeat(64) })
+    ).rejects.toThrow("auth_lifecycle_refused");
   });
 });

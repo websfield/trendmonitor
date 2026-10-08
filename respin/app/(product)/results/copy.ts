@@ -128,8 +128,11 @@ export const EVIDENCE_STATE_COPY: Readonly<Record<string, EvidenceStateCopy>> = 
   },
   quantified_self_reported: {
     label: "I read these numbers off the platform and typed them in",
+    // R-115 / audit Phase 2 P2-A1: this sentence said "every comparison built
+    // from them carries that label" — a comparison no self-reported row can
+    // enter. Stored and shown, never counted.
     meaning:
-      "Stored as self reported, which is what it is. Nothing here checks the numbers against the platform, so every comparison built from them carries that label.",
+      "Stored and shown as self reported, which is what it is. Nothing here checks the numbers against the platform, so they never enter a comparison, a median or a proposal.",
     offered: true,
     numbers: true,
     badge: "SELF REPORTED, UNVERIFIED",
@@ -218,7 +221,7 @@ export function noDeclaredMetricDetail(brainHref: string): string {
 
 /** The generation-less result, stated ON the form (contract C4). */
 export const NO_GENERATION_MEANING =
-  "A result that is not about one of your Respin drafts is stored, and it never joins a treatment group — there is nothing to say what it tested, and nothing is invented to fill that in. If you give it numbers it can also count towards your own baseline; with no numbers it counts towards nothing, and is kept as a record that the post happened.";
+  "A result that is not about one of your Respin drafts is stored and shown, and it never joins a treatment group — there is nothing to say what it tested, and nothing is invented to fill that in. Numbers you type in are kept with it and never counted into a baseline: only a verified analytics connector could supply a counted result, and none is connected.";
 
 export const NO_GENERATION_OPTION_LABEL = "Not one of my Respin drafts";
 
@@ -319,6 +322,17 @@ export const VERIFICATION_UNAVAILABLE =
  * Names all six predicates, because a creator who cannot see what "comparable"
  * meant cannot tell an absent comparison from a broken one.
  */
+/**
+ * WHICH METRIC VERSIONS ARE COMPARED, in the same clauses `COMPARISON_BASIS`
+ * uses (audit Phase 2, P2-A5). `/results` used to say results "measured under
+ * different versions are never compared with each other" while the basis
+ * sentence — and the code, which keys the stratum on `metricDeclarationKey` —
+ * compares matching declarations across versions. `tests/results-honesty
+ * .test.tsx` pins both to the four tuple clauses.
+ */
+export const METRIC_VERSIONS_NOTE =
+  "Results you logged earlier keep the version of this metric they were measured under, including its unit and its direction. Results are compared only when their declared metric tuple matches — key, label, unit, and direction — even when matching declarations came from more than one version of your strategy; a declaration that differs in any one of the four is never compared with another.";
+
 export const COMPARISON_BASIS =
   "A comparison is only built from your own results that share all of this: the same creator profile, the same platform, the same organic or paid class, and the same declared metric tuple — key, label, unit, and direction — even when matching declarations came from more than one version of your strategy. A treatment group additionally shares what was tested. Your baseline is the median of your own other results in the same group, with every result of the treatment itself left out. The window printed on a card is not a period the compared results all share: it is a span wide enough to hold your results in this group, and results months apart can sit in one comparison.";
 
@@ -340,13 +354,16 @@ export function shortPopulationSentence(
   n: number,
   needed: number
 ): string {
-  const more = needed === 1 ? "one more result" : `${needed} more results`;
+  // VERIFIED POSTS, said as such (R-115, R-170): only a connector-verified
+  // result enters a population, and `n` counts distinct posts, so "N more
+  // results" read as if logging more self-reported rows would fill it.
+  const more = needed === 1 ? "one more verified post" : `${needed} more verified posts`;
   const have =
     n === 0
-      ? "no results at all"
+      ? "no verified posts at all"
       : n === 1
-        ? "one result"
-        : `${n} results`;
+        ? "one verified post"
+        : `${n} verified posts`;
   return `Your ${which} has ${have} in this group, so there is no median to show. ${capitalise(more)} in the same group would make one.`;
 }
 

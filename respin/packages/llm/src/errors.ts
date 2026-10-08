@@ -161,7 +161,7 @@ export class LlmUnavailableError extends LlmError {
 export class LlmRefusedError extends LlmError {
   constructor() {
     super(
-      "The model provider declined to answer this request. The attempt was recorded. If this repeats on ordinary material, tell us — it is not something you can fix by rewording.",
+      "The model provider declined to answer this request. The attempt was recorded. If this repeats on ordinary material, rewording will not fix it.",
       "refused",
       true
     );

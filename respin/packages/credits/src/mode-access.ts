@@ -27,7 +27,9 @@
 // tier is the defect class behind two M1 round-6 findings.
 import {
   MODE_IDS,
+  MODE_SPECS,
   UnknownModeError,
+  takesCreativeForm,
   type ModeId,
 } from "@respin/modes";
 import type {
@@ -400,6 +402,14 @@ export type ModeOffer = {
    * today, and misleading tomorrow).
    */
   status: "available" | "not_in_plan";
+  /**
+   * Whether this mode takes the creative form control (R-148) — read from
+   * `@respin/modes`' `CREATIVE_FORM_MODES` list, so the screen offers the
+   * control exactly where `generate` will accept it and holds no mode list of
+   * its own. A courtesy, never the gate: `generate` refuses a creative request
+   * for any other mode before anything is spent.
+   */
+  takesCreativeForm: boolean;
 };
 
 /**
@@ -424,6 +434,14 @@ export type ModeOffer = {
  */
 export const ONBOARDING_FIRST_IDEAS_MODE: ModeId = "ideation";
 
+/**
+ * The mode "Find my next concept" runs (launch L2). The facade's `findConcept`
+ * sets it and `/studio` reads its offer — price and plan status — by it, so
+ * the price stated beside the press is the price of the mode the press runs.
+ * Not an entitlement, for the reason the constant above is not.
+ */
+export const FIND_CONCEPT_MODE: ModeId = "ideation";
+
 export function modeOffers(tier: EntitlementTier): readonly ModeOffer[] {
   return MODE_IDS.map((id) => ({
     id,
@@ -431,5 +449,28 @@ export function modeOffers(tier: EntitlementTier): readonly ModeOffer[] {
     status: !planIncludesMode(tier, id)
       ? ("not_in_plan" as const)
       : ("available" as const),
+    takesCreativeForm: takesCreativeForm(id),
   }));
+}
+
+/**
+ * WHETHER A MODE CAN BE PRESSED FROM STUDIO'S PICKER (Phase 6 compliance
+ * gate). A mode whose output goes through the Spin similarity gate
+ * (`MODE_SPECS[id].similarityGated`, today `analyseAndSpin` alone) needs an
+ * autopsy chosen on `/trends`: from the picker `generate` always refuses it
+ * ("analyse-and-spin requires an autopsy selected by its opaque identifier"),
+ * so offering it there sold a press that could not work. Derived from the
+ * spec, not listed, so a second gated mode leaves the picker by construction.
+ */
+export function offeredInStudio(id: ModeId): boolean {
+  return !MODE_SPECS[id].similarityGated;
+}
+
+/**
+ * Studio's picker: `modeOffers` minus the modes that run only from `/trends`
+ * (`offeredInStudio`). `modeOffers` stays TOTAL for every other reader; this
+ * is the one view of it a Studio screen renders.
+ */
+export function studioModeOffers(tier: EntitlementTier): readonly ModeOffer[] {
+  return modeOffers(tier).filter((offer) => offeredInStudio(offer.id));
 }

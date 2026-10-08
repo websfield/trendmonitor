@@ -9,11 +9,35 @@ import { describe, expect, it } from "vitest";
 
 import {
   PROMPT_BUNDLE_NAMESPACE,
+  UNTRUSTED_ENCODING_PROBE,
   bundlePartsFor,
   hashBundleParts,
   promptBundleVersion,
 } from "../src/bundle";
 import { MODE_IDS } from "../src/modes";
+import {
+  AUTO_FORM_INSTRUCTION,
+  CONSTRAINT_LABELS,
+  CREATIVE_BLOCK_HEADER,
+  CREATIVE_RULES,
+  DRAFT_FENCE_CLOSE,
+  DRAFT_FENCE_OPEN,
+  FORM_INSTRUCTIONS,
+  FORM_REQUESTED_NOTE,
+  INPUT_FENCE_CLOSE,
+  INPUT_FENCE_OPEN,
+  KILL_TEST_DRAFT_FENCE_OPEN,
+  NO_CONSTRAINTS_LINE,
+  PEOPLE_LABELS,
+  UNIVERSAL_LAWS,
+  universalLawLines,
+  assembleGenerationPrompt,
+  assembleRewritePrompt,
+  encodeUntrusted,
+  type GenerationContext,
+} from "../src/assemble";
+import { CREATIVE_FORM_MODES } from "../src/creative";
+import { assembleKillTestPrompt } from "../src/kill-test";
 import { SPECIFIC_SHAPES } from "../src/traceability";
 
 describe("the version string", () => {
@@ -58,13 +82,85 @@ describe("what is in the hash", () => {
       // drafts, which is the question REQ-J02 asks a version to answer.
       "modeChecks",
       "outputContract",
+      // Gate note (audit Phase 8): the static labels around per-generation
+      // text — the mode's input label, "What was found:", the kill test's two.
+      "promptLabels",
       // Slice 8c: the reference block's STATIC words — header, note and the
       // per-field labels. Same argument as `frameworkBlock`: they decide how
       // a model reads another creator's mechanism, and they lived in
       // `contextBlock` where nothing hashed them.
       "referenceBlock",
       "rewriteInstruction",
+      // Audit Phase 8 (P8-A4): the universal laws the generation renders —
+      // outside the hash until 2026-10-07, against their own docblock's promise.
+      "universalLaws",
+      // Audit Phase 8 (P8-R2): the untrusted-input fences and the encoding's
+      // behaviour — `contextBlock`'s output, which nothing else hashes.
+      "untrustedFences",
     ]);
+  });
+
+  it("AC5: the fences are IN the hashed part, and flipping one delimiter constant moves the digest", () => {
+    const parts = bundlePartsFor("hooks");
+    // Non-vacuity: every marker the prompt emits is in the part that is hashed.
+    for (const marker of [INPUT_FENCE_OPEN, INPUT_FENCE_CLOSE, DRAFT_FENCE_OPEN, DRAFT_FENCE_CLOSE, KILL_TEST_DRAFT_FENCE_OPEN]) {
+      expect(parts.untrustedFences, marker).toContain(marker);
+    }
+    // ...and the encoding's OUTPUT on the probe, not merely its name.
+    expect(parts.untrustedFences).toMatch(/^encoding="/m);
+    expect(parts.untrustedFences).toContain("draftMarkers=");
+    const flipped = {
+      ...parts,
+      untrustedFences: parts.untrustedFences.split(INPUT_FENCE_CLOSE).join("<<<END OF INPUT>>>"),
+    };
+    expect(flipped.untrustedFences).not.toBe(parts.untrustedFences);
+    expect(hashBundleParts(flipped)).not.toBe(hashBundleParts(parts));
+  });
+
+  it("AC5 non-vacuity: every fence line the ASSEMBLED prompts emit is a line of the hashed part — an inlined literal in contextBlock or the rewrite would be red", () => {
+    const context: GenerationContext = {
+      universalLaws: [...UNIVERSAL_LAWS],
+      frameworks: [],
+      brain: { voice: ["plain"], strategy: [], killtest: [] },
+      input: "an idea",
+      platform: "youtube",
+      unvouchedSpecifics: [],
+      creative: null,
+      recentWork: null,
+    };
+    const first = assembleGenerationPrompt({ mode: "hooks", context });
+    const rewrite = assembleRewritePrompt({
+      mode: "hooks",
+      context,
+      draft: "{}",
+      findings: [{ rule: "hook_word_ceiling", shape: "too_long", field: "/hooks/0/text", excerpt: "x", remedy: "r" }] as never,
+    });
+    const scoring = assembleKillTestPrompt({ draft: "{}", rules: [{ id: "r1", text: "never open on a question" }] });
+    const fenceLines = [first.prompt, rewrite.prompt, scoring.prompt]
+      .flatMap((p) => p.split("\n"))
+      .filter((l) => l.startsWith("<<<"));
+    // The five markers, each actually emitted by one of the three prompts.
+    expect(new Set(fenceLines)).toEqual(
+      new Set([INPUT_FENCE_OPEN, INPUT_FENCE_CLOSE, DRAFT_FENCE_OPEN, DRAFT_FENCE_CLOSE, KILL_TEST_DRAFT_FENCE_OPEN])
+    );
+    const hashedLines = new Set(bundlePartsFor("hooks").untrustedFences.split("\n"));
+    for (const line of fenceLines) expect(hashedLines.has(line), line).toBe(true);
+    // ...and the encoding the slot uses is the one whose output is hashed.
+    expect(bundlePartsFor("hooks").untrustedFences).toContain(
+      "encoding=" + encodeUntrusted(UNTRUSTED_ENCODING_PROBE)
+    );
+  });
+
+  it("AC14: changing ONE universal-law sentence moves prompt_bundle_version, for every mode", () => {
+    const edited = [...UNIVERSAL_LAWS];
+    edited[0] = edited[0] + " (edited)";
+    for (const m of MODE_IDS) {
+      expect(promptBundleVersion(m, 1, edited), m).not.toBe(promptBundleVersion(m));
+    }
+    // The default IS the product's constant: passing it explicitly changes nothing.
+    expect(promptBundleVersion("hooks", 1, UNIVERSAL_LAWS)).toBe(promptBundleVersion("hooks"));
+    // The block exactly as the prompt renders it (label and bullets), gate note.
+    expect(bundlePartsFor("hooks").universalLaws).toBe(universalLawLines(UNIVERSAL_LAWS).join("\n"));
   });
 
   it("...and the reference block's own instructions, which are not per creator (slice 8c)", () => {
@@ -228,6 +324,65 @@ describe("what is in the hash", () => {
     expect(gates).toContain("will perform=hard");
   });
 
+  describe("the claim FIELD POPULATION, GUARDS and OCCURRENCE POLICY (audit Phase 2, P2-R2…R4)", () => {
+    // Measured 2026-09-21: none of the three was in the hashed description, so
+    // what Phase 2 changes would have left `prompt_bundle_version` unmoved.
+    const lineOf = (gates: string, prefix: string) =>
+      gates.split("\n").find((l) => l.startsWith(prefix));
+    const withLine = (parts: Record<string, string>, prefix: string, edit: (l: string) => string) => ({
+      ...parts,
+      gates: parts.gates
+        .split("\n")
+        .map((l) => (l.startsWith(prefix) ? edit(l) : l))
+        .join("\n"),
+    });
+
+    it("claimFields= carries each hard shape's RESOLVED pointer set, and flipping one entry moves the digest", () => {
+      const parts = bundlePartsFor("hooks");
+      const line = lineOf(parts.gates, "claimFields=");
+      expect(line, "the field population is not in the hash").toBeDefined();
+      // Non-vacuity: an explanation-only shape and an every-presented one.
+      expect(line).toContain("will perform=/whyThisPerforms/reasoning,/whyThisPerforms/weakestPoint|");
+      expect(line).toMatch(/guarantee=[^|]*\/caption\/text/);
+      expect(line).not.toMatch(/guarantee=[^|]*\/disclosure\//);
+      // Flip ONE entry: `guarantee` back to the explanation section only.
+      const flipped = withLine(parts, "claimFields=", (l) =>
+        l.replace(/guarantee=[^|]*/, "guarantee=/whyThisPerforms/reasoning,/whyThisPerforms/weakestPoint")
+      );
+      expect(flipped.gates).not.toBe(parts.gates);
+      expect(hashBundleParts(flipped)).not.toBe(hashBundleParts(parts));
+    });
+
+    it("claimGuards= carries every guard's window and pattern, and one guard pattern moving moves the digest", () => {
+      const parts = bundlePartsFor("hooks");
+      const line = lineOf(parts.gates, "claimGuards=");
+      expect(line).toContain("disclosure-directive:outside:concealment~");
+      // R-173's closed allowlist, every phrase written out.
+      expect(line).toContain(" hedges~hedge-no-guarantee:guarantee=no guarantee,no guarantees,there is no guarantee,");
+      expect(line).toContain("hedge-not-proven:proven to=");
+      expect(line).toContain(' tails~"",", just what worked for me"');
+      expect(line).toContain(" admission~/whyThisPerforms/weakestPoint=it's unlikely to go viral,");
+      const flipped = withLine(parts, "claimGuards=", (l) => l.replace("i can't guarantee,", ""));
+      expect(flipped.gates).not.toBe(parts.gates);
+      expect(hashBundleParts(flipped)).not.toBe(hashBundleParts(parts));
+    });
+
+    it("claimOccurrence= carries the scan's OUTPUT on the probes, and the occurrence policy moving moves the digest", () => {
+      const parts = bundlePartsFor("hooks");
+      const line = lineOf(parts.gates, "claimOccurrence=");
+      // The strictest-across-occurrences reading, and the em-dash clause.
+      expect(line).toContain("goes viral anyway.=>viral=flag/goes viral=hard");
+      // R-173's endpoint rule: the hedge admits only a sentence that IS it.
+      expect(line).toContain("this will perform.=>will perform=hard/guarantee=hard");
+      expect(line).toContain("/caption/text:Results are guaranteed.=>guarantee=hard");
+      // A first-occurrence-only policy would have printed `goes viral=flag`.
+      const flipped = withLine(parts, "claimOccurrence=", (l) =>
+        l.replace("goes viral anyway.=>viral=flag/goes viral=hard", "goes viral anyway.=>viral=flag/goes viral=flag")
+      );
+      expect(hashBundleParts(flipped)).not.toBe(hashBundleParts(parts));
+    });
+  });
+
   it("a gate change MOVES the version", () => {
     // The property stated end to end rather than per part: the digest of the
     // real bundle differs from the digest of the same bundle with one gate
@@ -271,5 +426,81 @@ describe("the canonicalisation", () => {
 
   it("an empty bundle is not the same as a one-empty-part bundle", () => {
     expect(hashBundleParts({})).not.toBe(hashBundleParts({ a: "" }));
+  });
+});
+
+describe("R-148: a version-2 generation runs, and is booked against, its own bundle", () => {
+  it("each form mode's v2 bundle differs from its v1 bundle", () => {
+    for (const mode of CREATIVE_FORM_MODES) {
+      expect(promptBundleVersion(mode, 2), mode).not.toBe(promptBundleVersion(mode));
+      expect(promptBundleVersion(mode, 2), mode).toMatch(
+        new RegExp(`^${PROMPT_BUNDLE_NAMESPACE}/${mode}@[0-9a-f]{12}$`)
+      );
+    }
+  });
+
+  it("the v2 parts add the creative block and swap the output contract — and nothing else", () => {
+    const v1 = bundlePartsFor("ideation");
+    const v2 = bundlePartsFor("ideation", 2);
+    expect(Object.keys(v2).sort()).toEqual([...Object.keys(v1), "creativeBlock"].sort());
+    expect(v2.outputContract).not.toBe(v1.outputContract);
+    for (const key of Object.keys(v1)) {
+      if (key === "outputContract") continue;
+      expect(v2[key], key).toBe(v1[key]);
+    }
+  });
+
+  it("the creative block carries EVERY static creative sentence the prompt can use", () => {
+    const block = bundlePartsFor("ideaToScript", 2).creativeBlock;
+    for (const text of [
+      CREATIVE_BLOCK_HEADER,
+      FORM_REQUESTED_NOTE,
+      AUTO_FORM_INSTRUCTION,
+      NO_CONSTRAINTS_LINE,
+      ...Object.values(FORM_INSTRUCTIONS),
+      ...CREATIVE_RULES,
+      ...Object.values(CONSTRAINT_LABELS),
+      ...Object.values(PEOPLE_LABELS),
+    ]) {
+      expect(block).toContain(text);
+    }
+    // ...and the creative block's hash is part of the version: change one
+    // sentence of it and the digest moves.
+    const parts = bundlePartsFor("ideation", 2);
+    expect(
+      hashBundleParts({ ...parts, creativeBlock: parts.creativeBlock + " reworded" })
+    ).not.toBe(hashBundleParts(parts));
+  });
+
+  it("the gate description carries the creative checks' constants, for every mode", () => {
+    const gates = bundlePartsFor("hooks").gates;
+    expect(gates).toContain("basis=minWords");
+    expect(gates).toContain("pivotForForm=");
+    expect(gates).toContain("demonstration_experiment:reveal");
+    expect(gates).toContain("constraintBounds=");
+    expect(gates).toContain("form_mismatch");
+  });
+
+  it("L1 moved EVERY mode's bundle: each gate description names R-148's rules", () => {
+    // WHY THIS IS PINNED: the bundle version is part of `hashRequest`, so this
+    // is what makes an attempt claimed by a pre-L1 build fail its payload-hash
+    // check rather than settle under rules it never ran (`generate.ts`'s
+    // `CANDIDATE_VERSION` note relies on it). A pre-L1 gate line could not name
+    // a rule that did not exist.
+    for (const mode of MODE_IDS) {
+      const gates = bundlePartsFor(mode).gates;
+      for (const rule of [
+        "form_mismatch",
+        "unsupported_experience",
+        "filming_outside_limits",
+        "custom_framework_name",
+      ]) {
+        expect(gates, `${mode} / ${rule}`).toContain(rule);
+      }
+    }
+  });
+
+  it("a mode with no v2 contract has no v2 bundle", () => {
+    expect(() => promptBundleVersion("hooks", 2)).toThrow(/no version-2 prompt bundle/);
   });
 });

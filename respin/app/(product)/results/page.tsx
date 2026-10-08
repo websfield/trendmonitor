@@ -53,6 +53,7 @@
 // adjudicate — see `comparison-view.tsx`'s `metricKey` docblock.
 // ---------------------------------------------------------------------------
 import {
+  CHECK,
   RESULT_AUDIENCE_CLASSES,
   RESULT_CONFOUNDER_CODES,
   RESULT_EVIDENCE_STATES,
@@ -71,7 +72,7 @@ import { scopeForUser } from "../workspace-scope";
 // is logged about a draft that named a platform, and two lists would let a
 // creator log "TikTok" against a draft written for "Tiktok" — two strata
 // wearing one name, which is the exact failure the platform predicate exists
-// to prevent. `run-copy.ts` imports nothing, so this costs no server module.
+// to prevent. `run-copy.ts` has no value imports, so this costs no server module.
 import { PLATFORM_OPTIONS } from "../studio/run-copy";
 import {
   decidePromotionAction,
@@ -87,6 +88,7 @@ import {
 } from "./copy";
 import { LogPanel } from "./log-panel";
 import { PromotionPanel, type PromotionPanelProps } from "./promotion-panel";
+import { projectPromotionReview } from "./promotion-review";
 import { comparisonGroupView, resultRowView } from "./projection";
 import { ResultsView, type ResultsViewState } from "./results-view";
 
@@ -139,7 +141,10 @@ export default async function ResultsPage() {
     const settled = await Promise.allSettled(
       history.map((proposal) => respinDb.promotionProposalReview(scope, profile.id, proposal.id))
     );
-    proposalReviews = settled.flatMap((item) => item.status === "fulfilled" ? [item.value] : []);
+    // FIELD BY FIELD (audit Phase 2 gate, tenancy): the client panel receives
+    // the transport shape, never the DB object — the same projection the
+    // review action applies.
+    proposalReviews = settled.flatMap((item) => item.status === "fulfilled" ? [projectPromotionReview(item.value)] : []);
     if (settled.some((item) => item.status === "rejected")) {
       proposalHistoryState = "partial";
     }
@@ -320,6 +325,9 @@ export default async function ResultsPage() {
       refreshAction={refreshPromotionAction.bind(null, profile.id)}
       reviewAction={reviewPromotionAction.bind(null, profile.id)}
       decideAction={decidePromotionAction.bind(null, profile.id)}
+      // The client panel may not import `@respin/db`; it takes the marker
+      // from here (audit Phase 2, P2-R8).
+      checkMarker={CHECK}
     />
   } />;
 }

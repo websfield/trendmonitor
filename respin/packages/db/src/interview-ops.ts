@@ -51,6 +51,7 @@
 // claims. `goals`, `ambitions` and `metric` ARE always populated even when
 // nothing under them was decided, per `brain-content.ts`'s own comment on
 // the interview-driven builder; that is this file.
+import { boundedReadOrJoin } from "./render-transaction";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { DbLike, TxLike } from "./db-like";
@@ -317,7 +318,7 @@ export async function getInterviewDraft(
   profileId: string
 ): Promise<OnboardingInterviewDraft | null> {
   const profileScope = await ProfileScope.mint(db, scope, profileId);
-  return db.transaction(async (tx) => {
+  return boundedReadOrJoin(db, async (tx) => {
     await assertFreshProfileScopeInTx(tx, profileScope);
     const row = await readDraftRow(
       tx,

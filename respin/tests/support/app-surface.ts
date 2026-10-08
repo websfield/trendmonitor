@@ -155,19 +155,38 @@ export function blankComments(src: string): string {
 }
 
 /**
- * True when the file's FIRST statement is the `"use server"` directive.
+ * True when the file DECLARES A SERVER ACTION: its FIRST statement is the
+ * `"use server"` directive, OR some function body's first statement is
+ * (audit P5-R7, REG-15).
+ *
+ * The function-level form is an entrypoint too — Next makes that one function
+ * a POST endpoint reachable without the page rendering — and before P5-R7 this
+ * check saw the module-level form only, so a function-level action in an
+ * otherwise ordinary module was classified `module` and escaped every gate
+ * scan that keys on `server-actions`.
  *
  * Not a substring search: `billing-errors.ts` and `config-form-state.ts` both
  * discuss `"use server"` in prose and are NOT server-action modules — they are
- * this check's live non-vacuity cases.
+ * this check's live non-vacuity cases. Comments are blanked first, and the
+ * function-level form must sit directly after a body's opening brace.
  */
 export function isUseServerModule(src: string): boolean {
   // trimStart, not a hand-rolled character class: ECMAScript counts U+FEFF
   // (the BOM readFileSync("utf8") leaves in place) as WhiteSpace, so a file
   // saved with a BOM still has its directive seen as first. Asserted below.
-  const head = blankComments(src).trimStart();
-  return /^(["'])use server\1\s*;?/.test(head);
+  const code = blankComments(src);
+  if (/^(["'])use server\1\s*;?/.test(code.trimStart())) return true;
+  return FUNCTION_LEVEL_USE_SERVER.test(code);
 }
+
+/**
+ * A function body whose first statement is the directive: a `function`
+ * declaration or expression (its parameter list, an optional return type,
+ * then `{`), or an arrow (`=> {`). Exported so the gate test plants both
+ * shapes against it.
+ */
+export const FUNCTION_LEVEL_USE_SERVER =
+  /(?:\bfunction\b[^{;]*\)\s*(?::[^{;=]*)?|=>)\s*\{\s*(["'])use server\1/;
 
 /** How a caller asks for the files a scan would otherwise never want to see. */
 export type WalkOptions = {

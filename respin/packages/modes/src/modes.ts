@@ -93,6 +93,21 @@ export const MODE_CHECK_IDS = [
   "framework_eligibility",
   /** REQ-I04: the weakest point names something. */
   "weakest_point",
+  // ---------------------------------------------------- R-148 (launch L1)
+  //
+  // THE FOUR CREATIVE CHECKS, declared by exactly the modes in
+  // `CREATIVE_FORM_MODES` (`mode-checks.test.ts` derives that). Each one reads
+  // only a version-2 document and the request's creative half; on a legacy
+  // document they have nothing to read, and `runKillTest` refuses a document
+  // whose version disagrees with its request before any of them runs.
+  /** An explicit form is honoured, and the pivot is the form's kind. */
+  "creative_form",
+  /** An event or result is quoted from the creator's material, or `[check]`ed. */
+  "premise_basis",
+  /** Declared filming limits are binding. */
+  "filming_limits",
+  /** `offered` names an offered framework; `custom` never carries an approved name. */
+  "framework_provenance",
 ] as const;
 
 export type ModeCheckId = (typeof MODE_CHECK_IDS)[number];
@@ -177,6 +192,17 @@ const SCRIPT_CHECKS = [
   "weakest_point",
 ] as const satisfies readonly ModeCheckId[];
 
+/**
+ * The checks a mode in `CREATIVE_FORM_MODES` runs on top of its own (R-148).
+ * Listed once, so the two modes cannot drift apart.
+ */
+const CREATIVE_CHECKS = [
+  "creative_form",
+  "premise_basis",
+  "filming_limits",
+  "framework_provenance",
+] as const satisfies readonly ModeCheckId[];
+
 const scriptMode = (
   id: ModeId,
   label: string,
@@ -202,7 +228,10 @@ export const MODE_SPECS: Record<ModeId, ModeSpec> = {
     "Footage to thesis",
     "fullScript"
   ),
-  ideaToScript: scriptMode("ideaToScript", "Idea to script", "fullScript"),
+  ideaToScript: scriptMode("ideaToScript", "Idea to script", "fullScript", {
+    // R-148: one of the two modes that take the creative form control.
+    checks: [...SCRIPT_CHECKS, ...CREATIVE_CHECKS],
+  }),
   sourceToReel: scriptMode("sourceToReel", "Source to reel", "fullScript", {
     // THE ONE MODE WHOSE INPUT IS SOMEBODY ELSE'S MATERIAL, so it is the one
     // mode that can be refused for repeating it (REQ-C01 mode 3, card R3).
@@ -257,6 +286,8 @@ export const MODE_SPECS: Record<ModeId, ModeSpec> = {
       "ideas_not_topics",
       "framework_eligibility",
       "weakest_point",
+      // R-148: the other mode that takes the creative form control.
+      ...CREATIVE_CHECKS,
     ],
     ideaCount: { min: 3, max: 5 },
     similarityGated: false,

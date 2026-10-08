@@ -361,9 +361,10 @@ export function LogPanel({
               // silently dead field is worse than an absent one.
               <p className="muted" data-testid="results-levers-disabled">
                 You said you do not have numbers for this one, so there is
-                nothing to type here. The result is still stored, and it stays
-                out of every comparison on this page until you log one with
-                numbers.
+                nothing to type here. The result is still stored and shown.
+                Nothing logged on this form is counted into a comparison,
+                numbers or not: only a verified analytics connector could
+                supply a counted result.
               </p>
             ) : null}
             {levers.map((lever) => (

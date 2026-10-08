@@ -3,6 +3,8 @@
 import { useActionState } from "react";
 import { buttonClass } from "../../ui/button";
 import { SubmitButton } from "../onboarding/submit-button";
+import { DISCLOSURE_LINE, FREE_CLAIM_REFUSAL } from "../studio/run-copy";
+import { KillTestBlock } from "../studio/generation-outcome";
 import type { OriginalReferenceSummary } from "./trends-view";
 import { IDLE_SPIN_STATE, type SpinActionState } from "./spin-state";
 
@@ -72,7 +74,11 @@ export function SpinOutcome({ state, originalReference }: { state: SpinActionSta
       <h4>Spin withheld</h4>
       {state.why.length > 0 ? (
         <>
-          <p>The candidate did not pass the required checks, so it is not shown. Charge applied: <span className="mono">{state.chargedCredits}</span> credits.</p>
+          {state.freeClaimRefusal && state.chargedCredits === 0 ? (
+            <p data-testid="spin-withheld-charge">The candidate did not pass the required checks, so it is not shown. {FREE_CLAIM_REFUSAL}</p>
+          ) : (
+            <p data-testid="spin-withheld-charge">The candidate did not pass the required checks, so it is not shown. Charge applied: <span className="mono">{state.chargedCredits}</span> credits.</p>
+          )}
           <h5>What fired</h5>
           <ul data-testid="spin-withheld-why">
             {state.why.map((reason) => (
@@ -116,8 +122,22 @@ export function SpinOutcome({ state, originalReference }: { state: SpinActionSta
   if (state.status === "replayed") {
     return <p className="muted">This request was already settled. No new charge was applied by this press.</p>;
   }
+  if (state.status === "settled_held") {
+    return <p className="muted" data-testid="spin-settled-held">
+      This Spin was finished from the draft the model had already written and held for you; this press called no model.{" "}
+      {state.freeClaimRefusal && state.chargedCredits === 0 ? (
+        FREE_CLAIM_REFUSAL
+      ) : (
+        <>Charge applied: <span className="mono">{state.chargedCredits}</span> credits.</>
+      )}{" "}
+      Your balance is <span className="mono">{state.balanceAfter}</span> credits. The draft is stored with your saved drafts on Studio.
+    </p>;
+  }
   if (state.status === "refused") {
-    return <p className="muted">This Spin could not be started. No candidate is shown.</p>;
+    return <section role="alert" data-testid="spin-refused">
+      <p><strong>{state.copy.title}</strong></p>
+      <p className="muted">{state.copy.detail}</p>
+    </section>;
   }
   return <section data-testid="spin-result">
     <p className="muted">Charge applied: <span className="mono">{state.chargedCredits}</span> credits.</p>
@@ -138,7 +158,17 @@ export function SpinOutcome({ state, originalReference }: { state: SpinActionSta
     </section>
     <section aria-labelledby="spin-disclosure-heading" data-testid="spin-disclosure">
       <h4 id="spin-disclosure-heading">Disclosure guidance</h4>
-      <p>{state.disclosureGuidance}</p>
+      {/* The product's sentence for the disclosure kind, never the model's
+          prose (R-121, audit P1-R1). */}
+      <p>{DISCLOSURE_LINE[state.disclosure.kind]}</p>
     </section>
+    {/* PARITY WITH /studio, NOT A STATED OMISSION (audit Phase 2 gate, R-172).
+        The same block `/studio`, first-ideas and the saved pack render:
+        traceability flags, the marker offers beside them, claim flags and the
+        limit note. A claim the analysis could not decide is flagged rather
+        than refused, so it has to be visible here. The disclosure provenance
+        sentence is not shown: this screen renders the product's disclosure
+        line under its own heading above. */}
+    <KillTestBlock summary={state.killTest} showDisclosureProvenance={false} />
   </section>;
 }

@@ -222,7 +222,7 @@ export class OnboardingInputLimitError extends Error {
 export class BrainVersionLimitError extends Error {
   constructor(limit: number) {
     super(
-      `This creator profile already has ${limit} retained brain versions, so another immutable version was not stored. Export the history and contact support before making more revisions.`
+      `This creator profile already has ${limit} retained brain versions, so another immutable version was not stored, and the profile cannot take more. The export keeps the complete history.`
     );
     this.name = "BrainVersionLimitError";
   }
@@ -546,6 +546,26 @@ export class FeedbackTargetError extends Error {
       "That feedback was not recorded because the output it is about is not available on this creator profile. Reopen the output from your own history and leave the feedback from there — nothing was changed."
     );
     this.name = "FeedbackTargetError";
+  }
+}
+
+/**
+ * "Leave this out of future drafts" named a reaction that is not this creator
+ * profile's (audit P6-A1, R-174).
+ *
+ * BYTE-IDENTICAL FOR A FOREIGN, A MISSING AND A MALFORMED ID, the
+ * `FeedbackTargetError` rule: a distinguishable refusal would tell a caller
+ * which reaction ids exist in another profile. Its own class rather than
+ * `FeedbackTargetError` because that copy says the feedback "was not
+ * recorded", which is false here: the reaction exists, it is just not one
+ * this profile can address.
+ */
+export class FeedbackExclusionTargetError extends Error {
+  constructor() {
+    super(
+      "That reaction was not left out because it is not one recorded on this creator profile. Reload Studio and try again from a draft you reacted to. Nothing was changed."
+    );
+    this.name = "FeedbackExclusionTargetError";
   }
 }
 
@@ -951,5 +971,54 @@ export class ComparisonStratumError extends Error {
       `That comparison could not be set up: ${detail}. This is a fault on our side, not something wrong with the results you logged. Reload the page and try again.`
     );
     this.name = "ComparisonStratumError";
+  }
+}
+
+/**
+ * WHY A CREATIVE PIECE COULD NOT BE CREATED, READ OR MOVED (launch L2, R-151).
+ *
+ * `reason` IS A CLOSED CODE — the `RevisionParentError` discipline — because
+ * the four values are four different true sentences, and a screen branches on
+ * it (`billingErrorCode`'s instance branch) rather than on prose:
+ *
+ *   `not_found`          — the piece, or the concept it names, is not this
+ *                          creator's. ONE message for foreign, missing,
+ *                          deleted and malformed ids (the `ProfileAccessError`
+ *                          enumeration rule: a uuidv7 leaks creation time).
+ *   `source_unusable`    — the named output is not a usable concept batch, or
+ *                          the index is not one of its concepts.
+ *   `stale`              — the page that sent this was out of date: the piece
+ *                          moved on (a version token or an operation id that
+ *                          is no longer the current one).
+ *   `not_commissionable` — the piece was cancelled, or the request does not
+ *                          match what a piece can commission.
+ *
+ * Every one is raised BEFORE any claim, debit or provider call. The message
+ * names no identifier and echoes no creator text.
+ */
+export const CREATIVE_PIECE_REFUSALS = [
+  "not_found",
+  "source_unusable",
+  "stale",
+  "not_commissionable",
+] as const;
+
+export type CreativePieceRefusal = (typeof CREATIVE_PIECE_REFUSALS)[number];
+
+const CREATIVE_PIECE_MESSAGES: Record<CreativePieceRefusal, string> = {
+  not_found:
+    "That concept or piece is not available on this creator profile, so nothing was changed. Nothing was spent and no model was called.",
+  source_unusable:
+    "That output has no concept at that position to develop, so nothing was changed. Nothing was spent and no model was called.",
+  stale:
+    "This page was out of date — the piece changed since it was shown — so nothing was changed. Reload to see its current state. Nothing was spent and no model was called.",
+  not_commissionable:
+    "This piece cannot be developed into a script any more, so nothing was changed. Nothing was spent and no model was called.",
+};
+
+export class CreativePieceError extends Error {
+  constructor(readonly reason: CreativePieceRefusal) {
+    super(CREATIVE_PIECE_MESSAGES[reason]);
+    this.name = "CreativePieceError";
   }
 }

@@ -70,10 +70,32 @@ const subUpdate = vi.fn(async () => ({ id: "sub_updated" }));
 // serve it. `subscriptions.retrieve` / `invoices.retrieve` are what
 // `createInvoiceRecoveryUrl` reads; without them its whole Stripe half was
 // unreachable and an inverted status check would have failed nothing.
-const priceRetrieve = vi.fn(async () => ({
-  id: "price_pack",
+// Tier price ids answer with the amount `TIER_AMOUNTS_CENTS` states for their
+// tier (Phase 6 billing gate: Checkout now checks it); every other id is the
+// $10 pack the original mock served.
+const TIER_PRICE_CENTS: Record<string, number> = { price_pro: 6000, price_studio: 20000 };
+const MONTHLY_TIER_PRICE = {
   active: true,
+  type: "recurring",
+  recurring: { interval: "month", interval_count: 1, usage_type: "licensed" },
+  billing_scheme: "per_unit",
+  tiers_mode: null,
   unit_amount: 1000,
+  currency: "usd",
+};
+// Plan price ids get a monthly, per-unit, licensed shape (what
+// `tierPriceDefect` accepts); every other id is a one-time pack price (what
+// `priceDefect` accepts for a pack).
+const PLAN_PRICE_IDS = new Set(["price_creator", "price_creator_v2", "price_pro", "price_studio"]);
+const priceRetrieve = vi.fn(async (id?: string): Promise<Record<string, unknown>> => ({
+  id: id ?? "price_pack",
+  active: true,
+  ...(id !== undefined && PLAN_PRICE_IDS.has(id)
+    ? { type: "recurring", recurring: { interval: "month", interval_count: 1, usage_type: "licensed" } }
+    : { type: "one_time", recurring: null }),
+  billing_scheme: "per_unit",
+  tiers_mode: null,
+  unit_amount: (id !== undefined ? TIER_PRICE_CENTS[id] : undefined) ?? 1000,
   currency: "usd",
 }));
 const subRetrieve = vi.fn(async (_id?: string): Promise<Record<string, unknown>> => {
@@ -141,6 +163,14 @@ import {
   tierCheckoutProtocolRollouts,
   trustWorkspaceId,
   withWorkspace,
+  // R-163: the read-grade checkout probe below.
+  deletionOperations,
+  // R-164: the Google arm, driven to the checkout below.
+  recordedGoogleReauthentication,
+  stampGoogleReauthentication,
+  ensureUserWorkspace,
+  isReadGradeScope,
+  ScopeForgeryError,
   type TestDb,
   type WorkspaceScope,
 } from "@respin/db";
@@ -165,9 +195,16 @@ import {
   UnknownTierPriceError,
 } from "../src/stripe/actions";
 import {
+  TierPriceChangedError,
+  TierPriceMismatchError,
+  TierPriceUnavailableError,
+} from "../src/stripe/tier-price";
+import {
   AUTO_TOPUP_IDEMPOTENCY_SAFE_RETRY_MS,
+  AUTO_TOPUP_MAX_ATTEMPTS_PER_MONTH,
   maybeAutoTopup,
 } from "../src/stripe/auto-topup";
+import { setAutoTopupReconciliationMetricSink, type AutoTopupReconciliationMetric } from "../src/metrics";
 import { AutoTopupRolloutError } from "../src/stripe/auto-topup-rollout";
 import { TierCheckoutRolloutError } from "../src/stripe/tier-checkout-rollout";
 import { getWorkspaceBillingState } from "../src/state";
@@ -533,6 +570,80 @@ describe("owner-only billing actions (REQ-A02, AC-6 matrix)", () => {
     await expect(
       createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
     ).rejects.toThrow(/stripe:setup/);
+  });
+
+  // PHASE 6 BILLING GATE (HIGH, R-175): the public page states
+  // `TIER_AMOUNTS_CENTS`, so Checkout refuses a mapped price that charges
+  // anything else — before an attempt is reserved or a Session is opened.
+  it("a mapped tier price whose amount or currency differs from the stated price REFUSES before any Checkout", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_creator: "creator" } },
+      "test-admin"
+    );
+    sessionCreate.mockClear();
+    // PLANTED: someone edited the creator price in the dashboard to $12.
+    priceRetrieve.mockResolvedValueOnce({ ...MONTHLY_TIER_PRICE, id: "price_creator", unit_amount: 1200 });
+    const mismatch = await createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS).catch((e: unknown) => e);
+    expect(mismatch).toBeInstanceOf(TierPriceMismatchError);
+    expect((mismatch as Error).message).toMatch(/1200c[\s\S]*1000c/);
+    // The right amount in the wrong money, and an archived price, refuse too.
+    priceRetrieve.mockResolvedValueOnce({ ...MONTHLY_TIER_PRICE, id: "price_creator", currency: "eur" });
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).rejects.toBeInstanceOf(TierPriceUnavailableError);
+    priceRetrieve.mockResolvedValueOnce({ ...MONTHLY_TIER_PRICE, id: "price_creator", active: false });
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).rejects.toBeInstanceOf(TierPriceUnavailableError);
+    // NOTHING WAS OPENED OR RESERVED.
+    expect(sessionCreate).not.toHaveBeenCalled();
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, wsId));
+    expect(row?.tierCheckoutAttemptId ?? null).toBeNull();
+    // NON-VACUITY: the same mapping at the stated amount opens a Checkout.
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).resolves.toEqual(expect.any(String));
+    expect(sessionCreate).toHaveBeenCalledTimes(1);
+  });
+
+  // PHASE 6 BILLING RE-RUN (MEDIUM): the mid-checkout mapping change, witnessed.
+  // A config version is appended AFTER the price was checked and BEFORE the
+  // reservation reads the mapping inside the lock; the checked price is not
+  // the one that would be charged, so nothing may be reserved.
+  it("a price mapping changed between the check and the reservation refuses with TierPriceChangedError and reserves nothing", async () => {
+    const db = await createTestDb();
+    const { wsId, scopeOf } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_creator: "creator" } },
+      "test-admin"
+    );
+    sessionCreate.mockClear();
+    priceRetrieve.mockImplementationOnce(async (id?: string) => {
+      // The check has read the mapping and is now reading Stripe: an admin
+      // remaps the tier at exactly this moment.
+      await appendConfigVersion(
+        db,
+        { ...CONFIG_V1_SEED, stripePriceMap: { price_creator_v2: "creator" } },
+        "admin-remapping-mid-checkout"
+      );
+      return { ...MONTHLY_TIER_PRICE, id: id ?? "price_creator" };
+    });
+    const err = await createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TierPriceChangedError);
+    expect((err as Error).message).toMatch(/changed while this Checkout was being prepared/);
+    expect(sessionCreate).not.toHaveBeenCalled();
+    const [row] = await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, wsId));
+    expect(row?.tierCheckoutAttemptId ?? null, "an attempt was reserved for an unchecked price").toBeNull();
+    expect(row?.tierCheckoutAttemptPriceId ?? null).toBeNull();
+    // NON-VACUITY: the next press checks the NEW mapping and proceeds.
+    await expect(
+      createTierCheckoutUrl(db, scopeOf("owner"), "creator", "a@b.c", URLS)
+    ).resolves.toEqual(expect.any(String));
+    expect(priceRetrieve).toHaveBeenLastCalledWith("price_creator_v2");
   });
 
   it("pause bounds come from CONFIG (never a type-level 1|2|3)", async () => {
@@ -1470,6 +1581,96 @@ describe("durable auto-top-up dispatch recovery", () => {
     await forceArmAutoTopup(db, wsId);
     return wsId;
   }
+
+  it("P3-R7: refuses past the bounded attempt ordinal as cap_reached, before any provider call — and one below the bound still dispatches", async () => {
+    const seedMonth = async (db: TestDb, wsId: ReturnType<typeof trustWorkspaceId>, n: number) => {
+      // A cents cap far above n packs, so ONLY the ordinal bound can refuse.
+      await forceArmAutoTopup(db, wsId, 100_000_000);
+      const at = new Date();
+      const monthStart = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
+      const expiresAt = new Date(at.getTime() + 365 * 24 * 3_600_000);
+      await db.insert(creditLedger).values(
+        Array.from({ length: n }, (_, i) => ({
+          workspaceId: wsId, delta: 1, kind: "pack" as const,
+          ...autoTopupReceipt(`pi_ord_${i}`, new Date(monthStart.getTime() + 1000 + i)), expiresAt,
+        }))
+      );
+      return at;
+    };
+    const atBound = await createTestDb();
+    const full = await armed(atBound, "cus_ordinal_full");
+    const at = await seedMonth(atBound, full, AUTO_TOPUP_MAX_ATTEMPTS_PER_MONTH);
+    piCreate.mockClear();
+    expect(await maybeAutoTopup(atBound, full, 100, at)).toEqual({ triggered: false, reason: "cap_reached" });
+    expect(piCreate).not.toHaveBeenCalled();
+    const [untouched] = await atBound.select().from(subscriptions);
+    expect(untouched.autoTopupAttemptId).toBeNull();
+    // NON-VACUITY: one row fewer and the same cents headroom dispatches.
+    const below = await createTestDb();
+    const room = await armed(below, "cus_ordinal_room");
+    const at2 = await seedMonth(below, room, AUTO_TOPUP_MAX_ATTEMPTS_PER_MONTH - 1);
+    piCreate.mockClear();
+    expect((await maybeAutoTopup(below, room, 100, at2)).triggered).toBe(true);
+    expect(piCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("P3-R7 (R-158 point 6): config may only TIGHTEN the attempt bound — a stored 3 refuses the 4th attempt, and a value over the compiled ceiling is refused by the schema", async () => {
+    const db = await createTestDb();
+    const wsId = await armed(db, "cus_ordinal_config");
+    await forceArmAutoTopup(db, wsId, 100_000_000);
+    const at = new Date();
+    const monthStart = new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1));
+    const expiresAt = new Date(at.getTime() + 365 * 24 * 3_600_000);
+    await db.insert(creditLedger).values(
+      Array.from({ length: 3 }, (_, i) => ({
+        workspaceId: wsId, delta: 1, kind: "pack" as const,
+        ...autoTopupReceipt(`pi_cfg_${i}`, new Date(monthStart.getTime() + 1000 + i)), expiresAt,
+      }))
+    );
+    await appendConfigVersion(
+      db,
+      {
+        ...CONFIG_V1_SEED,
+        stripePriceMap: { "respin_pack_checkout_v1:price_pack": "pack" },
+        pack: { ...CONFIG_V1_SEED.pack, autoTopupMaxAttemptsPerMonth: 3 },
+      },
+      "ordinal-tightened"
+    );
+    piCreate.mockClear();
+    expect(await maybeAutoTopup(db, wsId, 100, at)).toEqual({ triggered: false, reason: "cap_reached" });
+    expect(piCreate).not.toHaveBeenCalled();
+    await expect(
+      appendConfigVersion(db, { ...CONFIG_V1_SEED, pack: { ...CONFIG_V1_SEED.pack, autoTopupMaxAttemptsPerMonth: AUTO_TOPUP_MAX_ATTEMPTS_PER_MONTH + 1 } }, "ordinal-widened")
+    ).rejects.toThrow();
+  });
+
+  it("P3-R7: \"money may have moved\" reaches the SINK, and auto-topup.ts makes no console call", async () => {
+    const db = await createTestDb();
+    const wsId = await armed(db, "cus_metric_sink");
+    const seen: AutoTopupReconciliationMetric[] = [];
+    const warn = vi.spyOn(console, "warn");
+    setAutoTopupReconciliationMetricSink((m) => seen.push(m));
+    try {
+      piCreate.mockClear();
+      piCreate.mockRejectedValueOnce(new Error("unknown provider outcome"));
+      const result = await maybeAutoTopup(db, wsId, 100, new Date());
+      expect(result).toMatchObject({ triggered: false, reason: "reconciliation_required" });
+      expect(seen).toEqual([
+        { source: "provider_create", attemptId: (result as { attemptId: string }).attemptId },
+      ]);
+      // The sink replaced the default line: nothing went to console.warn.
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes("auto_topup_reconciliation_required"))).toEqual([]);
+    } finally {
+      setAutoTopupReconciliationMetricSink(null);
+      warn.mockRestore();
+    }
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../src/stripe/auto-topup.ts"),
+      "utf8"
+    ).replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(src).not.toMatch(/\bconsole\./);
+    expect(src).toMatch(/emitAutoTopupReconciliationMetric\(/);
+  });
 
   it("a lost create response reconciles the signed attempt and never creates a second PaymentIntent", async () => {
     const db = await createTestDb();
@@ -2590,5 +2791,132 @@ describe("the billing server action forwards the exact-session authority", () =>
     expect(reauthenticationAt).toBeGreaterThan(-1);
     expect(reauthenticationAt).toBeLessThan(mutationAt);
     expect(body.slice(mutationAt)).toMatch(/authority\s*\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R-163 (audit P5-R3, row 17(b) / row 34): the `assertScoped`-only writer
+// class. The seven Stripe actions fence on `assertOwner -> assertScoped` alone
+// and read raw `scope.workspaceId`, so a read-grade scope smuggled past the
+// type must be refused by `assertScoped` itself. THE NON-VACUITY CHECK is a
+// mutation: adding the read grade's cage to `assertScoped` turns exactly this
+// probe red (recorded in the phase card).
+// ---------------------------------------------------------------------------
+describe("R-163: a read-grade scope never reaches a checkout", () => {
+  it("createTierCheckoutUrl refuses a read-grade scope smuggled through `as unknown as WorkspaceScope` with ScopeForgeryError", async () => {
+    const db = await createTestDb();
+    await seedAuthUser(db, "rg_checkout");
+    const boot = await ensureUserWorkspace(db, { authUserId: "rg_checkout", name: "RG" });
+    await db
+      .update(schema.workspaces)
+      .set({ lifecycleState: "tombstoned" })
+      .where(eq(schema.workspaces.id, boot.workspace.id));
+    // A workspace deletion in its grace window: the read grade's mint condition.
+    await db.insert(deletionOperations).values({
+      scope: "workspace",
+      targetKey: `workspace:${boot.workspace.id}`,
+      workspaceId: boot.workspace.id,
+      requesterUserId: boot.user.id,
+      requesterDigest: "a".repeat(64),
+      requestSessionDigest: "b".repeat(64),
+      requestMembershipVersion: 1,
+      requestWorkspaceLifecycleVersion: 1,
+      idempotencyKey: "rg-checkout-probe",
+      payloadHash: "c".repeat(64),
+      state: "grace",
+    });
+    const read = await withWorkspace(db, { authUserId: "rg_checkout" }, { grade: "read" });
+    expect(isReadGradeScope(read), "the fixture must hold the read grade, or the probe proves nothing").toBe(true);
+    const anyAuthority = {
+      authUserId: "rg_checkout",
+      sessionId: "session-rg",
+      reauthenticatedAt: new Date(),
+    };
+    await expect(
+      createTierCheckoutUrlWithAuthority(
+        db,
+        read as unknown as WorkspaceScope,
+        "creator",
+        "a@b.c",
+        URLS,
+        anyAuthority
+      )
+    ).rejects.toBeInstanceOf(ScopeForgeryError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R-164 (audit P5-R8 amendment, AC13): a GOOGLE-ONLY identity reaches the tier
+// checkout only after a `max_age=0` challenge's callback stamped ITS OWN
+// session; a plain Google sign-in (no stamp) is refused, and a password
+// identity's arm is unchanged.
+// ---------------------------------------------------------------------------
+describe("R-164: a Google-only owner reaches checkout through the recorded challenge stamp", () => {
+  it("refused before the callback's stamp, through after it — and only for the stamped session", async () => {
+    const db = await createTestDb();
+    const { scopeOf } = await setup(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_creator: "creator" } },
+      "test-admin"
+    );
+    const owner = scopeOf("owner");
+    const authUserId = "actions_owner";
+    const sessionId = "session-actions_owner";
+    // Google-only: a linked Google account, no credential row, and a session
+    // that ordinary sign-in created — no reauthentication stamp at all.
+    await db.insert(schema.account).values({
+      id: "google-actions-owner",
+      accountId: "google-sub-actions-owner",
+      providerId: "google",
+      userId: authUserId,
+    });
+    await db.update(schema.session).set({ reauthenticatedAt: null }).where(eq(schema.session.id, sessionId));
+
+    // Before the challenge: the google arm refuses, so no authority exists to
+    // present to the checkout.
+    await expect(recordedGoogleReauthentication(db, { authUserId, sessionId })).rejects.toThrow(
+      "auth_lifecycle_refused"
+    );
+    // A plain Google sign-in's ID token has an `auth_time` from BEFORE the
+    // challenge was requested: the silent-SSO case. Refused, nothing stamped.
+    const requestedAt = new Date();
+    await expect(
+      stampGoogleReauthentication(db, {
+        authUserId,
+        sessionId,
+        sub: "google-sub-actions-owner",
+        authTime: Math.floor(requestedAt.getTime() / 1000) - 3600,
+        requestedAt,
+      })
+    ).rejects.toThrow("auth_lifecycle_refused");
+    await expect(recordedGoogleReauthentication(db, { authUserId, sessionId })).rejects.toThrow(
+      "auth_lifecycle_refused"
+    );
+
+    // The callback's verified claims: a fresh `auth_time` and the linked `sub`.
+    const stamped = await stampGoogleReauthentication(db, {
+      authUserId,
+      sessionId,
+      sub: "google-sub-actions-owner",
+      authTime: Math.floor(Date.now() / 1000),
+      requestedAt,
+    });
+    const authority = await recordedGoogleReauthentication(db, { authUserId, sessionId });
+    expect(authority).toEqual(stamped);
+    await expect(
+      createTierCheckoutUrlWithAuthority(db, owner, "creator", "a@b.c", URLS, authority)
+    ).resolves.toBe("https://checkout.stripe.test/cs_created");
+    // Another session of the same person carries no stamp of its own.
+    await db.insert(schema.session).values({
+      id: "session-actions_owner-other",
+      token: "token-actions_owner-other",
+      userId: authUserId,
+      expiresAt: new Date(Date.now() + 3_600_000),
+      updatedAt: new Date(),
+    });
+    await expect(
+      recordedGoogleReauthentication(db, { authUserId, sessionId: "session-actions_owner-other" })
+    ).rejects.toThrow("auth_lifecycle_refused");
   });
 });

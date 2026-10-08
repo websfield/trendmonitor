@@ -25,8 +25,41 @@ import {
   scanHookLength,
   scanTextOnlyHardRules,
 } from "../src/hard-rules";
-import { type TextUnit } from "../src/text";
+import { CLAUSE_SEPARATOR, type TextUnit } from "../src/text";
 import { SIXTEEN_WORD_HOOK } from "./support/fixtures";
+
+describe("ONE clause separator, three antithesis consumers (audit Phase 2, P2-R3)", () => {
+  // The negated-clause guard in `claims.ts` reads the same constant. These
+  // three shapes are COMPOSED from its source (`String.raw`), so each is held
+  // to firing across every member, and to not firing on a word hyphen.
+  const COMPOSED = {
+    "its-not-its": (sep: string) => `It's not a hack${sep}it's a habit.`,
+    "repeated-subject-copula": (sep: string) => `You're not lazy${sep}you're tired.`,
+    "repeated-subject-verb": (sep: string) =>
+      `You don't need a better camera${sep}you need a better reason.`,
+  } as const;
+  const MEMBERS = [", ", "; ", ": ", " — ", " – ", " - ", ",", "—"];
+
+  it("each composed shape carries the shared source, verbatim", () => {
+    for (const id of Object.keys(COMPOSED)) {
+      const shape = ANTITHESIS_SHAPES.find((s) => s.id === id)!;
+      expect(shape.pattern.source, id).toContain(CLAUSE_SEPARATOR.source);
+    }
+  });
+
+  it.each(Object.entries(COMPOSED))("%s fires on every separator member", (id, sentence) => {
+    for (const sep of MEMBERS) {
+      const found = scanAntithesis(prose(sentence(sep)));
+      expect(found.map((f) => f.shape), JSON.stringify(sep)).toEqual([id]);
+    }
+  });
+
+  it("a hyphen JOINING two words is not a clause break (the one narrowing, stated)", () => {
+    expect(CLAUSE_SEPARATOR.test("low-key")).toBe(false);
+    expect(CLAUSE_SEPARATOR.test("hack - it")).toBe(true);
+    expect(scanAntithesis(prose("It isn't talent-it's tempo."))).toEqual([]);
+  });
+});
 
 const prose = (text: string, field = "beats/0/vo"): TextUnit => ({
   field,
@@ -69,8 +102,38 @@ describe("the rule ids are a closed set", () => {
         "idea_is_a_topic",
         "similarity",
         "summarised_source",
+        // R-148 (launch L1): the form and filming integrity rules.
+        "form_mismatch",
+        "unsupported_experience",
+        "filming_outside_limits",
+        "custom_framework_name",
       ].sort()
     );
+  });
+
+  it("R-148's four rules are APPENDED — the stored ordering of every earlier rule does not move", () => {
+    // `honestRefusal` orders a refusal's reasons by this tuple, so inserting a
+    // rule anywhere but the end would reorder every stored refusal. The prefix
+    // is pinned IN ORDER, not as a set, because order is the property.
+    expect(HARD_RULE_IDS.slice(0, 11)).toEqual([
+      "fragment_triad",
+      "antithesis",
+      "invented_specific",
+      "forbidden_claim",
+      "hook_too_long",
+      "summarised_source",
+      "collapsed_variants",
+      "idea_is_a_topic",
+      "framework_not_offered",
+      "empty_weakest_point",
+      "similarity",
+    ]);
+    expect(HARD_RULE_IDS.slice(11)).toEqual([
+      "form_mismatch",
+      "unsupported_experience",
+      "filming_outside_limits",
+      "custom_framework_name",
+    ]);
   });
 });
 

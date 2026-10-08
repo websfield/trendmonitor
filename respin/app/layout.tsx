@@ -9,7 +9,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   // R-2: "Respin" is a working name; nothing user-facing hardcodes it elsewhere.
   title: "Respin",
-  description: "Scripts in your voice, built on reviewed mechanisms.",
+  // SCOPED (audit P6-A2): reviewed library mechanisms, the creator's own
+  // frameworks, and any other structure labelled as unreviewed.
+  description:
+    "Scripts in your voice, built on reviewed library mechanisms or your own frameworks, with any other structure labelled as unreviewed.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

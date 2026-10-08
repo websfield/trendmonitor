@@ -1,0 +1,5 @@
+# Entry baseline (brownfield ratchet) — RETIRED 2026-10-03
+
+Retired by launch-remediation L1's validation gate. The two recorded failures in `respin/packages/credits/tests/isolation.test.ts` (ENUMERATION completeness for `presented-output.ts`; exported functions `presentedDisclosure`, `presentedTextUnits`, `getTierCheckoutProtocolState`) are cleared by L1. Transcript: [creator-ready/entry-gate-L1.txt](creator-ready/entry-gate-L1.txt) — preflight, typecheck, worker:typecheck, lint, db:check and build exit 0; `pnpm test` run 1 exit 1 with 0 failed tests and one unhandled vitest-worker RPC timeout (`Timeout calling "onTaskUpdate"`), re-run on the unchanged tree exit 0 (221 files passed, 23 skipped; 5,885 tests passed, 119 skipped). The 23 Docker suites were skipped (`TEST_DATABASE_URL` unset).
+
+Baseline count: **0**. The canon says the first all-green run deletes this file; it is kept with this retirement note so the history stays readable. A later red run starts a new baseline only with the owner's say-so.

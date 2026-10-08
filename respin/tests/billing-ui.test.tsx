@@ -80,6 +80,7 @@ import {
   resolveSavedVersion,
 } from "../app/(admin)/admin/config/config-form-state";
 import { AccessRefusal } from "../app/(product)/access-refusal";
+import { studioRefusalCopy } from "../app/(product)/studio/copy";
 
 const NOW = new Date("2026-08-17T00:00:00Z");
 const html = (el: React.ReactElement) => renderToStaticMarkup(el);
@@ -531,7 +532,10 @@ describe("failure mode: balance derivation throws", () => {
     );
     expect(out).toContain('data-testid="balance-error"');
     expect(out).toContain("Your credit history could not be read");
-    expect(out).toContain("contact support");
+    // R-176: no channel is configured in this run, so the page promises none;
+    // the remedy it keeps is that the failure is recorded for an operator.
+    expect(out).not.toMatch(/contact support|email /i);
+    expect(out).toContain("recorded for an operator");
     expect(out).not.toContain('data-testid="balance-value"');
   });
 });
@@ -1988,6 +1992,72 @@ describe("audit #16: the admin config error summary is reachable and tied to the
  * `refund_source_never_expires` and `pasted_reference_input` as two that were
  * outside every sweep; a derived population makes naming them unnecessary.
  */
+describe("audit P3-R2/R3/A4: the new refusals reach the screen through the FACADE's classes", () => {
+  it("LlmInputTooLargeError — constructed through the facade export — maps by its LARGEST part to the remedy that is true for it", () => {
+    const err = (largestPart: string | null) =>
+      new creditsFacade.LlmInputTooLargeError(
+        largestPart === null ? null : { system: 900, [largestPart]: 50_000 },
+        51_000,
+        40_000,
+        largestPart
+      );
+    expect(billingErrorCode(err("brain.voice"))).toBe("input_too_large_voice");
+    expect(billingErrorCode(err("brain.strategy"))).toBe("input_too_large_strategy");
+    expect(billingErrorCode(err("brain.killtest"))).toBe("input_too_large_killtest");
+    expect(billingErrorCode(err("frameworks"))).toBe("input_too_large_frameworks");
+    expect(billingErrorCode(err("input"))).toBe("input_too_large_input");
+    // The inference caller records no parts: the posts remedy, never a part.
+    expect(billingErrorCode(err(null))).toBe("input_too_large_posts");
+    // An unknown part (a rolling deploy, a new segment) is the neutral remedy.
+    expect(billingErrorCode(err("recentWork"))).toBe("input_too_large");
+    // The copy NAMES the part and the act that shrinks it.
+    expect(billingErrorDisplay(err("brain.voice")).detail).toMatch(/Voice document.*Brain page/s);
+    expect(billingErrorDisplay(err("input")).detail).toMatch(/what you typed or pasted.*Shorten it/s);
+    expect(billingErrorDisplay(err(null)).detail).toMatch(/posts/);
+    // Every one says nothing was spent — the check runs before any call.
+    for (const part of ["brain.voice", "input", null]) {
+      expect(billingErrorDisplay(err(part)).detail).toMatch(/nothing was spent/);
+    }
+  });
+
+  it("GenerationHeldError maps by its reason; each copy names the hold, the path, the time and that nothing was charged", () => {
+    for (const [reason, code, remedy] of [
+      ["paused", "generation_held_paused", /Resume from Billing/],
+      ["insufficient_balance", "generation_held_balance", /overage pack or turn on auto-top-up/],
+      ["transient", "generation_held_transient", /Press Finish this draft/],
+    ] as const) {
+      const held = new creditsFacade.GenerationHeldError("att-1", reason, new Date());
+      expect(billingErrorCode(held)).toBe(code);
+      const { detail } = billingErrorDisplay(held);
+      expect(detail).toMatch(remedy);
+      expect(detail).toMatch(/held for 24 hours/);
+      expect(detail).toMatch(/Held drafts on Studio/);
+      expect(detail).toMatch(/Finish this draft/);
+      expect(detail).toMatch(/nothing is charged/);
+    }
+    expect(billingErrorCode(new creditsFacade.HeldDraftUnavailableError("att-x"))).toBe("held_draft_unavailable");
+  });
+
+  it("EVERY SURFACE THAT CATCHES A GenerationHeldError renders the held copy (audit Phase 3 gate, by list)", () => {
+    // The list: /studio generate, /studio "Finish this draft", the piece
+    // commission and the saved page's revision (all `studioRefusalCopy()`; the
+    // saved page overrides only `generation_quote_changed`), /onboarding/
+    // first-ideas (`studioRefusalCopy()`), and /trends Spin (its action
+    // carries `BILLING_ERROR_COPY[code]` — `tests/trends-actions.test.ts`).
+    const studio = studioRefusalCopy();
+    for (const code of ["generation_held_paused", "generation_held_balance", "generation_held_transient"] as const) {
+      expect(studio[code], code).toEqual(BILLING_ERROR_COPY[code]);
+    }
+  });
+
+  it("the per-window total is its OWN code — never the uncharged copy's \"a fault on our side\"", () => {
+    const err = new creditsFacade.GenerationWindowCostCapError(60_000_000, 60_000_000, 60);
+    expect(billingErrorCode(err)).toBe("generation_window_cost_cap");
+    expect(billingErrorDisplay(err).detail).not.toMatch(/fault on our side/);
+    expect(billingErrorDisplay(err).detail).toMatch(/Nothing was spent/);
+  });
+});
+
 describe("no refusal copy in the shared map makes a forbidden or performance claim (R23)", () => {
   // THE PREDICATE IS `claimHits`, NOT A LOOP HERE (P1-R4, applied 2026-09-21
   // after the batch-5 compliance gate counted six survivors). This file had

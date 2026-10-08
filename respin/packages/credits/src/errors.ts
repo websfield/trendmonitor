@@ -130,7 +130,12 @@ export class UnchargedAttemptCapError extends Error {
       // `UNCHARGED_CAP_WINDOW_CLAUSE`, which its windowed sibling below does.
       // `generation-pricing.test.ts` asserts that split against the config
       // rather than leaving it as two sentences somebody kept in step.
-      `This creator has ${attempts} runs on record that failed in a way that cost us money and cost you nothing, which is the limit (${cap}). Nothing was spent and no model was called this time. This is a fault on our side that repeats until it is fixed rather than anything you can change; please tell us so we can fix it.`
+      //
+      // ONE CAUSE, NOT TWO (Phase 6 gate): unlike the two generation caps
+      // below, this one counts the ONBOARDING voice build alone (`inference.ts`
+      // passes `ONBOARDING_BRAIN_PURPOSE`), which runs no claim scan, so a free
+      // claim-only refusal (R-173) can never be among these runs.
+      `This creator has ${attempts} runs on record that failed in a way that cost us money and cost you nothing, which is the limit (${cap}). Nothing was spent and no model was called this time. This is a fault on our side that repeats until it is fixed rather than anything you can change, and it is recorded for an operator.`
     );
     this.name = "UnchargedAttemptCapError";
   }
@@ -210,7 +215,7 @@ export class GenerationUnchargedAttemptCapError extends Error {
     readonly windowMinutes: number
   ) {
     super(
-      `This creator has ${attempts} generations in the last ${windowMinutes} minutes that failed in a way that cost us money and cost you nothing, which is the limit (${cap}). Nothing was spent and no model was called this time. ${UNCHARGED_CAP_WINDOW_CLAUSE} It is a fault on our side rather than anything you did, and it will keep happening until the cause is fixed; please tell us.`
+      `This creator has ${attempts} generations in the last ${windowMinutes} minutes that failed in a way that cost us money and cost you nothing, which is the limit (${cap}). Nothing was spent and no model was called this time. ${UNCHARGED_CAP_WINDOW_CLAUSE} If those drafts were stopped because they made a claim this product won't make (a refusal that is free, R-173), ask for a draft without that claim. If they failed for any other reason, it is a fault on our side rather than anything you did, it will keep happening until the cause is fixed, and it is recorded for an operator.`
     );
     this.name = "GenerationUnchargedAttemptCapError";
   }
@@ -236,9 +241,83 @@ export class GenerationUnchargedCostCapError extends Error {
     readonly windowMinutes: number
   ) {
     super(
-      `This creator's generations in the last ${windowMinutes} minutes have cost us ${costMicroUsd} micro-USD in attempts that failed in a way that charged you nothing, which is over the limit (${capMicroUsd}). Nothing was spent and no model was called this time. ${UNCHARGED_CAP_WINDOW_CLAUSE} It is a fault on our side rather than anything you did, and it will keep happening until the cause is fixed; please tell us.`
+      `This creator's generations in the last ${windowMinutes} minutes have cost us ${costMicroUsd} micro-USD in attempts that failed in a way that charged you nothing, which is over the limit (${capMicroUsd}). Nothing was spent and no model was called this time. ${UNCHARGED_CAP_WINDOW_CLAUSE} If those drafts were stopped because they made a claim this product won't make (a refusal that is free, R-173), ask for a draft without that claim. If they failed for any other reason, it is a fault on our side rather than anything you did, it will keep happening until the cause is fixed, and it is recorded for an operator.`
     );
     this.name = "GenerationUnchargedCostCapError";
+  }
+}
+
+/**
+ * The same window, bounding TOTAL spend — successful calls included (audit
+ * P3-R3, decisions R-158).
+ *
+ * The uncharged bound above cannot see a success: it counts only rows the
+ * creator was not charged for, so a looping caller that succeeds every time
+ * was unbounded in money. This is the runaway bound, sized so no tier's
+ * legitimate use reaches it (`generation.maxBillableCostMicroUsdPerWindow`).
+ *
+ * A CLASS OF ITS OWN, because the sentence is different: this creator WAS
+ * being charged, nothing failed, and the remedy is to wait for the window —
+ * the uncharged copy ("this is a fault on our side") would be false here.
+ * Numbers and our own literals only.
+ */
+export class GenerationWindowCostCapError extends Error {
+  constructor(
+    readonly costMicroUsd: number,
+    readonly capMicroUsd: number,
+    readonly windowMinutes: number
+  ) {
+    super(
+      `This creator's generations in the last ${windowMinutes} minutes have cost us ${costMicroUsd} micro-USD, which is at the per-window ceiling (${capMicroUsd}). Nothing was spent and no model was called this time. It clears on its own as the window moves on: only generations from the last ${windowMinutes} minutes count.`
+    );
+    this.name = "GenerationWindowCostCapError";
+  }
+}
+
+/** Why a finished draft was HELD at settlement rather than refused (audit P3-A4). */
+export type GenerationHeldReason = "paused" | "insufficient_balance" | "transient";
+
+/**
+ * THE VENDOR ANSWERED, THE DRAFT IS STORED, AND SETTLEMENT COULD NOT FINISH
+ * FOR A REASON THAT ENDS ON ITS OWN (audit P3-A4, decisions R-157).
+ *
+ * A pause ends, a balance can be topped up, and a serialisation failure or a
+ * deadlock (SQLSTATE 40001 / 40P01) or a lock timeout (55P03) is gone on the
+ * next attempt. Each of these used to REFUSE the attempt, which nulls the
+ * candidate — so the paid output was destroyed by a condition that would have
+ * cleared in minutes. Now the attempt stays `vendor_complete` with its
+ * candidate, and this error says so: nothing was charged, and the draft can be
+ * finished from /studio ("Finish this draft", `settleHeldAttempt`) until
+ * `heldUntil` — 24 hours after the vendor answered, when the worker's hard
+ * clear removes it.
+ *
+ * `heldUntil` is `null` only when the failure came before the settlement read
+ * the claim; the /studio list reads the time from the attempt itself.
+ */
+export class GenerationHeldError extends Error {
+  constructor(
+    readonly attemptId: string,
+    readonly reason: GenerationHeldReason,
+    readonly heldUntil: Date | null,
+    cause?: unknown
+  ) {
+    super(
+      "This draft was finished and is held, unsettled: nothing was taken from your balance. Finish it from Studio once the cause has cleared; after its hold time it is removed and nothing is charged.",
+      cause === undefined ? undefined : { cause }
+    );
+    this.name = "GenerationHeldError";
+  }
+}
+
+/**
+ * "Finish this draft" named an attempt this creator cannot finish (audit
+ * P3-A4): no such attempt in THIS profile's scope. The same message whether it
+ * belongs to another profile or does not exist — no enumeration oracle.
+ */
+export class HeldDraftUnavailableError extends Error {
+  constructor(readonly attemptId: string) {
+    super("That held draft is not one this creator can finish. Nothing was charged.");
+    this.name = "HeldDraftUnavailableError";
   }
 }
 
@@ -612,6 +691,47 @@ export class AutoTopupReconciliationRequiredError extends Error {
 }
 
 /**
+ * THE PRICE MOVED SINCE THE CONFIRMATION WAS SHOWN (launch L2, R-151).
+ *
+ * A confirmed commission settles under the config version its quote was shown
+ * under (the claim's snapshot), so a creator is never charged a number they
+ * were not shown. When the ACTIVE document now prices the same operation
+ * differently, the commission is refused BEFORE the claim — nothing spent, no
+ * model called — and "New generation" re-quotes it at today's price.
+ */
+export class GenerationQuoteChangedError extends Error {
+  constructor(
+    readonly quoted: number,
+    readonly current: number
+  ) {
+    super(
+      `The price of this script changed since it was shown (${quoted} credits then, ${current} now), so it was not started. Nothing was spent and no model was called. Press New generation to see the current price.`
+    );
+    this.name = "GenerationQuoteChangedError";
+  }
+}
+
+/**
+ * "FIND MY NEXT CONCEPT" HAS NOTHING SAFE TO START FROM (launch L2, R-151).
+ *
+ * The no-concept entrance proposes concepts from the creator's APPROVED context
+ * — the confirmed claims of their activated Strategy document — plus the
+ * platform and any limits. When that document confirms nothing about what they
+ * make, the honest answer is one short question, not concepts built on an
+ * invented biography. Decided deterministically from the activated documents
+ * (`conceptContextSufficient`); NO model call — classifier or otherwise — makes
+ * this decision. Raised before any claim, debit or provider call.
+ */
+export class ConceptContextInsufficientError extends Error {
+  constructor() {
+    super(
+      "There is not enough confirmed about what you make to suggest concepts yet. In one sentence, tell us what your videos are about, then try again. Nothing was spent and no model was called."
+    );
+    this.name = "ConceptContextInsufficientError";
+  }
+}
+
+/**
  * Performance-learning access could not be resolved from authoritative
  * billing state plus the active config (slice 9b, C2 / R-112).
  *
@@ -633,5 +753,40 @@ export class PerformanceLearningConfigUnavailableError extends Error {
       cause === undefined ? undefined : { cause }
     );
     this.name = "PerformanceLearningConfigUnavailableError";
+  }
+}
+
+/**
+ * A SAVED-PAGE REVISION THIS PAGE DOES NOT OFFER (launch L4, R-153).
+ *
+ * The saved recording pack offers three fixed revisions — shorter, more
+ * natural, easier to film — and the server maps the chosen one to its note.
+ * Anything else is a value the page never rendered, refused BEFORE any claim,
+ * debit or provider call.
+ */
+export class RevisionPresetError extends Error {
+  constructor() {
+    super(
+      "That revision is not one this page offers, so nothing was started. Nothing was spent and no model was called."
+    );
+    this.name = "RevisionPresetError";
+  }
+}
+
+/**
+ * A locked balance derivation was asked to run in a transaction whose
+ * isolation is not READ COMMITTED (audit Phase 8, P8-A2; register 2026-10-05
+ * item 11). Under a snapshot fixed before the workspace lock, the fold would
+ * miss rows committed while it waited and write an expiry row claiming a
+ * remainder that no longer exists — an error the append-only ledger cannot
+ * repair. Refused before either under-lock write. A read-only caller wants
+ * `committedFoldInTx`, which writes nothing.
+ */
+export class BalanceIsolationError extends Error {
+  constructor(readonly isolation: string) {
+    super(
+      "Your balance could not be read just now. Nothing was charged or changed. Reload the page."
+    );
+    this.name = "BalanceIsolationError";
   }
 }

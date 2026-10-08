@@ -1,0 +1,1 @@
+ALTER TABLE "deletion_operations" ADD COLUMN "cancelled_by_digest" text;

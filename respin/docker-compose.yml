@@ -3,11 +3,19 @@
 # projects on this machine. The credentials below are throwaway LOCAL-DEV
 # values (localhost-only); production credentials live in env on the server,
 # never in this file.
+#
+# LOCALHOST-ONLY IS NOW TRUE OF THE PORT TOO (R-155, register 2026-10-05 item
+# 47): the port is published on 127.0.0.1, not on every interface, because the
+# password above is also written in CLAUDE.md. An existing container keeps its
+# old binding until it is recreated (`docker compose up -d postgres`).
 name: respin
 
 services:
   postgres:
-    image: postgres:17-alpine
+    # Pinned by digest as well as tag (P9-R11): the tag alone is a moving
+    # pointer. Quoted from `docker image inspect postgres:17-alpine` on
+    # 2026-10-05 (RepoDigests); bump both together.
+    image: postgres:17-alpine@sha256:d4bb0a8c1b7bb2e29f976d099e7bfb9a5d8858cffe9e46b35cd302cd1f1f8168
     container_name: respin-postgres
     # createDockerTestDb runs DROP SCHEMA public CASCADE, which takes one
     # lock per object in a single transaction. The schema passed the
@@ -17,7 +25,7 @@ services:
     command: postgres -c max_locks_per_transaction=512
     restart: unless-stopped
     ports:
-      - "5435:5432"
+      - "127.0.0.1:5435:5432"
     environment:
       POSTGRES_USER: respin
       POSTGRES_PASSWORD: respin_local_dev
@@ -29,6 +37,73 @@ services:
       interval: 3s
       timeout: 3s
       retries: 15
+
+  # ---------------------------------------------------------------------------
+  # THE LOCAL-DRILL DELETION JOURNAL (R-155, P9-R4) — an S3-compatible server on
+  # loopback, so `scripts/restore-drill.sh` runs end to end with no cloud
+  # account, through the SAME S3 writer and verifier production uses
+  # (`deletion-journal-s3.ts` admits a loopback http endpoint and nothing else
+  # that is not https).
+  #
+  # PROFILE `drill`: `docker compose up -d` is unchanged and never starts these;
+  # `docker compose --profile drill up -d minio minio-init` does.
+  #
+  # WHY THIS IMAGE. MinIO's own images (`minio/minio`, `quay.io/minio/minio`)
+  # refused anonymous pulls when this was built (2026-10-05: "pull access
+  # denied" / 401). `bitnamilegacy/minio` is a frozen, pullable build that also
+  # carries the `mc` client the bucket init needs; pinned by digest, from
+  # `docker image inspect` the same day. Measured against it the same day: the
+  # journal writer's conditional create (If-None-Match), COMPLIANCE Object
+  # Lock, SSE-S3 (AES256, enabled by MINIO_KMS_SECRET_KEY), the SHA-256
+  # checksum, and the verifier's list-versions/get-version all work, and a
+  # one-version chain verified.
+  #
+  # NO VOLUME, deliberately: every journal object is written under a 28-day
+  # COMPLIANCE lock that the API will not delete, so a persistent volume would
+  # accumulate locked drill objects. The bucket lives and dies with the
+  # container (`docker compose --profile drill rm -sf minio` empties it).
+  #
+  # The credentials are throwaway LOCAL-DRILL values, published on loopback
+  # only; RUNBOOK.md's local-drill env block exports them as AWS_ACCESS_KEY_ID /
+  # AWS_SECRET_ACCESS_KEY because neither the writer nor the verifier passes
+  # credentials, so the SDK's default chain must find them in the environment.
+  minio:
+    profiles: ["drill"]
+    image: bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7
+    container_name: respin-minio
+    entrypoint: ["minio"]
+    command: ["server", "/tmp/respin-journal", "--address", ":9000"]
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      MINIO_ROOT_USER: respinlocal
+      MINIO_ROOT_PASSWORD: respin_local_drill
+      # `<key name>:<base64 of 32 bytes>` — a fixed throwaway key that turns on
+      # SSE-S3, which the verifier requires (`encryption_missing` otherwise).
+      MINIO_KMS_SECRET_KEY: "respin-local-drill:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Creates the journal bucket with versioning and Object Lock, both of which
+  # must exist before the first object (`mc mb --with-lock` sets both). Re-runs
+  # are harmless: `--ignore-existing` makes an existing bucket a no-op.
+  minio-init:
+    profiles: ["drill"]
+    image: bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7
+    container_name: respin-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 respinlocal respin_local_drill
+        && mc mb --ignore-existing --with-lock local/respin-deletion-journal-local
+        && mc version info local/respin-deletion-journal-local
+    restart: "no"
 
 volumes:
   respin-pgdata:

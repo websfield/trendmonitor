@@ -5,7 +5,9 @@ import { requireUser } from "@respin/auth";
 import { ExportBusyError, ProfileAccessError, respinDb } from "@respin/db";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { logRefusal } from "../../(product)/safe-log";
-import { scopeForUser } from "../../(product)/workspace-scope";
+import { readScopeForUser } from "../../(product)/workspace-scope";
+import { supportContact } from "../../support-contact";
+import { exportFailedText } from "../../support-copy";
 
 const JSON_FILENAME = "respin-creator-brain.json";
 const MARKDOWN_FILENAME = "respin-creator-brain.md";
@@ -59,7 +61,12 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   try {
-    const scope = await scopeForUser(user);
+    // THE READ GRADE (R-163, P5-R3): "export at any time" has to hold exactly
+    // when a workspace is pending deletion. Under the write grade this route
+    // answered 500 there (`user has no workspace`); a read-grade scope reaches
+    // `openBrainExport`, whose accessors re-check the deletion's window on
+    // every page, so the export stops once erasure begins.
+    const scope = await readScopeForUser(user);
     // Await preflight before constructing the Response. Profile and busy
     // refusals can therefore still carry their real HTTP status and headers.
     const source = await respinDb.openBrainExport(scope, profileId, format);
@@ -104,7 +111,8 @@ export async function GET(req: Request): Promise<Response> {
       );
     }
     return new Response(
-      "The export could not be prepared. Try again, or contact support if it repeats.",
+      // R-176: names the operator-set support address, or promises nothing.
+      exportFailedText(supportContact()),
       {
         status: 500,
         headers: {

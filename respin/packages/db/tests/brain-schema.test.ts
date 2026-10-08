@@ -32,6 +32,7 @@ import {
   workspaceSpendMonthly,
 } from "../src/onboarding-schema";
 import {
+  creativePieces,
   generationAttempts,
   generationFeedback,
   generations,
@@ -490,6 +491,20 @@ describe("AC-10: the composite FKs and CHECKs refuse what they exist to refuse",
           workspaceId: wsA,
           generationId: GENERATION_ID,
           reaction: "used_as_is",
+        },
+      },
+      // Launch L2 (R-151). ORDERED AFTER `generations`: the piece's source
+      // names that row through a same-tenant composite FK, and the cascade it
+      // witnesses is the registry's — a chosen concept leaves with the profile.
+      {
+        table: "creative_pieces",
+        drizzle: creativePieces,
+        row: {
+          profileId: profileA,
+          workspaceId: wsA,
+          sourceGenerationId: GENERATION_ID,
+          sourceIdeaIndex: 0,
+          quoteConfigVersion: 1,
         },
       },
       // Slice 9a (R5). ORDERED AFTER `generations` AND `brain_docs`, because

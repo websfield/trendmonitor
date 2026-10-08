@@ -52,6 +52,7 @@ const B04_OFFER = modeOffers("studio").find(
 import {
   FORBIDDEN_CLAIMS,
   PERFORMANCE_CLAIMS,
+  STUDIO_POSITIVE_ASSERTIONS,
 } from "./support/forbidden-claims";
 import { claimHits, specimensFor } from "./support/claim-scan";
 import {
@@ -76,7 +77,6 @@ import {
   FIRST_IDEAS_NEEDS_BRAIN,
   FIRST_IDEAS_NEXT,
   FIRST_IDEAS_NOT_IN_PLAN,
-  FIRST_IDEAS_NO_RESULTS_BASIS,
   FIRST_IDEAS_PAUSED,
   FIRST_IDEAS_PENDING_LABEL,
   FIRST_IDEAS_VIEWER,
@@ -166,10 +166,7 @@ const IDEAS_DOCUMENT: ScriptDocument = {
     weakestPoint:
       "The third promises a single take and the footage has to deliver one; if it does not, the opening is a bait.",
   },
-  disclosure: {
-    platform: "TikTok",
-    guidance: "Say in the caption that a tool helped write this before you post it.",
-  },
+  disclosure: { kind: "policy_check_required" },
 };
 
 const KILL_TEST: KillTestSummary = {
@@ -191,7 +188,7 @@ const USABLE_RUN = {
   modeLabel: B04_OFFER!.label,
   document: IDEAS_DOCUMENT,
   killTest: KILL_TEST,
-  charge: { creditsChargedNow: 4, balanceAfter: 21 },
+  charge: { creditsChargedNow: 4, balanceAfter: 21, freeClaimRefusal: false },
   // ZERO, NOT `null`: this run really built an offer and really dropped
   // nothing. `null` is the replay/retry answer and is a different fact.
   privateFrameworksNotUsed: 0,
@@ -229,7 +226,7 @@ const HONEST_REFUSAL: StudioRunState = {
   why: ["The brain has no point of view on this topic yet."],
   sharperAngle: "Pick the part of it you have actually done and start there.",
   killTest: KILL_TEST,
-  charge: { creditsChargedNow: 4, balanceAfter: 21 },
+  charge: { creditsChargedNow: 4, balanceAfter: 21, freeClaimRefusal: false },
   privateFrameworksNotUsed: 0,
 };
 
@@ -243,6 +240,7 @@ const REPLAYED: StudioRunState = {
     "The third promises a single take and the footage has to deliver one.",
   refusalReason: null,
   balanceAfter: 21,
+  freeClaimRefusal: false,
 };
 
 /**
@@ -263,6 +261,10 @@ const baseProps: FirstIdeasViewProps = {
     action: async () => ({ status: "idle" }) as StudioRunState,
     costSentence: firstIdeasCostSentence(4, 25),
     block: null,
+    // Audit P6-R6: the scoped count (zero by default; every branch driven
+    // below) and the history-reading mode the server named for this screen.
+    resultCount: 0,
+    historyModeLabels: ["Ideation"],
     refusalCopy: REFUSAL_COPY,
     fallbackCopy: REFUSAL_COPY.unknown,
   },
@@ -582,12 +584,15 @@ describe("what the screen shows", () => {
     expect(html).toContain(
       "2 other specifics were not found either — a plain number or a name, where an ordinary word can land, so these are a prompt to look, never a fault."
     );
-    expect(html.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
-    expect(html).toContain("names, numbers and dates are not listed here");
-    expect(html).toContain("recall aid, not a complete check.");
+    expect(html.match(/The disclosure line on this draft is this product's own sentence/g)).toHaveLength(1);
+    expect(html).toContain("not the draft's and not from your material, so it has nothing to list here.");
   });
 
-  it("keeps a hard disclosure row and withholds an all-disclosure list", () => {
+  it("withholds a synthetic HARD disclosure row and an all-disclosure list (R-121, audit P1-R1)", () => {
+    // The hard case is built by hand: a usable run cannot carry a hard
+    // traceability finding (`inventedSpecificFindings` turns each into a
+    // hard-rule finding). Were it reachable, its `unit` is the model's
+    // disclosure prose, so the row is withheld either way.
     const hard = withRun({
       ...USABLE_RUN,
       killTest: {
@@ -598,14 +603,16 @@ describe("what the screen shows", () => {
             enforcement: "hard",
             token: "$4,000",
             field: `${DISCLOSURE_FIELD_PREFIX}guidance`,
-            unit: "Within the first 3 seconds.",
+            unit: "SENTINEL-UNIT Within the first 3 seconds.",
           },
         ],
       },
     });
-    expect(hard).toContain("$4,000 [check]");
-    expect(hard).toContain("1 amount or date is");
-    expect(hard.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
+    expect(hard).not.toContain("$4,000 [check]");
+    expect(hard).not.toContain("1 amount or date");
+    expect(hard).not.toContain("SENTINEL-UNIT");
+    expect(hard).not.toContain('data-testid="studio-traceability"');
+    expect(hard.match(/The disclosure line on this draft is this product's own sentence/g)).toHaveLength(1);
 
     const allDisclosure = withRun({
       ...USABLE_RUN,
@@ -627,7 +634,7 @@ describe("what the screen shows", () => {
       "Every number, date and name outside the disclosure guidance in this draft was found in your brain or in what you typed in."
     );
     expect(allDisclosure).not.toContain("Every name in this draft was found");
-    expect(allDisclosure.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
+    expect(allDisclosure.match(/The disclosure line on this draft is this product's own sentence/g)).toHaveLength(1);
   });
 
   it("EVERY gate has its own sentence, and they say different things", () => {
@@ -715,7 +722,10 @@ describe("Phase 1 T7: first-ideas pre-form prose folds without hiding honesty", 
         { kind: "proper_noun", enforcement: "flag" as const, token: "Dorset", field: "/ideas/0/hook", unit: "Filmed in Dorset." },
       ],
       claims: [
-        { family: "concealment" as const, enforcement: "flag" as const, token: "skip the label", field: "/disclosure/guidance", unit: "Most people skip the label." },
+        { family: "concealment" as const, enforcement: "flag" as const, token: "skip the label", field: "/ideas/0/hook", unit: "Most people skip the label." },
+        // R-121, audit P1-R1: a finding in the model's disclosure section is
+        // stored and NOT presented — its `unit` is that section's prose.
+        { family: "concealment" as const, enforcement: "flag" as const, token: "skip the label", field: "/disclosure/guidance", unit: "SENTINEL-UNIT Most people skip the label." },
       ],
     };
     const html = renderToStaticMarkup(
@@ -726,6 +736,7 @@ describe("Phase 1 T7: first-ideas pre-form prose folds without hiding honesty", 
     );
     const details = html.match(/<details[\s\S]*?<\/details>/g) ?? [];
     expect(details).toHaveLength(1);
+    expect(html).not.toContain("SENTINEL-UNIT");
     const folded = details[0] ?? "";
     expect(folded).toContain("How this works and what it costs");
     expect(folded).toContain('data-testid="first-ideas-intro"');
@@ -769,12 +780,15 @@ describe("Phase 1 T7: first-ideas pre-form prose folds without hiding honesty", 
               { kind: "proper_noun", enforcement: "flag", token: "Dorset", field: "/ideas/0/hook", unit: "Filmed in Dorset." },
             ],
             claims: [
-              { family: "concealment", enforcement: "flag", token: "skip the label", field: "/disclosure/guidance", unit: "Most people skip the label." },
+              { family: "concealment", enforcement: "flag", token: "skip the label", field: "/ideas/0/hook", unit: "Most people skip the label." },
+              // R-121, audit P1-R1: stored, never presented.
+              { family: "concealment", enforcement: "flag", token: "skip the label", field: "/disclosure/guidance", unit: "SENTINEL-UNIT Most people skip the label." },
             ],
           },
         }}
       />
     );
+    expect(html).not.toContain("SENTINEL-UNIT");
     const folded = html.match(/<details[\s\S]*?<\/details>/)?.[0] ?? "";
     expect((html.match(/<details[\s\S]*?<\/details>/g) ?? [])).toHaveLength(1);
     expect(folded).toContain("How this works and what it costs");
@@ -850,13 +864,39 @@ describe("R16/R21: it does not stream, and it claims no evidence about the creat
     expect(streamingViolations(ROOT)).toEqual([]);
   });
 
-  it("the n = 0 statement is unconditional on a creator's FIRST output", () => {
-    // This is the moment a creator most naturally assumes the product knows
-    // them, and it holds no result of theirs at all.
-    const html = decoded(render());
-    expect(html).toContain('data-testid="first-ideas-no-results-basis"');
-    expect(html).toMatch(/No results of yours have been logged/i);
-    expect(html).toMatch(/not measuring you/i);
+  // AUDIT P6-R6 (register item 8): THIS WAS "the n = 0 statement is
+  // unconditional on a creator's FIRST output". A creator can log results on
+  // `/results` before pressing this, so "none logged" was not guaranteed even
+  // here. It now asserts the CONDITION — the branch the scoped count selects
+  // and the history this screen's mode reads — through the same marker
+  // pattern `/studio`'s harness uses.
+  it("the results sentence follows the creator's scoped count, and names the history this mode reads", () => {
+    const basis = STUDIO_POSITIVE_ASSERTIONS.find((a) => a.testId === "studio-no-results-basis")!;
+    const sentence = (run: Partial<NonNullable<FirstIdeasViewProps["run"]>>) => {
+      const html = decoded(render({ run: { ...baseProps.run!, ...run } }));
+      const at = html.indexOf('data-testid="first-ideas-no-results-basis"');
+      expect(at, "the marker is not rendered").toBeGreaterThan(-1);
+      return visibleCopy(html.slice(at, html.indexOf("</p>", at)));
+    };
+    const zero = sentence({ resultCount: 0 });
+    expect(zero).toMatch(/No results of yours have been logged/i);
+    expect(zero).toMatch(/not measuring you/i);
+    const counted = sentence({ resultCount: 2 });
+    expect(counted).not.toMatch(/No results of yours have been logged/i);
+    expect(counted).toMatch(/You have logged 2 results\./);
+    expect(counted).toMatch(/none of them/i);
+    const unread = sentence({ resultCount: null });
+    expect(unread).not.toMatch(/No results of yours have been logged/i);
+    expect(unread).toMatch(/could not read how many results/i);
+    // THE CHANNEL: Ideation reads recent work, so the sentence says so.
+    for (const text of [zero, counted, unread]) {
+      expect(text).toMatch(/Ideation drafts also see/);
+      expect(text).toMatch(/labelled history/);
+      expect(basis.must.test(text), text).toBe(true);
+      expect(claimHits(text, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toEqual([]);
+    }
+    // ...and a mode that reads none is told "nothing else", which is then true.
+    expect(sentence({ historyModeLabels: [] })).toMatch(/nothing else of yours/);
   });
 
   it("every rendered state claims nothing this product cannot support", () => {
@@ -956,7 +996,6 @@ describe("R16/R21: it does not stream, and it claims no evidence about the creat
       FIRST_IDEAS_BUTTON: [FIRST_IDEAS_BUTTON],
       FIRST_IDEAS_PENDING_LABEL: [FIRST_IDEAS_PENDING_LABEL],
       FIRST_IDEAS_NEXT: [FIRST_IDEAS_NEXT],
-      FIRST_IDEAS_NO_RESULTS_BASIS: [FIRST_IDEAS_NO_RESULTS_BASIS],
       FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE: [FIRST_IDEAS_BRAIN_STATE_UNAVAILABLE],
       FIRST_IDEAS_NEEDS_BRAIN: [FIRST_IDEAS_NEEDS_BRAIN],
       FIRST_IDEAS_NOT_IN_PLAN: [FIRST_IDEAS_NOT_IN_PLAN],

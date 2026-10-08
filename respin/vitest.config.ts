@@ -1,4 +1,32 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
+
+import {
+  REAL_POSTGRES_FILES_PER_GROUP,
+  REAL_POSTGRES_SUITES,
+} from "./tests/support/real-postgres-suites";
+import { SPAWN_BOUND_SUITES } from "./tests/support/spawn-bound-suites";
+
+const INCLUDE = [
+  "tests/**/*.test.{ts,tsx}",
+  "packages/**/tests/**/*.test.ts",
+  "worker/tests/**/*.test.ts",
+];
+
+// THE REAL-POSTGRES FILES RUN AFTER THE PGLITE SUITES, A FEW AT A TIME (audit
+// Phase 3, 2026-10-06). See `tests/support/real-postgres-suites.ts` for the
+// measured cause: every live file used to start at once beside the PGlite
+// suites — 21 workers, up to 20 connections per suite pool, a server capped at
+// 100 — giving "too many clients", hook timeouts, and the CPU load that tips a
+// PGlite-blocked worker over birpc's 60 s `onTaskUpdate` wall. `groupOrder`
+// runs project groups lowest-first and each group to completion: group 0 is
+// every other test file at full parallelism (exactly the non-live run, which
+// exits 0), then the real-Postgres files in groups of
+// `REAL_POSTGRES_FILES_PER_GROUP`. Without `TEST_DATABASE_URL` those files
+// skip in milliseconds, so the ordinary run's wall clock is unchanged.
+const realPostgresGroups: string[][] = [];
+for (let i = 0; i < REAL_POSTGRES_SUITES.length; i += REAL_POSTGRES_FILES_PER_GROUP) {
+  realPostgresGroups.push(REAL_POSTGRES_SUITES.slice(i, i + REAL_POSTGRES_FILES_PER_GROUP));
+}
 
 export default defineConfig({
   // Tests receive only explicit process variables. Never probe developer-local
@@ -7,10 +35,36 @@ export default defineConfig({
   esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
-    include: [
-      "tests/**/*.test.{ts,tsx}",
-      "packages/**/tests/**/*.test.ts",
-      "worker/tests/**/*.test.ts",
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "suite",
+          include: INCLUDE,
+          // vitest's own default excludes kept (setting `exclude` replaces them).
+          exclude: [...configDefaults.exclude, ...REAL_POSTGRES_SUITES, ...SPAWN_BOUND_SUITES],
+          sequence: { groupOrder: 0 },
+        },
+      },
+      // The process-spawn-bound files, alone, right after group 0: measured
+      // 8-28x slower under group 0's load than alone, which is contention, not
+      // work (`tests/support/spawn-bound-suites.ts`).
+      {
+        extends: true,
+        test: {
+          name: "spawn-bound",
+          include: [...SPAWN_BOUND_SUITES],
+          sequence: { groupOrder: 1 },
+        },
+      },
+      ...realPostgresGroups.map((files, index) => ({
+        extends: true as const,
+        test: {
+          name: `postgres-${index + 1}`,
+          include: files,
+          sequence: { groupOrder: index + 2 },
+        },
+      })),
     ],
 
     // BOTH raised 30s -> 60s when migration 0012 landed (M2b-1).
@@ -74,6 +128,27 @@ export default defineConfig({
     // `VITEST_MAX_THREADS=8` (after the fix) took 183s against 127s at the
     // default and left the same 6-9s residual blocks. The residue is PGlite's
     // in-process WASM under contention, and fewer workers does not remove it.
+    //
+    // THE RESIDUE, MEASURED AND HALVED (audit Phase 3, 2026-10-06). PGlite's
+    // promises settle as microtasks, so `createTestDb()` applying every
+    // migration in one `migrate()` call held the worker off its macrotask
+    // queue — where the RPC reply waits — for the whole build: 8.3 s on an
+    // idle machine (a 50 ms interval timer's largest gap). `createTestDb` now
+    // applies one migration per call and yields between them, which leaves
+    // PGlite's own start-up (~2.7-4.5 s) as the largest block. The run still
+    // exited 1 this way once before the yield landed, with no live suite
+    // running — so the live suite was not this symptom's cause.
+    //
+    // THE TWO LARGEST BLOCKS WERE NOT PGLITE (same day, an event-loop delay
+    // histogram per test file across the full run): `tests/table-writers.test.ts`
+    // held its worker 55.6 s — re-parsing every production file for each
+    // plant, and once at collection where nothing can yield — and
+    // `packages/llm/tests/assemble-kinds.test.ts` 38 s, one `expect` per
+    // Unicode scalar in one synchronous loop. Both now cache the parse by
+    // (path, text), scan in yielding steps, and (the Unicode case) collect
+    // mismatches into one assertion. Run together without the rest of the
+    // suite, their largest blocks then measured 4.9 s and 3.7 s; across the
+    // full run, 17.1 s and 12.7 s, every other file under 7.7 s.
     //
     // THE DISCRIMINATOR, so nobody widens this to hide a real failure: the
     // shape it addresses has ZERO failing tests and exactly one Errors line

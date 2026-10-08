@@ -615,6 +615,12 @@ const ROOT_LIST_CENSUS: Readonly<Record<string, string>> = {
   "tests/studio-ui.test.tsx": "packages/*/src — the mode registry lives there",
   "tests/import-boundary.test.ts": "declares the TEST-side roots, which ROOT_DIRS deliberately is not",
   "tests/feedback-readers.test.ts": "PRODUCT_SOURCE_TREES — the product trees, not the workspace",
+  // NOT A SOURCE-ROOT WALK (R-155). Its TypeScript population IS the shared
+  // `sourceFilesUnder(PRODUCTION_ROOTS)`; `join(WORKSPACE, "scripts")` is the
+  // directory of the operator SHELL scripts (`*.sh`), which no TypeScript
+  // walker reads and whose `${X:?` inputs the env authority must also see.
+  "tests/env-example.test.ts":
+    "join(WORKSPACE, \"scripts\") is the *.sh directory handle; the TypeScript population is the shared PRODUCTION_ROOTS",
   "tests/table-writers.test.ts":
     "the self-pin asserting PRODUCTION_ROOTS' exact value — the control that the shared list did not drift",
   "packages/db/tests/connector-verified-closure.test.ts":

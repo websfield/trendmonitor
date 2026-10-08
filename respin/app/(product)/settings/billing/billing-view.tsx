@@ -98,6 +98,15 @@ export type BillingViewProps = {
   };
   cancelHref: string;
   usageHref: string;
+  /**
+   * R-164: the Google arm of billing reauthentication. Absent or
+   * `available: false` renders exactly the pre-R-164 page: the password field
+   * required on every billing form. When available, a "Confirm with Google"
+   * link starts the `max_age=0` challenge, and the password field may be left
+   * blank for ten minutes after it — the server admits the stamp the
+   * challenge recorded, and refuses a blank password otherwise.
+   */
+  googleReauth?: { available: boolean; startHref: string; confirmed: boolean };
 };
 
 // Panels, banners and muted text are Signal classes (app/globals.css);
@@ -184,7 +193,14 @@ function ActionButton({
   );
 }
 
-function CurrentPasswordField({ helpId }: { helpId: string }) {
+function CurrentPasswordField({
+  helpId,
+  googleReauth,
+}: {
+  helpId: string;
+  googleReauth?: BillingViewProps["googleReauth"];
+}) {
+  const google = googleReauth?.available === true;
   return (
     <>
       <label style={{ display: "block", marginBottom: "0.5rem" }}>
@@ -193,13 +209,14 @@ function CurrentPasswordField({ helpId }: { helpId: string }) {
           type="password"
           name="password"
           autoComplete="current-password"
-          required
+          required={!google}
           aria-describedby={helpId}
         />
       </label>
       <p className="muted" id={helpId}>
-        Required to confirm this billing change. The proof applies only to this
-        signed-in session and expires after 10 minutes.
+        {google
+          ? "Required to confirm this billing change — or leave it blank if you confirmed with Google in the last 10 minutes. Either proof applies only to this signed-in session and expires after 10 minutes."
+          : "Required to confirm this billing change. The proof applies only to this signed-in session and expires after 10 minutes."}
       </p>
     </>
   );
@@ -278,6 +295,15 @@ export function BillingView(props: BillingViewProps) {
   return (
     <section>
       <h1>Billing</h1>
+
+      {props.googleReauth?.available ? (
+        <p data-testid="google-reauth">
+          {props.googleReauth.confirmed
+            ? "Confirmed with Google. For the next 10 minutes you can leave the password blank on this page's billing forms. "
+            : "Signed in with Google and have no password? Confirm with Google first, then leave the password blank. "}
+          <a href={props.googleReauth.startHref}>Confirm with Google</a>
+        </p>
+      ) : null}
 
       {error ? (
         <Banner title={error.title} data-testid="action-error" role="alert">
@@ -400,7 +426,7 @@ export function BillingView(props: BillingViewProps) {
             label="Pay the outstanding invoice"
             blockedBy={notOwner ?? noStripe}
           >
-            <CurrentPasswordField helpId="recover-invoice-reauth-help" />
+            <CurrentPasswordField googleReauth={props.googleReauth} helpId="recover-invoice-reauth-help" />
           </ActionButton>
           <p className="muted">
             If there is nothing left to pay, the attempt has probably lapsed —
@@ -428,7 +454,7 @@ export function BillingView(props: BillingViewProps) {
                 : "No Stripe billing account exists for this workspace yet.")
             }
           >
-            <CurrentPasswordField helpId="portal-manage-reauth-help" />
+            <CurrentPasswordField googleReauth={props.googleReauth} helpId="portal-manage-reauth-help" />
           </ActionButton>
         </div>
       ) : (
@@ -451,7 +477,7 @@ export function BillingView(props: BillingViewProps) {
                         : `No Stripe price is mapped for ${t.label}. An operator needs to run \`pnpm stripe:setup\` and paste the printed price ids into /admin/config as \`stripePriceMap\`.`)
                     }
                   >
-                    <CurrentPasswordField helpId={`subscribe-${t.tier}-reauth-help`} />
+                    <CurrentPasswordField googleReauth={props.googleReauth} helpId={`subscribe-${t.tier}-reauth-help`} />
                   </ActionButton>
                   <p className="muted">
                     {t.monthlyCredits} credits per month (from config v
@@ -488,7 +514,7 @@ export function BillingView(props: BillingViewProps) {
                   : "No Stripe price is mapped for the credit pack. An operator needs to run `pnpm stripe:setup` and paste the printed price ids into /admin/config as `stripePriceMap`.")
               }
             >
-              <CurrentPasswordField helpId="buy-pack-reauth-help" />
+              <CurrentPasswordField googleReauth={props.googleReauth} helpId="buy-pack-reauth-help" />
             </ActionButton>
             <p className="muted">
               A one-off pack. Packs are valid for longer than a monthly
@@ -596,7 +622,7 @@ export function BillingView(props: BillingViewProps) {
                 }
               />
             </label>
-            <CurrentPasswordField helpId="auto-topup-reauth-help" />
+            <CurrentPasswordField googleReauth={props.googleReauth} helpId="auto-topup-reauth-help" />
             <button type="submit" className={buttonClass("secondary")}>
               Save auto-top-up
             </button>
@@ -627,7 +653,7 @@ export function BillingView(props: BillingViewProps) {
             label="Resume subscription now"
             blockedBy={notOwner ?? noStripe}
           >
-            <CurrentPasswordField helpId="resume-reauth-help" />
+            <CurrentPasswordField googleReauth={props.googleReauth} helpId="resume-reauth-help" />
           </ActionButton>
         </div>
       ) : null}
@@ -666,7 +692,7 @@ export function BillingView(props: BillingViewProps) {
                     ))}
                   </select>
                 </label>{" "}
-                <CurrentPasswordField helpId="pause-reauth-help" />
+                <CurrentPasswordField googleReauth={props.googleReauth} helpId="pause-reauth-help" />
                 <button type="submit" className={buttonClass("secondary")}>
                   Pause subscription
                 </button>
@@ -713,7 +739,7 @@ export function BillingView(props: BillingViewProps) {
                     ))}
                   </select>
                 </label>{" "}
-                <CurrentPasswordField helpId="pause-offer-reauth-help" />
+                <CurrentPasswordField googleReauth={props.googleReauth} helpId="pause-offer-reauth-help" />
                 <button type="submit" className={buttonClass("primary")}>
                   Pause instead of cancelling
                 </button>
@@ -744,7 +770,7 @@ export function BillingView(props: BillingViewProps) {
                 : "No Stripe billing account exists for this workspace yet, so there is nothing to cancel.")
             }
           >
-            <CurrentPasswordField helpId="cancel-final-reauth-help" />
+            <CurrentPasswordField googleReauth={props.googleReauth} helpId="cancel-final-reauth-help" />
           </ActionButton>
         </div>
       ) : hasLiveSubscription ? (

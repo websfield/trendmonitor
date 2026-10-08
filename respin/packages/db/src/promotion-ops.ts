@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   buildComparisonGroups,
@@ -10,6 +10,7 @@ import {
   metricDeclarationKey,
   ProposalInputError,
   type FeedbackProposalDraft,
+  type PerformanceRule,
   type PromotionProposalDraft,
   type ResultProposalDraft,
 } from "@respin/brain";
@@ -17,6 +18,7 @@ import {
 import type { TxLike } from "./db-like";
 import type { BrainDoc } from "./brain-schema";
 import {
+  CHECK,
   enumerateClaimFields,
   readPointer,
 } from "./brain-content";
@@ -24,12 +26,12 @@ import {
   promotionProposals,
   proposalEvidenceFeedback,
   proposalEvidenceResults,
+  type PromotionDecisionReason,
   type PromotionProposal,
 } from "./promotion-schema";
 import { declaredMetricOf } from "./results-schema";
 import {
   onboardingInputs,
-  brainActivationSnapshots,
   type OnboardingInput,
   type StoredInputClass,
 } from "./onboarding-schema";
@@ -115,11 +117,20 @@ function validateDraft(draft: unknown): PromotionProposalDraft {
   return draft;
 }
 
-async function reconstructCurrentDrafts(
+type ResultInputs = Awaited<ReturnType<ProfileScope["accessors"]["promotionResultInputs"]>>;
+
+/**
+ * Every results draft the comparison supports over THESE rows. One builder for
+ * the refresh's full population and for the family guard's re-derivation from
+ * a population with a rejected proposal's treatment members removed (R-171
+ * (ii)), so both go through `packages/brain` — the sole constructor — the
+ * same way.
+ */
+function resultDraftsFrom(
   scope: ProfileScope,
-  tx: TxLike
-): Promise<{ drafts: PromotionProposalDraft[]; resultPopulationTruncated: boolean }> {
-  const resultInputs = await scope.accessors.promotionResultInputs(tx);
+  resultInputs: ResultInputs,
+  rows: ResultInputs["population"]["rows"]
+): ResultProposalDraft[] {
   const declaredMetrics = new Map<string, NonNullable<ReturnType<typeof declaredMetricOf>>>();
   let activeMetric: NonNullable<ReturnType<typeof declaredMetricOf>> | null = null;
   for (const version of resultInputs.strategyMetricVersions) {
@@ -131,7 +142,7 @@ async function reconstructCurrentDrafts(
   }
   const groups = buildComparisonGroups({
     profileId: scope.profileId,
-    results: resultInputs.population.rows,
+    results: rows,
     truncated: resultInputs.population.truncated,
     declaredMetrics,
   });
@@ -149,7 +160,7 @@ async function reconstructCurrentDrafts(
     for (const comparison of group.comparisons) {
       const treatmentIds = comparison.treatment.state === "present" ? comparison.treatment.resultIds : [];
       const baselineIds = comparison.baseline.state === "present" ? comparison.baseline.resultIds : [];
-      const toEvidence = (ids: readonly string[]) => resultInputs.population.rows
+      const toEvidence = (ids: readonly string[]) => rows
         .filter((row) => ids.includes(row.id))
         .map((row) => ({
           id: row.id,
@@ -179,6 +190,15 @@ async function reconstructCurrentDrafts(
       if (draft) resultDrafts.push(validateDraft(draft) as ResultProposalDraft);
     }
   }
+  return resultDrafts;
+}
+
+async function reconstructCurrentDrafts(
+  scope: ProfileScope,
+  tx: TxLike
+): Promise<{ drafts: PromotionProposalDraft[]; resultPopulationTruncated: boolean; resultInputs: ResultInputs }> {
+  const resultInputs = await scope.accessors.promotionResultInputs(tx);
+  const resultDrafts = resultDraftsFrom(scope, resultInputs, resultInputs.population.rows);
 
   const feedbackGroups = new Map<string, PromotionFeedbackInputRow[]>();
   for (const row of await scope.accessors.promotionFeedbackInputs(tx)) {
@@ -200,6 +220,7 @@ async function reconstructCurrentDrafts(
   return {
     drafts: [...resultDrafts, ...feedbackDrafts],
     resultPopulationTruncated: resultInputs.population.truncated,
+    resultInputs,
   };
 }
 
@@ -218,16 +239,160 @@ function proposalValues(draft: PromotionProposalDraft, scope: ProfileScope) {
   };
 }
 
+/** The statuses the digest index ignores — immutable history (P2-R10). */
+const HISTORY_STATUSES = ["stale", "superseded"] as const;
+
+/** The active document of a kind, read once per refresh. */
+function activeDocReader(scope: ProfileScope, tx: TxLike) {
+  const cache = new Map<string, Promise<BrainDoc | null>>();
+  return (kind: PromotionProposalDraft["target"]["kind"]): Promise<BrainDoc | null> => {
+    let doc = cache.get(kind);
+    if (doc === undefined) {
+      doc = scope.accessors.brainDocsByKind(kind, tx).then((docs) => docs.find((d) => d.status === "active") ?? null);
+      cache.set(kind, doc);
+    }
+    return doc;
+  };
+}
+
+/**
+ * Whether a draft's value already stands at its target in the active document
+ * — the content-and-server-owned test both the family guard and a duplicate
+ * accept read (R-171). Feedback compares the closed static value; results
+ * compare the stored rule canonically.
+ */
+function valuePresentIn(draft: PromotionProposalDraft, active: BrainDoc | null): boolean {
+  if (active === null) return false;
+  const content = active.content as Record<string, unknown>;
+  if (draft.source === "results") {
+    const rules = content.rules;
+    if (!Array.isArray(rules)) return false;
+    const wanted = canonical(storedRule(draft.rule));
+    return rules.some((rule) => canonical(rule) === wanted);
+  }
+  const values = content[draft.target.kind === "voice" ? "avoid" : "rules"];
+  return Array.isArray(values) && values.includes(draft.value);
+}
+
+/**
+ * The members R-171 (ii) compares: a feedback draft's feedback rows, a results
+ * draft's TREATMENT rows. Baseline rows are the creator's other posts and are
+ * shared by every comparison in a stratum, so comparing them would make a
+ * rejection permanent for every treatment the creator ever tests.
+ */
+function evidenceMembers(draft: PromotionProposalDraft): string[] {
+  return draft.source === "results"
+    ? draft.evidence.filter((e) => e.role === "treatment").map((e) => e.resultId)
+    : draft.evidence.map((e) => e.feedbackId);
+}
+
+/**
+ * THE FAMILY GUARD, ONE LEVEL ABOVE THE DIGEST INDEX (R-171, audit Phase 2
+ * P2-A2). The partial index arbitrates EXACT digests; every refresh rebuilds
+ * every draft from current inputs, so one more flag minted a fresh digest for
+ * a family whose rule was already accepted, and a second accept appended the
+ * same `/avoid` value again. Two rules, both read from content and stored
+ * decisions, never from anything a model wrote:
+ *
+ *   (i) ACCEPTED STANDS — a draft whose value already stands at its target in
+ *       the active document proposes nothing, nor does any results draft of a
+ *       family whose accepted rule still stands there. It reopens only once
+ *       the creator removes that value.
+ *  (ii) REJECTED NEEDS NEW EVIDENCE — a family with a rejected proposal
+ *       re-proposes only on evidence sharing NO member with any rejected
+ *       proposal of that family — feedback rows, or a results proposal's
+ *       TREATMENT rows (`evidenceMembers`) — and only if that evidence alone
+ *       reaches the brain's own minimum (n >= 3 distinct generations or
+ *       posts). Both are re-derived through `packages/brain`, the sole
+ *       constructor: a feedback draft from the disjoint rows, a results draft
+ *       by the comparison over the population minus the rejected treatment
+ *       members.
+ */
+async function guardFamilies(
+  scope: ProfileScope,
+  drafts: readonly PromotionProposalDraft[],
+  history: readonly PromotionProposal[],
+  resultInputs: ResultInputs,
+  tx: TxLike
+): Promise<PromotionProposalDraft[]> {
+  const activeDoc = activeDocReader(scope, tx);
+  const rejectedMembers = new Map<string, Set<string>>();
+  for (const row of history.filter((r) => r.status === "rejected")) {
+    const stored = await scope.accessors.promotionProposalReview(row.id, tx);
+    const key = row.source + ":" + row.familyKey;
+    const members = rejectedMembers.get(key) ?? new Set<string>();
+    for (const e of stored?.resultEvidence ?? []) if (e.role === "treatment") members.add(e.id);
+    for (const e of stored?.feedbackEvidence ?? []) members.add(e.feedbackId);
+    rejectedMembers.set(key, members);
+  }
+  const out: PromotionProposalDraft[] = [];
+  for (const draft of drafts) {
+    const active = await activeDoc(draft.target.kind);
+    if (valuePresentIn(draft, active)) continue;
+    if (draft.source === "results") {
+      const rules = active === null ? null : (active.content as { rules?: unknown }).rules;
+      const acceptedStands = Array.isArray(rules) && history.some((row) => {
+        if (row.status !== "accepted" || row.source !== "results" || row.familyKey !== draft.familyKey) return false;
+        const parsed = resultPayloadSchema.safeParse(row.payload);
+        if (!parsed.success) return false;
+        const wanted = canonical(storedRule(parsed.data.rule));
+        return rules.some((rule) => canonical(rule) === wanted);
+      });
+      if (acceptedStands) continue;
+    }
+    const rejected = rejectedMembers.get(draft.source + ":" + draft.familyKey);
+    if (rejected === undefined || !evidenceMembers(draft).some((id) => rejected.has(id))) {
+      out.push(draft);
+      continue;
+    }
+    if (draft.source === "results") {
+      // RE-DERIVED BY THE COMPARISON from the population minus the rejected
+      // treatment members, so the new evidence shares none of them and the
+      // brain's own minimum (n >= 3 distinct posts) decides whether it stands.
+      const rebuilt = resultDraftsFrom(
+        scope,
+        resultInputs,
+        resultInputs.population.rows.filter((row) => !rejected.has(row.id))
+      ).find((candidate) => candidate.familyKey === draft.familyKey);
+      if (rebuilt !== undefined) out.push(rebuilt);
+      continue;
+    }
+    const disjoint = buildFeedbackProposalDraft({
+      profileId: scope.profileId,
+      reaction: draft.evidence[0]!.reaction,
+      basisBrainDocId: draft.basisBrainDocId,
+      evidence: draft.evidence
+        .filter((e) => !rejected.has(e.feedbackId))
+        .map((e) => ({
+          feedbackId: e.feedbackId,
+          generationId: e.generationId,
+          profileId: scope.profileId,
+          workspaceId: scope.workspaceId,
+          reaction: e.reaction,
+          basisBrainDocId: draft.basisBrainDocId,
+        })),
+    });
+    if (disjoint !== null) out.push(validateDraft(disjoint));
+  }
+  return out;
+}
+
 export async function refreshPromotionProposalsInScope(
   scope: ProfileScope,
   entitlement: PerformanceLearningEntitlement,
   tx: TxLike
 ): Promise<PromotionProposal[]> {
   requireFull(entitlement);
-  const { drafts, resultPopulationTruncated } = await reconstructCurrentDrafts(scope, tx);
+  const reconstructed = await reconstructCurrentDrafts(scope, tx);
+  const { resultPopulationTruncated } = reconstructed;
+  const existing = await scope.accessors.promotionProposalHistory(tx);
+  // THE EFFECTIVE DRAFTS — what this refresh would propose after the family
+  // guard (R-171). The staling loop below reads these, not the raw rebuild: a
+  // re-proposal built from disjoint evidence has its own digest, and judging
+  // it against the full rebuild would stale it on every refresh.
+  const drafts = await guardFamilies(scope, reconstructed.drafts, existing, reconstructed.resultInputs, tx);
   const byFamily = new Map<string, PromotionProposalDraft[]>();
   for (const draft of drafts) byFamily.set(draft.familyKey, [...(byFamily.get(draft.familyKey) ?? []), draft]);
-  const existing = await scope.accessors.promotionProposalHistory(tx);
   for (const row of existing.filter((proposal) => proposal.status === "proposed")) {
     // A clipped result read cannot prove that any old evidence or family is
     // absent. Leave result proposals untouched until a complete population is
@@ -260,11 +425,26 @@ export async function refreshPromotionProposalsInScope(
       .where(and(eq(promotionProposals.id, row.id), eq(promotionProposals.profileId, scope.profileId), eq(promotionProposals.workspaceId, scope.workspaceId), eq(promotionProposals.status, "proposed")));
   }
   for (const draft of drafts) {
-    const [inserted] = await tx.insert(promotionProposals).values(proposalValues(draft, scope)).onConflictDoNothing().returning();
+    // THE CONFLICT TARGET IS THE PARTIAL INDEX, predicate included (P2-R10):
+    // a `stale`/`superseded` row with this digest is history the index does
+    // not see, so the insert succeeds and a FRESH `proposed` row stands beside
+    // it, the terminal row untouched; a `proposed`, `accepted` or `rejected`
+    // row with this digest still arbitrates, so a decided proposal absorbs the
+    // insert and stays the one row (R-115 para 3: decided rows are immutable
+    // history that proposes nothing). drizzle-orm 0.44.7's
+    // `onConflictDoNothing` takes `{ target, where }`; `where` renders the
+    // index predicate (`ON CONFLICT (...) WHERE ... DO NOTHING`).
+    const [inserted] = await tx.insert(promotionProposals).values(proposalValues(draft, scope)).onConflictDoNothing({
+      target: [promotionProposals.profileId, promotionProposals.source, promotionProposals.familyKey, promotionProposals.evidenceDigest],
+      where: sql`status NOT IN ('stale', 'superseded')`,
+    }).returning();
+    // The fallback read carries the index's own predicate, so it returns the
+    // one arbitrating row — live or decided — and never a history row.
     const proposal = inserted ?? (await tx.select().from(promotionProposals).where(and(
       eq(promotionProposals.profileId, scope.profileId), eq(promotionProposals.workspaceId, scope.workspaceId),
       eq(promotionProposals.source, draft.source), eq(promotionProposals.familyKey, draft.familyKey),
       eq(promotionProposals.evidenceDigest, draft.evidenceDigest),
+      notInArray(promotionProposals.status, [...HISTORY_STATUSES]),
     )).limit(1))[0];
     if (!proposal) throw new PromotionPayloadError("the idempotent proposal row could not be read back");
     if (draft.source === "results") {
@@ -284,8 +464,12 @@ export async function refreshPromotionProposalsInScope(
 
 type SummaryClaim = { pointer: string; value: unknown; quote: string };
 
-function storedRule(draft: ResultProposalDraft) {
-  const rule = draft.rule;
+/**
+ * A results rule exactly as `mergedFor` stores it in Performance Meta. Takes
+ * the RULE, not a draft, so the family guard can read an accepted row's stored
+ * payload through the same function with no cast to a draft type.
+ */
+function storedRule(rule: PerformanceRule) {
   return {
     metricLabel: rule.metric.label,
     metricKey: rule.metric.key,
@@ -309,13 +493,22 @@ function storedRule(draft: ResultProposalDraft) {
   };
 }
 
-function mergedFor(draft: PromotionProposalDraft, base: BrainDoc | null): { content: unknown; newPointers: string[] } {
+/**
+ * The document an accept would write. NEVER APPENDS A VALUE ALREADY PRESENT
+ * (R-171): when the draft's value already stands at its target, the content is
+ * the base unchanged, there are no new pointers, and `alreadyPresent` says so —
+ * the accept then records a decision and writes no version.
+ */
+function mergedFor(draft: PromotionProposalDraft, base: BrainDoc | null): { content: unknown; newPointers: string[]; alreadyPresent: boolean } {
+  if (base !== null && valuePresentIn(draft, base)) {
+    return { content: base.content, newPointers: [], alreadyPresent: true };
+  }
   if (draft.source === "results") {
     const previous = base ? (base.content as { rules?: unknown[] }).rules : [];
     if (!Array.isArray(previous)) throw new PromotionPayloadError("the current Performance Meta rules are not an array");
-    const content = { rules: [...previous, storedRule(draft)] };
+    const content = { rules: [...previous, storedRule(draft.rule)] };
     const index = previous.length;
-    return { content, newPointers: enumerateClaimFields("performance_meta", content).filter((p) => p.startsWith(`/rules/${index}/`)) };
+    return { content, newPointers: enumerateClaimFields("performance_meta", content).filter((p) => p.startsWith(`/rules/${index}/`)), alreadyPresent: false };
   }
   if (!base) throw new PromotionFreshnessError(`there is no active ${draft.target.kind} document to extend`);
   const record = structuredClone(base.content) as Record<string, unknown>;
@@ -324,7 +517,7 @@ function mergedFor(draft: PromotionProposalDraft, base: BrainDoc | null): { cont
   if (!Array.isArray(values)) throw new PromotionPayloadError(`the current ${draft.target.kind} ${key} field is not an array`);
   const pointer = `/${key}/${values.length}`;
   record[key] = [...values, draft.value];
-  return { content: record, newPointers: [pointer] };
+  return { content: record, newPointers: [pointer], alreadyPresent: false };
 }
 
 function summaryFor(proposal: PromotionProposal, draft: PromotionProposalDraft, merged: { content: unknown; newPointers: string[] }): { content: string; claims: SummaryClaim[] } {
@@ -512,6 +705,12 @@ export type PromotionProposalReview = PromotionProposalStoredReview & {
   claims: PromotionReviewClaim[];
   freshnessToken: string;
   learningEligibility: LearningEligibility;
+  /**
+   * The value already stands at its target in the active document (R-171):
+   * accepting records the decision and writes no new version. Always false
+   * for a terminal row's review.
+   */
+  alreadyPresent: boolean;
 };
 
 /** True when a `results` proposal's joined evidence carries any row that is not connector verified. */
@@ -553,6 +752,7 @@ async function buildReview(scope: ProfileScope, stored: PromotionProposalStoredR
         claims: [],
         freshnessToken: sha({ proposalId: stored.proposal.id, legacy: true }),
         learningEligibility: { kind: "legacy_unverified" },
+        alreadyPresent: false,
       },
       // No draft: a terminal legacy row reconstructs nothing, and the two
       // write-side callers refuse a null draft by name.
@@ -579,15 +779,9 @@ async function buildReview(scope: ProfileScope, stored: PromotionProposalStoredR
     if (!acceptedDoc || acceptedDoc.kind !== draft.target.kind) {
       throw new PromotionFreshnessError("its accepted document is absent or has the wrong kind");
     }
-    const [acceptedSnapshot] = await tx
-      .select()
-      .from(brainActivationSnapshots)
-      .where(and(
-        eq(brainActivationSnapshots.id, acceptedActivationId),
-        eq(brainActivationSnapshots.profileId, scope.profileId),
-        eq(brainActivationSnapshots.workspaceId, scope.workspaceId)
-      ))
-      .limit(1);
+    // THROUGH THE SCOPE'S ACCESSOR (audit Phase 2 gate, tenancy), not a raw
+    // select: the recorded id resolves only inside this profile and workspace.
+    const [acceptedSnapshot] = await scope.accessors.brainActivationsByIds([acceptedActivationId], tx);
     const snapshotDocId = draft.target.kind === "performance_meta"
       ? acceptedSnapshot?.performanceMetaDocId
       : draft.target.kind === "voice"
@@ -630,6 +824,7 @@ async function buildReview(scope: ProfileScope, stored: PromotionProposalStoredR
         claims,
         freshnessToken: sha(tokenFields),
         learningEligibility: eligibilityFor(stored, draft),
+        alreadyPresent: false,
       },
       draft,
       base: acceptedDoc,
@@ -669,9 +864,10 @@ async function buildReview(scope: ProfileScope, stored: PromotionProposalStoredR
     targetKind: stored.proposal.targetKind,
     baseBrainDocId: base?.id ?? null,
     mergedContentHash: sha(merged.content),
+    alreadyPresent: merged.alreadyPresent,
     claims: claims.map(({ pointer, displayedValue, sourceEvidence }) => ({ pointer, displayedValue, sourceEvidence })).sort((a, b) => a.pointer.localeCompare(b.pointer)),
   };
-  return { review: { ...stored, baseBrainDocId: base?.id ?? null, mergedContent: merged.content, claims, freshnessToken: sha(tokenFields), learningEligibility: eligibilityFor(stored, draft) }, draft, base, summary };
+  return { review: { ...stored, baseBrainDocId: base?.id ?? null, mergedContent: merged.content, claims, freshnessToken: sha(tokenFields), learningEligibility: eligibilityFor(stored, draft), alreadyPresent: merged.alreadyPresent }, draft, base, summary };
 }
 
 
@@ -746,6 +942,8 @@ export type DecidePromotionProposalParams = {
 export type PromotionDecisionResult = {
   proposal: PromotionProposal;
   status: "accepted" | "rejected";
+  /** `already_present`: the accept wrote nothing — the value already stood (R-171). */
+  reason: PromotionDecisionReason | null;
 };
 
 export async function decidePromotionProposalInScope(
@@ -774,7 +972,7 @@ export async function decidePromotionProposalInScope(
   const stored = await scope.accessors.promotionProposalReview(params.proposalId, tx);
   if (!stored) throw new PromotionAccessError();
   if (stored.proposal.status === "accepted" || stored.proposal.status === "rejected") {
-    return { proposal: stored.proposal, status: stored.proposal.status };
+    return { proposal: stored.proposal, status: stored.proposal.status, reason: stored.proposal.decisionReason ?? null };
   }
   if (stored.proposal.status !== "proposed") throw new PromotionDecisionError(`its status is ${stored.proposal.status}`);
   const built = await buildReview(scope, stored, tx);
@@ -784,12 +982,35 @@ export async function decidePromotionProposalInScope(
     if (!Array.isArray(params.confirmedFields) || params.confirmedFields.length !== 0) throw new PromotionDecisionError("a rejection cannot carry field confirmations");
     const [proposal] = await tx.update(promotionProposals).set({ status: "rejected", decisionUserId: scope.userId, decisionRole: scope.role as "owner" | "editor", decisionAt: new Date() }).where(and(eq(promotionProposals.id, stored.proposal.id), eq(promotionProposals.profileId, scope.profileId), eq(promotionProposals.workspaceId, scope.workspaceId), eq(promotionProposals.status, "proposed"))).returning();
     if (!proposal) throw new PromotionFreshnessError("another decision completed first");
-    return { proposal, status: "rejected" };
+    return { proposal, status: "rejected", reason: null };
   }
   if (!Array.isArray(params.confirmedFields)) throw new PromotionDecisionError("confirmations must be a list");
-  const expected = built.review.claims.map((claim) => ({ pointer: claim.pointer, asPlaceholder: claim.displayedValue === "[check]" })).sort((a, b) => a.pointer.localeCompare(b.pointer));
+  const expected = built.review.claims.map((claim) => ({ pointer: claim.pointer, asPlaceholder: claim.displayedValue === CHECK })).sort((a, b) => a.pointer.localeCompare(b.pointer));
   const submitted = params.confirmedFields.slice().sort((a, b) => a.pointer.localeCompare(b.pointer));
   if (canonical(expected) !== canonical(submitted)) throw new PromotionDecisionError("the confirmed pointer set is not the complete reviewed claim set");
+  if (built.review.alreadyPresent && built.base !== null) {
+    // A DUPLICATE ACCEPT IS A DECISION RECORD, NOT A WRITE (R-171). The value
+    // already stands in the active document, so no summary input is appended,
+    // no brain version is created and no version number is consumed (a version
+    // asserting nothing is not storable — `with-workspace.ts`'s own rule), and
+    // no provenance changes. The row records the accept against the document
+    // that already carries the value and the latest activation, which names
+    // it, with the closed reason.
+    const base = built.base;
+    // THE COHERENT BRAIN NOW, through the scope's own accessor (audit Phase 2
+    // gate, tenancy): the latest activation, which must name the active
+    // document that already carries the value.
+    const [snapshot] = await scope.accessors.latestBrainActivation(tx);
+    const namedDocId = base.kind === "performance_meta"
+      ? snapshot?.performanceMetaDocId
+      : base.kind === "voice"
+        ? snapshot?.voiceDocId
+        : snapshot?.killtestDocId;
+    if (!snapshot || namedDocId !== base.id) throw new PromotionFreshnessError("the latest activation does not name the document that already carries this value");
+    const [proposal] = await tx.update(promotionProposals).set({ status: "accepted", decisionUserId: scope.userId, decisionRole: scope.role as "owner" | "editor", decisionAt: new Date(), decisionReason: "already_present", acceptedBrainDocId: base.id, acceptedActivationId: snapshot.id }).where(and(eq(promotionProposals.id, stored.proposal.id), eq(promotionProposals.profileId, scope.profileId), eq(promotionProposals.workspaceId, scope.workspaceId), eq(promotionProposals.status, "proposed"))).returning();
+    if (!proposal) throw new PromotionFreshnessError("another decision completed first");
+    return { proposal, status: "accepted", reason: "already_present" };
+  }
   const summaryRow = await caps.appendPromotionSummaryForProposal(stored.proposal.id, tx);
   const summary = built.summary;
   const newEvidence: SourceEvidenceEntry[] = summary.claims.map((claim) => {
@@ -803,5 +1024,5 @@ export async function decidePromotionProposalInScope(
   const activated = await caps.activateBrainDocCoherent({ brainDocId: doc.id }, tx);
   const [proposal] = await tx.update(promotionProposals).set({ status: "accepted", decisionUserId: scope.userId, decisionRole: scope.role as "owner" | "editor", decisionAt: new Date(), acceptedBrainDocId: activated.doc.id, acceptedActivationId: activated.snapshot.id }).where(and(eq(promotionProposals.id, stored.proposal.id), eq(promotionProposals.profileId, scope.profileId), eq(promotionProposals.workspaceId, scope.workspaceId), eq(promotionProposals.status, "proposed"))).returning();
   if (!proposal) throw new PromotionFreshnessError("another decision completed first");
-  return { proposal, status: "accepted" };
+  return { proposal, status: "accepted", reason: null };
 }

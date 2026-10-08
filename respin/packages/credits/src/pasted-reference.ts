@@ -77,7 +77,7 @@ import {
   parkedAutopsyClaimsForProfile,
 } from "@respin/db";
 import { deriveBalance, deriveBalanceInTx } from "./balance";
-import { assertWriteClock, getDbNow, takeWorkspaceLock } from "./clock";
+import { assertWriteClock, getDbNow, takeWorkspaceLockInOrder } from "./clock";
 import {
   InsufficientCreditsError,
   PastedReferenceInputError,
@@ -157,6 +157,25 @@ export async function pastedReferenceQuote(
     tier: billing.tier,
     allowed,
   };
+}
+
+/**
+ * IS THE STANDALONE REFERENCE BREAKDOWN IN THIS WORKSPACE'S PLAN? (launch L2,
+ * audit P8-R1 for `/studio`'s entrance.) The tier authority against
+ * `PASTED_REFERENCE_TIERS`, and nothing else: no balance, no price, no pause.
+ * `pastedReferenceQuote` derives the balance, and `deriveBalance` takes the
+ * workspace money lock — so `/studio`, which only needs "offered or not",
+ * reads this instead and never queues a render behind a settlement.
+ * `pasted-reference-availability.test.ts` runs it on a database that refuses
+ * every transaction and raw statement, the only way that lock can be taken.
+ */
+export async function pastedReferenceInPlan(
+  db: DbLike,
+  workspaceId: VerifiedWorkspaceId,
+  at: Date
+): Promise<boolean> {
+  const billing = await getWorkspaceBillingState(db, workspaceId, at);
+  return PASTED_REFERENCE_TIERS.includes(billing.tier);
 }
 
 export type SubmitPastedReferenceResult = PastedReferenceIntakeResult & {
@@ -254,7 +273,13 @@ export async function submitPastedReference(
   classifyInputRefusal(() => normalisePastedReferenceUrl(input.sourceUrl));
 
   return db.transaction(async (tx) => {
-    await takeWorkspaceLock(tx, profile.workspaceId);
+    // THE ORDERED HELPER (audit Phase 8, P8-A1, R-177; confirmed at build:
+    // `intakePastedReference` below runs `assertFreshProfileScopeInTx`, the
+    // profile lifecycle fence), so its membership locks come first, shared.
+    await takeWorkspaceLockInOrder(tx, {
+      workspaceId: profile.workspaceId,
+      userId: profile.userId,
+    });
     await assertWriteClock(tx, profile.workspaceId, at);
 
     // THE ONE TIER AUTHORITY, inside the lock (see the docblock).
@@ -454,7 +479,13 @@ export async function settleParkedAutopsies(
 ): Promise<SettleParkedAutopsiesResult> {
   const profile = await mintProfileScope(db, scope, profileId);
   return db.transaction(async (tx) => {
-    await takeWorkspaceLock(tx, profile.workspaceId);
+    // THE ORDERED HELPER (audit Phase 8, P8-A1, R-177; found at build — the
+    // plan counted this site "billing alone"): `parkedAutopsyClaimsForProfile`
+    // below runs `assertFreshProfileScopeInTx`, the profile lifecycle fence.
+    await takeWorkspaceLockInOrder(tx, {
+      workspaceId: profile.workspaceId,
+      userId: profile.userId,
+    });
     // THE ONE PAUSE READ, inside this transaction, and the one the result
     // reports: no caller re-derives it (see the `deferred` field).
     if (await hasOpenPause(tx, profile.workspaceId)) {
@@ -516,10 +547,10 @@ export async function settleParkedAutopsies(
  * not imported HERE: `@respin/credits` does not declare `@respin/trends` as a
  * dependency, and this module needs nothing from it at runtime.
  *
- * `accepted: false` IS NEVER PRODUCED. The port's one refusal reason is
- * `quote_budget_exceeded`, and the intake has no quote budget: R-3's quote
- * budget is enforced where a voice document is GROUNDED, not where a
- * reference is stored (`appendReferencePost` refuses blank or over-ceiling
+ * THE PORT HAS NO REFUSAL ARM (audit Phase 2, P2-R11): it returns an
+ * acceptance or throws. The intake has no quote budget — R-3's quote budget
+ * is enforced where a voice document is GROUNDED, not where a reference is
+ * stored (`appendReferencePost` refuses blank or over-ceiling
  * text with `PostContentError`, which is not a quote budget either). Every
  * refusal this port can raise — tier, pause, role, balance, content, input
  * shape — is a typed error thrown through, never relabelled as a reason the
@@ -534,10 +565,7 @@ export function pastedReferenceIntakePort(
     profileId: string;
     sourceUrl: string;
     transcript: string;
-  }): Promise<
-    | { accepted: true; referenceInputId: string }
-    | { accepted: false; reason: "quote_budget_exceeded" }
-  >;
+  }): Promise<{ accepted: true; referenceInputId: string }>;
 } {
   return {
     async intakeReferenceTranscript(input) {

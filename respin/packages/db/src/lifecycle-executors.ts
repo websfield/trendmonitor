@@ -356,17 +356,19 @@ function subjectAndPredicateFor(
       predicate: { kind: "direct", matches: [{ column: "rights_subject_user_id", subjectField: "userId" }] },
     };
   }
+  // The requester and (R-166) the canceller: each a single identity link on
+  // a deletion receipt, scrubbed by THAT person's identity erasure.
   if (
     scope === "identity" &&
     (table === "deletion_operations" || table === "deletion_operation_transitions") &&
     columns.length === 1 &&
-    columns[0] === "requester_user_id"
+    (columns[0] === "requester_user_id" || columns[0] === "cancelled_by_user_id")
   ) {
     return {
       subject: subjectForScope("identity", subjects),
       predicate: {
         kind: "direct",
-        matches: [{ column: "requester_user_id", subjectField: "userId" }],
+        matches: [{ column: columns[0], subjectField: "userId" }],
       },
     };
   }

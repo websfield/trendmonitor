@@ -136,3 +136,13 @@ Two copy claims are now pinned rather than trusted: `tests/landing-pricing.test.
 **What batch 5 is specifically asked to distrust.** That the pin table's `holds()` predicates read the tree rather than the copy, and that a pin whose authority is a `repoFile(...).includes(...)` string is not itself a claim about code it never executes. That `MARKETING_CLAIM_GAPS` is an honest scope statement and not an exemption list wearing a docblock. That `source-files.ts`'s `ROOT_DIRS` assertion actually fails when a root appears. That the six-entry `PLANT_OWED` ratchet cannot be satisfied by deleting an entry. That `?plan=` is validated everywhere it is read and never reflected. And that **every number in §1-§3 of this card and in the instruments file re-derives from the tree today** — five stale counts shipped in certifying artefacts two sessions ago.
 
 **One hash in that table is this file's own, and a file cannot hash itself after writing the hash down.** `785d68e3` is this card as the other 21 inputs were measured, before §4 existed. The byte state reviewers are actually given is this card **as of dispatch**, and the orchestrator records that measurement in `ledger.md`'s batch-5 dispatch entry (the card has no ledger section of its own — pointer corrected 2026-09-21) rather than inside the file, which is the only place it can be stated without invalidating itself. The other 21 hashes are self-consistent and are the ones to verify; a mismatch on this card alone means §4 was appended, which is what §4 is.
+
+---
+
+## 5. Owed items closed, 2026-10-07 (engineering only; no gate run)
+
+- **The "contact support" decision is R-176** (owner-delegated 2026-10-05; plan label R-159): one operator-set address, `RESPIN_SUPPORT_EMAIL`, read only in `respin/app/support-contact.ts`. Measured at execution:
+  - `grep -rni "contact support" app packages/*/src --include=*.ts --include=*.tsx` found **21 lines in 5 files**, the plan's list. It finds **0** now.
+  - `grep -rniE "tell us"` over the same trees found **34 lines in 7 files**: 28 contact promises (rewritten), 4 form prompts (listed as not promises), 2 comments.
+  - Both lists are held by site in `respin/tests/support-contact.test.tsx`.
+- **The two-branch results sentence, its scoped count accessor and the three prose pins** are built. Their decisions and witnesses are R-174 and R-175 in `docs/initial/decisions.md`, plus `respin/tests/landing-pricing.test.ts`.

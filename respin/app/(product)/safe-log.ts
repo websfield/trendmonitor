@@ -138,6 +138,43 @@ export function wireLabel(raw: string): string {
   return /^[A-Za-z][A-Za-z0-9_-]{0,39}$/.test(raw) ? raw : NOT_A_LABEL;
 }
 
+/**
+ * The fixed token an id-shaped value is replaced with when it is NOT an id.
+ * Not itself id-shaped, so it can never be mistaken for one in a log line.
+ */
+export const NOT_AN_ID = "not-an-id";
+
+/** A canonical UUID, any version — `uuidv7()` and `randomUUID()` both mint these. */
+const UUID_SHAPE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+/** A ULID: 26 Crockford base-32 characters, the first at most `7`. */
+const ULID_SHAPE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+
+/**
+ * An ID that arrived ON THE WIRE, clamped to a shape a log line may carry
+ * (audit P1-A3, register 2026-10-05 item 43).
+ *
+ * WHY `wireLabel` IS NOT THE ANSWER FOR IDS. A server action's bound
+ * `profileId`, a posted `operationId`, a JSON `requestId` are all untrusted:
+ * the refusal path fires precisely when one is not what the server offered, so
+ * logging it raw writes an attacker-chosen string to stdout. But `wireLabel`
+ * requires a LETTER first, and every uuidv7 minted today starts with a digit
+ * ("01a…"), so it would replace every valid id with its sentinel and the log
+ * line would name nobody — the opposite of "a spend log names WHO it happened
+ * to" (production gate, 2026-08-28).
+ *
+ * So the shape is the id's own: a canonical UUID or a ULID passes byte for
+ * byte, and ANYTHING else is the fixed token `NOT_AN_ID`, never a prefix (a
+ * prefix of a hostile string is still a leak). A database-derived id
+ * (`scope.workspaceId`, `result.generation.id`, `profile.id`) needs no clamp;
+ * `tests/safe-log.test.ts` refuses a bare identifier in a log context and lists
+ * the server-derived roots a context may read from directly.
+ */
+export function wireId(raw: unknown): string {
+  return typeof raw === "string" && (UUID_SHAPE.test(raw) || ULID_SHAPE.test(raw))
+    ? raw
+    : NOT_AN_ID;
+}
+
 /** How many rejected key names a single refusal line may name. */
 const SCHEMA_KEYS_LOGGED_MAX = 5;
 

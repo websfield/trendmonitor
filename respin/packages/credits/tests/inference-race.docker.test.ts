@@ -568,6 +568,48 @@ describe.skipIf(!MAINTENANCE_URL)("runInference under REAL concurrency", () => {
     ).toHaveLength(1);
   }, 60_000);
 
+  it("audit P3-A1 (R-156): the persisted output runs INSIDE the debit's transaction, under the workspace lock — a second run's debit WAITS on it, and a refused write takes its own debit with it", async () => {
+    await grant(REBUILD_COST * 6);
+    // Spend the included build so both racers are PRICED and must debit.
+    await run(`att-included-${n}`, fastProvider());
+    await prewarmPool(4);
+    let enterPersist!: () => void;
+    const inPersist = new Promise<void>((r) => {
+      enterPersist = r;
+    });
+    let releasePersist!: () => void;
+    const persistReleased = new Promise<void>((r) => {
+      releasePersist = r;
+    });
+    const a = `att-persist-a-${n}`;
+    const b = `att-persist-b-${n}`;
+    // A: debits, then its persist HOLDS the transaction open, then refuses.
+    const runA = runInference(harness.db, owner, profileId, fastProvider(), anySlots(), {
+      attemptId: a, system: "s", prompt: "p", promptBundleVersion: "test-bundle",
+      persist: async () => {
+        enterPersist();
+        await persistReleased;
+        throw new Error("the write refused");
+      },
+    }, new Date()).catch((e: unknown) => e);
+    await inPersist;
+    // B starts while A sits inside persist, holding the workspace lock.
+    const runB = runInference(harness.db, owner, profileId, fastProvider(), anySlots(), {
+      attemptId: b, system: "s", prompt: "p", promptBundleVersion: "test-bundle",
+      persist: async () => undefined,
+    }, new Date());
+    // B's debit transaction is BLOCKED on the workspace lock A's persist holds.
+    expect(await waitForBlockedAdvisoryLock(5_000), "B never waited on A's lock — the persist is not inside the locked debit transaction").toBe(true);
+    // A's debit is not visible from outside: it has not committed.
+    expect((await inferenceDebits()).filter((d) => d.refId === a)).toHaveLength(0);
+    releasePersist();
+    expect(await runA).toBeInstanceOf(Error);
+    await runB;
+    // A's refused write rolled A's debit back; B's committed.
+    expect((await inferenceDebits()).filter((d) => d.refId === a)).toHaveLength(0);
+    expect((await inferenceDebits()).filter((d) => d.refId === b)).toHaveLength(1);
+  }, 60_000);
+
   it("the same attempt id cannot be debited twice, even from two connections", async () => {
     // `credit_ledger_inference_debit_uq` is the durable half of the
     // double-submit story that the pending-disabled button only narrows.

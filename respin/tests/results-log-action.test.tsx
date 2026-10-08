@@ -26,6 +26,8 @@ const db = vi.hoisted(() => ({
   withWorkspace: vi.fn(),
   recordResult: vi.fn(),
   decidePromotionProposal: vi.fn(),
+  refreshPromotionProposals: vi.fn(),
+  promotionProposalReview: vi.fn(),
 }));
 const cache = vi.hoisted(() => ({ revalidatePath: vi.fn() }));
 const credits = vi.hoisted(() => ({ performanceLearningEntitlementFor: vi.fn() }));
@@ -62,7 +64,8 @@ const { RESULT_FIELD, leverField, IDLE_LOG_RESULT_STATE } = await import(
   "../app/(product)/results/log-state"
 );
 const { PROMOTION_FIELD } = await import("../app/(product)/results/promotion-state");
-const { logResultAction, decidePromotionAction } = await import("../app/(product)/results/actions");
+const { logResultAction, decidePromotionAction, refreshPromotionAction, reviewPromotionAction } = await import("../app/(product)/results/actions");
+const { refreshedSentence, decidedSentence } = await import("../app/(product)/results/promotion-panel");
 const { IDLE_PROMOTION_ACTION_STATE } = await import("../app/(product)/results/promotion-state");
 
 /** A filled-in form, as the browser posts it. Overridable field by field. */
@@ -319,6 +322,72 @@ describe("logResultAction: what it reports back", () => {
   });
 });
 
+describe("proposal actions: what crosses to the browser (audit Phase 2, P2-A3 / P2-A5 / R-171)", () => {
+  const row = (id: string, status: string) => ({ id, status, source: "feedback", familyKey: "family" });
+
+  it("P2-A3: the refresh counts the PROPOSED rows, not the whole history", async () => {
+    db.refreshPromotionProposals.mockResolvedValue([
+      row("a", "proposed"),
+      row("b", "proposed"),
+      row("c", "accepted"),
+      row("d", "rejected"),
+      row("e", "stale"),
+    ]);
+    const state = await refreshPromotionAction("p_1", IDLE_PROMOTION_ACTION_STATE, new FormData());
+    expect(state).toEqual({ status: "refreshed", count: 2 });
+    expect(refreshedSentence(2)).toBe("2 proposals available after refresh.");
+    expect(refreshedSentence(1)).toBe("1 proposal available after refresh.");
+  });
+
+  it("P2-A5: the review is projected field by field — a planted DB-only field never serialises", async () => {
+    const SENTINEL = "DB-ONLY-SENTINEL";
+    db.promotionProposalReview.mockResolvedValue({
+      proposal: {
+        id: "proposal-1",
+        source: "feedback",
+        status: "proposed",
+        strength: "repeated",
+        payload: { value: "Reject a draft that could be true of anyone." },
+        familyKey: SENTINEL,
+        evidenceDigest: SENTINEL,
+        workspaceId: SENTINEL,
+        decisionUserId: SENTINEL,
+        plantedColumn: SENTINEL,
+      },
+      resultEvidence: [{ id: "r1", role: "treatment", reachValue: SENTINEL, connectorEventId: SENTINEL }],
+      feedbackEvidence: [{ feedbackId: "f1", generationId: "g1", profileId: SENTINEL, basisBrainDocId: SENTINEL }],
+      baseBrainDocId: SENTINEL,
+      mergedContent: { rules: ["Reject a draft that could be true of anyone."] },
+      claims: [{
+        pointer: "/rules/0",
+        displayedValue: "Reject a draft that could be true of anyone.",
+        sourceEvidence: { quote: "/rules/0 = x", inputId: SENTINEL, inputClass: "feedback_summary" },
+      }],
+      freshnessToken: "fresh-1",
+      learningEligibility: { kind: "structured_feedback", occurrences: 3 },
+      alreadyPresent: false,
+      plantedTopLevel: SENTINEL,
+    });
+    const fd = new FormData();
+    fd.set(PROMOTION_FIELD.proposalId, "proposal-1");
+    const state = await reviewPromotionAction("p_1", IDLE_PROMOTION_ACTION_STATE, fd);
+    expect(state.status).toBe("reviewed");
+    // NON-VACUITY: the projection carried the real fields through.
+    expect(JSON.stringify(state)).toContain("Reject a draft that could be true of anyone.");
+    expect(JSON.stringify(state)).toContain("fresh-1");
+    // THE WITNESS: the whole object, serialised, carries no DB-only field.
+    expect(JSON.stringify(state)).not.toContain(SENTINEL);
+  });
+
+  it("R-171: an accept of a value already present says so", async () => {
+    db.decidePromotionProposal.mockResolvedValue({ status: "accepted", reason: "already_present" });
+    const state = await runDecision(proposalDecision("accept"));
+    expect(state).toEqual({ status: "decided", decision: "accepted", alreadyPresent: true });
+    expect(decidedSentence({ decision: "accepted", alreadyPresent: true })).toMatch(/already in the document it targets, so no new version was written/);
+    expect(decidedSentence({ decision: "rejected", alreadyPresent: false })).toBe("Proposal rejected.");
+  });
+});
+
 describe("proposal decision action: the reviewed payload is decision-specific", () => {
   it("passes the exact checked reviewed confirmation set for accept", async () => {
     const confirmed = [
@@ -326,7 +395,7 @@ describe("proposal decision action: the reviewed payload is decision-specific", 
       { pointer: "/rules/1", asPlaceholder: true },
     ];
     const state = await runDecision(proposalDecision("accept", confirmed));
-    expect(state).toEqual({ status: "decided", decision: "accepted" });
+    expect(state).toEqual({ status: "decided", decision: "accepted", alreadyPresent: false });
     expect(db.decidePromotionProposal).toHaveBeenCalledWith(
       expect.anything(),
       "p_1",
@@ -338,7 +407,7 @@ describe("proposal decision action: the reviewed payload is decision-specific", 
   it("passes no confirmations for exact reject", async () => {
     db.decidePromotionProposal.mockResolvedValue({ status: "rejected" });
     const state = await runDecision(proposalDecision("reject"));
-    expect(state).toEqual({ status: "decided", decision: "rejected" });
+    expect(state).toEqual({ status: "decided", decision: "rejected", alreadyPresent: false });
     expect(db.decidePromotionProposal).toHaveBeenCalledWith(
       expect.anything(),
       "p_1",

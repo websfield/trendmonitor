@@ -12,7 +12,7 @@
 //
 // It stays PURE (no async, no gate, no query) for the same reason `ShellRail`
 // is: every authority — `requireUser()`, `ensureUserWorkspace`,
-// `withWorkspace`, `getBalance` and the refusal mapping — remains in
+// `withWorkspace`, `getDisplayBalance` and the refusal mapping — remains in
 // `layout.tsx`, above this component. This renders what it is handed.
 import type { ReactNode } from "react";
 import { SignOutButton } from "./sign-out-button";
@@ -24,11 +24,14 @@ import { ThemeSwitch } from "../ui/theme-switch";
 export function ProductShell({
   workspaceName,
   credits,
+  creditsSettling = false,
   children,
 }: {
   workspaceName: string;
   /** `null` is the refusal render: no credits element, never a guessed zero. */
   credits: number | null;
+  /** The number is the committed fold, still updating (audit Phase 8, P8-R1). */
+  creditsSettling?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -41,7 +44,7 @@ export function ProductShell({
             there (round-2 NOTE 6). Same links, now the Colour Pop / After Hours rail (R-129). */}
         <ProductNav>
           <div className="shell-foot">
-            <ShellRail workspaceName={workspaceName} credits={credits} />
+            <ShellRail workspaceName={workspaceName} credits={credits} settling={creditsSettling} />
             <ThemeSwitch />
             <SignOutButton />
           </div>

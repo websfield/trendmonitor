@@ -208,6 +208,17 @@ export interface SafeWorkerEventInput {
   readonly deletionWaiting?: number;
   readonly deletionBlocked?: number;
   readonly deletionErased?: number;
+  // R-162 / R-165: the wedge sweep and the held-money replay that share the
+  // deletion tick. Counts only.
+  readonly deletionWedgesResumed?: number;
+  readonly deletionWedgesRefused?: number;
+  readonly deletionHeldMoneyReplayed?: number;
+  readonly deletionHeldMoneyFailed?: number;
+  readonly deletionHeldMoneyStillHeld?: number;
+  readonly deletionMoneyNeedsOperator?: number;
+  readonly deletionRefundOwed?: number;
+  // R-166: waiting deletions older than the alert bound.
+  readonly deletionStalledWaits?: number;
   // Phase 10b-1 Task 6: retention receiver counts. Same discipline — counts and
   // one content-safe key, never a row. `retentionKey` is a registry key
   // (`table::row_class::field_set`), which SAFE_TOKEN admits; it names WHICH
@@ -225,6 +236,11 @@ export interface SafeWorkerEventInput {
   readonly generationAbandoned?: number;
   readonly generationPastDeadline?: number;
   readonly generationSettleable?: number;
+  /**
+   * Audit P3-R1(a): how long the oldest unsettled `vendor_complete` candidate
+   * has waited, in ms. Under the 24-hour clear by construction.
+   */
+  readonly generationOldestUnsettledMs?: number;
   readonly generationHardCleared?: number;
   /** Phase 10a: public Sample Spin stale-attempt recovery, per tick. Non-zero `failed` is always actionable. */
   readonly sampleSpinRecovered?: number;
@@ -264,6 +280,14 @@ const NUMBER_FIELDS = [
   "deletionWaiting",
   "deletionBlocked",
   "deletionErased",
+  "deletionWedgesResumed",
+  "deletionWedgesRefused",
+  "deletionHeldMoneyReplayed",
+  "deletionHeldMoneyFailed",
+  "deletionHeldMoneyStillHeld",
+  "deletionMoneyNeedsOperator",
+  "deletionRefundOwed",
+  "deletionStalledWaits",
   "retentionScanned",
   "retentionRedacted",
   "retentionDeleted",
@@ -275,6 +299,7 @@ const NUMBER_FIELDS = [
   "generationAbandoned",
   "generationPastDeadline",
   "generationSettleable",
+  "generationOldestUnsettledMs",
   "generationHardCleared",
   "sampleSpinRecovered",
   "sampleSpinRecoveryFailed",

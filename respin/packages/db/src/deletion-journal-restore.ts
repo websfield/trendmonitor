@@ -487,11 +487,32 @@ export async function loadJournalChain(
   return verifyJournalChain({ config, operationId, listed, read });
 }
 
-/** Enumerate every operation the journal holds for this environment. */
-export async function listJournalOperationIds(
+/**
+ * What the journal prefix holds: the operations it can name, and every key it
+ * cannot. Both halves are returned because "no operation" and "a key nobody can
+ * read" must never reach the same conclusion.
+ */
+export type JournalOperationListing = Readonly<{
+  operationIds: readonly string[];
+  /** Keys under `{environment}/deletion-journal/` that do not parse, sorted. */
+  unparseableKeys: readonly string[];
+}>;
+
+/**
+ * Enumerate every operation the journal holds for this environment, and COUNT
+ * what it cannot parse.
+ *
+ * Register 2026-10-05 item 44: this listing used to drop an unparseable key
+ * without a trace, so an operation whose objects were all mis-keyed vanished
+ * from the restore verifier and the purge alike. The two callers — listed, not
+ * searched for (non-negotiable 7): `scripts/restore-verify.ts` fails on a
+ * non-zero count, and `scripts/journal-purge.ts` reports the keys and exits
+ * non-zero without deleting them.
+ */
+export async function listJournalOperations(
   transport: JournalVerifierTransport,
   config: DeletionJournalConfig
-): Promise<readonly string[]> {
+): Promise<JournalOperationListing> {
   // Round-1 (all three gates): this listed `${environment}/`, which the IAM
   // templates' `StringLike s3:prefix = "<ENVIRONMENT>/deletion-journal/*"`
   // condition does not match — so the FIRST call of both operator scripts would
@@ -503,11 +524,13 @@ export async function listJournalOperationIds(
     `${config.environment}/${JOURNAL_KEY_INFIX}/`
   );
   const ids = new Set<string>();
+  const unparseable = new Set<string>();
   for (const entry of listed) {
     const parsed = parseJournalObjectKey(config, entry.key);
     if (parsed) ids.add(parsed.operationId);
+    else unparseable.add(entry.key);
   }
-  return [...ids].sort();
+  return { operationIds: [...ids].sort(), unparseableKeys: [...unparseable].sort() };
 }
 
 // ---------------------------------------------------------------------------

@@ -11,9 +11,16 @@
 // dates, no currency, so a mode fixture that comes back dirty is dirty for the
 // reason the test is about rather than for a specific nobody supplied.
 import {
+  type CreativeContext,
   type GenerationContext,
   type SpinReferenceMechanism,
 } from "../../src/assemble";
+import {
+  PIVOT_FOR_FORM,
+  type CreativeForm,
+  type FilmingConstraints,
+  type FormChoice,
+} from "../../src/creative";
 import { MODE_IDS, type ModeId } from "../../src/modes";
 
 import { CLEAN_HOOKS } from "./fixtures";
@@ -45,6 +52,10 @@ export const SEEDED_CONTEXT: GenerationContext = {
   // An ORIGINAL, said out loud: `unvouchedSpecifics` is required, so a fixture
   // cannot inherit "nothing is unvouched" from a missing key.
   unvouchedSpecifics: [],
+  // The LEGACY contract, stated (R-148): a context must say which it runs.
+  creative: null,
+  // No history, stated (launch L3): a context must say whether it reads any.
+  recentWork: null,
 };
 
 /**
@@ -383,3 +394,141 @@ export const IDEAS_AS_TOPICS = {
   ],
   ...WHY_AND_DISCLOSURE,
 };
+
+// ---------------------------------------------- OUTPUT CONTRACT v2 (R-148)
+//
+// THE SAME DISCIPLINE AS EVERY FIXTURE ABOVE — no digits in text, no dates, no
+// currency, no capitalised name mid-sentence — so a v2 document that comes back
+// dirty is dirty for the reason its test is about. A minute count is a closed
+// integer field, never text, so it is the one number these documents carry.
+
+/** No declared filming limits — the canonical empty form `parseCreativeRequest` returns. */
+export const NO_LIMITS: FilmingConstraints = {
+  people: null,
+  maxMinutes: null,
+  locations: [],
+  equipment: [],
+  footage: null,
+};
+
+/** A quote that IS in `SEEDED_CONTEXT.input`, word for word. */
+export const REAL_EXCERPT = "shot the same lens change over and over";
+
+/**
+ * A narrated event that RESTATES the creator's input (R-150 point 4): it reads
+ * as first-person past, and it is honest because the creator said it.
+ */
+export const HONEST_RESTATING_BEAT = "today I shot the same lens change over and over";
+
+/**
+ * A version-2 context: the seeded brain and input, plus the creator's choice and
+ * limits. Every server-derived field is stated, as `generate.ts` must state it.
+ */
+export function v2Context(
+  formChoice: FormChoice,
+  constraints: FilmingConstraints = NO_LIMITS,
+  over: Partial<CreativeContext> = {},
+  base: GenerationContext = SEEDED_CONTEXT
+): GenerationContext {
+  return {
+    ...base,
+    creative: {
+      formChoice,
+      constraints,
+      // An ORIGINAL: the creator's note IS the input.
+      creatorNote: base.input,
+      carriedBasis: [],
+      carriedUnconfirmed: [],
+      approvedFrameworkNames: [],
+      ...over,
+    },
+  };
+}
+
+/** The basis each form takes by default in these fixtures — every one honest. */
+function basisFor(form: CreativeForm) {
+  return form === "explain_opinion"
+    ? ({ kind: "none" } as const)
+    : form === "personal_story_observation"
+      ? ({ kind: "material", excerpt: REAL_EXCERPT } as const)
+      : ({ kind: "unconfirmed" } as const);
+}
+
+/** An honest premise for a form: a demonstration's unconfirmed result is marked. */
+export function premiseFor(form: CreativeForm) {
+  return {
+    whatHappens:
+      form === "demonstration_experiment"
+        ? "you film the same shot twice, once without prep and once after a short checklist"
+        : "you change the lens again and again and keep almost none of the takes",
+    interest: "everyone has kept going on a shoot they should have stopped",
+    payoff:
+      form === "demonstration_experiment"
+        ? "the prepared take holds focus the whole way through [check]"
+        : "the take worth keeping comes after checking the dial",
+    basis: basisFor(form),
+  };
+}
+
+export const SOLO_KITCHEN_FILMING = {
+  location: "kitchen",
+  equipment: ["phone"],
+  people: "solo" as const,
+  minutes: 20,
+};
+
+/** One v2 concept per idea of `IDEATION_OUTPUT`, in the form given for each. */
+export function ideationV2(forms: readonly CreativeForm[]) {
+  return {
+    ...IDEATION_OUTPUT,
+    ideas: IDEATION_OUTPUT.ideas.map((idea, i) => ({
+      ...idea,
+      form: forms[i % forms.length],
+      frameworkProvenance: "offered" as const,
+      premise: premiseFor(forms[i % forms.length]),
+      filming: SOLO_KITCHEN_FILMING,
+    })),
+  };
+}
+
+/** Three concepts, one in each form — what "Choose for me" may plausibly return. */
+export const IDEATION_V2_MIXED = ideationV2([
+  "personal_story_observation",
+  "explain_opinion",
+  "demonstration_experiment",
+]);
+
+/**
+ * A v2 script in one form, its single pivot beat of that form's kind.
+ *
+ * ITS OPENING BEAT IS AN HONEST NARRATED EVENT (R-150 point 4): "today I shot
+ * the same lens change over and over" says something happened, and it is the
+ * creator's own input restated — so it passes the event scan by sharing a
+ * four-word run with their material, the way a real creator's script will.
+ * `REAL_EXCERPT` is that input, and `HONEST_RESTATING_BEAT` is asserted to pass
+ * by that route alone in `mode-checks.test.ts`. A demonstration's premise is
+ * unconfirmed, so its reveal beat carries the `[check]` an unconfirmed script
+ * owes in a beat that says the same event.
+ */
+export function scriptV2(form: CreativeForm) {
+  return {
+    ...SCRIPT_OUTPUT,
+    framework: { ...SCRIPT_OUTPUT.framework, provenance: "offered" as const },
+    beats: [
+      { atSeconds: 0, vo: HONEST_RESTATING_BEAT, isTurn: false },
+      {
+        atSeconds: 6,
+        vo:
+          form === "demonstration_experiment"
+            ? "here is the second take with the dial set, and it holds focus [check]"
+            : "here is the dial nobody checks before a lens change",
+        isTurn: true,
+        pivot: PIVOT_FOR_FORM[form],
+      },
+      { atSeconds: 14, vo: "show the same shot again with the dial where it should be", isTurn: false },
+    ],
+    form,
+    premise: premiseFor(form),
+    filming: SOLO_KITCHEN_FILMING,
+  };
+}

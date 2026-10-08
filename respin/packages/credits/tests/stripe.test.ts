@@ -26,6 +26,8 @@ import {
   classifyStripeReceiptAttribution,
   handleStripeEvent,
   DuplicateStripeEvent,
+  replayHeldStripeEvents,
+  replayHeldStripeEventsForActiveWorkspaces,
 } from "../src/stripe/webhooks";
 import { deriveBalance } from "../src/balance";
 import { getWorkspaceBillingState } from "../src/state";
@@ -2197,18 +2199,18 @@ describe("round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)", (
       mkEventAt("invoice.payment_failed", invoiceObject(), t + 10)
     );
     const first = (await getWorkspaceBillingState(db, ws, new Date())).graceExpiresAt!;
-    // Stand in for "months later": the workspace recovered (observed only as a
-    // subscription snapshot, so no invoice.paid ever cleared the deadline) and
-    // the first window has long since lapsed.
+    // The workspace RECOVERED, observed only as a subscription snapshot (no
+    // invoice.paid ever arrived) — driven through the webhook, not written to
+    // the row: since audit P3-R4 (R-159) an `active` snapshot NEWER than the
+    // episode's marker is what ends the episode, clearing marker and deadline.
+    await handleStripeEvent(
+      db,
+      mkEventAt("customer.subscription.updated", subObject({ status: "active" }), t + 15)
+    );
     const stale = new Date(Date.now() - 30 * 24 * HOUR);
-    await db
-      .update(subscriptions)
-      .set({ status: "active", graceExpiresAt: stale })
-      .where(eq(subscriptions.workspaceId, ws));
     // A SECOND episode. Round 5 read "a deadline exists" and reused the lapsed
     // one, so state.ts derived `free` with ZERO grace — REQ-G06's window
-    // silently skipped. The rule is now "never extend a LIVE deadline", which
-    // needs nobody to clear anything and so cannot be raced by a stale event.
+    // silently skipped. It must open a fresh window.
     await handleStripeEvent(
       db,
       mkEventAt("invoice.payment_failed", invoiceObject({ id: "in_2" }), t + 20)
@@ -2314,6 +2316,124 @@ describe("round-5 regression pins (billing review findings 1, 2, 4, 5, 6, 8)", (
     expect(row.stripeSubscriptionId).toBe("sub_2");
     expect(row.status).toBe("active");
     expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe("active");
+  });
+});
+
+describe("audit P3-R4 (R-159): grace is bounded per unpaid EPISODE", () => {
+  function mkEventAt(type: string, object: object, createdSec: number): Stripe.Event {
+    return { ...mkEvent(type, object), created: createdSec } as Stripe.Event;
+  }
+  const mirrorOf = async (db: TestDb) => (await db.select().from(subscriptions))[0]!;
+  /** Lapse the open deadline without touching the episode marker. */
+  const lapse = (db: TestDb, ws: VerifiedWorkspaceId) =>
+    db
+      .update(subscriptions)
+      .set({ graceExpiresAt: new Date(Date.now() - HOUR) })
+      .where(eq(subscriptions.workspaceId, ws));
+
+  it("three payment_failed across two lapsed deadlines inside ONE episode write exactly one deadline, and leave the workspace on Free with its monthly mint", async () => {
+    const { db, ws } = await setup();
+    const t = nowSec();
+    await handleStripeEvent(db, mkEventAt("customer.subscription.created", subObject(), t));
+    expect(await handleStripeEvent(db, mkEventAt("invoice.payment_failed", invoiceObject({ id: "in_a" }), t + 10))).toBe("processed");
+    const opened = await mirrorOf(db);
+    expect(opened.dunningStartedAt?.getTime()).toBe((t + 10) * 1000);
+    expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe("grace");
+    // The first deadline lapses; a second failure arrives INSIDE the episode.
+    await lapse(db, ws);
+    const lapsedAt = (await mirrorOf(db)).graceExpiresAt!.getTime();
+    expect(await handleStripeEvent(db, mkEventAt("invoice.payment_failed", invoiceObject({ id: "in_b" }), t + 20))).toBe("processed");
+    // REG-3: before the marker this wrote a fresh 7-day deadline here.
+    expect((await mirrorOf(db)).graceExpiresAt!.getTime()).toBe(lapsedAt);
+    expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe("free");
+    // ...and a third, after the (same) deadline has lapsed again.
+    await lapse(db, ws);
+    const lapsedAgain = (await mirrorOf(db)).graceExpiresAt!.getTime();
+    expect(await handleStripeEvent(db, mkEventAt("invoice.payment_failed", invoiceObject({ id: "in_c" }), t + 30))).toBe("processed");
+    const after = await mirrorOf(db);
+    expect(after.graceExpiresAt!.getTime()).toBe(lapsedAgain);
+    expect(after.dunningStartedAt?.getTime()).toBe((t + 10) * 1000);
+    expect(after.status).toBe("past_due");
+    const state = await getWorkspaceBillingState(db, ws, new Date());
+    expect(state.state).toBe("free");
+    expect(state.tier).toBe("free");
+    // FREE WITH ITS MONTHLY MINT — the non-paying workspace is not left with
+    // nothing: the balance read mints this month's Free allowance.
+    await deriveBalance(db, ws);
+    const mints = (await db.select().from(creditLedger)).filter((r) => r.refType === "free_allowance");
+    expect(mints).toHaveLength(1);
+    expect(mints[0]!.delta).toBe(CONFIG_V1_SEED.allowances.free);
+  });
+
+  it("an OLDER `active` snapshot after the episode opened leaves the marker AND the deadline standing", async () => {
+    const { db, ws } = await setup();
+    const t = nowSec();
+    await handleStripeEvent(db, mkEventAt("customer.subscription.created", subObject(), t));
+    await handleStripeEvent(db, mkEventAt("invoice.payment_failed", invoiceObject(), t + 10));
+    const opened = await mirrorOf(db);
+    // Created BEFORE the failure (t+5 < t+10), delivered after it.
+    await handleStripeEvent(db, mkEventAt("customer.subscription.updated", subObject({ status: "active" }), t + 5));
+    const after = await mirrorOf(db);
+    expect(after.dunningStartedAt?.getTime()).toBe(opened.dunningStartedAt!.getTime());
+    expect(after.graceExpiresAt?.getTime()).toBe(opened.graceExpiresAt!.getTime());
+    void ws;
+  });
+
+  it("a NEWER `active` clears both, and the next payment_failed opens a FRESH graceDays window", async () => {
+    const { db, ws } = await setup();
+    const t = nowSec();
+    await handleStripeEvent(db, mkEventAt("customer.subscription.created", subObject(), t));
+    await handleStripeEvent(db, mkEventAt("invoice.payment_failed", invoiceObject(), t + 10));
+    await handleStripeEvent(db, mkEventAt("customer.subscription.updated", subObject({ status: "active" }), t + 20));
+    const recovered = await mirrorOf(db);
+    expect(recovered.dunningStartedAt).toBeNull();
+    expect(recovered.graceExpiresAt).toBeNull();
+    const before = Date.now();
+    await handleStripeEvent(db, mkEventAt("invoice.payment_failed", invoiceObject({ id: "in_2" }), t + 30));
+    const reopened = await mirrorOf(db);
+    expect(reopened.dunningStartedAt?.getTime()).toBe((t + 30) * 1000);
+    // A full `graceDays` window from now, not a remnant of the first episode.
+    expect(reopened.graceExpiresAt!.getTime()).toBeGreaterThanOrEqual(
+      before + CONFIG_V1_SEED.graceDays * 24 * HOUR - 60_000
+    );
+    expect((await getWorkspaceBillingState(db, ws, new Date())).state).toBe("grace");
+  });
+
+  it("invoice.paid and a death notice each end the episode", async () => {
+    const { db } = await setup();
+    const t = nowSec();
+    await handleStripeEvent(db, mkEventAt("customer.subscription.created", subObject(), t));
+    await handleStripeEvent(db, mkEventAt("invoice.payment_failed", invoiceObject(), t + 10));
+    expect((await mirrorOf(db)).dunningStartedAt).not.toBeNull();
+    await handleStripeEvent(db, mkEventAt("invoice.paid", invoiceObject({ id: "in_paid" }), t + 20));
+    expect((await mirrorOf(db)).dunningStartedAt).toBeNull();
+    await handleStripeEvent(db, mkEventAt("invoice.payment_failed", invoiceObject({ id: "in_3" }), t + 30));
+    expect((await mirrorOf(db)).dunningStartedAt).not.toBeNull();
+    await handleStripeEvent(db, mkEventAt("customer.subscription.deleted", subObject({ status: "canceled" }), t + 40));
+    const dead = await mirrorOf(db);
+    expect(dead.dunningStartedAt).toBeNull();
+    expect(dead.graceExpiresAt).toBeNull();
+  });
+
+  it("REPLAY: the same payment_failed event id against a past_due mirror with an open episode writes the marker once; the second delivery is a duplicate with zero writes", async () => {
+    const { db } = await setup();
+    const t = nowSec();
+    await handleStripeEvent(db, mkEventAt("customer.subscription.created", subObject(), t));
+    await handleStripeEvent(db, mkEventAt("invoice.payment_failed", invoiceObject(), t + 10));
+    const open = await mirrorOf(db);
+    expect(open.status).toBe("past_due");
+    const event = { ...mkEventAt("invoice.payment_failed", invoiceObject({ id: "in_replay" }), t + 20), id: "evt_replay_pf" } as Stripe.Event;
+    expect(await handleStripeEvent(db, event)).toBe("processed");
+    const afterFirst = await mirrorOf(db);
+    // The second delivery reports DUPLICATE — the file's own spelling of it
+    // is the typed `DuplicateStripeEvent` refusal.
+    await expect(handleStripeEvent(db, event)).rejects.toThrow(DuplicateStripeEvent);
+    const afterSecond = await mirrorOf(db);
+    // Written once: the open episode's marker is the first failure's.
+    expect(afterFirst.dunningStartedAt?.getTime()).toBe((t + 10) * 1000);
+    expect(afterSecond).toEqual(afterFirst);
+    const stored = (await db.select().from(stripeEvents)).filter((e) => e.id === "evt_replay_pf");
+    expect(stored).toHaveLength(1);
   });
 });
 
@@ -3230,22 +3350,34 @@ describe("tier Checkout durable attempt and mixed-version fence ordering", () =>
       .set({ lifecycleState: "tombstoned" })
       .where(eq(schema.workspaces.id, ws));
 
-    expect(await handleStripeEvent(db, mkEvent("invoice.paid", invoice))).toBe(
-      "ignored"
-    );
-    expect(
+    // RE-DECIDED (R-165): money on a tombstoned workspace is HELD, not
+    // dropped as `ignored`. It still mints nothing while tombstoned.
+    const duplicate = mkEvent("invoice.paid", invoice);
+    expect(await handleStripeEvent(db, duplicate)).toBe("held_tombstoned");
+    const invoiceGrants = async () =>
       (await db.select().from(creditLedger)).filter(
         (row) => row.refType === "invoice" && row.refId === invoice.id
-      )
-    ).toHaveLength(1);
+      );
+    expect(await invoiceGrants()).toHaveLength(1);
     const receipts = (await db.select().from(stripeEvents)).filter(
       (row) => row.type === "invoice.paid"
     );
     expect(receipts).toHaveLength(2);
     expect(receipts[1]).toMatchObject({
-      outcome: "ignored",
+      outcome: "held_tombstoned",
       tierInvoiceAuthority: null,
     });
+    // Restored: the replay runs `dispatch`, which converges the duplicate to
+    // `ignored` — and THAT is what the receipt records, never a presumed
+    // `processed`. Still exactly one grant.
+    await db
+      .update(schema.workspaces)
+      .set({ lifecycleState: "active" })
+      .where(eq(schema.workspaces.id, ws));
+    expect(await replayHeldStripeEvents(db, ws)).toEqual({ replayed: 1, alreadySettled: 0, failed: 0, stillHeld: 0 });
+    expect(await invoiceGrants()).toHaveLength(1);
+    const [settled] = await db.select().from(stripeEvents).where(eq(stripeEvents.id, duplicate.id));
+    expect(settled!.outcome).toBe("ignored");
   });
 
   it.each([
@@ -3495,5 +3627,213 @@ describe("tier Checkout durable attempt and mixed-version fence ordering", () =>
     expect(row.stripeSubscriptionId).toBe(`checkout_fence:${ws}`);
     expect(row.tierCheckoutFenceSubscriptionId).toBe(NEW_SUB_ID);
     expect(row.tierCheckoutFenceAt).not.toBeNull();
+  });
+});
+
+describe("R-165 (audit P5-A1, AC14): money paid into a TOMBSTONED workspace is held, then replayed exactly once", () => {
+  const setLifecycle = (db: TestDb, ws: VerifiedWorkspaceId, lifecycleState: "active" | "tombstoned") =>
+    db.update(schema.workspaces).set({ lifecycleState }).where(eq(schema.workspaces.id, ws));
+  const outcomeOf = async (db: TestDb, id: string) =>
+    (await db.select().from(stripeEvents).where(eq(stripeEvents.id, id)))[0]!.outcome;
+
+  it("a pack checkout and an invoice.paid each record held_tombstoned with ZERO ledger rows; the replay mints each once and records dispatch's outcome", async () => {
+    const { db, ws } = await setup();
+    await activateTierCheckoutProtocol(db);
+    await handleStripeEvent(db, mkEvent("customer.subscription.created", subObject()));
+    await setLifecycle(db, ws, "tombstoned");
+    const pack = mkEvent(
+      "checkout.session.completed",
+      sessionObject({ id: "cs_held_pack", metadata: { respin_kind: "pack", workspace_id: ws } })
+    );
+    const invoice = mkEvent("invoice.paid", invoiceObject({ id: "in_held", billing_reason: "subscription_create" }));
+    expect(await handleStripeEvent(db, pack)).toBe("held_tombstoned");
+    expect(await handleStripeEvent(db, invoice)).toBe("held_tombstoned");
+    expect(await db.select().from(creditLedger)).toHaveLength(0);
+    // A non-money event on the same tombstoned workspace is still `ignored`:
+    // the population is the list in `HELD_MONEY_EVENT_TYPES`, not "anything".
+    expect(
+      await handleStripeEvent(db, mkEvent("customer.subscription.updated", subObject({ status: "past_due" })))
+    ).toBe("ignored");
+
+    // The deletion is cancelled: the workspace is active again.
+    await setLifecycle(db, ws, "active");
+    expect(await replayHeldStripeEvents(db, ws)).toEqual({ replayed: 2, alreadySettled: 0, failed: 0, stillHeld: 0 });
+    const ledger = await db.select().from(creditLedger);
+    expect(ledger.filter((row) => row.kind === "pack" && row.refId === "cs_held_pack")).toHaveLength(1);
+    expect(ledger.filter((row) => row.kind === "grant" && row.refId === "in_held")).toHaveLength(1);
+    expect(await outcomeOf(db, pack.id)).toBe("processed");
+    expect(await outcomeOf(db, invoice.id)).toBe("processed");
+
+    // A second replay finds no held row and mints nothing; the live handler is
+    // never re-entered for a held event — a redelivery is a duplicate.
+    expect(await replayHeldStripeEvents(db, ws)).toEqual({ replayed: 0, alreadySettled: 0, failed: 0, stillHeld: 0 });
+    expect(await db.select().from(creditLedger)).toHaveLength(ledger.length);
+    await expect(handleStripeEvent(db, pack)).rejects.toBeInstanceOf(DuplicateStripeEvent);
+  });
+
+  it("records the outcome dispatch RETURNED, never a presumed processed: a planted dispatch returning ignored records ignored and mints nothing", async () => {
+    const { db, ws } = await setup();
+    await activateTierCheckoutProtocol(db);
+    await setLifecycle(db, ws, "tombstoned");
+    const pack = mkEvent(
+      "checkout.session.completed",
+      sessionObject({ id: "cs_held_planted", metadata: { respin_kind: "pack", workspace_id: ws } })
+    );
+    expect(await handleStripeEvent(db, pack)).toBe("held_tombstoned");
+    await setLifecycle(db, ws, "active");
+    const planted = vi.fn(async () => "ignored" as const);
+    expect(await replayHeldStripeEvents(db, ws, { dispatch: planted })).toEqual({
+      replayed: 1,
+      alreadySettled: 0,
+      failed: 0,
+      stillHeld: 0,
+    });
+    expect(planted).toHaveBeenCalledTimes(1);
+    expect(await outcomeOf(db, pack.id)).toBe("ignored");
+    expect(await db.select().from(creditLedger)).toHaveLength(0);
+  });
+
+  it("a held receipt is never replayed while its workspace is still tombstoned, and its outcome is FINAL once settled (0064's trigger)", async () => {
+    const { db, ws } = await setup();
+    await activateTierCheckoutProtocol(db);
+    await setLifecycle(db, ws, "tombstoned");
+    const pack = mkEvent(
+      "checkout.session.completed",
+      sessionObject({ id: "cs_held_still", metadata: { respin_kind: "pack", workspace_id: ws } })
+    );
+    await handleStripeEvent(db, pack);
+    const planted = vi.fn(async () => "processed" as const);
+    expect(await replayHeldStripeEvents(db, ws, { dispatch: planted })).toEqual({
+      replayed: 0,
+      alreadySettled: 0,
+      failed: 0,
+      // Still tombstoned: held, and counted as such (R-166).
+      stillHeld: 1,
+    });
+    expect(planted).not.toHaveBeenCalled();
+    expect(await outcomeOf(db, pack.id)).toBe("held_tombstoned");
+    await setLifecycle(db, ws, "active");
+    await replayHeldStripeEvents(db, ws);
+    expect(await outcomeOf(db, pack.id)).toBe("processed");
+    // Final: no writer may move a settled outcome, and none may hold it again.
+    await expect(
+      db.update(stripeEvents).set({ outcome: "held_tombstoned" }).where(eq(stripeEvents.id, pack.id))
+    ).rejects.toThrow();
+    await expect(
+      db.update(stripeEvents).set({ outcome: "ignored" }).where(eq(stripeEvents.id, pack.id))
+    ).rejects.toThrow();
+  });
+
+  it("the dead lifecycle checks and the false 'may still settle' comment are gone from the handler", () => {
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../src/stripe/webhooks.ts"),
+      "utf8"
+    );
+    expect(source).not.toContain("A deleted workspace may still settle");
+    expect(source).not.toMatch(/&&\s*workspaceActive|workspaceActive\s*&&/);
+    expect(source).not.toMatch(/workspaceActive: boolean/);
+  });
+
+  it("R-166: a held row on an ACTIVE workspace whose customer no longer maps to it is counted stillHeld — the worker pages on it", async () => {
+    const { db, ws } = await setup();
+    await activateTierCheckoutProtocol(db);
+    await setLifecycle(db, ws, "tombstoned");
+    const pack = mkEvent(
+      "checkout.session.completed",
+      sessionObject({ id: "cs_held_remapped", metadata: { respin_kind: "pack", workspace_id: ws } })
+    );
+    expect(await handleStripeEvent(db, pack)).toBe("held_tombstoned");
+    await setLifecycle(db, ws, "active");
+    // The customer mapping moved away while the money was held.
+    await db.update(subscriptions).set({ stripeCustomerId: "cus_elsewhere" }).where(eq(subscriptions.workspaceId, ws));
+    const planted = vi.fn(async () => "processed" as const);
+    expect(await replayHeldStripeEvents(db, ws, { dispatch: planted })).toEqual({
+      replayed: 0,
+      alreadySettled: 0,
+      failed: 0,
+      stillHeld: 1,
+    });
+    expect(planted).not.toHaveBeenCalled();
+    expect(await outcomeOf(db, pack.id)).toBe("held_tombstoned");
+    expect(await replayHeldStripeEventsForActiveWorkspaces(db)).toMatchObject({ stillHeld: 1, workspaces: 1 });
+  });
+
+  it("R-166: 21 STUCK workspaces cannot starve a fresh one — the never-tried workspace replays on the first tick", async () => {
+    const { db, ws } = await setup();
+    // Twenty-one OLDER, already-tried workspaces whose held rows can never
+    // replay (a payload that is not its event): each attempt fails.
+    const long = new Date(Date.now() - 86_400_000);
+    for (let i = 0; i < 21; i += 1) {
+      const [stuck] = await db.insert(schema.workspaces).values({ name: `Stuck ${i}` }).returning();
+      await db.insert(subscriptions).values({ workspaceId: stuck!.id, stripeCustomerId: `cus_stuck_${i}`, status: "none" });
+      await db.insert(stripeEvents).values({
+        id: `evt_stuck_${i}`,
+        type: "invoice.paid",
+        payload: { id: "not-this-event" },
+        workspaceId: stuck!.id,
+        stripeCustomerId: `cus_stuck_${i}`,
+        receiptAttribution: "workspace_attributed",
+        outcome: "held_tombstoned",
+        receivedAt: long,
+        heldReplayAttemptedAt: new Date(Date.now() - 60_000),
+      });
+    }
+    // (The mirror rows above precede the tier-checkout protocol, whose write
+    // guard refuses a bare subscriptions insert once it is active.)
+    await activateTierCheckoutProtocol(db);
+    await setLifecycle(db, ws, "tombstoned");
+    const pack = mkEvent(
+      "checkout.session.completed",
+      sessionObject({ id: "cs_held_fresh", metadata: { respin_kind: "pack", workspace_id: ws } })
+    );
+    expect(await handleStripeEvent(db, pack)).toBe("held_tombstoned");
+    await setLifecycle(db, ws, "active");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const summary = await replayHeldStripeEventsForActiveWorkspaces(db);
+      expect(summary).toMatchObject({ replayed: 1, workspaces: 20, failed: 19 });
+    } finally {
+      warn.mockRestore();
+    }
+    expect(await outcomeOf(db, pack.id)).toBe("processed");
+    expect((await db.select().from(creditLedger)).filter((row) => row.refId === "cs_held_fresh")).toHaveLength(1);
+    // ...and the stuck ones ROTATE: the two not tried this tick are first next tick.
+    const untried = (await db.select().from(stripeEvents))
+      .filter((row) => row.outcome === "held_tombstoned")
+      .sort((a, b) => a.heldReplayAttemptedAt!.getTime() - b.heldReplayAttemptedAt!.getTime())
+      .slice(0, 2)
+      .map((row) => row.id);
+    expect(untried).toHaveLength(2);
+  });
+
+  it("R-166: the worker's sweep takes the workspace with the OLDEST held money first", async () => {
+    const { db, ws } = await setup();
+    const [other] = await db.insert(schema.workspaces).values({ name: "Older" }).returning();
+    await db.insert(subscriptions).values({ workspaceId: other!.id, stripeCustomerId: "cus_older", status: "none" });
+    // Payloads that are not their own events: each replay attempt FAILS and
+    // logs its id, which is how this observes which workspace was taken.
+    const held = (id: string, workspaceId: string, customer: string, receivedAt: Date) => ({
+      id,
+      type: "invoice.paid",
+      payload: { id: "not-this-event" },
+      workspaceId,
+      stripeCustomerId: customer,
+      receiptAttribution: "workspace_attributed" as const,
+      outcome: "held_tombstoned" as const,
+      receivedAt,
+    });
+    await db.insert(stripeEvents).values([
+      held("evt_newer", ws, "cus_test", new Date(Date.now() - 60_000)),
+      held("evt_older", other!.id, "cus_older", new Date(Date.now() - 3_600_000)),
+    ]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await replayHeldStripeEventsForActiveWorkspaces(db, 1)).toMatchObject({ failed: 1, workspaces: 1 });
+      const lines = warn.mock.calls.map((call) => String(call[0]));
+      expect(lines.some((line) => line.includes("evt_older"))).toBe(true);
+      expect(lines.some((line) => line.includes("evt_newer"))).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

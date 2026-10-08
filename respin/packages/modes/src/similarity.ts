@@ -4,9 +4,10 @@
 // trusted autopsy projection. It does NOT receive generic generation input or
 // a raw transcript: those are unbounded, caller-controlled material and would
 // make this control's reference population ambiguous.
-import { contentWords } from "./mode-checks";
+import { NOT_PRESENTED_FIELD_PREFIXES, straightApostrophes } from "./claims";
+import { COMPARISON_STOPWORDS } from "./mode-checks";
 import { outputTextUnits, type ScriptOutput } from "./output";
-import { words } from "./text";
+import { words, type TextUnit } from "./text";
 
 /**
  * The least strict Spin policy code permits. A stored config may demand MORE
@@ -144,6 +145,11 @@ export class SpinSimilarityError extends Error {
  * The reference hook is compared against EVERY creator-facing text unit
  * `outputTextUnits` registers (thesis, hooks, ideas, beats, caption, …), not
  * only the hook-marked ones, because the Spin surface renders more than hooks.
+ * ONE EXCEPTION, for a reference hook with no content words (stopwords only,
+ * P2-A4 / R-173): the three proxies cannot read it, so `sequenceSimilarityOf`
+ * decides — a verbatim copy of a reference of three words or more refuses on
+ * every presented unit, while the near-copy (edit-distance) test, and the
+ * identity test for a reference of two words or fewer, read hook units only.
  * This remains lexical rather than semantic similarity; fixtures document the
  * proxy boundary rather than claiming a plagiarism detector.
  */
@@ -186,7 +192,7 @@ export function evaluateSpinSimilarity(params: {
   let hookSimilarity = 0;
   let hookMatchField: string | null = null;
   for (const unit of units) {
-    const similarity = hookSimilarityOf(params.reference.hook, unit.text);
+    const similarity = hookSimilarityOf(params.reference.hook, unit, effectiveStrictness);
     // Strictly greater: at a tie, the first unit in section order
     // (`SECTION_KEYS`, which `outputTextUnits` walks) at the worst overlap is
     // named. Thesis precedes hooks in that order, so a thesis and a hook tied
@@ -288,8 +294,27 @@ export function assertTrustedReference(reference: SpinReference): void {
   }
 }
 
+/**
+ * Lowercased words, ONE APOSTROPHE and NO HYPHENS (compliance verification,
+ * 2026-10-07): curly and straight apostrophes are the same character here, so
+ * "It’s not you" is the reference "It's not you", and a hyphenated token is
+ * its parts, so "kitchen-renovation" holds the term "kitchen renovation". The
+ * subject-term test and the stopword fallback both read these words.
+ */
 function normalisedWords(value: string): string[] {
-  return words(value).map((word) => word.toLocaleLowerCase());
+  return words(straightApostrophes(value)).flatMap((word) =>
+    word.toLocaleLowerCase().split("-").filter((part) => part.length > 0)
+  );
+}
+
+/** `normalisedWords` without the comparison stopwords: the main path's content words. */
+function significantWords(value: string): string[] {
+  return normalisedWords(value).filter((word) => !COMPARISON_STOPWORDS.has(word));
+}
+
+/** Whether a text is made only of comparison stopwords once contractions are expanded. */
+function stopwordOnly(expanded: readonly string[]): boolean {
+  return expanded.every((word) => COMPARISON_STOPWORDS.has(word));
 }
 
 /**
@@ -347,10 +372,37 @@ function containsWordSequence(
  * so no candidate that used to fail can now pass. The windows can only add
  * higher scores, never remove one.
  */
-function hookSimilarityOf(source: string, candidate: string): number {
-  const sourceWords = contentWords(source);
-  const candidateWords = contentWords(candidate);
-  if (sourceWords.length === 0 || candidateWords.length === 0) return 0;
+function hookSimilarityOf(rawSource: string, unit: TextUnit, strictness: number): number {
+  const source = straightApostrophes(rawSource);
+  const candidate = straightApostrophes(unit.text);
+  // THE SAME NORMALISER ON THE MAIN PATH (final compliance verification):
+  // `contentWords` kept "you-know-who" as one token, so "you know who did
+  // this" passed against it. One apostrophe, hyphens split, stopwords dropped.
+  const sourceWords = significantWords(source);
+  const candidateWords = significantWords(candidate);
+  const sourceExpanded = expandedWords(source);
+  const candidateExpanded = expandedWords(candidate);
+  // A SIDE WITH NO CONTENT WORDS IS NOT A SIDE WITH NO WORDS (audit Phase 2,
+  // P2-A4, register item 37). This returned 0 here, so a reference hook made
+  // wholly of `COMPARISON_STOPWORDS` — "If this is you" — scored 0 against a
+  // verbatim copy of itself and passed the hard pre-display gate.
+  //
+  // THE FALLBACK READS EVERY PRESENTED UNIT FOR A VERBATIM COPY, AND ONLY
+  // HOOK UNITS FOR A NEAR-COPY (owner decision 2026-10-07, R-173; compliance
+  // gate High 2). The reference copied whole into a caption, the thesis or a
+  // beat is a copy wherever it lands, so containment runs on every unit the
+  // creator is shown; the looser edit-distance test stays on hooks, because a
+  // short stopword run recurs in ordinary prose ("…if this is the only take").
+  // The model's disclosure section is not presented (R-154) and is skipped.
+  //
+  // "STOPWORD-ONLY" IS DECIDED ON THE EXPANDED WORDS (compliance verification,
+  // 2026-10-07): "It's not you" has the content word "it's" until it is read
+  // as "it is not you", so the fallback never ran for a contracted reference
+  // and "If it is you, keep watching" passed against "If it's you".
+  if (stopwordOnly(sourceExpanded) || stopwordOnly(candidateExpanded)) {
+    if (NOT_PRESENTED_FIELD_PREFIXES.some((prefix) => unit.field.startsWith(prefix))) return 0;
+    return sequenceSimilarityOf(sourceExpanded, candidateExpanded, strictness, unit.isHook);
+  }
 
   const candidateCounts = count(candidateWords);
   const candidateBigrams = count(bigrams(candidateWords));
@@ -369,6 +421,112 @@ function hookSimilarityOf(source: string, candidate: string): number {
   return worst;
 }
 
+/** The stems `n't` leaves that are not words of their own. */
+const NOT_STEMS: Readonly<Record<string, string>> = { ca: "can", wo: "will", sha: "shall" };
+
+/** A contraction's suffix and the words it stands for. */
+const CONTRACTIONS: Readonly<Record<string, readonly string[]>> = {
+  "n't": ["not"],
+  "'re": ["are"],
+  "'m": ["am"],
+  "'ve": ["have"],
+  "'ll": ["will"],
+  "'d": ["would"],
+  "'s": ["is"],
+};
+
+/**
+ * Normalised words with contractions EXPANDED, so "it's you" and "it is you"
+ * are the same sequence (Phase 2 gate). `can't` is `can not`, `won't` is
+ * `will not`. A possessive `'s` also reads as `is`; both sides get the same
+ * expansion, so it misreads them alike.
+ */
+function expandedWords(value: string): string[] {
+  const out: string[] = [];
+  for (const word of normalisedWords(value)) {
+    // `cannot` is `can not`, like `can't` (compliance verification).
+    if (word === "cannot") {
+      out.push("can", "not");
+      continue;
+    }
+    const suffix = Object.keys(CONTRACTIONS).find((s) => word.length > s.length && word.endsWith(s));
+    if (suffix === undefined) {
+      out.push(word);
+      continue;
+    }
+    const stem = word.slice(0, -suffix.length);
+    // `can't` leaves "ca", `won't` "wo", `shan't` "sha": each restored.
+    const restored = suffix === "n't" ? (NOT_STEMS[stem] ?? stem) : stem;
+    out.push(restored, ...CONTRACTIONS[suffix]!);
+  }
+  return out;
+}
+
+/** Token edit distance (insertions, deletions, substitutions — Levenshtein over words). */
+function tokenEditDistance(a: readonly string[], b: readonly string[]): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        previous[j]! + 1,
+        current[j - 1]! + 1,
+        previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length]!;
+}
+
+/**
+ * THE STOPWORD-ONLY FALLBACK: a hook unit compared to the reference hook as a
+ * word SEQUENCE, contractions expanded.
+ *
+ * A COPY IS THE REFERENCE HOOK INSIDE A UNIT, OR A NEAR-IDENTICAL HOOK, so
+ * this refuses (scores 1) in two cases and scores 0 otherwise:
+ *
+ *   CONTAINMENT, ON EVERY PRESENTED UNIT — the unit holds the whole
+ *   reference hook as a contiguous word sequence, anywhere ("If this is you,
+ *   here's what nobody tells you about mornings"; the same four words as a
+ *   caption or a beat). Only for a reference of THREE words or more: a run of
+ *   two common words recurs in ordinary prose, so a reference of two words or
+ *   fewer is a copy only under the identity test on a hook unit below.
+ *
+ *   NEAR-IDENTITY, ON A HOOK UNIT ONLY — the token edit distance between the
+ *   two is at most `k` AND their lengths differ by at most `k`.
+ *
+ * Both read normalised, contraction-expanded words (`hookSimilarityOf`). `k` is DERIVED from the configured gate,
+ * not typed: the allowed overlap `1 - strictness` times the reference hook's
+ * length, rounded down — at the code floor (0.7) a four-word hook allows one
+ * changed, inserted or dropped word ("If this was you", "If this is really
+ * you"), and a hook of three words or fewer allows none, because a stricter
+ * test than identity would refuse ordinary three-word phrases. A stricter
+ * configured gate shrinks `k`; the code floor bounds how far a looser one can
+ * widen it.
+ *
+ * NOT the content-word proxies: every long text holds "if", "this", "is" and
+ * "you", so bag coverage over stopwords refused almost any draft — a debited
+ * refusal for words, not a copy.
+ *
+ * THE EMPTY-INPUT RETURN BELOW IS ONE OF TWO in this file, a measured list
+ * (`similarity.test.ts`): here a side has no words AT ALL, and in `scoreSpan`
+ * an empty span. A third early `return 0` is a list edit (rule 7).
+ */
+function sequenceSimilarityOf(
+  source: readonly string[],
+  candidate: readonly string[],
+  strictness: number,
+  isHook: boolean
+): number {
+  if (source.length === 0 || candidate.length === 0) return 0;
+  if (source.length >= 3 && containsWordSequence(candidate, source)) return 1;
+  if (!isHook) return 0;
+  const k = Math.floor(source.length * (1 - strictness) + 1e-9);
+  if (Math.abs(source.length - candidate.length) > k) return 0;
+  return tokenEditDistance(source, candidate) <= k ? 1 : 0;
+}
+
 /**
  * The three REQ-E04 proxies over one span of reference tokens.
  *
@@ -376,7 +534,8 @@ function hookSimilarityOf(source: string, candidate: string): number {
  * `contentOverlap` on strings, because a WINDOW has no string form — rejoining
  * its tokens would re-tokenise them and make the two paths disagree. Over a
  * whole hook the Jaccard TERM is the number `contentOverlap` returns: both are
- * Jaccard over the `contentWords` sets.
+ * Jaccard over the content-word sets (`significantWords`, the same words
+ * `contentWords` returns once hyphens are split and apostrophes unified).
  *
  * WHAT `similarity.test.ts` ACTUALLY ASSERTS is the weaker, observable relation
  * — that the reported `hookSimilarity` is at least `contentOverlap`'s value —

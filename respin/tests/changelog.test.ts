@@ -6,6 +6,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CHANGELOG } from "../app/(marketing)/changelog/entries";
+import { MODE_IDS } from "../packages/modes/src/modes";
+import { studioModeOffers } from "@respin/credits";
 import { FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS } from "./support/forbidden-claims";
 import { claimHits, specimensFor } from "./support/claim-scan";
 
@@ -79,6 +81,12 @@ describe("the changelog", () => {
 
     const entry = CHANGELOG.find((e) => e.date === "2026-09-05");
 
+    /** Each `feedbackMap` target kind's human spellings — a regex literal per kind. */
+    const TARGET_SPELLINGS: Readonly<Record<string, RegExp>> = {
+      voice: /\bvoice\b/,
+      killtest: /\bkill[ -]?test\b/,
+    };
+
     it("reads the producer, and the read is non-vacuous", () => {
       // If this ever returns [] the two assertions below would pass on an
       // empty population, which is the vacuous-scan shape this whole phase
@@ -92,17 +100,67 @@ describe("the changelog", () => {
       // `performance_meta` is the results-only target. Its human spelling must
       // not appear beside "feedback" anywhere in this entry.
       expect(text, "performance_meta is minted only from connector-verified results").not.toContain("performance meta");
-      // ...and the entry must name at least one target that IS minted here,
-      // so deleting the nouns altogether does not turn this green.
+      // ...and the entry must name EVERY target that is minted here (L-7,
+      // applied 2026-10-07): the kinds are read out of `feedbackMap`, each
+      // matched against its human spellings, so an entry naming only one of
+      // the two is red, and so is a third kind added to the producer without
+      // a spelling here.
+      const kinds = feedbackTargetKinds();
+      expect(kinds.every((kind) => kind in TARGET_SPELLINGS), `a feedbackMap kind with no spelling: ${kinds}`).toBe(true);
       expect(
-        ["voice", "kill test"].some((noun) => text.includes(noun)),
-        "the entry names none of the targets feedbackMap actually mints"
-      ).toBe(true);
+        kinds.filter((kind) => !TARGET_SPELLINGS[kind]!.test(text)),
+        "the entry does not name every target feedbackMap mints"
+      ).toEqual([]);
+    });
+
+    it("PLANTS: deleting either target noun is red, and every spelling of 'kill test' satisfies it", () => {
+      const named = (summary: string) =>
+        feedbackTargetKinds().every((kind) => TARGET_SPELLINGS[kind]!.test(summary.toLowerCase()));
+      expect(named(entry!.summary)).toBe(true);
+      expect(named(entry!.summary.replace(/voice rules and /i, ""))).toBe(false);
+      expect(named(entry!.summary.replace(/ and Kill Test rules/i, ""))).toBe(false);
+      for (const spelling of ["kill test", "kill-test", "killtest", "Kill Test"]) {
+        expect(named(entry!.summary.replace(/Kill Test/, spelling)), spelling).toBe(true);
+      }
     });
 
     it("NON-VACUITY: the old sentence is what this catches", () => {
+      // (The "performance meta" check below; the target spellings have their
+      // own plants above.)
       const shipped = "The Creator Brain proposes Performance Meta rules from repeated structured feedback".toLowerCase();
       expect(shipped).toContain("performance meta");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT P6-R7 (row 26): THE STUDIO MODE COUNT IS DERIVED, NOT TYPED. The entry
+// read "Seven Studio modes" while Studio offers six (Spin lives on /trends); a
+// hand-typed 6 is the version of this pin that already drifted once.
+
+const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"] as const;
+const ORDINALS = ["zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth"] as const;
+
+describe("P6-R7: the changelog's Studio mode count is what Studio's picker offers", () => {
+  // DERIVED FROM THE PICKER'S OWN FILTER (Phase 6 compliance gate), not from a
+  // hand-written exclusion list: `studioModeOffers` is what `/studio` renders,
+  // and it drops the modes that run only from /trends. The count is the same
+  // on every tier (plan status is a field, not a filter), so any tier answers.
+  const studioIds = () => studioModeOffers("studio").map((o) => o.id);
+  const sentence = (studio: number, all: number) =>
+    `${COUNT_WORDS[studio]![0]!.toUpperCase()}${COUNT_WORDS[studio]!.slice(1)} Studio modes — the ${ORDINALS[all]}, Spin, lives on Trends`;
+  const entryText = () => CHANGELOG.map((e) => e.summary).join("\n");
+
+  it("the entry states the derived count, and the one mode Studio omits is Spin", () => {
+    expect(MODE_IDS.filter((id) => !studioIds().includes(id))).toEqual(["analyseAndSpin"]);
+    expect(entryText()).toContain(sentence(studioIds().length, MODE_IDS.length));
+  });
+
+  it("PLANTS: the pin fails at either count + 1, and on a planted 'Seven Studio modes'", () => {
+    const studio = studioIds().length;
+    const all = MODE_IDS.length;
+    expect(entryText()).not.toContain(sentence(studio + 1, all));
+    expect(entryText()).not.toContain(sentence(studio + 1, all + 1));
+    expect(entryText().replace("Six Studio modes", "Seven Studio modes")).not.toContain(sentence(studio, all));
   });
 });

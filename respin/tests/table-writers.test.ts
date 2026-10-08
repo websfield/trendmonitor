@@ -19,7 +19,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { PRODUCTION_ROOTS } from "./support/source-files";
 import {
   APP_TABLES,
@@ -73,6 +73,8 @@ const TABLES: Record<string, string> = {
   generationAttempts: "generation_attempts",
   generations: "generations",
   generationFeedback: "generation_feedback",
+  // Launch L2 (R-151), registered in the SAME change that creates the table.
+  creativePieces: "creative_pieces",
   memberships: "memberships",
   pausePeriods: "pause_periods",
   rateLimit: "rate_limit",
@@ -202,10 +204,55 @@ function collectAliases(sf: ts.SourceFile): Map<string, string> {
   return aliases;
 }
 
+/**
+ * ONE PARSE PER (file, text), REUSED (audit Phase 3, 2026-10-06 — harness
+ * only). The probe cases below copy the whole production map, change one or
+ * two files, and re-run every scan; each full re-scan used to re-parse every
+ * production file. Measured with an event-loop delay histogram in each
+ * worker, this file held its worker off the event loop for 55.6 s — under
+ * the full suite's contention, past birpc's hard 60 s `onTaskUpdate` timeout,
+ * which is the `Errors 1` / exit 1 with every test passing that
+ * `vitest.config.ts` records. A result is a pure function of the file's path
+ * and text, so a cache keyed on both returns what a re-parse would.
+ */
+const parsedSources = new Map<string, { raw: string; sf: ts.SourceFile }>();
+function sourceFileOf(file: string, raw: string): ts.SourceFile {
+  const hit = parsedSources.get(file);
+  if (hit && hit.raw === raw) return hit.sf;
+  const sf = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest, true);
+  parsedSources.set(file, { raw, sf });
+  return sf;
+}
+const scannedWriters = new Map<string, { raw: string; findings: Finding[] }>();
+
 function scanWriters(files: Map<string, string>): Finding[] {
   const out: Finding[] = [];
+  for (const [file, raw] of files) out.push(...scanWritersInFile(file, raw));
+  return out;
+}
+
+/** The full scan, yielding to the event loop between files (the first, cold pass). */
+async function scanWritersYielding(files: Map<string, string>): Promise<Finding[]> {
+  const out: Finding[] = [];
   for (const [file, raw] of files) {
-    const sf = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest, true);
+    out.push(...scanWritersInFile(file, raw));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  return out;
+}
+
+function scanWritersInFile(file: string, raw: string): Finding[] {
+  const hit = scannedWriters.get(file);
+  if (hit && hit.raw === raw) return hit.findings;
+  const findings = scanWritersUncached(file, raw);
+  scannedWriters.set(file, { raw, findings });
+  return findings;
+}
+
+function scanWritersUncached(file: string, raw: string): Finding[] {
+  const out: Finding[] = [];
+  {
+    const sf = sourceFileOf(file, raw);
     const aliases = collectAliases(sf);
 
     const visit = (node: ts.Node): void => {
@@ -405,7 +452,7 @@ function pgBossCapabilityNames(files: ReadonlyMap<string, string>): ReadonlyMap<
   while (changed) {
     changed = false;
     for (const [file, raw] of files) {
-      const sf = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest, true);
+      const sf = sourceFileOf(file, raw);
       const local = capabilities.get(file)!;
       const exported = exports.get(file)!;
       const add = (set: Set<string>, value: string) => {
@@ -468,7 +515,7 @@ function scanPgBossWriterFiles(files: ReadonlyMap<string, string>): readonly str
   const writers = new Set<string>();
   const capabilities = pgBossCapabilityNames(files);
   for (const [file, raw] of files) {
-    const sf = ts.createSourceFile(file, raw, ts.ScriptTarget.Latest, true);
+    const sf = sourceFileOf(file, raw);
     const receivers = new Set<string>();
     const destructuredMethods = new Set<string>();
     const capabilityNames = capabilities.get(file) ?? new Set<string>();
@@ -754,6 +801,10 @@ const EXPECTED: Record<string, Record<string, string>> = {
   stripe_events: {
     "packages/credits/src/stripe/webhooks.ts::insert":
       "The verified Stripe webhook transaction records the provider event exactly once.",
+    "packages/credits/src/stripe/webhooks.ts::update":
+      "R-165 (audit P5-A1): the held-money replay settles a `held_tombstoned` receipt to the outcome `dispatch` returned, under the workspace's membership and billing locks and a row lock taken first, conditional on the held outcome. Migration 0064's trigger refuses every other outcome change, so this is the one outcome writer after insert. R-167 adds two content-free markers on the same table: `held_replay_attempted_at` (stamped by every replay attempt, so the sweep rotates stuck workspaces) and `money_needs_operator_paged_at` (stamped when the sweep pages a money receipt that needs an operator, once).",
+    "packages/db/src/deletion-executor.ts::update":
+      "R-166 (billing gate H1/M1): `recordRefundOwedInTx` moves each `held_tombstoned` receipt of the workspace being erased to `refund_owed`, with its amount, currency and the erasing operation's id, in the erasure transaction and before the payload purge — the durable refund-owed record. Conditional on the held outcome; migration 0065's trigger admits held -> refund_owed once and nothing after.",
     "packages/db/src/retention-receiver.ts::update":
       "The subject-erasure payload purge (Phase 10b-1 round 3). A COMPLETED identity or workspace erasure used to leave the deleted person's email, name and billing address in `payload` for up to 90 days, because `erasureHold` was satisfied by the RECEIVER existing and that receiver is a clock measured from `received_at`, not an erasure step. The purge lifts the finance facts out first, in the same transaction, then blanks the payload for every workspace the subject belonged to. It names the table in source (unlike the dynamic sweep in the same file), so it is a scannable physical writer and is enumerated here rather than left to registry closure.",
   },
@@ -805,7 +856,12 @@ const EXPECTED: Record<string, Record<string, string>> = {
     "packages/db/src/seed.ts::insert":
       "The deterministic development seed creates the email-free domain fixture row.",
   },
-  verification: {},
+  verification: {
+    "packages/db/src/auth-lifecycle.ts::insert":
+      "R-164: the Google re-authentication challenge's single-use state row (`respin-google-reauth:<id>`): a session digest, the PKCE verifier and the nonce — no user id — expiring with R-118's ten-minute window.",
+    "packages/db/src/auth-lifecycle.ts::delete":
+      "R-164: the callback CONSUMES the state row as it reads it (DELETE ... RETURNING), which is what makes the state single-use: a replay finds nothing.",
+  },
   workspaces: {
     "packages/db/src/lifecycle-sql-port.ts::insert":
       "Workspace erasure inserts one random tombstoned 'Deleted workspace' stub for the retained receipts to point at (Phase 10b-1 Task 4).",
@@ -855,10 +911,14 @@ const EXPECTED: Record<string, Record<string, string>> = {
   deletion_operations: {
     "packages/db/src/activation.ts::update":
       "Phase 10b-1 Task 7: the pending -> applied transition of the captured activation contribution, in the erasure transaction. Guarded by the pending state in the WHERE, so a replay updates zero rows and applies nothing twice.",
+    "packages/db/src/deletion-executor.ts::delete":
+      "R-166 (tenancy gate H2): a workspace erasure leaving grace retires the UNRESERVED profile drafts inside it — `requested`, no journal reservation, so no transition, proof or command references them (the restrict foreign keys would refuse the delete if one did) — because once the workspace is tombstoned they can never be reserved, and left in place their profile_id would hold the profile row the erasure removes.",
     "packages/db/src/deletion-executor.ts::update":
       "The worker executor claims and releases the operation lease, erases the recovery digest at erasure start, and clears the lease on completion; state transitions still go through the deletion authority's journal append.",
     "packages/db/src/deletion-lifecycle.ts::insert":
-      "The deletion authority creates the durable, idempotent current projection for identity, profile, and workspace requests.",
+      "The deletion authority creates the durable, idempotent current projection for identity, profile, and workspace requests — including R-160's cascaded workspace deletions, reserved in the identity's own reservation transaction.",
+    "packages/db/src/deletion-lifecycle.ts::delete":
+      "R-160: an identity request abandoned on an expired recovery window discards the workspace deletions it cascaded — rows still in `requested` at journal version 0, with no transition, command or snapshot — in the same transaction that journals the abandonment.",
     "packages/db/src/deletion-lifecycle.ts::update":
       "The deletion authority advances the projection only through the checked forward state machine and records delivery, journal, lease, and cancellation facts.",
   },
@@ -899,6 +959,27 @@ const EXPECTED: Record<string, Record<string, string>> = {
   model_usage: {
     "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().recordModelUsage — the append-only spend record",
+    // Launch L2 (R-151; L1 billing NOTE 1, the draft-1 fix). The spend FACTS
+    // stay append-only — tokens, cost, outcome, model and attempt are never
+    // rewritten. The ONE update is `settleGeneration` marking a GENERATION's
+    // own rows `consumed_included_build = true` inside the settlement
+    // transaction (false -> true, never back), keyed on the settled claim's
+    // own attempt id and purpose read off the returned row: the creator was
+    // charged for them. An operation that settles nothing keeps every row
+    // false, so both uncharged accessors count it. The onboarding voice
+    // purpose is never touched (A-11 fence).
+    "packages/db/src/with-workspace.ts::update":
+      "writeCapabilities().settleGeneration — marks the settled generation's own model_usage rows consumed in the money transaction (generation purpose only, false->true); no spend fact is rewritten.",
+  },
+  // Launch L2 (R-151). The creative piece: INSERT when a concept is chosen or
+  // an own idea entered (zero cost), UPDATE for "New generation", cancel and
+  // the settlement's selection link. One physical writer file, reached only
+  // through `writeCapabilities` (role, pause and lifecycle gates).
+  creative_pieces: {
+    "packages/db/src/creative-work-ops.ts::insert":
+      "createCreativePieceInScope via writeCapabilities().createCreativePiece — scope columns from the scope, operation id/state/version from database defaults, the origin and quote version validated locals; the source must be this profile's usable ideation generation with the index inside its ideas array.",
+    "packages/db/src/creative-work-ops.ts::update":
+      "renewCreativePieceOperationInScope (New generation: database-minted id, version-guarded), cancelCreativePieceInScope (selected -> cancelled, version-guarded), selectCreativePieceVersionInScope (launch L4, R-153: \"use this version\" — the selection moves to another usable version of the same piece, version-guarded, zero cost) and linkCreativePieceScriptInScope (the settlement's selection link, inside settleGeneration's money transaction).",
   },
   // R-80. INSERT ONLY, and the absence of `::update` and of any delete is the
   // assertion rather than an oversight: the claim on a profile's included build
@@ -910,6 +991,8 @@ const EXPECTED: Record<string, Record<string, string>> = {
   first_billable_attempts: {
     "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().recordModelUsage — the claim rides with the spend record, in one transaction, via onConflictDoNothing on (profile_id, purpose). Both scope columns, the purpose and the attempt id are read off the RETURNED usage row, never from the caller's params, so what is claimed is what was actually stored.",
+    "packages/db/src/with-workspace.ts::delete":
+      "writeCapabilities().releaseIncludedBuildClaim (audit Phase 3 gate, billing note) — runInference gives back THIS attempt's own claim, scoped on both axes, when the free build's output store was refused after step 8b committed the claim.",
   },
   // Written from slice 1. ONE writer, and the split is the point: the INSERT
   // lives in `packages/db` (a scope-caged workspace write capability) while the
@@ -992,7 +1075,18 @@ const EXPECTED: Record<string, Record<string, string>> = {
   // assertion, not an oversight: feedback is a record of what a creator said,
   // and an event log that can be rewritten is not evidence. A creator who
   // changes their mind records a DIFFERENT reaction.
+  // AUDIT P6-A1 (R-174, migration 0069) ADDED THE FIRST `::update` KEY, and
+  // it is narrow by construction: `excludeGenerationFeedbackFromHistory` sets
+  // `history_excluded_at` from NULL to the database clock and nothing else,
+  // and the `generation_feedback_event_immutable` trigger refuses any UPDATE
+  // that changes which output a reaction is about, what it was, whose it is or
+  // when it was recorded, or that clears or moves the stamp. It deliberately
+  // leaves `note` writable at the database (a future pseudonymisation
+  // executor, the 0022 precedent), so the note's immutability is still THIS
+  // scan's: the update writer below is the only one, and it sets one column.
   generation_feedback: {
+    "packages/db/src/with-workspace.ts::update":
+      "writeCapabilities().excludeGenerationFeedbackFromHistory — the ONE update writer (audit P6-A1, R-174). Owner-or-editor, cage-asserted, the target resolved through both scope columns first (foreign, missing and malformed ids raise one byte-identical FeedbackExclusionTargetError), then `history_excluded_at = now()` WHERE it is still NULL. The trigger from migration 0069 makes a change to the reaction, its target, its owner or its timestamp, or to a stamp already set, a database error; `note` is left writable there and is held by this list.",
     "packages/db/src/with-workspace.ts::insert":
       "writeCapabilities().recordGenerationFeedback — the ONE writer. Role-gated (a viewer may not), cage-asserted, both scope columns written from the scope rather than from the caller, the closed reaction set checked at RUNTIME as well as in the type (a cast otherwise reaches the pgEnum and the creator sees a driver error), and the note normalised/bounded/refused-if-blank. Insert-or-REFUSE via `onConflictDoNothing` against `generation_feedback_generation_reaction_uq`: a swallowed duplicate would report success on a note that was not kept.",
   },
@@ -1102,8 +1196,19 @@ const EXPECTED: Record<string, Record<string, string>> = {
 };
 
 describe("P8 — every M2a table's writers are enumerated", () => {
-  const files = allProductionSources();
-  const physicalWriters = scanWriters(files);
+  // FILLED IN `beforeAll`, NOT AT COLLECTION: the cold scan parses every
+  // production file, and collection-time code cannot yield to the event loop.
+  let files: Map<string, string>;
+  let physicalWriters: Finding[];
+  beforeAll(async () => {
+    files = allProductionSources();
+    physicalWriters = await scanWritersYielding(files);
+    // Warm the parse cache the pg-boss scan reads, between files too.
+    for (const [file, raw] of files) {
+      sourceFileOf(file, raw);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  });
 
   it("the scan is not vacuous: it sees all four shapes, for every verb", () => {
     const probe = new Map<string, string>([
@@ -1221,8 +1326,9 @@ describe("P8 — every M2a table's writers are enumerated", () => {
     // gate fixes added sources for it to walk (96%), then a timeout on the
     // next full-suite run under contention. The old budget was a latent red
     // before this change touched it. Raised with headroom rather than
-    // trimmed; the real fix is to memoise the parse across plants instead of
-    // re-parsing the whole tree seven times, recorded as a gate residual.
+    // trimmed. The parse is now memoised across plants (`sourceFileOf`,
+    // audit Phase 3, 2026-10-06), so each plant re-walks the tree but parses
+    // only its own planted files.
     { timeout: 420_000 },
     async () => {
     const yieldToWorkerRpc = () =>

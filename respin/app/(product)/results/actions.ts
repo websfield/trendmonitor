@@ -53,11 +53,11 @@ import { PromotionDecisionError, respinDb } from "@respin/db";
 import { respinCredits } from "@respin/credits/app-server";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import {
-  BILLING_ERROR_COPY,
+  billingErrorCopy,
   isBillingErrorCode,
   type BillingErrorCode,
 } from "../billing-errors";
-import { logRefusal } from "../safe-log";
+import { logRefusal, wireId } from "../safe-log";
 import { scopeForUser } from "../workspace-scope";
 import {
   RESULT_FIELD,
@@ -65,6 +65,8 @@ import {
   type LogResultState,
 } from "./log-state";
 import { PROMOTION_FIELD, type PromotionActionState } from "./promotion-state";
+import { projectPromotionReview } from "./promotion-review";
+
 
 /** A form field as a trimmed string, or `undefined` when it was left blank. */
 function optional(formData: FormData, name: string): string | undefined {
@@ -155,7 +157,7 @@ export async function logResultAction(
     rethrowNextControlFlow(err);
     const logged = logRefusal("[results] result refused", err, {
       ...(scope ? { workspaceId: scope.workspaceId } : {}),
-      profileId,
+      profileId: wireId(profileId),
     });
     // THE CLAMP, NOT A CAST (the `pasteReferenceAction` precedent):
     // `logRefusal` is typed `string` and its fallback is a plain literal, so
@@ -163,7 +165,7 @@ export async function logResultAction(
     // `BILLING_ERROR_COPY[code]` could hand the panel `undefined` — which
     // throws on `copy.title`, on the client, on the refusal path.
     const code: BillingErrorCode = isBillingErrorCode(logged) ? logged : "unknown";
-    return { status: "refused", code, copy: BILLING_ERROR_COPY[code] };
+    return { status: "refused", code, copy: billingErrorCopy(code) };
   }
   // Cache invalidation is not the mutation (the `trackNicheAction` precedent):
   // the row has committed by here, so a revalidation failure must not tell the
@@ -192,7 +194,7 @@ async function currentLearningEntitlement(scope: Awaited<ReturnType<typeof scope
 function promotionRefusal(err: unknown): PromotionActionState {
   const logged = logRefusal("[results] proposal action refused", err);
   const code: BillingErrorCode = isBillingErrorCode(logged) ? logged : "unknown";
-  return { status: "refused", code, copy: BILLING_ERROR_COPY[code] };
+  return { status: "refused", code, copy: billingErrorCopy(code) };
 }
 
 export async function refreshPromotionAction(
@@ -207,7 +209,14 @@ export async function refreshPromotionAction(
     const entitlement = await currentLearningEntitlement(scope);
     const proposals = await respinDb.refreshPromotionProposals(scope, profileId, entitlement);
     revalidatePath("/results");
-    return { status: "refreshed", count: proposals.length };
+    // THE PROPOSED ROWS, NOT THE HISTORY (audit Phase 2, P2-A3). The refresh
+    // returns every row of every status — accepted, rejected, stale and
+    // superseded included — so "N proposals available" counted decisions and
+    // history as if they were awaiting one.
+    return {
+      status: "refreshed",
+      count: proposals.filter((proposal) => proposal.status === "proposed").length,
+    };
   } catch (err) {
     rethrowNextControlFlow(err);
     return promotionRefusal(err);
@@ -226,7 +235,7 @@ export async function reviewPromotionAction(
       profileId,
       String(formData.get(PROMOTION_FIELD.proposalId) ?? "")
     );
-    return { status: "reviewed", review };
+    return { status: "reviewed", review: projectPromotionReview(review) };
   } catch (err) {
     rethrowNextControlFlow(err);
     return promotionRefusal(err);
@@ -256,7 +265,13 @@ export async function decidePromotionAction(
       ) ?? "[]")),
     }, entitlement);
     revalidatePath("/results");
-    return { status: "decided", decision: result.status };
+    return {
+      status: "decided",
+      decision: result.status,
+      // R-171: an accept of a value already in the document wrote nothing,
+      // and the creator is told so.
+      alreadyPresent: result.reason === "already_present",
+    };
   } catch (err) {
     rethrowNextControlFlow(err);
     return promotionRefusal(err);

@@ -1,9 +1,19 @@
 // Shared sections for the marketing landing and its /for/<audience>
-// variants. Pricing renders from ./pricing-copy.ts in exactly one place so
-// tests/landing-pricing.test.ts keeps a single authority to pin.
+// variants. Pricing renders from ./pricing-copy.ts's `pricingFor` in exactly
+// one place so tests/landing-pricing.test.ts keeps a single authority to pin;
+// the numbers it is built from are the ACTIVE config's, read per request by
+// ./pricing-load.ts (audit P6-A3, R-175) and handed in as a prop.
 import Image from "next/image";
+import { CHECK } from "@respin/db";
 import { buttonClass } from "../ui/button";
-import { MECHANIC_TAGS, PRICING } from "./pricing-copy";
+import {
+  MECHANIC_TAGS,
+  PRICING_NUMBERS_UNAVAILABLE,
+  brainStepSentence,
+  pricingFinePrint,
+  type LandingTerms,
+} from "./pricing-copy";
+import type { LandingPricing } from "./pricing-load";
 import { AUDIENCES, type DemoCopy } from "./audiences";
 
 export function LandingHeader() {
@@ -50,10 +60,12 @@ export function MarqueeTags() {
   );
 }
 
-// Renders literal "[check]" occurrences as the styled [check] token — the
-// product's marker for a specific it will not invent (REQ-I03).
+// Renders the marker's occurrences as the styled [check] token — the
+// product's marker for a specific it will not invent (REQ-I03). Splits on
+// `@respin/db`'s `CHECK`, the marker's one home (audit Phase 2, P2-R8); this
+// file is server-only (five server importers), so the import is allowed.
 function withCheckTokens(text: string) {
-  const parts = text.split("[check]");
+  const parts = text.split(CHECK);
   return parts.flatMap((part, i) =>
     i === 0
       ? [part]
@@ -115,7 +127,11 @@ export function DemoPanel({ demo }: { demo: DemoCopy }) {
   );
 }
 
-export function StepsBand() {
+/**
+ * `terms` carries step 01's post counts from the ACTIVE config (R-175), or
+ * `null` when that read failed, in which case the sentence names no number.
+ */
+export function StepsBand({ terms }: { terms: LandingTerms | null }) {
   return (
     <div className="band band-steps">
       <section className="landing-section">
@@ -124,20 +140,28 @@ export function StepsBand() {
           <div className="step">
             <span className="step-num">01</span>
             <h3>Build your brain</h3>
-            <p>
-              A short interview plus at least 3 of your own posts, up to 50.
-              You confirm every inferred field before it activates; nothing is
-              assumed silently.
-            </p>
+            <p>{brainStepSentence(terms)}</p>
           </div>
           <div className="step">
             <span className="step-num">02</span>
             <h3>Generate, kill-test, film</h3>
+            {/*
+              SCOPED TO WHAT THE PARSER ENFORCES (audit P6-A2, register item
+              33, and the Phase 6 gate). "Every beat mapped to a shot" was
+              unenforced: the parser requires the shot-map SECTION and refuses
+              a row that points past the last beat, and nothing else, so the
+              map can cover some beats or none. The sentence therefore names
+              only the shots the draft suggests. No post-call refusal is added
+              for an empty map: it would charge the creator for our model's
+              omission. `tests/landing-pricing.test.ts` pins "four" to the
+              modes `MODE_SPECS` requires both `beats` and `shotMap` of, and
+              "Seven" to `MODE_IDS`.
+            */}
             <p>
               Seven modes. The four script modes give you a timed script with
-              the turn marked and every beat mapped to a shot, described for
-              you to match or film. Hooks, captions and ideas are their own
-              shapes.
+              the turn marked, plus whatever shots the draft suggests,
+              described for you to match or film. Hooks, captions and ideas
+              are their own shapes.
             </p>
           </div>
           <div className="step">
@@ -182,7 +206,8 @@ export function RefusesBand() {
             <span>
               It never pads. A draft that fails the kill test is rewritten
               once; a second failure is refused with its reason, and the run
-              still costs its credits.
+              still costs its credits — unless the only problem was a claim
+              Respin won&apos;t make, which costs nothing.
             </span>
             <span>
               It checks where every number, date and name came from, and
@@ -200,7 +225,12 @@ export function RefusesBand() {
   );
 }
 
-export function PricingSection() {
+/**
+ * THE PRICING CARDS, from what the page read for this request (R-175): the
+ * active config's numbers, or number-free cards and a note pointing to the
+ * billing page when that read failed. Pure, so a test renders every state.
+ */
+export function PricingSection({ pricing }: { pricing: LandingPricing }) {
   return (
     <section id="pricing" className="landing-section">
       <div className="pricing-head">
@@ -213,7 +243,7 @@ export function PricingSection() {
         </span>
       </div>
       <div className="pricing-grid">
-        {PRICING.map((tier) => (
+        {pricing.tiers.map((tier) => (
           <div
             key={tier.name}
             className={
@@ -253,14 +283,13 @@ export function PricingSection() {
           </div>
         ))}
       </div>
-      <p className="pricing-fine">
-        Cancelling here offers a pause first: 1 to 3 months, no charges,
-        everything frozen and readable. Stripe&rsquo;s own billing portal stays
-        open and has no pause, so a cancellation started there is just a
-        cancellation. On a paid plan, unused monthly credits stay spendable for one more
-        month, then expire; on Free they expire at the end of the calendar
-        month; packs last 12 months. No
-        plan promises reach, and none of them ever will.
+      {pricing.configVersion === null ? (
+        <p className="pricing-fine" data-testid="pricing-numbers-unavailable">
+          {PRICING_NUMBERS_UNAVAILABLE}
+        </p>
+      ) : null}
+      <p className="pricing-fine" data-testid="pricing-fine">
+        {pricingFinePrint(pricing.terms)}
       </p>
     </section>
   );
@@ -289,8 +318,13 @@ export function LandingFooter() {
   return (
     <footer className="landing-footer">
       <span className="landing-wordmark">Respin</span>
+      {/* SCOPED (audit P6-A2): a draft may rest on the creator's own
+          framework, or on a structure it invents, which is labelled as not
+          reviewed by a curator (`CUSTOM_STRUCTURE_NOTE`), so "reviewed
+          mechanisms" alone was a universal it cannot keep. */}
       <span className="footer-tag">
-        Scripts in your voice, built on reviewed mechanisms.
+        Scripts in your voice, built on reviewed library mechanisms or your
+        own frameworks, with any other structure labelled as unreviewed.
       </span>
       <nav aria-label="Footer">
         {AUDIENCES.map((a) => (

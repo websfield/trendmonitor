@@ -36,7 +36,16 @@ export {
   type AnthropicProviderOptions,
 } from "./anthropic";
 export {
+  EXEMPTABLE_PROMPT_PARTS,
+  LlmInputTooLargeError,
+  assertInputWithinCeiling,
+  type CeilingInput,
+} from "./input-ceiling";
+export {
   assembleVoicePrompt,
+  composePrompt,
+  nothingGroundedError,
+  type PromptSegment,
   acceptCanonicalMatch,
   ASSEMBLY_KINDS,
   ASSEMBLY_KINDS_PRE_VENDOR,

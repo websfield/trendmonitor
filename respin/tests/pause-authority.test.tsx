@@ -42,8 +42,9 @@
 //   exactly that rather than leaving a package-side reader unmentioned.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { walkCodeFiles } from "./support/app-surface";
 
 const mocks = vi.hoisted(() => ({
   requireUser: vi.fn(),
@@ -191,16 +192,30 @@ const APP = join(HERE, "..", "app");
  *
  * A LIST, NOT A PATTERN. Every file here fronts an operation the server refuses
  * under an open `pause_periods` row, so every one of them has to ask the same
- * question the gate asks. Adding a sixth screen with a pause block costs a line
- * here — which is the point (CLAUDE.md, 2026-08-29).
+ * question the gate asks. Adding a screen with a pause block costs a line here
+ * — which is the point (CLAUDE.md, 2026-08-29; Respin rule 7) — and the
+ * population scan below FAILS CLOSED: it walks every file under
+ * `app/(product)` and holds the set it finds equal to this list, so a screen
+ * that asks about a pause without being listed turns it red (L4 tenancy gate:
+ * the saved pack's page was missing, and the scan also found `/results`).
  */
 const PAUSE_COURTESY_PAGES = [
   "(product)/studio/frameworks/page.tsx",
   "(product)/studio/page.tsx",
+  "(product)/studio/saved/[attemptId]/page.tsx",
   "(product)/brain/page.tsx",
   "(product)/onboarding/page.tsx",
   "(product)/onboarding/first-ideas/page.tsx",
+  "(product)/results/page.tsx",
 ] as const;
+
+/**
+ * Files whose code matches the mirror-read shape for a reason that is NOT a
+ * pause courtesy, each with that reason. `usage/usage-view.tsx` compares its
+ * own RUNWAY projection's state (`runway.state === "paused"`), which the page
+ * derived; it decides no control.
+ */
+const NON_COURTESY_STATE_READERS = ["(product)/usage/usage-view.tsx"] as const;
 
 /**
  * The files still allowed to read `BillingState.state === "paused"`, each with
@@ -270,6 +285,73 @@ describe("the population of mirror readers is a stated list", () => {
     expect(code, "the authority half of the union is gone").toMatch(
       /await hasOpenPause\(/
     );
+  });
+
+  it("THE POPULATION IS FOUND, NOT ASSUMED: every file under app/(product) that asks about a pause is a listed courtesy page or a listed mirror/state reader", () => {
+    // WHAT COUNTS AS ASKING: a call to `hasOpenPause(` or the mirror shape.
+    const asks = (code: string) => /\bhasOpenPause\s*\(/.test(code) || MIRROR_READ.test(code);
+    // NON-VACUITY: both shapes, planted as a page would write them, are seen;
+    // a comment that only NAMES the rule is not.
+    expect(asks(codeOf("  paused = await respinCredits.hasOpenPause(scope.workspaceId);"))).toBe(true);
+    expect(asks(codeOf('  const paused = billing.state === "paused";'))).toBe(true);
+    expect(asks(codeOf("  // the courtesy asks `hasOpenPause(...)`, never the mirror"))).toBe(false);
+    const root = join(APP, "(product)");
+    const found = walkCodeFiles(root)
+      .filter((file) => asks(codeOf(readFileSync(file, "utf8"))))
+      .map((file) => relative(APP, file).split(sep).join("/"))
+      .filter(
+        (rel) =>
+          !(MIRROR_READERS as readonly string[]).includes(rel) &&
+          !(NON_COURTESY_STATE_READERS as readonly string[]).includes(rel)
+      )
+      .sort();
+    expect(found.length).toBeGreaterThan(0);
+    expect(found).toEqual([...PAUSE_COURTESY_PAGES].sort());
+  });
+
+  // AUDIT PHASE 8 (P8-R1, AC10): THE DISPLAY FOLD IS AN AUTHORITY READER. The
+  // committed fold `getDisplayBalance` falls back to is a new reader of pause
+  // state outside the lock — the first new consumer the deferral row "Pause's
+  // two stored truths" asked to choose. It chose `pause_periods` alone; this
+  // pins the choice in source, and a planted mirror read turns it red.
+  // (`balance.test.ts` "AC10" plants the disagreement in both directions and
+  // watches the fold agree with `hasOpenPause` each time.)
+  const MIRROR_SHAPES = /\bsubscriptions\b|pausedAt|paused_at|getWorkspaceBillingState|isPausedSubscription|\bstate\s*===\s*"paused"/;
+
+  it("the DISPLAY FOLD (getDisplayBalance's fallback) reads the authority, pause_periods, and no mirror", () => {
+    const code = codeOf(
+      readFileSync(join(HERE, "..", "packages", "credits", "src", "balance.ts"), "utf8").replace(/\r\n/g, "\n")
+    );
+    // THE WHOLE FALLBACK PATH: the one-statement history read, the committed
+    // fold, AND `getDisplayBalance` itself (whose locked branch only CALLS
+    // `deriveBalanceInTx`, the mint's union reader above, by name), up to the
+    // next top-level declaration.
+    const start = code.indexOf("async function loadCommittedHistory");
+    const display = code.indexOf("export async function getDisplayBalance");
+    const end = code.indexOf("export function freeAllowancePeriodKey");
+    expect(start, "loadCommittedHistory is gone").toBeGreaterThanOrEqual(0);
+    expect(display, "getDisplayBalance is gone").toBeGreaterThan(start);
+    expect(end, "the slice's end marker moved").toBeGreaterThan(display);
+    const fallback = code.slice(start, end);
+    // Non-vacuity: it really reads the authority table, and it contains the
+    // display read's own fallback call.
+    expect(fallback).toMatch(/\bpausePeriods\b/);
+    expect(fallback).toMatch(/committedFoldInTx\(tx, workspaceId\)/);
+    expect(MIRROR_SHAPES.test(fallback)).toBe(false);
+    // PLANTED, in the committed fold: a mirror read is red.
+    const plantedInFold = fallback.replace(
+      "const fold = foldLedger(rows, pauses, viewAt);",
+      'const billing = await getWorkspaceBillingState(tx, workspaceId, asOf);\n  if (billing.state === "paused") pauses.push(openPause);\n  const fold = foldLedger(rows, pauses, viewAt);'
+    );
+    expect(plantedInFold).not.toBe(fallback);
+    expect(MIRROR_SHAPES.test(plantedInFold)).toBe(true);
+    // PLANTED, inside `getDisplayBalance`'s own fallback branch: red too.
+    const plantedInDisplay = fallback.replace(
+      "return { ...(await committedFoldInTx(tx, workspaceId)), settling: true };",
+      'const mirror = await getWorkspaceBillingState(tx, workspaceId, new Date());\n      return { ...(await committedFoldInTx(tx, workspaceId)), settling: mirror.state !== "paused" };'
+    );
+    expect(plantedInDisplay).not.toBe(fallback);
+    expect(MIRROR_SHAPES.test(plantedInDisplay)).toBe(true);
   });
 
   it("every pause-courtesy page asks the AUTHORITY by name", () => {

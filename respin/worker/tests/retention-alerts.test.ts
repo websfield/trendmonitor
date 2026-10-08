@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { toSafeWorkerEvent } from "../health";
+import { UNSETTLED_CANDIDATE_ALERT_MS, VENDOR_COMPLETE_HARD_CLEAR_MS } from "@respin/db";
 import { OVERDUE_BACKLOG_MS, evaluateRetentionAlerts, retentionTickEvent, type RetentionRunSummary } from "../retention";
 
 const WORKER = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -48,7 +49,8 @@ const summary = (over: Partial<RetentionRunSummary["retention"]> = {}): Retentio
   generation: {
     abandonedBeforeVendor: 0,
     startedPastDeadline: 0,
-    settlementAttempted: 0,
+    settleableCandidates: 0,
+    oldestUnsettledMs: null,
     hardCleared: 0,
     failureCode: null,
   },
@@ -71,6 +73,51 @@ describe("retention alerts", () => {
 
   it("a clean tick raises nothing — the non-vacuity baseline", () => {
     expect(codes(summary())).toEqual([]);
+  });
+
+  const generation = (over: Partial<RetentionRunSummary["generation"]>): RetentionRunSummary => ({
+    ...summary(),
+    generation: { ...summary().generation, ...over },
+  });
+
+  it("P3-R1(a): a vendor_complete candidate aged past the threshold and UNDER 24 h pages, and the event carries the age", () => {
+    const ageMs = UNSETTLED_CANDIDATE_ALERT_MS + 1;
+    expect(ageMs).toBeLessThan(VENDOR_COMPLETE_HARD_CLEAR_MS);
+    const aging = generation({ settleableCandidates: 1, oldestUnsettledMs: ageMs });
+    const alerts = evaluateRetentionAlerts(aging);
+    expect(alerts).toEqual([
+      {
+        code: "generation_unsettled_aging",
+        severity: "critical",
+        detail: { generationOldestUnsettledMs: ageMs, generationSettleable: 1 },
+      },
+    ]);
+    // THE ALLOWLIST KEEPS THE KEY. `toSafeWorkerEvent` copies only listed
+    // fields, so a key missing from `health.ts` would be dropped silently and
+    // this page would arrive with no age in it.
+    const paged = toSafeWorkerEvent({
+      code: `retention_alert_critical_${alerts[0]!.code}`,
+      observedAt: "2026-10-05T00:00:00.000Z",
+      ...alerts[0]!.detail,
+    });
+    expect(paged).toMatchObject({ generationOldestUnsettledMs: ageMs, generationSettleable: 1 });
+    const tick = toSafeWorkerEvent({ code: "retention_tick", observedAt: "2026-10-05T00:00:00.000Z", ...retentionTickEvent(aging) });
+    expect(tick).toMatchObject({ generationOldestUnsettledMs: ageMs });
+    // AT the threshold is quiet; nothing waiting is quiet and omits the key.
+    expect(codes(generation({ settleableCandidates: 1, oldestUnsettledMs: UNSETTLED_CANDIDATE_ALERT_MS }))).toEqual([]);
+    expect(retentionTickEvent(summary())).not.toHaveProperty("generationOldestUnsettledMs");
+  });
+
+  it("P3-A6: a started attempt swept past its deadline pages critical — and zero raises nothing", () => {
+    const past = generation({ startedPastDeadline: 1 });
+    expect(evaluateRetentionAlerts(past)).toEqual([
+      {
+        code: "generation_started_past_deadline",
+        severity: "critical",
+        detail: { generationPastDeadline: 1 },
+      },
+    ]);
+    expect(codes(generation({ startedPastDeadline: 0 }))).toEqual([]);
   });
 
   it("raises retention_sweep_failed on a table failure, carrying the CODE and never a message", () => {

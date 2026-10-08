@@ -14,10 +14,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
+  assertReadScoped,
   assertReauthenticatedWorkspaceScopeInTx,
   assertScoped,
   subscriptions,
   type DbLike,
+  type ReadGradeWorkspaceScope,
   type ReauthenticatedSessionRef,
   type WorkspaceScope,
 } from "@respin/db";
@@ -53,8 +55,17 @@ export class BillingContactProviderError extends Error {
   }
 }
 
-export async function billingContactStatus(db: DbLike, scope: WorkspaceScope): Promise<BillingContactStatus> {
-  assertScoped(scope);
+/**
+ * A READ of `subscriptions.billingContactUserId`, so it takes either grade
+ * (R-163): `/settings/account` renders it during a workspace deletion's grace
+ * under the read grade. `acceptBillingContact` below is a writer and keeps
+ * `assertScoped`, which refuses a read-grade scope.
+ */
+export async function billingContactStatus(
+  db: DbLike,
+  scope: WorkspaceScope | ReadGradeWorkspaceScope
+): Promise<BillingContactStatus> {
+  assertReadScoped(scope);
   const [row] = await db
     .select({ billingContactUserId: subscriptions.billingContactUserId })
     .from(subscriptions)

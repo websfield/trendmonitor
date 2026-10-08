@@ -24,6 +24,7 @@ import {
   seedDb,
   withWorkspace,
   CONFIG_V1_SEED,
+  CreativePieceError,
   type TestDb,
   type VerifiedUserId,
   type VerifiedWorkspaceId,
@@ -44,6 +45,13 @@ import * as stripeAutoTopup from "../src/stripe/auto-topup";
 // INTERNAL modules, imported so their INTERNAL_MODULES claims can be checked
 // against their real exports rather than trusted as prose.
 import * as balanceMod from "../src/balance";
+import * as creativeWorkMod from "../src/creative-work";
+import * as savedGenerationMod from "../src/saved-generation";
+import * as recentContextMod from "../src/recent-context";
+import * as heldDraftsMod from "../src/held-drafts";
+import * as operatorServer from "../src/operator-server";
+import { legacyIdeas } from "./support/form-fixtures";
+import { hooksOutput } from "./support/generation-fixtures";
 import * as deletionCommandsMod from "../src/stripe/deletion-commands";
 import * as foldMod from "../src/fold";
 import * as ledgerMod from "../src/ledger";
@@ -72,6 +80,9 @@ import * as autoTopupRolloutMod from "../src/stripe/auto-topup-rollout";
 import * as autoTopupV1ReconcileMod from "../src/stripe/auto-topup-v1-reconcile";
 import * as setupMod from "../src/stripe/setup";
 import * as packPriceMod from "../src/stripe/pack-price";
+import * as tierPricesMod from "../src/stripe/tier-prices";
+import * as tierPriceMod from "../src/stripe/tier-price";
+import * as priceAllowlistMod from "../src/stripe/price-allowlist";
 import * as packCheckoutAuthorityMod from "../src/stripe/pack-checkout-authority";
 import * as tierCheckoutAuthorityMod from "../src/stripe/tier-checkout-authority";
 import * as tierCheckoutRolloutMod from "../src/stripe/tier-checkout-rollout";
@@ -81,6 +92,7 @@ import * as burnPeriodMod from "../src/burn-period";
 import * as modeLabelMod from "../src/mode-label";
 import * as includedBuildMod from "../src/included-build";
 import * as pastedReferenceMod from "../src/pasted-reference";
+import * as presentedOutputMod from "../src/presented-output";
 import { handleStripeEvent } from "../src/stripe/webhooks";
 import { workspaceForCustomer, getOrCreateCustomer } from "../src/stripe/customers";
 import { createPortalUrl } from "../src/stripe/actions";
@@ -153,6 +165,8 @@ const req = (attemptId: string) => ({
  * the completeness assertion.
  */
 const NOT_DB_FACING: Record<string, string> = {
+  // R-165: the money-bearing predicate over an event already in hand.
+  isHeldMoneyEvent: "pure — reads the Stripe event object it is given; no query",
   // Phase 10a plan C2: the public Sample Spin's pure surface.
   loadSampleSpinFixture: "checked-in content, validated in memory — no query",
   sampleSpinContext: "pure — assembles a GenerationContext from the fixture and a parsed idea",
@@ -194,6 +208,9 @@ const NOT_DB_FACING: Record<string, string> = {
   // four pure functions and one composition, and every one of them is here for
   // a stated reason rather than as a batch:
   BrainNotActivatedError: "error class",
+  GenerationQuoteChangedError: "error class (launch L2)",
+  ConceptContextInsufficientError: "error class (launch L2)",
+  RevisionPresetError: "error class (launch L4)",
   GenerationAlreadyRefusedError: "error class",
   GenerationAttemptStateError:
     "error class (re-exported from @respin/db — the claim's transition refusal)",
@@ -202,6 +219,12 @@ const NOT_DB_FACING: Record<string, string> = {
   GenerationRecoveryRequiredError: "error class",
   GenerationUnchargedAttemptCapError: "error class",
   GenerationUnchargedCostCapError: "error class",
+  // Audit P3-R2/R3/A4.
+  GenerationWindowCostCapError: "error class",
+  GenerationHeldError: "error class",
+  HeldDraftUnavailableError: "error class",
+  LlmInputTooLargeError:
+    "error class (from @respin/llm — the assembled-input ceiling's refusal, re-exported as a value for `instanceof`)",
   ModeNotInPlanError: "error class",
   UnpricedOperationError: "error class",
   // Slice 7.
@@ -227,11 +250,40 @@ const NOT_DB_FACING: Record<string, string> = {
     "pure lookup in the MODE_TIERS record — no query, no workspace data (R14)",
   modesIncludedIn:
     "pure derivation of the per-tier view from the same record — no query (R13)",
+  offeredInStudio:
+    "pure lookup of `MODE_SPECS[id].similarityGated` — no query, no config, no workspace data (Phase 6 compliance gate)",
+  studioModeOffers:
+    "pure: `modeOffers` filtered by `offeredInStudio`, so Studio's picker omits the modes that run only from /trends. No query, no config, no workspace data (Phase 6 compliance gate)",
   modeOffers:
     "pure: `assertModeAllowed` read FORWARDS, over the same two authorities in the same order (the plan map here, IMPLEMENTED_MODES in @respin/modes) plus `modeLabel`. No query, no config, no workspace data — it is handed a resolved tier, like everything else in mode-access.ts. It exists so the mode picker in app/** is not a second derivation of the gate that refuses it (slice 7, R1/R13/R14)",
   privateFrameworkEntitlement:
     "pure lookup in the TIER_PRIVATE_FRAMEWORKS record. The tier it is handed comes from getWorkspaceBillingState, which is the one authority and IS covered below (R5c/REQ-D05)",
   GenerationAssemblyError: "error class (re-exported from @respin/modes)",
+  // R-148 (launch L1): raised by `generate` for a creative form or filming
+  // limit it will not act on, before any claim or provider call.
+  CreativeRequestError: "error class (re-exported from @respin/modes)",
+  // P1-R1's disclosure substitution (`presented-output.ts`), on the app facade
+  // since the audit's first remediation pass and enumerated here by launch L1,
+  // which owns the module. Neither has a workspace dimension, and the case
+  // "presented-output.ts owns no query" below CHECKS that rather than trusting
+  // these sentences.
+  presentedDisclosure:
+    "pure — takes no argument and returns the constant kind-only `{ kind: \"policy_check_required\" }`; no query, no scope, no workspace data (P1-R1)",
+  presentedEventConfirmation:
+    "pure — returns the server-authored confirmation item for every version-2 output the caller holds, or null for a legacy one; no query, no scope, no workspace data (R-150 point 3)",
+  presentedFilming:
+    "pure — reads the server's structural `serverChecks` off an already-parsed, in-memory output the caller holds and renders them as `[check]`; no query, no scope, no workspace data (R-148 point 3, R-150 point 2)",
+  presentedShotMap:
+    "pure — reads the server's structural shot-map decisions off an already-parsed, in-memory output the caller holds; no query, no scope, no workspace data (R-150 point 2)",
+  presentedTextUnits:
+    "pure — filters `outputTextUnits` of an already-parsed, in-memory `ScriptOutput` the caller holds, dropping the model's `/disclosure/` units; no query, no scope, no workspace data (P1-R1)",
+  // The v1 tier-checkout rollout fence's read projection, on the facade as
+  // `respinCredits.getTierCheckoutProtocolState`. The `getAutoTopupProtocolState`
+  // reason, one rollout over: `tier_checkout_protocol_rollouts` is a global
+  // singleton keyed by the constant `TIER_CHECKOUT_PROTOCOL` and has no
+  // workspace column (`billing-schema.ts`), so there is no A-vs-B dimension.
+  getTierCheckoutProtocolState:
+    "global singleton rollout-state read — one `tier_checkout_protocol_rollouts` row keyed by the constant protocol id, a table with no workspace column; it reads no workspace row, so there is no A-vs-B isolation dimension",
   KillTestError: "error class (re-exported from @respin/modes)",
   NoCreatorRulesError: "error class (re-exported from @respin/modes)",
   SpinSimilarityError: "error class (re-exported from @respin/modes)",
@@ -250,7 +302,7 @@ const NOT_DB_FACING: Record<string, string> = {
   freeAllowanceExpiry:
     "pure function — the first instant of the next UTC calendar month (R17's no-rollover expiry)",
   hashRequest:
-    "pure function — sha256 over SIX strings the caller already holds (slice 7 added `parentGenerationId`); no query, and deliberately no creator identifier in it",
+    "pure function — sha256 over the request fields the caller already holds (slice 7 added `parentGenerationId`, slice 8 the Spin reference, R-148 the creative half); no query, and deliberately no creator identifier in it",
   planIncludesMode:
     "pure predicate over the MODE_TIERS map and a resolved tier — no query, no workspace data (R18)",
   assertModeAllowed:
@@ -309,11 +361,22 @@ const NOT_DB_FACING: Record<string, string> = {
   PackPriceNotMappedError: "error class",
   PackPriceUnavailableError: "error class",
   PackPriceMismatchError: "error class",
+  TierPriceUnavailableError: "error class",
+  TierPriceMismatchError: "error class",
+  TierPriceChangedError: "error class",
   // Audit 2026-08-17 remediation (R2) — the `incomplete` remedy's refusals.
   InvoiceRecoveryUnavailableError: "error class",
   NotRecoverableError: "error class",
   getDbNow: "clock read — no workspace data",
   takeWorkspaceLock: "lock primitive — keyed by the id it is given",
+  // Audit Phase 8 (R-177): the non-blocking try and the ordered helper — lock
+  // primitives over the ids they are given; no row is read.
+  tryWorkspaceLock: "lock primitive — keyed by the id it is given",
+  takeWorkspaceLockInOrder: "lock primitive — keyed by the ids it is given",
+  BalanceIsolationError: "error class",
+  // P8-R5: the Stripe customer idempotency key — a pure string over the id and
+  // email it is given.
+  customerIdempotencyKey: "pure — sha256 over the email it is handed; no query",
   assertWriteClock: "guard — covered via debit/adjust/pause cases",
   getWebhookSecret: "env read — no query",
   isStripeConfigured:
@@ -326,6 +389,8 @@ const NOT_DB_FACING: Record<string, string> = {
     "pure receipt-time classification over workspace/customer ids already resolved by the webhook — no query, scope mint, or workspace access",
   modeLabel:
     "pure lookup in `MODE_SPECS` — a mode id in, a creator-facing name out; no query, no config read, no workspace data. Re-exported from the app facade because `@respin/modes` is denied to app/** (R-64) and a label map living in a view would be a second mode vocabulary (slice 6, R17a)",
+  tierPricesCents:
+    "returns the frozen subscription price table `stripe:setup` creates the Stripe prices from — no query, no config read, no workspace data. Re-exported from the app facade so the public pricing cards state the same numbers rather than a literal of their own (audit P6-A3, R-175)",
   // `getStripe` and `setupStripeProducts` used to be listed here. Neither is
   // on the enumerated public surface — `getStripe` lives in the INTERNAL
   // adapter module and the setup export is actually named `stripeSetup` — so
@@ -352,9 +417,22 @@ const STRIPE_BOUND: Record<string, string> = {
     "keyless up to the subscriptions read — covered by the A-vs-B live-subscription case",
   findPaymentIntentForAttempt:
     "provider lookup over a signed opaque attempt identity; it reads no application database row and its authority matching is driven in auto-topup-rollout.test.ts",
+  // R-167: OPERATOR-wide by design, never tenant-facing. The worker's money
+  // sweep pages each flagged receipt once; the operator's list reads them all.
+  // Neither takes a scope or writes a tenant row; both return ids, types,
+  // outcomes and amounts only (tests/held-money-payload.test.ts drives both).
+  pageStripeMoneyNeedingOperator:
+    "operator-wide by design: stamps the once-only page marker on every flagged money receipt, across workspaces, for the worker's alert; no tenant row is read or written",
+  listStripeMoneyNeedingOperator:
+    "operator-wide by design: the unresolved-money list across workspaces; ids, types, outcomes and amounts only, never a payload; no tenant-facing caller",
 };
 
 const COVERED = new Set([
+  // R-165: "replayHeldStripeEvents: replaying A's held money never touches
+  // B's held rows or B's ledger" (this file) — the per-workspace replay and
+  // the worker's active-workspace sweep, both driven A-vs-B.
+  "replayHeldStripeEvents",
+  "replayHeldStripeEventsForActiveWorkspaces",
   // Phase 10a plan C2, and the named case really exists: "accepted: two
   // metered calls, one measured money fact, the bucket consumed, and no
   // tenant row anywhere" (sample-spin-spend.test.ts) asserts credit_ledger,
@@ -375,6 +453,11 @@ const COVERED = new Set([
   "runInference",
   "deriveBalance",
   "deriveBalanceInTx",
+  // Audit Phase 8 (P8-R1): the display read and its committed fold, driven
+  // A-vs-B in the named case "deriveBalance/deriveBalanceInTx/getDisplayBalance/
+  // committedFoldInTx: A's balance ignores B's rows entirely" below.
+  "getDisplayBalance",
+  "committedFoldInTx",
   "grantCredits",
   "purchasePackCredits",
   "adjustCredits",
@@ -421,11 +504,42 @@ const COVERED = new Set([
   "submitPastedReference",
   "settleParkedAutopsies",
   "pastedReferenceQuote",
+  // Launch L2 code gate (B-2): `/studio`'s lock-free reference-entrance read,
+  // with its named case "pastedReferenceInPlan reads only the given
+  // workspace's tier" below — added WITH the case.
+  "pastedReferenceInPlan",
   // Slice 9b: each has a named A-vs-B authority case below. The entitlement
   // resolver reads the workspace's billing state; runway reads pause, balance
   // and debit history through one workspace-scoped repeatable-read snapshot.
   "performanceLearningEntitlementFor",
   "usageRunwayFor",
+  // Launch L2 (R-151): the creative piece's six facade methods, each driven on
+  // two workspaces AND two profiles by the named case "creative pieces: A's
+  // selection, view, renewal and cancel never reach B's piece" below — added
+  // WITH the case, for the reason the `createProfile` entry records.
+  "selectConcept",
+  "startOwnIdea",
+  "renewCreativeOperation",
+  "cancelCreativeWork",
+  "creativePieceView",
+  "conceptContextReady",
+  // Launch L4 (R-153): the saved recording pack's four facade methods, each
+  // driven on two workspaces by the named case "saved recording packs: A's
+  // read, selection, revision and recent list never reach B's" below — added
+  // WITH the case.
+  "readSavedGeneration",
+  "selectSavedVersion",
+  "reviseSaved",
+  "recentSavedGenerations",
+  // Audit P3-A4 (R-157): the held-draft list and "Finish this draft", each
+  // driven on two workspaces AND two profiles by the named case "held drafts:
+  // A's list and Finish never reach B's held draft" below — added WITH the
+  // case. `operatorSettleCandidate` (the operator-server door) mints its scope
+  // through `withWorkspace` as the attempt's own workspace owner, and the same
+  // case drives it.
+  "heldDrafts",
+  "settleHeldAttempt",
+  "operatorSettleCandidate",
 ]);
 
 // EVERY public entrypoint, not just src/index (code-review CHANGE). The two
@@ -437,6 +551,12 @@ const FACADE_METHODS = [
 ];
 
 const FACADE_METHOD_SOURCE: Record<string, string> = {
+  // Launch L2: the two mode-setting wrappers ARE `generate` — they set the
+  // mode server-side and call `respinCredits.generate` unchanged.
+  findConcept: "generate",
+  commissionPiece: "generate",
+  // Launch L4: the saved read's facade name differs from its function's.
+  savedGeneration: "readSavedGeneration",
   getBalance: "deriveBalance",
   getBillingState: "getWorkspaceBillingState",
   // R-95 (slice 8 fix pass): the tracked-niche allowance facade composes the
@@ -460,6 +580,8 @@ const ENUMERATED: Record<string, object> = {
   "webhook-server.ts": webhookServer,
   // Phase 10b-1 Task 4: the dedicated worker's one door into this package.
   "deletion-server.ts": deletionServer,
+  // Audit P3-R1(b): the operator settle command's one door into this package.
+  "operator-server.ts": operatorServer,
   "stripe/actions.ts": stripeActions,
   "stripe/billing-contact.ts": billingContactMod,
   "stripe/customers.ts": stripeCustomers,
@@ -502,6 +624,14 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   "sample-spin/fixture.ts": {
     reason: "the checked-in fictional brain and reference, validated at load; content, no query",
     viaIndex: ["loadSampleSpinFixture", "sampleSpinContext", "SampleSpinFixtureError"],
+    // Audit P3-R8: the boot-time Kill Test check, exported from this file
+    // only so a test can hand it a planted Kill Test; pure.
+    internalOnly: ["assertSampleSpinKillTestUsable"],
+  },
+  "held-drafts.ts": {
+    reason:
+      "audit P3-A4 / P3-R1(b) (R-157): held drafts from the creator's side and the operator's. It owns NO tenant query of its own: `heldDrafts` mints the profile scope and reads the caged `heldGenerationAttempts` accessor (breach-tested in profile-scope.test.ts); `operatorSettleCandidate` reads ids and a state through `locateGenerationAttemptForOperator` (@respin/db, no candidate column), mints the workspace scope through `withWorkspace` as the workspace's own owner, and hands the settlement to `settleHeldAttempt`. Reached through app-server (`heldDrafts`) and operator-server (`operatorSettleCandidate`), both COVERED by the named case \"held drafts: A's list and Finish never reach B's held draft\".",
+    internalOnly: ["heldDrafts", "operatorSettleCandidate"],
   },
   "sample-spin/idea.ts": {
     reason: "the untrusted-idea boundary; pure",
@@ -524,6 +654,11 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
     viaIndex: [
       "deriveBalanceInTx",
       "deriveBalance",
+      // Audit Phase 8 (P8-R1): the display read and its committed fold. Both
+      // read ONE verified workspace's ledger and pause periods by the branded
+      // id `getBalance` takes; the committed fold writes nothing.
+      "getDisplayBalance",
+      "committedFoldInTx",
       // Pure period arithmetic, on the public surface so the period key and
       // the no-rollover expiry can be asserted directly rather than inferred
       // from a stored row.
@@ -625,6 +760,17 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
     // not a question a screen has.
     internalOnly: ["purposeIsIncluded", "probedCreditCostKeys"],
   },
+  "presented-output.ts": {
+    reason:
+      "P1-R1's disclosure substitution and R-148/R-150's presenters of the server's stored decisions: five PURE functions over values the caller already holds (no `@respin/db` import at all — asserted below), homed here because `app/**` may not import `@respin/modes`. Reached by `app/**` only through app-server's re-export (declared in FACADE_REEXPORTED) and by the Sample Spin's `sample-spin/run.ts` inside the package; never through index.ts. Studio and the L4 saved pack read them through one projection",
+    internalOnly: [
+      "presentedDisclosure",
+      "presentedTextUnits",
+      "presentedFilming",
+      "presentedShotMap",
+      "presentedEventConfirmation",
+    ],
+  },
   "pasted-reference.ts": {
     reason:
       "the creator-submitted autopsy's MONEY (slice 8c, R-98). Here rather than in @respin/db for the reason profiles.ts and generate.ts are: the tier gate, the active document's price and the ledger are this package's. Its three db-facing entrypoints are covered by named two-workspace cases below; its four constants carry no query; `pastedReferenceIntakePort` is composition over `submitPastedReference`. The two private ledger reads (`autopsyClaimDebit`, `autopsyRefund`) are keyed on the workspace id the minted profile carries and are exercised on both workspaces by those cases.",
@@ -632,6 +778,7 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "submitPastedReference",
       "settleParkedAutopsies",
       "pastedReferenceQuote",
+      "pastedReferenceInPlan",
       "pastedReferenceIntakePort",
     ],
   },
@@ -674,7 +821,15 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   "clock.ts": {
     reason:
       "clock/lock primitives; latestEventAt exists only to serve assertWriteClock",
-    viaIndex: ["getDbNow", "takeWorkspaceLock", "assertWriteClock"],
+    viaIndex: [
+      "getDbNow",
+      "takeWorkspaceLock",
+      "assertWriteClock",
+      // Audit Phase 8 (R-177): the non-blocking try and the ordered helper —
+      // lock primitives over the branded workspace id, no row read.
+      "tryWorkspaceLock",
+      "takeWorkspaceLockInOrder",
+    ],
     internalOnly: ["latestEventAt"],
   },
   "months.ts": {
@@ -691,6 +846,21 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "emitUnchargedAttemptCapMetric",
       "setFrameworkOfferDroppedMetricSink",
       "emitFrameworkOfferDroppedMetric",
+      // (4) Launch L2 code gate (audit P3-R5): a paid call whose spend row
+      // could not be written twice — the attempt id and four numbers, caller
+      // generate.ts. No query of its own, off src/index like its siblings.
+      "setGenerationSpendUnrecordedMetricSink",
+      "emitGenerationSpendUnrecordedMetric",
+      // (5) Audit P3-R7: auto-top-up's "money may have moved and we cannot
+      // prove it" — a source code and an attempt id, caller
+      // stripe/auto-topup.ts. No query of its own, off src/index.
+      "setAutoTopupReconciliationMetricSink",
+      "emitAutoTopupReconciliationMetric",
+      // (6) Audit Phase 3 gate (billing note): the free build's claim could
+      // not be given back after its store was refused — an attempt id and a
+      // purpose, caller inference.ts. No query of its own, off src/index.
+      "setIncludedBuildReleaseFailedMetricSink",
+      "emitIncludedBuildReleaseFailedMetric",
     ],
   },
   "infer-voice.ts": {
@@ -716,6 +886,8 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "PostCallDebitError",
       "WorkspacePausedError",
       "ClockSkewError",
+      // Audit Phase 8 (P8-A2): the locked fold's isolation refusal.
+      "BalanceIsolationError",
       // Slice 6. Every generation refusal, on the public surface for exactly
       // the reason its siblings are: `app/(product)/billing-errors.ts` matches
       // on `instanceof`, and a class reachable from a facade method but absent
@@ -731,7 +903,19 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       // `respinCredits.generate` raises it, so `app/**` must be able to
       // `instanceof` it or the refusal renders as "Something went wrong".
       "GenerationUnchargedCostCapError",
+      // Audit P3-R3 / P3-A4: raised by `respinCredits.generate` and
+      // `respinCredits.settleHeldAttempt`, rendered on `instanceof`.
+      "GenerationWindowCostCapError",
+      "GenerationHeldError",
+      "HeldDraftUnavailableError",
       "UnpricedOperationError",
+      // Launch L2 (R-151). Both raised by `respinCredits.generate` before any
+      // claim, so `app/**` must be able to `instanceof` them.
+      "GenerationQuoteChangedError",
+      "ConceptContextInsufficientError",
+      // Launch L4 (R-153). Raised by `respinCredits.reviseSaved` before any
+      // claim, so `app/**` must be able to `instanceof` it.
+      "RevisionPresetError",
       // Slice 7 (R6/R8). The pre-call revision refusal — same reason again:
       // `respinCredits.generate` can raise it, so `app/**` must be able to
       // `instanceof` it or a named refusal about somebody else's output
@@ -826,7 +1010,7 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   "generate.ts": {
     reason:
       "the COMPOSED GENERATION (slice 6). Here rather than in @respin/db for the same layering reason as profiles.ts and inference.ts: it needs the resolved tier (state.ts), the active config, the ledger and the scoped write capabilities, and @respin/db can see only the last. It owns NO query of its own — every db touch is a caged accessor, a write capability, `debitCredits` or `deriveBalance*`, each isolated where it lives. `generate` itself reaches app/** through app-server.ts, which IS enumerated; `hashRequest` is pure and is on the public surface so the payload identity can be asserted without a database. Slice 7 added the framework read (`scope.accessors.eligibleFrameworks()`, a caged accessor breach-tested in profile-scope.test.ts) and the revision's parent read (`caps.readGenerationForAttempt`, an already-isolated write capability) — both somebody else's authority, so the sentence above still holds.",
-    viaIndex: ["generate", "generationOp", "hashRequest"],
+    viaIndex: ["generate", "generationOp", "hashRequest", "settleHeldAttempt"],
     internalOnly: [
       // Phase 10a: the brain flatten and the Kill Test rule projection, as
       // content-level helpers the public Sample Spin's fixture reuses. Pure.
@@ -846,7 +1030,46 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       // creator typed), not for a caller.
       "reportedSpecificsOf",
       "unvouchedSpecifics",
+      // Launch L2 (R-151): PURE helpers. `intentHashOf` is the client-intent
+      // hash (exported so its identity can be asserted without a database);
+      // `storedConceptOf` parses an ALREADY-FETCHED generation row (the
+      // scoped read is the caller's) and is shared with creative-work.ts so
+      // selection and commission resolve a concept identically;
+      // `conceptInput` composes material; `conceptContextSufficient` is the
+      // deterministic no-concept rule over already-read brain sentences.
+      "intentHashOf",
+      "storedConceptOf",
+      "conceptInput",
+      "conceptContextSufficient",
     ],
+  },
+  "creative-work.ts": {
+    reason:
+      "the creative piece from the creator's side (launch L2, R-151). It owns NO query of its own: every db touch is `mintProfileScope`, a caged accessor, a write capability (`readGenerationForAttempt`, `createCreativePiece`, `readCreativePiece`, `renewCreativePieceOperation`, `cancelCreativePiece` — breach-tested in profile-scope.test.ts and creative-work.test.ts) or `getWorkspaceBillingState`; it takes no workspace money lock (no balance read). Reached by app/** only through app-server's six facade methods, each COVERED by the named case \"creative pieces: A's selection, view, renewal and cancel never reach B's piece\" below.",
+    internalOnly: [
+      "selectConcept",
+      "startOwnIdea",
+      "renewCreativeOperation",
+      "cancelCreativeWork",
+      "creativePieceView",
+      "conceptContextReady",
+    ],
+  },
+  "saved-generation.ts": {
+    reason:
+      "launch L4 (R-153): the saved recording pack from the creator's side. It owns NO query of its own: every db touch is `mintProfileScope`, a caged accessor (`profile`, `generationsNewest`), a write capability (`readGenerationForAttempt`, `readGenerationAttempt`, `readSavedGenerationContext`, `selectCreativePieceVersion` — breach-tested in creative-work.test.ts), `spinReferenceSummaryForProfile` (a ProfileScope reader in trends-storage.ts that asserts the scope first and applies the same rights predicate as `spinReferenceForProfile`), `getWorkspaceBillingState`, or a GLOBAL config read — `getActiveConfig` and `configVersionContents` (the quote and its bound version; config rows belong to no tenant and carry no tenant data); it takes no workspace money lock and builds no provider for a read. `reviseSaved` hands the revision to `generate`. Reached by app/** only through app-server's four facade methods, each COVERED by the named case \"saved recording packs: A's read, selection, revision and recent list never reach B's\" below. `readSavedKillTest` is a PURE validator over an already-read jsonb value.",
+    internalOnly: [
+      "readSavedGeneration",
+      "selectSavedVersion",
+      "reviseSaved",
+      "recentSavedGenerations",
+      "readSavedKillTest",
+    ],
+  },
+  "recent-context.ts": {
+    reason:
+      "launch L3 (R-152): the bounded, labelled recent work one concept or script prompt carries. PURE — it owns NO query: the scoped read is `scope.accessors.recentContextCandidates` and the settlement's presence check is `scope.accessors.recentContextPresent`, both in @respin/db, both predicated on BOTH scope columns of every table they touch and breach-tested in profile-scope.test.ts (the P4 loops plus \"L3: the recent-context reads refuse a cross-parented row, table by table\") and end to end in recent-context.test.ts case 2. `buildRecentContext` turns already-read rows into labelled text and a content-free snapshot; `recentContextIdsOf` reads a claim the caller already holds. Reached by app/** only through `generate`.",
+    internalOnly: ["buildRecentContext", "recentContextIdsOf"],
   },
   "mode-access.ts": {
     reason:
@@ -857,6 +1080,8 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
       "modeTiers",
       "modesIncludedIn",
       "modeOffers",
+      "offeredInStudio",
+      "studioModeOffers",
       "privateFrameworkEntitlement",
       "trackedNicheEntitlement",
       "performanceLearningEntitlementFor",
@@ -888,6 +1113,27 @@ const INTERNAL_MODULES: Record<string, InternalModule> = {
   "stripe/setup-cli.ts": {
     reason: "CLI entrypoint for the above — importing it would run it",
     noImport: true,
+  },
+  "stripe/tier-prices.ts": {
+    reason:
+      "the subscription price table (audit P6-A3, R-175): a frozen constant and its read, no query and no workspace data. `stripe:setup` creates the Stripe prices from it and the marketing page states them through the app facade's `tierPricesCents`",
+    internalOnly: ["tierPricesCents"],
+  },
+  "stripe/price-allowlist.ts": {
+    reason:
+      "the Stripe price allowlist and the Checkout currency pin (Phase 6 final billing check): pure data and one pure evaluator over a price object the caller already read — no query, no Stripe call, no workspace data. Package-private: its readers are the tier and pack price checks, `stripe:setup`, the two Checkout Session creates and the auto-top-up PaymentIntent",
+    internalOnly: ["priceDefect"],
+  },
+  "stripe/tier-price.ts": {
+    reason:
+      "the tier Checkout's price check (Phase 6 billing gate, R-175): reads the GLOBAL active config's price map and Stripe's Price object, writes nothing and touches no workspace-scoped table. Package-private: its one caller is `createTierCheckoutUrl`, which runs it before reserving anything. The two errors reach app/** through the app-server facade",
+    internalOnly: [
+      "resolveTierPrice",
+      "tierPriceDefect",
+      "TierPriceUnavailableError",
+      "TierPriceMismatchError",
+      "TierPriceChangedError",
+    ],
   },
   "stripe/pack-price.ts": {
     reason:
@@ -992,6 +1238,9 @@ const INTERNAL_NAMESPACES: Record<string, object> = {
   "stripe/auto-topup-v1-reconcile.ts": autoTopupV1ReconcileMod,
   "stripe/setup.ts": setupMod,
   "stripe/pack-price.ts": packPriceMod,
+  "stripe/tier-prices.ts": tierPricesMod,
+  "stripe/tier-price.ts": tierPriceMod,
+  "stripe/price-allowlist.ts": priceAllowlistMod,
   "stripe/pack-checkout-authority.ts": packCheckoutAuthorityMod,
   "stripe/tier-checkout-authority.ts": tierCheckoutAuthorityMod,
   "stripe/tier-checkout-rollout.ts": tierCheckoutRolloutMod,
@@ -1001,6 +1250,11 @@ const INTERNAL_NAMESPACES: Record<string, object> = {
   "mode-label.ts": modeLabelMod,
   "included-build.ts": includedBuildMod,
   "pasted-reference.ts": pastedReferenceMod,
+  "presented-output.ts": presentedOutputMod,
+  "creative-work.ts": creativeWorkMod,
+  "saved-generation.ts": savedGenerationMod,
+  "held-drafts.ts": heldDraftsMod,
+  "recent-context.ts": recentContextMod,
 };
 
 /**
@@ -1016,12 +1270,24 @@ const FACADE_REEXPORTED: Record<string, string> = {
     "answers the keyless question the same way the adapter does, so the page's disabled state and the action's refusal cannot drift. An env read, no query, no workspace data.",
   burnPeriod:
     "R7 (slice 2b): a pure function over a subscription row `/usage` has already read, the tier it has already resolved, and a clock — no query of its own, so re-exporting it costs nothing tenancy-wise and saves the page from re-deriving the period-anchor rule itself.",
+  tierPricesCents:
+    "audit P6-A3 (R-175): the public pricing cards state the subscription prices from the same frozen table `stripe:setup` creates them from, instead of a literal in the copy. Pure: no query, no config read, no workspace data.",
   modeLabel:
     "R17a (slice 6): the ONE route from app/** to `MODE_SPECS[…].label`. `@respin/modes` is denied to app/** (R-64), so without this re-export the by-mode panel would either print raw mode ids or grow a hand-written label map — a second mode vocabulary that goes stale the day slice 7 adds six modes. Pure: a string in, a string out, no query and no workspace data.",
   getWebhookSecret:
       "the SIGNATURE-VERIFICATION secret, reached only through the WEBHOOK facade — which is allowlisted to app/api/stripe/webhook/** alone, not to app/** at large (see app-server.ts's header for why that distinction exists). The route needs it to call the SDK's static constructEvent BEFORE any handler runs; it performs no query and touches no workspace data.",
   mayChargeOffSession:
     "the one pure off-session-chargeability predicate. The billing page needs the same answer as maybeAutoTopup so it does not present a dead control; it receives a row already scoped by the server and performs no query or mutation.",
+  presentedDisclosure:
+    "P1-R1: the ONE disclosure a product surface may present — a kind, never the model's prose. `app/**` cannot import `@respin/modes`, so the substitution reaches the presenters through this facade; it takes no argument and performs no query.",
+  presentedTextUnits:
+    "P1-R1: every creator-facing text unit minus the model's disclosure, as ONE filter both product presenters and the Sample Spin share. Pure over an output the caller already holds; no query, no scope.",
+  presentedFilming:
+    "R-148 point 3, R-150 point 2: the ONE reading of which filming resources the server's stored `serverChecks` mark unconfirmed. Studio and the L4 saved pack (page and export) read it through one projection, so they cannot disagree. Pure over an output the caller already holds; no query, no scope.",
+  presentedShotMap:
+    "R-150 point 2: the ONE reading of which shot-map lines the server's stored `serverChecks` mark unconfirmed. Studio and the L4 saved pack read it through one projection. Pure over an output the caller already holds; no query, no scope.",
+  presentedEventConfirmation:
+    "R-150 point 3: the server-authored confirmation item, for EVERY version-2 output (null for a legacy one). Studio and the L4 saved pack read it through one projection. Pure over an output the caller already holds; no query, no scope.",
 };
 
 it("INTERNAL_MODULES claims are CHECKED, not prose (tenancy round-7 NOTE)", () => {
@@ -1108,6 +1374,109 @@ it("INTERNAL_MODULES claims are CHECKED, not prose (tenancy round-7 NOTE)", () =
  * Source-level, like the retention scan, and for the same reason: the risk is a
  * name nothing calls, which no type can flag.
  */
+it("presented-output.ts owns no query — its NOT_DB_FACING reasons are CHECKED, not prose (launch L1)", async () => {
+  // The two reasons above say "no query, no scope". A reason is a claim about
+  // a module, so it is checked against the module (CLAUDE.md, 2026-07-30): the
+  // source imports nothing from `@respin/db` and nothing that reaches a
+  // connection, and the two functions behave as the reasons describe.
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { resolve, dirname } = await import("node:path");
+  const src = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../src/presented-output.ts"),
+    "utf8"
+  );
+  const specifiers = [...src.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
+  expect(specifiers.length, "the scan read no import at all").toBeGreaterThan(0);
+  // The two PURE packages only: the pipeline's own types and functions, and
+  // `@respin/llm` for the `[check]` marker constant. Neither opens a connection.
+  expect(specifiers.every((s) => s === "@respin/modes" || s === "@respin/llm")).toBe(true);
+  // NON-VACUITY of the scan: the same pattern sees a planted db import.
+  expect(
+    [..."import { x } from \"@respin/db\";".matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])
+  ).toEqual(["@respin/db"]);
+  expect(presentedOutputMod.presentedDisclosure()).toEqual({
+    kind: "policy_check_required",
+  });
+  const units = presentedOutputMod.presentedTextUnits({
+    hooks: [
+      { text: "a", mechanic: "x" },
+      { text: "b", mechanic: "y" },
+      { text: "c", mechanic: "z" },
+    ],
+    whyThisPerforms: { reasoning: "r", weakestPoint: "w" },
+    disclosure: { platform: "p", guidance: "g" },
+  });
+  expect(units.length).toBeGreaterThan(0);
+  expect(units.some((u) => u.field.startsWith("/disclosure/"))).toBe(false);
+  // THE SERVER'S STRUCTURAL DECISION IS WHAT MARKS AN ITEM (R-150 point 2):
+  // the model's text is unmarked, the flag is `serverChecks`, and the
+  // presenter is where `[check]` appears. A model's own marker is kept as
+  // written and not doubled.
+  const v2 = {
+    contractVersion: 2,
+    requestedForm: "auto",
+    ideas: [
+      {
+        hook: "h",
+        thesis: "t",
+        form: "explain_opinion",
+        framework: "f",
+        frameworkProvenance: "custom",
+        premise: { whatHappens: "w", interest: "i", payoff: "p", basis: { kind: "none" } },
+        filming: { location: "kitchen", equipment: ["drone", "tripod [check]", "phone"], people: "solo", minutes: 5 },
+      },
+    ],
+    whyThisPerforms: { reasoning: "r", weakestPoint: "w" },
+    disclosure: { platform: "p", guidance: "g" },
+    serverChecks: { filming: [{ at: "/ideas/0", location: false, equipment: [0, 1] }], shotMap: [] },
+  } as unknown as Parameters<typeof presentedOutputMod.presentedFilming>[0];
+  expect(presentedOutputMod.presentedFilming(v2, "/ideas/0")).toEqual({
+    location: { text: "kitchen", unconfirmed: false },
+    equipment: [
+      { text: "drone [check]", unconfirmed: true },
+      { text: "tripod [check]", unconfirmed: true },
+      { text: "phone", unconfirmed: false },
+    ],
+    people: "solo",
+    minutes: 5,
+  });
+  // FAIL-CLOSED: no server checks at all presents every resource as unconfirmed.
+  const unstamped = { ...v2, serverChecks: undefined } as typeof v2;
+  expect(
+    presentedOutputMod.presentedFilming(unstamped, "/ideas/0").equipment.every((e) => e.unconfirmed)
+  ).toBe(true);
+  expect(() => presentedOutputMod.presentedFilming(v2, "/ideas/7")).toThrow(/no filming plan/);
+  // R-150 point 3 (round-3 gate): EVERY v2 output carries the item — this one
+  // is an explanation with no basis and no narrated event — and a legacy one
+  // never does.
+  expect(presentedOutputMod.presentedEventConfirmation(v2)).toBe(
+    "Before you film: confirm every event and result here really happened (or will be filmed as shown), or mark it [check]."
+  );
+  expect(
+    presentedOutputMod.presentedEventConfirmation({
+      hooks: [{ text: "a", mechanic: "x" }],
+      whyThisPerforms: { reasoning: "r", weakestPoint: "w" },
+      disclosure: { platform: "p", guidance: "g" },
+    } as unknown as Parameters<typeof presentedOutputMod.presentedEventConfirmation>[0])
+  ).toBeNull();
+});
+
+it("getTierCheckoutProtocolState's exclusion is CHECKED: the rollout table has no workspace or profile column (round-1 tenancy Low)", async () => {
+  // The NOT_DB_FACING reason says this read has no A-vs-B dimension because
+  // `tier_checkout_protocol_rollouts` is a global singleton with no workspace
+  // column. A reason is a claim about a table, so the table is read.
+  const { getTableConfig } = await import("drizzle-orm/pg-core");
+  const { tierCheckoutProtocolRollouts } = await import("@respin/db");
+  const columns = getTableConfig(tierCheckoutProtocolRollouts).columns.map((c) => c.name);
+  expect(columns, "the scan read no column at all").toContain("protocol");
+  expect(columns.filter((c) => /workspace|profile|user/.test(c))).toEqual([]);
+  // NON-VACUITY: the same filter sees a workspace column where one exists.
+  expect(
+    getTableConfig(subscriptions).columns.map((c) => c.name).filter((c) => /workspace/.test(c))
+  ).toEqual(["workspace_id"]);
+});
+
 it("every internalOnly name is actually READ inside the package", async () => {
   const { readdirSync, readFileSync, statSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
@@ -1377,7 +1746,7 @@ function reauthenticationFor(scope: WorkspaceScope) {
 }
 
 describe("cross-workspace isolation (A must never see or be moved by B)", () => {
-  it("deriveBalance/deriveBalanceInTx: A's balance ignores B's rows entirely", async () => {
+  it("deriveBalance/deriveBalanceInTx/getDisplayBalance/committedFoldInTx: A's balance ignores B's rows entirely", async () => {
     const db = await createTestDb();
     const { A, B } = await twoWorkspaces(db);
     await tx(db, async (t) => {
@@ -1392,6 +1761,36 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     });
     expect((await credits.deriveBalance(db, A)).balance).toBe(10);
     expect((await credits.deriveBalance(db, B)).balance).toBe(999);
+    // P8-R1: the display read (locked branch) and the committed fold read A's
+    // LEDGER rows only, and B's only for B. (Their PAUSE reads are the next case.)
+    expect((await credits.getDisplayBalance(db, A)).balance).toBe(10);
+    expect((await credits.getDisplayBalance(db, B)).balance).toBe(999);
+    expect((await tx(db, (t) => credits.committedFoldInTx(t, A))).balance).toBe(10);
+    expect((await tx(db, (t) => credits.committedFoldInTx(t, B))).balance).toBe(999);
+  });
+
+  it("committedFoldInTx: B's OPEN PAUSE never freezes A's lot — A's expired lot stays out of A's number (gate M3)", async () => {
+    // `loadCommittedHistory` reads `pause_periods` by workspace id. A pause in
+    // B that leaked into A's fold would freeze A's clock, keep A's expired lot
+    // live and put it back in A's balance. The getDisplayBalance FALLBACK runs
+    // this same function; its locked-out branch is driven on real Postgres in
+    // `balance-contention.docker.test.ts` ("gate M3").
+    const db = await createTestDb();
+    const { A, B } = await twoWorkspaces(db);
+    const now = Date.now();
+    await db.insert(schema.creditLedger).values([
+      // A: one lot already past its expiry (no expiry row written), one live.
+      { workspaceId: A, delta: 40, kind: "grant", createdAt: new Date(now - 48 * HOUR), expiresAt: new Date(now - HOUR), refType: "test", refId: "a-expired" },
+      { workspaceId: A, delta: 7, kind: "grant", createdAt: new Date(now - 48 * HOUR), expiresAt: new Date(now + 24 * HOUR), refType: "test", refId: "a-live" },
+    ]);
+    // B: an open pause that began BEFORE A's lot expired.
+    await db.insert(schema.pausePeriods).values({ workspaceId: B, startedAt: new Date(now - 47 * HOUR) });
+    const viewA = await tx(db, (t) => credits.committedFoldInTx(t, A));
+    expect(viewA.balance).toBe(7);
+    expect(viewA.lots.every((l) => l.frozen === false)).toBe(true);
+    // Non-vacuity: the SAME pause in A does freeze it, so the case can tell.
+    await db.insert(schema.pausePeriods).values({ workspaceId: A, startedAt: new Date(now - 47 * HOUR) });
+    expect((await tx(db, (t) => credits.committedFoldInTx(t, A))).balance).toBe(47);
   });
 
   it("debitCredits: A's debit consumes only A's lots; B's balance untouched; A cannot spend B's credits", async () => {
@@ -2001,6 +2400,191 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
   const ledgerOf = async (db: TestDb, ws: VerifiedWorkspaceId) =>
     (await db.select().from(creditLedger)).filter((r) => r.workspaceId === (ws as string));
 
+  it("creative pieces: A's selection, view, renewal and cancel never reach B's piece", async () => {
+    // Launch L2 (R-151). The six facade methods, driven on TWO workspaces: a
+    // stored concept batch for each profile, written raw (the generation path
+    // has its own suites), then every method aimed across the boundary.
+    const db = await createTestDb();
+    const { A, B, ownerA, ownerB, profA, profB } = await twoPaidWorkspaces(db, 100);
+    const ideation = (ws: VerifiedWorkspaceId, profileId: string, attemptId: string) =>
+      db.transaction(async (t) => {
+        await t.insert(schema.generationAttempts).values({
+          profileId, workspaceId: ws, attemptId, purpose: "generation", mode: "ideation",
+          payloadSha256: "a".repeat(64),
+        });
+        await t.insert(schema.generations).values({
+          profileId, workspaceId: ws, attemptId, mode: "ideation",
+          brainActivationId: "00000000-0000-4000-8000-000000000001",
+          request: { input: "x" }, model: "m", promptBundleVersion: "b", configVersion: 1,
+          outcome: "usable", output: legacyIdeas(), weakestPoint: "w",
+          killTest: { finalAttempt: { traceability: [] } },
+        });
+      });
+    await ideation(A, profA.id, "iso-ideas-a");
+    await ideation(B, profB.id, "iso-ideas-b");
+    // B's own brain confirms a Strategy claim; A has no brain at all.
+    const [strategyB] = await db.insert(schema.brainDocs).values({
+      profileId: profB.id, workspaceId: B, kind: "strategy", version: 1,
+      content: { audience: "people who film alone", positioning: "plain craft", pillars: ["lighting"] },
+      reason: "Version 1: you edited this document.", status: "active",
+      sourceEvidence: [{ field: "/audience", quote: "c", inputId: "00000000-0000-4000-8000-000000000001", startUtf16: 0, endUtf16: 1 }],
+      confirmedAt: new Date(), confirmedContentSha256: "0".repeat(64), activatedAt: new Date(),
+    }).returning();
+    await db.insert(schema.brainActivationSnapshots).values({
+      profileId: profB.id, workspaceId: B, strategyDocId: strategyB.id,
+    });
+
+    const pieceA = await creativeWorkMod.selectConcept(
+      db, ownerA, profA.id, { sourceAttemptId: "iso-ideas-a", ideaIndex: 1 }, new Date()
+    );
+    const pieceB = await creativeWorkMod.startOwnIdea(
+      db, ownerB, profB.id, { idea: "B's own idea" }, new Date()
+    );
+    const rows = await db.select().from(schema.creativePieces);
+    expect(rows.find((r) => r.id === pieceA.pieceId)?.workspaceId).toBe(A as string);
+    expect(rows.find((r) => r.id === pieceB.pieceId)?.workspaceId).toBe(B as string);
+    // A cannot choose B's concept, view, renew or cancel B's piece — one
+    // refusal, the not-found one, for every reach (no enumeration oracle).
+    const reach = async (run: () => Promise<unknown>) => {
+      try {
+        await run();
+        return "reached";
+      } catch (e) {
+        return e instanceof CreativePieceError ? e.reason : String(e);
+      }
+    };
+    expect(await reach(() => creativeWorkMod.selectConcept(db, ownerA, profA.id, { sourceAttemptId: "iso-ideas-b", ideaIndex: 0 }, new Date()))).toBe("not_found");
+    expect(await reach(() => creativeWorkMod.creativePieceView(db, ownerA, profA.id, pieceB.pieceId, new Date()))).toBe("not_found");
+    expect(await reach(() => creativeWorkMod.renewCreativeOperation(db, ownerA, profA.id, { pieceId: pieceB.pieceId, expectedVersion: pieceB.version }, new Date()))).toBe("not_found");
+    expect(await reach(() => creativeWorkMod.cancelCreativeWork(db, ownerA, profA.id, { pieceId: pieceB.pieceId, expectedVersion: pieceB.version }, new Date()))).toBe("not_found");
+    const [bAfter] = await db.select().from(schema.creativePieces).where(eq(schema.creativePieces.id, pieceB.pieceId));
+    expect(bAfter.version).toBe(pieceB.version);
+    expect(bAfter.state).toBe("selected");
+    expect(bAfter.operationAttemptId).toBe(pieceB.operationAttemptId);
+    // NON-VACUITY: the same moves on one's OWN piece land.
+    const renewed = await creativeWorkMod.renewCreativeOperation(db, ownerB, profB.id, { pieceId: pieceB.pieceId, expectedVersion: pieceB.version }, new Date());
+    expect(renewed.operationAttemptId).not.toBe(pieceB.operationAttemptId);
+    const cancelled = await creativeWorkMod.cancelCreativeWork(db, ownerA, profA.id, { pieceId: pieceA.pieceId, expectedVersion: pieceA.version }, new Date());
+    expect(cancelled.state).toBe("cancelled");
+    // The no-concept readiness reads each profile's OWN activated Strategy.
+    expect(await creativeWorkMod.conceptContextReady(db, ownerA, profA.id)).toBe(false);
+    expect(await creativeWorkMod.conceptContextReady(db, ownerB, profB.id)).toBe(true);
+    // Nothing here spent: neither ledger holds a debit.
+    expect((await ledgerOf(db, A)).filter((r) => r.kind === "debit")).toHaveLength(0);
+    expect((await ledgerOf(db, B)).filter((r) => r.kind === "debit")).toHaveLength(0);
+  });
+
+  it("held drafts: A's list and Finish never reach B's held draft (audit P3-A4)", async () => {
+    // The two facade methods and the operator door, driven on TWO workspaces.
+    // B holds a `vendor_complete` attempt (the candidate is an envelope this
+    // build cannot read, so nothing here can ever settle it into money).
+    const db = await createTestDb();
+    const { A, B, ownerA, ownerB, profA, profB } = await twoPaidWorkspaces(db, 100);
+    await db.insert(schema.generationAttempts).values({
+      profileId: profB.id, workspaceId: B, attemptId: "iso-held-b", purpose: "generation",
+      mode: "hooks", payloadSha256: "b".repeat(64), state: "vendor_complete",
+      vendorStartedAt: new Date(), vendorCompletedAt: new Date(),
+      candidate: { v: 999, secret: "B's held words" },
+    });
+    const reach = async (run: () => Promise<unknown>) => {
+      try {
+        await run();
+        return "reached";
+      } catch (e) {
+        return (e as Error).name;
+      }
+    };
+    // A's own list is empty, and A cannot list B's profile at all.
+    expect(await heldDraftsMod.heldDrafts(db, ownerA, profA.id)).toEqual([]);
+    expect(await reach(() => heldDraftsMod.heldDrafts(db, ownerA, profB.id))).toBe("ProfileAccessError");
+    // "Finish this draft" with B's attempt id, from A's own profile: the
+    // scoped read finds nothing — one refusal for foreign and unknown alike.
+    expect(await reach(() => credits.settleHeldAttempt(db, ownerA, profA.id, "iso-held-b", new Date()))).toBe("HeldDraftUnavailableError");
+    expect(await reach(() => credits.settleHeldAttempt(db, ownerA, profA.id, "no-such-attempt", new Date()))).toBe("HeldDraftUnavailableError");
+    // ...and naming B's PROFILE with A's scope: the cage refuses first.
+    expect(await reach(() => credits.settleHeldAttempt(db, ownerA, profB.id, "iso-held-b", new Date()))).toBe("ProfileAccessError");
+    // B's draft is untouched by every reach above.
+    const [held] = await db.select().from(schema.generationAttempts).where(eq(schema.generationAttempts.attemptId, "iso-held-b"));
+    expect(held).toMatchObject({ state: "vendor_complete", workspaceId: B as string });
+    expect(held!.candidate).not.toBeNull();
+    // NON-VACUITY: B lists its own held draft — ids, mode and time only.
+    const own = await heldDraftsMod.heldDrafts(db, ownerB, profB.id);
+    expect(own.map((d) => d.attemptId)).toEqual(["iso-held-b"]);
+    expect(JSON.stringify(own)).not.toContain("held words");
+    // THE OPERATOR DOOR acts in the attempt's OWN workspace, as its owner: an
+    // unknown id is `not_found`; B's unreadable candidate is refused as
+    // `recovery_required` — and neither workspace was charged.
+    expect(await heldDraftsMod.operatorSettleCandidate(db, "no-such-attempt", new Date())).toMatchObject({ code: "not_found" });
+    const operator = await heldDraftsMod.operatorSettleCandidate(db, "iso-held-b", new Date());
+    expect(operator).toMatchObject({ code: "recovery_required", attemptId: "iso-held-b" });
+    expect(JSON.stringify(operator)).not.toContain("held words");
+    expect((await ledgerOf(db, A)).filter((r) => r.kind === "debit")).toHaveLength(0);
+    expect((await ledgerOf(db, B)).filter((r) => r.kind === "debit")).toHaveLength(0);
+  });
+
+  it("saved recording packs: A's read, selection, revision and recent list never reach B's", async () => {
+    // Launch L4 (R-153). The four facade methods, driven on TWO workspaces: a
+    // stored hooks draft and a scripted piece in B, written raw, then every
+    // method aimed across the boundary with a provider that must never run.
+    const db = await createTestDb();
+    const { A, B, ownerA, ownerB, profA, profB } = await twoPaidWorkspaces(db, 100);
+    const stored = (ws: VerifiedWorkspaceId, profileId: string, attemptId: string, request: object) =>
+      db.transaction(async (t) => {
+        await t.insert(schema.generationAttempts).values({
+          profileId, workspaceId: ws, attemptId, purpose: "generation", mode: "hooks",
+          payloadSha256: "a".repeat(64),
+        });
+        const [g] = await t.insert(schema.generations).values({
+          profileId, workspaceId: ws, attemptId, mode: "hooks",
+          brainActivationId: "00000000-0000-4000-8000-000000000001",
+          request, model: "m", promptBundleVersion: "b", configVersion: 1,
+          outcome: "usable", output: hooksOutput(), weakestPoint: "w",
+          killTest: { finalAttempt: { traceability: [] } },
+        }).returning();
+        return g;
+      });
+    const pieceB = await creativeWorkMod.startOwnIdea(db, ownerB, profB.id, { idea: "B's own idea" }, new Date());
+    const draftB = await stored(B, profB.id, "iso-saved-b", {
+      input: "x", platform: "tiktok",
+      origin: { kind: "piece", pieceId: pieceB.pieceId, sourceGenerationId: null, sourceIdeaIndex: null },
+    });
+    await stored(A, profA.id, "iso-saved-a", { input: "x", platform: "tiktok", origin: null });
+    const never: LlmProvider = {
+      vendor: "must-not-be-called",
+      complete: async () => {
+        throw new Error("a saved-pack reach across workspaces called the vendor");
+      },
+    };
+    const reach = async (run: () => Promise<unknown>) => {
+      try {
+        const out = await run();
+        return (out as { status?: string } | null)?.status ?? "reached";
+      } catch (e) {
+        if (e instanceof CreativePieceError) return e.reason;
+        if (e instanceof credits.RevisionParentError) return e.reason;
+        return (e as Error).name;
+      }
+    };
+    // A, on its OWN profile, naming B's attempt: missing, not_found, not this creator's.
+    expect(await reach(() => savedGenerationMod.readSavedGeneration(db, ownerA, profA.id, "iso-saved-b", new Date()))).toBe("missing");
+    expect(await reach(() => savedGenerationMod.selectSavedVersion(db, ownerA, profA.id, { attemptId: "iso-saved-b", pieceId: pieceB.pieceId, expectedVersion: pieceB.version }))).toBe("not_found");
+    expect(await reach(() => savedGenerationMod.reviseSaved(db, ownerA, profA.id, never, anySlots(), { attemptId: "iso-rev-a", parentAttemptId: "iso-saved-b", preset: "shorter", quotedConfigVersion: 1 }, new Date()))).toBe("not_this_creators");
+    // A naming B's PROFILE with A's scope: the cage refuses before any read.
+    expect(await reach(() => savedGenerationMod.readSavedGeneration(db, ownerA, profB.id, "iso-saved-b", new Date()))).toBe("ProfileAccessError");
+    expect(await reach(() => savedGenerationMod.recentSavedGenerations(db, ownerA, profB.id))).toBe("ProfileAccessError");
+    // A's recent list holds only A's draft.
+    expect((await savedGenerationMod.recentSavedGenerations(db, ownerA, profA.id)).map((r) => r.attemptId)).toEqual(["iso-saved-a"]);
+    // NON-VACUITY: B reads its own draft, and its piece context.
+    const own = await savedGenerationMod.readSavedGeneration(db, ownerB, profB.id, "iso-saved-b", new Date());
+    expect(own.status).toBe("saved");
+    expect(own.status === "saved" ? own.view.generationId : null).toBe(draftB.id);
+    expect(own.status === "saved" ? own.view.piece?.pieceId : null).toBe(pieceB.pieceId);
+    // Nothing here spent or claimed: neither ledger holds a debit, no new claim.
+    expect((await ledgerOf(db, A)).filter((r) => r.kind === "debit")).toHaveLength(0);
+    expect((await ledgerOf(db, B)).filter((r) => r.kind === "debit")).toHaveLength(0);
+    expect((await db.select().from(schema.generationAttempts)).map((r) => r.attemptId).sort()).toEqual(["iso-saved-a", "iso-saved-b"]);
+  });
+
   it("submitPastedReference: A's paste lands only in A — B's ledger, rows and replay are untouched by it", async () => {
     const db = await createTestDb();
     const { A, B, ownerA, ownerB, profA, profB } = await twoPaidWorkspaces(db, 100);
@@ -2050,6 +2634,21 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
     expect(refunds[0].workspaceId).toBe(B as string);
     // ...and a cross-workspace scope cannot even name B's profile.
     await expect(credits.settleParkedAutopsies(db, ownerA, profB.id)).rejects.toThrow();
+  });
+
+  it("pastedReferenceInPlan reads only the given workspace's tier", async () => {
+    const db = await createTestDb();
+    await seedDb(db);
+    const { A, B } = await twoWorkspaces(db);
+    // B is paid, A is free: each answer is its own workspace's.
+    const { content } = await getActiveConfig(db);
+    await appendConfigVersion(db, { ...content, stripePriceMap: { price_iso_creator: "creator" } }, "test-admin");
+    await db.insert(schema.subscriptions).values({
+      workspaceId: B, stripeCustomerId: "cus_iso_b", stripeSubscriptionId: "sub_iso_b",
+      stripePriceId: "price_iso_creator", status: "active",
+    });
+    expect(await credits.pastedReferenceInPlan(db, A, new Date())).toBe(false);
+    expect(await credits.pastedReferenceInPlan(db, B, new Date())).toBe(true);
   });
 
   it("pastedReferenceQuote reads only the given workspace's tier, balance and pause", async () => {
@@ -2263,5 +2862,81 @@ describe("cross-workspace isolation (A must never see or be moved by B)", () => 
       tier: "free",
       state: "free",
     });
+  });
+});
+
+describe("R-165: held money replays per workspace (A-vs-B)", () => {
+  it("replayHeldStripeEvents: replaying A's held money never touches B's held rows or B's ledger", async () => {
+    const db = await createTestDb();
+    const { A, B } = await twoWorkspaces(db);
+    await seedAuthUser(db, "iso_held_user");
+    await seedDb(db);
+    await appendConfigVersion(
+      db,
+      { ...CONFIG_V1_SEED, stripePriceMap: { price_creator: "creator" } },
+      "test-admin"
+    );
+    await db.insert(subscriptions).values([
+      { workspaceId: A, stripeCustomerId: "cus_held_A", status: "none" },
+      { workspaceId: B, stripeCustomerId: "cus_held_B", status: "none" },
+    ]);
+    const sec = Math.floor(Date.now() / 1000);
+    const invoiceEvent = (id: string, customer: string) =>
+      ({
+        id,
+        object: "event",
+        type: "invoice.paid",
+        created: sec,
+        data: {
+          object: {
+            id: `in_${id}`,
+            object: "invoice",
+            customer,
+            billing_reason: "subscription_cycle",
+            parent: { subscription_details: { subscription: `sub_${customer}` } },
+            lines: {
+              object: "list",
+              data: [
+                {
+                  id: `il_${id}`,
+                  object: "line_item",
+                  period: { start: sec, end: sec + 30 * 86400 },
+                  pricing: { price_details: { price: "price_creator" } },
+                  parent: {
+                    type: "subscription_item_details",
+                    subscription_item_details: { subscription: `sub_${customer}` },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      }) as unknown as Parameters<typeof handleStripeEvent>[1];
+    await db.update(schema.workspaces).set({ lifecycleState: "tombstoned" });
+    expect(await handleStripeEvent(db, invoiceEvent("evt_held_A", "cus_held_A"))).toBe("held_tombstoned");
+    expect(await handleStripeEvent(db, invoiceEvent("evt_held_B", "cus_held_B"))).toBe("held_tombstoned");
+    const ledgerBefore = await db.select().from(creditLedger);
+    // A is restored; B stays tombstoned.
+    await db.update(schema.workspaces).set({ lifecycleState: "active" }).where(eq(schema.workspaces.id, A));
+    // Replaying B's id while B is tombstoned settles nothing.
+    expect(await stripeWebhooks.replayHeldStripeEvents(db, B)).toEqual({ replayed: 0, alreadySettled: 0, failed: 0, stillHeld: 1 });
+    // The sweep reaches ACTIVE workspaces only: A's one row.
+    expect(await stripeWebhooks.replayHeldStripeEventsForActiveWorkspaces(db)).toMatchObject({
+      replayed: 1,
+      failed: 0,
+      workspaces: 1,
+    });
+    const minted = (await db.select().from(creditLedger)).filter(
+      (row) => !ledgerBefore.some((before) => before.id === row.id)
+    );
+    expect(minted.length).toBeGreaterThan(0);
+    expect(minted.every((row) => row.workspaceId === A)).toBe(true);
+    const outcomes = await db.execute(
+      sql`SELECT id, outcome FROM stripe_events WHERE id IN ('evt_held_A', 'evt_held_B') ORDER BY id`
+    );
+    expect((outcomes as unknown as { rows: { id: string; outcome: string }[] }).rows).toEqual([
+      { id: "evt_held_A", outcome: "processed" },
+      { id: "evt_held_B", outcome: "held_tombstoned" },
+    ]);
   });
 });

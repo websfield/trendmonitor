@@ -22,10 +22,64 @@
 // exempted `hooks` because the screen submitted it as a hidden field. The
 // picker's options are server-resolved, so no file here needs to name one.
 import {
-  BILLING_ERROR_COPY,
+  billingErrorCopy,
+  withSupportContactFor,
   type BillingErrorCode,
   type BillingErrorCopy,
 } from "../billing-errors";
+import {
+  CREATIVE_FORM_OPTIONS,
+  type CreativePieceView,
+} from "@respin/credits/app-server";
+import type { PieceView } from "./piece-confirmation";
+
+/**
+ * The confirmation's plain projection of a piece (launch L2). Field by field —
+ * never a spread of the facade's value — and the form id becomes a LABEL from
+ * the facade's own list, so this directory holds no form vocabulary. The quote
+ * carries only what the screen states: the configured price, its config
+ * version, and whether the plan includes the script.
+ */
+export function pieceViewFor(view: CreativePieceView): PieceView {
+  const source = view.origin;
+  let origin: PieceView["origin"];
+  if (source.kind === "concept") {
+    const formId = source.formId;
+    origin = {
+      kind: "concept",
+      hook: source.hook,
+      thesis: source.thesis,
+      framework: source.framework,
+      formId,
+      formLabel:
+        formId === null
+          ? null
+          : (CREATIVE_FORM_OPTIONS.find((o) => o.id === formId)?.label ?? formId),
+      premise:
+        source.premise === null
+          ? null
+          : {
+              whatHappens: source.premise.whatHappens,
+              interest: source.premise.interest,
+              payoff: source.premise.payoff,
+            },
+    };
+  } else {
+    origin = { kind: "own_idea", idea: source.idea };
+  }
+  return {
+    pieceId: view.pieceId,
+    version: view.version,
+    state: view.state,
+    operationAttemptId: view.operationAttemptId,
+    origin,
+    quote: {
+      credits: view.quote.credits,
+      configVersion: view.quote.configVersion,
+      planIncludesScript: view.quote.planIncludesScript,
+    },
+  };
+}
 
 // THE PLATFORM LIST AND EVERY SENTENCE THE CLIENT PANEL RENDERS LIVE IN
 // `./run-copy.ts`, not here — and the mode ids live in NEITHER, because
@@ -36,8 +90,8 @@ import {
 // needs all three values, so importing them from here would put a Postgres
 // driver in the client bundle — `next build` then fails naming `dns` rather
 // than the import. `tests/client-bundle-boundary.test.ts` caught exactly that
-// on the first draft of this screen; `run-copy.ts` has no imports at all and
-// therefore cannot cross the boundary.
+// on the first draft of this screen; `run-copy.ts` has no value imports (one
+// erased `import type`) and therefore cannot cross the boundary.
 
 /**
  * Whether the generate control may be offered at all.
@@ -166,6 +220,47 @@ export const STUDIO_ERROR_CODES = [
   "revision_parent_different_mode",
   "revision_parent_unreadable",
   "generation_lineage",
+  // --- R-148 (launch L1): THE CREATIVE FORM CONTROL. `generate` raises
+  // `CreativeRequestError` before any claim or provider call; two codes because
+  // a revision of a pre-form draft is not a malformed request.
+  "creative_request",
+  "creative_revision_legacy",
+  // --- LAUNCH L2 (R-151): entry, selection and operation identity. Every one
+  // is raised before any claim, debit or provider call. The revision-form
+  // code is `CreativeRequestError`'s new instance branch; the five piece codes
+  // are `CreativePieceError`'s four reasons and its fallback; the transport
+  // refusal is reachable from the provider factory every generate press runs.
+  "creative_revision_form",
+  "creative_piece",
+  "creative_piece_not_found",
+  "creative_piece_source",
+  "creative_piece_stale",
+  "creative_piece_not_commissionable",
+  "generation_quote_changed",
+  "concept_context_needed",
+  "llm_transport_refused",
+  // --- AUDIT PHASE 3 (R-157, R-158). The input ceiling's refusal, one code per
+  // largest part (NOT `input_too_large_posts`: that is the onboarding caller's
+  // branch, reached only with no recorded parts, and `meteredCall` always
+  // records them); the per-window total; and the held draft — its three
+  // reasons and "Finish this draft" naming an attempt this creator cannot
+  // finish. Every one is raised before any debit, and a held one charges
+  // nothing.
+  "input_too_large",
+  "input_too_large_voice",
+  "input_too_large_strategy",
+  "input_too_large_killtest",
+  "input_too_large_frameworks",
+  "input_too_large_input",
+  "generation_window_cost_cap",
+  "generation_held_paused",
+  "generation_held_balance",
+  "generation_held_transient",
+  "held_draft_unavailable",
+  // --- LAUNCH L4 (R-153): the saved recording pack's revision presses render
+  // this screen's copy set; the one refusal of their own is a preset the page
+  // never offered (`RevisionPresetError`, before any claim or provider call).
+  "revision_preset",
   // --- SLICE 7: THE FEEDBACK EVENT (R10). A DIFFERENT ACTION on the same
   // screen, and its refusals belong to this closed set for exactly the reason
   // the generation's do: `recordFeedbackAction` returns a code, the panel
@@ -179,6 +274,27 @@ export const STUDIO_ERROR_CODES = [
   "feedback_target",
   "feedback_note",
   "feedback_duplicate",
+  // Audit P6-A1 (R-174): "Leave this out of future drafts", the fourth
+  // action on this screen. Spends nothing, like the reaction it narrows.
+  "feedback_exclusion_target",
+  // --- LAUNCH L3 (R-152): "REMEMBER THIS FOR FUTURE DRAFTS". A third action on
+  // this screen, composing the creator-edit path `/brain` uses — so its
+  // refusals are that path's, and each needs copy here or the press renders
+  // the neutral fallback. The first six are what `tests/studio-ui.test.tsx`
+  // derives from `feedback-ops.ts` and `brain-ops.ts`; the last five are the
+  // creator-edit write's own capability refusals (its `ALSO_REACHABLE` list).
+  // None of them spends anything.
+  "brain_edit_unchanged",
+  "brain_edit_busy",
+  "brain_edit_limit",
+  "brain-edit-all-check",
+  "provenance",
+  "evidence_unreadable",
+  "profile_role",
+  "reference_echo",
+  "brain_version_limit",
+  "brain_document_limit",
+  "onboarding_input_limit",
   // --- the cage, and the scope read this page performs before anything else.
   "scope_forgery",
   "workspace_access",
@@ -222,6 +338,20 @@ export const STUDIO_ERROR_CODES = [
  * be short by one.
  */
 const STUDIO_OVERRIDES: Partial<Record<BillingErrorCode, BillingErrorCopy>> = {
+  // LAUNCH L3 (R-152): on THIS screen these two codes come only from
+  // "Remember this for future drafts", and the shared wording is about a brain
+  // BUILD ("try the build again") or a whole-form edit — neither of which the
+  // creator did here.
+  provenance: {
+    title: "That rule could not be added here",
+    detail:
+      "Your Kill Test changed after this page loaded, it has no rule list yet, or it already holds as many rules as one version can. Nothing was saved and no credits were spent. Open the Brain page, check your Kill Test, and add the rule there.",
+  },
+  brain_edit_unchanged: {
+    title: "There was nothing to remember",
+    detail:
+      "The box was empty or held only [check], so no proposed rule was created and nothing was saved. Write the rule in your own words and try again.",
+  },
   insufficient_credits: {
     title: "Not enough credits for this draft",
     detail:
@@ -240,12 +370,12 @@ const STUDIO_OVERRIDES: Partial<Record<BillingErrorCode, BillingErrorCopy>> = {
   llm_attempt_recorded: {
     title: "The model answered, but not usably",
     detail:
-      "The provider returned something this product could not use, and it charged us for the attempt. Nothing was taken from your credit balance — our parse failure is not your bill. No draft was stored. Try again, and tell us if it keeps happening; rewording your input is unlikely to be the fix.",
+      "The provider returned something this product could not use, and it charged us for the attempt. Nothing was taken from your credit balance — our parse failure is not your bill. No draft was stored. Try again; rewording your input is unlikely to be the fix.",
   },
   llm_truncated: {
     title: "The model's answer was cut off",
     detail:
-      "The answer came back longer than this server's reply-length limit allows, so nothing usable arrived and nothing was stored. Nothing was taken from your credit balance. This is a server setting rather than anything you did, and trying again will hit the same limit until an operator raises it — so tell us rather than retrying.",
+      "The answer came back longer than this server's reply-length limit allows, so nothing usable arrived and nothing was stored. Nothing was taken from your credit balance. This is a server setting rather than anything you did, and trying again will hit the same limit until an operator raises it, so retrying will not help; the refusal is recorded for an operator.",
   },
   workspace_paused: {
     title: "This workspace is paused",
@@ -258,7 +388,7 @@ const STUDIO_OVERRIDES: Partial<Record<BillingErrorCode, BillingErrorCopy>> = {
     // (see the list above) and its copy must still be true if it ever renders.
     title: "Runs for this creator keep failing on our side",
     detail:
-      "Runs for this creator have repeatedly failed in a way that cost us money and cost you nothing, so the product has stopped trying rather than keep burning them. Nothing was spent and no model was called this time. There is nothing for you to change — this is a fault on our side; please tell us so we can fix it.",
+      "Runs for this creator have repeatedly failed in a way that cost us money and cost you nothing, so the product has stopped trying rather than keep burning them. Nothing was spent and no model was called this time. There is nothing for you to change: this is a fault on our side, and it is recorded for an operator.",
   },
   run_slot_busy: {
     // THE TWO THE HAND-WRITTEN LIST MISSED. `generate.ts` raises
@@ -291,7 +421,8 @@ export function studioErrorFor(raw: string | undefined): BillingErrorCopy | null
   if (!raw) return null;
   const known = (STUDIO_ERROR_CODES as readonly string[]).includes(raw);
   const code = (known ? raw : "unknown") as BillingErrorCode;
-  return STUDIO_OVERRIDES[code] ?? BILLING_ERROR_COPY[code];
+  const override = STUDIO_OVERRIDES[code];
+  return override === undefined ? billingErrorCopy(code) : withSupportContactFor(code, override);
 }
 
 /** Every code this screen can render, with its words. Resolved server-side. */

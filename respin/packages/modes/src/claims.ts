@@ -6,9 +6,13 @@
 // `GENERATION_SYSTEM` says "never claim reach, views, growth, or that anything
 // is guaranteed" — and by this package's own R5 logic that is a BRIEF, NOT A
 // GATE. Nothing checked `whyThisPerforms.reasoning`, a hook's text, or
-// `disclosure.guidance`, and all three are rendered verbatim on `/studio`. A
-// disclosure section reading "most people skip the label on a short like this"
-// would have rendered under a **Disclosure** heading as the product's advice.
+// `disclosure.guidance`, and all three were then rendered verbatim on
+// `/studio` — a disclosure section reading "most people skip the label on a
+// short like this" rendered under a **Disclosure** heading as the product's
+// advice. Since audit P1-R1 the model's disclosure section is presented on NO
+// surface (`/studio`, first-ideas and `/trends` show the product's sentence for
+// the disclosure kind, the saved pack overwrites it, the Sample Spin filters
+// it); `whyThisPerforms` and the hooks still are (R-154).
 //
 // SO THE RULE IS CODE, exactly like the other four: "a hard integrity rule
 // decided by a model is a rule that can be talked out of firing"
@@ -19,14 +23,21 @@
 // WHERE IT IS HARD AND WHERE IT ONLY FLAGS: THREE CEILINGS, AND A REFUSAL
 // NEEDS ALL THREE TO ALLOW IT.
 //
-//   THE FIELD (`HARD_CLAIM_FIELD_PREFIXES`) — `/whyThisPerforms/` is the
+//   THE FIELD (`OutputClaimShape.fields`, R-168) — `/whyThisPerforms/` is the
 //   section whose whole job is to explain the draft, so a forecast there is the
-//   product asserting it (REQ-I04). `/disclosure/` is the section rendered
-//   under a **Disclosure** heading as the product's advice, so concealment
-//   advice there is REQ-I05's own case. Everywhere else a claim is `flag` — a
-//   hook the creator wrote the input for may legitimately use the word "views",
-//   and refusing a draft over it would charge them a credit (slice card
-//   question 4) for a word rather than a claim.
+//   product asserting it (REQ-I04), and every hard shape refuses there. THREE
+//   shapes — `guarantee`, `proven to`, `best-performing` — refuse on EVERY
+//   presented field too (caption, hooks, VO beats, thesis …), because a
+//   guarantee or a claim of proof is one in any text a creator publishes
+//   (audit R3-2); the Phase 2 generator measured 441 such escapes in 1,500
+//   before this, and chose the three from its false-fire numbers. `/disclosure/`
+//   was a hard field while Studio rendered it as the product's advice; audit
+//   P1-R1 removed every presentation of it, so it is flag-only now (R-154) —
+//   refusing over text no creator reads would cost the creator a draft for
+//   nothing (a claim-only refusal is free since R-173, but the draft is
+//   lost). Everywhere else a claim is `flag` — a hook may legitimately say
+//   "Want more views?" or "You can't miss the switch", and refusing a draft
+//   over it would cost the creator that draft for a word rather than a claim.
 //
 //   THE SHAPE (`OutputClaimShape.enforcement`) — a pattern may only refuse if
 //   it carries a PREDICATE. A bare noun or adjective is a word, not a claim.
@@ -35,24 +46,30 @@
 //   words around it. "Skip the label" and "never skip the label" are opposite
 //   instructions built from one string, and these patterns are negation-blind
 //   by construction. A guard DEMOTES to `flag`; it never deletes a finding.
+//   For the performance and certainty families the only context that demotes
+//   is a SENTENCE that equals a phrase of the CLOSED hedge allowlist
+//   (`CLAIM_HEDGE_ALLOWLIST`, R-173) plus at most one `CLAIM_HEDGE_TAILS`
+//   entry and that nothing later in its unit takes back, and, on the weakest
+//   point alone, an exact `ADMISSION_HEDGE_PHRASES` sentence.
 //
-// WHY `/disclosure/` IS HARD HERE AND FLAG-ONLY IN `traceability.ts`, because
-// the two lists disagreeing about one section looks like a mistake and is not.
-// `FLAG_ONLY_FIELD_PREFIXES` demotes SPECIFICS in disclosure because that text
-// is the product's answer about a platform's policy and is untraceable to the
-// creator's corpus by construction (R-68). This rule is about the OPPOSITE
-// property of the same text: whether the advice tells a viewer's creator to
-// hide something. Untraceable-by-construction is a reason not to refuse over a
-// step number; it is not a reason to publish "nobody needs to know".
+//   EVERY OCCURRENCE (P2-R4): a sentence can carry a shape twice, the first
+//   inside a hedge and the second not ("Nothing here makes it go viral, but
+//   this hook goes viral anyway."). The scan reads every match and keeps the
+//   STRICTEST, so a guarded first occurrence can no longer hide the claim.
 //
-// MEASURED, and it is what made this file's own opening paragraph false until
-// this pass: with `/whyThisPerforms/` as the sole hard field, all seven
-// concealment shapes were `hard` at the shape level and `flag` on the ONLY
-// field they will ever land on. The pipeline returned `status: usable`,
-// `hardRules: []`, and displayed "Most people skip the label on a short like
-// this, and nobody needs to know a tool helped." under the Disclosure heading —
-// the exact sentence quoted eleven lines above as the reason this file exists.
-// The hard half of the concealment family had no live path at all.
+// WHY `/disclosure/` WAS HARD HERE WHILE FLAG-ONLY IN `traceability.ts`, AND
+// WHY IT NO LONGER IS. `FLAG_ONLY_FIELD_PREFIXES` demotes SPECIFICS in
+// disclosure because that text is untraceable to the creator's corpus by
+// construction (R-68). This rule was about the opposite property — whether
+// displayed advice told a creator to hide something — and it was hard because
+// the pipeline, with `/whyThisPerforms/` as the sole hard field, returned
+// `status: usable` and DISPLAYED "Most people skip the label on a short like
+// this, and nobody needs to know a tool helped." under the Disclosure heading.
+// Audit P1-R1 closed that the other way: the model's disclosure section is no
+// longer displayed anywhere, the product's sentence is, so REQ-I05 holds by
+// what is shown and a debited refusal over the hidden section buys nothing.
+// The concealment family keeps its hard half on `/whyThisPerforms/`, and every
+// finding in `/disclosure/` is still recorded at flag level (R-154).
 // ------------------------------------------------------------------
 //
 // THE VOCABULARY IS DEFINED HERE, NOT IMPORTED FROM `tests/`. `packages/modes`
@@ -67,14 +84,20 @@
 // EVERY PATTERN IS A LITERAL and every shape carries a `specimen` a test
 // asserts it matches (CLAUDE.md, 2026-08-21): a scan reporting no findings is
 // otherwise indistinguishable from a scan that is not working.
-import { excerpt, lines, sentenceUnits, type TextUnit } from "./text";
+import { outputTextPointers, pointerMatches } from "./output";
+import {
+  excerpt,
+  lines,
+  type TextUnit,
+} from "./text";
 
 /**
  * Which promise a shape is about.
  *
- * `performance` — how the post will DO once it is posted. The product has
- * logged no result of this creator's (n = 0 until slice 9), so every one of
- * these is a claim about a future it holds no evidence about.
+ * `performance` — how the post will DO once it is posted. No result a creator
+ * logs enters a draft's evidence until a verified analytics connector exists
+ * (R-115), so every one of these is a claim about a future the draft holds no
+ * evidence about.
  *
  * `certainty` — REQ-I04's own word. `guarantee` is in the repo's shared canon
  * (`FORBIDDEN_CLAIMS`) rather than in `PERFORMANCE_CLAIMS`, so it is a family
@@ -83,12 +106,24 @@ import { excerpt, lines, sentenceUnits, type TextUnit } from "./text";
  *
  * `concealment` — REQ-I05. This half has no canon anywhere in the repo, because
  * until this slice nothing generated a disclosure section for a creator to
- * read.
+ * read (and since audit P1-R1 the model's disclosure section is not presented
+ * — R-154).
  */
 export type ClaimFamily = "performance" | "certainty" | "concealment";
 
 /** Whether a claim finding may refuse a generation, or only flag it. */
 export type ClaimEnforcement = "hard" | "flag";
+
+/**
+ * Where a hard-ceiling shape may refuse (R-168).
+ *
+ * `explanation` — the fields under `HARD_CLAIM_FIELD_PREFIXES`, the product
+ * explaining its own draft. `presented` — every schema pointer a surface
+ * presents (`outputTextPointers()` minus `NOT_PRESENTED_FIELD_PREFIXES`).
+ * A `flag`-ceiling shape never refuses, so its scope is `explanation` and
+ * carries no meaning.
+ */
+export type ClaimFieldScope = "explanation" | "presented";
 
 export type OutputClaimShape = {
   /**
@@ -114,6 +149,17 @@ export type OutputClaimShape = {
    * more reach", "it is going to blow up".
    */
   enforcement: ClaimEnforcement;
+  /**
+   * WHICH FIELDS the hard ceiling reaches (R-168). `presented` for the three
+   * shapes audit R3-2 names — `guarantee`, `proven to`, `best-performing` — a
+   * guarantee or a claim of proof is one in any text a creator publishes. The
+   * other certainty and own-baseline shapes stay `explanation`: the Phase 2
+   * generator found an ordinary non-claim reading of each ("You can't miss the
+   * switch on the left side.", "Want more views? Cut the first second.") that
+   * would be a debited refusal on a hook or a beat. The false-fire the three
+   * cost is pinned in `KNOWN_VOCABULARY_GAPS`.
+   */
+  fields: ClaimFieldScope;
   /**
    * The discriminator a test plants — and, for the `performance` family, the
    * LABEL `PERFORMANCE_CLAIMS` uses, so the two lists can be compared by id.
@@ -176,6 +222,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "viral",
     enforcement: "flag",
+    fields: "explanation",
     family: "performance",
     pattern: /\bviral|\bvirality/,
     specimen: "this hook goes viral",
@@ -192,6 +239,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
     // which is exactly what R-68 said the other two nouns already did.
     id: "goes viral",
     enforcement: "hard",
+    fields: "explanation",
     family: "performance",
     pattern: /\b(go(es|ing)?|went|will go|gonna go)\s+viral\b/,
     specimen: "this hook goes viral",
@@ -199,6 +247,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "views",
     enforcement: "flag",
+    fields: "explanation",
     family: "performance",
     pattern: /\bviews\b/,
     specimen: "expect more views on this one",
@@ -206,6 +255,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "engagement",
     enforcement: "flag",
+    fields: "explanation",
     family: "performance",
     pattern: /\bengagement\b/,
     specimen: "this lifts engagement",
@@ -213,6 +263,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "more reach",
     enforcement: "hard",
+    fields: "explanation",
     family: "performance",
     pattern: /\b(more|wider|bigger|larger|extra|higher) reach\b/,
     specimen: "this one gets more reach",
@@ -220,6 +271,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "reach an audience",
     enforcement: "hard",
+    fields: "explanation",
     family: "performance",
     pattern:
       /\breach(es|ing)? (a |an |your |the )?(wider |bigger |larger |new |whole |right )?(audience|following|viewers)\b/,
@@ -228,6 +280,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "will perform",
     enforcement: "hard",
+    fields: "explanation",
     family: "performance",
     pattern: /\bwill perform/,
     specimen: "this draft will perform well",
@@ -235,6 +288,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "outperform",
     enforcement: "hard",
+    fields: "explanation",
     family: "performance",
     pattern: /\boutperform/,
     specimen: "it outperforms your last post",
@@ -242,6 +296,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "blow up",
     enforcement: "hard",
+    fields: "explanation",
     family: "performance",
     pattern: /\bblow(s|ing)? up\b/,
     specimen: "this one is going to blow up",
@@ -266,6 +321,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "beats your baseline",
     enforcement: "hard",
+    fields: "explanation",
     family: "performance",
     pattern: /\bbeat(s|ing)? (your|my|our|their|the) (baseline|average|numbers|usual|best)\b/,
     specimen: "this beats your baseline",
@@ -273,6 +329,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "better than your last",
     enforcement: "hard",
+    fields: "explanation",
     family: "performance",
     // The COMPARATIVE against the creator's own history, which is the sentence
     // the learning loop is not built to support until results exist (slice 9).
@@ -283,6 +340,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "best-performing",
     enforcement: "hard",
+    fields: "presented",
     family: "performance",
     pattern: /\bbest[- ]performing\b/,
     specimen: "your best-performing hook shape is this one",
@@ -290,6 +348,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "more views",
     enforcement: "hard",
+    fields: "explanation",
     family: "performance",
     // `more reach`'s sibling, and named for the likeliest of its metrics. The
     // bare nouns stay `flag`; the COMPARATIVE built from one is the predicate,
@@ -304,6 +363,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
     // has to stay id-for-id identical to this family (see the header).
     id: "proven to",
     enforcement: "hard",
+    fields: "presented",
     family: "performance",
     pattern: /\bproven to\b/,
     specimen: "it is proven to work for this audience",
@@ -314,6 +374,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "guarantee",
     enforcement: "hard",
+    fields: "presented",
     family: "certainty",
     pattern: /\bguarantee/,
     specimen: "results are guaranteed",
@@ -321,16 +382,21 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "cannot fail",
     enforcement: "hard",
+    fields: "explanation",
     family: "certainty",
-    pattern: /\bcan(no|['’])?t (fail|miss|lose)\b/,
+    // WIDENED (final compliance verification): "This won't fail." and "It
+    // never fails." produced no finding at all.
+    pattern: /\b(?:can(?:no|['’])?t|won['’]?t|will not|never) (?:fail|fails|miss|misses|lose|loses)\b/,
     specimen: "this one can't miss",
   },
 
-  // --- concealment: REQ-I05. The section this protects is `disclosure`, whose
-  //     guidance is rendered under a heading that makes it the product's advice.
+  // --- concealment: REQ-I05. Written for the `disclosure` section, which is
+  //     no longer presented (audit P1-R1, R-154): there they FLAG; they refuse
+  //     on the remaining hard field, `/whyThisPerforms/`.
   {
     id: "skip the label",
     enforcement: "hard",
+    fields: "explanation",
     family: "concealment",
     pattern: /\bskip(s|ping|ped)? (the |a |any |your )?(label|disclosure|disclaimer|tag|credit)\b/,
     specimen: "most people skip the label on a short like this",
@@ -338,6 +404,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "no need to disclose",
     enforcement: "hard",
+    fields: "explanation",
     family: "concealment",
     pattern: /\b(no|not) (need|necessary|required) to (disclose|declare|mention|label|tag)\b/,
     specimen: "there is no need to disclose this one",
@@ -345,6 +412,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "disclosure is optional",
     enforcement: "hard",
+    fields: "explanation",
     family: "concealment",
     pattern:
       /\b(disclosure|disclosing|the label|labelling|labeling) is (optional|not required|unnecessary|not needed)\b/,
@@ -353,6 +421,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "do not mention",
     enforcement: "hard",
+    fields: "explanation",
     family: "concealment",
     pattern: /\b(do|does|did)(n['’]?t| not) (mention|say|tell|reveal|admit|disclose)\b/,
     specimen: "don't mention that a tool helped",
@@ -360,6 +429,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "nobody needs to know",
     enforcement: "hard",
+    fields: "explanation",
     family: "concealment",
     pattern: /\b(nobody|no one) (needs|has|needs to|ever needs) to know\b/,
     specimen: "nobody needs to know how this was made",
@@ -367,6 +437,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "leave it out",
     enforcement: "hard",
+    fields: "explanation",
     family: "concealment",
     pattern: /\bleave (it|that|this|the label|the disclosure|the tag) out\b/,
     specimen: "leave it out of the caption",
@@ -374,6 +445,7 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
   {
     id: "hide that a tool made it",
     enforcement: "hard",
+    fields: "explanation",
     family: "concealment",
     pattern: /\bhid(e|es|ing) (the fact|that (a |an )?(tool|ai|model|it was))\b/,
     specimen: "hide the fact a tool wrote it",
@@ -386,7 +458,8 @@ export const OUTPUT_CLAIM_SHAPES: readonly OutputClaimShape[] = [
  *
  * `direction` says which way each one errs, because both directions are real
  * and they cost different things: a `miss` is a claim that ships, a
- * `false-fire` is a refusal a creator is charged for.
+ * `false-fire` is an honest draft refused — free when the claim scan is its
+ * only cause (R-173), still a lost draft.
  *
  * EVERY ENTRY IS PINNED BY A TEST in `claims.test.ts`, which asserts the
  * behaviour recorded here is the behaviour the scan actually has. So closing
@@ -408,7 +481,9 @@ export const KNOWN_VOCABULARY_GAPS: readonly VocabularyLimit[] = [
   {
     id: "concealment by negating a disclosure verb",
     direction: "miss",
-    field: "/disclosure/guidance",
+    // On the remaining HARD field (R-154): `/disclosure/` is flag-only since
+    // audit P1-R1, and a gap is pinned where a refusal is possible.
+    field: "/whyThisPerforms/reasoning",
     sentence: "Never tell them a tool helped.",
     why: "The concealment shapes name AVOIDANCE verbs (skip, leave out, hide). Concealment written as a prohibition on a DISCLOSURE verb is the same instruction with the negation moved, and the third ceiling reads a leading `never` as the honest direction — which is what makes this the exact class the guard cannot also cover.",
   },
@@ -426,6 +501,22 @@ export const KNOWN_VOCABULARY_GAPS: readonly VocabularyLimit[] = [
     sentence: "You have never had a hook this strong.",
     why: "PRD §5 metric 2 stated as fact at n = 0, with no comparative verb and no metric noun in it. The five own-baseline shapes are the phrasings that were measured, not the class.",
   },
+  // SYNONYM AND ELLIPSIS PROMISES (final compliance verification, 2026-10-07),
+  // pinned rather than patched: the certainty family is a list of phrasings.
+  {
+    id: "a synonym for a guarantee",
+    direction: "miss",
+    field: "/whyThisPerforms/reasoning",
+    sentence: "We promise it lands.",
+    why: "`promise` is not one of the certainty shapes: a verb this common also introduces honest sentences (\"we promise nothing\"), and the shape list is the phrasings that were measured, not the class. A synonym added later is a shape line, with its own specimen and false-fire probe.",
+  },
+  {
+    id: "an elliptical certainty",
+    direction: "miss",
+    field: "/whyThisPerforms/reasoning",
+    sentence: "It's certain.",
+    why: "The certainty is stated about a pronoun with the claim elided, so no listed shape has a predicate to match; reading `certain` alone as a claim would refuse \"Nothing here is certain\", the product's own most common honest sentence.",
+  },
   {
     id: "a misspelling",
     direction: "miss",
@@ -441,6 +532,34 @@ export const KNOWN_VOCABULARY_GAPS: readonly VocabularyLimit[] = [
       "The brief says the method is proven to work; this draft does not repeat that.",
     why: "The scan reads strings, not speech acts: quoting a claim to disown it carries the same string as making it. The cost is one refusal, and the sentence is rare in a section whose job is to explain the draft — but it is a cost, so it is named rather than discovered.",
   },
+  // A DENIAL THE CLOSED ALLOWLIST DOES NOT LIST (R-173): a negator that
+  // reaches a relative clause only THROUGH its antecedent.
+  {
+    id: "a negated antecedent governing a relative clause",
+    direction: "false-fire",
+    field: "/whyThisPerforms/reasoning",
+    sentence: "No draft is one that can't miss.",
+    why: "A hedge counts only as one of the closed allowlist's fixed phrases (R-173), and this denial is not one of them, so it reads as the claim. Admitting it would need the antecedent's scope, which a phrase list cannot see; the refusal is free under R-173, while the other direction ships a guarantee.",
+  },
+  // THE COST OF R-168, named rather than discovered. `guarantee` and
+  // `best-performing` refuse on every presented field because audit R3-2 names
+  // them, and the Phase 2 generator's synthetic vocabulary found an ordinary
+  // non-claim reading of each. Neither occurred in the 356 presented units of
+  // the pipeline fixtures or the 564 of the local stored generations.
+  {
+    id: "the noun `guarantee` on a presented field",
+    direction: "false-fire",
+    field: "/beats/0/vo",
+    sentence: "The lens came with a two-year guarantee.",
+    why: "`guarantee` is matched as a stem, so the warranty noun reads as a promise. On a VO beat that is a refusal for a sentence promising nothing — free under R-173, but a lost draft; the alternative — leaving a guarantee in a caption to flag — is the R3-2 escape this field population exists to close.",
+  },
+  {
+    id: "an instruction naming the creator's `best-performing` post",
+    direction: "false-fire",
+    field: "/hooks/0/text",
+    sentence: "Open your best-performing post and watch the first second.",
+    why: "Pointing the creator at their own best post is an instruction, not a claim that this draft performs. The pattern cannot tell the two apart, and R3-2 requires the claim reading to refuse on a hook.",
+  },
 ];
 
 /**
@@ -452,22 +571,66 @@ export const KNOWN_VOCABULARY_GAPS: readonly VocabularyLimit[] = [
  * asserting one — REQ-I04's exact case, and `output.ts` requires the section of
  * every mode, so this prefix is never absent.
  *
- * `/disclosure/` IS THE SECOND, AND ITS ABSENCE WAS THE BLOCK. Every
- * concealment shape is `hard` at the shape level and `/disclosure/guidance` is
- * the only field concealment vocabulary will ever land on, so with one prefix
- * in this list the whole family collapsed to `flag` on its only live path — a
- * hard rule witnessed solely by a synthetic `whyThisPerforms` fixture, which is
- * the vacuous-witness shape (CLAUDE.md, 2026-08-21). REQ-I05 / S5 is a release
- * gate: disclosure guidance is platform-appropriate and NEVER advises
- * concealment. `output.ts` requires this section of every mode too, so this
- * prefix is never absent either.
+ * `/disclosure/` WAS THE SECOND, AND IS NOT ANY MORE (R-154). It was added
+ * because Studio DISPLAYED the model's disclosure guidance as the product's
+ * advice, and REQ-I05 / S5 says disclosure guidance never advises concealment.
+ * Audit P1-R1 made that hold by presentation instead: no surface shows the
+ * model's disclosure section (`/studio`, first-ideas and `/trends` render the
+ * product's sentence for the disclosure kind, the saved pack overwrites it,
+ * the Sample Spin filters it, the JSON export carries the stored record, not
+ * advice). Keeping it hard would refuse — and debit — a draft over text no
+ * creator reads. `tests/disclosure-presenters.test.ts` is the presentation
+ * half's witness; `claims.test.ts` pins that every concealment shape still
+ * FLAGS there and still REFUSES on `/whyThisPerforms/`.
  *
- * A third hard field is a line here, taken deliberately.
+ * A second hard field is a line here, taken deliberately — and a surface that
+ * starts presenting the model's disclosure section again must put this one
+ * back in the same change (and take it out of `NOT_PRESENTED_FIELD_PREFIXES`).
+ *
+ * THIS IS THE `explanation` SCOPE. The three `presented`-scope shapes refuse on
+ * this list AND on every other presented pointer (R-168).
  */
 export const HARD_CLAIM_FIELD_PREFIXES: readonly string[] = [
   "/whyThisPerforms/",
-  "/disclosure/",
 ];
+
+/**
+ * The schema pointers NO SURFACE PRESENTS (R-154): the model's disclosure
+ * section. THE ONE AUTHORITY (R-172): `@respin/credits`' `presentedTextUnits`
+ * reads this list, and so does the claims refusal scope below, so what a
+ * screen presents and what can refuse are decided once.
+ */
+export const NOT_PRESENTED_FIELD_PREFIXES: readonly string[] = ["/disclosure/"];
+
+/**
+ * Schema leaves whose text is THE CREATOR'S OWN WORDS — a premise's basis
+ * excerpt, which `mode-checks.ts` verifies is quoted from the creator's
+ * material. Presented, but outside the claims refusal scope (audit Phase 2
+ * gate): a creator who once wrote "my best-performing post" is quoting
+ * themselves, not being promised anything, and refusing would charge them for
+ * their own sentence. Findings there are still recorded at flag level.
+ */
+export const CREATOR_QUOTE_LEAVES: readonly string[] = ["/basis/excerpt"];
+
+/**
+ * THE FIELD POPULATION a shape may refuse on, as schema pointer patterns
+ * (`/hooks/*\/text`) — derived from `outputTextPointers()`, never hand-typed,
+ * so a `line()` added to the schema joins the `presented` scope the day it is
+ * written (P2-R5's pointer set is this axis). Empty for a `flag` ceiling.
+ */
+export function claimFieldsFor(
+  shape: Pick<OutputClaimShape, "enforcement" | "fields">
+): readonly string[] {
+  if (shape.enforcement === "flag") return [];
+  const pointers = outputTextPointers();
+  return shape.fields === "presented"
+    ? pointers.filter(
+        (p) =>
+          !NOT_PRESENTED_FIELD_PREFIXES.some((x) => p.startsWith(x)) &&
+          !CREATOR_QUOTE_LEAVES.some((leaf) => p.endsWith(leaf))
+      )
+    : pointers.filter((p) => HARD_CLAIM_FIELD_PREFIXES.some((x) => p.startsWith(x)));
+}
 
 /**
  * THE THIRD CEILING: the same string, inverted by the words around it.
@@ -475,7 +638,9 @@ export const HARD_CLAIM_FIELD_PREFIXES: readonly string[] = [
  * WHY IT EXISTS, MEASURED. Promoting `/disclosure/` to a hard field without
  * this made three of seven honest guidance sentences refuse a generation — and
  * question 4's table DEBITS a refusal, so a creator would pay a credit for the
- * product telling them, correctly, to label their video:
+ * product telling them, correctly, to label their video. (`/disclosure/` is
+ * flag-only again since R-154; the guard still governs every concealment line
+ * on `/whyThisPerforms/`, where `claims.test.ts` measures it.)
  *
  *   "Do not leave the label out of the caption."
  *   "Never skip the label on a short like this."
@@ -492,9 +657,8 @@ export const HARD_CLAIM_FIELD_PREFIXES: readonly string[] = [
  * allowed". A guard that removed the finding would make a misfiring guard
  * indistinguishable from a clean sentence; a guard that demotes leaves the line
  * quoted on screen and stored in the kill-test result, and only takes away the
- * refusal and its charge. The honest sentences above therefore behave EXACTLY
- * as they do in the shipped build — flag, no refusal, no debit — and the
- * concealment sentences move from flag to hard, which is the whole change.
+ * refusal and its charge. On a hard field the honest sentences above therefore
+ * flag — no refusal, no debit — while the concealment sentences refuse.
  *
  * ITS COST, STATED: a sentence that both advises concealment and instructs
  * disclosure ("Nobody needs to know a tool helped, but you must tag the brand.")
@@ -513,18 +677,20 @@ export type ClaimContextGuard = {
   families: readonly ClaimFamily[];
   /**
    * Where the guard reads. `before` sees the lowercased text to the LEFT of the
-   * match, `outside` sees the text on either side of it — never the match
-   * itself.
+   * match; `outside` sees the text on either side of it. Neither ever sees the
+   * match itself.
    *
-   * THAT EXCLUSION IS BELT-AND-BRACES TODAY, AND IT IS SAID PLAINLY RATHER
-   * THAN OVERSOLD. The risk it is aimed at is a phrase that satisfies a guard
-   * with its own words — "no need to disclose" is built from the vocabulary of
-   * a disclosure directive. What actually stops that today is the DIRECTIVE
-   * LIST, which excludes `need to` on purpose, and `claims.test.ts` asserts
-   * that against the whole sentence. Measured: mutating this to read the whole
-   * sentence leaves every test green, so the span exclusion is the half that
-   * would still hold if a shape whose own text carried `must` or `should` were
-   * ever added, and it is not load-bearing before then.
+   * THE SPAN EXCLUSION IS LOAD-BEARING (audit R3-6 — this said it was not,
+   * from a measurement whose numbers were right and whose conclusion was
+   * wrong). The directive vocabulary excluding `need to` keeps "no need to
+   * disclose" from clearing itself, but it is not the only way a phrase can
+   * satisfy a guard with its own words: a directive word OUTSIDE the match and
+   * the guard's object noun INSIDE it. "Always skip the label on a short like
+   * this." and "Make sure you leave the label out." each match
+   * `disclosure-directive` when read whole (`always … label`, `make sure …
+   * label`) and would be demoted; read with the match excluded, both refuse.
+   * `claims.test.ts` pins both as refusals AND pins that the whole-sentence
+   * reading would clear them, so deleting the exclusion is red.
    */
   reads: "before" | "outside";
   pattern: RegExp;
@@ -585,29 +751,219 @@ export const CLAIM_CONTEXT_GUARDS: readonly ClaimContextGuard[] = [
       shape: "no need to disclose",
     },
   },
+];
+
+/** Every combination of the parts, joined by single spaces; an empty part drops out. */
+function phrases(...parts: readonly (readonly string[])[]): readonly string[] {
+  let out: string[] = [""];
+  for (const part of parts) {
+    out = out.flatMap((head) => part.map((w) => [head, w].filter((x) => x.length > 0).join(" ")));
+  }
+  return out;
+}
+
+/**
+ * ONE ENTRY OF THE CLOSED HEDGE ALLOWLIST (owner decision 2026-10-07,
+ * "strict + free refusal", R-173; compliance verification BLOCK, same day).
+ *
+ * A FIXED TOKEN SEQUENCE, NOT A PATTERN. `phrases` is the whole entry: every
+ * accepted wording, written out, each ending with the shape's own word, so the
+ * negator directly governs the shape and there is no free word anywhere in it.
+ * The first version of this list used patterns with factive verbs and
+ * free-word runs, and "Nobody tells you this hook is guaranteed to work." read
+ * as a hedge; the second matched a phrase ANYWHERE in a sentence, and "There's
+ * no guarantee like this hook." read as one. Since the final compliance
+ * verification (2026-10-07) a phrase admits only a sentence that IS the phrase,
+ * optionally followed by one `CLAIM_HEDGE_TAILS` entry (`hedgeSentenceAdmits`).
+ */
+export type ClaimHedge = {
+  id: string;
+  /** The shape ids the phrase's last word is — the only shapes it governs. */
+  shapes: readonly string[];
+  /** Every accepted wording, lowercase, straight apostrophes, single spaces. */
+  phrases: readonly string[];
+  /** A sentence the hedge MUST clear (flag), with its shape. */
+  specimen: { sentence: string; shape: string };
+  /** A sentence that looks like it and must still REFUSE. */
+  counterSpecimen: { sentence: string; shape: string };
+};
+
+/**
+ * THE HEDGE ALLOWLIST: for the performance and certainty families, a hard
+ * shape REFUSES unless its WHOLE SENTENCE is one of these phrases plus at most
+ * one closed tail, and nothing later in the unit can take it back
+ * (`hedgeSentenceAdmits`). Small and closed on purpose: a refusal caused only by
+ * the claim scan costs the creator nothing (R-173, `refusalIsClaimOnly`), so a
+ * missing honest wording is a free rewrite, while a wrong entry ships a
+ * promise. A new wording is a line here, with its specimen.
+ */
+export const CLAIM_HEDGE_ALLOWLIST: readonly ClaimHedge[] = [
   {
-    id: "negated-clause",
-    families: ["performance", "certainty"],
-    reads: "before",
-    // THE HONEST WEAKEST POINT, which REQ-I04 asks every output to name. The
-    // clause the claim sits in is negated at its subject — "Nothing here is
-    // guaranteed.", "Nothing here makes it go viral." — and the negator has to
-    // be in the SAME clause as the match (no `,` or `;` between them), so
-    // "Nothing else matters, this will perform." is untouched.
-    //
-    // This is the guard that lets `goes viral` carry the bare infinitive the
-    // gate prescribed without re-refusing the sentence R-68 pinned as honest.
-    pattern: /^[^,;]*\b(?:nothing|none|no part|nobody|not one)\b[^,;]*$/,
-    specimen: {
-      sentence: "Nothing here makes it go viral.",
-      shape: "goes viral",
-    },
-    counterSpecimen: {
-      sentence: "Nothing else matters, this hook goes viral.",
-      shape: "goes viral",
-    },
+    id: "hedge-no-guarantee",
+    shapes: ["guarantee"],
+    phrases: ["no guarantee", "no guarantees", "there is no guarantee", "there's no guarantee", "there are no guarantees"],
+    specimen: { sentence: "No guarantees, just what worked for me.", shape: "guarantee" },
+    counterSpecimen: { sentence: "No more guessing with this guaranteed method.", shape: "guarantee" },
+  },
+  {
+    id: "hedge-cannot-guarantee",
+    shapes: ["guarantee"],
+    phrases: phrases(["i", "we"], ["can't", "cannot", "can not", "won't", "will not", "don't", "do not"], ["guarantee"]),
+    specimen: { sentence: "I can't guarantee this works for you.", shape: "guarantee" },
+    counterSpecimen: { sentence: "Don't miss this guaranteed growth hack.", shape: "guarantee" },
+  },
+  {
+    id: "hedge-nothing-guaranteed",
+    shapes: ["guarantee"],
+    phrases: phrases(["nothing", "nothing here", "nothing in this draft", "none of this"], ["is", "is ever", "was", "will be"], ["guaranteed"]),
+    specimen: { sentence: "Nothing in this draft is guaranteed.", shape: "guarantee" },
+    counterSpecimen: { sentence: "Nothing but guaranteed growth.", shape: "guarantee" },
+  },
+  {
+    id: "hedge-not-guaranteed",
+    shapes: ["guarantee"],
+    phrases: [
+      ...phrases(["results", "the results", "outcomes"], ["aren't", "are not"], ["guaranteed"]),
+      ...phrases(["it", "this", "that", "success"], ["isn't", "is not"], ["guaranteed"]),
+      ...phrases(["it's not", "that's not"], ["guaranteed"]),
+    ],
+    specimen: { sentence: "Results aren't guaranteed.", shape: "guarantee" },
+    counterSpecimen: { sentence: "Not everyone knows the results are guaranteed.", shape: "guarantee" },
+  },
+  {
+    id: "hedge-not-proven",
+    shapes: ["proven to"],
+    phrases: [
+      ...phrases(["this", "it", "that", "this hook", "this draft", "this idea", "this method"], ["isn't", "is not"], ["", "yet"], ["proven to"]),
+      ...phrases(["it's not", "that's not"], ["", "yet"], ["proven to"]),
+    ],
+    specimen: { sentence: "This isn't proven to work for everyone.", shape: "proven to" },
+    counterSpecimen: { sentence: "Not everyone knows this method is proven to work.", shape: "proven to" },
   },
 ];
+
+/** Straight apostrophes, so one phrase list matches both spellings; same length, so offsets hold. */
+export function straightApostrophes(text: string): string {
+  return text.replace(/[‘’ʼ′`]/g, "'");
+}
+
+/**
+ * THE CLOSED TAIL LIST (final compliance verification, 2026-10-07): the only
+ * words that may follow an allowlisted hedge phrase in its sentence. Written
+ * out as data; none carries a claim shape, a negator that could re-negate the
+ * hedge, or an object a hedge could be turned into a comparison with ("like
+ * this hook", "comes close to"). "" is the bare phrase.
+ */
+export const CLAIM_HEDGE_TAILS: readonly string[] = [
+  "",
+  ", just what worked for me",
+  ", only what worked for me",
+  ", but it worked for me",
+  " for everyone",
+  " for every creator",
+  " for you",
+  " here",
+  " in this draft",
+  " this works",
+  " this works for you",
+  " that this works",
+  " it lands",
+  " this lands",
+  " work",
+  " work for everyone",
+  " land",
+];
+
+/**
+ * THE ADMISSION PHRASES (final compliance verification, 2026-10-07): the only
+ * sentences besides the hedge allowlist that FLAG a performance or certainty
+ * shape on an admission field (`ADMISSION_CLAIM_FIELDS`). Exact sentences,
+ * written out; every other weakest point carrying a hard shape refuses (free).
+ */
+export const ADMISSION_HEDGE_PHRASES: readonly string[] = [
+  "it's unlikely to go viral",
+  "it is unlikely to go viral",
+  "this is unlikely to go viral",
+  "it is not guaranteed that this will perform",
+  "it's not guaranteed that this will perform",
+  "this may not perform",
+  "this might not perform",
+  "results may vary",
+  "this will not outperform your last post on its own",
+  "this won't outperform your last post on its own",
+];
+
+/** An exception anywhere else in the unit can take a hedge back ("…except results."). */
+const EXCEPTION = /\b(?:except|but|apart from|aside from|other than|unless|besides|save for)\b/;
+
+/**
+ * A sentence as the allowlists compare it: lowercase, straight apostrophes,
+ * single spaces, no trailing `.`, `!` or ellipsis. A `?` is kept, so a
+ * question never equals a phrase.
+ */
+export function normaliseHedgeSentence(sentence: string): string {
+  return straightApostrophes(sentence.toLowerCase())
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.!…]+$/, "")
+    .trim();
+}
+
+/** Where a sentence sits in its unit — what the "taken back later" rule reads. */
+export type HedgeUnitContext = {
+  /** It is the unit's LAST sentence: nothing after it can take it back. */
+  last: boolean;
+  /** Another sentence of the same unit carries an exception word. */
+  exceptionElsewhere: boolean;
+};
+
+const HEDGE_SENTENCES: ReadonlyMap<string, readonly string[]> = new Map(
+  CLAIM_HEDGE_ALLOWLIST.flatMap((h) =>
+    h.phrases.flatMap((ph) => CLAIM_HEDGE_TAILS.map((tail) => [ph + tail, h.shapes] as const))
+  )
+);
+
+/**
+ * THE ENDPOINT RULE: the id of the hedge entry that admits this sentence for
+ * this shape, or null. Admitted only when the WHOLE normalised sentence is an
+ * allowlisted phrase plus one closed tail (or, on an admission field, an
+ * admission phrase), it is the last sentence of its unit, and no other
+ * sentence of the unit carries an exception.
+ */
+export function hedgeSentenceAdmits(params: {
+  sentence: string;
+  shape: string;
+  field?: string;
+  unit?: HedgeUnitContext;
+}): string | null {
+  const unit = params.unit ?? { last: true, exceptionElsewhere: false };
+  if (!unit.last || unit.exceptionElsewhere) return null;
+  const normalised = normaliseHedgeSentence(params.sentence);
+  const shapes = HEDGE_SENTENCES.get(normalised);
+  if (shapes !== undefined && shapes.includes(params.shape)) {
+    return CLAIM_HEDGE_ALLOWLIST.find(
+      (h) => h.shapes.includes(params.shape) && CLAIM_HEDGE_TAILS.some((t) => h.phrases.some((ph) => ph + t === normalised))
+    )!.id;
+  }
+  if (
+    params.field !== undefined &&
+    ADMISSION_CLAIM_FIELDS.includes(params.field) &&
+    ADMISSION_HEDGE_PHRASES.includes(normalised)
+  ) {
+    return "admission-hedge";
+  }
+  return null;
+}
+
+/**
+ * THE ADMISSION FIELDS (R-173): `/whyThisPerforms/weakestPoint` is where
+ * REQ-I04 asks the draft to name its weakness. It is inside the hard
+ * explanation scope; a performance or certainty shape there flags only when
+ * its sentence is an allowlisted hedge or one of `ADMISSION_HEDGE_PHRASES`
+ * exactly, and refuses (free) otherwise — "Nobody tells you…", "It's unlikely
+ * this won't go viral." and "Results are guaranteed." all refuse.
+ */
+export const ADMISSION_CLAIM_FIELDS: readonly string[] = ["/whyThisPerforms/weakestPoint"];
 
 /**
  * Which guard, if any, softens this match — the id, so a caller can say WHY.
@@ -618,11 +974,18 @@ export const CLAIM_CONTEXT_GUARDS: readonly ClaimContextGuard[] = [
  */
 export function claimContextGuard(params: {
   family: ClaimFamily;
+  /** The matched shape's id — a hedge governs only the shapes it names. */
+  shape?: string;
+  /** The pointer, so an ADMISSION field can read its own phrases. */
+  field?: string;
+  /** Where the sentence sits in its unit; absent reads as "alone in it". */
+  unit?: HedgeUnitContext;
   sentence: string;
   matchStart: number;
   matchEnd: number;
 }): string | null {
-  const { family, sentence, matchStart, matchEnd } = params;
+  const { family, shape, field, matchStart, matchEnd } = params;
+  const sentence = straightApostrophes(params.sentence.toLowerCase());
   const before = sentence.slice(0, matchStart);
   const after = sentence.slice(matchEnd);
   for (const guard of CLAIM_CONTEXT_GUARDS) {
@@ -630,7 +993,34 @@ export function claimContextGuard(params: {
     if (guard.pattern.test(before)) return guard.id;
     if (guard.reads === "outside" && guard.pattern.test(after)) return guard.id;
   }
-  return null;
+  if (family !== "performance" && family !== "certainty") return null;
+  if (shape === undefined) return null;
+  return hedgeSentenceAdmits({ sentence, shape, field, unit: params.unit });
+}
+
+/**
+ * WAS THIS REFUSAL CAUSED BY THE CLAIM SCAN ALONE? (owner decision
+ * 2026-10-07, R-173; amends R-68.) True exactly when the kill test failed and
+ * every hard rule on its final attempt is `forbidden_claim` — no fragment
+ * triad, antithesis, hook length, invented specific, mode check or
+ * similarity finding. Such a refusal is FREE: the settlement takes no debit,
+ * because the strict hedge allowlist above refuses some honest sentences and
+ * a creator is never charged for that. The pipeline's one rewrite has already
+ * named the refused sentences to the model as must-remove.
+ *
+ * Reads plain stored JSON (`generations.kill_test`), so a replay and a held
+ * settlement decide it from the same record the fresh path wrote.
+ */
+export function refusalIsClaimOnly(killTest: unknown): boolean {
+  if (typeof killTest !== "object" || killTest === null) return false;
+  const k = killTest as { outcome?: unknown; finalAttempt?: { hardRules?: unknown } };
+  if (k.outcome !== "failed") return false;
+  const rules = k.finalAttempt?.hardRules;
+  return (
+    Array.isArray(rules) &&
+    rules.length > 0 &&
+    rules.every((r) => typeof r === "object" && r !== null && (r as { rule?: unknown }).rule === "forbidden_claim")
+  );
 }
 
 /** One claim found in model-authored text. */
@@ -654,8 +1044,12 @@ export type ClaimFinding = {
  * forbids invented specifics and guarantees on any creator-facing surface.
  */
 const REMEDIES: Record<ClaimFamily, string> = {
+  // COUNT-INDEPENDENT (audit P2-R7, Phase 6 AC9's fourth site). This read "no
+  // result of yours has been logged" — a claim about the creator's history from
+  // a package that holds no scope and no count, false for everyone who has
+  // logged one. What is true for every creator is the R-115 precondition.
   performance:
-    "This says how the post will do once it is up. Nothing here has any evidence about that — no result of yours has been logged — so say what the idea does instead, and leave what happens after to the results you log.",
+    "This says how the post will do once it is up. Nothing you log enters a draft's evidence until a verified analytics connector exists, so nothing here has any evidence about that. Say what the idea does instead.",
   // NO BANNED WORD IN THE REMEDY ITSELF. This copy is creator-facing and is
   // scanned by `kill-test.test.ts` against both the repo canon and the list
   // above, so it says "certain" rather than the word it is refusing.
@@ -689,17 +1083,42 @@ export function claimRemedyFor(family: ClaimFamily): string {
  * into a neighbouring claim.
  */
 function enforcementFor(
-  shape: { enforcement: ClaimEnforcement; family: ClaimFamily },
+  shape: OutputClaimShape,
   field: string,
-  context: { sentence: string; matchStart: number; matchEnd: number }
+  context: { sentence: string; matchStart: number; matchEnd: number; unit: HedgeUnitContext }
 ): ClaimEnforcement {
   if (shape.enforcement === "flag") return "flag";
-  if (!HARD_CLAIM_FIELD_PREFIXES.some((prefix) => field.startsWith(prefix))) {
-    return "flag";
-  }
-  return claimContextGuard({ family: shape.family, ...context }) === null
+  if (!claimRefusesOn(shape, field)) return "flag";
+  return claimContextGuard({ family: shape.family, shape: shape.id, field, ...context }) === null
     ? "hard"
     : "flag";
+}
+
+/**
+ * Whether a hard-ceiling shape may refuse on this concrete pointer — the
+ * field ceiling alone, before the context guard. A pointer outside the schema
+ * matches no pattern and can only flag.
+ */
+export function claimRefusesOn(
+  shape: Pick<OutputClaimShape, "enforcement" | "fields">,
+  field: string
+): boolean {
+  return claimFieldsFor(shape).some((pattern) => pointerMatches(pattern, field));
+}
+
+/** Each shape's pattern, global, so every occurrence is read (P2-R4). */
+const GLOBAL_PATTERNS: ReadonlyMap<string, RegExp> = new Map(
+  OUTPUT_CLAIM_SHAPES.map((s) => [s.id, new RegExp(s.pattern.source, s.pattern.flags + "g")])
+);
+
+/**
+ * `sentenceUnits`, KEEPING EACH SENTENCE'S TERMINATOR: a hedge is void in a
+ * question (`normaliseHedgeSentence` keeps the `?`), and `sentenceUnits` splits the `?` away — "No
+ * guarantee here?" read as the statement it is not (measured by the
+ * generator's DISQUALIFIED property, 183 in 1,500, on the first run).
+ */
+function sentencesWithTerminators(line: string): string[] {
+  return (line.match(/[^.!?\u2026]+[.!?\u2026]*/g) ?? []).map((x) => x.trim()).filter((x) => /[^.!?\u2026\s]/.test(x));
 }
 
 /**
@@ -712,30 +1131,55 @@ function enforcementFor(
  * PER SENTENCE, so a finding names the claim rather than a whole VO beat, and
  * per LINE first, so a hook set (several one-line outputs in one field) is
  * never read as one sentence.
+ *
+ * ONE FINDING PER SHAPE PER SENTENCE, at the STRICTEST enforcement across
+ * every occurrence (P2-R4). The match used to be non-global, so a guarded
+ * first occurrence decided for the whole sentence and "Nothing here makes it
+ * go viral, but this hook goes viral anyway." only flagged (360 escapes in
+ * 1,500 on the generator's first run). The token reported is the occurrence
+ * that decided: the first hard one, or the first one if none is hard.
  */
 export function scanOutputClaims(
   units: readonly TextUnit[]
 ): ClaimFinding[] {
   const out: ClaimFinding[] = [];
   for (const unit of units) {
-    for (const line of lines(unit.text)) {
-      for (const sentence of sentenceUnits(line)) {
+    // THE UNIT'S SENTENCES, ACROSS LINES (final compliance verification): a
+    // hedge is taken back by a LATER sentence ("Nothing here is guaranteed!
+    // Results are.") or an exception anywhere else in the unit, so each
+    // sentence knows its place in the whole unit, not only in its line.
+    const all = lines(unit.text).flatMap(sentencesWithTerminators);
+    const exceptional = all.map((x) => EXCEPTION.test(straightApostrophes(x.toLowerCase())));
+    for (const [index, sentence] of all.entries()) {
+      {
+        const unitContext: HedgeUnitContext = {
+          last: index === all.length - 1,
+          exceptionElsewhere: exceptional.some((e, j) => e && j !== index),
+        };
         const haystack = sentence.toLowerCase();
         for (const shape of OUTPUT_CLAIM_SHAPES) {
-          const m = haystack.match(shape.pattern);
-          if (!m) continue;
-          // The SPAN, not the string: the third ceiling reads the words around
-          // the match, and `m.index` is the only place they are known.
-          const matchStart = m.index ?? 0;
-          out.push({
-            shape: shape.id,
-            family: shape.family,
-            enforcement: enforcementFor(shape, unit.field, {
+          let decided: { enforcement: ClaimEnforcement; token: string } | null = null;
+          for (const m of haystack.matchAll(GLOBAL_PATTERNS.get(shape.id)!)) {
+            // The SPAN, not the string: the third ceiling reads the words
+            // around the match, and `m.index` is the only place they are known.
+            const matchStart = m.index ?? 0;
+            const enforcement = enforcementFor(shape, unit.field, {
               sentence: haystack,
               matchStart,
               matchEnd: matchStart + m[0].length,
-            }),
-            token: m[0],
+              unit: unitContext,
+            });
+            if (decided === null || enforcement === "hard") {
+              decided = { enforcement, token: m[0] };
+            }
+            if (enforcement === "hard") break;
+          }
+          if (decided === null) continue;
+          out.push({
+            shape: shape.id,
+            family: shape.family,
+            enforcement: decided.enforcement,
+            token: decided.token,
             field: unit.field,
             unit: excerpt(sentence),
           });

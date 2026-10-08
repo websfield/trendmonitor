@@ -9,13 +9,22 @@ import {
   type OriginalReferenceSummary,
 } from "../app/(product)/trends/trends-view";
 import { SpinOutcome } from "../app/(product)/trends/spin-panel";
-import { spinWithheldLocator, type SpinActionState } from "../app/(product)/trends/spin-state";
+import { DISCLOSURE_LINE, FREE_CLAIM_REFUSAL } from "../app/(product)/studio/run-copy";
+import {
+  SPIN_RESULT_EXCLUDED_FIELDS,
+  spinWithheldLocator,
+  type SpinActionState,
+} from "../app/(product)/trends/spin-state";
+import { presentedTextUnits } from "../packages/credits/src/presented-output";
 // BY PATH, the `claims-vocabulary-agreement.test.ts` idiom: `tests/**` is the
 // only tree that may read `@respin/modes` beside `app/**`'s copy of its
 // vocabulary (R-64 denies the package to `app/**` outright), and importing by
 // path keeps the app's resolution boundary intact.
 import { SPECIFIC_SHAPES } from "../packages/modes/src/traceability";
 import { SECTION_KEYS } from "../packages/modes/src/modes";
+import { outputTextPointers, outputTextUnits } from "../packages/modes/src/output";
+import { NOT_PRESENTED_FIELD_PREFIXES } from "../packages/modes/src/claims";
+import { EVERY_SECTION as EVERY_SECTION_DOC } from "../packages/modes/tests/support/fixtures";
 import {
   PASTE_DISABLED_COPY,
   PASTE_FIELD_IDS,
@@ -106,15 +115,29 @@ const METADATA_ONLY: MetadataOnlyYoutubeItem = {
 };
 
 /**
- * The live action state after a usable spin. `reasoning` is deliberately NOT a
- * field here: the action's projection drops the model's performance rationale
- * and carries only what REQ-I04/I05 require beside the result.
+ * The live action state after a usable spin. `reasoning` is not a separate
+ * field here: since R-172 the rationale is one line of `spinResult`, like
+ * every other presented field, and the checks' findings ride as `killTest`.
  */
 const RESULT_STATE: Extract<SpinActionState, { status: "result" }> = {
   status: "result",
   spinResult: "Your result: use your own example, contrast and closing question.",
   weakestPoint: "None of this has been checked against how your own audience actually behaves.",
-  disclosureGuidance: "Say in the description that a tool helped draft this, in your own words.",
+  // A KIND, NEVER PROSE (R-121, audit P1-R1): the screen renders the
+  // product's sentence for it.
+  disclosure: { kind: "policy_check_required" },
+  killTest: {
+    outcome: "passed",
+    attempts: 1,
+    rewritten: false,
+    creatorRulesScored: false,
+    verdicts: [],
+    limitNote: "SPIN-LIMIT-NOTE-SENTINEL",
+    traceability: [{ kind: "proper-noun", enforcement: "flag", token: "Dorset", field: "/beats/0/vo", unit: "Filmed in Dorset." }],
+    // Canon-clean on purpose: the state scan below reads every rendered word,
+    // and a flag quotes the draft. `cannot fail` is outside the canon.
+    claims: [{ family: "certainty", enforcement: "flag", token: "can't miss", field: "/hooks/0/text", unit: "This angle can't miss on a slow week." }],
+  },
   chargedCredits: 2,
 };
 
@@ -127,6 +150,7 @@ const RESULT_STATE: Extract<SpinActionState, { status: "result" }> = {
  */
 const WITHHELD_STATE: Extract<SpinActionState, { status: "withheld" }> = {
   status: "withheld",
+  freeClaimRefusal: false,
   chargedCredits: 2,
   why: [
     {
@@ -367,9 +391,11 @@ const RENDERED_STATES: readonly [label: string, html: string][] = [
   ["view: untyped empty ready feed", renderToStaticMarkup(<TrendsView state={{ kind: "ready", autopsiedItems: [], discoveryItems: [] } as never} />)],
   ["outcome: near_copy_refused", renderToStaticMarkup(<SpinOutcome state={{ status: "near_copy_refused", chargedCredits: 2 }} originalReference={ORIGINAL_REFERENCE} />)],
   ["outcome: withheld with reasons", renderToStaticMarkup(<SpinOutcome state={WITHHELD_STATE} originalReference={ORIGINAL_REFERENCE} />)],
-  ["outcome: withheld with nothing to show", renderToStaticMarkup(<SpinOutcome state={{ status: "withheld", chargedCredits: 2, why: [], sharperAngle: null }} originalReference={ORIGINAL_REFERENCE} />)],
+  ["outcome: withheld with nothing to show", renderToStaticMarkup(<SpinOutcome state={{ status: "withheld", chargedCredits: 2, freeClaimRefusal: false, why: [], sharperAngle: null }} originalReference={ORIGINAL_REFERENCE} />)],
   ["outcome: replayed", renderToStaticMarkup(<SpinOutcome state={{ status: "replayed", balanceAfter: 8 }} originalReference={ORIGINAL_REFERENCE} />)],
-  ["outcome: refused", renderToStaticMarkup(<SpinOutcome state={{ status: "refused", code: "unknown" }} originalReference={ORIGINAL_REFERENCE} />)],
+  ["outcome: settled_held", renderToStaticMarkup(<SpinOutcome state={{ status: "settled_held", chargedCredits: 3, balanceAfter: 6, freeClaimRefusal: false }} originalReference={ORIGINAL_REFERENCE} />)],
+  ["outcome: refused", renderToStaticMarkup(<SpinOutcome state={{ status: "refused", code: "unknown", copy: BILLING_ERROR_COPY.unknown }} originalReference={ORIGINAL_REFERENCE} />)],
+  ["outcome: refused (held)", renderToStaticMarkup(<SpinOutcome state={{ status: "refused", code: "generation_held_balance", copy: BILLING_ERROR_COPY.generation_held_balance }} originalReference={ORIGINAL_REFERENCE} />)],
   ["outcome: result", renderToStaticMarkup(<SpinOutcome state={RESULT_STATE} originalReference={ORIGINAL_REFERENCE} />)],
 ];
 
@@ -547,15 +573,54 @@ describe("a usable spin result names its weakest point and disclosure guidance, 
     expect(html).toContain(RESULT_STATE.weakestPoint);
   });
 
-  it("renders the disclosure guidance under its own heading (REQ-I05)", () => {
+  it("renders the PRODUCT's disclosure line under its own heading (REQ-I05, R-121)", () => {
     expect(html).toContain('data-testid="spin-disclosure"');
     expect(html).toMatch(/<h4[^>]*>Disclosure guidance<\/h4>/);
-    expect(html).toContain(RESULT_STATE.disclosureGuidance);
+    // React escapes the apostrophes in "platform's", so the sentence is read
+    // back through the same escaping rather than compared raw.
+    expect(html).toContain(DISCLOSURE_LINE.policy_check_required.replace(/'/g, "&#x27;"));
   });
 
   it("renders the spin result itself beside the labelled original", () => {
     expect(html).toContain(RESULT_STATE.spinResult);
     expect(html).toContain('aria-label="Original reference"');
+  });
+
+  it("renders the SAME four honesty signals /studio renders (audit Phase 2 gate, R-172)", () => {
+    // Traceability flags, the marker offer beside each, claim flags and the
+    // limit note — the `/studio` block, so an undecided claim (flagged, never
+    // refused) is visible on this surface too.
+    expect(html).toContain('data-testid="studio-kill-test"');
+    expect(html).toContain('data-testid="studio-traceability"');
+    expect(html).toContain('data-testid="studio-check-offer"');
+    expect(html).toContain('data-testid="studio-claims"');
+    expect(html).toContain("This angle can&#x27;t miss on a slow week.");
+    expect(html).toContain("SPIN-LIMIT-NOTE-SENTINEL");
+    expect(html).not.toContain("spin-honesty-omission");
+    // ...and only on a draft: a refusal shows none.
+    const withheld = renderToStaticMarkup(
+      <SpinOutcome state={{ status: "withheld", chargedCredits: 1, freeClaimRefusal: false, why: [], sharperAngle: null }} originalReference={ORIGINAL_REFERENCE} />
+    );
+    expect(withheld).not.toContain("studio-kill-test");
+  });
+
+  it("ONE refusal-scope authority: the facade's exclusion is `NOT_PRESENTED_FIELD_PREFIXES`, and the surface's own list names only what it renders elsewhere", () => {
+    // R-172: the Spin screen's exclusion list holds the weakest point alone —
+    // rendered under its own heading — so screen = presented scope.
+    expect(Object.keys(SPIN_RESULT_EXCLUDED_FIELDS)).toEqual(["/whyThisPerforms/weakestPoint"]);
+    // Root tests may import `@respin/modes`; the screen may not. The facade's
+    // `presentedTextUnits` drops exactly the not-presented prefix, and every
+    // key of the surface's exclusion list is a schema pointer.
+    const doc = EVERY_SECTION_DOC as unknown as Parameters<typeof outputTextUnits>[0];
+    const all = outputTextUnits(doc).map((u) => u.field);
+    const presented = presentedTextUnits(doc).map((u) => u.field);
+    expect(presented).toEqual(
+      all.filter((f) => !NOT_PRESENTED_FIELD_PREFIXES.some((p) => f.startsWith(p)))
+    );
+    for (const field of Object.keys(SPIN_RESULT_EXCLUDED_FIELDS)) {
+      expect(outputTextPointers(), field).toContain(field);
+      expect(SPIN_RESULT_EXCLUDED_FIELDS[field].length, field).toBeGreaterThan(30);
+    }
   });
 
   it("the model's performance rationale is not a field the state can carry, so it cannot render", () => {
@@ -615,6 +680,7 @@ describe("a withheld spin says which rules fired and offers a sharper angle, nev
       <SpinOutcome
         state={{
           status: "withheld",
+          freeClaimRefusal: false,
           chargedCredits: 2,
           why: [{ rule: "hook_too_long", remedy: "Cut it to the one claim that makes someone stay.", locators: [] }],
           sharperAngle: null,
@@ -688,7 +754,7 @@ describe("a withheld spin says which rules fired and offers a sharper angle, nev
 
   it("a withheld state with nothing to report still renders honestly, without a blank list", () => {
     const empty = renderToStaticMarkup(
-      <SpinOutcome state={{ status: "withheld", chargedCredits: 2, why: [], sharperAngle: null }} originalReference={ORIGINAL_REFERENCE} />
+      <SpinOutcome state={{ status: "withheld", chargedCredits: 2, freeClaimRefusal: false, why: [], sharperAngle: null }} originalReference={ORIGINAL_REFERENCE} />
     );
     expect(empty).toContain("Spin withheld");
     expect(empty).not.toContain("What fired");
@@ -1184,5 +1250,53 @@ describe("no screen file under app/(product)/trends types a price, a limit, a co
         expect(style, name).not.toMatch(/color|background|border/i);
       }
     }
+  });
+});
+
+describe("R-173: a Spin stopped only because it made a claim this product won't make says no credits were used", () => {
+  const unescaped = (html: string) => html.replace(/&#x27;/g, "'");
+  it("withheld: the free refusal's sentence replaces the charge line; a charged one keeps it", () => {
+    const free = unescaped(renderToStaticMarkup(
+      <SpinOutcome state={{ ...WITHHELD_STATE, chargedCredits: 0, freeClaimRefusal: true }} originalReference={ORIGINAL_REFERENCE} />
+    ));
+    expect(free).toContain(FREE_CLAIM_REFUSAL);
+    expect(free).not.toMatch(/Charge applied/);
+    const charged = unescaped(renderToStaticMarkup(<SpinOutcome state={WITHHELD_STATE} originalReference={ORIGINAL_REFERENCE} />));
+    expect(charged).toMatch(/Charge applied: <span class="mono">2<\/span> credits/);
+    expect(charged).not.toContain(FREE_CLAIM_REFUSAL);
+  });
+
+  it("settled held: a free claim refusal finished by a press says so, with the balance", () => {
+    const html = unescaped(renderToStaticMarkup(
+      <SpinOutcome state={{ status: "settled_held", chargedCredits: 0, balanceAfter: 6, freeClaimRefusal: true }} originalReference={ORIGINAL_REFERENCE} />
+    ));
+    expect(html).toContain(FREE_CLAIM_REFUSAL);
+    expect(html).not.toMatch(/Charge applied/);
+    expect(html).toMatch(/Your balance is <span class="mono">6<\/span> credits/);
+  });
+});
+
+describe("audit P3-A2: a settled held Spin states the charge it took", () => {
+  it("names the charge and the balance, says no model was called by this press, and never says no charge was applied", () => {
+    const html = renderToStaticMarkup(
+      <SpinOutcome state={{ status: "settled_held", chargedCredits: 3, balanceAfter: 6, freeClaimRefusal: false }} originalReference={ORIGINAL_REFERENCE} />
+    );
+    expect(html).toContain('data-testid="spin-settled-held"');
+    expect(html).toMatch(/Charge applied: <span class="mono">3<\/span> credits/);
+    expect(html).toMatch(/this press called no model/);
+    expect(html).not.toMatch(/No new charge/);
+  });
+});
+
+describe("audit Phase 3 gate: a HELD Spin renders the held copy, never \"could not be started\"", () => {
+  it.each(["generation_held_paused", "generation_held_balance", "generation_held_transient"] as const)("%s: the title and the detail render, naming Held drafts and Finish this draft", (code) => {
+    const html = renderToStaticMarkup(
+      <SpinOutcome state={{ status: "refused", code, copy: BILLING_ERROR_COPY[code] }} originalReference={ORIGINAL_REFERENCE} />
+    );
+    expect(html).toContain('data-testid="spin-refused"');
+    expect(html).toContain(BILLING_ERROR_COPY[code].title);
+    expect(html).toMatch(/Held drafts on Studio/);
+    expect(html).toMatch(/Finish this draft/);
+    expect(html).not.toMatch(/could not be started/);
   });
 });

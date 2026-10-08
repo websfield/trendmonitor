@@ -194,7 +194,7 @@ export function findUngatedApiEntrypoints(appRoot: string): string[] {
 const PUBLIC_ENTRYPOINTS: { file: string; why: string }[] = [
   {
     file: "(marketing)/for/[audience]/page.tsx",
-    why: "the statically generated audience variants are public marketing pages; dynamicParams limits them to declared audience slugs.",
+    why: "the audience variants are public marketing pages, rendered per request since audit P6-A3 (R-175) because their pricing section reads the active config; notFound() limits them to declared audience slugs.",
   },
   {
     file: "(marketing)/page.tsx",
@@ -298,6 +298,38 @@ describe("the entrypoint definition is DERIVED (round-3 meta-finding)", () => {
       false
     );
     expect(isUseServerModule('"use client";\nexport const x = 1;')).toBe(false);
+    // P5-R7: a FUNCTION-LEVEL directive declares a server action too, so the
+    // fixture modules below are entrypoints — each shape the regex claims.
+    expect(
+      isUseServerModule('import x from "y";\nexport async function act(form: FormData) {\n  "use server";\n  return x;\n}\n')
+    ).toBe(true);
+    expect(
+      isUseServerModule("export async function act(): Promise<void> {\n  'use server';\n}\n")
+    ).toBe(true);
+    expect(
+      isUseServerModule('export const act = async (form: FormData) => {\n  "use server";\n};\n')
+    ).toBe(true);
+    // ...a string that merely CONTAINS it in a body is not a directive.
+    expect(
+      isUseServerModule('export function f() {\n  const s = "x";\n  return "use server";\n}\n')
+    ).toBe(false);
+    // ...and it is classified as an ENTRYPOINT by the classifier the gate
+    // scans key on, not only reported by the predicate.
+    const root = scratchDir("respin-inline-action-");
+    const write = (p: string, body: string) => {
+      const full = join(root, ...p.split("/"));
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, body);
+      return full;
+    };
+    expect(
+      classifyAppFile(
+        write(
+          "g/inline-action.ts",
+          'export async function act(form: FormData) {\n  "use server";\n}\n'
+        )
+      )
+    ).toBe("server-actions");
     // ...and the two real files that DISCUSS the directive are not actions.
     for (const f of [
       "(product)/billing-errors.ts",
@@ -434,6 +466,21 @@ const NAMED_PROTECTED_PAGES: {
   {
     file: "(product)/studio/frameworks/actions.ts",
     url: "/studio/frameworks",
+    gate: "requireUser",
+  },
+  // Launch L4 (R-153). The saved recording pack, UNDER `/studio` for the same
+  // reason the frameworks pair is. The page is a READ of one stored draft —
+  // a creator's own script, so an ungated one is a leak — and its action
+  // module is a POST endpoint in its own right: "use this version" moves a
+  // piece's selection and a revision reaches a vendor AND takes a debit.
+  {
+    file: "(product)/studio/saved/[attemptId]/page.tsx",
+    url: "/studio/saved/[attemptId]",
+    gate: "requireUser",
+  },
+  {
+    file: "(product)/studio/saved/actions.ts",
+    url: "/studio/saved",
     gate: "requireUser",
   },
   // Slice 7, stage D — PRD B04's step. Under `/onboarding` for the same reason,

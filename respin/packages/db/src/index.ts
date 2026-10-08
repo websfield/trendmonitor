@@ -12,6 +12,22 @@ export {
   ordinaryLoginAllowed,
   reauthenticateSessionWithPassword,
   assertReauthenticatedWorkspaceScopeInTx,
+  // R-164: the Google reauthentication challenge's server side, and the
+  // billing reauthentication arms it adds a member to.
+  BILLING_REAUTHENTICATION_ARMS,
+  consumeGoogleReauthentication,
+  GOOGLE_REAUTH_ATTEMPT_WINDOW_MS,
+  GOOGLE_REAUTH_DB_REFUSAL_CODES,
+  GOOGLE_REAUTH_MAX_ATTEMPTS,
+  GOOGLE_REAUTH_MAX_OUTSTANDING,
+  GOOGLE_REAUTH_STATE_PREFIX,
+  googleReauthDbRefusalCode,
+  recordedGoogleReauthentication,
+  reserveGoogleReauthentication,
+  stampGoogleReauthentication,
+  type BillingReauthenticationArm,
+  type GoogleReauthDbRefusalCode,
+  type GoogleReauthState,
   type ReauthenticatedSessionRef,
 } from "./auth-lifecycle";
 export {
@@ -82,7 +98,9 @@ export {
   DELETION_EXECUTOR_MAX_ERASURE_FAILURES,
   ERASURE_DISABLED,
   eraseOperation,
+  erasedWorkspaceOperationIdInTx,
   erasureHold,
+  stripeMoneyAmount,
   FINANCIAL_CHAIN_TABLES,
   STRIPE_PAYLOAD_RECEIVER_WIRED,
   unretainedFinancialChainTables,
@@ -173,12 +191,17 @@ export {
   ABANDONED_BEFORE_VENDOR,
   CLAIMED_ABANDON_MS,
   GENERATION_RECOVERY_BATCH,
+  UNSETTLED_CANDIDATE_ALERT_MS,
   VENDOR_COMPLETE_HARD_CLEAR_MS,
   VENDOR_COMPLETE_SETTLE_MS,
   VENDOR_STARTED_GRACE_MS,
+  isPastVendorCompleteHardClear,
+  locateGenerationAttemptForOperator,
+  type OperatorAttemptLocation,
   type GenerationRecoveryOptions,
   type GenerationRecoveryOutcome,
 } from "./generation-recovery";
+export { FORBIDDEN_CLAIM_RULE, refusalIsClaimOnly } from "./generation-refusal";
 export {
   createSqlLifecycleMutationPort,
   createSqlResidueProbePort,
@@ -219,13 +242,23 @@ export {
   DELETION_GRACE_MS,
   DELETION_JOURNAL_RETAIN_MS,
   DELETION_REAUTH_MAX_AGE_MS,
+  // R-162: the caller the five resume seams never had — the worker tick.
+  DELETION_WEDGE_RESUME_AFTER_MS,
+  IDENTITY_CASCADE_KEY_PREFIX,
+  resumeReservedScopedDeletionRequest,
+  resumeWedgedDeletionOperations,
+  type DeletionWedgeOutcome,
+  type DeletionWedgeSeam,
 } from "./deletion-lifecycle";
+export { NO_SEAT_CAP_RESTORE_POLICY } from "./deletion-ports";
 export type {
   DeletionJournalPort,
   JournalTransitionRequest,
   JournalTransitionResult,
   MembershipRestoreCandidate,
   MembershipRestoreDecision,
+  HeldMoneyReplayPort,
+  HeldMoneyReplaySummary,
   MembershipRestorePolicyPort,
   RecoveryDeliveryPort,
   RecoveryDeliveryRequest,
@@ -276,7 +309,7 @@ export {
   compareRestoredState,
   journalPurgeCandidates,
   journalReplayAction,
-  listJournalOperationIds,
+  listJournalOperations,
   loadJournalChain,
   parseJournalRecord,
   planJournalRestore,
@@ -286,6 +319,7 @@ export {
   type JournalConflict,
   type JournalConflictCode,
   type JournalOperationChain,
+  type JournalOperationListing,
   type JournalReplayAction,
   type JournalReplayStep,
   type JournalRestorePlan,
@@ -324,7 +358,34 @@ export {
   workspaceAcceptsMembership,
   sortedWorkspaceIds,
   withMembershipGraphLocks,
+  // Audit Phase 8 (R-177): the two lock forms and the lock-order guard.
+  BILLING_LOCK_HELD_SETTING,
+  LockOrderError,
+  MEMBERSHIP_KEYS_SETTING,
+  type MembershipLockMode,
 } from "./membership-lifecycle";
+export {
+  // Audit Phase 8 (P8-R1, R-177): the render budget.
+  LOCK_NOT_AVAILABLE_SQLSTATE,
+  RENDER_LOCK_TIMEOUT_MS,
+  RenderLockTimeoutError,
+  RenderTransactionNestingError,
+  boundedReadOrJoin,
+  isOpenTransaction,
+  sqlStateOf,
+  withBoundedReadTransaction,
+  withRenderTransaction,
+} from "./render-transaction";
+export {
+  // R-163: the read grade's lifecycle siblings and its window.
+  assertProfileReadAccess,
+  assertProfileReadTransactionAccess,
+  assertWorkspaceReadAccess,
+  assertWorkspaceReadTransactionAccess,
+  newestWorkspaceDeletionAdmitsRead,
+  READ_GRADE_BLOCKED_EXCLUDED_RESUME_STATES,
+  READ_GRADE_DELETION_STATES,
+} from "./read-grade-lifecycle";
 export {
   membershipRole,
   memberships,
@@ -358,6 +419,11 @@ export {
   createSystemWorkerDb,
   closeSystemWorkerDb,
   SYSTEM_WORKER_QUERY_POOL_CODE_CEILING,
+  // Phase 6 billing gate (R-175): the public pages' own small pool.
+  createMarketingReadDb,
+  MARKETING_READ_POOL_MAX,
+  MARKETING_READ_STATEMENT_TIMEOUT_MS,
+  MARKETING_READ_CONNECT_TIMEOUT_MS,
   type Db,
 } from "./client";
 export { type DbLike, type TxLike } from "./db-like";
@@ -378,8 +444,22 @@ export {
   assertFreshProfileScopeInTx,
   assertFreshWorkspaceScopeInTx,
   WorkspaceAccessError,
+  // R-163: the write grade's refusal for a pending-deletion-only identity,
+  // naming /settings/account (billing-errors gives it copy).
+  WorkspacePendingDeletionError,
   trustWorkspaceId,
   assertScoped,
+  // R-163: the readers' assertion (never a widening of `assertScoped`), the
+  // grade check, and the reader-side profile mint for either grade.
+  assertReadScoped,
+  isReadGradeScope,
+  mintReadableProfileScope,
+  ReadGradeProfileScope,
+  ReadGradeWorkspaceScope,
+  type ReadGradeProfileAccessors,
+  type ReadGradeWorkspaceAccessors,
+  type ReadGradeWorkspaceId,
+  type WorkspaceGradeOptions,
   writeCapabilities,
   workspaceWriteCapabilities,
   normaliseDisplayName,
@@ -388,6 +468,14 @@ export {
   CALLER_SUPPLIABLE_PROFILE_FIELDS,
   LEDGER_PAGE_MAX,
   ONBOARDING_PAGE_MAX,
+  HELD_GENERATION_ATTEMPTS_MAX,
+  // Launch L3 (R-152): the plan's count bounds on recent context, and the
+  // shapes of the one composition accessor that reads it.
+  RECENT_DRAFTS_MAX,
+  RECENT_NOTES_MAX,
+  type RecentContextCandidates,
+  type RecentContextNote,
+  type RecentContextQuery,
   type VerifiedWorkspaceId,
   type VerifiedProfileId,
   type WorkspaceCtx,
@@ -463,7 +551,7 @@ export {
 // ALLOWED under the allowlist. So the evidence for AC-15 is `tsc`, not lint,
 // and the lint denies below cover the separate surface (writeCapabilities,
 // VerifiedProfileId) that IS a value.
-export type { ProfileScope, WorkspaceScope } from "./with-workspace";
+export type { HeldGenerationAttempt, ProfileScope, WorkspaceScope } from "./with-workspace";
 export {
   BrainEditEmptyError,
   // Slice 5 gate round 1, G3. The no-op edit refusal, split off
@@ -528,6 +616,9 @@ export {
 //   FeedbackTargetError        — the output the feedback is about is not this
 //                                creator's (byte-identical for foreign,
 //                                missing and malformed ids).
+//   FeedbackExclusionTargetError — "Leave this out of future drafts" named a
+//                                reaction that is not this creator's (audit
+//                                P6-A1, R-174; byte-identical likewise).
 //   FrameworkAccessError       — not this profile's framework (byte-identical
 //                                for foreign, missing and shared-row ids).
 //   FrameworkStaleError        — edited against a superseded version; reload.
@@ -542,19 +633,42 @@ export {
 // wrote it — the list is the authority, and it grew twice while that stage was
 // written (once when the framework limits and the tier refusal were split out,
 // once when the author's adversarial re-read found `FeedbackTargetError`'s two
-// live defects). Count the entries, never the adjective.
+// live defects). Count the entries, never the adjective. ELEVEN since audit
+// P6-A1 added `FeedbackExclusionTargetError`.
 export {
   GenerationLineageError,
   FeedbackReactionError,
   FeedbackNoteError,
   FeedbackDuplicateError,
   FeedbackTargetError,
+  FeedbackExclusionTargetError,
   FrameworkAccessError,
   FrameworkStaleError,
   FrameworkContentError,
   FrameworkLimitError,
   PrivateFrameworkTierError,
 } from "./errors";
+// Launch L2 (R-151): the creative piece's one typed refusal, with a closed
+// `reason`. Exported with its copy and its instance branch in
+// `app/(product)/billing-errors.ts` in the same change.
+export {
+  CreativePieceError,
+  CREATIVE_PIECE_REFUSALS,
+  type CreativePieceRefusal,
+} from "./errors";
+export {
+  OWN_IDEA_MAX,
+  type CreateCreativePieceParams,
+  type CreativePieceMoveParams,
+  type CreativePieceRead,
+  type RenewCreativePieceOperationParams,
+  // Launch L4 (R-153): the saved recording pack's context read and its
+  // zero-cost "use this version" move.
+  PIECE_VERSIONS_MAX,
+  type PieceVersionRow,
+  type SavedGenerationContext,
+  type SelectCreativePieceVersionParams,
+} from "./creative-work-ops";
 // Slice 9a's four refusals. THEIR OBLIGATION IS NOT YET DISCHARGED, and this
 // is the record rather than a silent export: the ten above each have a
 // `HANDLERS` entry and a `BILLING_ERROR_COPY` entry in
@@ -739,6 +853,13 @@ export {
   type GenerationFeedbackReaction,
   type GenerationFeedbackRow,
   type NewGenerationFeedback,
+  // Launch L2 (R-151): the creative piece. Writes are capabilities on
+  // `writeCapabilities` only; the table object is denied to `app/**` like
+  // every other one.
+  creativePieces,
+  creativePieceState,
+  type CreativePiece,
+  type CreativePieceState,
 } from "./generation-schema";
 // Slice 9a — the logged result. Exported through the root for the same reason
 // every other schema module is: the `exports` map has only ".", so this is the
@@ -856,6 +977,8 @@ export {
   trendFeedProjection,
   reusableAutopsyForProfile,
   spinReferenceForProfile,
+  // Launch L4 (R-153 amendment A2): a saved Spin's reference, for display.
+  spinReferenceSummaryForProfile,
   // Slice 8c (R-96): the paste intake `@respin/credits` composes its R-98
   // debit around, its owner-only readers, and the URL rule they key on.
   intakePastedReference,
@@ -877,6 +1000,7 @@ export {
   type PrivateSystemAutopsyClaimResult,
   type SystemAutopsyClaimResult,
   type ScopedSpinReference,
+  type SpinReferenceSummary,
   type TrackedNicheEntitlement,
   type TrendFeedItem,
   type CanonicalAutopsyAnalysis,
@@ -965,7 +1089,15 @@ export {
 // operation in this package they take a `db` handle, so `app/**` reaches them
 // through `respinDb.recordFeedback` / `.listFeedback` only — the allowlist
 // denies the functions themselves, the same rule `appendOwnPost` follows.
-export { listFeedback, recordFeedback } from "./feedback-ops";
+export {
+  listFeedback,
+  recordFeedback,
+  // Audit P6-A1 (R-174): "Leave this out of future drafts".
+  excludeFeedbackFromHistory,
+  // Launch L3 (R-152): the explicit, reviewable preference edit.
+  REMEMBERED_PREFERENCE_KIND,
+  rememberForFutureDrafts,
+} from "./feedback-ops";
 export {
   selectActiveProfile,
   selectActiveProfileInTx,
@@ -1248,7 +1380,15 @@ export {
   type DirectionAnswer,
   type SubmitInterviewResult,
 } from "./interview-ops";
-export { respinDb, getServerDb, getServerRunSlots } from "./app-server";
+export {
+  respinDb,
+  getServerDb,
+  getServerRunSlots,
+  getMarketingReadDb,
+} from "./app-server";
+// `MarketingReadPoolBusyError` is deliberately NOT exported here: it never
+// reaches a screen's refusal copy. `getActiveConfigForPublicPage` raises it
+// into `landingPricing`, which renders the number-free page for any failure.
 // Test harness (packages/*/tests only — the app allowlist denies these).
 export {
   createTestDb,
@@ -1305,6 +1445,22 @@ export {
   type PreflightCheck,
   type PreflightReport,
 } from "./preflight";
+// Launch L2 (E-30): the ONE rule deciding whether the e2e LLM transport fake
+// may be selected (startup preflight and the provider factory both apply it).
+export {
+  LLM_TRANSPORT_FAKE_GLOBAL,
+  LLM_TRANSPORT_FAKE_SELECTOR,
+  LLM_TRANSPORT_FAKE_SERVED_MODEL,
+  LLM_TRANSPORT_SELECTOR_ENV,
+  LlmTransportSelectionError,
+  TEST_DATABASE_NAME_RE,
+  databaseNameOf,
+  resolveLlmTransportSelection,
+  selectedLlmUnderlyingFetch,
+  type LlmTransportEnvironment,
+  type LlmTransportRefusal,
+  type LlmTransportSelection,
+} from "./llm-transport-selection";
 // Phase 10a plan C5: content-free telemetry sink builders, SDK-less.
 export {
   ACTIVATION_COHORT_EVENT,

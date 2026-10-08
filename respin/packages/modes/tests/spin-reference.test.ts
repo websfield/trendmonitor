@@ -21,6 +21,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DRAFT_FENCE_OPEN,
   GenerationAssemblyError,
   MODE_BRIEFS,
   REFERENCE_BLOCK_HEADER,
@@ -365,11 +366,12 @@ describe("M5: the prompt never renders `hook`, `subjectTerms`, `structure` or a 
     );
     expect(prompts).toHaveLength(2);
     // THE POPULATION SCANNED: the whole of draft 1's prompt, and draft 2's
-    // prompt up to "Your previous draft:". The rewrite prompt legitimately
+    // prompt up to the draft fence (`DRAFT_FENCE_OPEN`; the "Your previous
+    // draft:" label until audit Phase 8). The rewrite prompt legitimately
     // quotes the model ITS OWN first draft — the near copy — as the thing to
     // fix, so the gate's hook is in that quoted draft by construction; what
     // must never carry it is the assembled context block above the draft.
-    const draftAt = prompts[1].indexOf("Your previous draft:");
+    const draftAt = prompts[1].indexOf(DRAFT_FENCE_OPEN);
     expect(draftAt).toBeGreaterThan(0);
     expect(prompts[1].slice(draftAt)).toContain(GATE_REFERENCE.hook);
     for (const p of [prompts[0], prompts[1].slice(0, draftAt)]) {

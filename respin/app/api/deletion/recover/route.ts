@@ -14,7 +14,11 @@ import {
 } from "@respin/auth";
 import { respinDb } from "@respin/db";
 import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
-import { RECOVER_DELETION_PATH } from "../../../../lib/routes";
+import {
+  RECOVER_DELETION_PATH,
+  RECOVERY_RECEIPT_COOKIE,
+  RECOVERY_RECEIPT_COOKIE_MAX_AGE_SECONDS,
+} from "../../../../lib/routes";
 
 const PAGE = RECOVER_DELETION_PATH;
 const MAX_BODY_BYTES = 4096;
@@ -32,15 +36,32 @@ const MAX_BODY_BYTES = 4096;
  * because this URL carries a live credential in its query string: without them
  * it reaches any third-party resource the page loads, and any shared cache.
  */
-function back(path: string): Response {
-  return new Response(null, {
-    status: 303,
-    headers: {
-      Location: path,
-      "Referrer-Policy": "no-referrer",
-      "Cache-Control": "no-store",
-    },
+function back(path: string, setCookie?: string): Response {
+  const headers = new Headers({
+    Location: path,
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
   });
+  if (setCookie !== undefined) headers.set("Set-Cookie", setCookie);
+  return new Response(null, { status: 303, headers });
+}
+
+/**
+ * THE RECEIPT RIDES A COOKIE, NOT THE URL (R-166, gate security Low). A query
+ * string reaches browser history, server and proxy access logs, and anything
+ * else that records URLs; a cookie scoped to the one page that reads it,
+ * HttpOnly, SameSite=Strict, and expiring with the receipt itself, reaches
+ * none of them. `Secure` in production; a development server is plain http.
+ */
+function receiptCookie(receipt: string): string {
+  return [
+    `${RECOVERY_RECEIPT_COOKIE}=${receipt}`,
+    `Path=${PAGE}`,
+    `Max-Age=${RECOVERY_RECEIPT_COOKIE_MAX_AGE_SECONDS}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    ...(process.env.NODE_ENV === "production" ? ["Secure"] : []),
+  ].join("; ");
 }
 
 /**
@@ -108,7 +129,7 @@ export async function POST(req: Request): Promise<Response> {
   const operationId = String(form.get("op") ?? "");
   const secret = String(form.get("s") ?? "");
   const password = String(form.get("password") ?? "");
-  let restored = 0;
+  let receipt = "";
   try {
     const { recoverySession } = await beginIdentityCancellationRecoverySession(operationId, secret);
     const proof = await createIdentityCancellationProofWithPassword(operationId, recoverySession, password);
@@ -116,7 +137,7 @@ export async function POST(req: Request): Promise<Response> {
       proofId: proof.proofId,
       cancellationReceipt: proof.cancellationReceipt,
     });
-    restored = report.restoredMembershipIds.length;
+    receipt = report.cancellationReceipt;
   } catch (err) {
     rethrowNextControlFlow(err);
     // Which of the three steps refused is deliberately not surfaced: it would
@@ -135,5 +156,11 @@ export async function POST(req: Request): Promise<Response> {
     if (/^[A-Za-z0-9_-]{1,64}$/.test(secret)) echo.set("s", secret);
     return back(`${PAGE}?${echo.toString()}`);
   }
-  return back(`${PAGE}?ok=${restored}`);
+  // The page reads the cancellation's outcome itself, through
+  // `readIdentityCancellationStatus` and this bounded receipt (R-162), so a
+  // membership that could not be restored renders as the conflict it is
+  // rather than as a count. The receipt expires ten minutes after issue and
+  // travels in `receiptCookie`, never in this URL (R-166).
+  const done = new URLSearchParams({ done: "1", op: operationId });
+  return back(`${PAGE}?${done.toString()}`, receiptCookie(receipt));
 }

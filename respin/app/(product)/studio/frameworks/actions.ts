@@ -32,7 +32,7 @@ import {
 } from "@respin/credits/app-server";
 import { respinDb, type PrivateFrameworkEntitlement } from "@respin/db";
 import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
-import { logRefusal } from "../../safe-log";
+import { logRefusal, wireId } from "../../safe-log";
 import type { BillingErrorCode } from "../../billing-errors";
 import { scopeForUser } from "../../workspace-scope";
 import { frameworkContentFromForm } from "./form-state";
@@ -71,9 +71,11 @@ function refused(
     // refusal about it names the FIELD, never the value — `FrameworkContentError`
     // carries `field`, and even that stays out of the log line, which takes
     // server-derived identifiers only (see `../../safe-log.ts`).
-    code: logRefusal(`[frameworks-action] ${act} refused`, err, {
-      ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
-      profileId: context.profileId,
+    // A LITERAL TAG (gate M5): the action travels as a context value.
+    code: logRefusal("[frameworks-action] refused", err, {
+      action: act,
+      ...(context.workspaceId ? { workspaceId: wireId(context.workspaceId) } : {}),
+      profileId: wireId(context.profileId),
     }) as BillingErrorCode,
   };
 }

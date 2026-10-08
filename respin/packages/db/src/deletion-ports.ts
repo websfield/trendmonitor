@@ -177,4 +177,44 @@ export interface MembershipRestorePolicyPort {
   ): Promise<MembershipRestoreDecision>;
 }
 
+/**
+ * R-165 (P5-A1): money a Stripe event carried for a workspace while it was
+ * tombstoned is HELD (`stripe_events.outcome = 'held_tombstoned'`), never
+ * dropped, and replayed once the workspace's deletion is cancelled. The replay
+ * lives in @respin/credits, which owns `dispatch`; this package cannot import
+ * it, so `cancelScopedDeletion` takes it as an optional port and runs it after
+ * its commit. The PRODUCTION replayer is the worker's deletion tick, which
+ * runs it for every active workspace with held rows (the app facade passes no
+ * port: the dispatcher's deliberate bare throws stay off its reachable set).
+ */
+export type HeldMoneyReplaySummary = Readonly<{
+  replayed: number;
+  /** Rows another replay already settled: the row-locked gate found no held row. */
+  alreadySettled: number;
+  /** Rows a replay could not settle; they stay held and are retried. */
+  failed: number;
+  /**
+   * Rows left held because the workspace is not active or its customer no
+   * longer maps to it (R-166, gate Low). On an ACTIVE workspace that is a
+   * money state no tick will change by itself: the worker pages on it.
+   */
+  stillHeld: number;
+}>;
+
+/**
+ * Phase 10b-1 Task 8: until 10b-2 introduces seat caps there is no capacity to
+ * refuse, so an unchanged suspended membership is always restorable. 10b-2
+ * replaces this constant with the real seat policy — "cancellation never
+ * assumes capacity" is why it is a named port, not an inline `true`. Homed
+ * here (moved from app-server.ts by R-162) so the worker's wedge sweep, which
+ * cannot import the app facade, composes the same policy the app does.
+ */
+export const NO_SEAT_CAP_RESTORE_POLICY: MembershipRestorePolicyPort = {
+  mayRestore: async () => ({ allowed: true, refusal: null }),
+};
+
+export interface HeldMoneyReplayPort {
+  replayHeldEvents(workspaceId: string): Promise<HeldMoneyReplaySummary>;
+}
+
 import { createHash } from "node:crypto";

@@ -74,6 +74,26 @@ export async function emitMaturedActivationCohorts(ports: ActivationEmitterPorts
   return { matured: cohorts.length, emitted, suppressedSmallCell, withheldExpired, notSent, failed };
 }
 
+/**
+ * A FAILED SEND PAGES (audit P3-R6). `failed` already reached the event stream
+ * as a count, and nothing read it: a cohort whose send failed is retried by
+ * the next daily run and, once its aggregate passes retention, is withheld as
+ * `withheldExpired` — a lost fact that never raised anything. An alert CODE on
+ * a non-zero count, in the `retention_alert_<severity>_<code>` shape the
+ * runtime emits, with the count the allowlist already carries.
+ */
+export type ActivationAlert = Readonly<{
+  code: "activation_send_failed";
+  severity: "warning";
+  detail: Readonly<{ activationFailed: number }>;
+}>;
+
+export function evaluateActivationAlerts(summary: ActivationEmitSummary): readonly ActivationAlert[] {
+  return summary.failed > 0
+    ? [{ code: "activation_send_failed", severity: "warning", detail: { activationFailed: summary.failed } }]
+    : [];
+}
+
 /** The production ports: sink and budget from the environment, once per process. */
 export function activationEmitterPorts(
   db: DbLike,

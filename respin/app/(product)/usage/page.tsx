@@ -15,6 +15,7 @@ import {
   modeLabel,
   type BurnPeriodTier,
 } from "@respin/credits/app-server";
+import { displayBalanceFor } from "../display-balance";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { AccessRefusal } from "../access-refusal";
 import { billingErrorDisplay, billingErrorFromCode } from "../billing-errors";
@@ -28,6 +29,7 @@ import { portalAvailability } from "./copy";
 import { openPortalAction } from "../settings/billing/actions";
 import { logRefusal } from "../safe-log";
 import { scopeForUser } from "../workspace-scope";
+import { supportContact } from "../../support-contact";
 
 /** How many ledger entries the page shows. One more is fetched to detect "more". */
 const PAGE_SIZE = 50;
@@ -58,10 +60,26 @@ export default async function UsagePage(props: {
   // Balance: the SINGLE authority. A failure here is not a page crash — a
   // LedgerIntegrityError in particular will not fix itself on a reload, and the
   // creator needs to be told that rather than shown a stack trace.
+  //
+  // NEVER A LOCKED WAIT, AND NEVER A SETTLING NUMBER SHOWN AS FINAL (audit
+  // Phase 8, P8-R1): `getDisplayBalance` returns the committed fold when
+  // another transaction holds the workspace's billing lock. This page states
+  // its balance as final ("Derived from your credit ledger as of …", and the
+  // top-up prompt at zero), so a settling read is shown as "could not be read"
+  // with no number rather than a number that may be missing this month's
+  // allowance or whatever the lock holder may be writing. The copy claims no
+  // write is in progress (gate M1): a held lock proves only that it is held.
   let balance: Parameters<typeof UsageView>[0]["balance"];
   try {
-    const view = await respinCredits.getBalance(scope.workspaceId);
-    balance = { ok: true, value: view.balance, asOf: view.asOf };
+    const view = await displayBalanceFor(scope.workspaceId);
+    balance = view.settling
+      ? {
+          ok: false,
+          title: "Your settled balance could not be read just now",
+          detail:
+            "Another operation on this workspace held its credit ledger when this page loaded, so the settled number is not shown. Reload in a moment to see it.",
+        }
+      : { ok: true, value: view.balance, asOf: view.asOf };
   } catch (err) {
     rethrowNextControlFlow(err);
     // Ids and instants stay in the log; the page gets the remedy.
@@ -225,6 +243,9 @@ export default async function UsagePage(props: {
       // second answer that can name a window the derivation did not choose.
       period={{ start: period.start, ...BURN_PERIOD_COPY[period.kind] }}
       burnByMode={burnByMode}
+      // R-176: the support address, read here on the server and handed down,
+      // so the view names it or promises nothing.
+      support={supportContact()}
       runway={runway}
       brainAssets={brainAssets}
       rows={rows}

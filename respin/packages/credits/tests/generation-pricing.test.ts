@@ -14,6 +14,7 @@ import { CONFIG_V1_SEED } from "@respin/db";
 import { respinConfigV1, type RespinConfigV1 } from "@respin/config";
 import { MODE_IDS, MODE_SPECS, UnknownModeError } from "@respin/modes";
 import { REVISION_CREDIT_COST_KEY, generationOp } from "../src/generate";
+import { rewriteExemptOverheadBytes, worstCaseAttemptNanoUsd } from "./support/attempt-worst-case";
 import {
   GENERATION_PURPOSE,
   ONBOARDING_BRAIN_PURPOSE,
@@ -500,17 +501,64 @@ describe("the uncharged-billable bound, per purpose (R16)", () => {
     expect(perCallOnly).toBe(1_800_000_000);
     expect(perWindowNanoUsd).toBeGreaterThan(perCallOnly);
 
-    // AND IT IS A FLOOR, NOT THE CEILING: no key here bounds INPUT tokens, and
-    // all three calls pay for them (the rewrite's prompt carries draft 1's
-    // whole reply). Asserting the input prices are non-zero is what makes
-    // "4.20 is a floor" a checked statement rather than a hedge — if they were
-    // zero, output really would be the whole story.
+    // THE INPUT HALF IS BOUNDED NOW (audit P3-R2, R-158): `llm.maxInputTokens`
+    // caps every call's assembled input, so 4.20 is no longer "a floor" — it is
+    // the OUTPUT half of a bounded per-window figure. The input prices are
+    // non-zero, so the input half is real, and it is recomputed below.
     expect(sonnet!.inputNanoUsdPerToken).toBeGreaterThan(0);
     expect(haiku!.inputNanoUsdPerToken).toBeGreaterThan(0);
-    expect(
-      Object.keys(content.llm).includes("maxInputTokens"),
-      "an input ceiling exists now — the exposure comment must stop calling 4.20 a floor"
-    ).toBe(false);
+    expect(Object.keys(content.llm)).toContain("maxInputTokens");
+  });
+
+  it("audit P3-R3 (R-158 point 7): the per-attempt worst case is 1.199998 USD, recomputed from config with the exempt drafts counted, and the window total covers at least 50 of them", () => {
+    // THE UNIT, NOT A MAXIMUM. Per counted attempt: three calls to the output
+    // ceiling (two drafts on the generation model, one scoring on the
+    // classification model), three bounded inputs at the input ceiling, and
+    // the two vendor drafts the rewrite and the scoring call carry EXEMPT
+    // from that ceiling (`support/attempt-worst-case.ts`, the one pricing of
+    // an attempt both this file and the ceiling's derivation read). A
+    // max-COST attempt is not a max-DURATION one, which is why the chosen
+    // bound is a runaway bound and not a derived maximum (R-158).
+    const overhead = rewriteExemptOverheadBytes();
+    expect(overhead).toBe(579);
+    for (const [where, doc] of [
+      ["the seeded document", content],
+      ["the schema's own defaults", respinConfigV1.parse({ ...CONFIG_V1_SEED, llm: undefined, generation: undefined })],
+    ] as const) {
+      const sonnet = doc.llm.prices[doc.llm.models.generation]!;
+      const haiku = doc.llm.prices[doc.llm.models.classification]!;
+      const output =
+        2 * doc.llm.maxOutputTokens * sonnet.outputNanoUsdPerToken +
+        doc.llm.maxOutputTokens * haiku.outputNanoUsdPerToken;
+      const input =
+        2 * doc.llm.maxInputTokens * sonnet.inputNanoUsdPerToken +
+        doc.llm.maxInputTokens * haiku.inputNanoUsdPerToken;
+      const exempt =
+        (doc.llm.maxOutputTokens + overhead) * sonnet.inputNanoUsdPerToken +
+        doc.llm.maxOutputTokens * haiku.inputNanoUsdPerToken;
+      expect(output, where).toBe(420_000_000);
+      expect(input, where).toBe(730_261_000);
+      expect(exempt, where).toBe(49_737_000);
+      const perAttemptNanoUsd = output + input + exempt;
+      // The hand arithmetic above and the shared helper agree.
+      expect(worstCaseAttemptNanoUsd(doc.llm, overhead).total, where).toBe(perAttemptNanoUsd);
+      expect(perAttemptNanoUsd / 1_000_000_000, where).toBeCloseTo(1.199998, 9);
+      // THE MARGIN, BOTH WAYS: at one token more on the ceiling, the window
+      // no longer covers 50 attempts — so a raised ceiling or a raised price
+      // without a matching window decision is red here.
+      expect(
+        doc.generation.maxBillableCostMicroUsdPerWindow * 1000,
+        `${where}: the ceiling is not at the margin rule's edge`
+      ).toBeLessThan(50 * worstCaseAttemptNanoUsd({ ...doc.llm, maxInputTokens: doc.llm.maxInputTokens + 1 }, overhead).total);
+      // The bound is micro-USD; the unit is nano-USD.
+      const boundNanoUsd = doc.generation.maxBillableCostMicroUsdPerWindow * 1000;
+      expect(
+        boundNanoUsd,
+        `${where}: a price or ceiling change quietly halved the window's headroom`
+      ).toBeGreaterThanOrEqual(50 * perAttemptNanoUsd);
+      // ...and it is the owner-chosen number, not one this test derives.
+      expect(doc.generation.maxBillableCostMicroUsdPerWindow, where).toBe(60_000_000);
+    }
   });
 });
 

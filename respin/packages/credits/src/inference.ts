@@ -26,7 +26,10 @@
 //   8.   `model_usage`, OWN TRANSACTION — committed alone, so nothing that
 //        happens next can roll away the record of money already spent.
 //   9.   THE DEBIT                      — after, keyed on the attempt, at most
-//        once, enforced by a partial unique index rather than by this file.
+//        once, enforced by a partial unique index rather than by this file —
+//        and, when the operation stores an output, THE OUTPUT TOO, in the same
+//        transaction (`persist`, audit P3-A1, R-156): a refused write rolls
+//        the debit back, so no debit commits for an output never stored.
 import {
   hasOpenPause,
   mintProfileScope,
@@ -36,6 +39,7 @@ import {
   type ProfileScope,
   type RunSlotRefusal,
   type RunSlots,
+  type TxLike,
   type WorkspaceScope,
 } from "@respin/db";
 import {
@@ -47,6 +51,7 @@ import {
   LlmTruncatedError,
   LlmUnavailableError,
   ModelPriceUnknownError,
+  assertInputWithinCeiling,
   costMicroUsd,
   priceFor,
   type InferenceOutcome,
@@ -55,7 +60,7 @@ import {
 import { deriveBalance, deriveBalanceInTx } from "./balance";
 import { debitCredits } from "./ledger";
 import { getWorkspaceBillingState, type BillingState } from "./state";
-import { getDbNow, takeWorkspaceLock } from "./clock";
+import { getDbNow, takeWorkspaceLockInOrder } from "./clock";
 import {
   InsufficientCreditsError,
   AutoTopupReconciliationRequiredError,
@@ -64,7 +69,10 @@ import {
   UnpricedOperationError,
   WorkspacePausedError,
 } from "./errors";
-import { emitUnchargedAttemptCapMetric } from "./metrics";
+import {
+  emitIncludedBuildReleaseFailedMetric,
+  emitUnchargedAttemptCapMetric,
+} from "./metrics";
 import { maybeAutoTopup } from "./stripe/auto-topup";
 
 /**
@@ -233,6 +241,19 @@ export type RunInferenceParams = {
    * was paid for it.
    */
   validate?: (text: string) => void;
+  /**
+   * STORE THE OPERATION'S OUTPUT IN THE DEBIT'S TRANSACTION (audit P3-A1,
+   * decisions R-156 — R-41 revised).
+   *
+   * Called once, after the debit (or after deciding the run is included and
+   * takes none), inside the same workspace-locked transaction — so a write
+   * that refuses rolls the debit back with it. Before this, the voice build
+   * committed its debit and THEN wrote the brain document in a second
+   * transaction, and a refused write (a reply that grounded nothing) left a
+   * charge for an output that was never stored, under copy saying no credits
+   * were spent. It runs only after `validate` accepted the reply.
+   */
+  persist?: (tx: TxLike) => Promise<void>;
 };
 
 export type RunInferenceResult = {
@@ -628,6 +649,16 @@ export async function runInference(
   // for it costs the creator nothing, whereas the post-call lookup can only
   // record `cost_state: 'unknown'` against money already gone.
   priceFor(content.llm.prices, model);
+  // THE INPUT CEILING, BEFORE ANYTHING IS SPENT OR RESERVED (audit P3-R2,
+  // R-158): before the slot, the claim and the call. The whole
+  // `system + prompt` is bounded — this caller receives no `partSizes`, and
+  // the one operation that reaches it (`inferVoice`) carries no exempt part,
+  // so the whole is exact. Defaulted read: a document without the key parses
+  // to the default, which still bounds.
+  assertInputWithinCeiling(
+    { system: params.system, prompt: params.prompt },
+    content.llm.maxInputTokens
+  );
 
   // 6. WHAT THIS ATTEMPT WOULD COST, AND WHETHER IT CAN BE PAID.
   //
@@ -1059,8 +1090,19 @@ export async function runInference(
     // refuses AFTER the tokens were burnt; that narrow case is the accepted cost
     // of not holding a lock across an HTTP call, and the spend record survives it
     // because of step 8b.
-    const { creditsCharged, balanceAfter } = await db.transaction(async (tx) => {
-      await takeWorkspaceLock(tx, scope.workspaceId);
+    // Set when the included build's OWN output store is refused, so the claim
+    // step 8b committed can be given back after this transaction rolls back.
+    let includedBuildStoreRefused = false;
+    const settled = db.transaction(async (tx) => {
+      // THE ORDERED HELPER (audit Phase 8, P8-A1, R-177): membership graph
+      // locks first (shared), then billing — `firstBillableAttempt` and
+      // `persist` (P3-A1's `writeBrainDoc`) re-run the profile lifecycle fence
+      // inside this transaction and re-enter the keys taken here instead of
+      // taking them after the billing lock.
+      await takeWorkspaceLockInOrder(tx, {
+        workspaceId: scope.workspaceId,
+        userId: scope.userId,
+      });
       const [claim] = await scope.accessors.firstBillableAttempt(
         {
           purpose: ONBOARDING_BRAIN_PURPOSE,
@@ -1074,6 +1116,16 @@ export async function runInference(
         attemptId: params.attemptId,
       });
       if (cost === 0) {
+        // The included build takes no debit — and still stores its output
+        // here, under the same lock, so both branches have one shape.
+        if (params.persist) {
+          try {
+            await params.persist(tx);
+          } catch (e) {
+            includedBuildStoreRefused = claim?.attemptId === params.attemptId;
+            throw e;
+          }
+        }
         const view = await deriveBalanceInTx(tx, scope.workspaceId);
         return { creditsCharged: 0, balanceAfter: view.balance };
       }
@@ -1103,8 +1155,37 @@ export async function runInference(
         }
         throw e;
       }
+      // THE OUTPUT, IN THE DEBIT'S TRANSACTION (audit P3-A1, R-156). A throw
+      // here rolls the debit above back: no charge for an output not stored.
+      if (params.persist) await params.persist(tx);
       const view = await deriveBalanceInTx(tx, scope.workspaceId);
       return { creditsCharged: cost, balanceAfter: view.balance };
+    });
+    // THE INCLUDED BUILD IS GIVEN BACK WHEN ITS OUTPUT WAS NOT STORED (audit
+    // Phase 3 gate, billing note). Step 8b committed this attempt's claim
+    // with its usage row, in an earlier transaction (R-80, R11), so the
+    // rollback above cannot take it back: a refused store — a pause, a brain
+    // write refusal — left the creator with no output AND no free build. The
+    // claim is removed in a fresh transaction, then the store's own error
+    // goes out unchanged. A failed removal never replaces that error; it is
+    // emitted (`INCLUDED_BUILD_RELEASE_FAILED_METRIC`) for an operator.
+    const { creditsCharged, balanceAfter } = await settled.catch(async (error: unknown) => {
+      if (includedBuildStoreRefused) {
+        try {
+          await db.transaction((tx) =>
+            writeCapabilities(scope).releaseIncludedBuildClaim(
+              { purpose: ONBOARDING_BRAIN_PURPOSE, attemptId: params.attemptId },
+              tx
+            )
+          );
+        } catch {
+          emitIncludedBuildReleaseFailedMetric({
+            attemptId: params.attemptId,
+            purpose: ONBOARDING_BRAIN_PURPOSE,
+          });
+        }
+      }
+      throw error;
     });
 
     return {

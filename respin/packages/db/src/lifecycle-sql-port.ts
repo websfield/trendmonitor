@@ -65,6 +65,8 @@ type LinkRoot = "identity" | "auth_identity" | "workspace" | "profile";
 const LINK_COLUMNS: Readonly<Record<string, LinkRoot>> = {
   user_id: "identity",
   requester_user_id: "identity",
+  // R-166: the canceller of a scoped deletion, scrubbed like the requester.
+  cancelled_by_user_id: "identity",
   rights_subject_user_id: "identity",
   confirmed_by: "identity",
   decision_user_id: "identity",
@@ -416,7 +418,10 @@ export function createSqlLifecycleMutationPort(
         const linkScope = SCOPE_OF_LINK[link];
         const inScope = linkScope === context.scope || (context.scope === "workspace" && linkScope === "profile");
         if (!inScope) continue;
-        if (columnMeta.nullable && !(isProjection && column !== "requester_user_id")) {
+        if (
+          columnMeta.nullable &&
+          !(isProjection && column !== "requester_user_id" && column !== "cancelled_by_user_id")
+        ) {
           assignments.push(sql`${identifier} = NULL`);
           // The unkeyed requester digest is sha256 of the user id: a known-id
           // dictionary would relink the retained receipt (R-122). Replace it

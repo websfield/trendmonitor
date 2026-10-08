@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   withWorkspace: vi.fn(),
   monthlySpend: vi.fn(),
   burnByMode: vi.fn(),
-  getBalance: vi.fn(),
+  getDisplayBalance: vi.fn(),
   getBillingState: vi.fn(),
   usageRunwayFor: vi.fn(),
   selectedProfileForMember: vi.fn(),
@@ -22,7 +22,11 @@ const mocks = vi.hoisted(() => ({
   getActiveConfigServer: vi.fn(),
 }));
 
-vi.mock("@respin/auth", () => ({ requireUser: mocks.requireUser }));
+vi.mock("@respin/auth", () => ({
+  requireUser: mocks.requireUser,
+  // R-164: the billing page offers "Confirm with Google" only when configured.
+  isGoogleConfigured: () => false,
+}));
 
 vi.mock("@respin/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@respin/db")>()),
@@ -41,7 +45,7 @@ vi.mock("@respin/credits/app-server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@respin/credits/app-server")>()),
   isStripeConfigured: () => false,
   respinCredits: {
-    getBalance: mocks.getBalance,
+    getDisplayBalance: mocks.getDisplayBalance,
     getBillingState: mocks.getBillingState,
     usageRunwayFor: mocks.usageRunwayFor,
   },
@@ -154,7 +158,7 @@ beforeEach(() => {
     hasAnyDebit: false,
     totalDebit: 0,
   });
-  mocks.getBalance.mockResolvedValue({ balance: 0, asOf: NOW });
+  mocks.getDisplayBalance.mockResolvedValue({ balance: 0, asOf: NOW, settling: false });
   mocks.getBillingState.mockResolvedValue({ tier: "free", state: "free" });
   mocks.usageRunwayFor.mockResolvedValue({
     state: "no_spend",
@@ -230,20 +234,25 @@ describe("the two first-login pages use the bootstrap-then-scope authority", () 
       importPath: "../../workspace-scope",
     },
     {
+      // R-163: one of the three read-grade callers — the SAME bootstrap-then-
+      // scope authority (`readScopeForUser` bootstraps first too), asking for
+      // the read grade so a pending deletion stays visible and cancellable.
       path: "app/(product)/settings/account/page.tsx",
       importPath: "../../workspace-scope",
+      helper: "readScopeForUser",
     },
   ];
 
-  it.each(surfaces)("$path routes scope derivation through scopeForUser", ({
+  it.each(surfaces)("$path routes scope derivation through the bootstrap-then-scope helper", ({
     path,
     importPath,
-  }) => {
+    helper = "scopeForUser",
+  }: { path: string; importPath: string; helper?: string }) => {
     const source = readFileSync(resolve(root, path), "utf8");
     expect(source).toContain(
-      'import { scopeForUser } from "' + importPath + '";'
+      "import { " + helper + ' } from "' + importPath + '";'
     );
-    expect(source).toContain("scope = await scopeForUser(user);");
+    expect(source).toContain("scope = await " + helper + "(user);");
     expect(source).not.toMatch(/await\s+respinDb\.withWorkspace\s*\(/);
   });
 

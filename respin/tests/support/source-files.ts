@@ -22,7 +22,7 @@
 // ROOT-LEVEL FILES ARE A ROOT. `middleware.ts` runs on every request,
 // `instrumentation*.ts` run at boot, and a walker that only descends into
 // directories reads none of them.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -165,7 +165,22 @@ export function sourceFilesUnder(
     out.push({ file: relativePath(full), text: text.replace(/\r\n/g, "\n") });
   };
   const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    // THE SAME RACE ONE LEVEL UP, and the same narrow answer. The probe
+    // writers also plant whole DIRECTORIES (`app/__scan_probe__/`,
+    // `app/__stripe_scan_probe__/` — `tests/support/probe-artifacts.ts`) and
+    // remove them, so a directory this walk just listed can be gone before it
+    // is opened; the live suite hit exactly that on 2026-10-05
+    // (`symbol-citations.test.ts`, ENOENT on `app/__stripe_scan_probe__`). A
+    // directory that no longer exists holds nothing in the committed tree.
+    // Every other error still throws, for the reason `read` gives.
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw err;
+    }
+    for (const entry of entries) {
       if (entry.isDirectory()) {
         if (!NOT_OURS.has(entry.name)) walk(join(dir, entry.name));
       } else if (/\.tsx?$/.test(entry.name)) read(join(dir, entry.name));

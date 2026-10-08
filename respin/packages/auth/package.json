@@ -2,6 +2,7 @@
   "name": "@respin/auth",
   "version": "0.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
@@ -15,7 +16,7 @@
     "better-auth": "^1.6.28"
   },
   "peerDependencies": {
-    "next": "^15.4.0",
+    "next": "15.5.24",
     "react": "^19.1.0"
   },
   "devDependencies": {

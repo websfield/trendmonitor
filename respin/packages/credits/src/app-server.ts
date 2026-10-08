@@ -12,11 +12,17 @@
 import {
   getServerDb,
   getServerRunSlots,
+  type ReadGradeWorkspaceScope,
   type ReauthenticatedSessionRef,
   type VerifiedWorkspaceId,
   type WorkspaceScope,
 } from "@respin/db";
-import { deriveBalance, type BalanceView } from "./balance";
+import {
+  deriveBalance,
+  getDisplayBalance,
+  type BalanceView,
+  type DisplayBalanceView,
+} from "./balance";
 import {
   getWorkspaceBillingState,
   hasLiveStripeSubscription,
@@ -27,6 +33,7 @@ import {
 import { hasOpenPause } from "./pause";
 import { LedgerIntegrityError } from "./fold";
 import {
+  BalanceIsolationError,
   ClockSkewError,
   AutoTopupReconciliationRequiredError,
   InsufficientCreditsError,
@@ -75,6 +82,13 @@ import {
   PackPriceNotMappedError,
   PackPriceUnavailableError,
 } from "./stripe/pack-price";
+// Phase 6 billing gate (R-175): the tier price checked at Checkout against the
+// price the public page states. Reachable from `respinCredits.createTierCheckoutUrl`.
+import {
+  TierPriceChangedError,
+  TierPriceMismatchError,
+  TierPriceUnavailableError,
+} from "./stripe/tier-price";
 import {
   AutoTopupAuthorityKeyError,
   isStripeConfigured,
@@ -108,10 +122,18 @@ import {
   ASSEMBLY_KINDS_PRE_VENDOR,
   AssemblyError,
   LlmError,
+  LlmInputTooLargeError,
   NotEnoughPostsError,
   type AssemblyKind,
 } from "@respin/llm";
 import { inferVoice, type InferVoiceResult } from "./infer-voice";
+// Audit P3-A4 / P3-R1(b) (R-157): the held-draft list, "Finish this draft"
+// and the operator's settle command — one settlement path behind all three.
+// The operator's command reaches the same path through
+// `@respin/credits/operator-server`, never through this app facade.
+import { heldDrafts, type HeldDraft } from "./held-drafts";
+import { settleHeldAttempt } from "./generate";
+export type { HeldDraft } from "./held-drafts";
 import {
   PublicSampleSpinEnablementError,
   PublicSampleSpinNotConfiguredError,
@@ -129,22 +151,71 @@ import { getActiveConfigRequiringStored } from "@respin/config";
 import {
   BrainNotActivatedError,
   BrainPointerDivergenceError,
+  ConceptContextInsufficientError,
   GenerationAlreadyRefusedError,
+  GenerationHeldError,
   GenerationInFlightError,
   GenerationPayloadMismatchError,
+  GenerationQuoteChangedError,
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
   GenerationUnchargedCostCapError,
+  GenerationWindowCostCapError,
+  HeldDraftUnavailableError,
   PerformanceLearningConfigUnavailableError,
   RevisionParentError,
+  RevisionPresetError,
   UnpricedOperationError,
 } from "./errors";
+import {
+  cancelCreativeWork,
+  conceptContextReady,
+  creativePieceView,
+  renewCreativeOperation,
+  selectConcept,
+  startOwnIdea,
+  type CreativePieceView,
+} from "./creative-work";
+export type { CreativePieceView } from "./creative-work";
+// Launch L4 (R-153): the saved recording pack — read, "use this version", the
+// three fixed revisions and the recent list. The read takes no provider.
+import {
+  REVISION_PRESETS,
+  readSavedGeneration,
+  recentSavedGenerations,
+  reviseSaved,
+  selectSavedVersion,
+  type RecentSavedGeneration,
+  type SavedGenerationRead,
+} from "./saved-generation";
+export type {
+  RecentSavedGeneration,
+  SavedGenerationRead,
+  SavedGenerationView,
+  SavedKillTest,
+  SavedPieceVersion,
+  SavedReference,
+  SavedRevisionBlock,
+  SavedRevisionLine,
+  SavedRuleVerdict,
+} from "./saved-generation";
+/**
+ * The three revisions the saved page offers — ids and labels only. The note
+ * each one sends is the package's (`REVISION_PRESETS`), never the screen's.
+ */
+export const SAVED_REVISION_OPTIONS: readonly { id: string; label: string }[] =
+  REVISION_PRESETS.map((p) => ({ id: p.id, label: p.label }));
+import {
+  LLM_TRANSPORT_FAKE_SELECTOR,
+  selectedLlmUnderlyingFetch,
+} from "@respin/db";
 import {
   generate,
   type GenerateParams,
   type GenerateResult,
 } from "./generate";
 import {
+  FIND_CONCEPT_MODE,
   ModeNotInPlanError,
   UnknownEntitlementTierError,
   performanceLearningEntitlementFor,
@@ -160,16 +231,70 @@ import { GenerationAttemptStateError } from "@respin/db";
 // demand these (it follows RELATIVE imports only), which is exactly why they
 // are named here deliberately rather than left to it.
 import {
+  CONSTRAINT_ITEM_MAX_CODE_POINTS,
+  CONSTRAINT_LIST_MAX,
+  CreativeRequestError,
+  EVENT_CONFIRMATION_ITEM,
+  FILMING_MINUTES_MAX,
+  FILMING_MINUTES_MIN,
+  FILMING_PEOPLE,
+  FOOTAGE_MAX_CODE_POINTS,
+  FORM_CHOICE_LABELS,
+  FORM_CHOICE_ORDER,
   GenerationAssemblyError,
   KillTestError,
   NoCreatorRulesError,
   ScriptOutputError,
   SpinSimilarityError,
   UnknownModeError,
+  type FormChoice,
 } from "@respin/modes";
+
+/**
+ * R-148 (launch L1) — THE CREATIVE FORM CONTROL'S DATA, for `/studio`.
+ *
+ * Here for the reason `modeLabel` and `modeOffers` are: `@respin/modes` is
+ * denied to `app/**` (R-64), so the closed set of choices, their labels and the
+ * bounds the parse enforces reach the screen through this facade rather than as
+ * a second vocabulary typed into a view. The screen offers exactly these; the
+ * operation's `parseCreativeRequest` refuses anything else, before any spend.
+ * Plain values — no query, no workspace data.
+ */
+export const CREATIVE_FORM_OPTIONS: readonly { id: FormChoice; label: string }[] =
+  FORM_CHOICE_ORDER.map((id) => ({ id, label: FORM_CHOICE_LABELS[id] }));
+
+/**
+ * Who films — the two closed values of `FILMING_PEOPLE`, with the words the
+ * form shows. A `Record` over the package's own type, so a third value with no
+ * label is a compile error here rather than an option the screen invents.
+ */
+const PEOPLE_OPTION_LABELS: Readonly<Record<(typeof FILMING_PEOPLE)[number], string>> = {
+  solo: "Just me",
+  with_help: "I will have help",
+};
+export const CREATIVE_PEOPLE_OPTIONS: readonly { id: string; label: string }[] =
+  FILMING_PEOPLE.map((id) => ({ id, label: PEOPLE_OPTION_LABELS[id] }));
+
+export const CREATIVE_CONSTRAINT_BOUNDS = {
+  itemMaxCodePoints: CONSTRAINT_ITEM_MAX_CODE_POINTS,
+  listMax: CONSTRAINT_LIST_MAX,
+  footageMaxCodePoints: FOOTAGE_MAX_CODE_POINTS,
+  minutesMin: FILMING_MINUTES_MIN,
+  minutesMax: FILMING_MINUTES_MAX,
+} as const;
+export type { FormChoice };
+
+/**
+ * R-150 point 3: the server-authored confirmation item, as a constant — so a
+ * test of a surface can assert the exact sentence; the L4 saved pack and its
+ * export render the same words Studio does, through the same projection. `presentedEventConfirmation` returns it
+ * for EVERY version-2 output. A plain value — no query, no workspace data.
+ */
+export { EVENT_CONFIRMATION_ITEM };
 import { ConfigNotMigratedError, getActiveConfig } from "@respin/config";
 // Slice 8c (R-98): the pasted reference's money, and its two refusals.
 import {
+  pastedReferenceInPlan,
   pastedReferenceQuote,
   settleParkedAutopsies,
   submitPastedReference,
@@ -209,6 +334,9 @@ export { hasLiveStripeSubscription, isStripeConfigured, mayChargeOffSession };
 // that must name it, and a screen-side copy of the names would be the second
 // answer R-66 already refused for `modeLabel`.
 export { burnPeriod, BURN_PERIOD_COPY } from "./burn-period";
+// Audit P6-A3 (R-175): the subscription prices a public page states, read from
+// the one table `stripe:setup` creates them from. Pure, no DB call.
+export { tierPricesCents, type PaidTier } from "./stripe/tier-prices";
 // Slice 6, billing gate round 2: the sentence a WINDOWED uncharged-billable
 // cap owes its reader. Re-exported for exactly the `BURN_PERIOD_COPY` reason —
 // `billing-errors.ts` writes the words a creator reads, and an independent
@@ -229,6 +357,16 @@ export { modeLabel } from "./mode-label";
 // without crossing the boundary the eslint rule draws.
 export { presentedDisclosure, presentedTextUnits } from "./presented-output";
 export type { PresentedDisclosure } from "./presented-output";
+// R-148 point 3, R-150 points 2 and 3: the ONE reading of the server's stored
+// decisions — which filming resources and shot-map lines the creator has not
+// declared — and the confirmation item every v2 output carries. Studio reads
+// them, and so does the L4 saved pack (through the same projection). Pure, no query.
+export {
+  presentedEventConfirmation,
+  presentedFilming,
+  presentedShotMap,
+} from "./presented-output";
+export type { PresentedFilmingItem } from "./presented-output";
 // Slice 7, R1/R13/R14 (stage D) — THE MODE PICKER'S DATA, and it is here for
 // the reason `modeLabel` one line up is: `@respin/modes` is denied to `app/**`
 // (R-64), so a screen cannot read `IMPLEMENTED_MODES`, and `mode-access.ts`
@@ -237,11 +375,17 @@ export type { PresentedDisclosure } from "./presented-output";
 // the control a creator is offered and the gate that refuses them cannot
 // disagree. Pure: a resolved tier in, three fields out, no query.
 export { modeOffers } from "./mode-access";
+// Phase 6 compliance gate: Studio's picker is `modeOffers` minus the modes that
+// run only from `/trends` (the Spin similarity gate's), derived from the spec.
+export { offeredInStudio, studioModeOffers } from "./mode-access";
 // ...and PRD B04's mode, as a NAMED `ModeId` rather than a string typed into
 // `app/**`. See its docblock: a literal there is invisible to a rename in
 // `MODE_IDS`, and `@respin/modes` is denied to `app/**` so a screen cannot
 // check one. Whether a workspace may RUN it is still `modeOffers`' answer.
 export { ONBOARDING_FIRST_IDEAS_MODE } from "./mode-access";
+// ...and launch L2's "Find my next concept" mode, named for the same reason:
+// `/studio` reads that mode's offer to state its price beside the press.
+export { FIND_CONCEPT_MODE } from "./mode-access";
 export type { ModeOffer } from "./mode-access";
 // ...and R5c's ONE producer of the `entitlement` argument every
 // private-framework write in `@respin/db` requires with no default. A screen
@@ -353,6 +497,10 @@ export {
   PackPriceNotMappedError,
   PackPriceUnavailableError,
   PackPriceMismatchError,
+  // Phase 6 billing gate (R-175): the tier Checkout's price check.
+  TierPriceUnavailableError,
+  TierPriceMismatchError,
+  TierPriceChangedError,
   // Audit 2026-08-17 remediation (R2) — the `incomplete` remedy's refusals.
   InvoiceRecoveryUnavailableError,
   NotRecoverableError,
@@ -423,8 +571,32 @@ export {
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
   GenerationUnchargedCostCapError,
+  // Audit P3-R3 (R-158): the per-window TOTAL, successes included — its own
+  // class because "you were being charged and hit the runaway bound" is not
+  // the uncharged copy's "this is a fault on our side".
+  GenerationWindowCostCapError,
+  // Audit P3-A4 (R-157): a settlement that met a pause, a short balance or a
+  // transient error HOLDS the draft rather than destroying it; and "Finish
+  // this draft" naming an attempt this creator cannot finish.
+  GenerationHeldError,
+  HeldDraftUnavailableError,
+  // Audit P3-R2 (R-158): the assembled prompt is over `llm.maxInputTokens`.
+  // A VALUE re-export, because `app/**` may not import `@respin/llm` and
+  // `billing-errors.ts` matches by `instanceof`; the facade-error walk follows
+  // relative imports only and cannot demand this one, so it is named here
+  // deliberately and `tests/billing-ui.test.tsx` constructs the error through
+  // THIS export.
+  LlmInputTooLargeError,
   ModeNotInPlanError,
   UnpricedOperationError,
+  // Launch L2 (R-151) — the confirmed commission's price moved since it was
+  // shown, and "find my next concept" with nothing confirmed to start from.
+  // Both are raised before any claim, debit or provider call.
+  GenerationQuoteChangedError,
+  ConceptContextInsufficientError,
+  // Launch L4 (R-153): a saved-page revision the page never offered, refused
+  // before any claim, debit or provider call.
+  RevisionPresetError,
   // Slice 7 (R5c/REQ-D05) — no tier→entitlement answer for this plan. Not a
   // creator's fault and not a creator's remedy, which is exactly why it needs
   // copy: `privateFrameworkEntitlement` is the ONE producer of the argument
@@ -462,10 +634,22 @@ export {
   // and `billingErrorCode` falls through to `unknown`.
   SpinSimilarityError,
   UnknownModeError,
+  // R-148 (launch L1): `respinCredits.generate` raises it for a form or a
+  // filming limit it will not act on, BEFORE any claim or provider call. A
+  // class `app/**` cannot `instanceof` renders "Something went wrong" on the
+  // screen that spends credits, so it is named here deliberately — the
+  // facade-error walk follows relative imports only and cannot demand it.
+  CreativeRequestError,
+  // Audit Phase 8 (P8-A2): `getBalance`/`getDisplayBalance` → `deriveBalanceInTx`
+  // refuses a non-READ-COMMITTED transaction. Unreachable from a page today
+  // (both open their own READ COMMITTED transaction), and named here because
+  // the facade-error walk demands every class it can reach.
+  BalanceIsolationError,
 };
 export type {
   BalanceView,
   BillingState,
+  DisplayBalanceView,
   CheckoutUrls,
   GenerateParams,
   GenerateResult,
@@ -484,6 +668,37 @@ export type {
   AutoTopupProtocolState,
   TierCheckoutProtocolState,
 };
+
+/**
+ * THE ONE PLACE THIS FACADE BUILDS ITS LLM PROVIDER (launch L2, E-30).
+ *
+ * Every door that reaches the vendor — `inferVoice`, `generate` and the public
+ * Sample Spin — builds through here, so the transport-selection rule
+ * (`selectedLlmUnderlyingFetch` in `@respin/db`) runs on each of them: no
+ * selector is the real transport; the e2e fake is used ONLY when selected by
+ * its exact name, outside a production build, against a database carrying the
+ * test marker, AND preloaded by the harness — every other shape REFUSES rather
+ * than quietly reaching a paid provider. The fake is injected as
+ * `underlyingFetch`, BELOW `pinnedFetch`, so metering, cost and the REQ-E01
+ * origin pin still run on each faked call. Under the fake no vendor key is
+ * sent anywhere: a placeholder satisfies the adapter's construction check.
+ */
+function llmProvider(opts: { timeoutMs: number; maxRetries: number }) {
+  const underlyingFetch = selectedLlmUnderlyingFetch({
+    selector: process.env.RESPIN_LLM_TRANSPORT,
+    nodeEnv: process.env.NODE_ENV,
+    databaseUrl: process.env.DATABASE_URL,
+  });
+  return createAnthropicProvider({
+    apiKey:
+      underlyingFetch === undefined
+        ? process.env.ANTHROPIC_API_KEY
+        : `placeholder-for-${LLM_TRANSPORT_FAKE_SELECTOR}`,
+    timeoutMs: opts.timeoutMs,
+    maxRetries: opts.maxRetries,
+    ...(underlyingFetch === undefined ? {} : { underlyingFetch }),
+  });
+}
 
 export const respinCredits = {
   /** Read-only projection used to distinguish an active v1 opt-in from a
@@ -553,8 +768,7 @@ export const respinCredits = {
   ): Promise<InferVoiceResult> => {
     const db = getServerDb();
     const { content } = await getActiveConfig(db);
-    const provider = createAnthropicProvider({
-      apiKey: process.env.ANTHROPIC_API_KEY,
+    const provider = llmProvider({
       timeoutMs: content.llm.timeoutMs,
       maxRetries: content.llm.maxRetries,
     });
@@ -598,8 +812,7 @@ export const respinCredits = {
   ): Promise<GenerateResult> => {
     const db = getServerDb();
     const { content } = await getActiveConfig(db);
-    const provider = createAnthropicProvider({
-      apiKey: process.env.ANTHROPIC_API_KEY,
+    const provider = llmProvider({
       timeoutMs: content.llm.timeoutMs,
       maxRetries: content.llm.maxRetries,
     });
@@ -614,6 +827,157 @@ export const respinCredits = {
     );
   },
   /**
+   * Audit P3-A4 (R-157) — THIS CREATOR'S HELD DRAFTS: ids, modes and the time
+   * each is cleared, never candidate bytes. A read; no provider, no money.
+   */
+  heldDrafts: (scope: WorkspaceScope, profileId: string): Promise<HeldDraft[]> =>
+    heldDrafts(getServerDb(), scope, profileId),
+  /**
+   * Audit P3-A4 (R-157) — "FINISH THIS DRAFT": settle one held draft by its
+   * attempt id through the same settlement a same-id resubmission takes. No
+   * provider enters here, because settling a stored candidate calls none.
+   */
+  settleHeldAttempt: (
+    scope: WorkspaceScope,
+    profileId: string,
+    attemptId: string
+  ): Promise<GenerateResult> =>
+    settleHeldAttempt(getServerDb(), scope, profileId, attemptId, new Date()),
+  /**
+   * Launch L2 — "FIND MY NEXT CONCEPT": `generate` as an ideation with no
+   * starting concept. The MODE IS SET HERE, never by `app/**` (which names no
+   * mode id), and every gate `generate` runs still runs.
+   */
+  findConcept: async (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: Pick<GenerateParams, "attemptId" | "platform" | "creative" | "sequel"> & {
+      hint: string;
+    }
+  ): Promise<GenerateResult> =>
+    respinCredits.generate(scope, profileId, {
+      mode: FIND_CONCEPT_MODE,
+      attemptId: params.attemptId,
+      input: params.hint,
+      platform: params.platform,
+      findConcept: true,
+      ...(params.creative === undefined ? {} : { creative: params.creative }),
+      ...(params.sequel === undefined ? {} : { sequel: params.sequel }),
+    }),
+  /**
+   * Launch L2 — COMMISSION A PIECE'S SCRIPT: `generate` as an original
+   * `ideaToScript` of the stored concept or own idea. The mode is set here;
+   * `attemptId` is the operation id the confirmation displayed.
+   */
+  commissionPiece: async (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: Pick<GenerateParams, "attemptId" | "platform" | "creative" | "sequel"> & {
+      pieceId: string;
+      note: string;
+    }
+  ): Promise<GenerateResult> =>
+    respinCredits.generate(scope, profileId, {
+      mode: "ideaToScript",
+      attemptId: params.attemptId,
+      input: params.note,
+      platform: params.platform,
+      pieceId: params.pieceId,
+      ...(params.creative === undefined ? {} : { creative: params.creative }),
+      ...(params.sequel === undefined ? {} : { sequel: params.sequel }),
+    }),
+  /**
+   * Launch L2 (R-151) — THE CREATIVE PIECE. Choosing a concept, stating an
+   * idea, "New generation" and cancelling each cost NOTHING: no ledger row, no
+   * provider call, no claim. The commission is `generate` with `pieceId`.
+   * `new Date()` enters here, as it does for `createProfile`.
+   */
+  selectConcept: (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: { sourceAttemptId: string; ideaIndex: number }
+  ): Promise<CreativePieceView> =>
+    selectConcept(getServerDb(), scope, profileId, params, new Date()),
+  startOwnIdea: (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: { idea: string }
+  ): Promise<CreativePieceView> =>
+    startOwnIdea(getServerDb(), scope, profileId, params, new Date()),
+  renewCreativeOperation: (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: { pieceId: string; expectedVersion: number }
+  ): Promise<CreativePieceView> =>
+    renewCreativeOperation(getServerDb(), scope, profileId, params, new Date()),
+  cancelCreativeWork: (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: { pieceId: string; expectedVersion: number }
+  ): Promise<CreativePieceView> =>
+    cancelCreativeWork(getServerDb(), scope, profileId, params, new Date()),
+  /** The confirmation's read — scoped; a courtesy, never the gate. */
+  creativePieceView: (
+    scope: WorkspaceScope,
+    profileId: string,
+    pieceId: string
+  ): Promise<CreativePieceView> =>
+    creativePieceView(getServerDb(), scope, profileId, pieceId, new Date()),
+  /**
+   * Launch L4 (R-153) — REOPEN A SAVED GENERATION by its attempt id. A READ:
+   * no provider is built here, no claim, no ledger row, no money lock. A
+   * zero balance or an open pause changes nothing it returns; scoping still
+   * refuses a foreign profile, a tombstone or a lost membership.
+   */
+  savedGeneration: (
+    scope: WorkspaceScope,
+    profileId: string,
+    attemptId: string
+  ): Promise<SavedGenerationRead> =>
+    readSavedGeneration(getServerDb(), scope, profileId, attemptId, new Date()),
+  /** Launch L4 — "Use this version": zero cost, version-guarded. */
+  selectSavedVersion: (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: { attemptId: string; pieceId: string; expectedVersion: number }
+  ): Promise<{ pieceId: string; version: number }> =>
+    selectSavedVersion(getServerDb(), scope, profileId, params),
+  /**
+   * Launch L4 — ONE OF THE THREE FIXED REVISIONS of a saved version: a
+   * same-mode revision through `generate` (every gate, one debit at the
+   * configured revision price). The provider is built here, as for
+   * `generate`; `attemptId` is the caller's per-press id, and
+   * `quotedConfigVersion` the version the page's price was read under (a
+   * different price under the active version refuses before anything runs).
+   */
+  reviseSaved: async (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: {
+      attemptId: string;
+      parentAttemptId: string;
+      preset: string;
+      quotedConfigVersion: number;
+    }
+  ): Promise<GenerateResult> => {
+    const db = getServerDb();
+    const { content } = await getActiveConfig(db);
+    const provider = llmProvider({
+      timeoutMs: content.llm.timeoutMs,
+      maxRetries: content.llm.maxRetries,
+    });
+    return reviseSaved(db, scope, profileId, provider, getServerRunSlots(), params, new Date());
+  },
+  /** Launch L4 — this profile's recent stored generations, for `/studio`. A read. */
+  recentSavedGenerations: (
+    scope: WorkspaceScope,
+    profileId: string
+  ): Promise<RecentSavedGeneration[]> =>
+    recentSavedGenerations(getServerDb(), scope, profileId),
+  /** Whether "find my next concept" can start without a hint (no model call). */
+  conceptContextReady: (scope: WorkspaceScope, profileId: string): Promise<boolean> =>
+    conceptContextReady(getServerDb(), scope, profileId),
+  /**
    * Slice 8c (R-98) — WHAT A PASTE WILL COST, for the `/trends` panel: the
    * active document's `creditCosts.autopsy`, the derived balance, the tier and
    * whether the writer would refuse on tier or pause. A QUOTE, not a decision
@@ -621,6 +985,14 @@ export const respinCredits = {
    */
   pastedReferenceQuote: (workspaceId: VerifiedWorkspaceId, at: Date): Promise<PastedReferenceQuote> =>
     pastedReferenceQuote(getServerDb(), workspaceId, at),
+  /**
+   * Launch L2 — whether `/studio` offers the standalone reference breakdown:
+   * the tier against the pasted-reference tier list and nothing else, so the
+   * render takes no workspace money lock (`pastedReferenceQuote` does, through
+   * its balance read).
+   */
+  pastedReferenceInPlan: (workspaceId: VerifiedWorkspaceId, at: Date): Promise<boolean> =>
+    pastedReferenceInPlan(getServerDb(), workspaceId, at),
   /**
    * Slice 8c (R-98) — THE PASTE, AND ITS DEBIT, IN ONE TRANSACTION. On this
    * facade and not on `respinDb` for the reason `createProfile` is: the tier
@@ -644,6 +1016,19 @@ export const respinCredits = {
     settleParkedAutopsies(getServerDb(), scope, profileId),
   getBalance: (workspaceId: VerifiedWorkspaceId): Promise<BalanceView> =>
     deriveBalance(getServerDb(), workspaceId),
+  /**
+   * THE PRODUCT PAGES' BALANCE READ (audit Phase 8, P8-R1, R-177): never waits
+   * on the money lock. The locked derive when the billing lock is free
+   * (`settling: false`); the committed fold when another transaction holds it
+   * (a money path, or another request's display read), or when
+   * the derive meets the 5 000 ms render budget (`settling: true` — render it
+   * as settling, never as final, and decide nothing from it). The same brand as
+   * `getBalance`. Every `app/(product)/**` balance read goes through this one,
+   * once per request, via `app/(product)/display-balance.ts`'s React `cache`
+   * (`balance-contention.docker.test.ts` scans both).
+   */
+  getDisplayBalance: (workspaceId: VerifiedWorkspaceId): Promise<DisplayBalanceView> =>
+    getDisplayBalance(getServerDb(), workspaceId),
   /** C8's one-snapshot balance/runway read for the usage surface. */
   usageRunwayFor: (scope: WorkspaceScope): Promise<UsageRunwayResult> => {
     assertUsageRunwayScope(scope);
@@ -742,8 +1127,9 @@ export const respinCredits = {
   // Plan C3 (Phase 10b-1): the billing-contact handover that lifts identity
   // deletion's `billing_contact_*` refusals. Provider write first, then the
   // binding (billing-contact.ts).
-  billingContactStatus: (scope: WorkspaceScope): Promise<BillingContactStatus> =>
-    billingContactStatus(getServerDb(), scope),
+  billingContactStatus: (
+    scope: WorkspaceScope | ReadGradeWorkspaceScope
+  ): Promise<BillingContactStatus> => billingContactStatus(getServerDb(), scope),
   acceptBillingContact: (
     scope: WorkspaceScope,
     email: string,
@@ -785,8 +1171,7 @@ export const respinCredits = {
     ]);
     const keyring = parsePublicSampleSpinKeyring(process.env[PUBLIC_SAMPLE_SPIN_HMAC_KEYS_ENV]);
     if (keyring === null) throw new PublicSampleSpinNotConfiguredError();
-    const provider = createAnthropicProvider({
-      apiKey: process.env.ANTHROPIC_API_KEY,
+    const provider = llmProvider({
       timeoutMs: content.llm.timeoutMs,
       maxRetries: 0,
     });

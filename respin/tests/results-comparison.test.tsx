@@ -113,10 +113,10 @@ describe("R12: an absent population is named, never drawn", () => {
     ]);
     const text = html.replace(/<[^>]+>/g, " ");
     expect(text).toContain("treatment group");
-    expect(text).toContain("has 2 results in this group");
+    expect(text).toContain("has 2 verified posts in this group");
     // Singular, and it says the NUMBER of results rather than a percentage —
     // "one more result" is the whole of what a creator can act on.
-    expect(text).toContain("One more result in the same group would make one.");
+    expect(text).toContain("One more verified post in the same group would make one.");
     // The bar is not drawn for this lever, and the effect is not either.
     expect(has(html, "results-comparison-0-reach-meter")).toBe(false);
     expect(has(html, "results-comparison-0-reach-effect")).toBe(false);
@@ -129,8 +129,8 @@ describe("R12: an absent population is named, never drawn", () => {
       lever({ lever: "conversion" }),
     ]);
     const text = html.replace(/<[^>]+>/g, " ");
-    expect(text).toContain("baseline has no results at all");
-    expect(text).toContain("3 more results");
+    expect(text).toContain("baseline has no verified posts at all");
+    expect(text).toContain("3 more verified posts");
     expect(has(html, "results-comparison-0-reach-meter")).toBe(false);
   });
 

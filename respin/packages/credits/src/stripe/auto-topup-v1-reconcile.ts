@@ -7,13 +7,12 @@ import { randomUUID } from "node:crypto";
 import { eq, isNotNull } from "drizzle-orm";
 import {
   creditLedger,
-  lockWorkspaceMembershipGraph,
   subscriptions,
   type DbLike,
   type VerifiedWorkspaceId,
 } from "@respin/db";
 import type Stripe from "stripe";
-import { getDbNow, takeWorkspaceLock } from "../clock";
+import { getDbNow, takeWorkspaceLockInOrder } from "../clock";
 import { getStripe } from "./adapter";
 import {
   AutoTopupAttemptIntegrityError,
@@ -143,8 +142,7 @@ async function retireCanceledAttempt(
     );
   }
   return db.transaction(async (tx) => {
-    await lockWorkspaceMembershipGraph(tx, mappedWorkspace);
-    await takeWorkspaceLock(tx, mappedWorkspace);
+    await takeWorkspaceLockInOrder(tx, { workspaceId: mappedWorkspace });
     await assertAutoTopupProtocolRecoveryReady(tx);
     const reboundWorkspace = await workspaceForCustomer(tx, customerId);
     if (reboundWorkspace !== mappedWorkspace) {
@@ -202,8 +200,7 @@ async function bindObservedAttempt(
     );
   }
   return db.transaction(async (tx) => {
-    await lockWorkspaceMembershipGraph(tx, mappedWorkspace);
-    await takeWorkspaceLock(tx, mappedWorkspace);
+    await takeWorkspaceLockInOrder(tx, { workspaceId: mappedWorkspace });
     await assertAutoTopupProtocolRecoveryReady(tx);
     const [sub] = await tx
       .select()
@@ -332,8 +329,7 @@ async function claimExpiredProviderAbsentAttempt(
     );
   }
   return db.transaction(async (tx) => {
-    await lockWorkspaceMembershipGraph(tx, mappedWorkspace);
-    await takeWorkspaceLock(tx, mappedWorkspace);
+    await takeWorkspaceLockInOrder(tx, { workspaceId: mappedWorkspace });
     await assertAutoTopupProtocolRecoveryReady(tx);
     const [sub] = await tx
       .select()
@@ -382,8 +378,7 @@ async function clearProviderAbsentOperatorClaim(
   row: { attemptId: string; operatorClaimId: string }
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
-    await lockWorkspaceMembershipGraph(tx, mappedWorkspace);
-    await takeWorkspaceLock(tx, mappedWorkspace);
+    await takeWorkspaceLockInOrder(tx, { workspaceId: mappedWorkspace });
     await assertAutoTopupProtocolRecoveryReady(tx);
     const [sub] = await tx
       .select()
@@ -410,8 +405,7 @@ async function exactLocalAttemptAppeared(
   attemptId: string
 ): Promise<"none" | "exact"> {
   return db.transaction(async (tx) => {
-    await lockWorkspaceMembershipGraph(tx, workspaceId);
-    await takeWorkspaceLock(tx, workspaceId);
+    await takeWorkspaceLockInOrder(tx, { workspaceId: workspaceId });
     await assertAutoTopupProtocolRecoveryReady(tx);
     if ((await workspaceForCustomer(tx, customerId)) !== workspaceId) {
       throw new AutoTopupV1ReconcileError(

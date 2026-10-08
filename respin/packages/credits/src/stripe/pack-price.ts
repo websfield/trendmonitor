@@ -25,6 +25,7 @@
 import type { DbLike } from "@respin/db";
 import { getActiveConfig } from "@respin/config";
 import { getStripe } from "./adapter";
+import { priceDefect } from "./price-allowlist";
 
 // The key, rather than the value, carries the cutover marker deliberately.
 // A pre-v1 binary still finds the `"pack"` value but hands the prefixed key to
@@ -150,9 +151,9 @@ export type PackPrice = {
  * Stripe read, so the two charge paths cannot observe different values even if
  * a config version is appended between their calls.
  *
- * Validated against the installed SDK's real fields (`stripe@22.5.0`
- * resources/Prices.d.ts: `active: boolean`, `currency: string`,
- * `unit_amount: number | null`) rather than assumed:
+ * Validated by `priceDefect` (`./price-allowlist.ts`), the allowlist over
+ * every payment-affecting field of the installed SDK's `Price`
+ * (`stripe@22.5.0`). The three cases this docblock first named are among them:
  *
  *  - `active: false` — Stripe refuses to charge an archived price, and finding
  *    that out from a Checkout 400 is worse than finding it out here;
@@ -170,35 +171,25 @@ export async function resolvePackPrice(
   const priceId = mappedPackPriceId(content.stripePriceMap, protocol);
 
   const price = await getStripe().prices.retrieve(priceId);
-  if (!price.active) {
-    throw new PackPriceUnavailableError(priceId, "the price is archived in Stripe");
-  }
-  if (typeof price.unit_amount !== "number") {
-    throw new PackPriceUnavailableError(
-      priceId,
-      "the price carries no fixed unit_amount (a tiered or metered price cannot back a one-off pack charge)"
-    );
-  }
-  if (price.currency !== "usd") {
-    throw new PackPriceUnavailableError(
-      priceId,
-      `the price is in ${price.currency} but pack charges are built in usd — the amount would be right and the currency wrong`
-    );
-  }
-
+  // THE SAME ALLOWLIST AS A PLAN PRICE (Phase 6 final billing check), for a
+  // one-time price: every payment-affecting field of `Price` must hold an
+  // allowed value (`./price-allowlist.ts`), so a pack price with
+  // `currency_options`, `transform_quantity`, a custom amount, tiers or an
+  // exclusive tax behaviour is refused like an archived one.
   const configCents = Math.round(content.pack.priceUsd * 100);
-  if (price.unit_amount !== configCents) {
-    throw new PackPriceMismatchError(
-      priceId,
-      price.unit_amount,
-      configCents,
-      version
-    );
+  const defect = priceDefect(price, {
+    type: "one_time",
+    amountCents: configCents,
+    amountAuthority: `the active config v${version}'s pack.priceUsd`,
+  });
+  if (defect?.kind === "amount") {
+    throw new PackPriceMismatchError(priceId, price.unit_amount as number, configCents, version);
   }
+  if (defect !== null) throw new PackPriceUnavailableError(priceId, defect.detail);
 
   return {
     priceId,
-    amountCents: price.unit_amount,
+    amountCents: price.unit_amount as number,
     currency: price.currency,
     credits: content.pack.credits,
     validityMonths: content.pack.validityMonths,

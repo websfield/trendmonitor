@@ -1,4 +1,15 @@
 export type SaturationWindow = Readonly<{ startsAt: string; endsAt: string }>;
+
+/**
+ * Every reason storage can hold for an unmeasured saturation (audit Phase 2,
+ * P2-R11). It admitted `incomplete_provenance` only while every pasted
+ * reference is written `no_population` under a CHECK that requires it, so a
+ * consumer typed against this package could not see a reason the storage
+ * holds. `tests/trends.test.ts` asserts this list equals the CHECK's set,
+ * read from `packages/db/src/trends-schema.ts`.
+ */
+export const SATURATION_UNMEASURED_REASONS = ["incomplete_provenance", "no_population"] as const;
+export type SaturationUnmeasuredReason = (typeof SATURATION_UNMEASURED_REASONS)[number];
 export type SaturationMeasurement =
   | Readonly<{
       status: "measured";
@@ -8,7 +19,7 @@ export type SaturationMeasurement =
       window: SaturationWindow;
       methodVersion: string;
     }>
-  | Readonly<{ status: "unmeasured"; reason: "incomplete_provenance" }>;
+  | Readonly<{ status: "unmeasured"; reason: SaturationUnmeasuredReason }>;
 
 export class SaturationMeasurementError extends Error {}
 
@@ -33,7 +44,11 @@ function isUtcInstant(value: unknown): value is string {
  * population over stored rows, and no `methodVersion` string exists anywhere
  * in production code — so the `measured` branch below is reachable only from
  * a fixture, and every `trend_items` row the product can write today is
- * `unmeasured: incomplete_provenance`. That is the honest default the storage
+ * `unmeasured` — `no_population` for a pasted reference (no channel baseline,
+ * so nothing to measure prevalence against) and `incomplete_provenance`
+ * otherwise, as the storage CHECK ties each reason to its cause. This function
+ * returns `incomplete_provenance` when it is handed no counts; it is not the
+ * pasted path's writer. That is the honest default the storage
  * CHECK and the UI already enforce (R-91); the counting query, its named
  * method constant and its population definition are future work and are not
  * claimed. See `packages/trends/README.md` §Saturation.

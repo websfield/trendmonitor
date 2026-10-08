@@ -9,7 +9,15 @@ import * as schema from "./schema";
  */
 function createDbWithPoolOptions(
   connectionString: string | undefined,
-  options: { max: number; applicationName?: string; label: string },
+  options: {
+    max: number;
+    applicationName?: string;
+    label: string;
+    /** Per-statement ceiling the server enforces, in ms; absent means none. */
+    statementTimeoutMs?: number;
+    /** How long a request waits for a connection; defaults to the query pool's. */
+    connectTimeoutMs?: number;
+  },
 ) {
   if (!connectionString) {
     throw new Error(
@@ -27,7 +35,10 @@ function createDbWithPoolOptions(
     // reads inside ONE transaction is a queue that can outlast Stripe's
     // delivery timeout and earn a redelivery. See the footprint note below.
     max: options.max,
-    connectionTimeoutMillis: QUERY_POOL_CONNECT_TIMEOUT_MS,
+    connectionTimeoutMillis: options.connectTimeoutMs ?? QUERY_POOL_CONNECT_TIMEOUT_MS,
+    ...(options.statementTimeoutMs !== undefined
+      ? { statement_timeout: options.statementTimeoutMs }
+      : {}),
   });
   attachPoolErrorGuard(pool, options.label);
   return drizzle(pool, { schema });
@@ -37,6 +48,40 @@ export function createDb(connectionString: string | undefined) {
   return createDbWithPoolOptions(connectionString, {
     max: DEFAULT_QUERY_POOL_MAX,
     label: "query",
+  });
+}
+
+/**
+ * THE PUBLIC MARKETING READS' OWN POOL (Phase 6 billing gate, R-175).
+ *
+ * R-175 makes `/` and `/for/*` read the active config on every request. On
+ * the shared query pool (`DEFAULT_QUERY_POOL_MAX` = 10) anonymous landing
+ * traffic would queue in front of Stripe webhooks, debits and settlements in
+ * the same process. This pool is separate and small, so the most a traffic
+ * spike on the public page can hold is `MARKETING_READ_POOL_MAX` connections.
+ * Three bounds make "a slow or saturated read fails into the page's
+ * number-free copy instead of waiting" true, each asserted in
+ * `packages/db/tests/marketing-pool.test.ts`:
+ *   - each statement is cut at `MARKETING_READ_STATEMENT_TIMEOUT_MS`;
+ *   - a connection is waited for at most `MARKETING_READ_CONNECT_TIMEOUT_MS`;
+ *   - a request arriving while the pool is saturated (every connection in use
+ *     or opening, or a request already queued) does not queue at all:
+ *     `getMarketingReadDb` refuses it with `MarketingReadPoolBusyError`, so
+ *     the wait queue cannot grow without bound under landing traffic.
+ * It adds 2 to the per-process footprint the query-pool note below counts:
+ * 10 + 16 + 2 = 28.
+ */
+export const MARKETING_READ_POOL_MAX = 2;
+export const MARKETING_READ_STATEMENT_TIMEOUT_MS = 2_000;
+export const MARKETING_READ_CONNECT_TIMEOUT_MS = 500;
+
+export function createMarketingReadDb(connectionString: string | undefined) {
+  return createDbWithPoolOptions(connectionString, {
+    max: MARKETING_READ_POOL_MAX,
+    applicationName: "respin-marketing-read",
+    label: "marketing-read",
+    statementTimeoutMs: MARKETING_READ_STATEMENT_TIMEOUT_MS,
+    connectTimeoutMs: MARKETING_READ_CONNECT_TIMEOUT_MS,
   });
 }
 
@@ -126,7 +171,8 @@ export const DEFAULT_RUN_SLOT_POOL_MAX = 16;
  * The query pool's ceiling, and the connection footprint it implies.
  *
  * ONE APP PROCESS HOLDS AT MOST `DEFAULT_QUERY_POOL_MAX + DEFAULT_RUN_SLOT_POOL_MAX`
- * = 10 + 16 = **26** Postgres connections. Postgres's own default
+ * = 10 + 16 = **26** Postgres connections for the product's own work, plus
+ * `MARKETING_READ_POOL_MAX` (2) for the public pages since R-175: **28**. Postgres's own default
  * `max_connections` is 100 and `docker-compose.yml` does not override it, so
  * three app processes fit with room for `psql` and the migration CLI; a fourth
  * does not. That arithmetic is written here rather than left to be rediscovered

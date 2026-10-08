@@ -252,12 +252,67 @@ describe("pg-boss registration", () => {
     expect(without.schedules.map((s) => s.key)).not.toContain("deletion-lifecycle-v1");
 
     const withTick = fakeBoss();
-    const composed = runtime(withTick.boss, async () => ({ claimed: 0, advanced: 0, waiting: 0, blocked: 0, erased: 0, outcomes: [] }));
+    const composed = runtime(withTick.boss, async () => ({ claimed: 0, advanced: 0, waiting: 0, blocked: 0, erased: 0, refundOwed: 0, stalledWaits: 0, outcomes: [], wedgesResumed: 0, wedgesRefused: 0, heldMoneyReplayed: 0, heldMoneyFailed: 0, heldMoneyStillHeld: 0, moneyNeedsOperator: 0 }));
     await composed.start();
     await composed.stop();
     expect(withTick.queues).toContain(DELETION_LIFECYCLE_QUEUE);
     expect(withTick.schedules).toContainEqual({ name: DELETION_LIFECYCLE_QUEUE, cron: DELETION_LIFECYCLE_CRON, key: "deletion-lifecycle-v1" });
     expect(withTick.workers).toContain(DELETION_LIFECYCLE_QUEUE);
     expect(DELETION_LIFECYCLE_CRON).toBe("* * * * *");
+  });
+
+  it("R-162 / R-165: the tick's sweep counts reach the event stream, and every isolated failure PAGES", async () => {
+    const events: Array<Record<string, string | number>> = [];
+    const fake = fakeBoss();
+    const composed = new RespinPgBossRuntime({
+      config: {
+        connectionString: "postgres://unused",
+        queuePoolMax: 1,
+        concurrency: 1,
+        queueLimit: 1,
+        heartbeatIntervalMs: 60_000,
+        workerName: "w",
+        alertPolicy: { heartbeatStaleAfterMs: 1, scheduleGraceMs: 1, nearBudgetRatio: 0.8, poolPressureRatio: 0.8 },
+      },
+      handlers: {
+        refresh: async () => ({ status: "completed" }),
+        digest: async () => ({ status: "completed" }),
+        autopsy: async () => ({ status: "completed" }),
+      },
+      sources: sources(async () => ({
+        claimed: 1, advanced: 0, waiting: 0, blocked: 0, erased: 1, refundOwed: 2, stalledWaits: 5, outcomes: [],
+        wedgesResumed: 3, wedgesRefused: 1, heldMoneyReplayed: 4, heldMoneyFailed: 1, heldMoneyStillHeld: 6, moneyNeedsOperator: 7,
+      })),
+      events: { emit: (event) => events.push(event) },
+      boss: fake.boss as unknown as ConstructorParameters<typeof RespinPgBossRuntime>[0]["boss"],
+    });
+    await composed.start();
+    const registration = (fake.boss.work.mock.calls as unknown as unknown[][]).find((call) => call[0] === DELETION_LIFECYCLE_QUEUE)!;
+    const handler = registration[2] as (jobs: Array<{ createdOn: Date }>) => Promise<void>;
+    await handler([{ createdOn: new Date() }]);
+    await composed.stop();
+    const tick = events.find((event) => event.code === "deletion_lifecycle_tick")!;
+    expect(tick).toMatchObject({
+      deletionWedgesResumed: 3,
+      deletionWedgesRefused: 1,
+      deletionHeldMoneyReplayed: 4,
+      deletionHeldMoneyFailed: 1,
+      deletionHeldMoneyStillHeld: 6,
+      deletionRefundOwed: 2,
+      deletionStalledWaits: 5,
+      deletionMoneyNeedsOperator: 7,
+    });
+    expect(events.map((event) => event.code)).toEqual(
+      expect.arrayContaining([
+        "deletion_alert_page_wedge_resume_refused",
+        "deletion_alert_page_held_money_replay_failed",
+        "deletion_alert_page_refund_owed",
+        "deletion_alert_page_held_money_still_held",
+        "deletion_alert_page_wait_stalled",
+        "deletion_alert_page_money_needs_operator",
+      ])
+    );
+    expect(events.find((event) => event.code === "deletion_alert_page_wait_stalled")).toMatchObject({ deletionStalledWaits: 5 });
+    expect(events.find((event) => event.code === "deletion_alert_page_held_money_still_held")).toMatchObject({ deletionHeldMoneyStillHeld: 6 });
   });
 });

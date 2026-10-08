@@ -6,7 +6,9 @@
 // gate round 1, 2026-09-03): `withheld` names the hard rules that fired and
 // their static remedies plus the sharper angle, and nothing else — a finding's
 // `excerpt` is candidate text and stays on the server.
-import type { BillingErrorCode } from "../billing-errors";
+import type { PresentedDisclosure } from "@respin/credits/app-server";
+import type { BillingErrorCode, BillingErrorCopy } from "../billing-errors";
+import type { KillTestSummary } from "../studio/run-state";
 
 /**
  * One fired hard rule: its id, the static remedy copy, and WHERE it fired —
@@ -94,6 +96,27 @@ export function spinWithheldLocator(shape: string, field: string): string | null
   return where ?? noun;
 }
 
+/**
+ * THE PRESENTED FIELDS A SPIN RESULT DOES NOT PUT IN ITS DRAFT BLOCK — this
+ * surface's one exclusion list (audit Phase 2, P2-R6), each with its reason.
+ * Everything else the facade's `presentedTextUnits` yields is rendered, so a
+ * new field in the output schema is displayed by default rather than silently
+ * dropped.
+ *
+ * ONE REFUSAL-SCOPE AUTHORITY (audit Phase 2 gate, R-172). This list hid
+ * `/whyThisPerforms/reasoning` while the claims scope treated it as
+ * presented, so a Spin could be refused — and charged — over a sentence the
+ * Spin screen never showed. The rationale is now rendered like every other
+ * presented field (it is the most-checked text in a draft: every hard shape
+ * refuses there), and the only member left is rendered elsewhere on the same
+ * screen. `tests/trends-actions.test.ts` asserts the screen's rendered set
+ * equals the presented scope.
+ */
+export const SPIN_RESULT_EXCLUDED_FIELDS: Readonly<Record<string, string>> = {
+  "/whyThisPerforms/weakestPoint":
+    "rendered on its own, under its own heading (REQ-I04), so it is not repeated inside the draft",
+};
+
 export type SpinActionState =
   | Readonly<{ status: "idle" }>
   | Readonly<{
@@ -101,18 +124,42 @@ export type SpinActionState =
       spinResult: string;
       /** REQ-I04: every output names its weakest point. */
       weakestPoint: string;
-      /** REQ-I05: platform-specific AI-assistance disclosure guidance. */
-      disclosureGuidance: string;
+      /**
+       * REQ-I05: the disclosure, as a KIND (R-121, audit P1-R1). The screen
+       * renders the product's sentence for it (`DISCLOSURE_LINE`); the type has
+       * no text member, so the model's disclosure prose cannot ride here.
+       */
+      disclosure: PresentedDisclosure;
+      /**
+       * What the checks found (R-172): the studio projection, so the Spin
+       * screen renders the same flags, offers and limit note `/studio` does.
+       */
+      killTest: KillTestSummary;
       chargedCredits: number;
     }>
   | Readonly<{ status: "near_copy_refused"; chargedCredits: number }>
   | Readonly<{
       status: "withheld";
       chargedCredits: number;
+      /** R-173: an honest refusal caused only by the claim scan, charged nothing. */
+      freeClaimRefusal: boolean;
       why: readonly SpinWithheldReason[];
       sharperAngle: string | null;
     }>
   | Readonly<{ status: "replayed"; balanceAfter: number }>
-  | Readonly<{ status: "refused"; code: BillingErrorCode }>;
+  /**
+   * A HELD Spin this press finished (audit P3-A2): the model had already
+   * written it, no model was called by this press, and the charge WAS taken
+   * by it. The draft is not re-shown here — this screen renders only a draft
+   * the press itself produced and checked.
+   */
+  | Readonly<{ status: "settled_held"; chargedCredits: number; balanceAfter: number; freeClaimRefusal: boolean }>
+  /**
+   * The refusal's code and its words, resolved on the server
+   * (`BILLING_ERROR_COPY[code]`) because this panel is a client component and
+   * cannot import the error map. A HELD Spin (`generation_held_*`) arrives
+   * here: its words say the draft is stored and where to finish it.
+   */
+  | Readonly<{ status: "refused"; code: BillingErrorCode; copy: BillingErrorCopy }>;
 
 export const IDLE_SPIN_STATE: SpinActionState = { status: "idle" };

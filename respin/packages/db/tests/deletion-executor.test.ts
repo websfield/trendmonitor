@@ -60,7 +60,7 @@ import {
 import { deriveActivationCohorts, NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
 import type { DeletionJournalPort, JournalTransitionRequest } from "../src/deletion-ports";
 import { journalReceiptDigest, journalRequestChecksum } from "../src/deletion-ports";
-import { generationAttempts, generations } from "../src/generation-schema";
+import { creativePieces, generationAttempts, generations } from "../src/generation-schema";
 import { migrationInventory } from "../src/lifecycle-inventory";
 import { modelUsage, onboardingInputs, workspaceSpendMonthly } from "../src/onboarding-schema";
 import { memberships, users, workspaces } from "../src/schema";
@@ -127,6 +127,7 @@ async function addSession(db: TestDb, authUserId: string, id: string) {
     expiresAt: new Date(Date.now() + HOUR),
     updatedAt: new Date(),
     reauthenticatedAt: new Date(),
+    reauthenticatedMethod: "password",
   });
 }
 
@@ -190,6 +191,27 @@ async function populate(db: TestDb) {
     output: { hooks: ["OWNER-SCRIPT"] },
     weakestPoint: "unproven",
     killTest: { rulesFired: [], rewritten: false },
+  });
+  // Launch L2 (R-151): one creative piece of EACH origin — the creator's own
+  // idea, and a scripted piece whose selection names the generation above —
+  // so the scope walk proves both erase with the profile.
+  const [ownerGeneration] = await db
+    .select({ id: generations.id })
+    .from(generations)
+    .where(eq(generations.attemptId, "att_exec_1"));
+  await db.insert(creativePieces).values({
+    profileId: profile!.id,
+    workspaceId,
+    ownIdea: "OWNER-PIECE-IDEA",
+    quoteConfigVersion: 1,
+  });
+  await db.insert(creativePieces).values({
+    profileId: profile!.id,
+    workspaceId,
+    ownIdea: "OWNER-PIECE-SCRIPTED",
+    selectedGenerationId: ownerGeneration!.id,
+    state: "scripted",
+    quoteConfigVersion: 1,
   });
 
   const [privateSource] = await db.insert(trendSources).values({
@@ -483,8 +505,8 @@ const EVERY_RIGHTS_CLASS = {
   autopsy_cache_claims: ["creator_consent", "independently_licensed", "profile_private"],
 };
 
-async function backdateGrace(db: TestDb, operationId: string) {
-  const past = new Date(Date.now() - DAY);
+async function backdateGrace(db: TestDb, operationId: string, ago = DAY) {
+  const past = new Date(Date.now() - ago);
   const [current] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, operationId));
   await db
     .update(deletionOperations)
@@ -526,7 +548,7 @@ describe("deletion executor — populated erasure", () => {
     const { port: journalPort } = journal();
     const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: ERASURE_DISABLED };
     expect(await advanceDeletionOperations(db, ports, { workerName: "w", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS })).toEqual({
-      claimed: 0, advanced: 0, waiting: 0, blocked: 0, erased: 0, outcomes: [],
+      claimed: 0, advanced: 0, waiting: 0, blocked: 0, erased: 0, refundOwed: 0, stalledWaits: 0, outcomes: [],
     });
   });
 
@@ -605,6 +627,7 @@ describe("deletion executor — populated erasure", () => {
     expect(await db.select().from(brainDocs)).toHaveLength(0);
     expect(await db.select().from(onboardingInputs)).toHaveLength(0);
     expect(await db.select().from(generations)).toHaveLength(0);
+    expect(await db.select().from(creativePieces)).toHaveLength(0);
     expect(await db.select().from(trendItems).where(eq(trendItems.id, fixture.privateItemId))).toHaveLength(0);
     // TASK 6, FLIPPED. R-122 keeps the financial chain seven years, so the
     // ledger and the model-usage cost facts SURVIVE the workspace — and they
@@ -924,6 +947,7 @@ describe("deletion executor — populated erasure", () => {
     expect(await db.select().from(creatorProfiles).where(eq(creatorProfiles.id, fixture.profileId))).toHaveLength(0);
     expect(await db.select().from(brainDocs)).toHaveLength(0);
     expect(await db.select().from(generations)).toHaveLength(0);
+    expect(await db.select().from(creativePieces)).toHaveLength(0);
     expect(await db.select().from(trendItems).where(eq(trendItems.id, fixture.privateItemId))).toHaveLength(0);
     expect(await db.select().from(trendItems).where(eq(trendItems.id, fixture.sharedItemId))).toHaveLength(1);
     expect(await db.select().from(workspaces).where(eq(workspaces.id, fixture.workspaceId))).toHaveLength(1);
@@ -1435,4 +1459,395 @@ describe("deletion executor — populated erasure", () => {
     expect(current).toMatchObject({ state: "cancelled", lastFailureCode: "external_command_failed" });
     expect((await db.select().from(workspaces).where(eq(workspaces.id, fixture.workspaceId)))[0]!.lifecycleState).toBe("active");
   });
+});
+
+describe("AC1 (R-160, R-165): a SOLE owner's account deletion reaches a terminal state through its cascaded workspace", () => {
+  let db: TestDb;
+  let fixture: Fixture;
+
+  beforeEach(async () => {
+    db = await createTestDb();
+    fixture = await populate(db);
+  });
+
+  it("cascades, cancels the subscription in external_actions_pending, waits for the workspace, erases both with ONE credit_ledger UPDATE, and lists held money as refund owed", async () => {
+    // The owner becomes the LAST owner of the workspace, and its billing contact.
+    await db
+      .delete(memberships)
+      .where(and(eq(memberships.userId, fixture.survivor.user.id), eq(memberships.workspaceId, fixture.workspaceId)));
+    await db
+      .update(subscriptions)
+      .set({ billingContactUserId: fixture.owner.user.id })
+      .where(eq(subscriptions.workspaceId, fixture.workspaceId));
+    // R-165: a pack Stripe collected while the workspace was tombstoned, never replayed.
+    await db.insert(stripeEvents).values({
+      id: "evt_held_owner",
+      type: "invoice.paid",
+      payload: { data: { object: { object: "invoice", id: "in_held_owner", amount_paid: 1900, currency: "usd" } } },
+      workspaceId: fixture.workspaceId,
+      stripeCustomerId: "cus_owner",
+      receiptAttribution: "workspace_attributed",
+      outcome: "held_tombstoned",
+    });
+
+    const { port: journalPort } = journal();
+    const recoveryDelivery = createAuthMailRecoveryDelivery(db, mailer, {
+      actionUrl: (operationId, secret) => `https://app.example/deletion/${operationId}#${secret}`,
+    });
+    const requested = await requestIdentityDeletion(
+      db,
+      { sessionId: "session-owner-auth", idempotencyKey: "ac1-identity" },
+      { recoveryDelivery, journal: journalPort, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
+    );
+    // ACCEPTED, not refused `last_owner`: the workspace is cascaded.
+    expect(requested).toMatchObject({ acknowledged: true, operation: { state: "tombstoned" } });
+    const [cascaded] = await db
+      .select()
+      .from(deletionOperations)
+      .where(and(eq(deletionOperations.scope, "workspace"), eq(deletionOperations.workspaceId, fixture.workspaceId)));
+    expect(cascaded).toMatchObject({ state: "tombstoned", requesterUserId: fixture.owner.user.id });
+
+    const commands = commandPort();
+    const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
+    const advance = () =>
+      advanceDeletionOperations(db, ports, { workerName: "ac1", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    const trace: string[] = [];
+    for (let tick = 0; tick < 2; tick += 1) {
+      for (const o of (await advance()).outcomes) trace.push(`${o.scope}:${o.from}->${o.to ?? "wait"}:${o.code}`);
+    }
+    // The Stripe cancel command dispatched IN external_actions_pending, which
+    // precedes grace — so by the time cancellation-from-grace is offered the
+    // provider action has run, and its reversal is `stripe_subscription_reopen`.
+    expect(trace).toContain("workspace:external_actions_pending->grace:pre_grace_commands_succeeded");
+    const [cancelCommand] = await db
+      .select()
+      .from(deletionExternalCommands)
+      .where(
+        and(
+          eq(deletionExternalCommands.operationId, cascaded!.id),
+          eq(deletionExternalCommands.kind, "stripe_subscription_cancel_at_period_end")
+        )
+      );
+    expect(cancelCommand).toMatchObject({ phase: "pre_grace", status: "succeeded" });
+
+    // Count every credit_ledger UPDATE statement, and the rows each changed.
+    await db.execute(sql`CREATE TEMP TABLE ac1_ledger_updates (changed bigint)`);
+    await db.execute(sql`CREATE FUNCTION ac1_count_ledger_update() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN INSERT INTO ac1_ledger_updates SELECT count(*) FROM changed_rows; RETURN NULL; END $$`);
+    await db.execute(sql`CREATE TRIGGER ac1_ledger_update AFTER UPDATE ON credit_ledger
+      REFERENCING NEW TABLE AS changed_rows FOR EACH STATEMENT EXECUTE FUNCTION ac1_count_ledger_update()`);
+
+    await backdateGrace(db, cascaded!.id);
+    await backdateGrace(db, requested.operation.id);
+    let refundOwed: unknown = null;
+    let stalledIdentityWaits = 0;
+    let stalledWaitsCounted = 0;
+    for (let tick = 0; tick < 10; tick += 1) {
+      const summary = await advance();
+      stalledWaitsCounted += summary.stalledWaits;
+      for (const o of summary.outcomes) {
+        trace.push(`${o.scope}:${o.from}->${o.to ?? "wait"}:${o.code}`);
+        if (o.refundOwed) refundOwed = o.refundOwed;
+        if (o.scope === "identity" && o.code === "nested_operation_active" && o.stalled) stalledIdentityWaits += 1;
+      }
+      const states = await db
+        .select({ id: deletionOperations.id, state: deletionOperations.state })
+        .from(deletionOperations)
+        .where(sql`${deletionOperations.id} IN (${cascaded!.id}, ${requested.operation.id})`);
+      if (states.every((row) => row.state === "complete")) break;
+    }
+    const finals = await db
+      .select({ scope: deletionOperations.scope, state: deletionOperations.state })
+      .from(deletionOperations)
+      .where(sql`${deletionOperations.id} IN (${cascaded!.id}, ${requested.operation.id})`);
+    expect(finals.map((row) => `${row.scope}:${row.state}`).sort(), trace.join("\n")).toEqual([
+      "identity:complete",
+      "workspace:complete",
+    ]);
+    // The identity's erasure WAITED for the workspace it cascaded.
+    expect(trace.some((line) => line.startsWith("identity:grace->wait:nested_operation_active")), trace.join("\n")).toBe(true);
+    // EXACTLY ONE credit_ledger UPDATE that changed rows: the pseudonymiser's
+    // `workspace_id` reassignment — the one exempted UPDATE of the ledger.
+    const updates = (await db.execute(sql`SELECT changed FROM ac1_ledger_updates`)) as unknown as {
+      rows: { changed: string | number }[];
+    };
+    expect(updates.rows.filter((row) => Number(row.changed) > 0)).toHaveLength(1);
+    for (const row of await db.select().from(creditLedger)) expect(row.workspaceId).not.toBe(fixture.workspaceId);
+    // R-165: the erasure's report lists the held money as REFUND OWED — ids and
+    // amounts only, read before the purge blanked the payload.
+    expect(refundOwed).toEqual([{ stripeEventId: "evt_held_owner", type: "invoice.paid", amount: 1900, currency: "usd" }]);
+    // R-166 (gate M1): THE DURABLE RECORD, read from the database — written in
+    // the erasure transaction that cleared the payload, and final.
+    const [owed] = await db.select().from(stripeEvents).where(eq(stripeEvents.id, "evt_held_owner"));
+    expect(owed).toMatchObject({
+      outcome: "refund_owed",
+      refundOwedAmount: 1900,
+      refundOwedCurrency: "usd",
+      refundOwedOperationId: cascaded!.id,
+      payload: {},
+    });
+    const operatorList = (await db.execute(
+      sql`SELECT id, refund_owed_amount FROM stripe_events WHERE outcome = 'refund_owed'`
+    )) as unknown as { rows: { id: string; refund_owed_amount: string | number }[] };
+    expect(operatorList.rows.map((row) => [row.id, Number(row.refund_owed_amount)])).toEqual([["evt_held_owner", 1900]]);
+    await expect(
+      db.update(stripeEvents).set({ outcome: "processed" }).where(eq(stripeEvents.id, "evt_held_owner"))
+    ).rejects.toThrow();
+    await expect(
+      db.update(stripeEvents).set({ refundOwedAmount: 1 }).where(eq(stripeEvents.id, "evt_held_owner"))
+    ).rejects.toThrow();
+    // R-166 (gate H2): grace ended a day ago, so the identity's nested wait is
+    // past the alert bound — counted per outcome and in the summary.
+    expect(stalledIdentityWaits, trace.join("\n")).toBeGreaterThan(0);
+    expect(stalledWaitsCounted).toBeGreaterThanOrEqual(stalledIdentityWaits);
+  });
+
+  it("R-166 (gate H2): an UNRESERVED draft on the sole-owned workspace is ADOPTED by the cascade, a dead profile draft is retired, and the account reaches complete", async () => {
+    await db
+      .delete(memberships)
+      .where(and(eq(memberships.userId, fixture.survivor.user.id), eq(memberships.workspaceId, fixture.workspaceId)));
+    await db
+      .update(subscriptions)
+      .set({ billingContactUserId: fixture.owner.user.id })
+      .where(eq(subscriptions.workspaceId, fixture.workspaceId));
+    const { port: journalPort } = journal();
+    // Two DRAFTS — `requested`, no journal reservation — the shape a refused or
+    // crashed reservation leaves. Made by the real request path, its journal
+    // failing after the reservation, then the reservation cleared.
+    const failing: DeletionJournalPort = {
+      appendTransition: async () => {
+        throw new Error("journal down");
+      },
+    };
+    const scope = await withWorkspace(db, { authUserId: "owner-auth" });
+    await expect(
+      requestWorkspaceDeletion(
+        db,
+        scope,
+        { sessionId: "session-owner-auth", idempotencyKey: "draft-ws-1", typedName: fixture.workspaceName },
+        failing
+      )
+    ).rejects.toThrow();
+    await expect(
+      requestProfileDeletion(
+        db,
+        scope,
+        fixture.profileId,
+        { sessionId: "session-owner-auth", idempotencyKey: "draft-profile-1", typedName: "Owner Creator" },
+        failing
+      )
+    ).rejects.toThrow();
+    await db
+      .update(deletionOperations)
+      .set({ journalIntentPlanDigest: null, journalIntentBaseVersion: null, journalIntentEffectiveAt: null });
+    const drafts = await db.select().from(deletionOperations);
+    expect(drafts.map((row) => `${row.scope}:${row.state}:${row.journalIntentPlanDigest}`).sort()).toEqual([
+      "profile:requested:null",
+      "workspace:requested:null",
+    ]);
+    const workspaceDraft = drafts.find((row) => row.scope === "workspace")!;
+    const profileDraft = drafts.find((row) => row.scope === "profile")!;
+
+    const recoveryDelivery = createAuthMailRecoveryDelivery(db, mailer, {
+      actionUrl: (operationId, secret) => `https://app.example/deletion/${operationId}#${secret}`,
+    });
+    const requested = await requestIdentityDeletion(
+      db,
+      { sessionId: "session-owner-auth", idempotencyKey: "h2-identity" },
+      { recoveryDelivery, journal: journalPort, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
+    );
+    expect(requested).toMatchObject({ acknowledged: true, operation: { state: "tombstoned" } });
+    // ADOPTED: the same row, now the cascade's — reserved, server-owned parent.
+    const [adopted] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, workspaceDraft.id));
+    expect(adopted).toMatchObject({
+      state: "tombstoned",
+      cascadeParentOperationId: requested.operation.id,
+      idempotencyKey: `identity-cascade:${requested.operation.id}:${fixture.workspaceId}`,
+      requesterUserId: fixture.owner.user.id,
+    });
+    expect(
+      (await db.select().from(deletionOperations)).filter((row) => row.scope === "workspace")
+    ).toHaveLength(1);
+
+    const commands = commandPort();
+    const ports: DeletionExecutorPorts = { journal: journalPort, commands: commands.port, enablement: { erasureEnabled: () => true } };
+    const advance = () =>
+      advanceDeletionOperations(db, ports, { workerName: "h2", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+    const trace: string[] = [];
+    for (let tick = 0; tick < 2; tick += 1) {
+      for (const o of (await advance()).outcomes) trace.push(`${o.scope}:${o.from}->${o.to ?? "wait"}:${o.code}`);
+    }
+    // Grace ended an HOUR ago: any wait from here is inside the alert bound.
+    await backdateGrace(db, workspaceDraft.id, HOUR);
+    await backdateGrace(db, requested.operation.id, HOUR);
+    let stalled = 0;
+    for (let tick = 0; tick < 12; tick += 1) {
+      const summary = await advance();
+      stalled += summary.stalledWaits;
+      for (const o of summary.outcomes) trace.push(`${o.scope}:${o.from}->${o.to ?? "wait"}:${o.code}`);
+      const states = await db
+        .select({ state: deletionOperations.state })
+        .from(deletionOperations)
+        .where(sql`${deletionOperations.id} IN (${workspaceDraft.id}, ${requested.operation.id})`);
+      if (states.every((row) => row.state === "complete")) break;
+    }
+    const finals = await db
+      .select({ scope: deletionOperations.scope, state: deletionOperations.state })
+      .from(deletionOperations)
+      .where(sql`${deletionOperations.id} IN (${workspaceDraft.id}, ${requested.operation.id})`);
+    expect(finals.map((row) => `${row.scope}:${row.state}`).sort(), trace.join("\n")).toEqual([
+      "identity:complete",
+      "workspace:complete",
+    ]);
+    // The profile draft could never be reserved once its workspace was
+    // tombstoned; the workspace's erasure retired it rather than waiting on it.
+    expect(await db.select().from(deletionOperations).where(eq(deletionOperations.id, profileDraft.id))).toEqual([]);
+    // Inside the bound, nothing paged.
+    expect(stalled).toBe(0);
+  });
+});
+
+/**
+ * R-166 (weakest bet of the gate batch): the workspace erasure RETIRES an
+ * unreserved profile draft by DELETE. That is safe only because every foreign
+ * key into `deletion_operations` is RESTRICT — so a draft something DOES
+ * reference is refused, never cascaded into the referencing evidence. Asserted
+ * twice: from the catalog (every such key, its delete action), and by planting
+ * a referencing row through each key in turn and running the erasure tick.
+ */
+describe("R-166: retiring a profile draft never cascades into what references it", () => {
+  let db: TestDb;
+  let fixture: Fixture;
+
+  beforeEach(async () => {
+    db = await createTestDb();
+    fixture = await populate(db);
+  });
+
+  /** Every FK into deletion_operations, from the catalog, with its ON DELETE action. */
+  const EXPECTED_RESTRICT_KEYS = [
+    "auth_mail_outbox",
+    "deletion_cancellation_proofs",
+    "deletion_external_commands",
+    "deletion_membership_snapshots",
+    "deletion_operation_transitions",
+    "deletion_operation_transitions",
+    "deletion_recovery_sessions",
+  ];
+
+  it("the catalog: every foreign key into deletion_operations is ON DELETE RESTRICT, and the list is exactly these", async () => {
+    const keys = (await db.execute(sql`
+      SELECT conrelid::regclass::text AS child, confdeltype AS action
+      FROM pg_constraint WHERE contype = 'f' AND confrelid = 'deletion_operations'::regclass
+    `)) as unknown as { rows: { child: string; action: string }[] };
+    expect(keys.rows.map((row) => row.child).sort()).toEqual([...EXPECTED_RESTRICT_KEYS].sort());
+    // 'r' = RESTRICT. Not 'c' (cascade), 'n' (set null), 'd' (set default), 'a' (no action, deferrable to commit).
+    expect(keys.rows.every((row) => row.action === "r")).toBe(true);
+  });
+
+  async function profileDraft() {
+    const failing: DeletionJournalPort = {
+      appendTransition: async () => {
+        throw new Error("journal down");
+      },
+    };
+    const scope = await withWorkspace(db, { authUserId: "owner-auth" });
+    await expect(
+      requestProfileDeletion(
+        db,
+        scope,
+        fixture.profileId,
+        { sessionId: "session-owner-auth", idempotencyKey: "draft-fk-profile", typedName: "Owner Creator" },
+        failing
+      )
+    ).rejects.toThrow();
+    await db
+      .update(deletionOperations)
+      .set({ journalIntentPlanDigest: null, journalIntentBaseVersion: null, journalIntentEffectiveAt: null })
+      .where(eq(deletionOperations.scope, "profile"));
+    const [draft] = await db.select().from(deletionOperations).where(eq(deletionOperations.scope, "profile"));
+    expect(draft).toMatchObject({ state: "requested", journalIntentPlanDigest: null });
+    return draft!;
+  }
+
+  type Draft = Awaited<ReturnType<typeof profileDraft>>;
+  const recoverySession = (draft: Draft) => sql`
+    INSERT INTO deletion_recovery_sessions (id, operation_id, auth_user_id, created_at, expires_at, rate_limit_key_digest, secret_digest, secret_prefix)
+    VALUES ('00000000-0000-7000-8000-00000000aa01', ${draft.id}, 'owner-auth', now(), now() + interval '15 minutes', ${"a".repeat(64)}, ${"b".repeat(64)}, 'prefix00')`;
+  /** One referencing row per key. The transitions row necessarily satisfies BOTH of that table's keys. */
+  const PLANTS: Record<string, (draft: Draft) => ReturnType<typeof sql>[]> = {
+    auth_mail_outbox: (draft) => [sql`
+      INSERT INTO auth_mail_outbox (id, purpose, auth_user_id, recipient_digest, operation_id, delivery_attempt, action_expires_at, admitted_at, admitted_day_utc, admitted_month_utc)
+      VALUES ('00000000-0000-7000-8000-00000000aa02', 'identity_deletion_recovery', 'owner-auth', ${"d".repeat(64)}, ${draft.id}, 1, now() + interval '1 hour', now(), to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD'), to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM'))`],
+    deletion_recovery_sessions: (draft) => [recoverySession(draft)],
+    deletion_cancellation_proofs: (draft) => [recoverySession(draft), sql`
+      INSERT INTO deletion_cancellation_proofs (id, operation_id, auth_user_id, recovery_session_id, factor_verified_at, expires_at)
+      VALUES ('00000000-0000-7000-8000-00000000aa03', ${draft.id}, 'owner-auth', '00000000-0000-7000-8000-00000000aa01', now(), now() + interval '10 minutes')`],
+    // No command kind is admitted for the profile scope (kind_scope_shape), so
+    // a profile op can never carry one; the plant uses a workspace-shaped
+    // command, which the single-column key still lets point at the draft.
+    deletion_external_commands: (draft) => [sql`
+      INSERT INTO deletion_external_commands (id, operation_id, kind, phase, scope, workspace_id, target_key, payload_hash)
+      VALUES ('00000000-0000-7000-8000-00000000aa04', ${draft.id}, 'auto_topup_disable', 'pre_grace', 'workspace', ${draft.workspaceId}, ${`workspace:${draft.workspaceId}`}, ${draft.payloadHash})`],
+    deletion_membership_snapshots: (draft) => [sql`
+      INSERT INTO deletion_membership_snapshots (id, operation_id, membership_id, membership_version, role, user_id, workspace_id)
+      SELECT '00000000-0000-7000-8000-00000000aa05', ${draft.id}, m.id, m.version, m.role, m.user_id, m.workspace_id
+      FROM memberships m WHERE m.user_id = ${fixture.owner.user.id} AND m.workspace_id = ${fixture.workspaceId}`],
+    deletion_operation_transitions: (draft) => [sql`
+      INSERT INTO deletion_operation_transitions (id, operation_id, scope, target_key, workspace_id, profile_id, requester_digest, payload_hash, version, from_state, to_state, external_receipt_digest)
+      VALUES ('00000000-0000-7000-8000-00000000aa06', ${draft.id}, 'profile', ${draft.targetKey}, ${draft.workspaceId}, ${draft.profileId}, ${draft.requesterDigest}, ${draft.payloadHash}, 1, 'requested', 'journal_pending', ${"c".repeat(64)})`],
+  };
+
+  it("the plants cover every referencing table in the catalog", () => {
+    expect(Object.keys(PLANTS).sort()).toEqual([...new Set(EXPECTED_RESTRICT_KEYS)].sort());
+  });
+
+  it.each(Object.keys(PLANTS))(
+    "a draft referenced through %s: the erasure tick REFUSES to retire it — the draft, the referencing row and the workspace all survive",
+    async (child) => {
+      const draft = await profileDraft();
+      // Every plant must LAND, or the case proves nothing about the delete.
+      await db.transaction(async (tx) => {
+        for (const statement of PLANTS[child]!(draft)) await tx.execute(statement);
+      });
+      const childCount = async () =>
+        Number(
+          ((await db.execute(sql.raw(`SELECT count(*)::int AS n FROM ${child} WHERE operation_id = '${draft.id}'`))) as unknown as {
+            rows: { n: number }[];
+          }).rows[0]!.n
+        );
+      const before = await childCount();
+      expect(before).toBeGreaterThan(0);
+
+      // The workspace's own deletion reaches the end of grace.
+      const { port: journalPort } = journal();
+      const scope = await withWorkspace(db, { authUserId: "owner-auth" });
+      const ws = await requestWorkspaceDeletion(
+        db,
+        scope,
+        { sessionId: "session-owner-auth", idempotencyKey: `draft-fk-ws-${child}`, typedName: fixture.workspaceName },
+        journalPort
+      );
+      const ports: DeletionExecutorPorts = { journal: journalPort, commands: commandPort().port, enablement: { erasureEnabled: () => true } };
+      const advance = () =>
+        advanceDeletionOperations(db, ports, { workerName: "draft-fk", migrations, activationExclusions: NO_ACTIVATION_EXCLUSIONS });
+      const codes: string[] = [];
+      for (let tick = 0; tick < 2; tick += 1) {
+        for (const o of (await advance()).outcomes) codes.push(`${o.scope}:${o.from}->${o.to ?? "wait"}:${o.code}`);
+      }
+      await backdateGrace(db, ws.id);
+      for (const o of (await advance()).outcomes) codes.push(`${o.scope}:${o.from}->${o.to ?? "wait"}:${o.code}`);
+
+      const draftAfter = await db.select().from(deletionOperations).where(eq(deletionOperations.id, draft.id));
+      const [wsAfter] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, ws.id));
+      // REFUSED, loudly: a foreign-key violation on the retiring DELETE,
+      // recorded on the row and counted as a retry; nothing removed.
+      expect(codes.some((code) => code.startsWith("workspace:grace->wait:sqlstate_23503")), codes.join("\n")).toBe(true);
+      expect(draftAfter).toHaveLength(1);
+      expect(await childCount()).toBe(before);
+      expect(wsAfter).toMatchObject({ state: "grace" });
+      expect(wsAfter!.lastFailureCode).toMatch(/^sqlstate_23503/);
+      expect(wsAfter!.retryCount).toBeGreaterThan(0);
+    }
+  );
 });

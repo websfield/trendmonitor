@@ -35,7 +35,7 @@
 // metric, a banned word — was learned, verified or measured: the creator
 // TOLD us; nothing here checked it against anything.
 import type { ReactNode } from "react";
-import type { BrainClaimView, BrainVersionView } from "@respin/db";
+import { CHECK, type BrainClaimView, type BrainVersionView } from "@respin/db";
 import { Banner } from "../../ui/banner";
 import { buttonClass } from "../../ui/button";
 import { FocusOnMount } from "../onboarding/focus-on-mount";
@@ -175,7 +175,6 @@ const control: React.CSSProperties = {
   padding: "0.6rem 1rem",
   fontSize: "1rem",
 };
-const CHECK_MARKER = "[check]";
 
 /** ISO day — server and browser must agree, and a test must assert an exact
  *  string (the `usage-view` / `onboarding-view` precedent). */
@@ -459,7 +458,7 @@ function ClaimEditFields({
             <span>{label}</span>
             <textarea
               name={`edit:${claim.pointer}`}
-              defaultValue={claim.isPlaceholder ? CHECK_MARKER : claim.value}
+              defaultValue={claim.isPlaceholder ? CHECK : claim.value}
               required
               rows={3}
               style={{ minHeight: "88px", minWidth: "44px", padding: "0.75rem" }}

@@ -27,9 +27,9 @@ import { redirect } from "next/navigation";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { AccessRefusal } from "../access-refusal";
 import { billingErrorDisplay } from "../billing-errors";
-import { scopeForUser } from "../workspace-scope";
+import { readScopeForUser } from "../workspace-scope";
 import { logRefusal } from "../safe-log";
-import { brainErrorFor } from "./copy";
+import { BRAIN_PENDING_DELETION_REASON, brainErrorFor } from "./copy";
 import {
   BrainView,
   selectCurrentBrainState,
@@ -58,14 +58,19 @@ export default async function BrainPage(props: {
   const user = await requireUser();
   const search = await props.searchParams;
 
-  // `scopeForUser`, not `withWorkspace` directly, for the reason that function
-  // documents: the layout's bootstrap renders CONCURRENTLY with the page, so a
-  // brand-new creator's first load can otherwise read before the bootstrap has
-  // committed. This page is reachable straight from `/onboarding`'s outcome
-  // link, which makes it one of the first a new creator can land on.
-  let scope: Awaited<ReturnType<typeof scopeForUser>>;
+  // `readScopeForUser`, not `withWorkspace` directly, for the reason
+  // `scopeForUser` documents: the layout's bootstrap renders CONCURRENTLY with
+  // the page, so a brand-new creator's first load can otherwise read before
+  // the bootstrap has committed. This page is reachable straight from
+  // `/onboarding`'s outcome link, which makes it one of the first a new
+  // creator can land on.
+  //
+  // THE READ GRADE (R-163): during a workspace deletion's grace this page
+  // renders a READ-ONLY history — see the grade branch below, which returns
+  // before every read the read grade does not accept.
+  let scope: Awaited<ReturnType<typeof readScopeForUser>>;
   try {
-    scope = await scopeForUser(user);
+    scope = await readScopeForUser(user);
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[brain] workspace scope unavailable", err);
@@ -152,6 +157,50 @@ export default async function BrainPage(props: {
   const voice = selectCurrentBrainState(voiceHistory);
   const strategy = selectCurrentBrainState(strategyHistory);
   const killtest = selectCurrentBrainState(killtestHistory);
+
+  // THE GRADE BRANCH (R-163, P5-R3). Under a read-grade scope this page has
+  // made exactly five reads — `creatorProfiles`, `selectedProfileForMember`
+  // and the three `readBrainHistory` calls above, every one through the read
+  // grade's own guards — and makes NO other. The Performance Meta history,
+  // the proposal history and its evidence, the asset counts, the interview
+  // draft and the pause courtesy read are not called: they are not readers the
+  // read grade serves, and `hasOpenPause(scope.workspaceId)` would not even
+  // compile under the read grade's id brand. The view's existing null states
+  // render in their place, and one decide block names the pending deletion
+  // and the page that cancels it. Every write control renders closed; the
+  // export links stay, because the export is the point.
+  if ("grade" in scope) {
+    const exportProfileId = encodeURIComponent(profile.id);
+    return (
+      <BrainView
+        profileName={profile.displayName}
+        voice={voice}
+        strategy={strategy}
+        killtest={killtest}
+        voiceHistory={voiceHistory}
+        strategyHistory={strategyHistory}
+        killtestHistory={killtestHistory}
+        performanceHistory={null}
+        proposalHistory={null}
+        assetCounts={null}
+        interviewTouchedButUndrafted={{ strategy: false, killtest: false }}
+        decideBlock={{ reason: BRAIN_PENDING_DELETION_REASON }}
+        confirmVoiceAction="/brain"
+        confirmStrategyAction="/brain"
+        confirmKillTestAction="/brain"
+        editVoiceAction="/brain"
+        editStrategyAction="/brain"
+        editKillTestAction="/brain"
+        editMetricAction="/brain"
+        activateVoiceAction="/brain"
+        activateStrategyAction="/brain"
+        activateKillTestAction="/brain"
+        exportJsonHref={`/api/export?profile=${exportProfileId}&format=json`}
+        exportMarkdownHref={`/api/export?profile=${exportProfileId}&format=markdown`}
+        error={brainErrorFor(typeof search.e === "string" ? search.e : undefined)}
+      />
+    );
+  }
 
   // Performance Meta and proposal history are independent asset reads. A
   // failure is named in their own panels rather than being misrepresented as

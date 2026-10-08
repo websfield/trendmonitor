@@ -128,6 +128,7 @@ describe("slice 7 stage A: revision lineage and feedback capture", () => {
     killTest: { rulesFired: [], rewritten: false },
     rewriteCount: 0,
     debitLedgerId: null,
+    usageIsSystemSpend: false,
     ...over,
   });
 
@@ -148,7 +149,14 @@ describe("slice 7 stage A: revision lineage and feedback capture", () => {
     const caps = writeCapabilities(scope);
     return db.transaction(async (tx) => {
       await caps.claimGenerationAttempt(
-        { attemptId, purpose: "generation", mode: "hookSet", payloadSha256: HASH },
+        {
+          attemptId,
+          purpose: "generation",
+          mode: "hookSet",
+          payloadSha256: HASH,
+          intentSha256: HASH,
+          requestSnapshot: { v: 1 },
+        },
         tx
       );
       await caps.advanceGenerationAttempt({ attemptId, to: "vendor_started" }, tx);
@@ -452,8 +460,13 @@ describe("slice 7 stage A: revision lineage and feedback capture", () => {
         "reaction",
         "note",
         "createdAt",
+        // Audit P6-A1 (R-174): the creator's "leave this out" stamp, NULL
+        // here. A fact about what the product may do next, not about the
+        // reaction, and read back raw like every other column.
+        "historyExcludedAt",
       ].sort()
     );
+    expect(read[0]?.historyExcludedAt).toBeNull();
   });
 
   it("R11: the RELATIONAL-QUERY API reaches this table unscoped — which is why the scan must see it", async () => {

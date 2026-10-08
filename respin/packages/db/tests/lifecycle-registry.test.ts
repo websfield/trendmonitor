@@ -285,6 +285,41 @@ describe("compile-closed lifecycle registry", () => {
     }
   });
 
+  it("launch L3 (R-152): the request snapshot's recent-context identifiers are GOVERNED paths with a writer witness, and losing the writer's token is red", () => {
+    const recentPaths = [
+      "$.recentContext.records[*].id",
+      "$.recentContext.pieces[*].id",
+      "$.recentContext.exclusions[*].id",
+    ];
+    const entries = JSON_PATH_INVENTORY.filter(
+      (item) => item.table === "generation_attempts" && item.column === "request_snapshot"
+    );
+    for (const path of recentPaths) {
+      const entry = entries.find((item) => item.path === path);
+      expect(entry, path).toBeDefined();
+      expect(entry!.sourceFile).toBe("packages/credits/src/recent-context.ts");
+      // ...and the registry row for the table governs it (the closure's other half).
+      expect(
+        LIFECYCLE_REGISTRY.some(
+          (row) => row.table === "generation_attempts" && row.governedJsonPaths.includes(`request_snapshot${path}`)
+        ),
+        path
+      ).toBe(true);
+    }
+    // THE WITNESS IS LIVE: strip one token from the writer and the source check reddens.
+    const writer = "packages/credits/src/recent-context.ts";
+    const sources = new Map(
+      [...new Set(JSON_PATH_INVENTORY.map((item) => item.sourceFile))].map((path) => [
+        path,
+        readFileSync(join(RESPIN, path), "utf8"),
+      ])
+    );
+    sources.set(writer, sources.get(writer)!.replaceAll("exclusions", "removedToken"));
+    expect(() =>
+      validateLifecycleSourceInventory(sources, [], JSON_PATH_INVENTORY, [], [])
+    ).toThrow(/missing JSON-path source: generation_attempts.request_snapshot\$\.recentContext\.exclusions/);
+  });
+
   it("pins the exact enabled Better Auth verification-row shapes from the installed runtime", () => {
     const authConfig = readFileSync(join(RESPIN, "packages/auth/src/create-auth.ts"), "utf8");
     const passwordRoutes = readFileSync(join(RESPIN, "node_modules/better-auth/dist/api/routes/password.mjs"), "utf8");

@@ -15,6 +15,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   advanceDeletionOperations,
+  NO_SEAT_CAP_RESTORE_POLICY,
+  resumeWedgedDeletionOperations,
   composeDeletionJournal,
   parseDeletionJournalEnv,
   parseDeletionScopeList,
@@ -29,6 +31,7 @@ import {
   type DeletionScope,
   type ErasureEnablementPort,
   type MigrationInventory,
+  type RecoveryDeliveryPort,
 } from "@respin/db";
 // The AWS client enters the process through this one sanctioned entrypoint, the
 // same shape as `@respin/credits/deletion-server`, so the app bundle never
@@ -101,7 +104,46 @@ export function loadMigrationInventory(
   );
 }
 
-export type DeletionLifecycleTick = (scheduledAt: Date) => Promise<DeletionLifecycleTickSummary>;
+/**
+ * The tick's summary: the executor's counts, plus the two sweeps R-162 and
+ * R-165 added to the same tick. Every count reaches the worker's event stream,
+ * and a non-zero `wedgesRefused`, `heldMoneyFailed`, `heldMoneyStillHeld`,
+ * `moneyNeedsOperator`, `refundOwed` or `stalledWaits` raises an alert there (`pg-boss-runtime.ts`)
+ * — a sweep that isolates a failure, or a wait that never retries, must also
+ * report it (CLAUDE.md 2026-09-09; R-166).
+ */
+export type WorkerDeletionTickSummary = DeletionLifecycleTickSummary & Readonly<{
+  wedgesResumed: number;
+  wedgesRefused: number;
+  heldMoneyReplayed: number;
+  heldMoneyFailed: number;
+  heldMoneyStillHeld: number;
+  /** R-166: money receipts needing an operator, paged for the first time this tick. */
+  moneyNeedsOperator: number;
+}>;
+
+export type DeletionLifecycleTick = (scheduledAt: Date) => Promise<WorkerDeletionTickSummary>;
+
+export type HeldMoneySweep = (
+  db: DbLike
+) => Promise<Readonly<{ replayed: number; failed: number; stillHeld: number; moneyNeedsOperator: number }>>;
+
+/**
+ * The wedge sweep never sends mail. It reaches only RESERVED operations, and a
+ * reserved identity request has a confirmed delivery by construction (the
+ * reservation refuses otherwise), so `resumeIdentityDeletionRequest` never
+ * reaches the delivery port from here. If that ever changed, this refuses and
+ * the sweep counts the refusal, rather than sending a recovery email from a
+ * worker that holds no recipient address.
+ */
+export const SWEEP_RECOVERY_DELIVERY: RecoveryDeliveryPort = {
+  deliverIdentityRecovery: async () => {
+    throw new Error("deletion_refused:recovery_delivery_not_available_in_sweep");
+  },
+  reconcileIdentityRecovery: async () => {
+    throw new Error("deletion_refused:recovery_delivery_not_available_in_sweep");
+  },
+};
 
 export function createDeletionLifecycleTick(input: Readonly<{
   db: DbLike;
@@ -111,13 +153,36 @@ export function createDeletionLifecycleTick(input: Readonly<{
   limit?: number;
   /** Task 7: the process environment, read ONCE here for ADMIN_USER_IDS / ACTIVATION_EXCLUDED_USER_IDS. */
   env?: Readonly<Record<string, string | undefined>>;
+  /** R-165: the held-money replay for workspaces that are active again (@respin/credits/deletion-server). */
+  heldMoney?: HeldMoneySweep;
 }>): DeletionLifecycleTick {
   const activationExclusions = resolveActivationExclusions(input.env ?? {});
-  return () =>
-    advanceDeletionOperations(input.db, input.ports, {
+  return async () => {
+    // R-162: FIRST, the wedges — a reservation whose transaction never ran.
+    // Before this the five resume seams had no production caller, so a crash
+    // between a journal reservation and its tombstone left `requested` forever.
+    const wedges = await resumeWedgedDeletionOperations(input.db, {
+      journal: input.ports.journal,
+      recoveryDelivery: SWEEP_RECOVERY_DELIVERY,
+      membershipRestore: NO_SEAT_CAP_RESTORE_POLICY,
+    });
+    const summary = await advanceDeletionOperations(input.db, input.ports, {
       workerName: input.workerName,
       migrations: input.migrations,
       activationExclusions,
       ...(input.limit === undefined ? {} : { limit: input.limit }),
     });
+    const held = input.heldMoney
+      ? await input.heldMoney(input.db)
+      : { replayed: 0, failed: 0, stillHeld: 0, moneyNeedsOperator: 0 };
+    return {
+      ...summary,
+      wedgesResumed: wedges.filter((wedge) => wedge.result === "resumed").length,
+      wedgesRefused: wedges.filter((wedge) => wedge.result === "refused").length,
+      heldMoneyReplayed: held.replayed,
+      heldMoneyFailed: held.failed,
+      heldMoneyStillHeld: held.stillHeld,
+      moneyNeedsOperator: held.moneyNeedsOperator,
+    };
+  };
 }

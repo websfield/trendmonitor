@@ -2,13 +2,15 @@
 // purposes. The purpose sub-cap lives inside the global cap and is derived
 // from the claims; the in-flight count and the stale recovery are the
 // concurrency and crash halves of the same authority.
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import {
   PUBLIC_SAMPLE_SPIN_ATTEMPT_LEASE_MS,
   PUBLIC_SAMPLE_SPIN_DAILY_CODE_CEILING_MICRO_USD,
   PUBLIC_SAMPLE_SPIN_DEADLINE_CODE_CEILING_MS,
   PUBLIC_SAMPLE_SPIN_FINALISE_MARGIN_MS,
+  PUBLIC_SAMPLE_SPIN_RECOVERY_PAGES,
+  SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING,
   SYSTEM_SPEND_PURPOSES,
   claimSystemSpend,
   publicSampleSpinInFlightCount,
@@ -231,5 +233,50 @@ describe("per-candidate isolation (lean gate round 1 R-5d; witnessed round 2)", 
     expect(await db.select().from(systemModelUsage)).toHaveLength(1);
     await expect(recoverStalePublicSampleSpinAttempts(db)).resolves.toEqual({ recovered: 1, failed: 0 });
     expect(await db.select().from(systemModelUsage)).toHaveLength(2);
+  });
+});
+
+describe("audit P3-A7: a failing row does not keep its place at the head of the recovery scan", () => {
+  it("a full batch of always-failing stale rows does not starve a NEWER recoverable row — it is recovered on the first tick, and every failure is still counted", async () => {
+    const db = await createTestDb();
+    // A row that fails EVEN ALONE, every tick: its usage insert is refused by
+    // a trigger, so its recovery transaction rolls back and writes nothing.
+    await db.execute(sql`
+      CREATE FUNCTION refuse_poisoned_usage() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.job_attempt_id LIKE 'sample:poison%' THEN
+          RAISE EXCEPTION 'poisoned row refused';
+        END IF;
+        RETURN NEW;
+      END
+      $$ LANGUAGE plpgsql
+    `);
+    await db.execute(sql`
+      CREATE TRIGGER refuse_poisoned_usage BEFORE INSERT ON system_model_usage
+      FOR EACH ROW EXECUTE FUNCTION refuse_poisoned_usage()
+    `);
+    const batch = SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING;
+    for (let i = 0; i < batch; i += 1) {
+      await claimSystemSpend(db, publicClaim(`poison${i}`, 1_000n));
+    }
+    await claimSystemSpend(db, publicClaim("newer", 1_000n));
+    // Every claim stale; the poisoned ones OLDER, so the oldest-first scan
+    // meets a full batch of them before the recoverable row.
+    const lease = PUBLIC_SAMPLE_SPIN_ATTEMPT_LEASE_MS + 60_000;
+    await db.execute(sql`
+      UPDATE system_spend_claims
+      SET created_at = now() - make_interval(secs => ${lease / 1000})
+        - make_interval(secs => CASE WHEN job_attempt_id LIKE 'sample:poison%' THEN 600 ELSE 0 END)
+    `);
+    const first = await recoverStalePublicSampleSpinAttempts(db);
+    // The newer row is recovered on THIS tick (the plan's bound is two ticks),
+    // and every poisoned row is counted — `sample_spin_recovery_failed` pages
+    // on this number in `worker/retention.ts`.
+    expect(first).toEqual({ recovered: 1, failed: batch });
+    const [newer] = await db.select().from(systemModelUsage).where(eq(systemModelUsage.jobAttemptId, "sample:newer"));
+    expect(newer).toMatchObject({ errorCode: "recovery_required", costState: "unknown" });
+    // The poisoned rows still fail, still loudly, on the next tick.
+    expect(await recoverStalePublicSampleSpinAttempts(db)).toEqual({ recovered: 0, failed: batch });
+    expect(PUBLIC_SAMPLE_SPIN_RECOVERY_PAGES).toBeGreaterThanOrEqual(2);
   });
 });

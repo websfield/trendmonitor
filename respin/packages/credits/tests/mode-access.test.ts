@@ -45,7 +45,9 @@ import {
   modeOffers,
   modeTiers,
   modesIncludedIn,
+  offeredInStudio,
   planIncludesMode,
+  studioModeOffers,
   privateFrameworkEntitlement,
   trackedNicheEntitlement,
   type EntitlementTier,
@@ -387,6 +389,20 @@ describe("modeOffers: the picker's data agrees with the gate (R1/R13/R14)", () =
       expect(modeOffers(tier).find((o) => o.id === "analyseAndSpin")?.status)
         .toBe("available");
     }
+  });
+
+  it("Studio's picker omits exactly the similarity-gated modes, which run only from /trends (Phase 6 compliance gate)", () => {
+    const gated = MODE_IDS.filter((id) => MODE_SPECS[id].similarityGated);
+    // NON-VACUITY: the gate exists, and today it is Spin alone.
+    expect(gated).toEqual(["analyseAndSpin"]);
+    for (const tier of TIERS) {
+      const studio = studioModeOffers(tier).map((o) => o.id);
+      expect(studio, tier).toEqual(MODE_IDS.filter((id) => !gated.includes(id)));
+      // The rest of each offer is `modeOffers`' own, unchanged.
+      expect(studioModeOffers(tier)).toEqual(modeOffers(tier).filter((o) => offeredInStudio(o.id)));
+    }
+    expect(offeredInStudio("analyseAndSpin")).toBe(false);
+    expect(offeredInStudio("ideation")).toBe(true);
   });
 
   it("an unclassified mode is a refusal here too, never a silent 'available'", () => {

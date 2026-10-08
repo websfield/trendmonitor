@@ -15,9 +15,12 @@ import {
   type BrainClaimView,
 } from "./brain-ops";
 import {
-  ProfileScope,
+  mintReadableProfileScope,
   PROFILE_EXPORT_TABLES,
   type ProfileExportTable,
+  type ProfileScope,
+  type ReadGradeProfileScope,
+  type ReadGradeWorkspaceScope,
   type SourceEvidenceEntry,
   type WorkspaceScope,
 } from "./with-workspace";
@@ -555,7 +558,10 @@ export type BrainExportFormat = "json" | "markdown";
  */
 export async function openBrainExport(
   db: DbLike,
-  scope: WorkspaceScope,
+  // EITHER GRADE (R-163, P5-R3): during a workspace deletion's grace the only
+  // scope its owner holds is the read grade, and "export at any time" must
+  // hold exactly then. The pause exemption above is the same argument.
+  scope: WorkspaceScope | ReadGradeWorkspaceScope,
   profileId: string,
   format: BrainExportFormat,
   runSlots?: RunSlots,
@@ -575,7 +581,10 @@ export async function openBrainExport(
   // Preflight the profile before the caller commits HTTP 200 headers. A
   // foreign profile must remain a typed 404-capable refusal, never a
   // successful response whose body aborts on first pull.
-  const profileScope = await ProfileScope.mint(db, scope, profileId);
+  // Fence 6: a read-grade workspace scope mints a read-grade profile scope,
+  // whose `exportPage`/`onboardingInputsByIds` run through fence 5's read
+  // sibling. A write scope is unchanged.
+  const profileScope = await mintReadableProfileScope(db, scope, profileId);
   if (!runSlots) {
     return lazyExportIterable(
       () => createPagedExportStream(
@@ -609,9 +618,17 @@ export async function openBrainExport(
   );
 }
 
+/**
+ * What the export reads through: either grade's profile scope (R-163). The
+ * union of the two CLASSES, not a structural `{ accessors }` shape: a shape
+ * would take these helpers out of AC-13's scope-taking surface
+ * (`tests/profile-cage.test.ts`), and a forged object would satisfy it.
+ */
+type ExportProfileScope = ProfileScope | ReadGradeProfileScope;
+
 function createPagedExportStream(
   db: DbLike,
-  profileScope: ProfileScope,
+  profileScope: ExportProfileScope,
   profileId: string,
   format: BrainExportFormat,
   plan: readonly ProfileExportTable[],
@@ -772,7 +789,7 @@ function lazyExportIterable(
 }
 
 async function forEachExportPage(
-  profileScope: ProfileScope,
+  profileScope: ExportProfileScope,
   table: ProfileExportTable,
   tx: TxLike,
   visit: (rows: unknown[]) => Promise<void>
@@ -800,7 +817,7 @@ function citedInputIds(docs: readonly BrainDoc[]): string[] {
 }
 
 async function inputsForDocs(
-  profileScope: ProfileScope,
+  profileScope: ExportProfileScope,
   docs: readonly BrainDoc[],
   tx: TxLike
 ): Promise<OnboardingInput[]> {
@@ -820,7 +837,7 @@ function exportJson(value: unknown): string {
 
 async function streamJsonExport(
   tx: TxLike,
-  profileScope: ProfileScope,
+  profileScope: ExportProfileScope,
   profileId: string,
   plan: readonly ProfileExportTable[],
   generatedAt: Date,
@@ -1003,7 +1020,7 @@ export function renderPerformanceMetaMarkdown(
 
 async function streamMarkdownExport(
   tx: TxLike,
-  profileScope: ProfileScope,
+  profileScope: ExportProfileScope,
   generatedAt: Date,
   emit: (chunk: string) => Promise<void>
 ): Promise<void> {

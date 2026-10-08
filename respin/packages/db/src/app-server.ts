@@ -29,20 +29,15 @@ import {
   beginIdentityCancellationRecoverySession,
   createIdentityCancellationProofWithPassword,
 } from "./auth-lifecycle";
-import type { MembershipRestorePolicyPort } from "./deletion-ports";
+import { NO_SEAT_CAP_RESTORE_POLICY } from "./deletion-ports";
 
-/**
- * Phase 10b-1 Task 8: until 10b-2 introduces seat caps there is no capacity to
- * refuse, so an unchanged suspended membership is always restorable. 10b-2
- * replaces this constant with the real seat policy — "cancellation never
- * assumes capacity" (deletion-ports.ts) is why it is a named port, not an
- * inline `true`.
- */
-export const NO_SEAT_CAP_RESTORE_POLICY: MembershipRestorePolicyPort = {
-  mayRestore: async () => ({ allowed: true, refusal: null }),
-};
+// Moved to deletion-ports.ts (R-162) so the worker composes the same policy;
+// re-exported here so the facade's surface is unchanged.
+export { NO_SEAT_CAP_RESTORE_POLICY };
 import {
   createDb,
+  createMarketingReadDb,
+  MARKETING_READ_POOL_MAX,
   createRunSlotPool,
   DEFAULT_RUN_SLOT_POOL_MAX,
   type Db,
@@ -61,6 +56,7 @@ import {
   type BrainAssetSummary,
   type LedgerPage,
   type MonthlySpendResult,
+  type ReadGradeWorkspaceScope,
   type WorkspaceCtx,
   type WorkspaceScope,
 } from "./with-workspace";
@@ -138,7 +134,12 @@ import type { Framework } from "./brain-schema";
 // Slice 7 (stage A). The feedback pair. Positional `WorkspaceScope`, AC-13
 // reason as above; `listFeedback` returns RAW stored events by requirement
 // (R11), so there is deliberately no summary method here to bind.
-import { listFeedback, recordFeedback } from "./feedback-ops";
+import {
+  excludeFeedbackFromHistory,
+  listFeedback,
+  recordFeedback,
+  rememberForFutureDrafts,
+} from "./feedback-ops";
 import type { Generation, GenerationFeedbackRow } from "./generation-schema";
 // Slice 9a. The results readers, the SAME shape as the feedback pair one line
 // up and for the same reasons: positional `WorkspaceScope`, and `listResults`
@@ -154,6 +155,7 @@ import type { Generation, GenerationFeedbackRow } from "./generation-schema";
 // returns — see `results-comparison-ops.ts` for why GROUPING went there rather
 // than here, which was a corrected mistake and not an obvious choice (R-105).
 import {
+  countResults,
   declaredMetricForProfile,
   generationsForResultLog,
   listResults,
@@ -193,6 +195,46 @@ let cached: Db | undefined;
 export function getServerDb(): Db {
   cached ??= createDb(process.env.DATABASE_URL);
   return cached;
+}
+
+let marketingCached: Db | undefined;
+
+/**
+ * THE PUBLIC PAGES' OWN SMALL POOL (Phase 6 billing gate, R-175): a separate
+ * `pg.Pool` of `MARKETING_READ_POOL_MAX` connections with a statement timeout,
+ * so landing traffic cannot take connections from webhooks, debits or
+ * settlements on `getServerDb()`'s pool. Package-facing like `getServerDb`;
+ * `app/**` reaches it only through `@respin/config/app-server`'s
+ * `getActiveConfigForPublicPage`.
+ */
+export function getMarketingReadDb(): Db {
+  marketingCached ??= createMarketingReadDb(process.env.DATABASE_URL);
+  // FAIL FAST WHEN SATURATED (Phase 6 billing re-run): `pg.Pool` has no bound
+  // on its wait queue, so a request that would queue is refused here instead.
+  // Read from the pool's own counters (`pg-pool`: `totalCount`, `idleCount`,
+  // `waitingCount`); the caller turns the refusal into number-free copy.
+  const pool = marketingCached.$client as {
+    totalCount: number;
+    idleCount: number;
+    waitingCount: number;
+  };
+  if (
+    pool.waitingCount > 0 ||
+    (pool.totalCount >= MARKETING_READ_POOL_MAX && pool.idleCount === 0)
+  ) {
+    throw new MarketingReadPoolBusyError();
+  }
+  return marketingCached;
+}
+
+/** The public pages' pool is saturated; the page renders its number-free copy. */
+export class MarketingReadPoolBusyError extends Error {
+  constructor() {
+    super(
+      "The public pages' read pool is saturated, so this read was refused rather than queued. The page renders its number-free copy; nothing else is affected."
+    );
+    this.name = "MarketingReadPoolBusyError";
+  }
 }
 
 /**
@@ -257,7 +299,15 @@ export const respinDb = {
   ensureUserWorkspace: (params: BootstrapParams) =>
     ensureUserWorkspace(getServerDb(), params),
   withWorkspace: (ctx: WorkspaceCtx) => withWorkspace(getServerDb(), ctx),
-  selectedProfileForMember: (scope: WorkspaceScope) =>
+  /**
+   * R-163: the READ grade. Exactly three callers (`readScopeForUser`):
+   * `/api/export`, `/settings/account`, `/brain`. A tombstoned workspace whose
+   * deletion is still undecided yields a `ReadGradeWorkspaceScope`, which no
+   * writer below accepts.
+   */
+  withWorkspaceReadGrade: (ctx: WorkspaceCtx) =>
+    withWorkspace(getServerDb(), ctx, { grade: "read" }),
+  selectedProfileForMember: (scope: WorkspaceScope | ReadGradeWorkspaceScope) =>
     selectedProfileForMember(getServerDb(), scope),
   selectActiveProfile: (scope: WorkspaceScope, profileId: string) =>
     selectActiveProfile(getServerDb(), scope, profileId),
@@ -380,7 +430,7 @@ export const respinDb = {
   readKillTestBrain: (scope: WorkspaceScope, profileId: string) =>
     readKillTestBrain(getServerDb(), scope, profileId),
   readBrainHistory: (
-    scope: WorkspaceScope,
+    scope: WorkspaceScope | ReadGradeWorkspaceScope,
     profileId: string,
     kind: "voice" | "strategy" | "killtest" | "performance_meta"
   ) => readBrainHistory(getServerDb(), scope, profileId, kind),
@@ -403,7 +453,7 @@ export const respinDb = {
       editDeclaredMetric(getServerDb(), scope, profileId, brainDocId, metric)
     ),
   openBrainExport: (
-    scope: WorkspaceScope,
+    scope: WorkspaceScope | ReadGradeWorkspaceScope,
     profileId: string,
     format: BrainExportFormat
   ): Promise<AsyncIterable<string>> =>
@@ -596,6 +646,27 @@ export const respinDb = {
     page?: LedgerPage
   ): Promise<GenerationFeedbackRow[]> =>
     listFeedback(getServerDb(), scope, profileId, page),
+  // Audit P6-A1 (R-174): "Leave this out of future drafts". `feedbackId` is
+  // untrusted; the capability resolves it through the scope and refuses a
+  // foreign, missing or malformed one with one byte-identical error.
+  excludeFeedbackFromHistory: (
+    scope: WorkspaceScope,
+    profileId: string,
+    feedbackId: string
+  ): Promise<GenerationFeedbackRow> =>
+    excludeFeedbackFromHistory(getServerDb(), scope, profileId, feedbackId),
+  // Launch L3 (R-152): "Remember this for future drafts" — the Studio-side
+  // door to the SAME creator-edit path `/brain` uses, so it runs through the
+  // same brain-edit slot. It writes a PROPOSED Kill Test version, never an
+  // active one; the creator confirms and activates it on `/brain`.
+  rememberForFutureDrafts: (
+    scope: WorkspaceScope,
+    profileId: string,
+    params: { text: string }
+  ) =>
+    withBrainEditSlot(getServerControlSlots(), scope, () =>
+      rememberForFutureDrafts(getServerDb(), scope, profileId, params)
+    ),
   brainAssetSummary: (
     scope: WorkspaceScope,
     profileId: string
@@ -625,6 +696,11 @@ export const respinDb = {
     profileId: string,
     page?: LedgerPage
   ): Promise<ResultRow[]> => listResults(getServerDb(), scope, profileId, page),
+  // Audit P6-R6: whether this creator has logged any result, for the
+  // sentence `/studio` and first ideas render. The binding only; the query is
+  // `ProfileScope.accessors.countResults`.
+  countResults: (scope: WorkspaceScope, profileId: string): Promise<number> =>
+    countResults(getServerDb(), scope, profileId),
   // R8. `null` is a PAGE STATE ("you have not declared a north-star metric
   // yet"), not an error - see `declaredMetricForProfile` for why the read and
   // the write answer the same absence differently.
@@ -711,8 +787,9 @@ export const respinDb = {
   },
   // The read asserts the cage itself (deletion-lifecycle.ts); the facade is a
   // thin forward of the same `scope`.
-  pendingDeletions: (scope: WorkspaceScope): Promise<readonly DeletionOperation[]> =>
-    pendingDeletionsForScope(getServerDb(), scope),
+  pendingDeletions: (
+    scope: WorkspaceScope | ReadGradeWorkspaceScope
+  ): Promise<readonly DeletionOperation[]> => pendingDeletionsForScope(getServerDb(), scope),
   requestWorkspaceDeletion: async (scope: WorkspaceScope, params: ScopedRequestParams): Promise<DeletionOperation> => {
     assertDeletionRequestsEnabled(resolveDeletionRequestEnablement(process.env), "workspace");
     const { journal } = await resolveAppDeletionJournal(process.env);
@@ -723,12 +800,21 @@ export const respinDb = {
     const { journal } = await resolveAppDeletionJournal(process.env);
     return requestProfileDeletion(getServerDb(), scope, profileId, params, journal);
   },
+  /**
+   * The seat policy restores memberships an earlier identity cancellation
+   * stranded (R-162). No held-money port here (R-165): the replay lives in
+   * @respin/credits, whose dispatcher keeps deliberate bare throws that must
+   * stay off the app facade's reachable set, so the worker's deletion tick
+   * replays held money for every workspace that is active again.
+   */
   cancelScopedDeletion: async (
     operationId: string,
     params: Omit<ScopedRequestParams, "idempotencyKey" | "typedName">,
   ): Promise<DeletionOperation> => {
     const { journal } = await resolveAppDeletionJournal(process.env);
-    return cancelScopedDeletion(getServerDb(), operationId, params, journal);
+    return cancelScopedDeletion(getServerDb(), operationId, params, journal, {
+      membershipRestore: NO_SEAT_CAP_RESTORE_POLICY,
+    });
   },
   requestIdentityDeletion: async (
     params: Readonly<{ sessionId: string; idempotencyKey: string; reauthMaxAgeMs?: number }>,

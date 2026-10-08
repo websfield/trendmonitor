@@ -1571,15 +1571,15 @@ describe("assembly refusals stay diagnostic and content-free", () => {
   it.each([
     [
       "no_fields_supplied",
-      "The product prepared no voice checks before the run. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+      "The product prepared no voice checks before the run. Nothing was sent to the model and nothing was spent. This is our fault, and the refusal is recorded so it can be investigated.",
     ],
     [
       "duplicate_post",
-      "The product prepared the same saved post more than once. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+      "The product prepared the same saved post more than once. Nothing was sent to the model and nothing was spent. This is our fault, and the refusal is recorded so it can be investigated.",
     ],
     [
       "duplicate_field_request",
-      "The product prepared the same voice check more than once. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+      "The product prepared the same voice check more than once. Nothing was sent to the model and nothing was spent. This is our fault, and the refusal is recorded so it can be investigated.",
     ],
   ] as const)("%s replaces the counted detail with its exact pre-vendor copy", (kind, copy) => {
     const html = refused(kind);
@@ -1630,8 +1630,14 @@ describe("assembly refusals stay diagnostic and content-free", () => {
   });
 
   it("keeps the four parked money clauses byte-identical", () => {
+    // TWO OF THE FOUR CHANGED ON 2026-10-07, AND ONLY OUTSIDE THEIR MONEY
+    // CLAUSES (audit P6-R6 amendment, R-176): `provenance` and `unknown` said
+    // "contact support" while no channel existed. The phrase is gone from the
+    // stored text and `billingErrorCopy` appends the operator-set address when
+    // one exists; "Nothing was saved and no credits were spent" and "nothing
+    // was charged" are byte-identical to what this pin held before.
     expect(BILLING_ERROR_COPY.provenance.detail).toBe(
-      "Every claim in a brain has to point at something you actually wrote, and one of the quotes did not appear where it said it did — so it was refused rather than stored. Nothing was saved and no credits were spent. Try the build again; if it keeps happening, contact support. The refusal code and error type are recorded without the quote."
+      "Every claim in a brain has to point at something you actually wrote, and one of the quotes did not appear where it said it did — so it was refused rather than stored. Nothing was saved and no credits were spent. Try the build again. The refusal code and error type are recorded without the quote."
     );
     expect(BILLING_ERROR_COPY.brain_document_limit.detail).toBe(
       "The proposed Brain version has too many claim or evidence entries, or its combined text is too large. Nothing was stored and the version already in force is unchanged. Shorten or reduce the claims and evidence, then rebuild or submit the replacement again."
@@ -1640,7 +1646,7 @@ describe("assembly refusals stay diagnostic and content-free", () => {
       "A reference post is kept only to find the pattern behind it, never to be repeated word for word — so a draft that echoes a long stretch of one, or quotes more of one than the limit allows, is refused rather than stored. Nothing was saved and no credits were spent. Rewrite the field describing the mechanism in your own words, or cite a shorter piece of the reference post, and try again. This check does not promise the result is original or safe to publish — it only stops the one thing it can measure: repeating a reference post's own wording."
     );
     expect(BILLING_ERROR_COPY.unknown.detail).toBe(
-      "The action did not complete and nothing was charged. Try again; if it keeps happening, contact support. The refusal code, error type and any server-derived context are recorded without exception details."
+      "The action did not complete and nothing was charged. Try again. The refusal code, error type and any server-derived context are recorded without exception details."
     );
   });
 
@@ -1733,6 +1739,7 @@ describe("assembly refusals stay diagnostic and content-free", () => {
       "provenance",
       "brain_content_walk",
       "segmenter_unavailable",
+      "input_too_large_posts",
       "unknown",
     ];
     expect(codeValues).toEqual(expectedCodes);
@@ -2119,7 +2126,8 @@ describe("the run control is wired, not assumed", () => {
     expect(pageSrc).toMatch(
       /runCostSentence\(\s*runIncludedCost,\s*runRebuildCost,\s*runBalance\s*\)/
     );
-    expect(pageSrc).toContain("respinCredits.getBalance(scope.workspaceId)");
+    // The one per-request display read (audit Phase 8, gate M1).
+    expect(pageSrc).toContain("displayBalanceFor(scope.workspaceId)");
   });
 
   it("the page prices through the OPERATION'S own rule, not by indexing config", () => {

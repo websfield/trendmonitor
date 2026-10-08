@@ -15,6 +15,7 @@
 // from the driver, and no identifier reaches an event.
 import type { SafeWorkerEventInput } from "./health";
 import {
+  UNSETTLED_CANDIDATE_ALERT_MS,
   runGenerationRecoveryTick,
   runRetentionTick,
   recoverStalePublicSampleSpinAttempts,
@@ -72,6 +73,8 @@ export type RetentionAlertCode =
   | "retention_batch_truncated"
   | "retention_poisoned_rows"
   | "generation_recovery_failed"
+  | "generation_started_past_deadline"
+  | "generation_unsettled_aging"
   | "generation_candidates_cleared"
   | "sample_spin_recovery_failed";
 
@@ -155,6 +158,34 @@ export function evaluateRetentionAlerts(summary: RetentionRunSummary): readonly 
       detail: { sampleSpinRecoveryFailed: summary.sampleSpin.failed },
     });
   }
+  // A STARTED ATTEMPT PAST ITS DEADLINE (audit P3-A6). The sweep moves it to
+  // `recovery_required` and never retries it, because the provider may have
+  // produced — and billed — a completion this process never saw. That is
+  // vendor spend with no settled output and no customer debit, so it pages
+  // rather than sitting in a counter nobody reads.
+  if (summary.generation.startedPastDeadline > 0) {
+    alerts.push({
+      code: "generation_started_past_deadline",
+      severity: "critical",
+      detail: { generationPastDeadline: summary.generation.startedPastDeadline },
+    });
+  }
+  // THE PAGE BEFORE THE CLEAR (audit P3-R1(a)). `generation_candidates_cleared`
+  // below fires when the paid output is destroyed; this one fires while it can
+  // still be settled — by the creator's "Finish this draft" or the operator's
+  // `scripts/settle-candidate.ts` — on the age of the OLDEST waiting candidate,
+  // the `retentionOldestOverdueMs` shape.
+  const oldestUnsettled = summary.generation.oldestUnsettledMs;
+  if (oldestUnsettled !== null && oldestUnsettled > UNSETTLED_CANDIDATE_ALERT_MS) {
+    alerts.push({
+      code: "generation_unsettled_aging",
+      severity: "critical",
+      detail: {
+        generationOldestUnsettledMs: oldestUnsettled,
+        generationSettleable: summary.generation.settleableCandidates,
+      },
+    });
+  }
   if (summary.generation.hardCleared > 0) {
     // C5 requires an alert on the 24-hour clear specifically: every cleared row
     // is a candidate whose provider call may already have been charged for and
@@ -190,6 +221,7 @@ export function retentionTickEvent(summary: RetentionRunSummary): RetentionAlert
     generationPastDeadline: number;
     generationSettleable: number;
     generationHardCleared: number;
+    generationOldestUnsettledMs?: number;
     retentionPoisoned: number;
     sampleSpinRecovered: number;
     sampleSpinRecoveryFailed: number;
@@ -206,13 +238,17 @@ export function retentionTickEvent(summary: RetentionRunSummary): RetentionAlert
     retentionPoisoned: summary.retention.poisoned,
     generationAbandoned: summary.generation.abandonedBeforeVendor,
     generationPastDeadline: summary.generation.startedPastDeadline,
-    generationSettleable: summary.generation.settlementAttempted,
+    generationSettleable: summary.generation.settleableCandidates,
     generationHardCleared: summary.generation.hardCleared,
     sampleSpinRecovered: summary.sampleSpin.recovered,
     sampleSpinRecoveryFailed: summary.sampleSpin.failed,
   };
   if (summary.retention.oldestOverdueMs !== null) {
     event.retentionOldestOverdueMs = summary.retention.oldestOverdueMs;
+  }
+  // Omitted, not zeroed, when nothing waits — the same rule as the backlog age.
+  if (summary.generation.oldestUnsettledMs !== null) {
+    event.generationOldestUnsettledMs = summary.generation.oldestUnsettledMs;
   }
   return event;
 }

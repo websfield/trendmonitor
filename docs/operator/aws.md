@@ -148,10 +148,19 @@ Credentials come from the ambient AWS chain (instance role or profile) — never
 ## Step 6 — Run the restore drill, then decide
 
 ```bash
-RESTORE_SERVING_DISABLED=1 ./respin/scripts/restore-drill.sh <backup-file>
+RESTORE_SERVING_DISABLED=confirmed \
+BACKUP_FILE=/mnt/backups/respin/respin-<stamp>.dump.gz.gpg \
+BACKUP_PASSPHRASE_FILE=/etc/respin/backup.pass \
+MAINTENANCE_URL='postgres://<user>:<password>@<host>:5432/postgres' \
+RESPIN_DELETION_JOURNAL_BUCKET=<BUCKET> \
+RESPIN_DELETION_JOURNAL_REGION=<REGION> \
+RESPIN_DELETION_JOURNAL_ENVIRONMENT=<ENVIRONMENT> \
+  bash respin/scripts/restore-drill.sh
 ```
 
-It fail-closes at five points and, on success, prints in terms that **this is not permission to serve**. Read the three manual steps it names. Keep the transcript.
+Every input is an environment variable — the script takes no positional argument and refuses one. `RESTORE_SERVING_DISABLED` must be exactly `confirmed` (stop the app and every worker pointed at the target first). The three journal names are the ones from Step 5; the drill's verifier reads them from **its own** shell, and its credentials come from the same ambient chain. Host tools: `pg_restore`, `psql`, `gpg`, `gunzip`, `sha256sum`, `node`, `pnpm`. Never pass `--allow-empty-money` here: it is refused unless the journal is the loopback MinIO, and a transcript carrying its marker closes nothing (decisions.md R-155). The command above is pinned against the script's own required inputs by `respin/tests/shell-scripts.test.ts`.
+
+It refuses on: a missing, expired or null-tombstone manifest; a checksum mismatch; an empty `config_versions` or money table; a negative ledger; a dump newer than the checkout; a failed `db:migrate` (a dump older than the checkout is **migrated in place** — restore → migrate → verify); and any journal conflict, or a verifier that exits without its success marker. On success it prints in terms that **this is not permission to serve**. Read the three manual steps it names. Keep the transcript.
 
 **Deletion and public launch stay disabled until this transcript exists.**
 

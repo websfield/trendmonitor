@@ -1,11 +1,11 @@
 import { PgBoss, type JobWithMetadata, type Queue, type UpdateQueueOptions } from "pg-boss";
 import {
   AUTOPSY_CLAIM_LEASE_MS,
-  type DeletionLifecycleTickSummary,
   type SystemAutopsyQueueCandidate,
   type SystemWorkerOperationalState,
 } from "@respin/db";
 import { BoundedConcurrencyPool, resolveConcurrencyLimit, resolveQueueLimit } from "./pool";
+import type { WorkerDeletionTickSummary } from "./deletion-lifecycle";
 import {
   evaluateWorkerAlerts,
   toSafeWorkerEvent,
@@ -24,7 +24,7 @@ import {
   retentionTickEvent,
   type RetentionRunSummary,
 } from "./retention";
-import type { ActivationEmitSummary } from "./activation-emitter";
+import { evaluateActivationAlerts, type ActivationEmitSummary } from "./activation-emitter";
 
 export const PG_BOSS_SCHEMA = "respin_worker";
 export const REFRESH_QUEUE = "respin.refresh.v1";
@@ -122,7 +122,7 @@ export interface PgBossRuntimeSources {
    * composed without the deletion ports registers no lifecycle queue at all
    * rather than a queue whose handler has nothing to call.
    */
-  readonly advanceDeletionLifecycle?: (scheduledAt: Date) => Promise<DeletionLifecycleTickSummary>;
+  readonly advanceDeletionLifecycle?: (scheduledAt: Date) => Promise<WorkerDeletionTickSummary>;
   /**
    * Phase 10b-1 Task 6: the retention receiver. Optional for the same reason
    * the lifecycle tick is — a runtime composed without it registers no queue,
@@ -461,13 +461,47 @@ export class RespinPgBossRuntime {
     const tick = this.#sources.advanceDeletionLifecycle;
     if (!tick) throw new Error("deletion lifecycle tick is not composed");
     const summary = await tick(job.createdOn);
-    this.#events.emit(safeEvent("deletion_lifecycle_tick", new Date(), {
+    const observedAt = new Date();
+    this.#events.emit(safeEvent("deletion_lifecycle_tick", observedAt, {
       deletionClaimed: summary.claimed,
       deletionAdvanced: summary.advanced,
       deletionWaiting: summary.waiting,
       deletionBlocked: summary.blocked,
       deletionErased: summary.erased,
+      deletionWedgesResumed: summary.wedgesResumed,
+      deletionWedgesRefused: summary.wedgesRefused,
+      deletionHeldMoneyReplayed: summary.heldMoneyReplayed,
+      deletionHeldMoneyFailed: summary.heldMoneyFailed,
+      deletionHeldMoneyStillHeld: summary.heldMoneyStillHeld,
+      deletionMoneyNeedsOperator: summary.moneyNeedsOperator,
+      deletionRefundOwed: summary.refundOwed,
+      deletionStalledWaits: summary.stalledWaits,
     }));
+    // R-162 / R-165: each sweep isolates a failing item so the rest proceed,
+    // so each failure count PAGES here rather than sitting in a counter
+    // nobody reads (CLAUDE.md 2026-09-09). A refund owed is an operator
+    // action by definition: money was collected for an erased workspace.
+    if (summary.wedgesRefused > 0) {
+      this.#events.emit(safeEvent("deletion_alert_page_wedge_resume_refused", observedAt, { deletionWedgesRefused: summary.wedgesRefused }));
+    }
+    if (summary.heldMoneyFailed > 0) {
+      this.#events.emit(safeEvent("deletion_alert_page_held_money_replay_failed", observedAt, { deletionHeldMoneyFailed: summary.heldMoneyFailed }));
+    }
+    if (summary.refundOwed > 0) {
+      this.#events.emit(safeEvent("deletion_alert_page_refund_owed", observedAt, { deletionRefundOwed: summary.refundOwed }));
+    }
+    // R-166: money held on an ACTIVE workspace (its customer no longer maps
+    // to it) and a wait older than a day change by no tick on their own.
+    if (summary.heldMoneyStillHeld > 0) {
+      this.#events.emit(safeEvent("deletion_alert_page_held_money_still_held", observedAt, { deletionHeldMoneyStillHeld: summary.heldMoneyStillHeld }));
+    }
+    // R-166: late refund-owed money, and money no workspace could take.
+    if (summary.moneyNeedsOperator > 0) {
+      this.#events.emit(safeEvent("deletion_alert_page_money_needs_operator", observedAt, { deletionMoneyNeedsOperator: summary.moneyNeedsOperator }));
+    }
+    if (summary.stalledWaits > 0) {
+      this.#events.emit(safeEvent("deletion_alert_page_wait_stalled", observedAt, { deletionStalledWaits: summary.stalledWaits }));
+    }
   }
 
   /** Phase 10a C5: cohort COUNTS only; a cohort's own numbers go to the sink, never the log. */
@@ -477,7 +511,8 @@ export class RespinPgBossRuntime {
     const emit = this.#sources.emitActivationAggregates;
     if (!emit) throw new Error("activation emitter is not composed");
     const summary = await emit(job.createdOn);
-    this.#events.emit(safeEvent("activation_emit", new Date(), {
+    const observedAt = new Date();
+    this.#events.emit(safeEvent("activation_emit", observedAt, {
       activationMatured: summary.matured,
       activationEmitted: summary.emitted,
       activationSuppressedSmallCell: summary.suppressedSmallCell,
@@ -485,6 +520,11 @@ export class RespinPgBossRuntime {
       activationNotSent: summary.notSent,
       activationFailed: summary.failed,
     }));
+    // Audit P3-R6: the count above paged nobody. Same code shape as the
+    // retention alerts below — the severity rides the code.
+    for (const alert of evaluateActivationAlerts(summary)) {
+      this.#events.emit(safeEvent(`activation_alert_${alert.severity}_${alert.code}`, observedAt, alert.detail));
+    }
   }
 
   /** Codes and counts only (C5): no table row or identifier enters the stream. */
@@ -540,6 +580,7 @@ export class RespinPgBossRuntime {
     const scheduledAt = job.createdOn;
     const niches = await this.#sources.refreshNiches();
     let nextIndex = 0;
+    let completed = 0;
     const consumerCount = Math.min(this.#config.concurrency, niches.length);
     await Promise.all(Array.from({ length: consumerCount }, async () => {
       while (nextIndex < niches.length) {
@@ -556,11 +597,20 @@ export class RespinPgBossRuntime {
           };
           const result = await this.#handlers.refresh(command);
           this.#events.emit(safeEvent(`refresh_${result.status}`, new Date(), { jobId: job.id }));
-          if (result.status === "completed") this.#lastSuccessfulRunAt = new Date().toISOString();
+          if (result.status === "completed") {
+            completed += 1;
+            this.#lastSuccessfulRunAt = new Date().toISOString();
+          }
         });
       }
     }));
-    this.#lastSuccessfulRefreshAt = scheduledAt;
+    // THE ANCHOR MOVES ONLY FOR A RUN THAT ACCOMPLISHED SOMETHING (audit
+    // P3-R6): at least one niche completed, or there was no niche to refresh.
+    // It used to move on every run, so a refresh whose every niche BLOCKED
+    // read as on schedule and `missed_schedule` could never fire. That alert
+    // is the true state when discovery blocks; the remedy for its noise is
+    // disabling the schedule, never advancing an anchor for work not done.
+    if (niches.length === 0 || completed > 0) this.#lastSuccessfulRefreshAt = scheduledAt;
   }
 
   async #dispatchAutopsies(jobs: JobWithMetadata<null>[]): Promise<void> {
@@ -620,7 +670,17 @@ export class RespinPgBossRuntime {
     const earliestSchedule = scheduleChecks[0];
     if (!earliestSchedule) throw new Error("worker schedule checks are unavailable");
     const stats = await this.#boss.getQueueStats(DEAD_LETTER_QUEUE, { force: true });
-    const current = stats.at(-1);
+    // THE NEWEST SNAPSHOT BY `capturedOn`, NOT BY POSITION (audit P3-R6).
+    // `stats.at(-1)` was right only because queue-stat persistence is off and
+    // one snapshot comes back; pg-boss 12.29.0 returns `QueueStats[]` whose
+    // order this code does not control once history is on.
+    const current = stats.reduce<(typeof stats)[number] | undefined>(
+      (newest, snapshot) =>
+        newest === undefined || snapshot.capturedOn.getTime() > newest.capturedOn.getTime()
+          ? snapshot
+          : newest,
+      undefined,
+    );
     const deadLetterJobs = current
       ? current.deferredCount + current.queuedCount + current.readyCount
         + current.activeCount + current.failedCount

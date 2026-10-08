@@ -30,6 +30,7 @@ import {
   LEVER_NOT_REPORTED,
   LOG_LIST_HEADING,
   LOG_LIST_NOTE,
+  METRIC_VERSIONS_NOTE,
   NOTHING_COMPARABLE_YET,
   VERIFICATION_UNAVAILABLE,
   NO_RESULTS_YET,
@@ -196,6 +197,12 @@ function ResultRow({ row }: { row: ResultRowView }) {
 }
 
 export function ResultsView({ state, logPanel, promotionPanel }: ResultsViewProps) {
+  // R-115: results exist and none is connector verified — the dedicated
+  // unverified state. Computed once, because two sections read it.
+  const verificationUnavailable =
+    state.kind === "ready" &&
+    state.results.length > 0 &&
+    state.results.every((row) => row.evidenceState !== "connector_verified");
   return (
     <section>
       <h1>{RESULTS_HEADING}</h1>
@@ -255,10 +262,7 @@ export function ResultsView({ state, logPanel, promotionPanel }: ResultsViewProp
                 one page whose subject is that historical results keep the
                 metric they were actually judged by. */}
             <p className="muted" data-testid="results-metric-history">
-              Results you logged earlier keep the version of this metric they
-              were measured under, including its unit and its direction, and
-              results measured under different versions are never compared with
-              each other.
+              {METRIC_VERSIONS_NOTE}
             </p>
             {logPanel}
           </div>
@@ -294,7 +298,7 @@ export function ResultsView({ state, logPanel, promotionPanel }: ResultsViewProp
             <p className="muted" data-testid="results-comparison-basis">
               {COMPARISON_BASIS}
             </p>
-            {state.results.length > 0 && state.results.every((row) => row.evidenceState !== "connector_verified") ? (
+            {verificationUnavailable ? (
               <p className="muted" data-testid="results-verification-unavailable">
                 {VERIFICATION_UNAVAILABLE}
               </p>
@@ -311,9 +315,16 @@ export function ResultsView({ state, logPanel, promotionPanel }: ResultsViewProp
                 <p className="muted">{state.comparisonError.detail}</p>
               </Banner>
             ) : state.comparisons.length === 0 ? (
-              <p className="panel" data-testid="results-no-comparison">
-                {state.results.length === 0 ? NO_RESULTS_YET : NOTHING_COMPARABLE_YET}
-              </p>
+              // THE DEDICATED UNVERIFIED STATE (audit Phase 2, P2-A1). With no
+              // verified result, the notice above IS the answer: no group can
+              // be built, and `NOTHING_COMPARABLE_YET`'s "needs results that
+              // name one of your drafts" would read as if logging more would
+              // fill one. So the absence sentence is not printed beside it.
+              verificationUnavailable ? null : (
+                <p className="panel" data-testid="results-no-comparison">
+                  {state.results.length === 0 ? NO_RESULTS_YET : NOTHING_COMPARABLE_YET}
+                </p>
+              )
             ) : (
               state.comparisons.map((group, index) => (
                 <ComparisonGroup

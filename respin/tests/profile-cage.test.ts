@@ -415,8 +415,20 @@ function nameOf(node: ts.Node, sf: ts.SourceFile): string | undefined {
   return undefined;
 }
 
-/** The type names that make a parameter a scope parameter (task 24). */
-const SCOPE_TYPE_RE = /\b(?:Workspace|Profile)Scope\b/;
+/**
+ * The type names that make a parameter a scope parameter (task 24). R-163 (P5
+ * row 33): the read grade's two classes are scope types too — before this the
+ * pattern's leading `\b` could not match inside `ReadGradeWorkspaceScope`, so
+ * an entry taking ONLY a read-grade scope was invisible to AC-13.
+ */
+const SCOPE_TYPE_RE = /\b(?:ReadGrade)?(?:Workspace|Profile)Scope\b/;
+
+/**
+ * THE ASSERTIONS AN ENTRY MAY TERMINATE ON, as a list (R-163).
+ * `assertReadScoped` is the readers' assertion beside the unchanged
+ * `assertScoped`; a third is an edit here, never an automatic inclusion.
+ */
+const SCOPE_ASSERTIONS: ReadonlySet<string> = new Set(["assertScoped", "assertReadScoped"]);
 
 /**
  * THE POPULATION OF PARAMETER SHAPES THIS SCAN SEES, AS A LIST (slice 6).
@@ -593,7 +605,7 @@ function collectEntries(files: Map<string, string>): Entry[] {
         const name = nameOf(node, sf);
         if (name) {
           const assertedScopeParam =
-            name !== "assertScoped" &&
+            !SCOPE_ASSERTIONS.has(name) &&
             node.type && ts.isTypePredicateNode(node.type) && node.type.assertsModifier &&
             node.type.type && SCOPE_TYPE_RE.test(node.type.type.getText(sf))
               ? node.type.parameterName.getText(sf)
@@ -739,7 +751,7 @@ function coveredEntries(entries: Entry[]): Set<string> {
     entries
       .filter((e) =>
         e.calls.some(
-          (c) => c.callee === "assertScoped" && forwardsOwnScope(e, c.args)
+          (c) => SCOPE_ASSERTIONS.has(c.callee) && forwardsOwnScope(e, c.args)
         )
       )
       .map((e) => e.key)
@@ -1007,6 +1019,11 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // them; every one was already covered, which is the good outcome and
         // not a reason the widening was unnecessary.
         "packages/db/src/with-workspace.ts:mint",
+        // R-163: the readers' profile mint for EITHER grade. Covered by its
+        // own first statement, `assertReadScoped(scope)`; both branches then
+        // mint through a function that asserts again (`ProfileScope.mint`'s
+        // `assertScoped`, `ReadGradeProfileScope.mint`'s `assertReadScoped`).
+        "packages/db/src/with-workspace.ts:mintReadableProfileScope",
         "packages/db/src/with-workspace.ts:withFreshWorkspaceRead",
         "packages/db/src/with-workspace.ts:assertFreshProfileScopeInTx",
         "packages/db/src/with-workspace.ts:assertFreshWorkspaceScopeInTx",
@@ -1163,6 +1180,10 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/db/src/results-ops.ts:generationsForResultLog",
         "packages/db/src/results-ops.ts:listResults",
         "packages/db/src/results-ops.ts:recordResult",
+        // Audit P6-R6: the count behind Studio's results sentence. Mints a
+        // ProfileScope first, like `listResults`, so it reaches `assertScoped`
+        // before its accessor runs; its facade bind is listed below.
+        "packages/db/src/results-ops.ts:countResults",
         "packages/db/src/profile-selection.ts:selectActiveProfileInTx",
         "packages/db/src/profile-selection.ts:selectActiveProfile",
         "packages/db/src/app-server.ts:selectedProfileForMember",
@@ -1234,9 +1255,24 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         // mutual recursion that calls either.
         "packages/credits/src/generate.ts:generate",
         "packages/credits/src/generate.ts:meteredCall",
+        // Launch L2 code gate (audit P3-R5): `meteredCall`'s spend write and
+        // its one retry. Not exported; its only callers are `meteredCall`'s
+        // two paths, which hand it the SAME minted `args.scope`, and it
+        // forwards that scope unchanged into `recordUsage` (argument identity).
+        "packages/credits/src/generate.ts:recordSpend",
         "packages/credits/src/generate.ts:observeExistingClaim",
         "packages/credits/src/generate.ts:settle",
         "packages/credits/src/app-server.ts:generate",
+        // Audit P3-A4 (R-157): "Finish this draft". `settleHeldAttempt` mints
+        // the profile scope itself (`assertScoped` inside `ProfileScope.mint`)
+        // before its scoped claim read, then hands that scope to
+        // `observeExistingClaim` above; `heldDrafts` mints and reads the caged
+        // `heldGenerationAttempts` accessor. Both facade methods forward the
+        // caller's WorkspaceScope unchanged.
+        "packages/credits/src/generate.ts:settleHeldAttempt",
+        "packages/credits/src/held-drafts.ts:heldDrafts",
+        "packages/credits/src/app-server.ts:heldDrafts",
+        "packages/credits/src/app-server.ts:settleHeldAttempt",
 
         // Slice 6 stage E1: the per-mode split of the same monthly burn
         // `monthlySpend` totals, and its bound facade method.
@@ -1277,8 +1313,17 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/db/src/frameworks.ts:retirePrivateFramework",
         "packages/db/src/feedback-ops.ts:recordFeedback",
         "packages/db/src/feedback-ops.ts:listFeedback",
+        // Launch L3 (R-152): "Remember this for future drafts" — mints its
+        // ProfileScope (the brain read) and then runs `editBrainDocument`,
+        // which mints its own inside the write's transaction.
+        "packages/db/src/feedback-ops.ts:rememberForFutureDrafts",
+        // Audit P6-A1 (R-174): "Leave this out of future drafts" mints a
+        // ProfileScope and runs the write capability in its own transaction.
+        "packages/db/src/feedback-ops.ts:excludeFeedbackFromHistory",
         "packages/db/src/app-server.ts:listPrivateFrameworks",
         "packages/db/src/app-server.ts:listResults",
+        "packages/db/src/app-server.ts:countResults",
+        "packages/db/src/app-server.ts:excludeFeedbackFromHistory",
         "packages/db/src/app-server.ts:eligibleFrameworks",
         "packages/db/src/app-server.ts:generationsForResultLog",
         "packages/db/src/app-server.ts:createPrivateFramework",
@@ -1290,6 +1335,7 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/db/src/app-server.ts:recordResult",
         "packages/db/src/app-server.ts:resultComparisons",
         "packages/db/src/app-server.ts:listFeedback",
+        "packages/db/src/app-server.ts:rememberForFutureDrafts",
         // Slice 9b. The DB facade exposes scoped refresh/review/history and
         // decision only; proposal payloads remain inside the DB/brain seam.
         "packages/db/src/promotion-ops.ts:refreshPromotionProposalsInScope",
@@ -1302,6 +1348,15 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/db/src/promotion-ops.ts:resultMetricIsCurrent",
         "packages/db/src/promotion-ops.ts:buildReview",
         "packages/db/src/promotion-ops.ts:proposalValues",
+        // Audit Phase 2, P2-A2 (R-171): the refresh's family guard and its
+        // active-document reader. Both receive the refresh's own already-
+        // minted ProfileScope and read only through `scope.accessors`.
+        "packages/db/src/promotion-ops.ts:guardFamilies",
+        "packages/db/src/promotion-ops.ts:activeDocReader",
+        // The results-draft builder both the refresh and the guard's
+        // re-derivation call (R-171 (ii)); it receives the refresh's own
+        // scope and rows the scope's accessor already read.
+        "packages/db/src/promotion-ops.ts:resultDraftsFrom",
         "packages/db/src/app-server.ts:refreshPromotionProposals",
         "packages/db/src/app-server.ts:promotionProposalReview",
         "packages/db/src/app-server.ts:promotionProposalHistory",
@@ -1402,6 +1457,92 @@ describe("AC-13 (completeness): every scope-taking entry in packages/** reaches 
         "packages/credits/src/app-server.ts:acceptBillingContact",
         "packages/credits/src/app-server.ts:submitPastedReference",
         "packages/credits/src/app-server.ts:settleParkedAutopsies",
+
+        // ---- Launch L2 (R-151): the creative piece. REVIEWED, each:
+        // `creative-work.ts`'s six operations mint FIRST
+        // (`mintProfileScope(db, workspaceScope, profileId)`, directly or via
+        // `profileCaps`), and every db touch after that is a write capability
+        // on the minted grain; `viewOf` receives the SAME forwarded scope for
+        // the tier read. The eight facade binds (`findConcept` and
+        // `commissionPiece` forward to `respinCredits.generate`, which mints)
+        // are thin forwards of the same `scope` argument. The db
+        // `*InScope` writers and their helpers take the asserted
+        // `ProfileScope` that `writeCapabilities` hands them — the
+        // `promotion-ops.ts` arrangement above — and read both scope columns
+        // off it on every statement.
+        "packages/credits/src/creative-work.ts:selectConcept",
+        "packages/credits/src/creative-work.ts:startOwnIdea",
+        "packages/credits/src/creative-work.ts:renewCreativeOperation",
+        "packages/credits/src/creative-work.ts:cancelCreativeWork",
+        "packages/credits/src/creative-work.ts:creativePieceView",
+        "packages/credits/src/creative-work.ts:conceptContextReady",
+        "packages/credits/src/creative-work.ts:profileCaps",
+        "packages/credits/src/creative-work.ts:viewOf",
+        "packages/credits/src/app-server.ts:selectConcept",
+        "packages/credits/src/app-server.ts:startOwnIdea",
+        "packages/credits/src/app-server.ts:renewCreativeOperation",
+        "packages/credits/src/app-server.ts:cancelCreativeWork",
+        "packages/credits/src/app-server.ts:creativePieceView",
+        "packages/credits/src/app-server.ts:conceptContextReady",
+        "packages/credits/src/app-server.ts:findConcept",
+        "packages/credits/src/app-server.ts:commissionPiece",
+        "packages/db/src/creative-work-ops.ts:createCreativePieceInScope",
+        "packages/db/src/creative-work-ops.ts:readCreativePieceInScope",
+        "packages/db/src/creative-work-ops.ts:renewCreativePieceOperationInScope",
+        "packages/db/src/creative-work-ops.ts:cancelCreativePieceInScope",
+        "packages/db/src/creative-work-ops.ts:linkCreativePieceScriptInScope",
+        "packages/db/src/creative-work-ops.ts:diagnose",
+        "packages/db/src/creative-work-ops.ts:generationInScope",
+        "packages/db/src/creative-work-ops.ts:pieceInScope",
+        "packages/db/src/creative-work-ops.ts:readPieceRow",
+        "packages/db/src/creative-work-ops.ts:scopeIds",
+
+        // ---- Launch L4 (R-153): the saved recording pack. REVIEWED, each:
+        // `saved-generation.ts`'s four operations mint FIRST
+        // (`mintProfileScope(db, workspaceScope, profileId)`, directly or via
+        // `profileCaps`; `reviseSaved` checks its closed preset list, which
+        // touches no scope, then mints, then hands the same scope to
+        // `generate`, which mints again), and every db touch after that is a
+        // write capability or accessor on the minted grain. `viewOf` and
+        // `revisionQuote` receive the SAME forwarded scope for the tier read.
+        // The four facade binds are thin forwards of the same `scope`. The db
+        // `*InScope` readers/writers and their helpers take the asserted
+        // `ProfileScope` that `writeCapabilities` hands them and read both
+        // scope columns off it on every statement (`generationScope`,
+        // `pieceInScope`).
+        "packages/credits/src/saved-generation.ts:readSavedGeneration",
+        "packages/credits/src/saved-generation.ts:viewOf",
+        "packages/credits/src/saved-generation.ts:revisionQuote",
+        "packages/credits/src/saved-generation.ts:profileCaps",
+        "packages/credits/src/saved-generation.ts:selectSavedVersion",
+        "packages/credits/src/saved-generation.ts:reviseSaved",
+        "packages/credits/src/saved-generation.ts:recentSavedGenerations",
+        "packages/credits/src/app-server.ts:savedGeneration",
+        "packages/credits/src/app-server.ts:selectSavedVersion",
+        "packages/credits/src/app-server.ts:reviseSaved",
+        "packages/credits/src/app-server.ts:recentSavedGenerations",
+        "packages/db/src/creative-work-ops.ts:generationScope",
+        "packages/db/src/creative-work-ops.ts:lineageRow",
+        "packages/db/src/creative-work-ops.ts:pieceIdOfGenerationInScope",
+        "packages/db/src/creative-work-ops.ts:pieceVersionsInScope",
+        "packages/db/src/creative-work-ops.ts:readSavedGenerationContextInScope",
+        "packages/db/src/creative-work-ops.ts:selectCreativePieceVersionInScope",
+        // ---- L4 gate fixes (R-153 amendment). REVIEWED, each: `referenceOf`
+        // receives the ProfileScope `readSavedGeneration` minted and forwards
+        // it to `spinReferenceSummaryForProfile`, whose FIRST statement is
+        // `assertScoped(profile)` (pinned by trends-storage.test.ts's
+        // PROFILE_SCOPE_TAKERS list) and which applies the same rights
+        // predicate as `spinReferenceForProfile`. The three new
+        // `creative-work-ops.ts` helpers are called only from
+        // `readSavedGenerationContextInScope` with its asserted scope, and
+        // read both scope columns on every table they touch
+        // (`generationScope`, and the snapshot and brain-doc joins by
+        // `scopeIds`).
+        "packages/credits/src/saved-generation.ts:referenceOf",
+        "packages/db/src/trends-storage.ts:spinReferenceSummaryForProfile",
+        "packages/db/src/creative-work-ops.ts:directRevisionsInScope",
+        "packages/db/src/creative-work-ops.ts:killtestContentInScope",
+        "packages/db/src/creative-work-ops.ts:rootOfGenerationInScope",
       ].sort();
     expect(
       actualScopeSurface.filter((entry) => !expectedScopeSurface.includes(entry)),
@@ -1733,6 +1874,34 @@ describe("AC-13 (the scanner's own coverage): every declaration shape is seen", 
       "export const facade = { readIt(db: DbLike, scope: WorkspaceScope) { return db; } };",
     ],
   ];
+
+  // R-163 (P5 row 33): a READ-GRADE scope parameter is a scope parameter. A
+  // planted entry taking one and reaching NEITHER assertion is seen and is
+  // UNCOVERED; the same entry calling `assertReadScoped` is covered.
+  it("sees a ReadGradeWorkspaceScope entry, and only an assertion covers it", () => {
+    const bare = collectEntries(
+      new Map([
+        [
+          "packages/db/src/probe.ts",
+          "export function readIt(db: DbLike, s: ReadGradeWorkspaceScope) { return db; }",
+        ],
+      ])
+    );
+    const seen = bare.filter(takesScope);
+    expect(seen.length, "the read grade is invisible to the AC-13 scan").toBe(1);
+    expect(coveredEntries(bare).has(seen[0]!.key)).toBe(false);
+    const asserted = collectEntries(
+      new Map([
+        [
+          "packages/db/src/probe.ts",
+          "export function readIt(db: DbLike, s: WorkspaceScope | ReadGradeWorkspaceScope) { assertReadScoped(s); return db; }",
+        ],
+      ])
+    );
+    const covered = asserted.filter(takesScope);
+    expect(covered.length).toBe(1);
+    expect(coveredEntries(asserted).has(covered[0]!.key)).toBe(true);
+  });
 
   it.each(SHAPES)("sees a WorkspaceScope entry declared as a %s", (_label, src) => {
     const entries = collectEntries(

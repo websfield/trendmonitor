@@ -5,6 +5,7 @@ import {
   buildResultProposalDraft,
   isPromotionProposalDraft,
   ProposalInputError,
+  type FeedbackReaction,
   type ResultProposalInput,
 } from "../src/index";
 
@@ -154,6 +155,40 @@ describe("promotion proposal constructors", () => {
     expect(isPromotionProposalDraft(draft)).toBe(true);
     expect(buildFeedbackProposalDraft({ profileId: "p", reaction: "used_as_is", basisBrainDocId: "voice-v1", evidence: [] })).toBeNull();
     expect(buildFeedbackProposalDraft({ profileId: "p", reaction: "off_voice", basisBrainDocId: "voice-v1", evidence: [evidence[0]!, { ...evidence[0]!, feedbackId: "f4" }, evidence[1]!] })).toBeNull();
+  });
+
+  it("R-169 property 4: a feedback-sourced draft never carries a number and never targets performance_meta", () => {
+    // EVERY reaction, exhaustively — a reaction added to `FeedbackReaction`
+    // and not here is a compile error (the `Exhaustive` line below). For each
+    // one that maps, the minted draft's target is voice or killtest and its
+    // value is a closed static sentence with no digit: a reaction is not a
+    // result, so it may propose a rule for review and never a number.
+    const ALL = [
+      "off_voice", "too_generic", "wrong_angle", "not_filmable",
+      "used_as_is", "used_with_edits", "discarded",
+    ] as const satisfies readonly FeedbackReaction[];
+    const exhaustive: Exclude<FeedbackReaction, (typeof ALL)[number]> extends never ? true : false = true;
+    expect(exhaustive).toBe(true);
+    let mapped = 0;
+    for (const reaction of ALL) {
+      const evidence = [1, 2, 3].map((n) => ({ feedbackId: `f${n}`, generationId: `g${n}`, profileId: "p", reaction, basisBrainDocId: "doc-v1" }));
+      const draft = buildFeedbackProposalDraft({ profileId: "p", reaction, basisBrainDocId: "doc-v1", evidence });
+      if (draft === null) continue;
+      mapped++;
+      expect(["voice", "killtest"], reaction).toContain(draft.target.kind);
+      expect(draft.target.kind, reaction).not.toBe("performance_meta");
+      expect(draft.value, reaction).not.toMatch(/\d/);
+      expect(draft.source).toBe("feedback");
+      expect("rule" in draft, reaction).toBe(false);
+    }
+    // NON-VACUITY: the four closed-code reactions map; the three usage
+    // reactions do not.
+    expect(mapped).toBe(4);
+    // THE TYPE half: a feedback draft's target kind cannot be performance_meta.
+    type FeedbackKind = Extract<ReturnType<typeof buildFeedbackProposalDraft>, object>["target"]["kind"];
+    // @ts-expect-error — `performance_meta` is not a feedback target kind.
+    const planted: FeedbackKind = "performance_meta";
+    void planted;
   });
 
   it("does not accept planted inline objects or casts as minted drafts", () => {

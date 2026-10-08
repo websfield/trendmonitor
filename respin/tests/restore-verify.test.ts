@@ -11,12 +11,31 @@
 // printed remedy was impossible to satisfy.
 //
 // It shipped because this script had no test at all. This is that test.
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { execFile } from "node:child_process";
+import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import {
+  createDeletionJournalStore,
+  createFakeS3,
+  DELETION_JOURNAL_RETAIN_MS,
+  type JournalTransitionRequest,
+  type JournalVerifierTransport,
+} from "@respin/db";
 import { scratchDir } from "./support/scratch-dir";
+import { PRODUCTION_ROOTS, sourceFilesUnder } from "./support/source-files";
 
-import { readRestoredOperations } from "../scripts/restore-verify";
+import { isEntrypoint } from "../scripts/entrypoint";
+import {
+  main,
+  readRestoredOperations,
+  RESTORE_VERIFY_SUCCESS_MARKER,
+} from "../scripts/restore-verify";
+
+const execFileAsync = promisify(execFile);
+const scriptsDir = resolve(__dirname, "../scripts");
 
 function operationsFile(rows: readonly unknown[]): string {
   const dir = scratchDir("respin-restore-verify-");
@@ -103,5 +122,162 @@ describe("the chain-less row classification (round-2 BLOCK)", () => {
     // Absence of a date is not evidence of expiry. Failing toward conflict is
     // the safe direction: it refuses the restore rather than serving it.
     expect(classify(4, null, now)).toBe("conflict");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R-155 (register 2026-10-05 item 3(b)) — `main()` must actually run, and the
+// drill must be able to tell that it did.
+// ---------------------------------------------------------------------------
+
+describe("the entrypoint guard compares resolved paths (item 3(b))", () => {
+  it("a file in a directory whose name holds a space is its own entrypoint", () => {
+    const dir = join(scratchDir("respin-entry-"), "dir with space");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "script.ts");
+    writeFileSync(file, "");
+    expect(isEntrypoint(pathToFileURL(file).href, file)).toBe(true);
+    // The defect, stated as the old expression: a URL never ends with a path
+    // whose characters it percent-encodes.
+    expect(pathToFileURL(file).href.endsWith(file.replace(/\\/g, "/"))).toBe(false);
+  });
+
+  it("an EXTENSIONLESS invocation (`tsx scripts/journal-purge`) is the entrypoint (gate round 1)", () => {
+    const dir = scratchDir("respin-entry-");
+    const file = join(dir, "script.ts");
+    writeFileSync(file, "");
+    expect(isEntrypoint(pathToFileURL(file).href, join(dir, "script"))).toBe(true);
+    // ...and a different stem still is not.
+    expect(isEntrypoint(pathToFileURL(file).href, join(dir, "scrip"))).toBe(false);
+  });
+
+  it("another file, or no argv[1], is not the entrypoint", () => {
+    const dir = scratchDir("respin-entry-");
+    const a = join(dir, "a.ts");
+    const b = join(dir, "b.ts");
+    writeFileSync(a, "");
+    writeFileSync(b, "");
+    expect(isEntrypoint(pathToFileURL(a).href, b)).toBe(false);
+    expect(isEntrypoint(pathToFileURL(a).href, undefined)).toBe(false);
+  });
+
+  it("RUNS main() from a checkout path containing a space (the verifier copied there, run under tsx)", async () => {
+    // The copy must sit inside the workspace so `@respin/db` still resolves
+    // through respin/node_modules; the two files are the script and the guard
+    // module it imports, nothing else.
+    const dir = resolve(__dirname, "..", ".tmp", `restore verify space ${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    copyFileSync(join(scriptsDir, "restore-verify.ts"), join(dir, "restore-verify.ts"));
+    copyFileSync(join(scriptsDir, "entrypoint.ts"), join(dir, "entrypoint.ts"));
+    const ops = join(dir, "operations.json");
+    writeFileSync(ops, "[]");
+    const env = { ...process.env };
+    for (const k of Object.keys(env)) if (k.startsWith("RESPIN_DELETION_JOURNAL_")) delete env[k];
+    // Run twice: as typed with its extension, and EXTENSIONLESS — tsx resolves
+    // `…/restore-verify` to the .ts file while argv keeps the bare path, the
+    // shape gate round 1 found exiting 0 silently.
+    for (const entry of ["restore-verify.ts", "restore-verify"]) {
+      const outcome = await execFileAsync(process.execPath, ["--import", "tsx", join(dir, entry), "--operations", ops], {
+        cwd: resolve(__dirname, ".."),
+        env,
+        encoding: "utf8",
+      }).then(
+        (r) => ({ status: 0, stdout: r.stdout, stderr: r.stderr }),
+        (e: { code?: number; stdout?: string; stderr?: string }) => ({ status: e.code ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" })
+      );
+      // main() ran: it reached the journal configuration and refused it. The
+      // defect was exit 0 with no output at all.
+      expect(outcome.stderr, entry).toMatch(/the deletion journal is not configured/);
+      expect(outcome.status, entry).toBe(1);
+    }
+  }, 90_000);
+
+  it("no operator script still carries the URL-suffix guard (the population is every source file, planted)", () => {
+    const OLD_GUARD = /import\.meta\.url\.endsWith\(/;
+    const offenders = sourceFilesUnder(PRODUCTION_ROOTS)
+      .filter((f) => OLD_GUARD.test(f.text.replace(/^\s*\/\/.*$/gm, "").replace(/^\s*\*.*$/gm, "")))
+      .map((f) => f.file);
+    expect(offenders).toEqual([]);
+    // the scan is not vacuous: it reads the scripts, and it catches the shape
+    const files = sourceFilesUnder(PRODUCTION_ROOTS).map((f) => f.file);
+    expect(files).toContain("scripts/restore-verify.ts");
+    expect(OLD_GUARD.test('if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"))) {')).toBe(true);
+  });
+});
+
+describe("main() against the in-memory journal: the marker, and unparseable keys (P9-A1)", () => {
+  const CONFIG = { environment: "test", bucket: "respin-deletion-journal-test", region: "eu-west-2" } as const;
+  const ENV = {
+    RESPIN_DELETION_JOURNAL_BUCKET: CONFIG.bucket,
+    RESPIN_DELETION_JOURNAL_REGION: CONFIG.region,
+    RESPIN_DELETION_JOURNAL_ENVIRONMENT: CONFIG.environment,
+  };
+  const OP = "01J8ZQ0000000000000000000A";
+
+  async function journalWithOneRecord() {
+    const requestedAt = new Date(Date.now() - 86_400_000);
+    const s3 = createFakeS3({ bucket: CONFIG.bucket, now: () => requestedAt });
+    const store = createDeletionJournalStore({ transport: s3.writer, config: CONFIG });
+    const request: JournalTransitionRequest = {
+      schemaVersion: 1,
+      operationId: OP,
+      scope: "workspace",
+      target: { userId: "user-1", workspaceId: "ws-1", profileId: null },
+      requesterDigest: "a".repeat(64),
+      version: 1,
+      fromState: "requested",
+      toState: "journal_pending",
+      payloadHash: "b".repeat(64),
+      priorReceiptDigest: null,
+      requestedAt,
+      effectiveAt: requestedAt,
+      retainUntil: new Date(requestedAt.getTime() + DELETION_JOURNAL_RETAIN_MS),
+    };
+    const result = await store.appendTransition(request);
+    expect(result.outcome).toBe("confirmed");
+    const ops = join(scratchDir("respin-verify-main-"), "operations.json");
+    writeFileSync(ops, JSON.stringify([{ id: OP, state: "journal_pending", journalVersion: 1, requestedAt: requestedAt.toISOString() }]));
+    return { s3, ops };
+  }
+
+  async function runMain(verifier: JournalVerifierTransport, ops: string) {
+    const out: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      out.push(String(chunk));
+      return true;
+    });
+    try {
+      const code = await main(["--operations", ops], ENV, { verifier });
+      const lines = out.join("").split("\n").filter((l) => l.trim() !== "");
+      return { code, text: out.join(""), last: lines[lines.length - 1] };
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("a verified journal exits 0 and its LAST line is the success marker", async () => {
+    const { s3, ops } = await journalWithOneRecord();
+    const run = await runMain(s3.verifier, ops);
+    expect(run.text).toMatch(/journal_operations=1 unparseable_keys=0/);
+    expect(run.code).toBe(0);
+    expect(run.last).toBe(RESTORE_VERIFY_SUCCESS_MARKER);
+  });
+
+  it("PLANTED: an unparseable key under the journal prefix fails verification and prints no marker", async () => {
+    const { s3, ops } = await journalWithOneRecord();
+    const STRAY = `${CONFIG.environment}/deletion-journal/${OP}/1.json`; // unpadded version: not a journal key
+    const withStray: JournalVerifierTransport = {
+      ...s3.verifier,
+      listVersions: async (bucket, prefix) => [
+        ...(await s3.verifier.listVersions(bucket, prefix)),
+        { key: STRAY, versionId: "v-stray", isDeleteMarker: false, size: 2, lastModified: new Date() },
+      ],
+    };
+    const run = await runMain(withStray, ops);
+    expect(run.code).toBe(2);
+    expect(run.text).toMatch(new RegExp(`CONFLICT unparseable_journal_key ${STRAY.replace(/[/.]/g, "\\$&")}`));
+    expect(run.text).toMatch(/unparseable_keys=1/);
+    expect(run.text).not.toContain(RESTORE_VERIFY_SUCCESS_MARKER);
   });
 });

@@ -256,7 +256,7 @@ const dbMocks = vi.hoisted(() => ({
   subscription: vi.fn(),
 }));
 const creditMocks = vi.hoisted(() => ({
-  getBalance: vi.fn(),
+  getDisplayBalance: vi.fn(),
   getBillingState: vi.fn(),
   usageRunwayFor: vi.fn(),
 }));
@@ -284,7 +284,7 @@ vi.mock("@respin/db", async (importOriginal) => ({
 vi.mock("@respin/credits/app-server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@respin/credits/app-server")>()),
   respinCredits: {
-    getBalance: creditMocks.getBalance,
+    getDisplayBalance: creditMocks.getDisplayBalance,
     getBillingState: creditMocks.getBillingState,
     usageRunwayFor: creditMocks.usageRunwayFor,
   },
@@ -311,7 +311,7 @@ describe("/usage renders the split from the scoped join, on the right period", (
       role: "owner",
       accessors: { ledger: dbMocks.ledger, subscription: dbMocks.subscription },
     });
-    creditMocks.getBalance.mockResolvedValue({ balance: 22, asOf: NOW });
+    creditMocks.getDisplayBalance.mockResolvedValue({ balance: 22, asOf: NOW, settling: false });
     creditMocks.getBillingState.mockResolvedValue({
       tier: "free",
       state: "free",

@@ -1,0 +1,461 @@
+# L1 validation transcript — started 2026-10-03T12:33:28+10:00
+node v24.18.0 pnpm 10.28.2 HEAD 3533dbf (dirty: L1 working tree)
+
+=== pnpm preflight
+
+> respin@0.0.0 preflight C:\projects\ai.playground\trendMonitor\respin
+> tsx scripts/preflight.ts
+
+preflight ok: brain_content_registry
+=== exit 0 (preflight)
+
+=== pnpm typecheck
+
+> respin@0.0.0 typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc --noEmit && pnpm --filter=!respin -r run typecheck
+
+Scope: 8 of 9 workspace projects
+packages/llm typecheck$ tsc --noEmit
+packages/brain typecheck$ tsc --noEmit
+packages/trends typecheck$ tsc --noEmit
+packages/trends typecheck: Done
+packages/brain typecheck: Done
+packages/llm typecheck: Done
+packages/modes typecheck$ tsc --noEmit
+packages/db typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/db typecheck: Done
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== exit 0 (typecheck)
+
+=== pnpm worker:typecheck
+
+> respin@0.0.0 worker:typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc -p worker/tsconfig.json --pretty false
+
+=== exit 0 (worker:typecheck)
+
+=== pnpm lint
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+=== exit 0 (lint)
+
+=== pnpm db:check
+
+> respin@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin
+> pnpm --filter @respin/db db:check
+
+
+> @respin/db@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin\packages\db
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+=== exit 0 (db:check)
+
+=== pnpm build
+├ ƒ /onboarding                          3.18 kB         106 kB
+├ ƒ /onboarding/first-ideas              1.66 kB         112 kB
+├ ƒ /onboarding/interview                  521 B         104 kB
+├ ƒ /recover-deletion                      155 B         103 kB
+├ ƒ /results                             7.13 kB         110 kB
+├ ƒ /settings/account                      155 B         103 kB
+├ ƒ /settings/billing                      155 B         103 kB
+├ ○ /sign-in                              1.4 kB         115 kB
+├ ƒ /sign-up                              1.4 kB         115 kB
+├ ƒ /studio                               3.4 kB         114 kB
+├ ƒ /studio/frameworks                    3.1 kB         106 kB
+├ ƒ /trends                              4.53 kB         108 kB
+└ ƒ /usage                                 155 B         103 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/1e9670fa-2d7df238e6dfbceb.js  54.2 kB
+  ├ chunks/264-ee37288ed9e7d4f7.js       46.8 kB
+  └ other shared chunks (total)          1.99 kB
+
+
+ƒ Middleware                               35 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+=== exit 0 (build)
+
+=== pnpm test
+   [33m[2m✓[22m[39m mapper containment[2m > [22mrejects the different forwarding content plant [33m 2642[2mms[22m[39m
+   [33m[2m✓[22m[39m mapper containment[2m > [22mrejects the different forwarding quote plant [33m 2562[2mms[22m[39m
+   [33m[2m✓[22m[39m mapper containment[2m > [22mrejects the extra forwarding argument plant [33m 3087[2mms[22m[39m
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Unhandled Errors [49m[22m[31m⎯⎯⎯⎯⎯⎯[39m
+[31m[1m
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Unhandled Error [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+[31m[1mError[22m: [vitest-worker]: Timeout calling "onTaskUpdate"[39m
+[90m [2m❯[22m Object.onTimeoutError node_modules/.pnpm-copy/vitest@3.2.7_@types+node@22.20.1_tsx@4.23.12/node_modules/vitest/dist/chunks/rpc.-pEldfrD.js:[2m53:10[22m[39m
+[90m [2m❯[22m Timeout._onTimeout node_modules/.pnpm-copy/vitest@3.2.7_@types+node@22.20.1_tsx@4.23.12/node_modules/vitest/dist/chunks/index.B521nVV-.js:[2m59:62[22m[39m
+[90m [2m❯[22m listOnTimeout node:internal/timers:[2m605:17[22m[39m
+[90m [2m❯[22m processTimers node:internal/timers:[2m541:7[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[39m
+
+
+[2m Test Files [22m [1m[32m221 passed[39m[22m[2m | [22m[33m23 skipped[39m[90m (244)[39m
+[2m      Tests [22m [1m[32m5885 passed[39m[22m[2m | [22m[33m119 skipped[39m[90m (6004)[39m
+[2m     Errors [22m [1m[31m1 error[39m[22m
+[2m   Start at [22m 12:36:07
+[2m   Duration [22m 629.22s[2m (transform 83.89s, setup 0ms, collect 865.01s, tests 11265.48s, environment 127ms, prepare 146.76s)[22m
+
+ ELIFECYCLE  Test failed. See above for more details.
+=== exit 1 (test)
+# finished 2026-10-03T12:46:37+10:00
+
+# RE-RUN of pnpm test (run 1 exit 1: 0 failed tests, 1 unhandled vitest-worker RPC timeout) — started 2026-10-03T12:46:57+10:00, tree unchanged
+   ✓ mapper containment > rejects the method override plant  13192ms
+   ✓ mapper containment > rejects the method-shaped field plant  14493ms
+   ✓ mapper containment > rejects the prototype override plant  11569ms
+   ✓ mapper containment > rejects the quoted prototype override plant  12843ms
+   ✓ mapper containment > rejects the defaulted mapper binding plant  14673ms
+   ✓ mapper containment > rejects the writable mapper binding plant  11396ms
+   ✓ mapper containment > rejects the local mapper replacing the parameter-derived binding plant  10376ms
+   ✓ mapper containment > rejects the parameter reassignment before binding plant  9929ms
+   ✓ mapper containment > rejects the parameter property mutation before binding plant  10739ms
+   ✓ mapper containment > rejects the parameter computed-property mutation before binding plant  8977ms
+   ✓ mapper containment > rejects the parameter alias before binding plant  8460ms
+   ✓ mapper containment > rejects the parameter escape before binding plant  8195ms
+   ✓ mapper containment > rejects the parameter closure escape before binding plant  8238ms
+   ✓ mapper containment > rejects the block function mapper shadow plant  8124ms
+   ✓ mapper containment > rejects the hoisted block function mapper shadow plant  4762ms
+   ✓ mapper containment > rejects the async block function mapper shadow plant  5602ms
+   ✓ mapper containment > rejects the generator block function mapper shadow plant  6462ms
+   ✓ mapper containment > rejects the block class mapper shadow plant  6899ms
+   ✓ mapper containment > rejects the block enum mapper shadow plant  7269ms
+   ✓ mapper containment > allows unrelated nested mapper bindings without mistaking methods for declarations  6999ms
+   ✓ mapper containment > rejects the wrapped forwarding call plant  7456ms
+   ✓ mapper containment > rejects the different forwarding content plant  7816ms
+   ✓ mapper containment > rejects the different forwarding quote plant  7694ms
+   ✓ mapper containment > rejects the extra forwarding argument plant  8222ms
+
+ Test Files  221 passed | 23 skipped (244)
+      Tests  5885 passed | 119 skipped (6004)
+   Start at  12:46:59
+   Duration  633.78s (transform 128.05s, setup 0ms, collect 1022.56s, tests 10146.18s, environment 124ms, prepare 169.44s)
+
+=== exit 0 (test, re-run)
+# finished 2026-10-03T12:57:34+10:00
+
+# ROUND-1 FIX BATCH validation — started 2026-10-03T14:05:10+10:00
+=== pnpm preflight
+
+> respin@0.0.0 preflight C:\projects\ai.playground\trendMonitor\respin
+> tsx scripts/preflight.ts
+
+preflight ok: brain_content_registry
+=== exit 0 (preflight)
+=== pnpm typecheck
+packages/brain typecheck: Done
+packages/llm typecheck: Done
+packages/modes typecheck$ tsc --noEmit
+packages/db typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/db typecheck: Done
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== exit 0 (typecheck)
+=== pnpm worker:typecheck
+
+> respin@0.0.0 worker:typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc -p worker/tsconfig.json --pretty false
+
+=== exit 0 (worker:typecheck)
+=== pnpm lint
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+=== exit 0 (lint)
+=== pnpm db:check
+
+> respin@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin
+> pnpm --filter @respin/db db:check
+
+
+> @respin/db@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin\packages\db
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+=== exit 0 (db:check)
+=== pnpm build
++ First Load JS shared by all             103 kB
+  ├ chunks/1e9670fa-2d7df238e6dfbceb.js  54.2 kB
+  ├ chunks/264-ee37288ed9e7d4f7.js       46.8 kB
+  └ other shared chunks (total)          1.99 kB
+
+
+ƒ Middleware                               35 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+=== exit 0 (build)
+=== pnpm test
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > active protocol refuses attemptless subscription deletion fence advancement  1523ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > a full snapshot refuses when either persisted subscription identity disagrees (observed=sub_new_generation, attempt=sub_other_attempt)  1552ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > a full snapshot refuses when either persisted subscription identity disagrees (observed=sub_other_observed, attempt=sub_new_generation)  1574ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > a second subscription seen through either Checkout or invoice delivery refuses without replacing the first  1586ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > invoice.paid for the retained dead generation grants by the existing policy without advancing the new-generation fence  1496ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > subscription.deleted before created re-establishes a dead-generation fence, and stale created cannot resurrect it  1550ms
+
+ Test Files  221 passed | 23 skipped (244)
+      Tests  5907 passed | 119 skipped (6026)
+   Start at  14:07:16
+   Duration  485.43s (transform 69.76s, setup 0ms, collect 861.79s, tests 8373.00s, environment 119ms, prepare 142.36s)
+
+=== exit 0 (test)
+# finished 2026-10-03T14:15:22+10:00
+
+# ROUND-2 CLASS-FIX (R-150) validation — started 2026-10-03T18:49:22+10:00
+=== pnpm preflight
+
+> respin@0.0.0 preflight C:\projects\ai.playground\trendMonitor\respin
+> tsx scripts/preflight.ts
+
+preflight ok: brain_content_registry
+=== exit 0 (preflight)
+=== pnpm typecheck
+packages/brain typecheck: Done
+packages/llm typecheck: Done
+packages/modes typecheck$ tsc --noEmit
+packages/db typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/db typecheck: Done
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== exit 0 (typecheck)
+=== pnpm worker:typecheck
+
+> respin@0.0.0 worker:typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc -p worker/tsconfig.json --pretty false
+
+=== exit 0 (worker:typecheck)
+=== pnpm lint
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+=== exit 0 (lint)
+=== pnpm db:check
+
+> respin@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin
+> pnpm --filter @respin/db db:check
+
+
+> @respin/db@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin\packages\db
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+=== exit 0 (db:check)
+=== pnpm build
++ First Load JS shared by all             103 kB
+  ├ chunks/1e9670fa-2d7df238e6dfbceb.js  54.2 kB
+  ├ chunks/264-ee37288ed9e7d4f7.js       46.8 kB
+  └ other shared chunks (total)          1.99 kB
+
+
+ƒ Middleware                               35 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+=== exit 0 (build)
+=== pnpm test
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > active protocol refuses attemptless subscription deletion fence advancement  1450ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > a full snapshot refuses when either persisted subscription identity disagrees (observed=sub_new_generation, attempt=sub_other_attempt)  1200ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > a full snapshot refuses when either persisted subscription identity disagrees (observed=sub_other_observed, attempt=sub_new_generation)  1316ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > a second subscription seen through either Checkout or invoice delivery refuses without replacing the first  1246ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > invoice.paid for the retained dead generation grants by the existing policy without advancing the new-generation fence  1235ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > subscription.deleted before created re-establishes a dead-generation fence, and stale created cannot resurrect it  1822ms
+
+ Test Files  221 passed | 23 skipped (244)
+      Tests  5954 passed | 119 skipped (6073)
+   Start at  18:51:32
+   Duration  450.73s (transform 64.49s, setup 0ms, collect 751.31s, tests 7880.11s, environment 128ms, prepare 117.76s)
+
+=== exit 0 (test)
+# finished 2026-10-03T18:59:03+10:00
+
+# ROUND-3 FIX BATCH validation — started 2026-10-03T19:42:56+10:00
+=== pnpm preflight
+
+> respin@0.0.0 preflight C:\projects\ai.playground\trendMonitor\respin
+> tsx scripts/preflight.ts
+
+preflight ok: brain_content_registry
+=== exit 0 (preflight)
+=== pnpm typecheck
+packages/brain typecheck: Done
+packages/llm typecheck: Done
+packages/db typecheck$ tsc --noEmit
+packages/modes typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/db typecheck: Done
+packages/config typecheck$ tsc --noEmit
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== exit 0 (typecheck)
+=== pnpm worker:typecheck
+
+> respin@0.0.0 worker:typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc -p worker/tsconfig.json --pretty false
+
+=== exit 0 (worker:typecheck)
+=== pnpm lint
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+=== exit 0 (lint)
+=== pnpm db:check
+
+> respin@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin
+> pnpm --filter @respin/db db:check
+
+
+> @respin/db@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin\packages\db
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+=== exit 0 (db:check)
+=== pnpm build
++ First Load JS shared by all             103 kB
+  ├ chunks/1e9670fa-2d7df238e6dfbceb.js  54.2 kB
+  ├ chunks/264-ee37288ed9e7d4f7.js       46.8 kB
+  └ other shared chunks (total)          1.99 kB
+
+
+ƒ Middleware                               35 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+=== exit 0 (build)
+=== pnpm test
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > active protocol refuses attemptless subscription deletion fence advancement  1117ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > a full snapshot refuses when either persisted subscription identity disagrees (observed=sub_new_generation, attempt=sub_other_attempt)  1181ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > a full snapshot refuses when either persisted subscription identity disagrees (observed=sub_other_observed, attempt=sub_new_generation)  1368ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > a second subscription seen through either Checkout or invoice delivery refuses without replacing the first  1281ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > invoice.paid for the retained dead generation grants by the existing policy without advancing the new-generation fence  1093ms
+   ✓ tier Checkout durable attempt and mixed-version fence ordering > subscription.deleted before created re-establishes a dead-generation fence, and stale created cannot resurrect it  1102ms
+
+ Test Files  221 passed | 23 skipped (244)
+      Tests  5965 passed | 119 skipped (6084)
+   Start at  19:44:43
+   Duration  428.14s (transform 71.40s, setup 0ms, collect 808.03s, tests 7313.15s, environment 144ms, prepare 126.96s)
+
+=== exit 0 (test)
+# finished 2026-10-03T19:51:51+10:00
+
+# ROUND-4 FINAL FIX BATCH validation — started 2026-10-03T22:06:36+10:00
+=== pnpm preflight
+
+> respin@0.0.0 preflight C:\projects\ai.playground\trendMonitor\respin
+> tsx scripts/preflight.ts
+
+preflight ok: brain_content_registry
+=== exit 0 (preflight)
+=== pnpm typecheck
+packages/brain typecheck: Done
+packages/llm typecheck: Done
+packages/db typecheck$ tsc --noEmit
+packages/modes typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/db typecheck: Done
+packages/config typecheck$ tsc --noEmit
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+=== exit 0 (typecheck)
+=== pnpm worker:typecheck
+
+> respin@0.0.0 worker:typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc -p worker/tsconfig.json --pretty false
+
+=== exit 0 (worker:typecheck)
+=== pnpm lint
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+=== exit 0 (lint)
+=== pnpm db:check
+
+> respin@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin
+> pnpm --filter @respin/db db:check
+
+
+> @respin/db@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin\packages\db
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+=== exit 0 (db:check)
+=== pnpm build
++ First Load JS shared by all             103 kB
+  ├ chunks/1e9670fa-2d7df238e6dfbceb.js  54.2 kB
+  ├ chunks/264-ee37288ed9e7d4f7.js       46.8 kB
+  └ other shared chunks (total)          1.99 kB
+
+
+ƒ Middleware                               35 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+=== exit 0 (build)
+=== pnpm test
+   ✓ mapper containment > rejects the block enum mapper shadow plant  3202ms
+   ✓ mapper containment > allows unrelated nested mapper bindings without mistaking methods for declarations  3053ms
+   ✓ mapper containment > rejects the wrapped forwarding call plant  3056ms
+   ✓ mapper containment > rejects the different forwarding content plant  2732ms
+   ✓ mapper containment > rejects the different forwarding quote plant  2797ms
+   ✓ mapper containment > rejects the extra forwarding argument plant  2698ms
+
+ Test Files  221 passed | 23 skipped (244)
+      Tests  5997 passed | 119 skipped (6116)
+   Start at  22:08:24
+   Duration  454.08s (transform 50.83s, setup 0ms, collect 784.22s, tests 7612.13s, environment 140ms, prepare 138.76s)
+
+=== exit 0 (test)
+# finished 2026-10-03T22:15:58+10:00

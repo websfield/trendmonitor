@@ -1,6 +1,6 @@
 # Phase 7 — Accessibility: the creator's way in
 
-Depends on: none. Owner: `respin-engineer`. Est. 4–5 h.
+Depends on: none. Owner: `respin-engineer`. Est. 4–5 h; **5–7 h with the 2026-10-05 additions** (an estimate).
 **Read first:** the codebase review §1's **two corrections** — four of the five "silent" pages already pass `role="alert"` (what they lack is the focus island), and the marquee **is** covered by a global reduced-motion reset. Planning from the audit's wording alone would produce the wrong change in both places.
 
 **Split per `.claude/gate-rules.md` §11 (plan-gate batch 0, 2026-09-21):** the earlier draft's Task 5 — thirteen unrelated one-attribute edits across `/settings/account`, `/trends`, the five data tables, the marketing landmark and the seven LOWs — is now **Phase 10** (`respin-audit-remediation-2026-09-19-phase-10.md`, depends on this phase). This phase keeps Tasks 1–4: the three Level-A/AA failures a creator meets on the way in, the class behind them, and the document titles. No requirement was lost: P7-R5's `/settings/account` and `/trends` halves are P10-R1, and P7-R6 in full is P10-R2…R7.
@@ -20,11 +20,26 @@ Row 13 edits the public Sample Spin panel's copy under zero paths. That surface 
 ## Requirements
 
 - **P7-R1 (REG-32, HIGH — requirement changed 2026-09-21 from "fix the token" to "ship the arithmetic").** The audit's failing ratios are stale: `respin-tokens.css` now sets `--text-4: #67657F` (light, `:48`) and `#A5AEC8` (dark, `:79`), and recomputed against `--surface-1/2/3` (WCAG 2.x relative luminance, `node -e` over the hex values in the file) they are **light 5.61 / 5.05 / 4.60**:1 and **dark 7.71 / 6.90 / 5.83**:1 — every pair ≥ 4.5:1, so `--text-4` passes 1.4.3 for text at any size in both themes today. (The old values fail exactly as the audit said: `#6B7280` gives light 4.83 / 4.35 / 3.97 and dark 3.53 / 3.16 / 2.67.) What is **still true** is that no contrast arithmetic exists in `respin/tests`, so the fix was luck, not control. The requirement is therefore the **token-pair contrast test**: every text-bearing token paired against every surface it can render on, both themes, asserted ≥ 4.5:1 (or ≥ 3:1 for large text), with the population derived from the CSS rather than a hand list, and a revert probe proving it reddens on the old value. The consumer migration to `--text-3` becomes conditional: only if the test finds a pair that fails. `DESIGN.md`'s claim then points at the test rather than being stated.
+  - **Amendment 2026-10-05 (register 2026-10-05 item 16, HIGH).** The token test as scoped cannot see either of the two Level-A/AA failures the new register measured, because both are outside its population:
+    - **Inline links are colour-only.** `a` has `text-decoration: none` outside `:hover` (`app/globals.css:57-66`), and nothing else marks a link (1.4.1 / F73; link against text ≈ 1.49:1).
+    - **The hero's "See pricing" CTA fails in light theme.** `.btn-secondary` is transparent with `--text-2` (`app/styles/controls.css:76-80`; `--text-2: #46415F`, `app/respin-tokens.css:46`) over the hero's `--scrim` (`rgba(9, 15, 34, 0.84)`, `:35`; applied at `app/styles/landing-base.css:71-79`), at ≈ 1.98:1 (1.4.3).
+    So the scrim becomes a **surface** in row 1's population: the worst case composites `--scrim` over white, the lightest photo pixel. Row 1's out-of-scope note for hero text no longer holds for the CTA and the hero sub-line. P7-A1 carries the fixes.
 - **P7-R2 (REG-33, HIGH — corrected scope).** A redirect-delivered refusal is announced *and reaches focus*. `Banner` gains an `arrival: "redirect" | "in-place"` prop that sets `role="alert" tabIndex={-1}` and mounts `FocusOnMount`; the five call sites migrate (`billing-view.tsx:283`, `usage-view.tsx:438-441`, `studio-view.tsx:60`, `first-ideas-view.tsx:48-51` — all of which already have the role and lack the focus — and `account-view.tsx:71-72`, which has **neither**; that fifth site stays in this phase so the requirement is whole, and `account-view.tsx`'s other items are Phase 10's). `FocusOnMount` moves out of `onboarding/` since it is no longer an onboarding concern. WCAG 4.1.3 / 3.3.1.
 - **P7-R3 (REG-34, HIGH — corrected rationale).** The landing marquee gains a visible pause/play control, or renders static and animates only on hover/focus-within. The tags are content (mechanic names), and `prefers-reduced-motion` — which **is** globally honoured at `respin-tokens.css:96-98` (the audit's `:91` predates the uncommitted token rewrite) — is an OS setting, not the on-page mechanism WCAG 2.2.2 (Level A) requires. The phase card states the existing reduced-motion coverage so the finding is not overstated.
 - **P7-R4 (REG-35, HIGH — half already landed).** The Sample Spin over-limit counter: the undefined `--danger-text` token is **already gone** (zero references in the tree; `.sample-spin-over` now uses `--check-ink`, `landing-demo.css:159-161`), so the colour half is done and AC4's grep pins it. What remains: the counter's **wording** changes when over the limit, not only its colour (1.4.1 — `sample-spin-panel.tsx:123-125` renders only `{used} / {maxCodePoints}`); and the disabled submit (`:126`) is linked to the reason with `aria-describedby` (3.3.2) — today only the textarea (`:120`) carries it.
 - **P7-R5 (REG-36, MEDIUM — the titles, the input boundary and forced-colors; the `/settings/account` and `/trends` halves are P10-R1).** A `title` template plus per-page metadata, so every product surface stops sharing the document title "Respin" (2.4.2, Level A — only changelog, legal and `/for/[audience]` override today). **The population is every `page.tsx` under `app/(product)/`**, measured 2026-09-21 with `find app -path '*/(product)/*' -name page.tsx` = **11** (`brain`, `onboarding`, `onboarding/first-ideas`, `onboarding/interview`, `results`, `settings/account`, `settings/billing`, `studio`, `studio/frameworks`, `trends`, `usage`) — not the audit's "12+", and not the flat `app/(product)/*/page.tsx` glob, which misses the four nested routes. Text inputs get a perceivable boundary — re-measured: input `--surface-2` against panel `--surface-1` is 1.11:1 (light) / 1.12:1 (dark), but the input already carries `border: 1px solid var(--border-strong)` (`controls.css:9`), and `--border-strong` is 4.64:1 (light) / 6.21:1 (dark) against `--surface-1`, so the audit's "border 1.21:1" no longer holds; the requirement is that the test in row 1 asserts the border pair too, and the boundary changes only if it fails. Forced-colors: the audit's `globals.css:135-141` `outline: none` is gone — the file is 134 lines and `:129-134` now sets `outline: 2px solid Highlight` under `@media (forced-colors: active)`; what remains is `controls.css:30-36`'s `input:focus { outline: none }` outside that media block, which the forced-colors override must be asserted to beat, plus the "fires on mouse focus" half (`:focus` versus `:focus-visible`).
 - **P7-R6 → Phase 10.** The mojibake and the seven LOWs (REG-37) are P10-R2…R7, each with the production file it edits and its own AC. Nothing of REG-37 remains in this phase.
+
+### 2026-10-05 register additions
+
+Homed here from `docs/progress/audit/2026-10-05.md`. Every `file:line` below was re-read on 2026-10-05.
+
+- **P7-A1 (item 16 — HIGH).** Two fixes, one per failure:
+  - **Prose links get a non-colour cue.** An underline rule applies to prose links (`app/globals.css:57-66`), with chrome links (nav, buttons) exempted by class, not by default.
+  - **The hero's secondary CTA uses the over-photo inks.** A `.hero .btn-secondary` override sets `--on-photo-*` text and border (`respin-tokens.css:33` declares `--on-photo-accent`).
+  The P7-R1 amendment adds `--scrim`-over-white as a surface in `tests/token-contrast.test.ts` (row 1), in both themes, and asserts the CTA pair at ≥ 4.5:1. A computed-style assertion that prose `a` has a non-`none` `text-decoration` in its resting state is added beside it. Proof: AC8.
+- **P7-A2 (item 34's Sample Spin half — MEDIUM). The Sample Spin run drops focus and never announces.** The textarea and submit carry `disabled={busy}` (`app/(marketing)/sample-spin/sample-spin-panel.tsx:119,126`), so focus is lost when the run starts, and the form unmounts on completion with no status announcement. **Fix:** the `aria-disabled` + `aria-busy` pattern `onboarding/submit-button.tsx` documents, so focus stays on the submit; a `role="status"` region is **pre-mounted** with the panel, empty until the run ends. At completion it receives **one sentence** (the run finished, or why it did not), never the result body. The result renders **outside** that region, and focus moves to the result heading. This is the `studio/piece-confirmation.tsx:168-180` pattern that P10-A1 makes shared. Proof: AC9.
+
 
 ## Tasks
 
@@ -34,6 +49,7 @@ Row 13 edits the public Sample Spin panel's copy under zero paths. That surface 
 | 2 | `Banner` arrival prop; `FocusOnMount` relocation; five call sites | 4–10, 17 |
 | 3 | Marquee control; Sample Spin counter wording and the submit's `aria-describedby` | 11–13 |
 | 4 | Title template and per-page metadata (eleven pages); the input-boundary and forced-colors assertions; the wiring test | 14–16, 18 |
+| 5 | 2026-10-05: the scrim surface and link cue in the contrast test, the prose-link underline and the hero CTA inks (A1); the Sample Spin's `aria-disabled`, status and focus (A2) | 1, 12, 13, 18, 19 |
 
 ## Files to create / modify
 
@@ -57,6 +73,9 @@ Row 13 edits the public Sample Spin panel's copy under zero paths. That surface 
 | 16 | `app/styles/controls.css` | M | `input:focus` (`:30-36`) — `:focus-visible` and no `outline: none` that the forced-colors block in `globals.css:129-134` must out-specify; boundary only if row 1's border pair fails |
 | 17 | `app/(product)/settings/account/account-view.tsx` | M | `arrival="redirect"` on the refusal banner (`:71-72`, the fifth P7-R2 site) — **only** that; the two disabled buttons and the retype label are Phase 10 row 1 |
 | 18 | `tests/a11y-wiring.test.tsx` | N | Arrival wiring on the five sites (the `<FocusOnMount>` + `tabIndex={-1}` static assertions), the eleven titles, the forced-colors specificity/order assertion, the over-limit branch through the claims canon |
+| 19 | `app/globals.css` | M | P7-A1: the prose-link underline (`:57-66`), with the chrome exemption by class |
+
+**2026-10-05 addendum: 19 rows (18 + 1).** Row 1 gains the scrim surface and the link cue, row 12 (`landing-base.css`) the hero CTA override, row 13 the Sample Spin `aria-disabled`/status/focus, and row 18 the Sample Spin wiring case.
 
 **18 rows; within the 25-row authoring target of `.claude/gate-rules.md` §11.** The earlier 29-row draft was split at Task 5 (now Phase 10, 17 rows); both counts are derived from their tables. Three files appear in both phases (`account-view.tsx`, `usage-view.tsx`, `landing-sections.tsx`) with disjoint edits, and Phase 10 depends on this phase, so the two never run concurrently on one checkout (2026-08-02 lesson). The task→row ranges above are derived from the table.
 
@@ -84,6 +103,8 @@ Row 13 edits the public Sample Spin panel's copy under zero paths. That surface 
 | AC5 | Every `page.tsx` under `app/(product)/` exports its own `metadata` title — **eleven** today (`find app -path '*/(product)/*' -name page.tsx \| wc -l`), asserted by row 18 as "count of page files = count of distinct titles", so a twelfth page is a red test, not a silent "Respin" | card quotes the eleven titles and the count |
 | AC6 | The input's boundary pair (`--border-strong` on `--surface-1`/`--surface-2`, ≥ 3:1 — 4.64 / 4.17 light, 6.21 / 5.56 dark today) is in row 1's asserted table; a focused control keeps a visible indicator under forced-colors (`globals.css:129-134` beats `controls.css:33`'s `outline: none`, asserted by specificity/order in row 18, not by a browser) | card quotes the ratios and the rule |
 | AC7 | Entry gate clean | card quotes the four results |
+| AC8 | `token-contrast.test.ts` derives `--scrim`-over-white as a surface and asserts the hero secondary CTA ≥ 4.5:1 in both themes. Reverting the override is red. A resting prose `a` has a visible non-colour cue, and deleting the rule is red | card quotes the two ratios, the revert run and the link assertion |
+| AC9 | Rendering the Sample Spin and pressing run keeps `document.activeElement` on the submit (`aria-disabled`), the pre-mounted status region gains exactly one sentence and contains no result text, and focus moves to the result heading. `a11y-wiring.test.tsx` asserts the wiring; the live announcement stays unverified (R-133) | card quotes the wiring assertions |
 
 ### Requirement → AC mapping
 
@@ -96,6 +117,8 @@ Every requirement has an AC (tabulated 2026-09-21). AC7 is the entry gate and ma
 | P7-R3 | AC3 |
 | P7-R4 | AC4 |
 | P7-R5 | AC5, AC6 (the `/settings/account` and `/trends` halves are Phase 10 AC1) |
+| P7-A1 | AC8 |
+| P7-A2 | AC9 |
 | P7-R6 | Phase 10 AC2–AC7 (moved whole under the §11 split; a pointer, not a requirement of this phase) |
 
 ## Definition of done

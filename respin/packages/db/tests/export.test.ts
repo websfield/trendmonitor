@@ -21,6 +21,7 @@ import {
   onboardingInterviewDrafts,
 } from "../src/onboarding-schema";
 import {
+  creativePieces,
   generationAttempts,
   generationFeedback,
   generations,
@@ -737,7 +738,10 @@ describe("REQ-A04 brain export", () => {
           outcome: "usable",
           output: { hooks: [marker] },
           weakestPoint: "you have logged no results, so this is not evidence about you",
-          killTest: { rulesFired: [], rewritten: false },
+          // A CLAIM FLAG on the stored kill test (audit Phase 2 gate, R-172):
+          // the export is the one surface that renders nothing, and it carries
+          // every finding by carrying the column whole.
+          killTest: { rulesFired: [], rewritten: false, finalAttempt: { claims: [{ family: "certainty", enforcement: "flag", token: "can't miss", field: "/hooks/0/text", unit: `${marker}-CLAIM-FLAG` }] } },
         })
         .returning();
       // Slice 7 (R10/R11): one feedback event for each, for exactly the reason
@@ -752,6 +756,17 @@ describe("REQ-A04 brain export", () => {
         reaction: "used_as_is",
         note: `${marker}-FEEDBACK`,
       }).returning();
+      // Launch L2 (R-151): one creative piece each — an own idea carrying the
+      // marker, so a leaked row is identifiable in the emitted JSON — whose
+      // selection names the owner's own generation (the same-tenant FK).
+      await db.insert(creativePieces).values({
+        profileId: owner,
+        workspaceId,
+        ownIdea: `${marker}-PIECE`,
+        selectedGenerationId: generation.id,
+        state: "scripted",
+        quoteConfigVersion: 1,
+      });
       // Slice 9a (R5): one logged result for each, for exactly the reason the
       // feedback event above carries one. The NOTE carries the marker, so a
       // leaked row is identifiable in the emitted JSON rather than merely
@@ -926,6 +941,9 @@ describe("REQ-A04 brain export", () => {
       sourceUrl: "https://example.test/0",
     });
     expect((parsed.tables.trend_items as Array<{ sourceId: string }>)[0].sourceId).toBe(submitted.id);
+    // R-172: the export carries the generation's claim flags (the stored kill
+    // test, whole) — the export surface's half of `tests/claim-flag-surfaces`.
+    expect(JSON.stringify(parsed.tables.generations)).toContain("TARGET-SCRIPT-CLAIM-FLAG");
     for (const [table, rows] of Object.entries(parsed.tables)) {
       expect(rows.length, `${table} returned nothing — its check is vacuous`).toBe(1);
       expect(

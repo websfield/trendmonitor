@@ -31,9 +31,26 @@
 // makes it safe to run against a restore target that must not be written to.
 //
 // Exit codes:
-//   0  every chain verified, no database-ahead conflict, plan printed
-//   2  a conflict was found, or the journal is not configured/readable
+//   0  every chain verified, no database-ahead conflict, plan printed, and the
+//      last line printed is RESTORE_VERIFY_SUCCESS_MARKER
+//   1  the script threw (unconfigured journal, unreadable operations file)
+//   2  a conflict was found, or the journal listing held a key it cannot parse
+//
+// EXIT 0 IS NOT THE SUCCESS SIGNAL (R-155, register 2026-10-05 item 3b). A
+// process that never ran `main()` also exits 0, and the entrypoint guard below
+// once did exactly that whenever the checkout path held a space. So
+// `restore-drill.sh` requires the marker line AND exit 0; this file prints the
+// marker on the success path only.
+//
+// ITS ONLY RELATIVE IMPORT IS ./entrypoint.ts, deliberately:
+// `tests/restore-verify.test.ts` copies this file and that one into a directory
+// whose name contains a space and runs the copy, which resolves only while
+// every other import is a package or a builtin.
 import { readFileSync } from "node:fs";
+import { isEntrypoint } from "./entrypoint";
+
+/** The one line `restore-drill.sh` accepts as "the journal verified". */
+export const RESTORE_VERIFY_SUCCESS_MARKER = "RESTORE-VERIFY: JOURNAL VERIFIED";
 
 /** R-119: journal objects are locked for 28 days and purged after. */
 const JOURNAL_RETENTION_DAYS = 28;
@@ -42,7 +59,7 @@ const JOURNAL_RETENTION_MS = JOURNAL_RETENTION_DAYS * 86_400_000;
 import {
   assertJournalConfig,
   compareRestoredState,
-  listJournalOperationIds,
+  listJournalOperations,
   loadJournalChain,
   planJournalRestore,
   type DeletionJournalConfig,
@@ -63,9 +80,10 @@ function configFromEnv(
   const environment = env.RESPIN_DELETION_JOURNAL_ENVIRONMENT?.trim();
   if (!bucket || !region || !environment) {
     // Fail closed with a way forward. A restore that cannot reach the journal
-    // must not serve, but the operator has to be told which knob is missing.
+    // must not serve, but the operator has to be told which knob is missing —
+    // and, since R-155, that there are two ways to satisfy it.
     throw new Error(
-      "the deletion journal is not configured, so this restore cannot be verified and must not serve. Set RESPIN_DELETION_JOURNAL_BUCKET, _REGION and _ENVIRONMENT to the bucket the backup's era wrote to (infra/s3-deletion-journal/README.md)."
+      "the deletion journal is not configured, so this restore cannot be verified and must not serve. Either set RESPIN_DELETION_JOURNAL_BUCKET, _REGION and _ENVIRONMENT to the bucket the backup's era wrote to (infra/s3-deletion-journal/README.md), or, for a LOCAL drill, start the loopback MinIO journal (`docker compose --profile drill up -d`) and export the local-drill env block from RUNBOOK.md (Respin → Restore drill), which adds RESPIN_DELETION_JOURNAL_ENDPOINT=http://127.0.0.1:9000 and the MinIO AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY."
     );
   }
   return assertJournalConfig({ bucket, region, environment });
@@ -109,9 +127,23 @@ export function readRestoredOperations(
   return map;
 }
 
+/**
+ * What `main` reads the journal through. The command line never passes this:
+ * it builds the real S3 verifier from the environment. `tests/restore-verify.
+ * test.ts` passes the in-memory fake (`createFakeS3().verifier`) so the whole
+ * of `main` — listing, chain checks, the summary and the success marker — runs
+ * against planted damage without a network.
+ */
+export type RestoreVerifyDeps = Readonly<{
+  // The verifier transport's type, derived from a function this script may
+  // already import, so the operator-script import allowlist does not widen.
+  verifier?: Parameters<typeof loadJournalChain>[0];
+}>;
+
 export async function main(
   argv: readonly string[],
-  env: Readonly<Record<string, string | undefined>>
+  env: Readonly<Record<string, string | undefined>>,
+  deps: RestoreVerifyDeps = {}
 ): Promise<number> {
   const operationsFile = flag(argv, "operations");
   if (!operationsFile) {
@@ -121,22 +153,37 @@ export async function main(
   }
 
   const config = configFromEnv(env);
-  const verifier = s3JournalVerifier(
-    createS3JournalClient({
-      region: config.region,
-      ...(env.RESPIN_DELETION_JOURNAL_ENDPOINT
-        ? { endpoint: env.RESPIN_DELETION_JOURNAL_ENDPOINT }
-        : {}),
-    })
-  );
+  const verifier =
+    deps.verifier ??
+    s3JournalVerifier(
+      createS3JournalClient({
+        region: config.region,
+        ...(env.RESPIN_DELETION_JOURNAL_ENDPOINT
+          ? { endpoint: env.RESPIN_DELETION_JOURNAL_ENDPOINT }
+          : {}),
+      })
+    );
 
   let failures = 0;
   let preJournal = 0;
   let purgedChains = 0;
   {
     const restored = readRestoredOperations(operationsFile);
-    const journalIds = await listJournalOperationIds(verifier, config);
+    const listing = await listJournalOperations(verifier, config);
+    const journalIds = listing.operationIds;
     const chains: JournalOperationChain[] = [];
+
+    // A key under the journal prefix that does not parse is not "no record".
+    // The listing used to drop it silently (register 2026-10-05 item 44), so an
+    // operation whose only objects were mis-keyed vanished from every check
+    // below. Each one is a failure, named by its key (ids and a version
+    // segment only, never content).
+    for (const key of listing.unparseableKeys) {
+      failures += 1;
+      process.stdout.write(
+        `CONFLICT unparseable_journal_key ${key}: an object under the journal prefix does not parse as {environment}/deletion-journal/{operationId}/{version}.json, so the operation it belongs to cannot be verified. Way forward: find what wrote it (the bucket's access log or CloudTrail data events for that key) and stop that writer; then, once its COMPLIANCE lock has expired, delete each of its versions by versionId — \`aws s3api list-object-versions --prefix <key>\` names them — and re-run this verifier. Nothing can remove it before the lock expires, so until then this restore must not serve.\n`
+      );
+    }
 
     // Step 3 — every journal record verifies.
     for (const operationId of journalIds) {
@@ -227,7 +274,7 @@ export async function main(
       );
     }
     process.stdout.write(
-      `\njournal_operations=${journalIds.length} restored_operations=${restored.size} pre_journal=${preJournal} purged=${purgedChains} conflicts=${failures}\n`
+      `\njournal_operations=${journalIds.length} unparseable_keys=${listing.unparseableKeys.length} restored_operations=${restored.size} pre_journal=${preJournal} purged=${purgedChains} conflicts=${failures}\n`
     );
     for (const step of plan.steps) {
       process.stdout.write(
@@ -260,13 +307,16 @@ export async function main(
         "transaction. Until the production restore walk records one, treat step 2 as",
         "the residue evidence and say so in the transcript.",
         "",
+        RESTORE_VERIFY_SUCCESS_MARKER,
+        "",
       ].join("\n")
     );
     return 0;
   }
 }
 
-if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"))) {
+// Resolved paths, not URL-suffix matching: see ./entrypoint.ts.
+if (isEntrypoint(import.meta.url, process.argv[1])) {
   void main(process.argv.slice(2), process.env).then(
     (code) => {
       process.exitCode = code;

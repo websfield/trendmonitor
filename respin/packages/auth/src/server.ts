@@ -12,8 +12,15 @@ import {
   createIdentityCancellationProofWithPassword as createCancellationProof,
   getServerDb,
   reauthenticateSessionWithPassword,
+  recordedGoogleReauthentication,
   type ReauthenticatedSessionRef,
 } from "@respin/db";
+import {
+  beginGoogleReauthentication,
+  completeGoogleReauthentication,
+  GOOGLE_REAUTH_CALLBACK_PATH,
+  type GoogleReauthConfig,
+} from "./google-reauth";
 import { adminAllowed, parseAdminAllowlist } from "./allowlist";
 import { canonicalClientIp } from "./client-ip";
 import { createAuth, type Auth } from "./create-auth";
@@ -62,8 +69,64 @@ export async function reauthenticateCurrentSessionWithPassword(
   });
 }
 
+/**
+ * R-164: the Google re-authentication challenge, from the server's own env.
+ * Refuses (via the flow's `not_configured`) when Google, the auth secret or
+ * the app's base URL is absent, rather than guessing a redirect target.
+ */
+function googleReauthConfig(): GoogleReauthConfig {
+  const base = (process.env.BETTER_AUTH_URL ?? "").replace(/\/+$/, "");
+  return {
+    db: getServerDb(),
+    secret: process.env.BETTER_AUTH_SECRET ?? "",
+    clientId: process.env.GOOGLE_CLIENT_ID ?? "",
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+    redirectURI: base ? `${base}${GOOGLE_REAUTH_CALLBACK_PATH}` : "",
+  };
+}
+
+async function currentSessionRef(): Promise<{ authUserId: string; sessionId: string } | null> {
+  const current = await getAuth().api.getSession({ headers: await headers() });
+  return current ? { authUserId: current.user.id, sessionId: current.session.id } : null;
+}
+
+/** R-164 step 1, for the CURRENT session: the Google URL to send the person to. */
+export async function beginGoogleReauthenticationForCurrentSession(): Promise<string> {
+  const current = await currentSessionRef();
+  if (!current) throw new Error("reauthentication_refused");
+  return beginGoogleReauthentication(
+    googleReauthConfig(),
+    current,
+    await authRateLimitKeyDigest("r164_google_reauthentication", await headers())
+  );
+}
+
+/** R-164 step 2: the callback, stamping only the session the state was bound to. */
+export async function completeGoogleReauthenticationForCurrentSession(
+  state: string,
+  code: string
+): Promise<ReauthenticatedSessionRef> {
+  return completeGoogleReauthentication(googleReauthConfig(), {
+    state,
+    code,
+    current: await currentSessionRef(),
+    rateLimitKeyDigest: await authRateLimitKeyDigest("r164_google_reauthentication", await headers()),
+  });
+}
+
+/**
+ * R-164's billing arm for the CURRENT session: the recorded stamp a Google
+ * challenge wrote, admitted only inside R-118's window. Never writes — the
+ * password arm (`reauthenticateCurrentSessionWithPassword`) is unchanged.
+ */
+export async function currentSessionGoogleReauthentication(): Promise<ReauthenticatedSessionRef> {
+  const current = await currentSessionRef();
+  if (!current) throw new Error("reauthentication_refused");
+  return recordedGoogleReauthentication(getServerDb(), current);
+}
+
 async function authRateLimitKeyDigest(
-  purpose: "r118_reauthentication" | "identity_cancellation",
+  purpose: "r118_reauthentication" | "identity_cancellation" | "r164_google_reauthentication",
   requestHeaders: Headers
 ): Promise<string> {
   const secret = process.env.BETTER_AUTH_SECRET;

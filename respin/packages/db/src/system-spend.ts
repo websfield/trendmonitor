@@ -1,7 +1,7 @@
 // The only writer for the non-tenant system budget (R21/R21a). The worker owns
 // scheduling and vendor calls; this module owns atomic pre-call reservation,
 // append-only attribution, and cache completion/failure transitions.
-import { and, asc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lt, notInArray, sql } from "drizzle-orm";
 import type { DbLike, TxLike } from "./db-like";
 import {
   AUTOPSY_ATTEMPT_CODE_CEILING,
@@ -456,61 +456,85 @@ export async function recoverStalePublicSampleSpinAttempts(
     sql`${systemSpendClaims.createdAt} < ${LEASE_BOUNDARY}`,
     NO_USAGE_ROW,
   );
-  const stale = await db
-    .select({ jobAttemptId: systemSpendClaims.jobAttemptId })
-    .from(systemSpendClaims)
-    .where(stalePredicate)
-    .orderBy(asc(systemSpendClaims.createdAt))
-    .limit(SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING);
   let recovered = 0;
   let failed = 0;
-  for (const candidate of stale) {
-    let inserted = false;
-    try {
-      inserted = await db.transaction(async (tx) => {
-      // RE-CHECKED INSIDE THE TRANSACTION, under the row lock: the lease
-      // boundary and the absence of a usage row are both re-evaluated, so a
-      // live attempt that finalised between the scan and this write is left
-      // alone rather than raced into "already bound to a different fact"
-      // (billing gate, round 1). A miss is a quiet `false`, never a throw
-      // that would abort the whole retention tick.
-      const [claim] = await tx
-        .select()
-        .from(systemSpendClaims)
-        .where(and(eq(systemSpendClaims.jobAttemptId, candidate.jobAttemptId), stalePredicate))
-        .for("update")
-        .limit(1);
-      if (!claim) return false;
-      const result = await recordSystemModelUsageInTx(tx, {
-        jobAttemptId: claim.jobAttemptId,
-        jobId: claim.jobId,
-        trendItemId: null,
-        purpose: "public_sample_spin",
-        model: claim.model,
-        tokensIn: null,
-        tokensOut: null,
-        costMicroUsd: null,
-        costState: "unknown",
-        outcome: "vendor_failed",
-        callCount: PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX,
-        unknownCallCount: PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX,
-        errorCode: "recovery_required",
-        businessDate: claim.businessDate,
-        reservedCostMicroUsd: claim.reservedMicroUsd,
-        reservationOverrunMicroUsd: null,
-      });
-      return result.inserted;
-      });
-    } catch {
-      // ONE candidate's failure never aborts the tick (lean gate round 1,
-      // R-5d): it is counted, the next candidate is tried, and the retention
-      // summary carries the count.
-      failed += 1;
+  // A FAILED ROW DOES NOT KEEP ITS PLACE AT THE HEAD (audit P3-A7). The scan
+  // is oldest-first and a failure writes nothing (its transaction rolls
+  // back), so a row that fails every tick used to stay at the head forever and
+  // a full batch of them starved every newer row. The table carries no
+  // last-attempt stamp to order by, so the skip is in memory and per tick:
+  // the next page excludes this tick's failures, up to
+  // `PUBLIC_SAMPLE_SPIN_RECOVERY_PAGES` pages. A tick therefore reaches newer
+  // rows unless that many full batches are ALL failing — and every failure is
+  // still counted into `failed`, which pages `sample_spin_recovery_failed`.
+  const failedThisTick: string[] = [];
+  for (let page = 0; page < PUBLIC_SAMPLE_SPIN_RECOVERY_PAGES; page += 1) {
+    const stale = await db
+      .select({ jobAttemptId: systemSpendClaims.jobAttemptId })
+      .from(systemSpendClaims)
+      .where(
+        failedThisTick.length === 0
+          ? stalePredicate
+          : and(stalePredicate, notInArray(systemSpendClaims.jobAttemptId, failedThisTick)),
+      )
+      .orderBy(asc(systemSpendClaims.createdAt))
+      .limit(SYSTEM_AUTOPSY_DISPATCH_BATCH_CODE_CEILING);
+    if (stale.length === 0) break;
+    const failedBefore = failed;
+    for (const candidate of stale) {
+      let inserted = false;
+      try {
+        inserted = await db.transaction(async (tx) => {
+        // RE-CHECKED INSIDE THE TRANSACTION, under the row lock: the lease
+        // boundary and the absence of a usage row are both re-evaluated, so a
+        // live attempt that finalised between the scan and this write is left
+        // alone rather than raced into "already bound to a different fact"
+        // (billing gate, round 1). A miss is a quiet `false`, never a throw
+        // that would abort the whole retention tick.
+        const [claim] = await tx
+          .select()
+          .from(systemSpendClaims)
+          .where(and(eq(systemSpendClaims.jobAttemptId, candidate.jobAttemptId), stalePredicate))
+          .for("update")
+          .limit(1);
+        if (!claim) return false;
+        const result = await recordSystemModelUsageInTx(tx, {
+          jobAttemptId: claim.jobAttemptId,
+          jobId: claim.jobId,
+          trendItemId: null,
+          purpose: "public_sample_spin",
+          model: claim.model,
+          tokensIn: null,
+          tokensOut: null,
+          costMicroUsd: null,
+          costState: "unknown",
+          outcome: "vendor_failed",
+          callCount: PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX,
+          unknownCallCount: PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX,
+          errorCode: "recovery_required",
+          businessDate: claim.businessDate,
+          reservedCostMicroUsd: claim.reservedMicroUsd,
+          reservationOverrunMicroUsd: null,
+        });
+        return result.inserted;
+        });
+      } catch {
+        // ONE candidate's failure never aborts the tick (lean gate round 1,
+        // R-5d): it is counted, the next candidate is tried, the retention
+        // summary carries the count and `evaluateRetentionAlerts` pages on it.
+        failed += 1;
+        failedThisTick.push(candidate.jobAttemptId);
+      }
+      if (inserted) recovered += 1;
     }
-    if (inserted) recovered += 1;
+    // A page with no failure left nothing to page around.
+    if (failed === failedBefore) break;
   }
   return { recovered, failed };
 }
+
+/** How many oldest-first pages one recovery tick may read (audit P3-A7). */
+export const PUBLIC_SAMPLE_SPIN_RECOVERY_PAGES = 4;
 
 async function claimInTx(
   tx: TxLike,
@@ -697,7 +721,12 @@ function assertUsageShape(usage: RecordSystemModelUsage): void {
     throw new Error("a successful autopsy must record every fixed-order stage call");
   }
   // One or two drafts plus the scoring call: a successful Sample Spin is never
-  // a single call and never a fourth (R-123).
+  // a single call and never a fourth (R-123). What keeps "a single call" from
+  // happening AFTER the vendor was billed (`runGeneration` skips the scoring
+  // call when no creator rule is usable) is the FIRST fence, at process boot:
+  // `assertSampleSpinKillTestUsable` (`@respin/credits` sample-spin
+  // `fixture.ts`) refuses a fixture with zero usable rules, so the shipped
+  // fixture cannot reach this throw; this check is the second fence (P3-R8).
   if (usage.outcome === "succeeded" && usage.purpose === "public_sample_spin"
     && (usage.callCount < 2 || usage.callCount > PUBLIC_SAMPLE_SPIN_VENDOR_CALLS_MAX)) {
     throw new Error("a successful sample spin records its drafts and the scoring call");

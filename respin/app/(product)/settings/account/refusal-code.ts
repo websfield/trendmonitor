@@ -64,9 +64,14 @@ export const ACCOUNT_ERROR_COPY: Record<AccountErrorCode, string> = {
   mail_unavailable: "No mail sender is configured, so the recovery email cannot be sent. Nothing was changed.",
   typed_name: "The name you typed does not match this workspace. Nothing was changed.",
   not_owner: "Only a workspace owner can do this.",
-  // No ownership-transfer or invite-as-owner surface exists yet (10b-2 seats),
-  // so the sentence names only what the product can do today.
-  last_owner: "You are the last owner of a workspace. Delete that workspace first, or ask an operator to add another owner; owner invitations arrive with the seats work.",
+  // R-160. Before it, this sentence named an operator adding an owner and an
+  // owner invitation — two surfaces that do not exist — so the refusal's own
+  // remedy could not be followed (CLAUDE.md 2026-07-30). An account deletion
+  // now schedules every workspace its person is the last owner of for deletion
+  // with it, so this refusal fires only when that set changed while the
+  // request was being made. The remedy is this page, which exists.
+  last_owner:
+    "A workspace you are the last owner of changed while this request was being made, so nothing was changed. Request the deletion again from this page: every workspace you are the last owner of is scheduled for deletion with your account.",
   billing_contact_handover_required:
     "You are the billing contact of a workspace that has a billing account. Another owner of that workspace must accept the billing contact first. Nothing was changed.",
   billing_contact_unknown:

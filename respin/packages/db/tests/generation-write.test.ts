@@ -77,6 +77,8 @@ describe("the generation claim's write capabilities", () => {
           purpose: "generation",
           mode: "hooks",
           payloadSha256: sha(over.payload ?? "payload"),
+          intentSha256: sha(over.payload ?? "payload"),
+          requestSnapshot: { v: 1 },
         },
         tx
       )
@@ -113,6 +115,7 @@ describe("the generation claim's write capabilities", () => {
     killTest: { outcome: "passed" },
     rewriteCount: 0,
     debitLedgerId: null,
+    usageIsSystemSpend: false,
     ...over,
   });
 
@@ -124,6 +127,8 @@ describe("the generation claim's write capabilities", () => {
       purpose: "generation",
       mode: "hooks",
       payloadSha256: sha("payload"),
+      intentSha256: sha("payload"),
+      requestSnapshot: { v: 1 },
       // Every server-derived column, smuggled past the type.
       state: "settled",
       claimedAt: new Date(0),
@@ -232,6 +237,8 @@ describe("the generation claim's write capabilities", () => {
       purpose: "generation",
       mode: "hooks",
       payloadSha256: sha("payload"),
+      intentSha256: sha("payload"),
+      requestSnapshot: { v: 1 },
       candidate: { v: 1, outcome: "usable", output: { hooks: ["SMUGGLED"] } },
     } as unknown as Parameters<
       ProfileWriteCapabilities["claimGenerationAttempt"]
@@ -362,6 +369,34 @@ describe("the generation claim's write capabilities", () => {
     expect(stored?.id).toBe(generation.id);
   });
 
+  it("R-173: settleGeneration DERIVES the system-spend flag from the kill test and refuses a caller value that disagrees — nothing is written", async () => {
+    await claim();
+    await advance({ attemptId: "att-1", to: "vendor_started" });
+    await complete();
+    const claimOnly = { outcome: "failed", finalAttempt: { hardRules: [{ rule: "forbidden_claim" }] } };
+    const mixed = { outcome: "failed", finalAttempt: { hardRules: [{ rule: "forbidden_claim" }, { rule: "similarity" }] } };
+    const refusal = { outcome: "honest_refusal" as const, output: null, weakestPoint: null, refusalReason: "It did not survive." };
+    for (const [label, over] of [
+      ["a claim-only refusal declared CHARGED", { ...refusal, killTest: claimOnly, usageIsSystemSpend: false }],
+      ["a mixed-cause refusal declared FREE", { ...refusal, killTest: mixed, usageIsSystemSpend: true }],
+      ["a usable draft declared FREE", { usageIsSystemSpend: true }],
+      ["a claim-only refusal carrying a DEBIT", { ...refusal, killTest: claimOnly, usageIsSystemSpend: true, debitLedgerId: "00000000-0000-7000-8000-000000000001" }],
+      ["a cast-smuggled non-boolean", { ...refusal, killTest: claimOnly, usageIsSystemSpend: "yes" }],
+    ] as const) {
+      await expect(
+        db.transaction((tx) => caps.settleGeneration(settleParams(over) as never, tx)),
+        label
+      ).rejects.toThrow(/R-173/);
+    }
+    const [attempt] = await db.select().from(generationAttempts).where(eq(generationAttempts.attemptId, "att-1"));
+    expect(attempt.state).toBe("vendor_complete");
+    // ...and the AGREEING value settles.
+    const { attempt: settled } = await db.transaction((tx) =>
+      caps.settleGeneration(settleParams({ ...refusal, killTest: claimOnly, usageIsSystemSpend: true }), tx)
+    );
+    expect(settled.state).toBe("settled");
+  });
+
   it("settleGeneration refuses an attempt the vendor has not finished — nothing is written", async () => {
     await claim();
     await advance({ attemptId: "att-1", to: "vendor_started" });
@@ -404,6 +439,8 @@ describe("the generation claim's write capabilities", () => {
           purpose: "generation",
           mode: "hooks",
           payloadSha256: sha("b"),
+          intentSha256: sha("b"),
+          requestSnapshot: { v: 1 },
         },
         tx
       )
@@ -456,6 +493,8 @@ describe("the generation claim's write capabilities", () => {
             purpose: "generation",
             mode: "hooks",
             payloadSha256: sha("v"),
+            intentSha256: sha("v"),
+            requestSnapshot: { v: 1 },
           },
           tx
         )

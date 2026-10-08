@@ -107,6 +107,7 @@ async function identityWithSurvivor(db: TestDb) {
     expiresAt: new Date(Date.now() + HOUR),
     updatedAt: new Date(),
     reauthenticatedAt: new Date(),
+    reauthenticatedMethod: "password",
   });
   return target;
 }
@@ -521,7 +522,15 @@ describe("auth-mail recovery delivery through the real identity-deletion request
     expect(second.operation.id).toBe(first.operation.id);
     expect(second.acknowledged).toBe(true);
     expect(second.operation.recoveryDeliveryAttempt).toBe(2);
-    expect(second.operation.recoveryExpiresAt!.getTime()).toBe(first.operation.recoveryExpiresAt!.getTime());
+    // RE-DECIDED (R-162, P5-R6): the rotation mints a NEW single-use link, so
+    // its seven-day window restarts with it — it is later, never the same.
+    expect(second.operation.recoveryExpiresAt!.getTime()).toBeGreaterThan(first.operation.recoveryExpiresAt!.getTime());
+    // ...and the mail carries the RESET expiry, not the first attempt's.
+    const [secondMail] = await db
+      .select()
+      .from(authMailOutbox)
+      .where(and(eq(authMailOutbox.operationId, first.operation.id), eq(authMailOutbox.deliveryAttempt, 2)));
+    expect(secondMail!.actionExpiresAt.getTime()).toBe(second.operation.recoveryExpiresAt!.getTime());
     expect(second.operation.recoverySecretDigest).not.toBe(first.operation.recoverySecretDigest);
     const rows = await db
       .select()

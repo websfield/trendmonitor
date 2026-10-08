@@ -28,10 +28,12 @@ import {
   type OnboardingInput,
   type RunSlots,
   type SourceEvidenceEntry,
+  type TxLike,
   type WorkspaceScope,
 } from "@respin/db";
 import {
   assembleVoicePrompt,
+  nothingGroundedError,
   parseVoiceReply,
   AssemblyError,
   CHECK,
@@ -114,7 +116,10 @@ export const VOICE_CORPUS_MAX_POSTS = 50;
  * guidance changes in a way that would move what the model returns — that is
  * the whole point of attributing spend to a bundle.
  */
-export const VOICE_PROMPT_BUNDLE_VERSION = "slice3-voice-v1";
+// v2 (audit Phase 8, P8-R2): `assembleVoicePrompt` neutralises a `<post` /
+// `</post` tag inside a post's content, which moves what the model reads for
+// any post carrying one.
+export const VOICE_PROMPT_BUNDLE_VERSION = "slice3-voice-v2";
 
 export type InferVoiceResult = {
   brainDocId: string;
@@ -214,6 +219,8 @@ export async function inferVoice(
   // Filled by `validate` below, which `runInference` runs on the reply it
   // returns — and, when a first reply is unreadable, on the one retry's reply.
   let parsed: AssembledField[] | undefined;
+  // Filled by `persist`, inside the debit's transaction.
+  let written: PersistedVoiceDocument | undefined;
   // Every gate slice 2a built runs inside this call, in its established order.
   const run = await runInference(
     db,
@@ -244,7 +251,22 @@ export async function inferVoice(
       // the loop terminates), so `parsed` below is this reply's, never an
       // earlier discarded attempt's.
       validate: (text) => {
-        parsed = parseVoiceReply({ text, fields: VOICE_FIELDS, posts });
+        const fields = parseVoiceReply({ text, fields: VOICE_FIELDS, posts });
+        // A REPLY THAT GROUNDED NOTHING IS UNUSABLE (audit P3-A1, R-156).
+        // `parseVoiceReply` admits one placeholder per field, so an
+        // all-`[check]` reply parsed — and `writeBrainDoc` then refused it on
+        // empty evidence AFTER the debit had committed. Refused here, it costs
+        // one more call inside the retry budget and never reaches the debit.
+        if (isAllPlaceholders(fields)) throw nothingGroundedError();
+        parsed = fields;
+      },
+      // THE BRAIN DOCUMENT IS WRITTEN IN THE DEBIT'S TRANSACTION (audit
+      // P3-A1, R-156 — R-41 revised), under the workspace lock `runInference`
+      // already holds: a write that refuses rolls the charge back with it,
+      // which is what makes the `provenance` copy's "no credits were spent"
+      // true by construction rather than by hope.
+      persist: async (tx) => {
+        written = await persistVoiceDocument(scope, parsed, tx);
       },
     },
     at,
@@ -268,15 +290,53 @@ export async function inferVoice(
   // `runInference` ever returned a reply it had not validated, the alternative
   // to this throw is `buildVoiceDocument(undefined!)` writing a brain document
   // from nothing — fail closed instead, and the suite pins the contract.
+  if (!written) {
+    // `runInference` returned without running `persist` — a broken contract,
+    // refused rather than reported as a stored document.
+    throw new AssemblyError(
+      "bad_shape",
+      "the reply was never validated and stored, so no voice document exists",
+    );
+  }
+
+  return {
+    brainDocId: written.brainDocId,
+    run,
+    claimPositions: written.claimPositions,
+    placeholders: written.placeholders,
+    postsUsed: posts.length,
+    postsAvailable: ownPostsAvailable,
+  };
+}
+
+type PersistedVoiceDocument = {
+  brainDocId: string;
+  claimPositions: number;
+  placeholders: number;
+};
+
+/**
+ * Build and write the voice document INSIDE the debit's transaction (audit
+ * P3-A1). Every refusal here — an unvalidated reply, a pointer divergence,
+ * `writeBrainDoc`'s own provenance and echo refusals — rolls the debit back.
+ */
+async function persistVoiceDocument(
+  scope: Awaited<ReturnType<typeof mintProfileScope>>,
+  parsed: AssembledField[] | undefined,
+  tx: TxLike,
+): Promise<PersistedVoiceDocument> {
+  // THE GUARD IS NOT DECORATION. `parsed` is filled by a callback, so "the
+  // callback ran" is a contract this function cannot see in its own types. If
+  // `runInference` ever reached `persist` with a reply it had not validated,
+  // the alternative to this throw is `buildVoiceDocument(undefined!)` writing
+  // a brain document from nothing — fail closed instead.
   if (!parsed) {
     throw new AssemblyError(
       "bad_shape",
       "the reply was never validated, so no voice document can be built from it",
     );
   }
-  const fields = parsed;
-
-  const { content, sourceEvidence } = buildVoiceDocument(fields);
+  const { content, sourceEvidence } = buildVoiceDocument(parsed);
 
   // THE POINTERS ARE DERIVED FROM THE STORED CONTENT, NOT ASSUMED.
   //
@@ -295,32 +355,23 @@ export async function inferVoice(
   }
 
   const caps = writeCapabilities(scope);
-  const doc = await db.transaction(async (tx) =>
-    caps.writeBrainDoc(
-      {
-        kind: "voice",
-        content,
-        sourceEvidence,
-        // A CODE, NOT A SENTENCE (C-42): `brain_docs.reason` is exported whole
-        // and REQ-I03 binds any output, so the stored text is rendered by the
-        // server from this code.
-        // A CODE AND NOTHING ELSE. `BrainDocReason` has no free-text member and
-        // no `detail` escape hatch, deliberately — the stored sentence is
-        // rendered by the server from this code plus facts it counted itself
-        // (`renderBrainReason`), so the post count below is NOT passed in.
-        reason: { code: "onboarding_inference" },
-      },
-      tx,
-    ),
+  const doc = await caps.writeBrainDoc(
+    {
+      kind: "voice",
+      content,
+      sourceEvidence,
+      // A CODE AND NOTHING ELSE (C-42). `BrainDocReason` has no free-text
+      // member and no `detail` escape hatch, deliberately — the stored
+      // sentence is rendered by the server from this code plus facts it
+      // counted itself (`renderBrainReason`), so the post count is NOT passed.
+      reason: { code: "onboarding_inference" },
+    },
+    tx,
   );
-
   return {
     brainDocId: doc.id,
-    run,
     claimPositions: enumerated.length,
     placeholders: enumerated.filter((p) => !cited.has(p)).length,
-    postsUsed: posts.length,
-    postsAvailable: ownPostsAvailable,
   };
 }
 
@@ -362,11 +413,10 @@ export function buildVoiceDocument(fields: AssembledField[]): {
   }
 
   // The non-empty CHECK on `source_evidence` refuses a document in which
-  // nothing is grounded, and `writeBrainDoc` refuses it by name. Reaching that
-  // refusal means the model returned `[check]` for every field, which is a real
-  // outcome for a creator whose posts are all links — so it is worth the caller
-  // knowing it is possible. Not thrown here: `writeBrainDoc`'s message is the
-  // one that names the rule.
+  // nothing is grounded, and `writeBrainDoc` refuses it by name. `inferVoice`
+  // no longer reaches that refusal on a model reply: its `validate` refuses an
+  // all-`[check]` reply with `nothing_grounded` before the debit (audit
+  // P3-A1). This function stays total so its own tests can drive that shape.
   return { content, sourceEvidence };
 }
 

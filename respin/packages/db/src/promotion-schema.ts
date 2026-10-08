@@ -16,6 +16,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { uuidv7 } from "uuidv7";
@@ -65,6 +66,16 @@ export const proposalEvidenceResultRole = pgEnum(
 export type PromotionTargetKind = "voice" | "performance_meta" | "killtest";
 export type PromotionDecisionRole = "owner" | "editor";
 
+/**
+ * Why an accept wrote nothing (R-171, audit Phase 2 P2-A2). A CLOSED set of
+ * one: `already_present` — the accepted value already stood at its target in
+ * the active document, so the decision is recorded and no brain version is
+ * created (a version asserting nothing is not storable). NULL on every other
+ * row, including every accept that wrote a version.
+ */
+export const PROMOTION_DECISION_REASONS = ["already_present"] as const;
+export type PromotionDecisionReason = (typeof PROMOTION_DECISION_REASONS)[number];
+
 export const promotionProposals = pgTable(
   "promotion_proposals",
   {
@@ -92,6 +103,7 @@ export const promotionProposals = pgTable(
     // closed owner/editor set in the CHECK also makes viewer unrepresentable.
     decisionRole: text("decision_role").$type<PromotionDecisionRole>(),
     decisionAt: timestamp("decision_at", { withTimezone: true }),
+    decisionReason: text("decision_reason").$type<PromotionDecisionReason>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -133,12 +145,18 @@ export const promotionProposals = pgTable(
       t.profileId,
       t.workspaceId
     ),
-    unique("promotion_proposals_evidence_digest_uq").on(
-      t.profileId,
-      t.source,
-      t.familyKey,
-      t.evidenceDigest
-    ),
+    // ONE ARBITRATING ROW PER DIGEST, ANY NUMBER OF HISTORY ROWS (audit
+    // Phase 2, P2-R10). This was a full unique constraint, so a digest
+    // re-derived after its row went `stale`/`superseded` conflicted with that
+    // terminal row and nothing could be proposed again. It is now partial:
+    // `proposed`, `accepted` and `rejected` rows still arbitrate — a decided
+    // row absorbs the refresh's insert, so a creator's rejection sticks and an
+    // acceptance is not re-proposed beside itself (R-115 ¶3, L7) — while
+    // `stale`/`superseded` rows are immutable history the index ignores. The
+    // insert in `promotion-ops.ts` names this predicate as its conflict target.
+    uniqueIndex("promotion_proposals_evidence_digest_uq")
+      .on(t.profileId, t.source, t.familyKey, t.evidenceDigest)
+      .where(sql`${t.status} NOT IN ('stale', 'superseded')`),
     check(
       "promotion_proposals_payload_is_object",
       sql`jsonb_typeof(${t.payload}) = 'object'`
@@ -160,6 +178,11 @@ export const promotionProposals = pgTable(
           OR (${t.source} = 'feedback'
             AND ((${t.targetKind} = 'voice' AND ${t.targetPointer} = '/avoid/-')
               OR (${t.targetKind} = 'killtest' AND ${t.targetPointer} = '/rules/-')))`
+    ),
+    check(
+      "promotion_proposals_decision_reason",
+      sql`${t.decisionReason} IS NULL
+          OR (${t.status} = 'accepted' AND ${t.decisionReason} = 'already_present')`
     ),
     check(
       "promotion_proposals_decision_shape",

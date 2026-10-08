@@ -15,13 +15,15 @@ const mocks = vi.hoisted(() => ({
   brainAssetSummary: vi.fn(),
   hasGenerationForProfile: vi.fn(),
   getBillingState: vi.fn(),
-  getBalance: vi.fn(),
+  getDisplayBalance: vi.fn(),
   getActiveConfigServer: vi.fn(),
 }));
 
 vi.mock("@respin/auth", () => ({ requireUser: mocks.requireUser }));
 vi.mock("../app/(product)/workspace-scope", () => ({
   scopeForUser: mocks.scopeForUser,
+  // R-163: `/brain` asks for the read grade; the same fixture scope answers.
+  readScopeForUser: mocks.scopeForUser,
 }));
 vi.mock("@respin/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@respin/db")>();
@@ -48,7 +50,7 @@ vi.mock("@respin/credits/app-server", async (importOriginal) => {
     respinCredits: {
       ...actual.respinCredits,
       getBillingState: mocks.getBillingState,
-      getBalance: mocks.getBalance,
+      getDisplayBalance: mocks.getDisplayBalance,
     },
   };
 });
@@ -143,7 +145,7 @@ beforeEach(() => {
     tier: "creator",
     state: "active",
   });
-  mocks.getBalance.mockResolvedValue({ balance: 10 });
+  mocks.getDisplayBalance.mockResolvedValue({ balance: 10, settling: false });
   mocks.getActiveConfigServer.mockResolvedValue({
     content: {
       profileCaps: { creator: 4 },
@@ -453,5 +455,54 @@ describe("missing selected profile", () => {
     expect(brainProps.profileName).toBe("this creator");
     expect(brainProps.exportJsonHref).toBe(null);
     expect(mocks.selectedProfileForMember).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("R-163: /brain under the READ grade renders a read-only history", () => {
+  it("makes EXACTLY the five reads the read grade serves, and names the pending deletion and the page that cancels it", async () => {
+    const readGrade = {
+      grade: "read" as const,
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      role: "owner" as const,
+      accessors: { creatorProfiles: mocks.creatorProfiles },
+    };
+    mocks.scopeForUser.mockResolvedValue(readGrade);
+    const element = await BrainPage({ searchParams: Promise.resolve({}) });
+    const props = pageProps<{
+      decideBlock: { reason: string } | null;
+      performanceHistory: unknown;
+      proposalHistory: unknown;
+      assetCounts: unknown;
+      interviewTouchedButUndrafted: unknown;
+      exportJsonHref: string | null;
+      confirmVoiceAction: unknown;
+      activateVoiceAction: unknown;
+    }>(element);
+    // The five reads.
+    expect(mocks.creatorProfiles).toHaveBeenCalledTimes(1);
+    expect(mocks.selectedProfileForMember).toHaveBeenCalledWith(readGrade);
+    expect(mocks.readBrainHistory.mock.calls.map((call) => [call[0], call[1], call[2]])).toEqual([
+      [readGrade, PROFILE_B.id, "voice"],
+      [readGrade, PROFILE_B.id, "strategy"],
+      [readGrade, PROFILE_B.id, "killtest"],
+    ]);
+    // ...and nothing else: no Performance Meta history, no proposals, no asset
+    // counts, no interview draft.
+    expect(mocks.promotionProposalHistory).not.toHaveBeenCalled();
+    expect(mocks.promotionProposalReview).not.toHaveBeenCalled();
+    expect(mocks.brainAssetSummary).not.toHaveBeenCalled();
+    expect(mocks.getInterviewDraft).not.toHaveBeenCalled();
+    // The view's existing null states, one decide block naming the way forward,
+    // every write control closed, and the export still offered.
+    expect(props.performanceHistory).toBeNull();
+    expect(props.proposalHistory).toBeNull();
+    expect(props.assetCounts).toBeNull();
+    expect(props.interviewTouchedButUndrafted).toEqual({ strategy: false, killtest: false });
+    expect(props.decideBlock?.reason).toContain("scheduled for deletion");
+    expect(props.decideBlock?.reason).toContain("/settings/account");
+    expect(props.confirmVoiceAction).toBe("/brain");
+    expect(props.activateVoiceAction).toBe("/brain");
+    expect(props.exportJsonHref).toBe(`/api/export?profile=${encodeURIComponent(PROFILE_B.id)}&format=json`);
   });
 });

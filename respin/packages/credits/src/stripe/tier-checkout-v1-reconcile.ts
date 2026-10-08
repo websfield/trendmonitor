@@ -6,14 +6,13 @@
 import { and, eq } from "drizzle-orm";
 import {
   creditLedger,
-  lockWorkspaceMembershipGraph,
   pausePeriods,
   subscriptions,
   workspaces,
   type DbLike,
   type VerifiedWorkspaceId,
 } from "@respin/db";
-import { CLOCK_SKEW_MS, takeWorkspaceLock } from "../clock";
+import { CLOCK_SKEW_MS, takeWorkspaceLockInOrder } from "../clock";
 import { IRREVERSIBLE_STATUSES } from "../state";
 import {
   getAuthenticatedStripeAccountIdentity,
@@ -605,8 +604,7 @@ export async function reconcileTierCheckoutV1Session(
   }
 
   return db.transaction(async (tx) => {
-    await lockWorkspaceMembershipGraph(tx, workspaceId);
-    await takeWorkspaceLock(tx, workspaceId);
+    await takeWorkspaceLockInOrder(tx, { workspaceId: workspaceId });
     await assertAutoTopupProtocolRecoveryReady(tx);
     await assertTierCheckoutProtocolRecoveryReady(tx);
     const [workspace] = await tx

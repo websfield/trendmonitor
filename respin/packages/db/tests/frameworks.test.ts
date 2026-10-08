@@ -1856,6 +1856,11 @@ describe("slice 7 stage A: frameworks", () => {
       "autopsy_cache_claims.autopsy_cache_claims_rights_immutable",
       "frameworks.frameworks_ownership_immutable",
       "frameworks.frameworks_rights_immutable",
+      // Migration 0069 (audit P6-A1, R-174): the reaction's event columns —
+      // its id, scope, generation, reaction and timestamp — and the one-way
+      // "leave out" stamp. Narrow: `note` stays writable for a future
+      // pseudonymisation executor; R-174 records the decision.
+      "generation_feedback.generation_feedback_event_immutable",
       "generations.generations_parent_id_immutable",
       "stripe_events.stripe_events_receipt_attribution_immutable",
       "trend_transcripts.trend_transcripts_rights_immutable",

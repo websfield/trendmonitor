@@ -1,7 +1,8 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   pgTable,
@@ -43,11 +44,24 @@ export const session = pgTable(
     // R-118 recent-reauth proof: written only after a fresh local credential,
     // passkey, or configured MFA challenge for THIS persisted session.
     reauthenticatedAt: timestamp("reauthenticated_at", { withTimezone: true }),
+    // R-164 / R-166: WHICH challenge wrote `reauthenticated_at` — `password`
+    // (the credential arm) or `google` (a `max_age=0` challenge). Billing
+    // accepts both; DELETION requests and cancellations accept only `password`
+    // (`requireReauthenticatedSession`), and refuse NULL — a stamp written
+    // before this column existed, all of which are past R-118's ten-minute
+    // window by the time this ships.
+    reauthenticatedMethod: text("reauthenticated_method"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
   },
-  (table) => [index("session_userId_idx").on(table.userId)],
+  (table) => [
+    index("session_userId_idx").on(table.userId),
+    check(
+      "session_reauthenticated_method_shape",
+      sql`${table.reauthenticatedMethod} IS NULL OR ${table.reauthenticatedMethod} IN ('password', 'google')`
+    ),
+  ],
 );
 
 export const account = pgTable(

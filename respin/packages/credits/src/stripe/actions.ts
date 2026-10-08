@@ -22,6 +22,8 @@ import {
 } from "./adapter";
 import { CustomerMappingLostError, getOrCreateCustomer } from "./customers";
 import { resolvePackPrice } from "./pack-price";
+import { TierPriceChangedError, resolveTierPrice } from "./tier-price";
+import { PINNED_CHECKOUT_PARAMS } from "./price-allowlist";
 import { packCheckoutAuthorityMetadata } from "./pack-checkout-authority";
 import {
   tierCheckoutAuthorityMetadata,
@@ -622,6 +624,16 @@ export async function createTierCheckoutUrl(
     return { customer };
   });
 
+  // THE PRICE IS CHECKED BEFORE ANY CHECKOUT IS RESERVED (Phase 6 billing
+  // gate, R-175): the Stripe price mapped to this tier must charge exactly
+  // `TIER_AMOUNTS_CENTS[tier]`, in usd, which is what the public page states.
+  // A divergence refuses with no attempt reserved, no Session opened and
+  // nothing charged. After the customer phase, so an already-subscribed
+  // workspace is still refused for that reason first; outside every
+  // transaction, so this provider read runs under no workspace lock.
+  const verifiedPrice = await resolveTierPrice(db, tier);
+  if (verifiedPrice === null) throw new UnknownTierPriceError(tier);
+
   // A durable reservation replaces reliance on Stripe's finite idempotency
   // retention. The first transaction below commits all provider-create inputs.
   // A lost response therefore leaves enough authority to find the Session by
@@ -668,6 +680,12 @@ export async function createTierCheckoutUrl(
         ([, configuredTier]) => configuredTier === tier
       )?.[0];
       if (!priceId) throw new UnknownTierPriceError(tier);
+      // The mapping read inside the lock must still be the one whose amount
+      // was verified above; a config version appended in between is refused
+      // rather than charged unverified.
+      if (priceId !== verifiedPrice.priceId) {
+        throw new TierPriceChangedError(tier);
+      }
       const id = randomUUID();
       const reservedAt = await getDbNow(tx);
       const authorityMetadata = tierCheckoutAuthorityMetadata(
@@ -844,6 +862,10 @@ export async function createTierCheckoutUrl(
         providerMutationStarted = true;
         const session = await getStripe().checkout.sessions.create(
           {
+            // PINNED (Phase 6 final billing check): charged in usd, the
+            // currency the page states, with Adaptive Pricing off so Stripe
+            // cannot present or charge a converted local amount.
+            ...PINNED_CHECKOUT_PARAMS,
             mode: "subscription",
             customer: dispatchAttempt.customerId,
             line_items: [{ price: dispatchAttempt.priceId, quantity: 1 }],
@@ -1025,6 +1047,8 @@ export async function createPackCheckoutUrl(
     await requireReauthenticatedOwnerInTx(tx, scope, authority);
     const session = await getStripe().checkout.sessions.create(
       {
+        // PINNED, like the tier Checkout: usd, Adaptive Pricing off.
+        ...PINNED_CHECKOUT_PARAMS,
         mode: "payment",
         customer,
         line_items: [{ price: pack.priceId, quantity: 1 }],

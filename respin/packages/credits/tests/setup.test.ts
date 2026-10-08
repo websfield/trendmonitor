@@ -11,12 +11,25 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 const productsList = vi.fn(async () => ({ data: [{ id: "prod_1", name: "Respin" }] }));
 const productsCreate = vi.fn(async () => ({ id: "prod_1", name: "Respin" }));
-const pricesCreate = vi.fn(async (params: { lookup_key: string; unit_amount: number }) => ({
+const pricesCreate = vi.fn(async (params: { lookup_key: string; unit_amount: number; currency: string }) => ({
   id: `price_new_${params.lookup_key}`,
   lookup_key: params.lookup_key,
   unit_amount: params.unit_amount,
+  currency: params.currency,
 }));
-let priceList: { id: string; lookup_key: string; unit_amount: number }[] = [];
+let priceList: Record<string, unknown>[] = [];
+
+/** A one-time, per-unit usd price: what `priceDefect` accepts for the pack. */
+const PACK = { active: true, type: "one_time", billing_scheme: "per_unit", recurring: null, currency: "usd" } as const;
+
+/** A monthly, per-unit, licensed usd price: what `tierPriceDefect` accepts. */
+const MONTHLY = {
+  active: true,
+  type: "recurring",
+  recurring: { interval: "month", interval_count: 1, usage_type: "licensed" },
+  billing_scheme: "per_unit",
+  tiers_mode: null,
+} as const;
 const pricesList = vi.fn(async () => ({ data: priceList }));
 
 vi.mock("../src/stripe/adapter", async (importActual) => ({
@@ -38,9 +51,9 @@ import { appendConfigVersion } from "@respin/config";
 import { stripeSetup } from "../src/stripe/setup";
 
 const TIER_PRICES = [
-  { id: "price_c", lookup_key: "respin_creator_monthly", unit_amount: 1000 },
-  { id: "price_p", lookup_key: "respin_pro_monthly", unit_amount: 6000 },
-  { id: "price_s", lookup_key: "respin_studio_monthly", unit_amount: 20000 },
+  { ...MONTHLY, id: "price_c", lookup_key: "respin_creator_monthly", unit_amount: 1000, currency: "usd" },
+  { ...MONTHLY, id: "price_p", lookup_key: "respin_pro_monthly", unit_amount: 6000, currency: "usd" },
+  { ...MONTHLY, id: "price_s", lookup_key: "respin_studio_monthly", unit_amount: 20000, currency: "usd" },
 ];
 
 async function dbWithPackPrice(usd: number): Promise<TestDb> {
@@ -92,7 +105,7 @@ describe("stripe:setup pack price authority", () => {
   it("REFUSES when the existing Stripe pack price disagrees with config, and changes nothing in Stripe", async () => {
     priceList = [
       ...TIER_PRICES,
-      { id: "price_pack_old", lookup_key: "respin_pack_1000", unit_amount: 1000 },
+      { ...PACK, id: "price_pack_old", lookup_key: "respin_pack_1000", unit_amount: 1000 },
     ];
     const db = await dbWithPackPrice(15);
     await expect(stripeSetup(db)).rejects.toThrow(/PRICE DIVERGENCE/);
@@ -110,37 +123,48 @@ describe("stripe:setup pack price authority", () => {
   it("is quiet and idempotent when Stripe and config AGREE (the check must not cry wolf)", async () => {
     priceList = [
       ...TIER_PRICES,
-      { id: "price_pack_ok", lookup_key: "respin_pack_1000", unit_amount: 1000 },
+      { ...PACK, id: "price_pack_ok", lookup_key: "respin_pack_1000", unit_amount: 1000 },
     ];
     const db = await dbWithPackPrice(CONFIG_V1_SEED.pack.priceUsd); // 10 → 1000c
     await stripeSetup(db);
     expect(pricesCreate).not.toHaveBeenCalled();
   });
 
-  it("a TIER price whose Stripe amount disagrees with the R-7 default WARNS (and never refuses — one charger, unlike the pack)", async () => {
-    // The pack refuses because it has TWO charging authorities; a tier has
-    // one (Stripe). But the script printed a bare price id with no amount, so
-    // an operator could paste a $60 price in as the $10 tier and see nothing.
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("a TIER price whose Stripe amount disagrees with the stated price REFUSES (Phase 6 billing gate, R-175)", async () => {
+    // This was a warning while a tier had one charger and no stated price.
+    // R-175 made `TIER_AMOUNTS_CENTS` the price the public page states, so a
+    // lookup key charging another amount is a refusal, as the pack's is.
+    priceList = [
+      { ...MONTHLY, id: "price_c", lookup_key: "respin_creator_monthly", unit_amount: 6000, currency: "usd" },
+      ...TIER_PRICES.slice(1),
+      { ...PACK, id: "price_pack_ok", lookup_key: "respin_pack_1000", unit_amount: 1000 },
+    ];
+    const db = await dbWithPackPrice(CONFIG_V1_SEED.pack.priceUsd);
+    const refused = stripeSetup(db);
+    await expect(refused).rejects.toThrow(/TIER PRICE DIVERGENCE/);
+    await expect(refused).rejects.toThrow(/price_c[\s\S]*6000c[\s\S]*1000c/);
+    expect(pricesCreate).not.toHaveBeenCalled();
+    // ...and a matching amount in another currency refuses too.
+    priceList = [
+      { ...MONTHLY, id: "price_c", lookup_key: "respin_creator_monthly", unit_amount: 1000, currency: "eur" },
+      ...TIER_PRICES.slice(1),
+      { ...PACK, id: "price_pack_ok", lookup_key: "respin_pack_1000", unit_amount: 1000 },
+    ];
+    await expect(stripeSetup(db)).rejects.toThrow(/in eur/);
+  });
+
+  it("agreeing tier prices print the amounts beside the map the operator pastes", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       priceList = [
-        { id: "price_c", lookup_key: "respin_creator_monthly", unit_amount: 6000 },
-        ...TIER_PRICES.slice(1),
-        { id: "price_pack_ok", lookup_key: "respin_pack_1000", unit_amount: 1000 },
+        ...TIER_PRICES,
+        { ...PACK, id: "price_pack_ok", lookup_key: "respin_pack_1000", unit_amount: 1000 },
       ];
-      const db = await dbWithPackPrice(CONFIG_V1_SEED.pack.priceUsd);
-      await stripeSetup(db); // must NOT throw
-      const warned = warn.mock.calls.map((c) => String(c[0])).join("\n");
-      expect(warned).toMatch(/price_c/);
-      expect(warned).toMatch(/6000c/);
-      expect(warned).toMatch(/1000c/);
-      // ...and the amounts are printed beside the map the operator pastes.
+      await stripeSetup(await dbWithPackPrice(CONFIG_V1_SEED.pack.priceUsd));
       const printed = log.mock.calls.map((c) => String(c[0])).join("\n");
       expect(printed).toMatch(/what each of those price ids charges today/);
-      expect(printed).toMatch(/price_c\s+creator\s+6000c/);
+      expect(printed).toMatch(/price_c\s+creator\s+1000c/);
     } finally {
-      warn.mockRestore();
       log.mockRestore();
     }
   });
@@ -150,7 +174,7 @@ describe("stripe:setup pack price authority", () => {
     try {
       priceList = [
         ...TIER_PRICES,
-        { id: "price_pack_ok", lookup_key: "respin_pack_1000", unit_amount: 1000 },
+        { ...PACK, id: "price_pack_ok", lookup_key: "respin_pack_1000", unit_amount: 1000 },
       ];
       const db = await dbWithPackPrice(CONFIG_V1_SEED.pack.priceUsd);
       await stripeSetup(db);

@@ -262,6 +262,34 @@ export const generationAttempts = pgTable(
      * `as unknown as` at every writer rather than trusting the type.
      */
     candidate: jsonb("candidate"),
+    /**
+     * THE IMMUTABLE CLIENT INTENT (launch L2, R-151) — a lowercase hex sha256
+     * over what the CALLER asked for (mode, platform, their own words, the
+     * revision target, the piece, the Spin reference id, the parsed creative
+     * request), computed BEFORE any context is read.
+     *
+     * WHY A SECOND HASH BESIDE `payload_sha256`. The payload hash is taken over
+     * the ASSEMBLED request, which includes the brain activation and the
+     * prompt bundle current at claim time — so a retry that recomputed it later
+     * could refuse an unchanged request because the brain moved on. A same-id
+     * submission now compares THIS value and observes the stored claim; it
+     * never rebuilds identity from newer context.
+     *
+     * NULL ON A PRE-L2 CLAIM, and such a claim refuses every same-id
+     * submission rather than guessing (`generate.ts`). Every claim written by
+     * this build carries it: `claimGenerationAttempt` requires it.
+     */
+    intentSha256: text("intent_sha256"),
+    /**
+     * THE DURABLE VERSIONED REQUEST SNAPSHOT (launch L2, R-151), bound to the
+     * claim in the same INSERT, before any outbound call: identities and
+     * versions only — the hashes of the creator's words, never the words — so
+     * it adds no creator text to a row that outlives a refusal. It carries the
+     * config version a confirmed quote was shown under, which is the version
+     * the settlement prices by. `packages/credits` owns its shape and reads it
+     * back fail-closed; this package only requires that it is an object.
+     */
+    requestSnapshot: jsonb("request_snapshot"),
     /** Why a `refused` attempt refused. Required by CHECK, like `adjust` rows. */
     refusalCode: text("refusal_code"),
     createdAt: createdAt(),
@@ -369,6 +397,22 @@ export const generationAttempts = pgTable(
     check(
       "generation_attempts_refusal_code",
       sql`${t.state} <> 'refused' OR ${t.refusalCode} IS NOT NULL`
+    ),
+    // L2: the intent hash is an identity like the payload hash — lowercase hex
+    // or absent (a pre-L2 claim), never anything else.
+    check(
+      "generation_attempts_intent_sha256_hex",
+      sql`${t.intentSha256} IS NULL OR ${t.intentSha256} ~ '^[0-9a-f]{64}$'`
+    ),
+    // ...and the snapshot is a document, for the reason the candidate is.
+    check(
+      "generation_attempts_request_snapshot_is_object",
+      sql`${t.requestSnapshot} IS NULL OR jsonb_typeof(${t.requestSnapshot}) = 'object'`
+    ),
+    // A claim this build writes carries BOTH, or neither (a pre-L2 row).
+    check(
+      "generation_attempts_intent_with_snapshot",
+      sql`(${t.intentSha256} IS NULL) = (${t.requestSnapshot} IS NULL)`
     ),
   ]
 );
@@ -666,6 +710,24 @@ export const generationFeedback = pgTable(
      */
     note: text("note"),
     createdAt: createdAt(),
+    /**
+     * WHEN THE CREATOR LEFT THIS REACTION OUT OF FUTURE DRAFTS (audit P6-A1,
+     * decisions R-174), or NULL while it may still be shown as labelled
+     * history (R-152 (b)).
+     *
+     * THE ONE MUTABLE FACT ON AN OTHERWISE APPEND-ONLY ROW, and it is
+     * mutable in one direction only: `writeCapabilities()
+     * .excludeGenerationFeedbackFromHistory` sets it from NULL to the
+     * database clock and is the table's only UPDATE writer
+     * (`tests/table-writers.test.ts`). The `generation_feedback_event_immutable`
+     * trigger (migration 0069) refuses an UPDATE that changes the id, either
+     * scope column, the generation, the reaction or `created_at`, or that
+     * clears or moves this stamp once set. It leaves `note` writable at the
+     * database on purpose (a future pseudonymisation executor), so the note's
+     * immutability rests on that writer list. This column records only what
+     * the product may do with a reaction next, never what was said.
+     */
+    historyExcludedAt: timestamp("history_excluded_at", { withTimezone: true }),
   },
   (t) => [
     // BOTH FKs, like `generations` itself carries both its profile FK and its
@@ -712,6 +774,137 @@ export const generationFeedback = pgTable(
     ),
   ]
 );
+
+/**
+ * WHERE A CREATIVE PIECE STANDS (launch L2, R-151).
+ *
+ *   `selected`  — a concept was chosen (or the creator's own idea entered) and
+ *                 its script has not been written. Costs nothing.
+ *   `scripted`  — a commissioned script settled; `selected_generation_id`
+ *                 names it.
+ *   `cancelled` — the creator backed out before any script. Costs nothing.
+ */
+export const creativePieceState = pgEnum("creative_piece_state", [
+  "selected",
+  "scripted",
+  "cancelled",
+]);
+
+/**
+ * ONE CREATIVE PIECE (launch L2, R-151): the minimal record that lets a creator
+ * pick a stored concept — or state their own idea — and commission its script
+ * without copying text between screens, and without a retry being charged as a
+ * second script.
+ *
+ * WHAT IT IS NOT: a workflow engine. It holds the source, the operation id the
+ * confirmation displayed, the quote's config version, the selected script and a
+ * monotonic version token — and nothing a later stage could want. L3/L4 extend
+ * it; nothing else may grow a second piece table (launch plan, shared contract).
+ *
+ * THE SOURCE IS IMMUTABLE AND SAME-TENANT. `source_generation_id` plus
+ * `source_idea_index` name one concept inside one stored ideation output, and
+ * the composite FK refuses a generation of another profile or workspace. The
+ * index is validated against the PARSED, versioned output by the writer in
+ * `packages/credits` (the parser is `@respin/modes`', which this package does
+ * not import); the writer here re-checks it against the stored array length as
+ * a second, structural line. Nothing updates either column after insert.
+ *
+ * THE CREATOR'S OWN IDEA is `own_idea`, present exactly when there is no
+ * source — the commissioned request preserves their premise verbatim.
+ *
+ * THE OPERATION ID IS SERVER-MINTED (`gen_random_uuid()`, a database default),
+ * never a parameter: it is the idempotency key the claim, every `model_usage`
+ * row and the one debit share (R5), and a caller-chosen key could collide with
+ * an unrelated ledger reference. "New generation" rotates it in the database
+ * too. `quote_config_version` is the config version whose price the
+ * confirmation displayed; the commission refuses when the active price differs.
+ */
+export const creativePieces = pgTable(
+  "creative_pieces",
+  {
+    id: id(),
+    profileId: uuid("profile_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    sourceGenerationId: uuid("source_generation_id"),
+    sourceIdeaIndex: integer("source_idea_index"),
+    ownIdea: text("own_idea"),
+    selectedGenerationId: uuid("selected_generation_id"),
+    state: creativePieceState("state").notNull().default("selected"),
+    version: integer("version").notNull().default(1),
+    operationAttemptId: text("operation_attempt_id")
+      .notNull()
+      .default(sql`gen_random_uuid()::text`),
+    quoteConfigVersion: integer("quote_config_version").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.profileId, t.workspaceId],
+      foreignColumns: [creatorProfiles.id, creatorProfiles.workspaceId],
+      name: "creative_pieces_profile_workspace_fk",
+    }).onDelete("cascade"),
+    // SAME-TENANT SOURCE AND SELECTION — `generation_feedback_generation_fk`'s
+    // shape. MATCH SIMPLE skips a NULL source (an own idea) and a NULL
+    // selection (no script yet), which is the intended meaning; a non-NULL id
+    // drags both NOT NULL scope columns into the check.
+    foreignKey({
+      columns: [t.sourceGenerationId, t.profileId, t.workspaceId],
+      foreignColumns: [generations.id, generations.profileId, generations.workspaceId],
+      name: "creative_pieces_source_generation_fk",
+    })
+      .onDelete("cascade")
+      .onUpdate("restrict"),
+    foreignKey({
+      columns: [t.selectedGenerationId, t.profileId, t.workspaceId],
+      foreignColumns: [generations.id, generations.profileId, generations.workspaceId],
+      name: "creative_pieces_selected_generation_fk",
+    })
+      .onDelete("cascade")
+      .onUpdate("restrict"),
+    // One piece per operation id: the id is the commission's identity.
+    uniqueIndex("creative_pieces_operation_attempt_uq").on(t.operationAttemptId),
+    check(
+      "creative_pieces_operation_attempt_uuid",
+      sql`${t.operationAttemptId} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`
+    ),
+    // The source is a PAIR — both or neither.
+    check(
+      "creative_pieces_source_pair",
+      sql`(${t.sourceGenerationId} IS NULL) = (${t.sourceIdeaIndex} IS NULL)`
+    ),
+    // ideation returns 3..5 concepts (`ideaCount`); the parsed-output check in
+    // the writer is the authority, this is the bound a raw INSERT meets.
+    check(
+      "creative_pieces_source_index_range",
+      sql`${t.sourceIdeaIndex} IS NULL OR (${t.sourceIdeaIndex} >= 0 AND ${t.sourceIdeaIndex} < 5)`
+    ),
+    // EXACTLY ONE ORIGIN: a stored concept, or the creator's own words that
+    // say something ('\n' is not an idea — the weakest-point predicate).
+    check(
+      "creative_pieces_one_origin",
+      sql`(${t.sourceGenerationId} IS NULL)
+          = (${t.ownIdea} IS NOT NULL AND ${t.ownIdea} ~ '[^[:space:]]')`
+    ),
+    check(
+      "creative_pieces_own_idea_bounded",
+      sql`${t.ownIdea} IS NULL OR char_length(${t.ownIdea}) <= 4000`
+    ),
+    // A script exists exactly when the piece says so.
+    check(
+      "creative_pieces_scripted_has_selection",
+      sql`(${t.state} = 'scripted') = (${t.selectedGenerationId} IS NOT NULL)`
+    ),
+    check("creative_pieces_version_positive", sql`${t.version} >= 1`),
+    check(
+      "creative_pieces_quote_version_positive",
+      sql`${t.quoteConfigVersion} >= 1`
+    ),
+  ]
+);
+
+export type CreativePiece = typeof creativePieces.$inferSelect;
+export type CreativePieceState = (typeof creativePieceState.enumValues)[number];
 
 export type GenerationAttempt = typeof generationAttempts.$inferSelect;
 export type NewGenerationAttempt = typeof generationAttempts.$inferInsert;

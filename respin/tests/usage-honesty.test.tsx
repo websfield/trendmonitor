@@ -93,6 +93,9 @@ const base: UsageViewProps = {
     notAGeneration: { credits: 5, debits: 1 },
     nonTerminalClaim: { credits: 0, debits: 0 },
   },
+  // R-176: no support address configured; `tests/support-contact.test.tsx`
+  // drives both states of the one sentence that uses it.
+  support: null,
   runway: {
     state: "estimate",
     asOf: AS_OF,
@@ -450,6 +453,19 @@ describe("/usage claims nothing this product cannot support", () => {
       BILLING_ERROR_COPY.generation_uncharged_attempt_cap.detail
     ).toContain(UNCHARGED_CAP_WINDOW_CLAUSE);
     expect(UNCHARGED_CAP_WINDOW_CLAUSE.length).toBeGreaterThan(30);
+  });
+
+  it("R-173: both generation caps name the CLAIM cause with its remedy, and say 'our side' only of the other cause", () => {
+    // A free claim refusal leaves its usage unconsumed (system spend), so it
+    // counts toward both caps — and for that cause the remedy is the creator's.
+    for (const code of ["generation_uncharged_attempt_cap", "generation_uncharged_cost_cap"] as const) {
+      const detail = BILLING_ERROR_COPY[code].detail;
+      expect(detail, code).toContain("made a claim this product won't make");
+      expect(detail, code).toContain("ask for a draft without that claim");
+      // The fault sentence is conditional on the OTHER cause, never unconditional.
+      expect(detail, code).toMatch(/If they failed for any other reason, the (fault is on our side|failure is ours)/);
+      expect(detail, code).not.toMatch(/^[^.]*\bIt is a fault on our side\b/m);
+    }
   });
 
   it("the page's own spend and runway sentences are scanned from rendered states", () => {

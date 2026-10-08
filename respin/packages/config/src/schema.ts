@@ -2,6 +2,21 @@
 // must parse EXACTLY the Phase-1 seed (parity test drives from CONFIG_V1_SEED).
 // strict(): an unknown key is a drifted document, not a silent passenger.
 import { z } from "zod";
+// THE ONE COPY of the worker's per-stage deadline ceiling (audit P3-A3): the
+// schema refuses a deadline the autopsy worker would refuse to start under.
+import { AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS } from "@respin/db";
+
+/**
+ * THE COMPILED CEILING ON AUTO-TOP-UP ATTEMPTS PER WORKSPACE PER UTC MONTH
+ * (audit P3-R7, R-158 point 6). The monthly cap in cents already bounds the
+ * count while every pack has a positive price; this is the backstop that does
+ * not depend on that — the attempt ordinal is part of the provider idempotency
+ * key, and an unbounded ordinal is an unbounded number of off-session charges
+ * if the cents bound ever reads zero. CHOSEN, not measured: far above any real
+ * month at today's pack price. `pack.autoTopupMaxAttemptsPerMonth` may only
+ * lower it.
+ */
+export const AUTO_TOPUP_ATTEMPTS_PER_MONTH_CEILING = 100;
 
 export const respinConfigV1 = z
   .object({
@@ -46,10 +61,14 @@ export const respinConfigV1 = z
       .strict(),
     allowances: z
       .object({
+        // Free MAY be 0 (no monthly mint is a real operator choice). The three
+        // PAID tiers may not (audit P3-A3, register item 42): `grantCredits`
+        // refuses a zero amount, so a stored 0 turned every paid invoice into
+        // a webhook 500 that Stripe redelivers forever.
         free: z.number().int().min(0),
-        creator: z.number().int().min(0),
-        pro: z.number().int().min(0),
-        studio: z.number().int().min(0),
+        creator: z.number().int().min(1),
+        pro: z.number().int().min(1),
+        studio: z.number().int().min(1),
       })
       .strict(),
     pack: z
@@ -57,6 +76,20 @@ export const respinConfigV1 = z
         credits: z.number().int().positive(),
         priceUsd: z.number().positive(),
         validityMonths: z.number().int().positive(),
+        /**
+         * The most auto-top-up attempts one workspace may make in one UTC
+         * month (audit P3-R7, R-158 point 6). Config may only TIGHTEN it:
+         * the schema refuses a value over the compiled
+         * `AUTO_TOPUP_ATTEMPTS_PER_MONTH_CEILING`, and `maybeAutoTopup` reads
+         * `min(this, that ceiling)` — the R-123 shape. Defaulted, so a
+         * stored document without the key parses to the ceiling.
+         */
+        autoTopupMaxAttemptsPerMonth: z
+          .number()
+          .int()
+          .min(1)
+          .max(AUTO_TOPUP_ATTEMPTS_PER_MONTH_CEILING)
+          .default(AUTO_TOPUP_ATTEMPTS_PER_MONTH_CEILING),
       })
       .strict(),
     graceDays: z.number().int().positive(),
@@ -440,15 +473,65 @@ export const respinConfigV1 = z
          * attempt cap when attempts are expensive and never binds when they are
          * cheap. Revisit trigger: the first 200 uncharged billable attempts'
          * measured cost, and it moves with `llm.maxOutputTokens` rather than
-         * being left behind by it, which is the whole point of the key.
+         * being left behind by it, which is the whole point of the key. A
+         * co-trigger is `generation.recentContextCharBudget` (launch L3, below):
+         * it raises the INPUT cost of every `ideation` / `ideaToScript` call and
+         * rewrite, so raising it moves the per-attempt worst case this bound
+         * was sized against (L3 billing gate, note BN-3).
          *
          * IT REPLACES NOTHING. A row whose `cost_state` is `unknown` carries a
          * NULL cost and contributes zero to the sum, which understates in the
          * dangerous direction — the attempt cap is what bounds those.
          */
         maxUnchargedBillableCostMicroUsd: z.number().int().min(1).default(1_000_000),
+        /**
+         * THE TOTAL, SUCCESSES INCLUDED (audit P3-R3, decisions R-158).
+         *
+         * The key above counts only rows the creator was NOT charged for, so
+         * it cannot see a success — and pointing it at a total would refuse a
+         * paying creator after two or three generations an hour. This is a
+         * separate key with a separate meaning: ALL billable generation spend
+         * per profile per `unchargedAttemptWindowMinutes`.
+         *
+         * 60,000,000 micro-USD = 60 USD. OWNER-CHOSEN, NOT A MAXIMUM. Its unit
+         * is the per-attempt worst case, output + input: three calls to the
+         * 12,000-token reply ceiling (2 × 12,000 × 15,000 + 12,000 × 5,000 =
+         * 420,000,000 nano-USD), three bounded inputs at the 104,323
+         * `llm.maxInputTokens` ceiling (104,323 × 3,000 × 2 + 104,323 × 1,000
+         * = 730,261,000), and the two vendor drafts carried EXEMPT from that
+         * ceiling — draft 1 on the rewrite with its 579 bytes of our own
+         * wrapping, the accepted draft on the scoring call ((12,000 + 579) ×
+         * 3,000 + 12,000 × 1,000 = 49,737,000) — = 1.199998 USD per attempt,
+         * so 60 USD covers 50 worst-case attempts per profile per hour. It
+         * binds on a runaway (a looping caller, a price change that
+         * multiplies the per-attempt cost), not on a tier's ordinary use.
+         * `generation-pricing.test.ts` recomputes the figure from the config
+         * inputs and requires this bound to cover at least 50 of them — the
+         * rule that sets the input ceiling (R-158). Revisit when `llm.maxOutputTokens`,
+         * `llm.maxInputTokens`, `llm.prices`, `llm.overallDeadlineMs` or
+         * `concurrencyLimits.studio` moves.
+         */
+        maxBillableCostMicroUsdPerWindow: z.number().int().min(1).default(60_000_000),
         unchargedAttemptWindowMinutes: z.number().int().min(1).default(60),
         frameworkContextCharBudget: z.number().int().min(1).default(20_000),
+        /**
+         * HOW MUCH LABELLED RECENT WORK ONE CONCEPT OR SCRIPT PROMPT MAY CARRY
+         * (launch L3, R-152) — the ONE character budget across both lists the
+         * plan bounds by count (at most five concept/draft records and three
+         * reaction notes, `RECENT_DRAFTS_MAX` / `RECENT_NOTES_MAX` in
+         * `packages/db/src/with-workspace.ts`, where the scoped read applies
+         * them). A SPEND DIAL for the
+         * reason `frameworkContextCharBudget` is one: it raises the input-token
+         * floor of every `ideation` / `ideaToScript` call.
+         *
+         * `min(0)`, UNLIKE THE FRAMEWORK BUDGET, deliberately: 0 is a real
+         * operator lever ("send no history"), not a silent library loss — every
+         * record the budget refuses is written into the claim's request
+         * snapshot as an `over_budget` exclusion, so the off switch is visible
+         * per operation. 4,000 characters is an UNMEASURED launch bound (about
+         * eight short records); revisit with L6's next-session witness.
+         */
+        recentContextCharBudget: z.number().int().min(0).default(4_000),
       })
       .strict()
       // EVERY KEY, NOT JUST THE ONES A STORED DOCUMENT USUALLY LACKS. In Zod 4
@@ -463,8 +546,10 @@ export const respinConfigV1 = z
       .default({
         maxUnchargedBillableAttempts: 10,
         maxUnchargedBillableCostMicroUsd: 1_000_000,
+        maxBillableCostMicroUsdPerWindow: 60_000_000,
         unchargedAttemptWindowMinutes: 60,
         frameworkContextCharBudget: 20_000,
+        recentContextCharBudget: 4_000,
       }),
     // Spin's requested lexical-change strictness. The pipeline clamps this to
     // its code-owned refusal floor, so config can only tighten the hard gate.
@@ -543,6 +628,43 @@ export const respinConfigV1 = z
             .strict()
         ),
         maxOutputTokens: z.number().int().positive(),
+        /**
+         * THE ASSEMBLED-INPUT CEILING ON EVERY CREATOR-FACING VENDOR CALL
+         * (audit P3-R2, decisions R-158), in tokens, compared against the
+         * prompt's UTF-8 byte length — an upper bound on its token count.
+         * Checked before the call by `assertInputWithinCeiling` (`@respin/llm`)
+         * in the studio and onboarding callers; the two public paths take
+         * `min(this, their compiled R-123 ceiling)`, so config may only
+         * tighten those.
+         *
+         * A SPEND DIAL, NOT A CONSTANT: input is billed per token on every
+         * call, so this is a REQ-G05 margin input — the
+         * `frameworkContextCharBudget` precedent.
+         *
+         * 104,323, THE MARGIN RULE'S MAXIMUM (R-158 point 7, 2026-10-06): the
+         * largest value at which the window total above still covers 50
+         * worst-case attempts, the exempt drafts included —
+         * `packages/credits/tests/input-ceiling-derivation.test.ts` computes it
+         * and requires this to equal it. The largest fresh generation the
+         * product's own caps produce — the framework and recent-work budgets
+         * at their limits, the creative block at its caps, three brain
+         * documents each at one maximal edit request (`BRAIN_EDIT_TOTAL_MAX`)
+         * and an idea at `OWN_IDEA_MAX` — measures 105,217 bytes, 0.86% OVER
+         * this (105,006 and 0.65% until audit Phase 8 added the untrusted-input
+         * fence, R-177): such an input is refused before the call with zero
+         * spend, a residual the owner sees in R-158 and the test keeps under
+         * 1%. A
+         * revision of a 12,000-token draft on such a brain, a brain grown past
+         * one edit per document, and a Spin reference at its field caps are
+         * larger still and are NOT admitted: admitting them breaks the margin
+         * rule, so that is the owner's call, recorded in R-158.
+         *
+         * DEFAULTED READ, NO REQUIRED PATH (the `overallDeadlineMs` rule
+         * below): a document without the key parses to 104,323 through the
+         * object-level default, which still bounds. It is listed in that
+         * default, because Zod 4 skips inner defaults when `llm` is absent.
+         */
+        maxInputTokens: z.number().int().min(1).default(104_323),
         // ONE ATTEMPT'S timeout. This is the SDK's per-request bound, so it
         // multiplies by `maxRetries + 1` — it is NOT a bound on the operation.
         timeoutMs: z.number().int().positive(),
@@ -588,7 +710,17 @@ export const respinConfigV1 = z
         // deadline still bounds the call. A defaulted price would bill a
         // creator against a number nobody chose, which is why that one is a
         // refusal and this one is not.
-        overallDeadlineMs: z.number().int().positive().default(120_000),
+        //
+        // ITS UPPER BOUND IS NOW ENFORCED HERE (audit P3-A3): above
+        // `AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS` the worker refuses to start
+        // on every tick, so a document carrying such a value is refused at
+        // parse — from the one constant `@respin/db` owns, never a copy.
+        overallDeadlineMs: z
+          .number()
+          .int()
+          .positive()
+          .max(AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS)
+          .default(120_000),
         // Bounded, and 0 is legal (it means "no retry"). A retry shares the
         // calling attempt's `attempt_id`, so retries never inflate the
         // distinct-attempt count D-M2-2 prices against (R5).
@@ -638,6 +770,7 @@ export const respinConfigV1 = z
         // that is stated rather than papered over, because a 53 s natural call
         // never had room for a retry inside a lease-bounded deadline.
         maxOutputTokens: 12_000,
+        maxInputTokens: 104_323,
         timeoutMs: 120_000,
         overallDeadlineMs: 120_000,
         maxRetries: 2,

@@ -4,7 +4,13 @@
 // never let a debit pass its balance check against since-expired lots.
 import { desc, eq, sql } from "drizzle-orm";
 import type { TxLike, VerifiedWorkspaceId } from "@respin/db";
-import { creditLedger, pausePeriods } from "@respin/db";
+import {
+  BILLING_LOCK_HELD_SETTING,
+  creditLedger,
+  lockIdentityMembershipGraph,
+  lockWorkspaceMembershipGraph,
+  pausePeriods,
+} from "@respin/db";
 import { ClockSkewError } from "./errors";
 
 /**
@@ -64,6 +70,18 @@ export async function getDbNow(tx: TxLike): Promise<Date> {
   return raw instanceof Date ? raw : new Date(raw);
 }
 
+/**
+ * THE BILLING LOCK — the last lock in the one global order (R-177):
+ * identity membership → workspace membership → billing. Blocking, by design:
+ * every money path serialises on it.
+ *
+ * It also records `respin.billing_lock_held` (transaction-local), which is
+ * what lets `@respin/db`'s membership-lock functions refuse a NEW membership
+ * key requested after it (`LockOrderError`, reason "after_billing") instead
+ * of risking the inversion that deadlocked settlement against the Stripe paths
+ * (register 2026-10-05 item 5). A transaction that needs membership locks as
+ * well takes them FIRST, through `takeWorkspaceLockInOrder` below.
+ */
 export async function takeWorkspaceLock(
   tx: TxLike,
   workspaceId: VerifiedWorkspaceId
@@ -71,8 +89,59 @@ export async function takeWorkspaceLock(
   // Session-level re-acquire of an xact lock is a no-op, which is what makes
   // deriveBalance safe to JOIN the debit path's transaction (D-M1-7).
   await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceId}::text, 0))`
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceId}::text, 0)), set_config(${BILLING_LOCK_HELD_SETTING}, 'on', true)`
   );
+}
+
+/**
+ * The NON-BLOCKING companion to `takeWorkspaceLock` (audit Phase 8, P8-R1):
+ * `pg_try_advisory_xact_lock` on the same key. Returns whether this
+ * transaction now holds the billing lock; on `true` the lock is held to the
+ * end of the transaction exactly as `takeWorkspaceLock` would hold it (and is
+ * recorded the same way), on `false` nothing was taken and nothing waited.
+ * Used by the display read only (`getDisplayBalance`), which falls back to the
+ * committed fold rather than queue behind a money path.
+ */
+export async function tryWorkspaceLock(
+  tx: TxLike,
+  workspaceId: VerifiedWorkspaceId
+): Promise<boolean> {
+  const result = (await tx.execute(
+    sql`SELECT got, CASE WHEN got THEN set_config(${BILLING_LOCK_HELD_SETTING}, 'on', true) END AS recorded FROM (SELECT pg_try_advisory_xact_lock(hashtextextended(${workspaceId}::text, 0)) AS got) AS attempt`
+  )) as unknown as { rows: { got: boolean | string }[] };
+  const got = result.rows[0]?.got;
+  return got === true || got === "t" || got === "true";
+}
+
+/**
+ * THE ORDERED HELPER (audit Phase 8, P8-A1, R-177) — the one way a
+ * transaction that needs the membership graph AND the billing lock takes them:
+ * the identity lock (when a user acts), then the workspace membership lock,
+ * both in the SHARED form, then the billing lock.
+ *
+ * Shared, because none of its callers changes the membership graph: settlement,
+ * onboarding inference, profile creation and pasted-reference intake re-run a
+ * lifecycle fence (a reader) inside the locked transaction, and the Stripe
+ * paths read the workspace's lifecycle state. A shared hold still excludes the
+ * exclusive form every deletion writer takes, and the billing lock that follows
+ * still serialises the money paths against each other.
+ *
+ * The guarded calls that follow in the same transaction re-enter keys already
+ * held (allowed), so settle's `caps.readGenerationAttempt`, inference's
+ * `firstBillableAttempt` and `writeBrainDoc`, and `createProfile`'s
+ * capabilities no longer take a membership lock after billing — the inversion
+ * register item 5 found. `lock-order.test.ts` lists every call site of this
+ * helper and of `takeWorkspaceLock`.
+ */
+export async function takeWorkspaceLockInOrder(
+  tx: TxLike,
+  holder: Readonly<{ workspaceId: VerifiedWorkspaceId; userId?: string }>
+): Promise<void> {
+  if (holder.userId !== undefined) {
+    await lockIdentityMembershipGraph(tx, holder.userId, "shared");
+  }
+  await lockWorkspaceMembershipGraph(tx, holder.workspaceId, "shared");
+  await takeWorkspaceLock(tx, holder.workspaceId);
 }
 
 /** Latest recorded event instant for the workspace (ledger + pauses). */

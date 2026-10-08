@@ -122,23 +122,21 @@ export const youtube: TrendSource & {
  * edge runs `credits -> db`, and `trends` depends on nothing), so the shape
  * is asserted against THIS type where the adapter lives, and the R4 block in
  * `tests/trends.test.ts` reads that file to witness the production caller
- * exists. The production port never returns `accepted: false`: no quote
- * budget is enforced at intake (R-3's is enforced at grounding), and every
- * refusal it has is a typed error thrown through rather than a reason
- * relabelled.
+ * exists.
+ *
+ * THE PORT HAS NO REFUSAL ARM (audit Phase 2, P2-R11). It advertised an
+ * `accepted: false` quote-budget refusal arm that its sole
+ * production implementation never produced — no quote budget is enforced at
+ * intake (R-3's is enforced at grounding) — and a test exercised propagation
+ * of a reason nothing computes. Every refusal is a TYPED ERROR THROWN
+ * THROUGH (tier, pause, role, balance, content, input shape), never a reason
+ * relabelled, so the arm, its error class and the phantom test were deleted.
  */
 export type ReferenceIntakePort = {
   intakeReferenceTranscript(input: { profileId: string; sourceUrl: string; transcript: string }): Promise<
-    | { accepted: true; referenceInputId: string }
-    | { accepted: false; reason: "quote_budget_exceeded" }
+    { accepted: true; referenceInputId: string }
   >;
 };
-
-export class SubmittedTranscriptRefusedError extends Error {
-  constructor(public readonly code: "quote_budget_exceeded") {
-    super(code);
-  }
-}
 
 export const submitted: TrendSource & {
   submit(input: { profileId: string; url: string; transcript: string; referenceIntake: ReferenceIntakePort }): Promise<{ referenceInputId: string }>;
@@ -146,7 +144,6 @@ export const submitted: TrendSource & {
   name: "submitted",
   async submit({ profileId, url, transcript, referenceIntake }) {
     const result = await referenceIntake.intakeReferenceTranscript({ profileId, sourceUrl: url, transcript });
-    if (!result.accepted) throw new SubmittedTranscriptRefusedError(result.reason);
     return { referenceInputId: result.referenceInputId };
   },
 };

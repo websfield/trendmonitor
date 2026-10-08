@@ -327,8 +327,39 @@ describe("usageRunwayFor authority wiring", () => {
     );
     expect(source).toContain("ledger: usageRunwayDebits");
     expect(source).toMatch(
-      /usageRunwayForWithReaders\(db, scope, AUTHORITATIVE_READERS\)/
+      /usageRunwayForWithReaders\(db, scope, USAGE_RUNWAY_READERS\)/
     );
     expect(source).not.toMatch(/creditLedger|model_usage|workspace_spend_monthly/);
+    // P8-A2: the balance reader is the PURE committed fold, never the locked
+    // derive that wrote expiry rows from this transaction's stale snapshot.
+    expect(source).toContain("balance: committedFoldInTx");
+    expect(source).not.toMatch(/balance:\s*deriveBalanceInTx/);
+  });
+});
+
+describe("P8-A2: the usage runway is a PURE READ", () => {
+  it("with an expired, unmaterialised lot in the ledger, the runway writes NO row — and the next locked fold still materialises it", async () => {
+    const db = await createTestDb();
+    await seedAuthUser(db, "runway_pure_user");
+    await seedDb(db);
+    await ensureUserWorkspace(db, { authUserId: "runway_pure_user", name: "Pure" });
+    const pure = await withWorkspace(db, { authUserId: "runway_pure_user" });
+    const longAgo = new Date(Date.now() - 48 * 3600_000);
+    await db.insert(schema.creditLedger).values([
+      // Expired yesterday with its whole remainder: an expiry candidate.
+      { workspaceId: pure.workspaceId, delta: 7, kind: "grant", createdAt: longAgo, expiresAt: new Date(Date.now() - 24 * 3600_000), refType: "test", refId: "expired" },
+    ]);
+    const rows = async () =>
+      (await db.select().from(schema.creditLedger)).filter((r) => r.workspaceId === pure.workspaceId);
+    const before = await rows();
+    const result = await usageRunwayFor(db, pure);
+    expect(result.state).not.toBe("read_unavailable");
+    // NOTHING written: no expiry row, and no Free mint either.
+    expect(await rows()).toEqual(before);
+    // The next LOCKED fold (the page's own display read, when the lock is
+    // free) is what settles it, from a fresh read.
+    const { deriveBalance } = await import("../src/balance");
+    await deriveBalance(db, pure.workspaceId);
+    expect((await rows()).filter((r) => r.kind === "expiry").map((r) => r.delta)).toEqual([-7]);
   });
 });

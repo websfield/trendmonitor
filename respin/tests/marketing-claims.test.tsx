@@ -41,7 +41,7 @@
 //     `script`, `hook` and `analy` on screens that do not do the thing. The
 //     product does all four, and "a script you can film" is the honest name
 //     for what the landing sells. `/studio` left the same list in slice 6.
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Metadata } from "next";
@@ -55,6 +55,10 @@ import {
   PERFORMANCE_CLAIMS,
 } from "./support/forbidden-claims";
 import { claimHits, specimensFor } from "./support/claim-scan";
+import {
+  DELETION_REQUEST_SCOPES_ENV,
+  parseDeletionScopeList,
+} from "../packages/db/src/deletion-request-enablement";
 
 // The landing's proof slot is a SERVER component that reads the public Sample
 // Spin rollout flag through the credits facade. `vi.hoisted` rather than a
@@ -72,6 +76,16 @@ vi.mock("@respin/credits/app-server", async (importOriginal) => {
     // function" rather than into a claim finding (batch-3 gate, N-10).
     respinCredits: { ...actual.respinCredits, publicSampleSpinEnablement: mocks.publicSampleSpinEnablement },
   };
+});
+
+// THE ACTIVE CONFIG the landing's pricing reads per request (audit P6-A3,
+// R-175), stood in for by the seed so the scan reads the numbered branch;
+// `tests/landing-pricing.test.ts` drives the number-free branch and an
+// appended version through the real read.
+vi.mock("@respin/config/app-server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@respin/config/app-server")>();
+  const { CONFIG_V1_SEED } = await import("@respin/db");
+  return { ...actual, getActiveConfigServer: async () => ({ version: 1, content: CONFIG_V1_SEED }) };
 });
 
 // `app/layout.tsx` is imported for its `metadata` — the landing's real
@@ -271,7 +285,8 @@ async function scanEverything(): Promise<Scanned> {
   const legal = await import("../app/(marketing)/legal/page");
 
   const rendered: Record<string, string> = {
-    "page.tsx": renderToStaticMarkup(<LandingPage />),
+    // ASYNC since audit P6-A3 (R-175): the page reads the active config.
+    "page.tsx": renderToStaticMarkup(await LandingPage()),
     "changelog/page.tsx": renderToStaticMarkup(<changelog.default />),
     "legal/page.tsx": renderToStaticMarkup(<legal.default />),
   };
@@ -417,6 +432,80 @@ describe("the marketing surfaces pass the claims canon", () => {
     // ...and the root layout's description really is in the scanned metadata,
     // which is the producer the first version missed entirely.
     expect(metadata["../layout.tsx"]).toContain("Scripts in your voice");
+  });
+
+  it("P1-A1: with no deletion scope open, /legal and the changelog say deletion is NOT open yet", async () => {
+    // THE LAUNCH STATE THIS COPY DESCRIBES, read rather than assumed: the
+    // shipped env template leaves the request flag blank, and blank parses to
+    // no open scope. The phase that opens a scope edits that line, and this
+    // case goes red until the copy is rewritten with it.
+    const template = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "..", "env.example"),
+      "utf8"
+    ).replace(/\r\n/g, "\n");
+    const line = template.split("\n").find((l) => l.startsWith(`${DELETION_REQUEST_SCOPES_ENV}=`));
+    expect(line, "env.example no longer declares the request flag").toBeDefined();
+    const value = line!.slice(DELETION_REQUEST_SCOPES_ENV.length + 1);
+    expect(parseDeletionScopeList(value, DELETION_REQUEST_SCOPES_ENV).size).toBe(0);
+    expect(parseDeletionScopeList(undefined, DELETION_REQUEST_SCOPES_ENV).size).toBe(0);
+
+    const { rendered } = await scanEverything();
+    const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&rsquo;|&#x27;/g, "'");
+    const legal = text(rendered["legal/page.tsx"]);
+    const changelog = text(rendered["changelog/page.tsx"]);
+    expect(legal).toContain("Deletion requests are not open on this service yet.");
+    expect(changelog).toContain("It is not enabled on this service, and deletion requests are not open yet.");
+    // ...and neither ANNOUNCES deletion as available. The first string is the
+    // sentence `/legal` shipped (register item 4); the second the changelog's.
+    for (const page of [legal, changelog]) {
+      expect(page).not.toContain("Account deletion has a recovery window");
+      expect(page).not.toContain("Erasure is enabled per deployment");
+      expect(page).not.toMatch(/\byou can (?:request|delete)\b/i);
+    }
+  });
+
+  it("AC12 (P5-R1 amendment): the two deletion sentences DERIVE from the request flag — unset says not open, `workspace` says open", async () => {
+    const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&rsquo;|&#x27;/g, "'");
+    const previous = process.env[DELETION_REQUEST_SCOPES_ENV];
+    try {
+      delete process.env[DELETION_REQUEST_SCOPES_ENV];
+      const closed = (await scanEverything()).rendered;
+      expect(text(closed["legal/page.tsx"])).toContain("Deletion requests are not open on this service yet.");
+      expect(text(closed["changelog/page.tsx"])).toContain("deletion requests are not open yet");
+
+      process.env[DELETION_REQUEST_SCOPES_ENV] = "workspace";
+      const open = (await scanEverything()).rendered;
+      const legal = text(open["legal/page.tsx"]);
+      const changelog = text(open["changelog/page.tsx"]);
+      expect(legal).toContain("Deletion requests are open on this service for workspaces.");
+      expect(legal).not.toContain("not open on this service yet");
+      expect(changelog).toContain("Deletion requests are open on this service for workspaces.");
+      expect(changelog).not.toContain("deletion requests are not open yet");
+      // The enabled wording names only the OPEN scope: accounts are not open.
+      expect(legal).not.toMatch(/open on this service for accounts/);
+      // R-166 (gate M3): the window's promise is worded PER SCOPE. The old
+      // single sentence promised every scope a brain export during grace.
+      expect(legal).toContain("a person for whom it is their only workspace can still export its brain");
+      expect(legal).not.toContain("the brain export stays available");
+      expect(legal).not.toContain("An account deletion");
+
+      process.env[DELETION_REQUEST_SCOPES_ENV] = "identity,profile";
+      const scoped = text((await scanEverything()).rendered["legal/page.tsx"]);
+      // Identity: closed during the window, nothing exportable, the emailed link cancels.
+      expect(scoped).toContain("the account is closed during that window, so its data cannot be exported");
+      expect(scoped).toContain("the recovery link sent to the account's email address, with the account's password, cancels it");
+      // Profile: a tombstoned profile cannot be opened or exported.
+      expect(scoped).toContain("the profile cannot be opened or exported during that window");
+      expect(scoped).not.toMatch(/export(?:s)? (?:its|the) brain/);
+      expect(scoped).not.toContain("A workspace deletion");
+      // ...and it still claims nothing the canon forbids.
+      for (const page of [open["legal/page.tsx"], open["changelog/page.tsx"]]) {
+        expect(claimHits(page, ...APPLIED)).toEqual([]);
+      }
+    } finally {
+      if (previous === undefined) delete process.env[DELETION_REQUEST_SCOPES_ENV];
+      else process.env[DELETION_REQUEST_SCOPES_ENV] = previous;
+    }
   });
 
   it.each(specimensFor(...APPLIED))(

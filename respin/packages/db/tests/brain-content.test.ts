@@ -144,7 +144,11 @@ describe("assertClosedSchema", () => {
     // matches, and a doctored copy does not.
     const { readFile } = await import("node:fs/promises");
     const url = new URL("../src/brain-content.ts", import.meta.url);
-    const src = await readFile(url, "utf8");
+    // LINE ENDINGS NORMALISED (audit Phase 2 gate): `brain-content.ts` is
+    // `w/crlf` in some worktrees, and the `^…$` patterns below with `m` would
+    // otherwise see a trailing `\r` — a negative match going silently green
+    // (CLAUDE.md, 2026-09-04 / 2026-09-18).
+    const src = (await readFile(url, "utf8")).replace(/\r\n/g, "\n");
 
     // Phase 10a closes G-15: the guard must NOT run at module load any more.
     // A top-level call (column 0, not inside a function) is the shape that
@@ -185,7 +189,10 @@ describe("assertClosedSchema", () => {
     const instrumentation = await readFile(new URL("instrumentation-node.ts", root), "utf8");
     const workerMain = await readFile(new URL("worker/main.ts", root), "utf8");
     expect(ci).toMatch(/run:\s*pnpm preflight/);
-    expect(instrumentation).toMatch(/runStartupPreflight\(\)/);
+    // Launch L2 (E-30): the server's call now passes its environment IN (the
+    // transport-selection check), so the pin is the CALL, with or without an
+    // argument object — not the empty parentheses.
+    expect(instrumentation).toMatch(/runStartupPreflight\((\)|\{)/);
     expect(workerMain).toMatch(/runStartupPreflight\(\)/);
   });
 

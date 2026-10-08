@@ -228,6 +228,27 @@ type ReaderShape =
   | "unresolvedFrom";
 type ReaderFinding = { file: string; shape: ReaderShape };
 
+/**
+ * ONE GUARDED TABLE: its drizzle export name and the raw-SQL rules that name
+ * it after `from` / `join`.
+ *
+ * THE SCANNER WAS WRITTEN FOR `generation_feedback` ALONE and is now a
+ * function of the table (audit P6-R6, AC10): `results` is the second guarded
+ * table, so "the count is reachable only through `ProfileScope.mint`" is a
+ * scan that exists rather than a sentence. The raw-SQL rules stay REGEXP
+ * LITERALS per table, never assembled from the name (CLAUDE.md 2026-08-26:
+ * one lost backslash and the rule matches nothing while reporting success).
+ */
+type GuardedTable = Readonly<{ exportName: string; rawSql: readonly RegExp[] }>;
+
+const FEEDBACK_TABLE: GuardedTable = {
+  exportName: TABLE_EXPORT,
+  rawSql: [
+    /\bfrom\s+(?:"?public"?\s*\.\s*)?"?generation_feedback"?\b/gi,
+    /\bjoin\s+(?:"?public"?\s*\.\s*)?"?generation_feedback"?\b/gi,
+  ],
+};
+
 /** Unwrap `x as never`, `x!`, `(x)` — a cast must not hide the table. */
 function unwrap(expr: ts.Expression): ts.Expression {
   let node: ts.Expression = expr;
@@ -274,6 +295,8 @@ function unwrap(expr: ts.Expression): ts.Expression {
  * depends on how the author happened to write the file.
  */
 type Bindings = {
+  /** The guarded table's drizzle export name this pass resolves. */
+  table: string;
   tables: Set<string>;
   queryRoots: Set<string>;
   accessors: Set<string>;
@@ -325,7 +348,7 @@ function isAccessorExpr(
   if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
     if (!isQueryRootExpr(node.expression, sf, b)) return false;
     const name = memberName(node, sf);
-    return name === null || name === TABLE_EXPORT;
+    return name === null || name === b.table;
   }
   return false;
 }
@@ -336,7 +359,7 @@ function namesTable(expr: ts.Expression, sf: ts.SourceFile, b: Bindings): boolea
   if (ts.isIdentifier(node)) return b.tables.has(node.getText(sf));
   // `schema.generationFeedback` / `schema["generationFeedback"]`
   if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-    return memberName(node, sf) === TABLE_EXPORT;
+    return memberName(node, sf) === b.table;
   }
   // `alias(generationFeedback, "gf")` — drizzle's own self-join helper, and a
   // first-class join idiom rather than an exotic spelling. It returned ZERO
@@ -373,9 +396,10 @@ function constString(
   return null;
 }
 
-function collectBindings(sf: ts.SourceFile): Bindings {
+function collectBindings(sf: ts.SourceFile, table: string = TABLE_EXPORT): Bindings {
   const b: Bindings = {
-    tables: new Set([TABLE_EXPORT]),
+    table,
+    tables: new Set([table]),
     queryRoots: new Set(),
     accessors: new Set(),
     strings: new Map(),
@@ -385,7 +409,7 @@ function collectBindings(sf: ts.SourceFile): Bindings {
   const visit = (node: ts.Node): void => {
     if (ts.isImportSpecifier(node)) {
       const original = (node.propertyName ?? node.name).getText(sf);
-      if (original === TABLE_EXPORT) b.tables.add(node.name.getText(sf));
+      if (original === b.table) b.tables.add(node.name.getText(sf));
     }
     if (ts.isVariableDeclaration(node) && node.initializer) {
       const init = unwrap(node.initializer);
@@ -411,7 +435,7 @@ function collectBindings(sf: ts.SourceFile): Bindings {
           const original = (el.propertyName ?? el.name).getText(sf);
           if (!ts.isIdentifier(el.name)) continue;
           const local = el.name.getText(sf);
-          if (original === TABLE_EXPORT) {
+          if (original === b.table) {
             if (fromQueryRoot) b.accessors.add(local);
             else b.tables.add(local);
           }
@@ -489,7 +513,7 @@ function shapeOf(expr: ts.Expression, sf: ts.SourceFile, b: Bindings): ReaderSha
   if (ts.isCallExpression(node)) return "aliased";
   if (ts.isPropertyAccessExpression(node)) return "schema";
   if (ts.isElementAccessExpression(node)) return "computed";
-  if (ts.isIdentifier(node) && node.getText(sf) !== TABLE_EXPORT) {
+  if (ts.isIdentifier(node) && node.getText(sf) !== b.table) {
     return b.tables.has(node.getText(sf)) ? "aliased" : "direct";
   }
   return "direct";
@@ -521,8 +545,14 @@ function shapeOf(expr: ts.Expression, sf: ts.SourceFile, b: Bindings): ReaderSha
  * enumerated there; this file is about who may look at the rows, which is the
  * R11 question.
  */
-export function scanFeedbackReaders(
-  files: Map<string, string>
+export function scanFeedbackReaders(files: Map<string, string>): ReaderFinding[] {
+  return scanTableReaders(files, FEEDBACK_TABLE);
+}
+
+/** Every READ of one guarded table in a set of sources — see `scanFeedbackReaders`. */
+export function scanTableReaders(
+  files: Map<string, string>,
+  guarded: GuardedTable
 ): ReaderFinding[] {
   const out: ReaderFinding[] = [];
   const READ_METHODS = new Set([
@@ -540,12 +570,17 @@ export function scanFeedbackReaders(
       true,
       /\.tsx$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS
     );
-    const bindings = collectBindings(sf);
+    const bindings = collectBindings(sf, guarded.exportName);
     const visit = (node: ts.Node): void => {
       if (
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
         READ_METHODS.has(node.expression.name.getText(sf)) &&
+        // `Array.from(x)` is not a query: the one receiver whose `.from` is a
+        // standard-library call rather than a query builder. A table named
+        // like a common noun (`results`) makes this a live false positive;
+        // `generationFeedback` never needed it.
+        !(ts.isIdentifier(node.expression.expression) && node.expression.expression.text === "Array") &&
         node.arguments.length > 0 &&
         namesTable(node.arguments[0], sf, bindings)
       ) {
@@ -582,10 +617,7 @@ export function scanFeedbackReaders(
     // `\s` into `s`, the rule matches nothing, and the scan reports "no
     // readers" because it found none of anything (CLAUDE.md 2026-08-21).
     const text = raw.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    const RAW_SQL: RegExp[] = [
-      /\bfrom\s+(?:"?public"?\s*\.\s*)?"?generation_feedback"?\b/gi,
-      /\bjoin\s+(?:"?public"?\s*\.\s*)?"?generation_feedback"?\b/gi,
-    ];
+    const RAW_SQL = guarded.rawSql;
     for (const re of RAW_SQL) {
       for (const _m of text.matchAll(re)) {
         void _m;
@@ -773,58 +805,180 @@ export function scanPromotionConstructorBoundary(
 }
 
 /**
- * AGGREGATION INSIDE THE ONE PERMITTED READER.
+ * EVERY QUERY IN THE PERMITTED FILE THAT READS `generation_feedback`, BY NAME
+ * (L3 tenancy gate, Low T-L2).
  *
- * The reader-ownership rule above means exactly one file may touch the table,
- * so "nothing aggregates feedback" reduces to "that file's feedback query
- * aggregates nothing". Checked STRUCTURALLY rather than by a text window: the
- * `feedbackPage` helper is located by parse and its call subtree is inspected
- * for a drizzle aggregate or a `groupBy`.
+ * A LIST, NOT A PRODUCER (CLAUDE.md Respin rule 7). This scan used to inspect
+ * ONE helper — `feedbackPage` — under a docblock calling it "the only query in
+ * this repo that reads `generation_feedback`". That was false before launch L3
+ * (`promotionFeedbackInputs`, `promotionProposalReview`, the
+ * `brainAssetSummary` count) and L3 added three more, none of which the
+ * aggregation check could see. Now `scanFeedbackQueries` finds EVERY reader by
+ * shape, and the test asserts the set it finds EQUALS this list — so a new
+ * reader is red until someone lists it here, deliberately, and from then on
+ * its query is scanned for aggregates like every other.
  *
- * Returns the aggregate names found, so a probe can name them.
+ * `owner` is the named function the read sits in (an accessor, a local helper);
+ * `shape` is how it reads: `.from(generationFeedback)`, a join on it, or a raw
+ * `sql` template interpolating the table.
  */
-export function scanFeedbackAggregation(source: string): string[] {
-  const AGGREGATES = new Set([
-    "count",
-    "countDistinct",
-    "sum",
-    "sumDistinct",
-    "avg",
-    "avgDistinct",
-    "min",
-    "max",
-    "groupBy",
-    "having",
-  ]);
+export const FEEDBACK_READERS: readonly { owner: string; shape: FeedbackReaderShape }[] = [
+  { owner: "feedbackPage", shape: "from" },
+  { owner: "brainAssetSummary", shape: "sql" },
+  // Launch L3 (R-152): the notes and the per-draft reaction labels…
+  { owner: "recentContextCandidates", shape: "from" },
+  { owner: "recentContextCandidates", shape: "from" },
+  // …and (audit P6-A1, R-174) the same notes window with the creator's
+  // exclusion lifted, ids and the stamp only, so the snapshot can record what
+  // "Leave this out of future drafts" kept out.
+  { owner: "recentContextCandidates", shape: "from" },
+  // Phase 6 tenancy gate (R-174): the correlated EXISTS / NOT EXISTS that
+  // withholds a draft every reaction on which was left out. One subquery
+  // builder, written once, read as one `from`; ids-free, no aggregate.
+  { owner: "reactionOn", shape: "from" },
+  // Audit P6-A1 (R-174): the exclusion write resolves its target through the
+  // scope before stamping it, and reads the settled row back after a lost
+  // race. Whole rows, no aggregate, nothing derived.
+  { owner: "excludeGenerationFeedbackFromHistory", shape: "from" },
+  { owner: "excludeGenerationFeedbackFromHistory", shape: "from" },
+  // …and the settlement's erased-context presence check (ids only).
+  { owner: "recentContextPresent", shape: "from" },
+  { owner: "promotionFeedbackInputs", shape: "from" },
+  { owner: "promotionProposalReview", shape: "join" },
+];
+
+/**
+ * The aggregates the readers above are KNOWN to contain, each with its reason.
+ * Anything the scan finds that is not here is red.
+ *
+ * `brainAssetSummary`'s `count(*)` is the Brain page's total of this profile's
+ * stored feedback rows (Phase 10b-1). It reads no reaction value and groups
+ * nothing, so it derives nothing ABOUT what the creator said (R11 forbids a
+ * rollup like "you said this three times", which needs a grouping or a
+ * filter on the reaction). It predates this list and is recorded here rather
+ * than judged: whether R11 permits a bare total is the owner's call, and a
+ * second entry needs the same deliberate edit and reason.
+ */
+export const KNOWN_FEEDBACK_AGGREGATES: readonly { owner: string; name: string }[] = [
+  { owner: "brainAssetSummary", name: "count" },
+];
+
+export type FeedbackReaderShape = "from" | "join" | "sql";
+
+const FEEDBACK_AGGREGATE_CALLS = new Set([
+  "count",
+  "countDistinct",
+  "sum",
+  "sumDistinct",
+  "avg",
+  "avgDistinct",
+  "min",
+  "max",
+  "groupBy",
+  "having",
+]);
+
+/**
+ * SQL aggregates inside a raw template's TEXT. Written as a regex LITERAL, never
+ * assembled from a string (CLAUDE.md 2026-08-26: one lost backslash turns `\b`
+ * into `b` and the scan matches nothing while reporting success); the planted
+ * case below asserts it fires.
+ */
+const SQL_AGGREGATE = /\b(count|sum|avg|min|max)\s*\(|\bgroup\s+by\b|\bhaving\b/gi;
+
+const JOIN_METHODS = new Set(["innerJoin", "leftJoin", "rightJoin", "fullJoin", "crossJoin"]);
+
+/**
+ * Find every `generation_feedback` reader in a source file, and every
+ * aggregate inside each reader's QUERY.
+ *
+ * THE QUERY is the whole chained expression the read belongs to — for
+ * `conn.select({…}).from(generationFeedback).where(…)` that is the chain from
+ * `conn` to its last call, so a `count()` in the `select` or a `.groupBy` after
+ * the `where` is inside it — and for a raw `sql` template it is the template's
+ * text. Each reader is attributed to its OWNER: the nearest enclosing named
+ * function (a property or variable whose value is a function, or a function
+ * or method declaration).
+ */
+export function scanFeedbackQueries(source: string): {
+  readers: { owner: string; shape: FeedbackReaderShape }[];
+  aggregates: { owner: string; name: string }[];
+} {
   const sf = ts.createSourceFile("x.ts", source, ts.ScriptTarget.Latest, true);
-  const found: string[] = [];
-  let helper: ts.Node | undefined;
-  const findHelper = (node: ts.Node): void => {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.getText(sf) === "feedbackPage"
-    ) {
-      helper = node;
+  const readers: { owner: string; shape: FeedbackReaderShape }[] = [];
+  const aggregates: { owner: string; name: string }[] = [];
+  const isTable = (node: ts.Node | undefined) =>
+    node !== undefined && ts.isIdentifier(node) && node.text === TABLE_EXPORT;
+  const isFunction = (node: ts.Node | undefined) =>
+    node !== undefined && (ts.isArrowFunction(node) || ts.isFunctionExpression(node));
+  const ownerOf = (node: ts.Node): string => {
+    for (let at: ts.Node | undefined = node.parent; at !== undefined; at = at.parent) {
+      if (
+        (ts.isPropertyAssignment(at) || ts.isVariableDeclaration(at)) &&
+        isFunction(at.initializer)
+      ) {
+        return at.name.getText(sf);
+      }
+      if ((ts.isFunctionDeclaration(at) || ts.isMethodDeclaration(at)) && at.name) {
+        return at.name.getText(sf);
+      }
     }
-    ts.forEachChild(node, findHelper);
+    return "<top level>";
   };
-  findHelper(sf);
-  if (!helper) return ["<feedbackPage helper not found>"];
+  /** Walk UP from a call to the outermost expression of its method chain. */
+  const chainOf = (call: ts.CallExpression): ts.Node => {
+    let top: ts.Node = call;
+    for (;;) {
+      const parent = top.parent;
+      if (ts.isPropertyAccessExpression(parent) && parent.expression === top) {
+        top = parent;
+      } else if (ts.isCallExpression(parent) && parent.expression === top) {
+        top = parent;
+      } else {
+        return top;
+      }
+    }
+  };
+  const aggregatesIn = (root: ts.Node, owner: string) => {
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression;
+        const name = ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : ts.isIdentifier(callee)
+            ? callee.text
+            : "";
+        if (FEEDBACK_AGGREGATE_CALLS.has(name)) aggregates.push({ owner, name });
+      }
+      if (ts.isTaggedTemplateExpression(node)) {
+        for (const m of node.template.getText(sf).matchAll(SQL_AGGREGATE)) {
+          aggregates.push({ owner, name: (m[1] ?? m[0]).toLowerCase().replace(/\s+/g, " ") });
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(root);
+  };
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      const name = ts.isPropertyAccessExpression(callee)
-        ? callee.name.getText(sf)
-        : ts.isIdentifier(callee)
-          ? callee.getText(sf)
-          : "";
-      if (AGGREGATES.has(name)) found.push(name);
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const method = node.expression.name.text;
+      if ((method === "from" || JOIN_METHODS.has(method)) && isTable(node.arguments[0])) {
+        const owner = ownerOf(node);
+        readers.push({ owner, shape: method === "from" ? "from" : "join" });
+        aggregatesIn(chainOf(node), owner);
+      }
+    }
+    if (ts.isTaggedTemplateExpression(node) && ts.isTemplateExpression(node.template)) {
+      if (node.template.templateSpans.some((span) => isTable(span.expression))) {
+        const owner = ownerOf(node);
+        readers.push({ owner, shape: "sql" });
+        aggregatesIn(node, owner);
+      }
     }
     ts.forEachChild(node, visit);
   };
-  visit(helper);
-  return found;
+  visit(sf);
+  return { readers, aggregates };
 }
 
 const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "migrations", "coverage"]);
@@ -1127,6 +1281,118 @@ describe("R11 (verification 7): a SECOND raw reader anywhere else fails", () => 
   });
 });
 
+// ---------------------------------------------------------------------------
+// AUDIT P6-R6 (AC10): `results` IS THE SECOND GUARDED TABLE.
+//
+// `countResults` is the count behind Studio's and first ideas' results
+// sentence, and the plan's claim about it is that it is reachable only
+// through `ProfileScope.mint`. That claim needs a scan that would go red on a
+// bare `db.select().from(results)` anywhere else — which is this block. The
+// scanner is the same function, handed a second table.
+
+const RESULTS_TABLE: GuardedTable = {
+  exportName: "results",
+  rawSql: [
+    /\bfrom\s+(?:"?public"?\s*\.\s*)?"?results"?\b/gi,
+    /\bjoin\s+(?:"?public"?\s*\.\s*)?"?results"?\b/gi,
+  ],
+};
+
+/**
+ * THE FILES THAT MAY READ `results` RAW — MEASURED 2026-10-07, not the plan's
+ * one-entry guess (Respin rule 7: the population is what the scan finds, each
+ * listed with its reason). EXACT PATHS, compared with `===`.
+ */
+const RAW_RESULTS_READER_FILES: readonly string[] = [
+  // The scoped readers: `resultsPage` (the screen list and `exportPage`),
+  // `comparableResults`, `countResults` (P6-R6), and `brainAssetSummary`'s
+  // count — every one under both scope columns.
+  "packages/db/src/with-workspace.ts",
+  // The operator's PRE-DEPLOY proposal audit (R-115, `pnpm proposals:audit`):
+  // cross-tenant by design, an EXISTS over the evidence join, ids out. No
+  // `app/**` or worker path reaches it.
+  "packages/db/src/promotion-audit.ts",
+  // The deletion executor's and the retention receiver's computed-identifier
+  // SQL, the same reason `RAW_FEEDBACK_READER_FILES` lists them: they render
+  // every registry table by identifier, so the scan's fail-closed
+  // `unresolvedFrom` rule finds them for ANY table, `results` included.
+  "packages/db/src/lifecycle-sql-port.ts",
+  "packages/db/src/retention-receiver.ts",
+];
+
+describe("P6-R6 (AC10): `results` has a reader census too", () => {
+  const isAllowed = (file: string) => RAW_RESULTS_READER_FILES.includes(file);
+  const scan = (src: string, file = "packages/credits/src/sneaky-count.ts") =>
+    scanTableReaders(new Map([[file, src]]), RESULTS_TABLE);
+
+  // THE SPELLINGS, PLANTED FOR THIS TABLE. The scanner's resolvers were
+  // written against `generationFeedback`; each spelling is driven again with
+  // the second name so a resolver that still hard-codes the first is red.
+  const SPELLINGS: [ReaderShape, string][] = [
+    ["direct", "db.select().from(results);"],
+    ["direct", "db.select({ n: count() }).from(results).where(eq(results.profileId, p));"],
+    ["aliased", 'import { results as r } from "@respin/db";\ndb.select().from(r);'],
+    ["aliased", "const { results: t } = schema;\ndb.select().from(t);"],
+    ["schema", "db.select().from(schema.results);"],
+    ["computed", 'db.select().from(schema["results"]);'],
+    ["cast", "db.select().from(results as never);"],
+    ["rawSql", "q('select count(*) from results where profile_id = $1');"],
+    ["rawSql", 'q(\'select 1 from public."results"\');'],
+    ["queryApi", "await db.query.results.findMany();"],
+    ["sqlTemplate", "await db.execute(sql`select count(*) from ${results}`);"],
+  ];
+
+  it.each(SPELLINGS)("sees a %s read of results, and it is not allowed outside the list", (shape, src) => {
+    const found = scan(src);
+    expect(found.some((f) => f.shape === shape), src).toBe(true);
+    expect(found.filter((f) => !isAllowed(f.file))).not.toEqual([]);
+  });
+
+  it("AC10 plants: a new production file counting results directly, or through `schema.results`, is red; the sanctioned file is not", () => {
+    const direct = scan('import { results } from "@respin/db";\nexport const n = () => db.select({ n: count() }).from(results);', "app/(product)/studio/count.ts");
+    const schema = scan("export const n = () => db.select().from(schema.results);", "packages/db/src/results-count.ts");
+    for (const found of [direct, schema]) {
+      expect(found.length, "the plant was not seen at all").toBeGreaterThan(0);
+      expect(found.filter((f) => !isAllowed(f.file))).not.toEqual([]);
+    }
+    expect(isAllowed("packages/db/src/with-workspace.ts")).toBe(true);
+    expect(isAllowed("packages/db/src/results-ops.ts")).toBe(false);
+  });
+
+  it("does NOT mistake an array, a local of the same name, or prose for a read", () => {
+    expect(
+      scanTableReaders(
+        new Map([
+          ["a.ts", "const results = await run();\nconst copy = Array.from(results);"],
+          ["b.ts", "const out = { results: rows };\nreturn out.results.length;"],
+          ["c.ts", "// db.select().from(results)\n"],
+          ["d.ts", "const s = 'Proposals from logged results wait on a connector.';"],
+          ["e.ts", "db.insert(results).values(x);"],
+        ]),
+        RESULTS_TABLE
+      )
+    ).toEqual([]);
+  });
+
+  it("THE REAL REPO: exactly the listed files read `results`, and the sanctioned reader is found", () => {
+    const files = productSources(join(ROOT, "packages"));
+    for (const tree of PRODUCT_SOURCE_TREES.slice(1)) productSources(join(ROOT, tree), files);
+    expect(files.size, "the scan read nothing").toBeGreaterThan(20);
+    const findings = scanTableReaders(files, RESULTS_TABLE);
+    expect(
+      findings.map((f) => f.file),
+      "the sanctioned raw reader was not found — the scan is broken, not the repo"
+    ).toContain(RAW_RESULTS_READER_FILES[0]);
+    expect(
+      [...new Set(findings.map((f) => f.file))].filter((f) => !isAllowed(f)),
+      "an unsanctioned raw reader of results — route it through a ProfileScope accessor behind ProfileScope.mint (`listResults`, `countResults`), or add the file here with a reason"
+    ).toEqual([]);
+    // TWO-WAY: every listed file still reads the table, so a stale entry is
+    // red rather than a silent widening.
+    expect([...new Set(findings.map((f) => f.file))].sort()).toEqual([...RAW_RESULTS_READER_FILES].sort());
+  });
+});
+
 describe("R10: promotion proposal construction is structurally restricted to packages/brain", () => {
   it("an inline draft, a cast, and a differently named public payload outside packages/brain are findings", () => {
     const findings = scanPromotionConstructorBoundary(new Map([
@@ -1270,43 +1536,72 @@ describe("R-94: the CURATION-proposal allowance is explicit, exact, and narrower
   });
 });
 
-describe("R11: the one permitted feedback query aggregates nothing", () => {
+describe("R11: no generation_feedback query in the permitted file aggregates", () => {
   const readerSource = () =>
     readFileSync(join(ROOT, RAW_FEEDBACK_READER_FILES[0]), "utf8");
+  const key = (r: { owner: string; shape?: string; name?: string }) =>
+    `${r.owner}:${r.shape ?? r.name}`;
 
-  it("the real `feedbackPage` helper contains no aggregate and no groupBy", () => {
+  it("EVERY reader in the file is LISTED — the set the scan finds equals `FEEDBACK_READERS` (Respin rule 7)", () => {
+    const { readers } = scanFeedbackQueries(readerSource());
     expect(
-      scanFeedbackAggregation(readerSource()),
-      "the one permitted feedback query aggregates — slice 7 captures feedback and derives nothing from it (R11)"
-    ).toEqual([]);
+      readers.map(key).sort(),
+      "a generation_feedback reader was added or removed — list it in FEEDBACK_READERS, deliberately, so its query is scanned"
+    ).toEqual(FEEDBACK_READERS.map(key).sort());
   });
 
-  it("...and the check SEES a planted aggregate (it is not vacuous)", () => {
-    // The plant is a doctored copy of the REAL source, so the negative case is
-    // this repo minus the property rather than a hand-typed fixture.
-    const doctored = readerSource().replace(
-      ".from(generationFeedback)",
-      ".from(generationFeedback)\n        .groupBy(generationFeedback.reaction)"
-    );
+  it("no reader's query aggregates, beyond the one KNOWN, recorded count", () => {
     expect(
-      doctored,
-      "the doctoring anchor no longer exists — this probe is measuring nothing"
-    ).not.toBe(readerSource());
-    expect(scanFeedbackAggregation(doctored)).toContain("groupBy");
-    // ...and a `count()` inside the helper is seen too, which is the shape a
-    // "you have said this three times" banner would arrive as.
-    const counted = readerSource().replace(
-      "const feedbackPage = (",
-      "const feedbackPage = (\n      // @ts-expect-error probe\n      _probe = count(),"
-    );
-    expect(scanFeedbackAggregation(counted)).toContain("count");
+      scanFeedbackQueries(readerSource()).aggregates.map(key).sort(),
+      "a feedback query aggregates — R11: feedback is captured, and nothing but packages/brain derives from it"
+    ).toEqual(KNOWN_FEEDBACK_AGGREGATES.map(key).sort());
   });
 
-  it("...and it fails LOUDLY if the helper is renamed away", () => {
-    // A scan that cannot find its subject must say so rather than return `[]`,
-    // which is the fail-open shape this whole file exists to avoid.
-    expect(scanFeedbackAggregation("const other = 1;")).toEqual([
-      "<feedbackPage helper not found>",
+  it("...and the scan SEES a planted aggregate in an L3 reader, a groupBy in `feedbackPage`, and an aggregate in a raw template (it is not vacuous)", () => {
+    // Each plant is a doctored copy of the REAL source, so the negative case
+    // is this repo minus the property rather than a hand-typed fixture.
+    const real = readerSource();
+    const plant = (anchor: string, replacement: string) => {
+      expect(real.split(anchor).length - 1, `the doctoring anchor is not unique: ${anchor}`).toBe(1);
+      return scanFeedbackQueries(real.replace(anchor, replacement)).aggregates.map(key);
+    };
+    // A `count()` in an L3 reader's select — the shape a "you rejected this
+    // angle three times" label would arrive as.
+    expect(
+      plant(
+        "generationId: generationFeedback.generationId,\n                  reaction: generationFeedback.reaction,",
+        "generationId: generationFeedback.generationId,\n                  reaction: generationFeedback.reaction,\n                  times: count(),"
+      )
+    ).toContain("recentContextCandidates:count");
+    expect(
+      plant(
+        ".where(both(generationFeedback))\n        .orderBy(desc(generationFeedback.createdAt), desc(generationFeedback.id))\n        .limit(limit)",
+        ".where(both(generationFeedback))\n        .groupBy(generationFeedback.reaction)\n        .orderBy(desc(generationFeedback.createdAt), desc(generationFeedback.id))\n        .limit(limit)"
+      )
+    ).toContain("feedbackPage:groupBy");
+    expect(
+      plant(
+        "select count(*)::integer from ${generationFeedback}",
+        "select sum(1)::integer from ${generationFeedback} group by reaction"
+      )
+    ).toEqual(expect.arrayContaining(["brainAssetSummary:sum", "brainAssetSummary:group by"]));
+  });
+
+  it("...and a NEW reader in any shape is seen, so the list check above goes red until it is listed", () => {
+    const probe = `
+      const accessors = {
+        sneaky: (conn) => conn.select().from(generationFeedback),
+        joined: (conn) => conn.select().from(generations).leftJoin(generationFeedback, x),
+        raw: (conn) => conn.execute(sql\`select id from \${generationFeedback}\`),
+      };`;
+    expect(scanFeedbackQueries(probe).readers.map(key).sort()).toEqual([
+      "joined:join",
+      "raw:sql",
+      "sneaky:from",
     ]);
+    // A file with no reader at all reads as an EMPTY set, which the list check
+    // refuses — the scan cannot pass by failing to find its subject.
+    expect(scanFeedbackQueries("const other = 1;").readers).toEqual([]);
+    expect(FEEDBACK_READERS.length).toBeGreaterThan(0);
   });
 });

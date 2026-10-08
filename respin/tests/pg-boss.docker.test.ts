@@ -62,6 +62,7 @@ import {
   CONFIG_V1_SEED,
   claimSharedAutopsyForSystem,
   closeSystemWorkerDb,
+  configVersions,
   createDockerTestDb,
   createSystemAutopsyAttemptStore,
   createSystemWorkerDb,
@@ -668,6 +669,15 @@ describeIfDocker("the production worker's config resolution and attempt binding 
     ...CONFIG_V1_SEED,
     llm: { ...CONFIG_V1_SEED.llm, overallDeadlineMs },
   });
+  /**
+   * STORE A DOCUMENT RAW, past `appendConfigVersion`'s validation (audit
+   * P3-A3). The schema now refuses an over-ceiling deadline at write time, so
+   * the only way such a document reaches the worker is a row written before
+   * that bound existed — which is exactly the case the worker's own read must
+   * still refuse.
+   */
+  const storeRaw = (content: object, createdBy: string) =>
+    db.insert(configVersions).values({ content, createdBy });
 
   /** A shared item with a rights-backed transcript and a prepared cache claim — the system-spend fixture shape. */
   async function pendingSharedAutopsy(suffix: string) {
@@ -727,20 +737,26 @@ describeIfDocker("the production worker's config resolution and attempt binding 
   });
 
   it("CHANGE 1: a stored deadline one millisecond over the lease ceiling is refused by every production read, before any claim; the ceiling itself is admitted", async () => {
-    await appendConfigVersion(db, withDeadline(AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS + 1), "billing-round-2");
+    // THE FIRST FENCE (audit P3-A3): the schema refuses to STORE it at all.
+    await expect(
+      appendConfigVersion(db, withDeadline(AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS + 1), "billing-round-2")
+    ).rejects.toThrow();
+    // THE SECOND FENCE: a row written before that bound (stored raw here) is
+    // still refused by every production read — now at the parse, fail closed.
+    await storeRaw(withDeadline(AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS + 1), "billing-round-2");
     const candidate = { cacheClaimId: "00000000-0000-7000-8000-0000000000aa", itemId: "00000000-0000-7000-8000-0000000000bb", attemptNumber: 1 };
     const scheduledAt = new Date();
 
     // The dispatch tick's read.
     await expect(productionAutopsyCommands({ db, workerName: WORKER_NAME, candidates: [candidate], scheduledAt }))
-      .rejects.toThrow(/outruns the .* claim lease/);
+      .rejects.toThrow(/outruns the .* claim lease|config/i);
     // The attempt's read (bound before the claim, CHANGE 2) — and the named read itself.
     await expect(productionAutopsyVendor({ db, apiKey: "test-key" })({
       jobId: "autopsy:x", itemId: candidate.itemId, attemptId: "attempt-r2-1", autopsyCacheClaimId: candidate.cacheClaimId,
       businessDate: scheduledAt.toISOString().slice(0, 10), modelCode: CONFIG_V1_SEED.llm.models.classification,
       maxCostMicroUsd: 1, maxInputTokens: 1, maxOutputTokens: 1, configuredDailyCapMicroUsd: 1,
-    })).rejects.toThrow(/outruns the .* claim lease/);
-    await expect(resolveSystemConfig(db)).rejects.toThrow(/outruns the .* claim lease/);
+    })).rejects.toThrow(/outruns the .* claim lease|config/i);
+    await expect(resolveSystemConfig(db)).rejects.toThrow(/outruns the .* claim lease|config/i);
     expect(await db.select().from(systemSpendClaims)).toEqual([]);
     expect(await db.select().from(systemModelUsage)).toEqual([]);
 
@@ -760,7 +776,9 @@ describeIfDocker("the production worker's config resolution and attempt binding 
     const usage: SystemUsagePort = {
       async startAttempt(input) {
         const claim = await store.startAttempt(input);
-        await appendConfigVersion(db, withDeadline(AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS + 1), "operator-mid-attempt");
+        // Stored RAW: the schema refuses this document at write time now
+        // (audit P3-A3), so a pre-bound row is how it can still appear.
+        await storeRaw(withDeadline(AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS + 1), "operator-mid-attempt");
         return claim;
       },
       finalizeAttempt: (input) => store.finalizeAttempt(input),
@@ -802,6 +820,6 @@ describeIfDocker("the production worker's config resolution and attempt binding 
 
     // The document appended mid-attempt is what the next dispatch tick sees.
     await expect(productionAutopsyCommands({ db, workerName: WORKER_NAME, candidates, scheduledAt: new Date() }))
-      .rejects.toThrow(/outruns the .* claim lease/);
+      .rejects.toThrow(/outruns the .* claim lease|config/i);
   }, LONG);
 });

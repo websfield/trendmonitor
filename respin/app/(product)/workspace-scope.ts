@@ -30,6 +30,11 @@ import { respinDb } from "@respin/db";
  *
  * Throws exactly what `withWorkspace` throws — `WorkspaceAccessError` for a
  * user in more than one workspace — so the caller's refusal path is unchanged.
+ * For an identity whose only workspace is pending deletion that is
+ * `WorkspacePendingDeletionError` (R-163), whose copy names
+ * `/settings/account`: since R-161 bootstrap no longer mints a replacement
+ * workspace in that state, so every page but the three readers below renders
+ * this refusal — a refusal with a way forward.
  */
 export async function scopeForUser(user: {
   id: string;
@@ -40,4 +45,26 @@ export async function scopeForUser(user: {
     name: user.name || undefined,
   });
   return respinDb.withWorkspace({ authUserId: user.id });
+}
+
+/**
+ * The READ-GRADE sibling (R-163, P5-R3): a `WorkspaceScope` for an active
+ * workspace, or a `ReadGradeWorkspaceScope` for one tombstoned by a deletion
+ * that is still in its read window. EXACTLY THREE CALLERS, and the list is
+ * the contract — `app/api/export/route.ts`, `app/(product)/settings/account/
+ * page.tsx` and `app/(product)/brain/page.tsx` — so a creator can export,
+ * read their brain's history and cancel the deletion during grace. Every
+ * other page keeps `scopeForUser` and renders the pending-deletion refusal.
+ * A caller that holds the result must branch on grade before any read the
+ * read grade does not accept; the type makes the writers a compile error.
+ */
+export async function readScopeForUser(user: {
+  id: string;
+  name?: string | null;
+}): Promise<Awaited<ReturnType<typeof respinDb.withWorkspaceReadGrade>>> {
+  await respinDb.ensureUserWorkspace({
+    authUserId: user.id,
+    name: user.name || undefined,
+  });
+  return respinDb.withWorkspaceReadGrade({ authUserId: user.id });
 }

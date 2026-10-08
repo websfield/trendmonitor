@@ -9,7 +9,7 @@ import {
   type WorkspaceScope,
 } from "@respin/db";
 import { getActiveConfig, type RespinConfigV1 } from "@respin/config";
-import { deriveBalanceInTx, type BalanceView } from "./balance";
+import { committedFoldInTx, type BalanceView } from "./balance";
 import { getDbNow } from "./clock";
 
 export type DaysToEmptyConfig = RespinConfigV1["daysToEmpty"];
@@ -120,11 +120,23 @@ export type UsageRunwayReaders = {
   ) => Promise<UsageRunwayDebits>;
 };
 
-const AUTHORITATIVE_READERS: UsageRunwayReaders = {
+/**
+ * `balance` IS THE COMMITTED FOLD, NOT THE LOCKED DERIVE (audit Phase 8,
+ * P8-A2; register 2026-10-05 item 11). This transaction runs at REPEATABLE
+ * READ so the balance and the debit window are one snapshot — and a snapshot
+ * fixed before the workspace lock is exactly what `deriveBalanceInTx` cannot
+ * write from: it used to lock, read stale rows, and write expiry rows claiming
+ * remainders a concurrent debit had already spent, after which every later fold
+ * threw `materialization drifted`. The committed fold takes no lock and writes
+ * nothing, so the snapshot is a benefit here rather than a hazard; the mint and
+ * the materialisation happen on the page's own `getDisplayBalance` read, and
+ * `deriveBalanceInTx` now refuses this isolation level outright.
+ */
+export const USAGE_RUNWAY_READERS: UsageRunwayReaders = {
   asOf: getDbNow,
   config: async (tx) => (await getActiveConfig(tx)).content.daysToEmpty,
   pause: hasOpenPause,
-  balance: deriveBalanceInTx,
+  balance: committedFoldInTx,
   ledger: usageRunwayDebits,
 };
 
@@ -225,14 +237,15 @@ export async function usageRunwayInTx(
 
 /**
  * C8's sole runway transaction: one repeatable snapshot, one DB as-of, and no
- * visible-ledger, model-usage, or monthly-spend reader.
+ * visible-ledger, model-usage, or monthly-spend reader. A PURE READ: no lock,
+ * no write (P8-A2) — see `USAGE_RUNWAY_READERS`.
  */
 export async function usageRunwayFor(
   db: DbLike,
   scope: WorkspaceScope
 ): Promise<UsageRunwayResult> {
   assertUsageRunwayScope(scope);
-  return usageRunwayForWithReaders(db, scope, AUTHORITATIVE_READERS);
+  return usageRunwayForWithReaders(db, scope, USAGE_RUNWAY_READERS);
 }
 
 /** Package-internal test seam; deliberately absent from the package barrel. */

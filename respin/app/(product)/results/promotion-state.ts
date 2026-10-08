@@ -28,6 +28,11 @@ export type PromotionReview = {
     sourceEvidence: { quote?: string; inputClass?: string | null; absence?: string };
   }[];
   freshnessToken: string;
+  /**
+   * The value is already in the document it would change (R-171): accepting
+   * records the decision and writes no new version.
+   */
+  alreadyPresent: boolean;
 };
 
 /** Wire names shared by the proposal forms and their server actions. */
@@ -43,7 +48,7 @@ export type PromotionActionState =
   | { status: "idle" }
   | { status: "refreshed"; count: number }
   | { status: "reviewed"; review: PromotionReview }
-  | { status: "decided"; decision: "accepted" | "rejected" }
+  | { status: "decided"; decision: "accepted" | "rejected"; alreadyPresent: boolean }
   | { status: "refused"; code: string; copy: { title: string; detail: string } };
 
 export const IDLE_PROMOTION_ACTION_STATE: PromotionActionState = { status: "idle" };

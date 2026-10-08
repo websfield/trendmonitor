@@ -17,7 +17,20 @@ export {
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
   GenerationUnchargedCostCapError,
+  // Audit P3-R3 / P3-A4 (R-158, R-157): the per-window total, a held draft,
+  // and "Finish this draft" naming an attempt this creator cannot finish.
+  // Public for the `instanceof` reason every sibling here is.
+  GenerationWindowCostCapError,
+  GenerationHeldError,
+  HeldDraftUnavailableError,
   UnpricedOperationError,
+  // Launch L2 (R-151) — the confirmed quote moved, and "find my next concept"
+  // with nothing confirmed to start from. Public for the `instanceof` reason
+  // every sibling here is.
+  GenerationQuoteChangedError,
+  ConceptContextInsufficientError,
+  // Launch L4 (R-153) — a saved-page revision the page never offered.
+  RevisionPresetError,
   // Slice 7, R6/R8 — the revision's parent could not be built from. Raised
   // BEFORE the vendor is contacted, which is why it is a class here rather than
   // @respin/db's `GenerationLineageError`: that one is the settlement's
@@ -39,10 +52,20 @@ export {
   PastedReferenceTierError,
   PerformanceLearningConfigUnavailableError,
   type PastedReferenceInputField,
+  // Audit Phase 8 (P8-A2): a locked balance derivation refused outside READ
+  // COMMITTED.
+  BalanceIsolationError,
 } from "./errors";
 export { LedgerIntegrityError, foldLedger, effectiveExpiry } from "./fold";
 export type { FoldResult, LotView } from "./fold";
-export { deriveBalance, deriveBalanceInTx, type BalanceView } from "./balance";
+export {
+  committedFoldInTx,
+  deriveBalance,
+  deriveBalanceInTx,
+  getDisplayBalance,
+  type BalanceView,
+  type DisplayBalanceView,
+} from "./balance";
 export {
   projectUsageRunway,
   usageRunwayFor,
@@ -74,7 +97,14 @@ export {
   ensurePauseStarted,
   ensurePauseEnded,
 } from "./pause";
-export { getDbNow, takeWorkspaceLock, assertWriteClock, CLOCK_SKEW_MS } from "./clock";
+export {
+  getDbNow,
+  takeWorkspaceLock,
+  takeWorkspaceLockInOrder,
+  tryWorkspaceLock,
+  assertWriteClock,
+  CLOCK_SKEW_MS,
+} from "./clock";
 // Slice 1: the creator-profile entitlement decision. Here rather than in
 // `@respin/db` because it needs the resolved tier, whose sole authority is
 // `state.ts` in this package — see `profiles.ts` for the full reason.
@@ -130,6 +160,7 @@ export { freeAllowanceExpiry, freeAllowancePeriodKey } from "./balance";
 export {
   ENTITLEMENT_TIERS,
   MODE_TIERS,
+  FIND_CONCEPT_MODE,
   ONBOARDING_FIRST_IDEAS_MODE,
   TIER_MODES,
   TIER_PRIVATE_FRAMEWORKS,
@@ -137,6 +168,8 @@ export {
   UnknownEntitlementTierError,
   assertModeAllowed,
   modeOffers,
+  offeredInStudio,
+  studioModeOffers,
   modeTiers,
   modesIncludedIn,
   planIncludesMode,
@@ -159,6 +192,7 @@ export {
   PASTED_REFERENCE_DEBIT_REF_TYPE,
   PASTED_REFERENCE_REFUND_REF_TYPE,
   PASTED_REFERENCE_TIERS,
+  pastedReferenceInPlan,
   pastedReferenceIntakePort,
   pastedReferenceQuote,
   settleParkedAutopsies,
@@ -171,6 +205,8 @@ export {
   generate,
   generationOp,
   hashRequest,
+  // Audit P3-A4 (R-157): "Finish this draft" — one settlement path.
+  settleHeldAttempt,
   GENERATION_REFUSAL_CODES,
   REVISION_CREDIT_COST_KEY,
   UNIVERSAL_LAWS,

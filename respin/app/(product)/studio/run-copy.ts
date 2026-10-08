@@ -1,10 +1,15 @@
-// The Studio controls' sentences, as PURE functions with NO imports at all.
+// The Studio controls' sentences, as PURE functions with NO VALUE imports.
 //
 // SAME RULE AS `../onboarding/run-copy.ts`, and the same reason it is not in
 // `./copy.ts`: these are rendered by client code, and `copy.ts` imports
 // `../billing-errors` for its refusal table — which imports
 // `@respin/credits/app-server`, which reaches `@respin/db` and therefore `pg`.
-// A file with no imports cannot put a Postgres driver in the client bundle.
+// A file with no value imports cannot put a Postgres driver in the client
+// bundle. Its ONE import is a whole-clause `import type` (`PresentedDisclosure`,
+// for `DISCLOSURE_LINE`), which is erased before bundling — a mixed
+// `import { type X, y }` clause would not be, and
+// `tests/client-bundle-boundary.test.ts` counts it as a value import.
+import type { PresentedDisclosure } from "@respin/credits/app-server";
 //
 // R18's rule applies here as it does on `/onboarding`: THE CONTROL SAYS WHAT IT
 // WILL SPEND BEFORE IT SPENDS IT, and a sentence about money assembled inline
@@ -41,9 +46,10 @@ export const PLATFORM_OPTIONS: readonly string[] = [
 /**
  * ONE MODE AS THE SCREEN RECEIVES IT — structural, never `ModeOffer` by name.
  *
- * This file imports nothing (see the header), so it cannot name the facade's
- * type. A structural parameter accepts `ModeOffer & { cost }` without naming
- * its module, which is the same trick `claimsHeading` already uses below.
+ * This file keeps its imports to the one erased type `DISCLOSURE_LINE` needs
+ * (see the header), so it does not name the facade's type. A structural
+ * parameter accepts `ModeOffer & { cost }` without naming its module, which is
+ * the same trick `claimsHeading` already uses below.
  */
 export type ModeChoiceView = {
   id: string;
@@ -54,16 +60,153 @@ export type ModeChoiceView = {
    * price could not be read. NEVER a guess — non-negotiable 6.
    */
   cost: number | null;
+  /**
+   * Whether this mode takes the creative form control (R-148) — the facade's
+   * `ModeOffer.takesCreativeForm`, resolved server-side. This file names no
+   * mode; it only reads the flag the server set.
+   *
+   * OPTIONAL, AND ABSENT READS AS "NO CONTROL" — the direction that offers
+   * less. The page always sets it from `modeOffers`; a view fixture that omits
+   * it renders the legacy form, and the operation is the gate either way.
+   */
+  takesCreativeForm?: boolean;
 };
+
+/** One creative form choice as the screen receives it — id and label, server-resolved. */
+export type FormOptionView = { id: string; label: string };
+
+/** The bounds the form's inputs advertise, server-resolved from the parse's own. */
+export type CreativeBoundsView = {
+  itemMaxCodePoints: number;
+  listMax: number;
+  footageMaxCodePoints: number;
+  minutesMin: number;
+  minutesMax: number;
+};
+
+// --------------------------------------------- the creative form (R-148)
+
+export const FORM_CONTROL_LEGEND = "What kind of piece is it?";
+
+/**
+ * Shown beside BOTH modes that take the control (`ideation` and
+ * `ideaToScript`, R-148), so it names both outcomes: a set of ideas gets a
+ * form per idea, a script gets one (audit P6-A4; it used to say "for each
+ * idea" on the script path too).
+ */
+export const FORM_CONTROL_HELP =
+  "Choose for me lets the draft pick from the three forms listed: one per idea when you ask for ideas, one for the whole script when you ask for a script. Every option costs the same as the mode itself: choosing a form adds no charge and no extra step.";
+
+export const FILMING_LIMITS_SUMMARY = "Filming limits (optional)";
+
+/**
+ * WHAT THE FILMING CHECK COVERS, AND THAT IT CAN MISS (audit P6-A4). The
+ * sentence it replaced said "any place or piece of kit" the draft needs is
+ * marked; `mode-checks.ts`' recorded limits say otherwise: kit or help in a
+ * shot-map line is read through two literal marker lists
+ * (`shot-map-kit-not-in-list`), and kit named only in the story or a beat is
+ * not compared at all (`kit-named-in-narrative`).
+ */
+export const FILMING_LIMITS_HELP =
+  "Who films and the time you have are binding: the draft has to fit them. Places and kit in the filming plan that you did not list here are marked [check] for you to confirm. The check reads the plan and some shot lines, not the story, so it can miss kit a shot or a beat mentions: read the shot map before you film. The footage you already have is material the draft can draw on.";
+
+/**
+ * Once per document, whenever the server's stored decisions mark any filming
+ * resource or shot-map line unconfirmed (R-150 point 2).
+ */
+export const FILMING_UNCONFIRMED_NOTE =
+  "Items marked [check] are ones you did not list: confirm you have them, or change the plan, before you film.";
+
+/** The revision note: a revision keeps its parent's form and limits. */
+export const REVISION_KEEPS_FORM_NOTE =
+  "A revision keeps the form and filming limits of the draft it revises, and a draft made before forms existed keeps its original format.";
+
+/**
+ * The pivot beat, IN WORDS (PRD §46, R-148 point 2) — never by styling alone.
+ * A turn and a reveal are different instructions to the person filming, so
+ * they are different sentences. The legacy line is the turn's, unchanged, and
+ * the reveal's is written in the same shape so the pair reads as one control;
+ * that is why it keeps the legacy sentence's dash, which DESIGN.md's copy rule
+ * would otherwise not use.
+ */
+export const PIVOT_SENTENCES: Readonly<Record<"turn" | "reveal", string>> = {
+  turn: "This is the turn — where the piece changes direction.",
+  reveal: "This is the reveal — where the result is shown.",
+};
+
+/** Who is needed on set, in words. */
+export const PEOPLE_SENTENCES: Readonly<Record<"solo" | "with_help", string>> = {
+  solo: "One person can film it alone.",
+  with_help: "Needs a second person to film or appear.",
+};
+
+/** The model's own estimate, labelled as one. */
+export function minutesSentence(minutes: number): string {
+  return `Estimated filming time: ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`;
+}
+
+/**
+ * What a premise rests on (R-148 point 4), said plainly. A quote is labelled
+ * as the creator's line WITH an instruction to check it supports the event —
+ * the one thing the check that verified it cannot fully decide (round-1
+ * compliance gate: the relatedness floor is a floor, not a meaning test).
+ */
+export function basisSentence(
+  basis: { kind: "material"; excerpt: string } | { kind: "unconfirmed" } | { kind: "none" }
+): string {
+  if (basis.kind === "material") {
+    return `The line of yours this rests on. Check that it supports what happens: “${basis.excerpt}”`;
+  }
+  if (basis.kind === "unconfirmed") {
+    return "Not confirmed yet: the parts marked [check] are yours to confirm or replace before you film.";
+  }
+  // CLAIMS NOTHING (round-1 compliance BLOCK): this used to say the premise
+  // "describes no event that needs a source", a product-authored statement
+  // about text the model wrote. The checks now refuse the event shapes they
+  // recognise; this sentence covers what they cannot.
+  return "No source given. If this describes something that happened, or a result, mark it [check] before you film.";
+}
+
+/** A custom structure, never presented as a library framework (REQ-D02 as amended). */
+export const CUSTOM_STRUCTURE_NOTE =
+  "A structure of its own: not one from the framework library, and not reviewed by a curator.";
 
 /** The confirmed document kinds this draft may draw from. */
 export type ActiveBrainKind = "Voice" | "Strategy" | "Kill test";
 
-/** Disclosure traceability findings are stored but not offered to creators. */
+/**
+ * The model's disclosure section, as a field-pointer prefix. Findings in it —
+ * traceability and claim findings alike — are stored on the generation and
+ * not presented: the section itself is not shown (R-121, P1-R1), so a finding
+ * would print its text as the finding's `unit`.
+ */
 export const DISCLOSURE_FIELD_PREFIX = "/disclosure/";
 
+/**
+ * WHAT `/studio` AND `/trends` SAY ABOUT DISCLOSURE — a product sentence keyed
+ * on the facade's disclosure KIND, never the model's prose (R-121, audit
+ * P1-R1). A `Record` over the kind, so a new kind is a compile error here
+ * rather than a blank line on the screen.
+ *
+ * THE SAME WORDING AS `PRESENTED_DISCLOSURE_GUIDANCE`, which the saved pack and
+ * its export render. It is declared twice only because this file is in the
+ * client graph (`studio-panel.tsx`, `first-ideas-panel.tsx` and
+ * `trends/spin-panel.tsx` value-import it) and that constant's module
+ * value-imports `@respin/modes`. `tests/disclosure-presenters.test.ts` holds
+ * the two equal key by key, so an edit to either alone is red.
+ */
+export const DISCLOSURE_LINE: Readonly<Record<PresentedDisclosure["kind"], string>> = {
+  policy_check_required:
+    "Before you post, check the platform's current rules on disclosing AI assistance and any paid partnership, and use the platform's own label where one applies. This product does not decide what those rules require.",
+};
+
+/**
+ * Why the disclosure line has no traceability entries. The draft's own
+ * disclosure section is not shown (`DISCLOSURE_LINE` replaces it), so nothing
+ * in that section is listed or offered a `[check]`.
+ */
 export const DISCLOSURE_PROVENANCE =
-  "Any disclosure guidance is written by the product about the platform's policy, not from your material, so its names, numbers and dates are not listed here. It is checked against this product's list of concealment phrasings, which is a recall aid, not a complete check.";
+  "The disclosure line on this draft is this product's own sentence, not the draft's and not from your material, so it has nothing to list here.";
 
 /** Say exactly which confirmed documents are available to this draft. */
 export function inForceSentence(
@@ -105,7 +248,11 @@ export function modeAvailabilityNote(
       `${listOf(notInPlan)} ${notInPlan.length === 1 ? "is" : "are"} not part of this workspace's plan`
     );
   }
-  if (parts.length === 0) return `${head} Every mode this product has is one of them.`;
+  // "ON THIS PAGE", NOT "THIS PRODUCT HAS" (Phase 6 compliance gate): Studio's
+  // picker omits the modes that run only from the Trends page
+  // (`studioModeOffers`), so a sentence about every mode the product has would
+  // be false on the one screen that renders it.
+  if (parts.length === 0) return `${head} Every mode offered on this page is one of them.`;
   return `${head} ${parts.join("; ")}.`;
 }
 
@@ -133,10 +280,19 @@ function listOf(items: readonly string[]): string {
  * time. `cost` is nullable for the reason every other number on these screens
  * is: when the server could not read one, the screen says so rather than
  * inventing it (non-negotiable 6).
+ *
+ * `settling` (audit Phase 8, P8-R1): the balance is the committed fold — read
+ * while another transaction held the workspace's billing lock — so the sentence
+ * says it may change (never that a write is in progress: a held lock proves
+ * only that it is held) and that the server checks the real balance at the
+ * press. It makes NO comparison against the cost: "insufficient" is decided
+ * only in `generate` (the pre-call gate and the settlement's locked debit), on
+ * the money path's own locked read, never on a display number.
  */
 export function generateCostSentence(
   modes: readonly ModeChoiceView[],
-  balance: number | null
+  balance: number | null,
+  settling = false
 ): string {
   const offered = modes.filter((m) => m.status === "available");
   if (offered.length === 0) {
@@ -159,6 +315,9 @@ export function generateCostSentence(
   }
   const rule = `${capitalise(parts.join("; "))}.`;
   if (balance === null) return rule;
+  if (settling) {
+    return `${rule} Your balance shows ${creditWords(balance)} for now — it was read without waiting for other activity on your workspace, so it may change, and pressing the button checks it on the server before anything is spent.`;
+  }
   return `${rule} You have ${creditWords(balance)}.`;
 }
 
@@ -256,40 +415,113 @@ export const NO_STREAM_NOTE =
 export const PREPARING_LABEL = "Preparing your draft…";
 
 /**
- * R21's n = 0 sentence — THE ONE THIS SLICE IS MOST LIKELY TO GET WRONG.
+ * WHAT A DRAFT IS AND IS NOT BUILT FROM, AND WHETHER THIS CREATOR HAS LOGGED
+ * RESULTS (R21; audit P6-R6 and register item 8; decisions R-174).
  *
- * No result of this creator's has been logged: the results loop is slice 9, so
- * `n` is zero for everybody, always, today. Anything on this screen that hinted
- * the draft was shaped by what has worked for this person would be a claim
- * about evidence the product does not hold — which is the exact shape
- * non-negotiable 6 forbids and which nothing in the schema prevents.
+ * TWO CONDITIONS, BOTH READ FROM THE SERVER, NEVER ASSUMED.
  *
- * SLICE 7 ADDED A REASON IT MATTERS MORE, not less: this screen now records
- * feedback. A creator who has just pressed "off voice" is at exactly the moment
- * they would assume the product is adjusting to them, and it is not.
- * `FEEDBACK_TODAY` below is where that is said in full.
+ *   1. THE CREATOR'S OWN RESULT COUNT (`respinDb.countResults`, the scoped
+ *      `ProfileScope.accessors.countResults`). The sentence this replaced said
+ *      "No results of yours have been logged" to everyone, which was false for
+ *      every creator who had used `/results` since slice 9a. Zero says none;
+ *      a positive count says how many and that none of them changes a draft
+ *      (R-115: nothing enters a comparison, baseline or proposal until a
+ *      verified analytics connector exists, and the product holds none);
+ *      `null` is a failed read and says so. A failed read NEVER falls back to
+ *      the zero sentence, which would be the false claim this exists to remove.
+ *   2. WHICH MODES READ RECENT WORK. The old last clause, "built from the
+ *      brain you confirmed and from what you type in, and nothing else", has
+ *      been false since launch L3: concept and script drafts are shown recent
+ *      drafts and reactions as labelled history (R-152 (b)/(d), ratified as a
+ *      T3 carve-out by R-174). The labels come from the server's own
+ *      `ModeOffer.takesCreativeForm` flags, so this file names no mode, and a
+ *      screen whose modes read no history says "nothing else" truthfully.
+ *
+ * NO `learn` STEM, NO NUMBER THE COUNT DID NOT SUPPLY. Both renderers run the
+ * claims canon over the rendered screen, and `tests/support/forbidden-claims.ts`
+ * holds the condition-not-wording `must` pattern for this marker.
  */
-export const NO_RESULTS_BASIS =
-  "Nothing here is based on how your posts have done. No results of yours have been logged — this product holds none, and it is not measuring you. A draft is built from the brain you confirmed and from what you type in, and nothing else.";
+export function resultsBasisSentence(
+  resultCount: number | null,
+  historyModeLabels: readonly string[]
+): string {
+  const results =
+    resultCount === null
+      ? "This page could not read how many results you have logged, so it says nothing about them here."
+      : resultCount === 0
+        ? "Nothing here is based on how your posts have done. No results of yours have been logged, and this product is not measuring you."
+        : `You have logged ${resultCount} ${resultCount === 1 ? "result. It does not change" : "results. None of them changes"} a draft: nothing you log enters any comparison, baseline or proposal this product computes until a verified analytics connector exists (this product does not hold one), and every brain change needs your approval.`;
+  return `${results} ${historySentence(historyModeLabels)}`;
+}
+
+/**
+ * THE RECENT-WORK CHANNEL, NAMED (R-152 (b)/(d), R-174): which drafts see
+ * labelled history, that it steers and never vouches, and that a reaction can
+ * be left out when it is recorded (the control appears beside it then; there
+ * is no list of older reactions to leave out from). `labels` are the
+ * server-resolved labels of the modes that read it; an empty list means none
+ * on this screen does. "Nothing else OF YOURS": the framework library and the
+ * product's own instructions are in every prompt, so the sentence is about the
+ * creator's data, not about the whole prompt.
+ */
+export function historySentence(labels: readonly string[]): string {
+  if (labels.length === 0) {
+    return "A draft here is built from the brain you confirmed and from what you type in, and from nothing else of yours.";
+  }
+  return `A draft is built from the brain you confirmed and from what you type in. ${listOf(labels)} drafts also see some of your recent drafts and your reactions to them, as labelled history: it can steer a draft, it never counts as evidence for anything in one, and it never changes your brain. When you record a reaction to one of them, you can leave it out of future drafts.`;
+}
+
+/**
+ * THE FREE CLAIM REFUSAL'S SENTENCE (owner decision 2026-10-07, R-173). The
+ * owner's wording said "promised a result"; it is NEUTRAL here (billing
+ * verification, same day) because a claim-only refusal can be concealment
+ * advice ("skip the label") as well as a forecast or a guarantee, and the
+ * sentence must be true of all three. Said exactly when
+ * `GenerateResult.freeClaimRefusal` is true:
+ * an honest refusal whose only cause was the claim scan, settled with no
+ * ledger row. Every surface that reports a charge reads it from here.
+ */
+export const FREE_CLAIM_REFUSAL =
+  "We stopped this draft because it made a claim this product won't make; no credits were used.";
 
 /**
  * What the screen says AFTER a run, from the operation's own return value.
  *
  * `charged` of 0 is a REAL answer — an operator has priced this mode at zero —
  * and it is never rendered as "free" by absence: it is the number `generate`
- * returned, not a ledger row this screen failed to find.
+ * returned, not a ledger row this screen failed to find. A FREE CLAIM REFUSAL
+ * (R-173) is a third answer and says so in its own words.
  */
-export function generateChargeSentence(
-  charged: number,
-  balanceAfter: number
-): string {
+export function generateChargeSentence(charge: {
+  creditsChargedNow: number;
+  balanceAfter: number;
+  freeClaimRefusal: boolean;
+}): string {
+  const { creditsChargedNow: charged, balanceAfter } = charge;
   const bal = balanceAfter === 1 ? "credit" : "credits";
-  const spent =
-    charged === 0
-      ? "Nothing was taken from your credit balance for this draft."
-      : `That cost ${charged} ${charged === 1 ? "credit" : "credits"}.`;
-  return `${spent} Your balance is now ${balanceAfter} ${bal}. The entry is in your credit history on the usage page.`;
+  // `charged === 0` TOO: the settlement prices a free claim refusal at zero,
+  // and a sentence saying "no credits were used" beside a debit would be the
+  // exact lie this branch exists to prevent.
+  if (charge.freeClaimRefusal && charged === 0) {
+    return `${FREE_CLAIM_REFUSAL} Your balance is ${balanceAfter} ${bal}.`;
+  }
+  // THE LEDGER CLAUSE ONLY WHEN A ROW EXISTS (audit P3-A2): a zero-cost
+  // settlement writes no `credit_ledger` row (`generate.ts` debits only when
+  // the price is above zero), so "the entry is in your credit history" was a
+  // pointer to nothing on every zero-priced draft.
+  if (charged === 0) {
+    return `Nothing was taken from your credit balance for this draft. Your balance is ${balanceAfter} ${bal}.`;
+  }
+  return `That cost ${charged} ${charged === 1 ? "credit" : "credits"}. Your balance is now ${balanceAfter} ${bal}. The entry is in your credit history on the usage page.`;
 }
+
+/**
+ * THE THIRD OUTCOME'S NOTE (audit P3-A2): a held draft finished by this press.
+ * The model was NOT called by this press — and the charge, when there is one,
+ * WAS taken by it, which `generateChargeSentence` says beside this.
+ */
+export const HELD_SETTLED_NOTE =
+  "This draft was finished from the copy the model had already written and held for you — this press called no model. The draft itself is not shown again here; open its saved recording pack to read it, copy it or export it.";
 
 /**
  * WHAT THE PROMPT COULD NOT CARRY OF THE CREATOR'S OWN FRAMEWORKS (R17).
@@ -337,9 +569,80 @@ export function frameworksNotUsedSentence(
   return `${n} of your own ${noun} ${verb} not put in the prompt for this one: one prompt can only carry so much of the framework library, and yours did not all fit. The curated library is offered first, so none of it was displaced by yours. Nothing about the charge changes, and nothing was lost — if you want a different set in front of the model, retire the ones you no longer use on the frameworks page.`;
 }
 
-/** The same sentence for a re-submission that settled earlier (R14c's replay). */
-export function replayChargeSentence(balanceAfter: number): string {
+/**
+ * THE SAVED RECORDING PACK'S ADDRESS (launch L4, R-153) — the attempt id a
+ * generation settled under, encoded. Reopening it reads the stored draft and
+ * never calls a model or takes a credit.
+ */
+export function savedPackHref(attemptId: string): string {
+  return `/studio/saved/${encodeURIComponent(attemptId)}`;
+}
+
+/**
+ * THE INPUT CEILING, STATED WHERE IT BINDS (audit P3-R2, register item 34).
+ *
+ * The number is the server-read `llm.maxInputTokens` the page hands down —
+ * never a literal here. It is VISIBLE TEXT, not a `maxLength`: the attribute
+ * silently truncates pasted text (`trends/paste-panel.tsx` records the rule),
+ * and the server refusal, which names the part to shorten, is the control.
+ * The ceiling is compared against UTF-8 bytes, so a character outside plain
+ * ASCII counts for more than one — said, rather than promised away.
+ */
+export function inputLimitSentence(maxInputTokens: number | null): string {
+  if (maxInputTokens === null) {
+    return "One draft request has a size limit. A request over it is refused before anything is sent or spent, and says which part to shorten.";
+  }
+  return `One draft request can carry about ${maxInputTokens.toLocaleString("en-US")} characters in total — this creator's brain, the frameworks it is offered, and what you type here (accented letters and emoji count for more). A request over that is refused before anything is sent or spent, and says which part to shorten.`;
+}
+
+/**
+ * HELD DRAFTS (audit P3-A4, R-157) — finished by the model, stored, not yet
+ * charged. The heading is the name the refusal copy points to.
+ */
+export const HELD_DRAFTS_HEADING = "Held drafts";
+export const HELD_DRAFTS_NOTE =
+  "These drafts were written by the model but not yet added to your drafts or charged — the workspace was paused, the balance was short, or saving met a brief conflict. Finish one to store it and take its charge. Each is removed at the time shown, and nothing is charged for a draft that is removed.";
+export const HELD_DRAFTS_UNAVAILABLE =
+  "Held drafts could not be read just now. Reload the page to see them; nothing about them has changed.";
+export const FINISH_HELD_DRAFT_LABEL = "Finish this draft";
+
+/** When a held draft is removed, as a fixed, unambiguous UTC string. */
+export function heldUntilText(heldUntilIso: string): string {
+  const at = new Date(heldUntilIso);
+  if (Number.isNaN(at.getTime())) return "within 24 hours of when the model answered";
+  const iso = at.toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+/** The recent-drafts list on `/studio` (launch L4): the way back to a pack. */
+export const RECENT_PACKS_HEADING = "Your saved drafts";
+export const RECENT_PACKS_NOTE =
+  "Every finished draft is saved. Open one to read it, copy it or export it; that costs nothing.";
+export const RECENT_PACKS_EMPTY = "Nothing has been saved for this creator yet.";
+export const RECENT_PACKS_UNAVAILABLE =
+  "Your saved drafts could not be listed just now. Reload this page to try again.";
+
+/** The link every finished draft carries to its saved recording pack. */
+export const SAVED_PACK_LINK_LABEL = "Open the saved recording pack";
+
+/** What a replay says about the stored draft, now that it can be reopened. */
+export const REPLAY_SAVED_NOTE =
+  "The draft itself is not shown again here, because this press did not run anything. Open its saved recording pack to read it, copy it or export it; that costs nothing.";
+
+/**
+ * The same sentence for a re-submission that settled earlier (R14c's replay).
+ * SAID ONLY ON A TRUE REPLAY (`replayed: true`) — never on a press that
+ * settled a held draft, which charged (audit P3-A2). A replay of a FREE CLAIM
+ * REFUSAL (R-173) was never paid for, so "already been paid for" would be false.
+ */
+export function replayChargeSentence(
+  balanceAfter: number,
+  freeClaimRefusal: boolean
+): string {
   const bal = balanceAfter === 1 ? "credit" : "credits";
+  if (freeClaimRefusal) {
+    return `This draft had already finished, so nothing was called again. ${FREE_CLAIM_REFUSAL} Your balance is ${balanceAfter} ${bal}.`;
+  }
   return `This draft had already been paid for and finished, so nothing was called and nothing extra was spent. Your balance is ${balanceAfter} ${bal}.`;
 }
 
@@ -458,6 +761,16 @@ export function whyThisPerformsView(section: {
  * the SUGGESTION a creator may copy; the draft above it is rendered untouched,
  * and `tests/studio-ui.test.tsx` asserts the flagged token still appears in the
  * rendered draft byte for byte.
+ *
+ * A DECLARATION, NOT AN IMPORT, AND THE REASON IS THE CLIENT BUNDLE (audit
+ * Phase 2, P2-R8). This module is value-imported by `studio-panel.tsx` and
+ * `first-ideas-panel.tsx`, both "use client", and
+ * `tests/client-bundle-boundary.test.ts` refuses any `@respin/*` value import
+ * in a client graph (`@respin/db` imports `pg`). The two consumers render in
+ * different client entries with no common server parent to hand the marker
+ * down, so this is the one client-safe `app/**` home of the marker, and
+ * `packages/credits/tests/check-marker.test.ts` pins it EQUAL to
+ * `@respin/llm`'s and `@respin/db`'s `CHECK`.
  */
 export const CHECK_MARKER = "[check]";
 
@@ -472,21 +785,23 @@ export function checkOffer(token: string): string {
  * performance forecasts, certainty promises and concealment advice, and stores
  * EVERY finding on `killTest.*Attempt.claims` — hard-enforced or flag-only.
  * The hard ones reach a creator through the refusal's `why`; the flag-level
- * ones reached nobody. A concealment sentence in the disclosure guidance was
- * being detected, recorded, and never shown, which is inventory rather than a
- * control (Definition of Done, reachability).
+ * ones reached nobody, which is inventory rather than a control (Definition of
+ * Done, reachability).
  *
- * WHY SHOWING THE PHRASE IS HONEST RATHER THAN A CLAIM. A `flag` finding sits
- * in text the creator is already reading — the hook, the disclosure — because
- * `HARD_CLAIM_FIELD_PREFIXES` covers `/whyThisPerforms/` and `/disclosure/`.
- * Hard findings refuse the draft; a shown flag remains a finding the creator
- * can inspect. Quoting a
- * line to say "this is a claim we cannot back" adds no word to the page that
- * was not already on it, and labelling it is the opposite of making it.
+ * WHY SHOWING THE PHRASE IS HONEST RATHER THAN A CLAIM. A shown `flag` finding
+ * sits in text the creator is already reading — a hook, a beat, a caption.
+ * Findings in the model's disclosure section are NOT shown: that section is
+ * not on the page (R-121, audit P1-R1), so `summariseKillTest` drops them
+ * before the screen's state is built, and quoting one would put the model's
+ * disclosure prose back on the page as the finding's `unit`. Hard findings
+ * refuse the draft; a shown flag remains a finding the creator can inspect.
+ * Quoting a line to say "this is a claim we cannot back" adds no word to the
+ * page that was not already on it, and labelling it is the opposite of making
+ * it.
  */
 export function claimsHeading(
-  // STRUCTURAL, NOT `ClaimFlag`: this file imports NOTHING (see the header —
-  // one import here can pull a Postgres driver into the client bundle), and a
+  // STRUCTURAL, NOT `ClaimFlag`: this file takes no value imports (see the
+  // header — one can pull a Postgres driver into the client bundle), and a
   // structural parameter accepts `ClaimFlag[]` without naming its module.
   claims: readonly { enforcement: "hard" | "flag"; field: string }[]
 ): string {
@@ -512,7 +827,7 @@ export function claimsHeading(
   const parts: string[] = [];
   if (hard > 0) {
     parts.push(
-      `${hard} ${hard === 1 ? "line" : "lines"} in the explanation made a claim this product may not make, which is what the draft was stopped over`
+      `${hard} ${hard === 1 ? "line" : "lines"} in this draft made a claim this product may not make, which is what the draft was stopped over`
     );
   }
   if (flagged > 0) {
@@ -540,7 +855,11 @@ export function claimsHeading(
  */
 export function claimFamilyNote(family: string): string {
   if (family === "performance") {
-    return "a claim about how the post will do once it is up — no result of yours has been logged, so nothing here has any evidence for it";
+    // COUNT-INDEPENDENT (audit P6-R6, site 2): this note is a pure
+    // `family -> string` rendered beside each flagged claim, with no count in
+    // reach, so it states the R-115 precondition rather than how many results
+    // this creator has logged, which it cannot know.
+    return "a claim about how the post will do once it is up — nothing you have logged enters a draft's evidence until a verified analytics connector exists, so nothing here has any evidence for it";
   }
   if (family === "certainty") {
     return "a promise that something is certain, which this product does not make about anything";
@@ -562,9 +881,10 @@ export function claimFamilyNote(family: string): string {
  * IT IS NOT ANY MORE, and the compliance fix that changed it is the reason:
  * `traceability.ts` demoted `plain-number` to `flag` (a listicle's "The 5
  * mistakes…" was being REFUSED, and a refusal is debited), and the whole
- * `/disclosure/` traceability stays stored at flag level, but its product-written
- * guidance is not listed with creator-specific offers. The displayed flag bucket
- * therefore holds bare numbers and names from creator fields.
+ * `/disclosure/` traceability stays stored at flag level, but the model's
+ * disclosure section is not shown (R-121, P1-R1), so none of its findings is
+ * listed — hard or flag. The displayed flag bucket therefore holds bare numbers
+ * and names from the other fields.
  *
  * The hard bucket is the shapes that are unambiguously a claim about an amount
  * or a time: `currency`, `percent`, `multiplier`, `iso-date`, `month-date`.
@@ -625,11 +945,12 @@ export function traceabilityFlagNote(kind: string): string {
  * model of "revise" is "edit", and an edit does not get re-checked. Here it
  * does — a revision is new text and a kill test is a property of text (the
  * card's question 2), so a revision can be REFUSED where its parent passed, and
- * an honest refusal is charged for. Somebody who did not know that would
+ * an honest refusal is charged for — except one caused only by a promised
+ * result, which is free (R-173). Somebody who did not know that would
  * reasonably call it a bug.
  */
 export const REVISION_NOTE_HELP =
-  "Say what to change. The draft above is sent back to the model along with this note, and what comes back is a new draft that goes through the same checks from scratch — a revision is never assumed to be safe because the draft it came from was. It can be refused where the first one passed, and a refusal is charged for like any other run.";
+  "Say what to change. The draft above is sent back to the model along with this note, and what comes back is a new draft that goes through the same checks from scratch — a revision is never assumed to be safe because the draft it came from was. It can be refused where the first one passed. A refusal is charged like any other run, except one stopped only because the draft made a claim this product won't make: that one uses no credits.";
 
 /** What a revision cannot do, said where a creator would try it. */
 export const REVISION_SAME_MODE_NOTE =
@@ -687,11 +1008,11 @@ export function lineageLineFor(entry: {
  *
  * The DURABLE lineage is in the database: `generations.parent_id` is a
  * composite, same-tenant foreign key that is immutable after insert, so which
- * output came from which is a fact the product keeps. What does NOT exist yet
- * is a scoped reader for it in `@respin/db` — there is no accessor any screen
- * can call to page a creator's past generations, and building one is a
- * `packages/db` change slice 7's app stage did not make. So the chain below is
- * assembled from the runs THIS PAGE has performed since it loaded, and a reload
+ * output came from which is a fact the product keeps. Scoped readers of it now
+ * exist (corrected by audit P6-A4: this said none did, which stopped being true
+ * at slice 9a's `generationsNewest` and launch L4's saved pages, where each
+ * draft links the draft it revises), but THIS chain does not use them: it is
+ * assembled from the runs THIS PAGE has performed since it loaded, so a reload
  * empties it while the stored lineage is untouched.
  *
  * SAYING SO IS NOT OPTIONAL. A list that looks like history and empties on
@@ -727,13 +1048,30 @@ export const FEEDBACK_HEADING = "Tell the product what you thought";
 /**
  * WHAT FEEDBACK DOES TODAY, AND WHAT IT DOES NOT — R12, in the screen's words.
  *
- * THREE CLAIMS, and the third is the one that costs something to write:
+ * FOUR CLAIMS, and the last two are the ones that cost something to write:
  *   1. it is RECORDED — a stored event, and it is in the creator's export;
- *   2. NOTHING reads it today. Not a rule, not a summary, not a weighting.
- *      This slice captures; deriving anything from feedback is `packages/brain`'s
- *      and `packages/brain` does not exist (R-10/R-44, R11);
- *   3. what a later slice MAY do is PROPOSE, for a person to approve — never
- *      apply. Brains are context, never weights, never silent (R-8).
+ *   2. it does NOT change the brain. Not a rule, not a summary, not a weighting
+ *      (R-10/R-44, R11);
+ *   3. SINCE LAUNCH L3 (R-152) IT IS READ — the sentence this used to carry,
+ *      "nothing reads it today ... it does not change the next draft", became
+ *      false the day the next concept or script draft was shown recent work as
+ *      LABELLED HISTORY. Reactions reach it TWO ways, and the sentence names
+ *      both (L3 gate, learning Low B-L1 — it used to name only the second):
+ *      every reaction on each of up to five recent drafts rides as a LABEL on
+ *      that draft (`RECENT_DRAFTS_MAX`), and up to three recent reactions are
+ *      also shown on their own WITH their note (`RECENT_NOTES_MAX`) — unless
+ *      the note carries a hard-enforced specific shape (a date, an amount, a
+ *      percentage, a multiple), whose words are then left out
+ *      (`recent-context.ts`). They are shown as the creator's words about an
+ *      earlier draft, never as a fact, and the draft is told not to repeat
+ *      what was rejected unless a sequel is asked for. `tests/studio-ui.test.tsx`
+ *      pins both numbers to the two constants;
+ *   4. what MAY happen later is a PROPOSAL, for a person to approve — never an
+ *      application. Brains are context, never weights, never silent (R-8).
+ *   5. SINCE AUDIT P6-A1 (R-174) THE CREATOR CAN WITHDRAW ONE: "Leave this out
+ *      of future drafts" stops a recorded reaction, and its note, reaching the
+ *      history in point 3. It does not touch point 4's proposals, which read
+ *      reactions through `promotionFeedbackInputs`.
  *
  * IT AVOIDS `learn`, `improve` and `train` NOT BY LUCK. Those three words are
  * banned on every creator-facing screen, and this sentence is the one place a
@@ -742,22 +1080,24 @@ export const FEEDBACK_HEADING = "Tell the product what you thought";
  * become a suggested change to a document you review.
  */
 export const FEEDBACK_TODAY =
-  "What you choose here is stored as a record of what you said, and it is yours — it is in your export. Nothing reads it today: it does not change your brain, it does not change the next draft, and no part of this product adjusts itself because of it. Later, repeated reactions of the same kind across comparable drafts may be turned into a suggested edit to one of your brain documents — a suggestion you read and approve or reject yourself. Nothing is ever applied to your brain without you.";
+  "What you choose here is stored as a record of what you said, and it is yours — it is in your export. It does not change your brain. Your next concept and script drafts are shown some of your recent work as labelled history: up to five of your most relevant recent concept batches and scripts, each labelled with every reaction you recorded on it, and up to three of your most relevant recent reactions with the note you wrote — leaving out a note's words when they contain a date, an amount, a percentage or a multiple. All of it is your words about an earlier draft, never a fact about you, and those drafts are told not to repeat what you rejected unless you ask for a sequel. Once you record a reaction to a concept or script, you can leave it out of future drafts with the control that appears beside it. Later, repeated reactions of the same kind across comparable drafts may be turned into a suggested edit to one of your brain documents — a suggestion you read and approve or reject yourself. Nothing is ever applied to your brain without you.";
 
 /**
  * The note ceiling, stated where it binds. The number comes from the server.
  *
- * "AS YOU TYPED IT, EXCEPT FOR..." RATHER THAN "EXACTLY AS YOU TYPE IT", which
- * is what the first draft said and which is false: `recordGenerationFeedback`
- * runs `normaliseContent` — NFC plus CRLF→LF — the one normalisation this
- * package stores text under, so two notes a person cannot tell apart are one
- * note in the column. `/onboarding`'s paste form already words it this way
- * ("stored as you typed them — only line endings are normalised"), and saying
- * less than that here would be a small false claim about a creator's own words
- * on the screen whose whole subject is what the product does with them.
+ * IT NAMES THE NORMALISATION AND MAKES NO "AS YOU TYPED" CLAIM AT ALL. The
+ * first draft said "exactly as you type it", which is false:
+ * `recordGenerationFeedback` runs `normaliseContent` (NFC plus CRLF to LF),
+ * the one normalisation this package stores text under, so two notes a person
+ * cannot tell apart are one note in the column. The second draft said "stored
+ * as you typed it, only line endings and unicode form are normalised", which
+ * the audit (2026-10-05 item 45, P6-A4) read as the banned phrase with a
+ * caveat after it. This one states what is changed and that nothing else is.
  */
 export function feedbackNoteLimit(max: number): string {
-  return `Optional. Up to ${max} characters, stored as you typed it — only line endings and unicode form are normalised. Nothing reads it for meaning, and it goes into your export beside the reaction.`;
+  // LAUNCH L3 (R-152): "Nothing reads it for meaning" became false — the note
+  // can be shown to the next concept or script draft as the creator's words.
+  return `Optional. Up to ${max} characters. It is stored with its line endings and Unicode form made consistent and nothing else changed, goes into your export beside the reaction, and may be shown to your next concept or script drafts as your words about this one.`;
 }
 
 /**
@@ -794,7 +1134,189 @@ export function feedbackRecordedSentence(
 ): string {
   const what = reactionLabel(reactionCode);
   const note = noteKept
-    ? " Your note was stored with it, as you typed it."
+    ? " Your note was stored with it."
     : " No note was sent with it.";
-  return `Recorded: “${what}”.${note} It is in your export, and nothing in the product has changed because of it.`;
+  // LAUNCH L3 (R-152): "nothing in the product has changed" became too broad —
+  // the next concept or script draft may be shown this reaction as history. What
+  // stays true, and is what a creator needs to hear, is that the BRAIN did not.
+  return `Recorded: “${what}”.${note} It is in your export, and your brain has not changed because of it.`;
+}
+
+// ------------------------------------------------------------------------
+// AUDIT P6-A1 (R-174): "LEAVE THIS OUT OF FUTURE DRAFTS".
+
+/** The control beside a recorded reaction. */
+export const EXCLUDE_FROM_HISTORY_LABEL = "Leave this out of future drafts";
+
+/**
+ * What the control does, and what it does not. It narrows what later concept
+ * and script drafts are shown (the reaction and its note, as a note and as a
+ * label on its draft, and a draft whose every reaction was left out); it
+ * deletes nothing, the export keeps both, the reaction still feeds feedback
+ * proposals (`promotionFeedbackInputs` ignores the stamp, R-174), and it
+ * cannot be undone anywhere (the stamp moves one way, migration 0069).
+ */
+export const EXCLUDE_FROM_HISTORY_HELP =
+  "Your next concept and script drafts will not be shown this reaction or its note. It stays recorded and in your export. It can still count toward a suggested edit to your brain, which you approve or reject. Leaving it out cannot be undone.";
+
+/** After the press. */
+export const EXCLUDED_FROM_HISTORY_SENTENCE =
+  "Left out: later concept and script drafts will not be shown this reaction or its note. It is still in your export.";
+
+// ------------------------------------------------------------------------
+// LAUNCH L3 (R-152): THE SEQUEL REQUEST AND "REMEMBER THIS FOR FUTURE DRAFTS".
+
+/** The sequel checkbox's label — the creator's explicit request, never inferred. */
+export const SEQUEL_LABEL = "This is a follow-up to my recent work (a sequel)";
+
+/** What the sequel box does, and what leaving it empty does. */
+export const SEQUEL_HELP =
+  "Your next concept or script draft is shown a few of your recent drafts and reactions as labelled history. Left empty, it is told not to repeat them and not to bring back anything you rejected. Ticked, it may build on them — including a direction you set aside. Nothing is ticked for you.";
+
+/** The heading over the preference box. */
+export const REMEMBER_HEADING = "Remember this for future drafts";
+
+/**
+ * WHAT THE PRESS DOES, IN FULL (R-8, REQ-B02/C05): it PROPOSES; it applies
+ * nothing. The words become a new rule on a proposed Kill Test version, which
+ * is not in force until the creator confirms and activates it on the Brain
+ * page — the same review every brain edit gets.
+ */
+export const REMEMBER_HELP =
+  "Write the rule in your own words — how you film, or something you never want in a draft. It is added to your Kill Test as a proposed change with your words as its evidence. Nothing uses it until you confirm and activate that version on the Brain page, where you can also change or replace it later.";
+
+/** The textarea's label. */
+export const REMEMBER_LABEL = "The rule, in your words";
+
+/**
+ * The box's ceiling, stated in the help text the box is described by (L3 gate,
+ * accessibility Low D-L2). The number is `BRAIN_EDIT_VALUE_MAX`, passed in by
+ * the page — never typed here.
+ */
+export function rememberLimitSentence(max: number): string {
+  return `Up to ${max} characters.`;
+}
+
+/** After the press: which version holds the proposal, and that it is not in force. */
+export function rememberProposedSentence(version: number): string {
+  return `Proposed as Kill Test version ${version}. It is not in force yet — confirm and activate it on the Brain page for future drafts to use it.`;
+}
+
+/**
+ * After a press that wrote NOTHING because the editable version already holds
+ * the same rule (L3 gate, C-L1). Whether that version is the active one or a
+ * proposal decides which sentence is true.
+ */
+export function rememberAlreadyHeldSentence(version: number, active: boolean): string {
+  return active
+    ? `That rule is already in your Kill Test — version ${version}, the active version. Nothing new was saved.`
+    : `That rule is already in proposed Kill Test version ${version}. Nothing new was saved. It is not in force yet — confirm and activate that version on the Brain page for future drafts to use it.`;
+}
+
+/**
+ * Shown in place of the box to an editor or a viewer (L3 gate, tenancy Low
+ * T-L3): proposing a brain edit is the owner's act (R-118), and the server
+ * refuses anyone else, so the screen does not offer a press that can only fail.
+ */
+export const REMEMBER_OWNER_ONLY =
+  "Only a workspace owner can propose a rule for this creator's Kill Test. Ask an owner to add it, or to change your role.";
+
+// ------------------------------------------------------------------------
+// LAUNCH L2 (R-151): THE ENTRANCES, THE CHOICE AND THE CONFIRMATION.
+//
+// Every sentence here is TRUE ON EVERY PATH IT RENDERS ON, and none of them
+// names a mode id, a tier map or an upgrade: the price is the configured
+// number the server read under the quote's own config version, and the plan
+// block states what this workspace's plan does not include without selling the
+// one that does (the `an upgrade as the remedy` clause this screen's honesty
+// scan refuses).
+
+export const FIND_CONCEPT_HEADING = "Find my next concept";
+/**
+ * WHAT IS CHECKED, IN `TRACEABILITY_LIMIT_NOTE`'S TERMS (L2 compliance gate,
+ * A-2): the trace is about where a specific came from, never whether it is
+ * true, and it does not read every field (`EVENT_SCAN_EXCLUDED`). No count:
+ * the scaffold asks for three, and the parser accepts three to five.
+ */
+export const FIND_CONCEPT_HELP =
+  "A few concepts drawn from what your confirmed brain says about you, the platform you pick and any filming limits. The numbers, dates and names in them are checked against your brain and what you type here — a check of where a specific came from, not of whether it is true — and it does not cover every sentence, so read each concept before you choose one. The result lists what it asks you to confirm.";
+export const FIND_CONCEPT_HINT_LABEL = "Anything to steer towards (optional)";
+/**
+ * The ONE clarifying question, asked when the confirmed brain does not yet say
+ * what the creator makes — decided by a deterministic rule on the server, never
+ * by a model call.
+ */
+export const FIND_CONCEPT_QUESTION =
+  "Your confirmed brain does not say what you make yet. In one sentence, what are your videos about?";
+export const FIND_CONCEPT_SUBMIT = "Find concepts";
+/**
+ * What the "Find concepts" press costs (L2 billing gate, B-5): the configured
+ * price of the mode `findConcept` runs, from the same server-resolved offer
+ * the panel prices — never a literal. `null` = the offer was not found.
+ */
+export function findConceptCostSentence(offer: ModeChoiceView | null): string {
+  if (offer === null || (offer.status === "available" && offer.cost === null)) {
+    return "The price of finding concepts could not be read just now, so it is not shown. Pressing the button still prices and checks it on the server before anything is spent.";
+  }
+  if (offer.status === "not_in_plan") {
+    return "Finding concepts is not part of this workspace's plan, so pressing the button is refused before anything is spent.";
+  }
+  return `Finding concepts costs ${creditWords(offer.cost as number)} — the configured price.`;
+}
+/** Announced in the polite status region when a concept batch arrives (WCAG 4.1.3). */
+export const FIND_CONCEPT_DONE_STATUS = "Your concepts are ready below.";
+export const DEVELOP_IDEA_HEADING = "Develop an idea I already have";
+export const DEVELOP_IDEA_LABEL = "Your idea, in your own words";
+export const DEVELOP_IDEA_HELP =
+  "Continuing costs nothing. The next step shows the script's price before anything is written, and your words are kept exactly as you typed them.";
+export const DEVELOP_IDEA_SUBMIT = "Continue to the script's price";
+export const CHOOSE_CONCEPT_HEADING = "Pick one to develop";
+export const CHOOSE_CONCEPT_HELP =
+  "Choosing costs nothing. The next step shows what the script would cost before anything is written.";
+export function chooseConceptLabel(position: number, hook: string): string {
+  return `Choose concept ${position + 1}: ${hook}`;
+}
+export const REFERENCE_ENTRANCE_HEADING = "Break down a reference";
+export const REFERENCE_ENTRANCE_HELP =
+  "Paste a reference you are allowed to use and get its structure taken apart, on the trends page.";
+export const REFERENCE_ENTRANCE_BLOCKED =
+  "Breaking down a pasted reference is not part of this workspace's plan, so it is not offered here. Nothing has been charged.";
+/**
+ * The plan could not be read (L2 compliance gate, A-3): a neutral pointer,
+ * never the plan block — that would state a plan fact nobody read.
+ */
+export const REFERENCE_ENTRANCE_UNKNOWN =
+  "Breaking down a pasted reference happens on the trends page, which shows whether your plan includes it and what it costs before anything is charged.";
+export const OTHER_MODES_HEADING = "Other ways to start";
+
+export const PIECE_HEADING = "Your chosen piece";
+export const PIECE_OWN_IDEA_LABEL = "Your idea";
+export const PIECE_CONCEPT_LABEL = "The concept you chose";
+/** The configured price, or the honest absence of one (non-negotiable 6). */
+export function pieceQuoteSentence(credits: number | null, configVersion: number): string {
+  if (credits === null) {
+    return "The script's price could not be read right now, so none is shown; nothing will be charged without one. Reload to try again.";
+  }
+  return `Writing this script costs ${credits} ${credits === 1 ? "credit" : "credits"} — the configured price (config version ${configVersion}). Choosing it cost nothing.`;
+}
+/** The named plan block: what this plan does not include, never a sale. */
+export const PIECE_PLAN_BLOCK =
+  "Writing a script from a chosen piece is not part of this workspace's plan, so it cannot be written here. Choosing it cost nothing, nothing has been charged, and no model was called.";
+export const PIECE_COMMISSION_SUBMIT = "Write the script";
+export const PIECE_NOTE_LABEL = "Anything to add for this script (optional)";
+export const PIECE_OPERATION_NOTE =
+  "This press is one operation: pressing again, reloading or retrying after a lost connection does not charge you twice for it. Only New generation starts another, charged one.";
+/** Announced in the polite status region when the script arrives (WCAG 4.1.3). */
+export const PIECE_SCRIPT_DONE_STATUS = "Your script is ready below.";
+export const PIECE_NEW_GENERATION_LABEL = "New generation";
+export const PIECE_NEW_GENERATION_HELP =
+  "Starts a separate script for this piece, even with the same words, and is charged as a new script when you write it.";
+export const PIECE_CANCEL_LABEL = "Cancel this piece";
+export const PIECE_CANCEL_HELP = "Backing out costs nothing.";
+/** The status line `/studio?cancelled=1` shows, and focuses, after a cancel. */
+export const PIECE_CANCELLED_STATUS = "The piece was cancelled. Nothing was charged.";
+export function pieceStateSentence(state: string): string {
+  if (state === "scripted") return "A script has been written for this piece.";
+  if (state === "cancelled") return "This piece was cancelled. Choose a concept again to start a new one.";
+  return "No script has been written for this piece yet.";
 }

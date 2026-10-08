@@ -30,15 +30,32 @@ Monorepo layout:
   /(product)          studio, trends, results, brain, settings, usage
   /(admin)            curation queue, sources, margin dashboard, user lookup
   /api                route handlers (webhooks, generation, spin, ledger)
-/packages
-  /db                 drizzle schema + migrations + seed
-  /llm                provider adapter, model tiers, prompt assembly
-  /brain              sole deterministic comparison/proposal constructor; no DB runtime import
-  /modes              the 7 generation pipelines + kill test + output schema
-  /trends             ingest adapters, outlier scoring, autopsy pipeline
-  /credits            billing-backed entitlements, ledger operations, metering, balance derivation and ledger-only runway
+/packages             (the map that SHIPPED — corrected 2026-10-07, audit Phase 8 P8-R6, R-178;
+                       line counts are src/**/*.ts, measured that day)
+  /db                 ~51.9k lines. Drizzle schema + migrations (packages/db/migrations) + seed, AND
+                      everything that persists or scopes: withWorkspace and the scope cages, the
+                      lifecycle/deletion/retention machinery and the deletion journal, the membership-
+                      graph locks and the render budget (withRenderTransaction), brain/results/
+                      promotion/frameworks/trends storage, export, auth-mail, system spend, the
+                      startup preflight, and the telemetry senders
+  /credits            ~26.8k lines. Billing, Stripe (checkout, webhooks, auto-top-up), the credit
+                      ledger, balance derivation and the display read, metering — AND the generation
+                      SERVICE: `generate` (claim → vendor → settle), onboarding voice inference, the
+                      public Sample Spin, pasted-reference intake and the presented-output projection
+  /modes              ~10.5k lines. Prompt assembly for every generation (system prompt, context
+                      block, untrusted-input fences, rewrite prompt), the 7 mode pipelines, the kill
+                      test, the hard rules and claim scans, output schemas, prompt_bundle_version
+  /llm                ~1.7k lines. The Anthropic provider adapter, model pricing, the input ceiling,
+                      and the voice-inference prompt (assembleVoicePrompt) — NOT generation prompts
   /config             versioned runtime config (credit costs, allowances, model tiers)
+  /brain              sole deterministic comparison/proposal constructor; no DB runtime import
+  /auth               Better Auth wiring: sessions, the auth rate rules, Google reauth
+  /trends             ~0.6k lines. Source adapters and access rules, outlier scoring, saturation and
+                      the autopsy's types; the autopsy's vendor prompt still lives in
+                      worker/autopsy-vendor.ts (deferral ledger)
 ```
+
+Two consequences of that map are stated rather than hidden (R-178): `@respin/db` is far wider than "schema + migrations" — the `@respin/telemetry` / `@respin/lifecycle` carve is deferred with a trigger; and because `@respin/credits` is the de-facto generation service, a Critical-Path trigger keyed on `packages/credits` fires on prompt and presenter changes as well as money changes (the proposed CLAUDE.md trigger-row change is the owner's).
 
 Rule: `app/` imports from `packages/`; packages never import from `app/`. Generation logic lives in `packages/modes` and is callable from tests without HTTP. `@respin/brain` is the sole constructor/mint for promotion drafts and accepts no DB runtime; `@respin/db` owns scoped persistence and the atomic approval ceremony, but receives no caller-built draft/payload; `@respin/credits` is the sole resolver of billing-backed learning access and composes runway only from the ledger authority.
 

@@ -227,9 +227,20 @@ function testBodyDepth(recs: Rec[]): number {
   throw new Error("no test(...) { body found");
 }
 
+/**
+ * The specs in `e2e/journeys/` that are NOT persona journeys, BY LIST, each with
+ * its reason (Respin rule 7: a second producer is a list edit). They take no
+ * screenshots, so the settled-wait scan below does not apply to them.
+ */
+const NON_PERSONA_SPECS: Readonly<Record<string, string>> = {
+  "recording-pack.spec.ts":
+    "launch L4's paid recording-pack walk (R-153), written at L4 and SKIPPED until L6 LA-2 (it needs F-01's paid tier); not a persona journey",
+};
+
 function specFiles(): readonly string[] {
   return readdirSync(journeysDir)
     .filter((f) => f.endsWith(".spec.ts"))
+    .filter((f) => !(f in NON_PERSONA_SPECS))
     .sort();
 }
 
@@ -238,6 +249,16 @@ describe("journey specs: every screenshot follows a settled-state wait (AC2)", (
 
   it("scans exactly the four persona specs", () => {
     expect(files).toEqual(PERSONAS.map((p) => `${p}.spec.ts`).sort());
+  });
+
+  it("the directory holds exactly the four persona specs and the LISTED non-persona specs", () => {
+    const all = readdirSync(journeysDir).filter((f) => f.endsWith(".spec.ts")).sort();
+    expect(all).toEqual([...PERSONAS.map((p) => `${p}.spec.ts`), ...Object.keys(NON_PERSONA_SPECS)].sort());
+    // The recording-pack walk is skipped LOUDLY until L6, with a reason that names it.
+    const pack = readFileSync(resolve(journeysDir, "recording-pack.spec.ts"), "utf8");
+    expect(pack).toMatch(/test\.skip\(true, SKIP_REASON\)/);
+    expect(pack).toMatch(/L6 LA-2/);
+    expect(pack).toMatch(/F-01/);
   });
 
   for (const file of files) {

@@ -41,7 +41,7 @@ import {
 } from "@respin/db";
 import { getActiveConfig } from "@respin/config";
 import { getWorkspaceBillingState } from "./state";
-import { assertWriteClock, takeWorkspaceLock } from "./clock";
+import { assertWriteClock, takeWorkspaceLockInOrder } from "./clock";
 
 /**
  * Create a creator profile, or refuse by name.
@@ -90,7 +90,13 @@ export async function createProfile(
   }
 
   return db.transaction(async (tx) => {
-    await takeWorkspaceLock(tx, scope.workspaceId);
+    // THE ORDERED HELPER (audit Phase 8, P8-A1, R-177): the capabilities and
+    // `selectActiveProfileInTx` below run the workspace lifecycle fence; its
+    // membership locks are taken here, shared, before the billing lock.
+    await takeWorkspaceLockInOrder(tx, {
+      workspaceId: scope.workspaceId,
+      userId: scope.userId,
+    });
     // THE WRITE CLOCK, for the reason every sibling allocating write in this
     // package takes it (`ledger.ts`, `pause.ts`) — and this one needs it more
     // than the comment above once implied. `at` DECIDES THE TIER:

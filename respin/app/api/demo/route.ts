@@ -13,7 +13,7 @@
 import { proxyAttestedClientIp } from "@respin/auth";
 import { respinCredits } from "@respin/credits/app-server";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
-import { logRefusal } from "../../(product)/safe-log";
+import { logRefusal, wireId } from "../../(product)/safe-log";
 
 export const dynamic = "force-dynamic";
 
@@ -114,7 +114,7 @@ export async function POST(req: Request): Promise<Response> {
     rethrowNextControlFlow(err);
     // Content-free by construction: the code, the class name and the request
     // id. Never the error's message, never the idea.
-    logRefusal("[demo]", err, { requestId });
+    logRefusal("[demo]", err, { requestId: wireId(requestId) });
     return refusal(503, "service_unavailable", "The Sample Spin could not complete. Nothing you typed was kept. Try again later.", requestId);
   }
 }

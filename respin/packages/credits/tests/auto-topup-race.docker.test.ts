@@ -21,6 +21,10 @@ const { paymentIntentCreate, priceRetrieve } = vi.hoisted(() => ({
   priceRetrieve: vi.fn(async () => ({
     id: "price_pack",
     active: true,
+    // A one-time, per-unit price: what `priceDefect` accepts for a pack.
+    type: "one_time",
+    billing_scheme: "per_unit",
+    recurring: null,
     unit_amount: 1000,
     currency: "usd",
   })),

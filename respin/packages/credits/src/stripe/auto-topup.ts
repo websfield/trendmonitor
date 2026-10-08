@@ -2,11 +2,11 @@
 // pack is reserved per trigger. Credits land only through the verified Stripe
 // webhook; this path owns the durable, replayable charge attempt.
 import { randomUUID } from "node:crypto";
+import { AUTO_TOPUP_ATTEMPTS_PER_MONTH_CEILING, getActiveConfig } from "@respin/config";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import {
   assertWorkspaceAcceptsMembership,
   creditLedger,
-  lockWorkspaceMembershipGraph,
   subscriptions,
   workspaceAcceptsMembership,
   type DbLike,
@@ -18,9 +18,11 @@ import {
   hasLiveStripeSubscription,
   mayChargeOffSession,
 } from "../state";
-import { assertWriteClock, getDbNow, takeWorkspaceLock } from "../clock";
+import { assertWriteClock, getDbNow, takeWorkspaceLockInOrder } from "../clock";
+import { emitAutoTopupReconciliationMetric } from "../metrics";
 import { getAutoTopupAuthorityKey, getStripe } from "./adapter";
 import { resolvePackPrice } from "./pack-price";
+import { PINNED_CURRENCY } from "./price-allowlist";
 import { isAutoTopupProtocolActive } from "./auto-topup-rollout";
 import {
   autoTopupAuthorityMetadata,
@@ -63,12 +65,19 @@ function reconciliationRequired(
 ): AutoTopupResult {
   // Do not log the provider exception: Stripe errors can contain request and
   // payment details. The signed random attempt id is sufficient for an operator
-  // to run the v1 reconciler without exposing customer or card data.
-  console.warn(
-    `[respin-metric] auto_topup_reconciliation_required=1 source=${source} attempt=${attemptId}`
-  );
+  // to run the v1 reconciler without exposing customer or card data. Through
+  // the sink indirection (audit P3-R7), never a bare console call here.
+  emitAutoTopupReconciliationMetric({ source, attemptId });
   return { triggered: false, reason: "reconciliation_required", attemptId };
 }
+
+/**
+ * THE COMPILED CEILING on auto-top-up attempts per workspace per UTC month
+ * (audit P3-R7) — `@respin/config`'s `AUTO_TOPUP_ATTEMPTS_PER_MONTH_CEILING`,
+ * the one copy. The bound applied is `min(pack.autoTopupMaxAttemptsPerMonth,
+ * this)`, refused as `cap_reached` before any reservation.
+ */
+export const AUTO_TOPUP_MAX_ATTEMPTS_PER_MONTH = AUTO_TOPUP_ATTEMPTS_PER_MONTH_CEILING;
 
 export class AutoTopupUnnamedRefusalError extends Error {
   constructor(
@@ -508,8 +517,7 @@ export async function maybeAutoTopup(
     throw new AutoTopupShortfallError(shortfall);
   }
   const prepared = await db.transaction(async (tx): Promise<Prepared> => {
-    await lockWorkspaceMembershipGraph(tx, workspaceId);
-    await takeWorkspaceLock(tx, workspaceId);
+    await takeWorkspaceLockInOrder(tx, { workspaceId: workspaceId });
     const [selectedSub] = await tx
       .select()
       .from(subscriptions)
@@ -551,6 +559,17 @@ export async function maybeAutoTopup(
     const period = periodMonthUtc(dbNow);
     const spent = await spendForPeriod(tx, workspaceId, period);
     if (spent.cents >= sub.autoTopupMonthlyCapCents!) {
+      return { result: { triggered: false, reason: "cap_reached" } };
+    }
+    // THE ORDINAL BOUND (audit P3-R7): the next attempt would be ordinal
+    // `spent.n + 1`; past the bound it is refused before anything is written.
+    // Config may only tighten the compiled ceiling (the R-123 shape).
+    const { content } = await getActiveConfig(tx);
+    const attemptBound = Math.min(
+      content.pack.autoTopupMaxAttemptsPerMonth,
+      AUTO_TOPUP_MAX_ATTEMPTS_PER_MONTH
+    );
+    if (spent.n + 1 > attemptBound) {
       return { result: { triggered: false, reason: "cap_reached" } };
     }
 
@@ -609,8 +628,7 @@ export async function maybeAutoTopup(
   if ("result" in prepared) return prepared.result;
 
   const dispatchPlan = await db.transaction(async (tx): Promise<DispatchPlan> => {
-    await lockWorkspaceMembershipGraph(tx, workspaceId);
-    await takeWorkspaceLock(tx, workspaceId);
+    await takeWorkspaceLockInOrder(tx, { workspaceId: workspaceId });
     const [sub] = await tx
       .select()
       .from(subscriptions)
@@ -756,8 +774,7 @@ export async function maybeAutoTopup(
       );
       verifyAutoTopupAuthority(observed, workspaceId);
       return await db.transaction(async (tx) => {
-        await lockWorkspaceMembershipGraph(tx, workspaceId);
-        await takeWorkspaceLock(tx, workspaceId);
+        await takeWorkspaceLockInOrder(tx, { workspaceId: workspaceId });
         const [sub] = await tx
           .select()
           .from(subscriptions)
@@ -788,8 +805,7 @@ export async function maybeAutoTopup(
     if (found) {
       try {
         return await db.transaction(async (tx) => {
-          await lockWorkspaceMembershipGraph(tx, workspaceId);
-          await takeWorkspaceLock(tx, workspaceId);
+          await takeWorkspaceLockInOrder(tx, { workspaceId: workspaceId });
           const [sub] = await tx
             .select()
             .from(subscriptions)
@@ -824,8 +840,7 @@ export async function maybeAutoTopup(
       AUTO_TOPUP_IDEMPOTENCY_SAFE_RETRY_MS
     ) {
       const retired = await db.transaction(async (tx) => {
-        await lockWorkspaceMembershipGraph(tx, workspaceId);
-        await takeWorkspaceLock(tx, workspaceId);
+        await takeWorkspaceLockInOrder(tx, { workspaceId: workspaceId });
         const [sub] = await tx
           .select()
           .from(subscriptions)
@@ -857,8 +872,7 @@ export async function maybeAutoTopup(
   let providerDispatched = false;
   try {
     return await db.transaction(async (tx): Promise<AutoTopupResult> => {
-    await lockWorkspaceMembershipGraph(tx, workspaceId);
-    await takeWorkspaceLock(tx, workspaceId);
+    await takeWorkspaceLockInOrder(tx, { workspaceId: workspaceId });
     const lifecycleActive = await workspaceAcceptsMembership(tx, workspaceId);
     try {
       if (!(await isAutoTopupProtocolActive(tx))) {
@@ -920,6 +934,15 @@ export async function maybeAutoTopup(
     ) {
       return reconciliationRequired(pending.id, "idempotency_window");
     }
+    // THE CHARGE CURRENCY IS PINNED, not carried (Phase 6 final billing
+    // check). `resolvePackPrice` only reserves a usd price, so a reserved
+    // attempt in another currency is a row this product never writes: refuse
+    // before the provider is called rather than charge in it.
+    if (pending.currency !== PINNED_CURRENCY) {
+      throw new AutoTopupAttemptIntegrityError(
+        `the reserved auto-top-up attempt is in ${pending.currency}, not ${PINNED_CURRENCY}; nothing was charged`
+      );
+    }
 
     let pi: Stripe.PaymentIntent;
     try {
@@ -927,7 +950,10 @@ export async function maybeAutoTopup(
       pi = await getStripe().paymentIntents.create(
         {
         amount: pending.amountCents,
-        currency: pending.currency,
+        // STATED, NOT CARRIED (Phase 6 final billing check): the charge is in
+        // the pinned currency, and a reserved attempt in any other currency
+        // was refused above, before this call.
+        currency: PINNED_CURRENCY,
         customer: pending.customerId,
         off_session: true,
         confirm: true,

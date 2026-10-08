@@ -9,7 +9,7 @@ import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
 import { AccessRefusal } from "../../access-refusal";
 import { billingErrorDisplay } from "../../billing-errors";
 import { logRefusal } from "../../safe-log";
-import { scopeForUser } from "../../workspace-scope";
+import { readScopeForUser } from "../../workspace-scope";
 import { AccountView, type PendingDeletion } from "./account-view";
 import {
   acceptBillingContactAction,
@@ -30,6 +30,15 @@ const NOTICE_COPY: Record<string, string> = {
 /**
  * States a SCOPED (profile/workspace) deletion can be cancelled from.
  *
+ * `requested` IS NOT ONE (R-162, P5-R6). It used to be listed, and the claim
+ * was false: `TRANSITIONS.requested` is `["journal_pending"]` alone, so a
+ * button offered there refused. No `requested -> cancelled` edge is added —
+ * it would bypass the journal. A `requested` operation lasts one transition,
+ * and a wedged one is the worker's resume sweep's job, not a button's.
+ *
+ * `blocked` IS ONE (R-162) unless its resume state is irreversible work
+ * (`erasing`/`verifying`), which the server refuses as `erasure_started`.
+ *
  * Keyed on state AND scope. Keyed on state alone, an identity operation in
  * `requested` / `journal_pending` / `tombstoned` rendered a "Cancel deletion"
  * button whose action calls `cancelScopedDeletion`, which refuses
@@ -40,9 +49,11 @@ const NOTICE_COPY: Record<string, string> = {
  * walk they cannot reach this page at all. Offering a control that cannot work
  * is worse than offering none.
  */
-const CANCELLABLE_STATES = new Set(["requested", "journal_pending", "tombstoned", "external_actions_pending", "grace"]);
-const isCancellable = (scope: string, state: string): boolean =>
-  scope !== "identity" && CANCELLABLE_STATES.has(state);
+const CANCELLABLE_STATES = new Set(["journal_pending", "tombstoned", "external_actions_pending", "grace", "blocked"]);
+const isCancellable = (scope: string, state: string, blockedResumeState: string | null): boolean =>
+  scope !== "identity" &&
+  CANCELLABLE_STATES.has(state) &&
+  !(state === "blocked" && (blockedResumeState === "erasing" || blockedResumeState === "verifying"));
 
 const isErrorCode = (value: string): value is AccountErrorCode =>
   (ACCOUNT_ERROR_CODES as readonly string[]).includes(value);
@@ -52,9 +63,13 @@ export default async function AccountSettingsPage(props: {
 }) {
   const user = await requireUser();
   const search = await props.searchParams;
-  let scope: Awaited<ReturnType<typeof scopeForUser>>;
+  // THE READ GRADE (R-163): during a workspace deletion's grace the only scope
+  // its owner can hold. Every read below accepts it — the workspace row, the
+  // pending deletions (`assertReadScoped`, the requester arm) and the billing
+  // contact — and the cancel is a session-proof action that takes no scope.
+  let scope: Awaited<ReturnType<typeof readScopeForUser>>;
   try {
-    scope = await scopeForUser(user);
+    scope = await readScopeForUser(user);
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[account] workspace scope unavailable", err);
@@ -73,7 +88,7 @@ export default async function AccountSettingsPage(props: {
     state: op.state,
     requestedAt: op.requestedAt.toISOString(),
     graceExpiresAt: op.graceExpiresAt?.toISOString() ?? null,
-    cancellable: isCancellable(op.scope, op.state),
+    cancellable: isCancellable(op.scope, op.state, op.blockedResumeState),
   }));
   const e = typeof search.e === "string" && isErrorCode(search.e) ? search.e : null;
   const ok = typeof search.ok === "string" ? search.ok : null;
@@ -86,6 +101,7 @@ export default async function AccountSettingsPage(props: {
       requestsOpen={{ identity: requestsOpen.identity, workspace: requestsOpen.workspace }}
       billingContact={billingContact}
       pending={pending}
+      workspacePendingDeletion={"grade" in scope && scope.grade === "read"}
       // Own keys only: a crafted `?ok=` naming a prototype member would
       // otherwise hand a function to the banner (lean gate S-2, pre-existing).
       notice={ok && Object.hasOwn(NOTICE_COPY, ok) ? NOTICE_COPY[ok]! : null}

@@ -121,6 +121,8 @@ const usageProps: UsageViewProps = {
   burn: { ok: true, hasAnyDebit: false },
   period: { start: AS_OF, ...BURN_PERIOD_COPY.calendar_month },
   burnByMode: { ok: true, byMode: [], notAGeneration: { credits: 0, debits: 0 }, nonTerminalClaim: { credits: 0, debits: 0 } },
+  // R-176: no support address configured.
+  support: null,
   runway: {
     state: "estimate",
     asOf: AS_OF,

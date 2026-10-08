@@ -7,7 +7,7 @@ import type { DbLike, TxLike } from "@respin/db";
 import { schema } from "@respin/db";
 import { respinConfigV1, type RespinConfigV1 } from "./schema";
 
-export { respinConfigV1 } from "./schema";
+export { AUTO_TOPUP_ATTEMPTS_PER_MONTH_CEILING, respinConfigV1 } from "./schema";
 export type { RespinConfigV1, SubscriptionTier } from "./schema";
 
 export class ConfigUnavailableError extends Error {

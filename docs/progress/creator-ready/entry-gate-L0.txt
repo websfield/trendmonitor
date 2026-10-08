@@ -1,0 +1,93 @@
+# L0 candidate entry gate — 2026-09-30T23:48:09+10:00 — HEAD 3533dbfcf40a19924d5665e772f5a7411017817f
+node v24.18.0 · pnpm 10.28.2
+TEST_DATABASE_URL set: no
+
+## pnpm -C respin preflight — start 23:48:10
+
+> respin@0.0.0 preflight C:\projects\ai.playground\trendMonitor\respin
+> tsx scripts/preflight.ts
+
+preflight ok: brain_content_registry
+## pnpm -C respin preflight · exit 0 · end 23:48:16
+
+## pnpm -C respin typecheck — start 23:48:16
+packages/trends typecheck$ tsc --noEmit
+packages/llm typecheck$ tsc --noEmit
+packages/trends typecheck: Done
+packages/brain typecheck: Done
+packages/llm typecheck: Done
+packages/db typecheck$ tsc --noEmit
+packages/modes typecheck$ tsc --noEmit
+packages/modes typecheck: Done
+packages/db typecheck: Done
+packages/auth typecheck$ tsc --noEmit
+packages/config typecheck$ tsc --noEmit
+packages/config typecheck: Done
+packages/auth typecheck: Done
+packages/credits typecheck$ tsc --noEmit
+packages/credits typecheck: Done
+## pnpm -C respin typecheck · exit 0 · end 23:49:11
+
+## pnpm -C respin worker:typecheck — start 23:49:11
+
+> respin@0.0.0 worker:typecheck C:\projects\ai.playground\trendMonitor\respin
+> tsc -p worker/tsconfig.json --pretty false
+
+## pnpm -C respin worker:typecheck · exit 0 · end 23:49:19
+
+## pnpm -C respin lint — start 23:49:19
+
+> respin@0.0.0 lint C:\projects\ai.playground\trendMonitor\respin
+> eslint .
+
+## pnpm -C respin lint · exit 0 · end 23:49:54
+
+## pnpm -C respin db:check — start 23:49:54
+
+> respin@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin
+> pnpm --filter @respin/db db:check
+
+
+> @respin/db@0.0.0 db:check C:\projects\ai.playground\trendMonitor\respin\packages\db
+> drizzle-kit check
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file 'C:\projects\ai.playground\trendMonitor\respin\packages\db\drizzle.config.ts'
+Everything's fine 🐶🔥
+## pnpm -C respin db:check · exit 0 · end 23:49:57
+
+## pnpm -C respin build — start 23:49:57
+├ ƒ /studio/frameworks                    3.1 kB         106 kB
+├ ƒ /trends                              4.53 kB         108 kB
+└ ƒ /usage                                 155 B         103 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/1e9670fa-2d7df238e6dfbceb.js  54.2 kB
+  ├ chunks/264-ee37288ed9e7d4f7.js       46.8 kB
+  └ other shared chunks (total)          1.99 kB
+
+
+ƒ Middleware                               35 kB
+
+○  (Static)   prerendered as static content
+●  (SSG)      prerendered as static HTML (uses generateStaticParams)
+ƒ  (Dynamic)  server-rendered on demand
+
+## pnpm -C respin build · exit 0 · end 23:51:16
+
+## pnpm -C respin test — start 23:51:16
+    [90m1259| [39m  );
+    [90m1260| [39m  expect(unaccounted, "add an isolation case or a reasoned exclusion")…
+    [90m   | [39m                                                                       [31m^[39m
+    [90m1261| [39m    []
+    [90m1262| [39m  );
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m220 passed[39m[22m[2m | [22m[33m23 skipped[39m[90m (244)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m5749 passed[39m[22m[2m | [22m[33m119 skipped[39m[90m (5870)[39m
+[2m   Start at [22m 23:51:17
+[2m   Duration [22m 524.63s[2m (transform 85.85s, setup 0ms, collect 1058.23s, tests 8325.08s, environment 189ms, prepare 117.43s)[22m
+
+ ELIFECYCLE  Test failed. See above for more details.
+## pnpm -C respin test · exit 1 · end 00:00:02

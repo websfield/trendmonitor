@@ -31,6 +31,7 @@
 //   R-97     the spin reference carries the autopsy's MECHANISM projection
 //            (hook mechanic, beats, ending, follow trigger) beside the gate
 //            fields; the prompt side of that rule lives in `packages/modes`.
+import { boundedReadOrJoin } from "./render-transaction";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { DbLike, TxLike } from "./db-like";
@@ -43,7 +44,15 @@ import {
 } from "./with-workspace";
 import { ProfileRoleError, WorkspacePausedError } from "./errors";
 import { hasOpenPause } from "./pause";
-import { autopsies, autopsyCacheClaims, trackedNiches, trendItems, trendSources, trendTranscripts } from "./trends-schema";
+import {
+  autopsies,
+  autopsyCacheClaims,
+  trackedNiches,
+  trendItems,
+  trendSources,
+  trendTranscripts,
+  type TrendSourceKind,
+} from "./trends-schema";
 import { onboardingInputs } from "./onboarding-schema";
 import { appendReferencePost } from "./onboarding-ops";
 import { AUTOPSY_ATTEMPT_CODE_CEILING } from "./autopsy-policy";
@@ -122,6 +131,19 @@ export type ScopedSpinReference = {
   mechanism: { hookMechanic: string; beats: readonly string[]; ending: string; followTrigger: string };
 };
 
+/**
+ * WHAT A SAVED SPIN SAYS ABOUT ITS REFERENCE (launch L4, R-153 amendment A2):
+ * the three display fields `/trends` puts beside a Spin — where the reference
+ * came from, its title, and its hook mechanic. Never the gate fields (`hook`,
+ * `subjectTerms`, `structure`) and never the transcript.
+ */
+export type SpinReferenceSummary = {
+  // The enum's own type (P2-R11), never a second hand-typed union.
+  sourceKind: TrendSourceKind;
+  title: string;
+  hookMechanic: string;
+};
+
 /** DB mirror of @respin/trends' bounded canonical AutopsyAnalysis contract. */
 export type CanonicalAutopsyAnalysis = {
   hookMechanic: string; beats: readonly string[]; ending: string; followTrigger: string;
@@ -196,7 +218,8 @@ function isUnavailableBaselineInput(input: PrivateTrendItemInput): input is Unav
 
 export async function createTrendSource(
   db: DbLike,
-  input: { kind: "youtube"; externalId: string; sourceUrl: string }
+  // Narrowed FROM the enum (P2-R11): renaming the member is a compile error here.
+  input: { kind: Extract<TrendSourceKind, "youtube">; externalId: string; sourceUrl: string }
 ) {
   const [row] = await db.insert(trendSources).values(input).onConflictDoNothing()
     .returning();
@@ -826,7 +849,7 @@ export async function trackedNichesForProfile(
   profileId: string,
 ) {
   const profile = await ProfileScope.mint(db, scope, profileId);
-  return db.transaction(async (tx) => {
+  return boundedReadOrJoin(db, async (tx) => {
     await assertFreshProfileScopeInTx(tx, profile);
     return tx.select({ id: trackedNiches.id, niche: trackedNiches.niche })
       .from(trackedNiches)
@@ -876,7 +899,7 @@ export async function feedItemsForProfile(
   db: DbLike, scope: WorkspaceScope, profileId: string, now = new Date()
 ) {
   const profile = await ProfileScope.mint(db, scope, profileId);
-  return db.transaction(async (tx) => {
+  return boundedReadOrJoin(db, async (tx) => {
     await assertFreshProfileScopeInTx(tx, profile);
     const niches = await tx.select({ niche: trackedNiches.niche }).from(trackedNiches).where(and(
       eq(trackedNiches.profileId, profile.profileId), eq(trackedNiches.workspaceId, profile.workspaceId)
@@ -920,7 +943,7 @@ export type TrendFeedItem = {
   baselineObservationIds: unknown; baselineWindowStartsAt: Date; baselineWindowEndsAt: Date;
   outlierRatio: string; saturation: "measured" | "unmeasured";
   saturationMeasurement: unknown; transcriptState: "transcript_required" | "transcript_available" | "transcript_unavailable";
-  sourceKind: "youtube" | "submitted";
+  sourceKind: TrendSourceKind;
   autopsy: CanonicalAutopsyAnalysis & { autopsyId: string; analysisVersion: string };
 };
 
@@ -929,7 +952,7 @@ export async function trendFeedProjection(
 ): Promise<TrendFeedItem[]> {
   const rows = await feedItemsForProfile(db, scope, profileId, now);
   const profile = await ProfileScope.mint(db, scope, profileId);
-  return db.transaction(async (tx) => {
+  return boundedReadOrJoin(db, async (tx) => {
     await assertFreshProfileScopeInTx(tx, profile);
     const projections = await Promise.all(rows.map(async (row) => {
       const [source] = await tx.select({ kind: trendSources.kind }).from(trendSources).where(eq(trendSources.id, row.sourceId)).limit(1);
@@ -1041,6 +1064,55 @@ export async function spinReferenceForProfile(
       mechanism: {
         hookMechanic: analysis.hookMechanic, beats: analysis.beats, ending: analysis.ending, followTrigger: analysis.followTrigger,
       },
+    };
+  });
+}
+
+/** The opaque autopsy id shape; anything else is never sent to a uuid column. */
+const SPIN_AUTOPSY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * THE REFERENCE A STORED SPIN WAS MADE FROM, as a display summary (launch L4,
+ * R-153 amendment A2). The SAME rights predicate as `spinReferenceForProfile`
+ * — a shared analysis, or this profile's own private one, its trend item under
+ * the same rights scope — but no transcript is required: this shows what the
+ * creator already saw on `/trends`, it feeds no gate. `null`, never a throw,
+ * for an id that is not readable here (erased, foreign, unfinished,
+ * unparseable): the saved page then says the reference is not available.
+ */
+export async function spinReferenceSummaryForProfile(
+  db: DbLike, profile: ProfileScope, autopsyId: string
+): Promise<SpinReferenceSummary | null> {
+  assertScoped(profile);
+  if (typeof autopsyId !== "string" || !SPIN_AUTOPSY_ID_RE.test(autopsyId)) return null;
+  return boundedReadOrJoin(db, async (tx) => {
+    await assertFreshProfileScopeInTx(tx, profile);
+    const [autopsy] = await tx.select().from(autopsies).where(and(
+      eq(autopsies.id, autopsyId), eq(autopsies.status, "completed"),
+      or(
+        eq(autopsies.rightsScope, "shared_analysis"),
+        and(eq(autopsies.rightsScope, "profile_private"), eq(autopsies.profileId, profile.profileId), eq(autopsies.workspaceId, profile.workspaceId))
+      )
+    )).limit(1);
+    if (!autopsy) return null;
+    const [item] = await tx.select({ title: trendItems.title, sourceKind: trendSources.kind }).from(trendItems)
+      .innerJoin(trendSources, eq(trendSources.id, trendItems.sourceId))
+      .where(and(
+        eq(trendItems.id, autopsy.trendItemId),
+        eq(trendItems.rightsScope, autopsy.rightsScope),
+        autopsy.rightsScope === "profile_private"
+          ? and(eq(trendItems.profileId, profile.profileId), eq(trendItems.workspaceId, profile.workspaceId))
+          : isNull(trendItems.profileId)
+      )).limit(1);
+    if (!item) return null;
+    const analysis = parseCanonicalAutopsyAnalysis(autopsy.analysis);
+    if (!analysis) return null;
+    return {
+      // The column is typed by the enum, so it is passed through rather than
+      // re-derived by a ternary that would map any third kind to "submitted".
+      sourceKind: item.sourceKind,
+      title: item.title,
+      hookMechanic: analysis.hookMechanic,
     };
   });
 }
@@ -1367,7 +1439,7 @@ export async function pastedReferencesForProfile(
 ): Promise<PastedReference[]> {
   const profile = await ProfileScope.mint(db, scope, profileId);
   const pair: OwnerPair = { profileId: profile.profileId, workspaceId: profile.workspaceId };
-  return db.transaction(async (tx) => {
+  return boundedReadOrJoin(db, async (tx) => {
     await assertFreshProfileScopeInTx(tx, profile);
     const rows = await tx.select({ item: trendItems, sourceUrl: trendSources.sourceUrl })
       .from(trendItems)

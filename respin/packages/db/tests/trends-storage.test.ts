@@ -391,7 +391,7 @@ describe("REQ-A03: a forged ProfileScope is refused BEFORE any query (CLAUDE.md 
     };
     // THE POPULATION, AS A LIST (CLAUDE.md 2026-08-29): adding a second
     // function that receives an already-minted scope costs an entry here.
-    const PROFILE_SCOPE_TAKERS = ["spinReferenceForProfile"];
+    const PROFILE_SCOPE_TAKERS = ["spinReferenceForProfile", "spinReferenceSummaryForProfile"];
     const real = scan(source);
     expect(real.map((f) => f.name).sort()).toEqual([...PROFILE_SCOPE_TAKERS].sort());
     for (const f of real) expect(f.asserted, `${f.name} does not call assertScoped as its first statement`).toBe(true);

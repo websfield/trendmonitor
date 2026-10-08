@@ -28,14 +28,24 @@
 // EVERY REGEX IS A LITERAL. Assembling one from a string loses a backslash and
 // the scan silently matches nothing (CLAUDE.md, 2026-08-21); every antithesis
 // shape below carries a `specimen` that a test asserts it matches, so a broken
-// pattern is a red test rather than a clean report.
+// pattern is a red test rather than a clean report. THE ONE EXCEPTION is the
+// clause separator (audit Phase 2, P2-R3): three antithesis shapes splice
+// `CLAUSE_SEPARATOR.source` into a `String.raw` template, because one concept
+// spelled in four places is how `claims.ts`'s negated-clause guard came to read
+// `,`/`;` while these read dashes too. `String.raw` consumes no backslash, and
+// `hard-rules.test.ts` asserts each composed shape fires on every separator
+// member as well as on its specimen.
 import {
+  CLAUSE_SEPARATOR,
   excerpt,
   lines,
   sentenceUnits,
   wordCount,
   type TextUnit,
 } from "./text";
+
+/** The shared clause separator's source, spliced into three antithesis shapes. */
+const SEP = CLAUSE_SEPARATOR.source;
 
 export const HARD_RULE_IDS = [
   "fragment_triad",
@@ -68,6 +78,20 @@ export const HARD_RULE_IDS = [
   // Slice 8's Spin-only pre-display release gate. This stays after the
   // established output rules so stored refusal ordering remains stable.
   "similarity",
+  // ------------------------------------------------- R-148 (launch L1)
+  //
+  // THE FORM AND FILMING RULES, APPENDED for the reason the slice-7 rules were:
+  // `honestRefusal` orders its lines by this tuple, so inserting would reorder
+  // every stored refusal's reasons. R-148 point 6 classes all four as
+  // INTEGRITY rules — none is a taste rule, and no taste rule moved.
+  /** An explicit form choice not honoured, or the wrong pivot kind for the form. */
+  "form_mismatch",
+  /** A personal event or demonstrated result neither quoted nor `[check]`ed. */
+  "unsupported_experience",
+  /** A filming plan outside a limit the creator declared. */
+  "filming_outside_limits",
+  /** A `custom` structure that carries an approved framework's name. */
+  "custom_framework_name",
 ] as const;
 
 export type HardRuleId = (typeof HARD_RULE_IDS)[number];
@@ -153,6 +177,14 @@ const REMEDIES: Record<HardRuleId, string> = {
     "Every output names its weakest point, and this one names nothing. Say what would have to be true for this to work, and what you do not know yet.",
   similarity:
     "This stays too close to the reference. Change the subject, rewrite the hook in your own words, and alter at least one beat or turn.",
+  form_mismatch:
+    "This is not the form that was asked for, or its pivot is the wrong kind for it. Write it in the requested form: an explanation or a story turns, a demonstration reveals its result.",
+  unsupported_experience:
+    "This describes something that happened, or a result, and names no source that says it: a quote of yours about something else is not a source for it. Quote the line of yours it comes from, or mark what is unconfirmed [check] right after it so you can fill it in before you film.",
+  filming_outside_limits:
+    "This needs more than you said you have — more time, more people, or a place or piece of kit you did not list. Fit it to what you declared, or mark what you would need to find [check].",
+  custom_framework_name:
+    "This calls its own structure by the name of a framework in the library. A custom structure gets a name of its own, so it is never mistaken for the reviewed one.",
 };
 
 function finding(
@@ -276,8 +308,12 @@ export function scanFragmentTriads(unit: TextUnit): HardRuleFinding[] {
  *   MISS "We're not guessing, we're measuring."          (and three more)
  *
  * Only "It isn't talent, it's tempo." fired, and only because `its-not-its`
- * covers the literal subject `it`. The separator is now `[.!?]+` OR a comma,
- * semicolon or dash — the backreference is still what does the work, so the
+ * covers the literal subject `it`. The separator is now `[.!?]+` OR
+ * `CLAUSE_SEPARATOR` (`text.ts`: comma, semicolon, colon, either dash, or a
+ * hyphen used as a dash — never one joining two words, so "It isn't
+ * talent-it's tempo." no longer reads as a break, while "It isn't talent: it's
+ * tempo." now does; audit Phase 2, P2-R3) — the backreference is still what
+ * does the work, so the
  * five pinned true negatives ("I don't shoot at night, it's too grainy.") stay
  * clean in both punctuations, which is asserted in both punctuations.
  *
@@ -302,7 +338,10 @@ export const ANTITHESIS_SHAPES: readonly {
     // "it isn't", "it is not". The last two were missing, and "It isn't talent,
     // it's tempo." is one of the strings the gate measured escaping.
     pattern:
-      /\bit(?:['’]s\s+not|\s+is\s+not|\s+isn['’]?t)\b[^.!?\n]{1,80}[,;—–-]\s*it(?:['’]s|\s+is)\b/i,
+      new RegExp(
+        String.raw`\bit(?:['’]s\s+not|\s+is\s+not|\s+isn['’]?t)\b[^.!?\n]{1,80}${SEP}it(?:['’]s|\s+is)\b`,
+        "i"
+      ),
     specimen: "It's not a hack, it's a habit.",
   },
   {
@@ -316,7 +355,10 @@ export const ANTITHESIS_SHAPES: readonly {
     // control: without it, this is the pattern that fired on "I don't shoot at
     // night. It's too grainy."
     pattern:
-      /\b(it|that|this|he|she|they|we|you|i)(?:['’]s\s+not|['’]re\s+not|\s+is\s+not|\s+are\s+not|\s+isn['’]?t|\s+aren['’]?t)\b[^.!?\n]{0,80}(?:[.!?]+\s+|\s*[,;—–-]\s*)\1(?:['’]s|['’]re|\s+is|\s+are)\b/i,
+      new RegExp(
+        String.raw`\b(it|that|this|he|she|they|we|you|i)(?:['’]s\s+not|['’]re\s+not|\s+is\s+not|\s+are\s+not|\s+isn['’]?t|\s+aren['’]?t)\b[^.!?\n]{0,80}(?:[.!?]+\s+|${SEP})\1(?:['’]s|['’]re|\s+is|\s+are)\b`,
+        "i"
+      ),
     specimen: "It isn't talent. It's tempo.",
   },
   {
@@ -324,7 +366,10 @@ export const ANTITHESIS_SHAPES: readonly {
     // "<subject> doesn't <verb> X<sep> <same subject> <same verb> Y." TWO
     // backreferences, because the figure is the same verb coming back affirmed.
     pattern:
-      /\b(i|you|we|they|it|that|this|he|she)\s+(?:do|does|did|can|could|will|would|should)(?:n['’]?t|\s+not)\s+(\w+)\b[^.!?\n]{0,80}(?:[.!?]+\s+|\s*[,;—–-]\s*)\1\s+\2\b/i,
+      new RegExp(
+        String.raw`\b(i|you|we|they|it|that|this|he|she)\s+(?:do|does|did|can|could|will|would|should)(?:n['’]?t|\s+not)\s+(\w+)\b[^.!?\n]{0,80}(?:[.!?]+\s+|${SEP})\1\s+\2\b`,
+        "i"
+      ),
     specimen: "You don't need a better camera. You need a better reason.",
   },
   {

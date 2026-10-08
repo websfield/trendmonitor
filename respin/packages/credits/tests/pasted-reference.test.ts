@@ -876,7 +876,7 @@ describe("the `submitted` adapter's PRODUCTION PORT (slice 8 R4)", () => {
     expect(await balance(db, scope)).toBe(100 - cost);
   });
 
-  it("never relabels a refusal as `quote_budget_exceeded`: a Free workspace's tier error propagates through the adapter AS ITSELF", async () => {
+  it("never relabels a refusal as a reason: a Free workspace's tier error propagates through the adapter AS ITSELF", async () => {
     const { db, scope, a } = await fixture({ tier: "free" });
     const port: ReferenceIntakePort = pastedReferenceIntakePort(db, scope, now());
     await expect(

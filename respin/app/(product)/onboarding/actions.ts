@@ -42,7 +42,7 @@ import { requireUser } from "@respin/auth";
 import { respinDb } from "@respin/db";
 import { AssemblyError, respinCredits } from "@respin/credits/app-server";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
-import { logRefusal, logSpend, schemaIssueFields } from "../safe-log";
+import { logRefusal, logSpend, schemaIssueFields, wireId } from "../safe-log";
 import type { BillingErrorCode } from "../billing-errors";
 import type { VoiceInferenceState } from "./run-state";
 import type { CandidateSafetyState } from "./candidate-safety-state";
@@ -291,8 +291,8 @@ export async function runVoiceInferenceAction(
     // metering facts only, and the creator's posts are the input to this call.
     logSpend("[onboarding-action] voice inference completed", {
       workspaceId: scope.workspaceId,
-      profileId,
-      attemptId,
+      profileId: wireId(profileId),
+      attemptId: wireId(attemptId),
       brainDocId: result.brainDocId,
       claimPositions: result.claimPositions,
       placeholders: result.placeholders,
@@ -325,8 +325,8 @@ export async function runVoiceInferenceAction(
       status: "refused",
       code: logRefusal("[onboarding-action] voice inference refused", err, {
         ...(scope ? { workspaceId: scope.workspaceId } : {}),
-        profileId,
-        attemptId,
+        profileId: wireId(profileId),
+        attemptId: wireId(attemptId),
         ...(assemblyKind ? { assemblyKind } : {}),
         // WHERE a `bad_shape` happened, clamped in `schemaIssueFields` (live
         // walk, 2026-09-18). Without it the line said `assemblyKind:

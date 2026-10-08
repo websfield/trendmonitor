@@ -29,6 +29,7 @@ import {
 } from "@respin/db";
 import {
   assertTrustedReference,
+  usableCreatorRules,
   type CreatorRule,
   type GenerationContext,
   type SpinReference,
@@ -220,6 +221,37 @@ function assertNoPlaceholder(kind: string, content: unknown): void {
   }
 }
 
+/**
+ * THE SAMPLE KILL TEST MUST CARRY AT LEAST ONE USABLE RULE (audit P3-R8,
+ * decisions R-157), checked AT LOAD so a process cannot serve the Sample Spin
+ * with one that does not.
+ *
+ * WHY AT LOAD: `runGeneration` skips the scoring call when no rule is usable
+ * (`usableCreatorRules` drops `[check]` and blank rules), so a run records ONE
+ * call — and `system-spend.ts` throws on a `succeeded` `public_sample_spin`
+ * with fewer than two calls, AFTER the vendor was billed, which the demo route
+ * renders as a 503. The rules are static per process, so the fixture is the
+ * only producer of "zero usable rules": refusing it here makes that
+ * paid-then-503 shape unreachable, and the spend invariant stays as it is, as
+ * the second fence. The `[check]` half was already refused by
+ * `assertNoPlaceholder`; the BLANK half (a whitespace-only rule, which the
+ * brain schema admits) and the empty list are refused here too.
+ *
+ * Exported from this file only — not through `sample-spin/index.ts` — so a
+ * test can hand it a planted Kill Test.
+ */
+export function assertSampleSpinKillTestUsable(killtest: unknown): CreatorRule[] {
+  assertNoPlaceholder("killtest", killtest);
+  const creatorRules = creatorRulesOfContent(killtest);
+  if (creatorRules.length === 0) {
+    throw new SampleSpinFixtureError("the sample Kill Test carries no rules");
+  }
+  if (usableCreatorRules(creatorRules).length === 0) {
+    throw new SampleSpinFixtureError("the sample Kill Test carries no usable rule");
+  }
+  return creatorRules;
+}
+
 let loaded: SampleSpinFixture | null = null;
 
 /** Validate once, then serve the frozen result. A failure throws every time. */
@@ -258,8 +290,7 @@ export function loadSampleSpinFixture(): SampleSpinFixture {
     structure: analysis.structure,
   };
   assertTrustedReference(gate);
-  const creatorRules = creatorRulesOfContent(killtest);
-  if (creatorRules.length === 0) throw new SampleSpinFixtureError("the sample Kill Test carries no rules");
+  const creatorRules = assertSampleSpinKillTestUsable(killtest);
   const fixture: SampleSpinFixture = Object.freeze({
     version: SAMPLE_SPIN_FIXTURE_VERSION,
     provenance: SAMPLE_SPIN_PROVENANCE,
@@ -297,6 +328,11 @@ export function sampleSpinContext(fixture: SampleSpinFixture, idea: string): Gen
     input: idea,
     platform: SAMPLE_SPIN_PLATFORM,
     unvouchedSpecifics: [],
+    // The Sample Spin is `analyseAndSpin`, which keeps the legacy contract
+    // (R-148): no creative form, stated rather than defaulted.
+    creative: null,
+    // Nor does it read any history (launch L3): a public demo has none.
+    recentWork: null,
     reference: { mechanism: fixture.mechanism },
   };
 }

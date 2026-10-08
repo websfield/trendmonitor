@@ -69,8 +69,9 @@ export function LineageList({
             {/*
               A REFUSED RUN STAYS IN THE CHAIN, LABELLED. Hiding it would hide a
               charge: an honest refusal is a stored generation the creator paid
-              for (the slice card's question-4 table), and a chain that showed
-              only the successes would under-count what the session cost.
+              for (the slice card's question-4 table; a claim-only refusal is
+              the R-173 exception and was free), and a chain that showed only
+              the successes would under-count what the session cost.
             */}
             {entry.outcome === "honest_refusal" ? (
               <span className="muted"> (this one was refused)</span>

@@ -44,6 +44,7 @@ import {
   onboardingBrainPrices,
   respinCredits,
 } from "@respin/credits/app-server";
+import { displayBalanceFor } from "../display-balance";
 import { getActiveConfigServer } from "@respin/config/app-server";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { AccessRefusal } from "../access-refusal";
@@ -98,7 +99,9 @@ async function progressRead<T>(
   } catch (err) {
     rethrowNextControlFlow(err);
     if (err instanceof ProfileAccessError || err instanceof WorkspaceAccessError) {
-      logRefusal(`[onboarding] ${label} unavailable`, err);
+      // A LITERAL TAG (gate M5): the step travels as a context value, so the
+      // log prefix is never assembled from a variable.
+      logRefusal("[onboarding] progress read unavailable", err, { step: label });
       const { title, detail } = billingErrorDisplay(err);
       return { known: false, refusal: { title, detail } };
     }
@@ -256,8 +259,12 @@ export default async function OnboardingPage(props: {
     logRefusal("[onboarding] run price unavailable", err);
   }
   try {
-    const view = await respinCredits.getBalance(scope.workspaceId);
-    runBalance = view.balance;
+    // Non-blocking (audit Phase 8, P8-R1). A SETTLING read states no balance:
+    // `runCostSentence` presents its number as final, so the committed fold is
+    // left unsaid rather than shown as settled; the run is priced and checked
+    // on the server at the press either way.
+    const view = await displayBalanceFor(scope.workspaceId);
+    runBalance = view.settling ? null : view.balance;
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[onboarding] balance unavailable", err);

@@ -29,7 +29,19 @@ import { MAIN_CHAPTERS, PERSONAS, VOICE_PRESS_PERSONAS } from "../e2e/support/ma
 
 export type ScanProblem = { kind: "blocking-note" | "missing-screenshot" | "missing-log" | "handoff-file"; detail: string };
 
-const BLOCKING_LINE = new RegExp(`^\\[note\\] ${BLOCKING_NOTE_PREFIX}`);
+/**
+ * The pattern for a note line beginning with `prefix`, with the prefix ESCAPED.
+ *
+ * It was interpolated raw (audit item 47, P1-R8): a prefix carrying a regex
+ * metacharacter would have matched lines it does not name, or none at all, and
+ * the scan whose job is "any BLOCKING note fails CI" would have passed a run
+ * full of them. Exported so the escape is tested with a prefix that has one.
+ */
+export function blockingLinePattern(prefix: string): RegExp {
+  return new RegExp(`^\\[note\\] ${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+}
+
+const BLOCKING_LINE = blockingLinePattern(BLOCKING_NOTE_PREFIX);
 
 function* walk(dir: string): Generator<string> {
   if (!fs.existsSync(dir)) return;
@@ -226,7 +238,8 @@ export function main(argv: readonly string[], env: NodeJS.ProcessEnv = process.e
     try {
       runId = runIdFlag >= 0 ? rest[runIdFlag + 1] : currentRunId(env);
     } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
+      // `currentRunId`'s own refusal text; a non-Error is not printed (gate L4).
+      console.error(error instanceof Error ? error.message : "the run id could not be read");
       return 2;
     }
     if (!runId) {

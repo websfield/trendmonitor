@@ -5,7 +5,7 @@ import type { ResidueProbeImplementations } from "./lifecycle-probes";
 
 export const APP_TABLES = [
   "account", "activation_cohort_daily", "auth_mail_outbox", "auto_topup_protocol_rollouts", "autopsies", "autopsy_cache_claims", "brain_activation_snapshots", "brain_docs",
-  "config_versions", "creator_profiles", "credit_ledger", "deletion_cancellation_proofs", "deletion_external_commands", "deletion_membership_snapshots", "deletion_operation_transitions", "deletion_operations", "deletion_recovery_sessions", "first_billable_attempts", "frameworks",
+  "config_versions", "creative_pieces", "creator_profiles", "credit_ledger", "deletion_cancellation_proofs", "deletion_external_commands", "deletion_membership_snapshots", "deletion_operation_transitions", "deletion_operations", "deletion_recovery_sessions", "first_billable_attempts", "frameworks",
   "generation_attempts", "generation_feedback", "generations", "membership_profile_selections", "memberships",
   "model_usage", "onboarding_inputs", "onboarding_interview_drafts", "pause_periods", "promotion_proposals",
   "proposal_evidence_feedback", "proposal_evidence_results", "public_sample_spin_buckets", "rate_limit", "results", "session", "stripe_events",
@@ -59,6 +59,7 @@ export const ROW_CLASSES_BY_TABLE = {
   brain_activation_snapshots: ["profile_row"],
   brain_docs: ["profile_row"],
   config_versions: ["system_row"],
+  creative_pieces: ["profile_row"],
   creator_profiles: ["profile_row"],
   credit_ledger: ["workspace_row"],
   deletion_cancellation_proofs: ["identity_row"],
@@ -153,9 +154,14 @@ export const SPLIT_TABLE_FIELD_SETS = {
     // Task 7: the keyed activation hash is identifier-bearing material and
     // scrubs with the target; the contribution numbers and receipt digest are
     // receipt facts and survive on the one-year clock.
-    { name: "linkable_identifiers", kind: "columns", columns: ["id", "target_key", "user_id", "workspace_id", "profile_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash", "activation_payload_hash"] },
+    // R-166: `cascade_parent_operation_id` names the identity operation that
+    // cascaded this one — an identifier, scrubbed with the target.
+    { name: "linkable_identifiers", kind: "columns", columns: ["id", "target_key", "user_id", "workspace_id", "profile_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash", "activation_payload_hash", "cascade_parent_operation_id"] },
     { name: "requester_identity", kind: "columns", columns: ["requester_user_id"] },
-    { name: "receipt_facts", kind: "remaining_columns", excluding: ["request_session_digest", "recovery_secret_digest", "recovery_secret_prefix", "id", "target_key", "user_id", "workspace_id", "profile_id", "requester_user_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash", "activation_payload_hash"] },
+    { name: "receipt_facts", kind: "remaining_columns", excluding: ["request_session_digest", "recovery_secret_digest", "recovery_secret_prefix", "id", "target_key", "user_id", "workspace_id", "profile_id", "requester_user_id", "recovery_delivery_recipient_digest", "idempotency_key", "payload_hash", "activation_payload_hash", "cascade_parent_operation_id", "cancelled_by_user_id"] },
+    // R-166: the canceller — scrubbed by the CANCELLER's identity erasure, the
+    // way `requester_identity` is scrubbed by the requester's.
+    { name: "canceller_identity", kind: "columns", columns: ["cancelled_by_user_id"] },
   ],
   deletion_operation_transitions: [
     { name: "linkable_identifiers", kind: "columns", columns: ["id", "operation_id", "target_key", "user_id", "workspace_id", "profile_id", "payload_hash"] },
@@ -326,14 +332,17 @@ export const LIFECYCLE_REGISTRY = [
   row("deletion_operations", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "identity_recovery_7_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[0]),
   row("deletion_operations", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[1]),
   row("deletion_operations", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[2]),
+  row("deletion_operations", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[4]),
   row("deletion_operations", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[3]),
   row("deletion_operations", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "identity_recovery_7_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[0]),
   row("deletion_operations", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "profile_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[1]),
   row("deletion_operations", "profile_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[2]),
+  row("deletion_operations", "profile_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[4]),
   row("deletion_operations", "profile_row", { scope: "profile", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[3]),
   row("deletion_operations", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_secret", exportProjector: "none", action: "delete_explicit", retention: "identity_recovery_7_days", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[0]),
   row("deletion_operations", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "workspace_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[1]),
   row("deletion_operations", "workspace_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[2]),
+  row("deletion_operations", "workspace_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[4]),
   row("deletion_operations", "workspace_row", { scope: "workspace", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "delete_explicit", retention: "deletion_receipt_one_year", executor: "expiry_receiver", residueProbe: "expiry_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operations[3]),
   row("deletion_operation_transitions", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[0]),
   row("deletion_operation_transitions", "identity_row", { scope: "identity", writerOwner: "packages/db/src/deletion-lifecycle.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "deletion_receipt_one_year", executor: "identifier_scrubber", residueProbe: "identity_residue" }, SPLIT_TABLE_FIELD_SETS.deletion_operation_transitions[1]),
@@ -387,8 +396,12 @@ export const LIFECYCLE_REGISTRY = [
   // Task 6 / R-122: REQ-G05's margin input outlives the profile.
   row("model_usage", "profile_row", { scope: "profile", writerOwner: "packages/db/src/with-workspace.ts", export: "excluded_system", exportProjector: "none", action: "pseudonymise", retention: "financial_chain_seven_years", executor: "identifier_scrubber", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.model_usage[0]),
   row("model_usage", "profile_row", { scope: "profile", writerOwner: "packages/db/src/with-workspace.ts", export: "excluded_system", exportProjector: "none", action: "retain_financial", retention: "financial_chain_seven_years", executor: "financial_retention_receiver", residueProbe: "retained_financial_residue" }, SPLIT_TABLE_FIELD_SETS.model_usage[1]),
-  profile("first_billable_attempts", "packages/db/src/with-workspace.ts", false), profile("generation_attempts", "packages/db/src/with-workspace.ts", false, ["candidate$.request.brainActivationId", "candidate$.request.parentGenerationId", "candidate$.request.spinAutopsyId", "candidate$.frameworkVersions[*].id"]),
-  profile("generations", "packages/db/src/with-workspace.ts", true, ["framework_versions$[*].frameworkId", "context_input_ids$[*]", "request$.brainActivationId", "request$.parentGenerationId", "request$.spinAutopsyId"]), profile("generation_feedback", "packages/db/src/with-workspace.ts", true),
+  profile("first_billable_attempts", "packages/db/src/with-workspace.ts", false), profile("generation_attempts", "packages/db/src/with-workspace.ts", false, ["candidate$.request.brainActivationId", "candidate$.request.parentGenerationId", "candidate$.request.spinAutopsyId", "candidate$.request.origin.pieceId", "candidate$.request.origin.sourceGenerationId", "candidate$.frameworkVersions[*].id", "request_snapshot$.brainActivationId", "request_snapshot$.parentGenerationId", "request_snapshot$.spinAutopsyId", "request_snapshot$.origin.pieceId", "request_snapshot$.origin.sourceGenerationId", "request_snapshot$.frameworkVersions[*].id", "request_snapshot$.recentContext.records[*].id", "request_snapshot$.recentContext.pieces[*].id", "request_snapshot$.recentContext.exclusions[*].id"]),
+  profile("generations", "packages/db/src/with-workspace.ts", true, ["framework_versions$[*].frameworkId", "context_input_ids$[*]", "request$.brainActivationId", "request$.parentGenerationId", "request$.spinAutopsyId", "request$.origin.pieceId", "request$.origin.sourceGenerationId"]), profile("generation_feedback", "packages/db/src/with-workspace.ts", true),
+  // Launch L2 (R-151): the creative piece. Profile-scoped, exported with the
+  // profile, erased with it (every FK cascades from the profile or from a
+  // generation of the same profile), and its own idea is creator content.
+  profile("creative_pieces", "packages/db/src/creative-work-ops.ts", true),
   profile("tracked_niches", "packages/db/src/trends-storage.ts", true), profile("results", "packages/db/src/with-workspace.ts", true),
   profile("promotion_proposals", "packages/db/src/promotion-ops.ts", true, ["payload$.rule.evidenceStates[*].resultId"]), profile("proposal_evidence_results", "packages/db/src/promotion-ops.ts", true),
   profile("proposal_evidence_feedback", "packages/db/src/promotion-ops.ts", true),
@@ -669,10 +682,25 @@ export const JSON_PATH_INVENTORY: readonly JsonPathInventoryEntry[] = [
   { table: "generations", column: "request", path: "$.brainActivationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "brainActivationId" },
   { table: "generations", column: "request", path: "$.parentGenerationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "parentGenerationId" },
   { table: "generations", column: "request", path: "$.spinAutopsyId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "spinAutopsyId" },
+  { table: "generations", column: "request", path: "$.origin.pieceId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "pieceId" },
+  { table: "generations", column: "request", path: "$.origin.sourceGenerationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "sourceGenerationId" },
   { table: "generation_attempts", column: "candidate", path: "$.request.brainActivationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "brainActivationId" },
   { table: "generation_attempts", column: "candidate", path: "$.request.parentGenerationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "parentGenerationId" },
   { table: "generation_attempts", column: "candidate", path: "$.request.spinAutopsyId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "spinAutopsyId" },
+  { table: "generation_attempts", column: "candidate", path: "$.request.origin.pieceId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "pieceId" },
+  { table: "generation_attempts", column: "candidate", path: "$.request.origin.sourceGenerationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "sourceGenerationId" },
   { table: "generation_attempts", column: "candidate", path: "$.frameworkVersions[*].id", sourceFile: "packages/credits/src/generate.ts", sourceToken: "frameworkVersions" },
+  { table: "generation_attempts", column: "request_snapshot", path: "$.brainActivationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "brainActivationId" },
+  { table: "generation_attempts", column: "request_snapshot", path: "$.parentGenerationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "parentGenerationId" },
+  { table: "generation_attempts", column: "request_snapshot", path: "$.spinAutopsyId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "spinAutopsyId" },
+  { table: "generation_attempts", column: "request_snapshot", path: "$.origin.pieceId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "pieceId" },
+  { table: "generation_attempts", column: "request_snapshot", path: "$.origin.sourceGenerationId", sourceFile: "packages/credits/src/generate.ts", sourceToken: "sourceGenerationId" },
+  { table: "generation_attempts", column: "request_snapshot", path: "$.frameworkVersions[*].id", sourceFile: "packages/credits/src/generate.ts", sourceToken: "frameworkVersions" },
+  // Launch L3 (R-152): the history the prompt carried — draft and reaction
+  // ids, the pieces whose state labelled a draft, and every excluded row.
+  { table: "generation_attempts", column: "request_snapshot", path: "$.recentContext.records[*].id", sourceFile: "packages/credits/src/recent-context.ts", sourceToken: "records" },
+  { table: "generation_attempts", column: "request_snapshot", path: "$.recentContext.pieces[*].id", sourceFile: "packages/credits/src/recent-context.ts", sourceToken: "pieces" },
+  { table: "generation_attempts", column: "request_snapshot", path: "$.recentContext.exclusions[*].id", sourceFile: "packages/credits/src/recent-context.ts", sourceToken: "exclusions" },
   { table: "frameworks", column: "source_references", path: "$[*].ref", sourceFile: "packages/db/src/frameworks.ts", sourceToken: "sourceReferences" },
   { table: "frameworks", column: "evidence_entries", path: "$[*].ref", sourceFile: "packages/db/src/frameworks.ts", sourceToken: "evidenceEntries" },
   { table: "promotion_proposals", column: "payload", path: "$.rule.evidenceStates[*].resultId", sourceFile: "packages/db/src/promotion-ops.ts", sourceToken: "resultId" },
@@ -702,6 +730,7 @@ export const JSON_COLUMN_INVENTORY: readonly JsonColumnInventoryEntry[] = [
   { table: "frameworks", column: "source_references", classification: "identifier_paths" },
   { table: "frameworks", column: "tested_caveats", classification: "creator_content_no_internal_link" },
   { table: "generation_attempts", column: "candidate", classification: "identifier_paths" },
+  { table: "generation_attempts", column: "request_snapshot", classification: "identifier_paths" },
   { table: "generations", column: "context_input_ids", classification: "identifier_paths" },
   { table: "generations", column: "framework_versions", classification: "identifier_paths" },
   { table: "generations", column: "kill_test", classification: "creator_content_no_internal_link" },
@@ -820,6 +849,8 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
     ["deletion_operations_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "restrict", "retention_restrict"],
     ["deletion_operations_profile_id_creator_profiles_id_fk", ["profile_id"], "creator_profiles", ["id"], "restrict", "retention_restrict"],
     ["deletion_operations_requester_user_id_users_id_fk", ["requester_user_id"], "users", ["id"], "set_null", "reference_set_null"],
+    // R-166: who cancelled (any active owner may, R-162). Same posture as the requester.
+    ["deletion_operations_cancelled_by_user_id_users_id_fk", ["cancelled_by_user_id"], "users", ["id"], "set_null", "reference_set_null"],
     ["deletion_operations_user_id_users_id_fk", ["user_id"], "users", ["id"], "restrict", "retention_restrict"],
     ["deletion_operations_workspace_id_workspaces_id_fk", ["workspace_id"], "workspaces", ["id"], "restrict", "retention_restrict"],
   ],
@@ -831,6 +862,11 @@ const FINAL_SCHEMA_FOREIGN_KEYS = {
   frameworks: [
     ["frameworks_owner_profile_workspace_fk", ["owner_profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
     ["frameworks_rights_subject_user_id_users_id_fk", ["rights_subject_user_id"], "users", ["id"], "cascade", "identity_subject"],
+  ],
+  creative_pieces: [
+    ["creative_pieces_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"],
+    ["creative_pieces_selected_generation_fk", ["selected_generation_id", "profile_id", "workspace_id"], "generations", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
+    ["creative_pieces_source_generation_fk", ["source_generation_id", "profile_id", "workspace_id"], "generations", ["id", "profile_id", "workspace_id"], "cascade", "related_cascade"],
   ],
   generation_attempts: [["generation_attempts_profile_workspace_fk", ["profile_id", "workspace_id"], "creator_profiles", ["id", "workspace_id"], "cascade", "scope_owner"]],
   generation_feedback: [
@@ -1386,6 +1422,7 @@ export const LIFECYCLE_WRITER_INVENTORY = [
   { table: "deletion_operation_transitions", owner: "packages/db/src/deletion-lifecycle.ts", physicalWriters: ["packages/db/src/deletion-lifecycle.ts"] },
   { table: "deletion_operations", owner: "packages/db/src/deletion-lifecycle.ts", physicalWriters: ["packages/db/src/activation.ts", "packages/db/src/deletion-executor.ts", "packages/db/src/deletion-lifecycle.ts"] },
   { table: "deletion_recovery_sessions", owner: "packages/db/src/auth-lifecycle.ts", physicalWriters: ["packages/db/src/auth-lifecycle.ts"] },
+  { table: "creative_pieces", owner: "packages/db/src/creative-work-ops.ts", physicalWriters: ["packages/db/src/creative-work-ops.ts"] },
   { table: "first_billable_attempts", owner: "packages/db/src/with-workspace.ts", physicalWriters: ["packages/db/src/with-workspace.ts"] },
   { table: "frameworks", owner: "packages/db/src/frameworks.ts", physicalWriters: ["packages/db/src/frameworks.ts"] },
   // Task 6 adds the worker-side attempt receiver as a SECOND physical writer.
@@ -1411,7 +1448,7 @@ export const LIFECYCLE_WRITER_INVENTORY = [
   // names the table in SOURCE (the dynamic sweep in the same file does not, and
   // is covered by DYNAMIC_LIFECYCLE_WRITERS instead). The tenancy review found
   // this file in NO physicalWriters list of any table it writes.
-  { table: "stripe_events", owner: "packages/credits/src/stripe/webhooks.ts", physicalWriters: ["packages/credits/src/stripe/webhooks.ts", "packages/db/src/retention-receiver.ts"] },
+  { table: "stripe_events", owner: "packages/credits/src/stripe/webhooks.ts", physicalWriters: ["packages/credits/src/stripe/webhooks.ts", "packages/db/src/deletion-executor.ts", "packages/db/src/retention-receiver.ts"] },
   { table: "stripe_finance_extracts", owner: "packages/db/src/finance-extract.ts", physicalWriters: ["packages/db/src/finance-extract.ts"] },
   { table: "subscriptions", owner: "packages/credits/src/stripe", physicalWriters: ["packages/credits/src/pause.ts", "packages/credits/src/stripe/actions.ts", "packages/credits/src/stripe/auto-topup-rollout.ts", "packages/credits/src/stripe/billing-contact.ts", "packages/credits/src/stripe/auto-topup-v1-reconcile.ts", "packages/credits/src/stripe/auto-topup.ts", "packages/credits/src/stripe/customers.ts", "packages/credits/src/stripe/deletion-commands.ts", "packages/credits/src/stripe/tier-checkout-rollout.ts", "packages/credits/src/stripe/tier-checkout-v1-reconcile.ts", "packages/credits/src/stripe/webhooks.ts"] },
   { table: "system_model_usage", owner: "packages/db/src/system-spend.ts", physicalWriters: ["packages/db/src/system-spend.ts"] },
@@ -1425,7 +1462,11 @@ export const LIFECYCLE_WRITER_INVENTORY = [
   { table: "trend_transcripts", owner: "packages/db/src/trends-storage.ts", physicalWriters: ["packages/db/src/trends-storage.ts"] },
   { table: "user", owner: "packages/auth", physicalWriters: ["packages/db/src/deletion-lifecycle.ts", "packages/db/src/lifecycle-sql-port.ts", "packages/db/src/seed.ts", "packages/db/src/testing.ts"] },
   { table: "users", owner: "packages/db/src/bootstrap.ts", physicalWriters: ["packages/db/src/bootstrap.ts", "packages/db/src/deletion-lifecycle.ts", "packages/db/src/lifecycle-sql-port.ts", "packages/db/src/seed.ts"] },
-  { table: "verification", owner: "packages/auth", physicalWriters: [] },
+  // R-164: the Google re-authentication challenge's single-use state rows
+  // (`respin-google-reauth:<id>`) — written at the start of the challenge,
+  // deleted as they are read. They carry no user id, only a session digest,
+  // the PKCE verifier and the nonce, and expire with R-118's window.
+  { table: "verification", owner: "packages/auth", physicalWriters: ["packages/db/src/auth-lifecycle.ts"] },
   { table: "workspaces", owner: "packages/db/src/bootstrap.ts", physicalWriters: ["packages/db/src/bootstrap.ts", "packages/db/src/deletion-lifecycle.ts", "packages/db/src/lifecycle-sql-port.ts", "packages/db/src/seed.ts"] },
   { table: "workspace_spend_monthly", owner: "packages/db/src/spend-rollup.ts", physicalWriters: ["packages/db/src/spend-rollup.ts"] },
 ] as const satisfies readonly LifecycleWriterInventoryEntry[];
@@ -1512,19 +1553,46 @@ export type ExportDecision = { included: boolean; reason: string };
 /** @deprecated Export compatibility only. Deletion code must use LIFECYCLE_REGISTRY. */
 export type DeletionDecision = { behaviour: "cascade" | "retained" | "pseudonymised"; reason: string; legacyProjectionOnly: true };
 export type CreatorDataEntry = { table: string; holdsCreatorContent: boolean; export: ExportDecision; deletion: DeletionDecision };
-const PROFILE_CONTENT = new Set(["creator_profiles", "brain_docs", "onboarding_inputs", "onboarding_interview_drafts", "generations", "frameworks", "generation_feedback", "trend_sources", "tracked_niches", "trend_items", "trend_transcripts", "autopsies", "autopsy_cache_claims", "results", "promotion_proposals"]);
 const LEGACY_CREATOR_DATA_TABLES = new Set<AppTable>([
   ...LIFECYCLE_REGISTRY.filter((entry) => entry.scope === "profile").map((entry) => entry.table),
   "membership_profile_selections",
   "workspace_spend_monthly",
 ]);
-export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = APP_TABLES.filter((table) => LEGACY_CREATOR_DATA_TABLES.has(table)).map((table) => {
-  const entries = LIFECYCLE_REGISTRY.filter((entry) => entry.table === table);
+/**
+ * The legacy projection, as a FUNCTION of the lifecycle registry (P5-R7), so a
+ * test can derive it from a registry with a planted entry and watch the
+ * derived content set move. Production takes the defaults.
+ */
+export function deriveCreatorDataRegistry(
+  registry: readonly LifecycleClassEntry[] = LIFECYCLE_REGISTRY,
+  tables: readonly string[] = APP_TABLES
+): readonly CreatorDataEntry[] {
+  const legacy = new Set<string>([
+    ...registry.filter((entry) => entry.scope === "profile").map((entry) => entry.table),
+    "membership_profile_selections",
+    "workspace_spend_monthly",
+  ]);
+  return tables.filter((table) => legacy.has(table)).map((table) => creatorDataEntryFrom(registry, table));
+}
+
+function creatorDataEntryFrom(registry: readonly LifecycleClassEntry[], table: string): CreatorDataEntry {
+  const entries = registry.filter((entry) => entry.table === table);
   const included = entries.some((entry) => entry.export === "included" && entry.exportProjector === "profile_creator");
+  // `holdsCreatorContent` IS `export.included` (audit P5-R7, R-162): DERIVED
+  // from LIFECYCLE_REGISTRY, never a hand-written Set beside it. The Set this
+  // replaced (`PROFILE_CONTENT`, 16 names on 2026-10-06) lagged the registry by
+  // exactly three tables — `brain_activation_snapshots`,
+  // `proposal_evidence_results`, `proposal_evidence_feedback` — each a
+  // `profile(…, true)` entry the registry already ships in the creator's
+  // export as `profile_creator` rows citing the creator's own docs, results
+  // and feedback: content, decided. A new `profile(…, true)` entry therefore
+  // reports content at once, and `tests/creator-data-registry.test.ts` pins
+  // the derived list so the change is seen.
   const pseudonymised = entries.some((entry) => entry.action === "pseudonymise");
   const retained = entries.every((entry) => entry.action === "retain_financial" || entry.action === "not_applicable");
-  return { table, holdsCreatorContent: PROFILE_CONTENT.has(table), export: { included, reason: included ? "The lifecycle registry assigns this table to the profile_creator projector, preserving the established scoped profile export." : "The lifecycle registry assigns no profile_creator projector to this table; identity, workspace, secret and system rows stay outside the profile export." }, deletion: { behaviour: table === "workspace_spend_monthly" ? "retained" : pseudonymised ? "pseudonymised" : retained ? "retained" : "cascade", legacyProjectionOnly: true, reason: table === "workspace_spend_monthly" ? "Legacy export compatibility only: financial records are retained for the dependency-aware clock and the workspace identifier is pseudonymised. Deletion executors must use LIFECYCLE_REGISTRY." : "Legacy export compatibility only: mixed row and field classes are intentionally collapsed here. Deletion executors must use LIFECYCLE_REGISTRY as the sole lifecycle authority." } };
-});
+  return { table, holdsCreatorContent: included, export: { included, reason: included ? "The lifecycle registry assigns this table to the profile_creator projector, preserving the established scoped profile export." : "The lifecycle registry assigns no profile_creator projector to this table; identity, workspace, secret and system rows stay outside the profile export." }, deletion: { behaviour: table === "workspace_spend_monthly" ? "retained" : pseudonymised ? "pseudonymised" : retained ? "retained" : "cascade", legacyProjectionOnly: true, reason: table === "workspace_spend_monthly" ? "Legacy export compatibility only: financial records are retained for the dependency-aware clock and the workspace identifier is pseudonymised. Deletion executors must use LIFECYCLE_REGISTRY." : "Legacy export compatibility only: mixed row and field classes are intentionally collapsed here. Deletion executors must use LIFECYCLE_REGISTRY as the sole lifecycle authority." } };
+}
+export const CREATOR_DATA_REGISTRY: readonly CreatorDataEntry[] = deriveCreatorDataRegistry();
 export function creatorDataEntry(table: string): CreatorDataEntry | undefined { return CREATOR_DATA_REGISTRY.find((entry) => entry.table === table); }
 export const NOT_CREATOR_DATA: Readonly<Record<string, string>> = Object.fromEntries(
   APP_TABLES.filter((table) => !LEGACY_CREATOR_DATA_TABLES.has(table)).map((table) => [

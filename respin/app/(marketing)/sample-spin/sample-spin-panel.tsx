@@ -14,6 +14,7 @@ import { useId, useRef, useState } from "react";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { buttonClass } from "../../ui/button";
 import { SAMPLE_SPIN_RETENTION } from "./disclosure";
+import { claimFamilyNote } from "../../(product)/studio/run-copy";
 
 export type SampleSpinOriginal = Readonly<{ title: string; lines: readonly string[] }>;
 
@@ -21,6 +22,7 @@ type Accepted = Readonly<{
   status: "accepted";
   spin: readonly Readonly<{ field: string; text: string }>[];
   weakestPoint: string;
+  claimFlags: readonly Readonly<{ family: string; token: string; field: string; unit: string }>[];
   highlightedRules: readonly Readonly<{ id: string; text: string }>[];
   rewritten: boolean;
 }>;
@@ -152,7 +154,7 @@ export function SampleSpinPanel({ original, maxCodePoints }: { original: SampleS
   );
 }
 
-function AcceptedView({ result }: { result: Accepted }) {
+export function AcceptedView({ result }: { result: Accepted }) {
   return (
     <div className="sample-spin-result">
       <dl className="spin-units">
@@ -167,6 +169,20 @@ function AcceptedView({ result }: { result: Accepted }) {
         <span className="the-turn-label">WEAKEST POINT</span>
         <p>{result.weakestPoint}</p>
       </div>
+      {/* THE CLAIM FLAGS (audit Phase 2 gate, R-172), as `/studio` renders
+          them: the phrase, the sentence it sits in, and the family's note. */}
+      {result.claimFlags.length > 0 ? (
+        <div className="spin-rules" data-testid="sample-spin-claims">
+          <span className="demo-label">WHAT THE DRAFT SAYS ABOUT ITSELF</span>
+          <ul>
+            {result.claimFlags.map((flag, i) => (
+              <li key={`${flag.field}-${i}`} className="spin-rule">
+                <code>{flag.token}</code> — {flag.unit} · {claimFamilyNote(flag.family)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="spin-rules">
         <span className="demo-label">SAMPLE BRAIN RULES THE GATE SAYS THIS DRAFT KEPT</span>
         {result.highlightedRules.length === 0 ? (

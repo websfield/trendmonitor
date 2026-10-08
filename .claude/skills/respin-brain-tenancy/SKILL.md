@@ -49,12 +49,53 @@ confirms or edits before the brain activates. **Nothing updates silently**: feed
 becomes a *proposal* requiring approval. The system never silently infers sensitive
 personal traits. Brains are context, not weights (R-8) — no per-creator fine-tuning path.
 
+**The one carve-out: session history (R-174, ratifying R-152 (b)/(d)).** A creator's
+recent concept and script drafts and their reactions (with notes) may reach the next
+concept or script prompt as labelled history, because history **steers, never vouches,
+never writes the brain**: it sits in its own prompt block, outside both traceability
+corpora (`recent-context.ts` never sends a `[check]`ed, claimed or hard-shaped passage),
+and nothing on that path creates a `brain_docs` version. A proposal still comes only
+from `packages/brain`. The creator can leave out the reaction just recorded, at the
+moment it is recorded, on a concept or script draft ("Leave this out of future drafts"
+sets `generation_feedback.history_excluded_at`, one-way, migration 0069). There is no
+list of older reactions to leave out from. `recentContextCandidates` then sends
+neither its note nor its label, withholds a draft whose every reaction was left out,
+and records `creator_excluded` in the claim snapshot. A left-out reaction can still
+count toward a feedback proposal (`promotionFeedbackInputs` ignores the stamp). A
+finding on this path includes history reaching the brain or a corpus, an excluded
+reaction reaching a prompt, or a second UPDATE writer on `generation_feedback`, plus
+any T1 cross-profile read or undisclosed behaviour.
+
 ### T4 — Export is complete, deletion is real (REQ-A04)
 
 A creator can export the full brain (all four documents + generation history) as
 JSON/markdown at any time, and delete the account with full data removal within 30 days.
 A new table holding creator-derived data must join both flows in the same change — an
 export that silently omits a table is a finding.
+
+**Export during a workspace deletion's grace — the read grade (R-163).** The ONE
+sanctioned non-writable scope is `ReadGradeWorkspaceScope` (and the
+`ReadGradeProfileScope` minted from it). It is minted ONLY inside `withWorkspace(ctx, {
+grade: "read" })`, only for a membership whose workspace is `tombstoned` by a workspace
+deletion still in `journal_pending | tombstoned | external_actions_pending | grace |
+blocked`, and lives in its own cages (`readGradeCage`, `readGradeProfileCage`), never in
+`workspaceCage`/`profileCage`. Its workspace id is a distinct brand
+(`ReadGradeWorkspaceId`) no writer accepts. `assertScoped` stays byte-identical and keeps
+refusing it; the readers call `assertReadScoped` — the list is `openBrainExport`,
+`readBrainHistory`, `pendingDeletionsForScope`, `selectedProfileForMember`,
+`billingContactStatus`, and the accessors `workspace`, `creatorProfiles`,
+`brainDocsByKind`, `exportPage`, `onboardingInputsByIds`. Every read re-checks the
+deletion (`read-grade-lifecycle.ts`), so the grade stops at `erasing`. Three pages ask for
+it (`readScopeForUser`): `/api/export`, `/settings/account`, `/brain`. A finding on this
+path: widening `assertScoped` instead of calling `assertReadScoped`; a fourth caller or
+reader added without editing these lists and `tests/profile-cage.test.ts`; a writer that
+takes the union type. Identity-deletion grace has no read grade (the user row is
+tombstoned and login disabled); the way forward there is cancel, then export.
+
+**Deletion has no dead ends (R-160, R-162).** A last owner's identity erasure cascades
+their sole-owned workspaces instead of refusing; any active owner may cancel a scoped
+deletion; `blocked` may be cancelled; a wedged reservation is finished by the worker's
+`resumeWedgedDeletionOperations`. A refusal on this path must print a remedy that exists.
 
 ### T5 — Roles and the admin boundary (REQ-A02, REQ-J01, tech-spec §6)
 

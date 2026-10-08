@@ -1,0 +1,632 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>L0 Research Inputs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Spectral:wght@500;600&display=swap">
+<style>
+:root{
+  --ground:#F1F4F3;--surface:#FFFFFF;--sunk:#E7ECEA;--ink:#16201C;--muted:#566660;--line:#D3DBD8;
+  --accent:#1F6F5C;--accent-ink:#FFFFFF;--accent-soft:#DCEFE9;
+  --ok:#2C7A4B;--ok-soft:#DDF0E4;--warn:#A9531F;--warn-soft:#F7E6DA;--bad:#B23A3A;--bad-soft:#F6DEDE;
+  --focus:#2B6CB0;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --display:"Spectral",Georgia,"Times New Roman",serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --ground:#0E1412;--surface:#161F1C;--sunk:#1D2925;--ink:#E3ECE8;--muted:#97A8A1;--line:#2C3A35;
+  --accent:#5CC0A3;--accent-ink:#06231B;--accent-soft:#18352D;
+  --ok:#6BCB8E;--ok-soft:#173326;--warn:#E59A68;--warn-soft:#3A2618;--bad:#EE8A8A;--bad-soft:#3A1E1E;--focus:#7FB2F0;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#0E1412;--surface:#161F1C;--sunk:#1D2925;--ink:#E3ECE8;--muted:#97A8A1;--line:#2C3A35;
+  --accent:#5CC0A3;--accent-ink:#06231B;--accent-soft:#18352D;
+  --ok:#6BCB8E;--ok-soft:#173326;--warn:#E59A68;--warn-soft:#3A2618;--bad:#EE8A8A;--bad-soft:#3A1E1E;--focus:#7FB2F0;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font:15px/1.55 var(--sans);padding-inline:16px;padding-block:24px 64px}
+.wrap{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:240px minmax(0,1fr);gap:32px}
+@media (max-width:860px){.wrap{grid-template-columns:minmax(0,1fr)}.rail{position:static!important}}
+h1{font-family:var(--display);font-weight:600;font-size:2rem;line-height:1.15;margin:0 0 8px;text-wrap:balance}
+h2{font-family:var(--display);font-weight:600;font-size:1.35rem;margin:0;text-wrap:balance}
+h3{font-size:1rem;font-weight:600;margin:0}
+p{margin:0;max-width:68ch}
+.eyebrow{font:500 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.lede{color:var(--muted);max-width:68ch}
+.rail{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start;display:flex;flex-direction:column;gap:16px}
+.rail nav{display:flex;flex-direction:column;gap:2px}
+.rail a{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;color:var(--ink);text-decoration:none;font-size:14px}
+.rail a:hover{background:var(--sunk)}
+.meter{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.meter .big{font:500 1.6rem/1 var(--mono);font-variant-numeric:tabular-nums}
+.bar{height:6px;background:var(--sunk);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+main{display:flex;flex-direction:column;gap:28px;min-width:0}
+header.top{display:flex;flex-direction:column;gap:10px}
+.blocker{display:flex;gap:12px;align-items:flex-start;background:var(--warn-soft);color:var(--ink);border-left:3px solid var(--warn);padding:12px 14px;border-radius:0 6px 6px 0}
+.blocker strong{color:var(--warn)}
+section.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:flex;flex-direction:column;gap:16px;scroll-margin-top:16px}
+#research article{display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:16px}
+.card a{color:var(--accent);text-underline-offset:3px}
+.card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.card-head .t{display:flex;flex-direction:column;gap:6px}
+.pill{font:500 11px/1 var(--mono);letter-spacing:.04em;padding:5px 8px;border-radius:999px;white-space:nowrap;text-transform:uppercase}
+.pill.todo{background:var(--sunk);color:var(--muted)}
+.pill.done{background:var(--ok-soft);color:var(--ok)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.conds{display:grid;gap:8px;margin:0;padding:0;list-style:none;counter-reset:c}
+.conds li{display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;padding:10px 12px;background:var(--sunk);border-radius:6px}
+.conds li::before{counter-increment:c;content:counter(c);font:500 13px/1.6 var(--mono);color:var(--accent)}
+.conds b{font-weight:600}
+.choices{display:flex;flex-wrap:wrap;gap:8px}
+.choice{position:relative}
+.choice input{position:absolute;opacity:0;pointer-events:none}
+.choice label{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:1px solid var(--line);border-radius:8px;cursor:pointer;background:var(--surface);font-weight:500}
+.choice input:checked+label{border-color:var(--accent);background:var(--accent-soft);color:var(--ink)}
+.choice input:focus-visible+label{outline:2px solid var(--focus);outline-offset:2px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-weight:500;font-size:14px}
+.field .hint{font-size:13px;color:var(--muted)}
+input[type=text],input[type=number],input[type=email],textarea{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 10px;width:100%}
+input[type=number]{font-family:var(--mono);font-variant-numeric:tabular-nums}
+textarea{min-height:64px;resize:vertical}
+input:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.tbl{position:relative;overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:14px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{font:500 11px/1.3 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);background:var(--sunk)}
+td input[type=number]{width:64px;padding:5px 6px}
+td input[type=text]{width:96px;padding:5px 6px;font-family:var(--mono)}
+tfoot td{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500;background:var(--sunk)}
+.checks{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.checks li{display:flex;gap:10px;align-items:baseline;font-size:14px}
+.checks .mk{font:500 12px/1 var(--mono);width:18px;flex:none}
+.checks .ok{color:var(--ok)}.checks .no{color:var(--bad)}
+.calc{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.stat{background:var(--sunk);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:4px}
+.stat .v{font:500 1.25rem/1.1 var(--mono);font-variant-numeric:tabular-nums}
+.stat .k{font-size:12px;color:var(--muted)}
+.note{font-size:13px;color:var(--muted);max-width:72ch}
+.mono{font-family:var(--mono);font-size:.92em}
+button{font:inherit;font-weight:600;border-radius:8px;padding:10px 16px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.ghost{padding:6px 10px;font-weight:500;font-size:13px}
+.savebar{position:sticky;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.08)}
+.savebar .msg{font-size:13px;color:var(--muted)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+details{border-top:1px solid var(--line);padding-top:10px}
+summary{cursor:pointer;font-weight:500;font-size:14px}
+pre.out{white-space:pre-wrap;font:12px/1.5 var(--mono);background:var(--sunk);padding:12px;border-radius:6px;max-height:260px;overflow:auto}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <aside class="rail" aria-label="Progress">
+    <div class="meter">
+      <span class="eyebrow">Live L6 worksheet</span>
+      <span class="big" id="mCount">0 / 7</span>
+      <div class="bar" aria-hidden="true"><i id="mBar"></i></div>
+      <span class="note" id="mSaved">Dev simulation supplied below</span>
+    </div>
+    <nav id="toc">
+      <a href="#development">Development answers</a>
+      <a href="#research">Account research</a>
+      <a href="#pass">Pass mark <span class="pill todo" data-for="pass">open</span></a>
+      <a href="#people">Participants <span class="pill todo" data-for="people">open</span></a>
+      <a href="#consent">Consent <span class="pill todo" data-for="consent">open</span></a>
+      <a href="#spend">Dollar cap <span class="pill todo" data-for="spend">open</span></a>
+      <a href="#storage">Storage &amp; dev set <span class="pill todo" data-for="storage">open</span></a>
+      <a href="#owners">Named owners <span class="pill todo" data-for="owners">open</span></a>
+      <a href="#review">N1 re-review <span class="pill todo" data-for="review">open</span></a>
+    </nav>
+  </aside>
+
+  <main>
+    <header class="top">
+      <span class="eyebrow">Respin launch remediation · L0 · decisions A-5 and O-1</span>
+      <h1>Development research for five creators</h1>
+      <p class="lede">Updated 3 October 2026. Fred confirms verbal agreement from the five supplied participants and requests a development simulation. Public findings and imagined participant answers are supplied below, with ten practical briefs to try.</p>
+      <div class="blocker" role="note">
+        <div><strong>Development simulation.</strong> All five accounts, including Fred, are included. Imagined answers are working assumptions, not quotations, signatures or independent research results. The live L6 worksheet remains below for reference; its open items do not block this synthetic exercise.</div>
+      </div>
+    </header>
+
+    <section class="card" id="development" aria-labelledby="developmentTitle">
+      <div class="card-head"><div class="t"><span class="eyebrow">Current scope · development</span><h2 id="developmentTitle">Filled answers for the practice run</h2></div></div>
+      <p><b>Participants:</b> Joie Beauty, Cognito Tuition, Vivian, Fred and Social Soup. No replacement fifth participant is needed for this simulation. Use two synthetic briefs per account on their supplied platforms: six Instagram and four TikTok.</p>
+      <p><b>Consent:</b> owner-reported verbal agreement from all five, clarified 3 October 2026. The <a href="research/l0-development-simulation.md">development packet</a> includes suggested written wording, five imagined interviews, production defaults, rejection criteria and all ten briefs. It does not claim the wording was signed or spoken by a participant.</p>
+      <p><b>People:</b> Fred Wang is the development owner. <b>Morgan Lee</b> is the fictional researcher and <b>Alex Chen</b> is the fictional rater, both roleplayed by the assistant. They are test roles, not appointed people or independent human judges.</p>
+      <p><b>Storage:</b> public notes and synthetic briefs live in <code>docs/research/l0-development-simulation.md</code>. The restricted-storage test value is <code>mock://respin-dev/research/l0-simulation</code>; it is non-resolving and asserts no real access controls.</p>
+      <p><b>Support:</b> <code>mock://respin-dev/support/l0</code> is a simulated inbox with Morgan as the fictional monitor. It is not a monitored external service. Development feedback can remain in Fred's current conversation.</p>
+      <p><b>RapidAPI:</b> Fred identified the Instagram/TikTok BaseUrl, Host and ApiKey variables in <code>respin/.env.local</code>. This session's sandbox blocks that file, and a presence-only check found all six variables absent from the process environment. No key values were read or shown. No connected tool or authenticated response is available; account posts and metrics remain unverified. <a href="https://docs.rapidapi.com/docs/consume-apis-using-ai">RapidAPI documents an authenticated MCP connection</a>.</p>
+      <p><b>Local retrieval supplied:</b> run <code>node docs/research/rapidapi-research.mjs</code> from the repository root. The <a href="research/rapidapi-research.md">runner instructions</a> explain its ten-request cap and report location. Fred runs it locally; the assistant can inspect the resulting report without opening the credential file.</p>
+      <p class="note"><b>Result status:</b> synthetic / unverified / excluded from launch evidence. No completed participant interviews, independent ratings or performance scores are claimed. <a href="research/l6-creator-consent.md">Future live L6 consent wording</a> is supplied separately.</p>
+    </section>
+
+    <section class="card" id="research" aria-labelledby="researchTitle">
+      <div class="card-head"><div class="t"><span class="eyebrow">Public research · updated 3 October 2026</span><h2 id="researchTitle">Five accounts, five practical starting points</h2></div></div>
+      <p><b>Evidence limits.</b> The three business websites were readable. Direct Instagram and TikTok pages did not return inspectable posts; exact-handle searches did not establish a usable post sample for Vivian or Fred. No videos were watched, and no follower counts, audience demographics, posting cadence or engagement performance are asserted. Website positioning is not evidence of an account's spoken voice.</p>
+      <p><b>How to use this.</b> “Observed” means public first-party material; “Owner supplied” means Fred's request; everything labelled “Recommended” is a working hypothesis for the creator to adopt or correct. These are public planning notes, not approved creator context or held-out briefs. Keep the code-to-person roster and all evaluation content in restricted research storage.</p>
+
+      <article aria-labelledby="joieTitle">
+        <h3 id="joieTitle">Joie Beauty</h3>
+        <p><b>Imagined participant answer:</b> “Help me make choosing a shade feel manageable. Give me useful, attractive videos that explain the choice before asking someone to buy. Show one application clearly; don't make every shade sound essential.” This is an assistant-written development assumption.</p>
+        <p><b>Additional public detail.</b> The <a href="https://joiebeauty.co/pages/faqs">brand FAQ</a> directs shoppers to a Season Finder quiz for a recommended shade. That makes explaining the choice process a plausible content direction; it does not establish how current Instagram followers behave.</p>
+        <p><b>Observed.</b> The current shop sells lip glaze, blush balm and vanity cases, organises shades by season and offers a shade quiz. The February 2025 brand article emphasises fewer, better-matched purchases; its prelaunch wording is historical, not current availability. Sources: <a href="https://joiebeauty.co/">current shop</a>, <a href="https://joiebeauty.co/blogs/learn-more/changing-the-beauty-industry">brand philosophy, 28 February 2025</a>. Supplied account: <a href="https://www.instagram.com/joiebeautyco/">@joiebeautyco</a> (posts unverified).</p>
+        <p><b>Recommended audience and job.</b> Help people who feel overwhelmed by shade choice make a confident, smaller purchase. Lead with useful colour guidance and visible product application. Use a warm, precise, reassuring voice rather than urgency or insecurity. Primary business objective: qualified visits to the shade quiz or product page; track purchases separately.</p>
+        <p><b>Recommended production.</b> Instagram first; test TikTok only if the creator wants it. Start with a phone, consistent light, actual stock and hands/face close-ups; assume a solo 45-minute filming session until resources are declared. Keep lighting consistent in comparisons and describe the actual shade shown.</p>
+        <p><b>Development directions.</b> (1) Explain how to narrow a shade choice without buying every option. (2) Demonstrate one product's application in consistent lighting. These are practice directions, not observed posts or a claim that either format performs.</p>
+        <p><b>Boundaries / weakest point.</b> No invented wear tests, customer quotes, skin benefits or universal shade guarantees. Product claims need current brand evidence. Actual presenter, spoken voice and filming access remain unverified.</p>
+      </article>
+
+      <article aria-labelledby="cognitoTitle">
+        <h3 id="cognitoTitle">Cognito Tuition</h3>
+        <p><b>Imagined participant answer:</b> “Help a student understand one thing they were stuck on, and show parents what our teaching feels like. Give our tutors something useful to film between classes. Keep every worked step correct.” This is an assistant-written development assumption.</p>
+        <p><b>Additional public detail.</b> The <a href="https://www.cognitotuition.com/schedule">schedule page</a> explains school-specific teaching order and standard, accelerated and holiday options. The <a href="https://www.cognitotuition.com/faq">FAQ</a> describes self-review using marking criteria and limits the conditional two-lesson trial to weekly courses. These support lesson demonstrations and clear parent-facing explanations.</p>
+        <p><b>Observed.</b> This is the Sydney HSC tutoring business, not the similarly named UK learning platform. Its website lists Year 11–12 Chemistry, Physics and extension Maths, school-specific classes and a Chatswood campus. The two-lesson trial is payable if the student continues, rather than universally free. Sources: <a href="https://www.cognitotuition.com/">official site</a>, <a href="https://www.cognitotuition.com/campuses/chatswood-tutoring">campus and trial terms</a>. Supplied account: <a href="https://www.instagram.com/cognito.tuition/">@cognito.tuition</a> (posts unverified).</p>
+        <p><b>Recommended audience and job.</b> Help HSC STEM students understand a difficult step and help parents assess teaching fit. Use a patient tutor's voice: show the reasoning, not just a result. Primary business objective: relevant trial enquiries; lesson saves are a separate educational signal, not proof of enrolment.</p>
+        <p><b>Recommended production.</b> Instagram first, with TikTok explainers if desired. One adult tutor, a phone and a whiteboard or tablet; default to a single worked step in 30–60 seconds and a 45-minute filming session. Use tutor-created examples with checked solutions.</p>
+        <p><b>Development directions.</b> (1) Explain a tutor-selected misconception using a worked example. (2) Demonstrate checking a solution step by step. A tutor observation can later supply a story, but only from an actual event the tutor approves.</p>
+        <p><b>Boundaries / weakest point.</b> No fabricated marks, rankings, student outcomes or guaranteed improvement. Do not include identifiable students or their work without the relevant permissions. The participating adult tutor, subject and current syllabus alignment need confirmation.</p>
+      </article>
+
+      <article aria-labelledby="vivianTitle">
+        <h3 id="vivianTitle">Vivian · personal account</h3>
+        <p><b>Imagined participant answer:</b> “Help me turn an ordinary thing I notice into a short post without making it feel like an advert. Give me a quieter version if the hook feels performative, and let me choose how much of my life I share.” This is an assistant-written development assumption, not an inferred biography.</p>
+        <p><b>Owner supplied.</b> <a href="https://www.instagram.com/playwithvivian/">@playwithvivian</a> is a personal account. Its existing posts could not be inspected here. The handle alone does not establish a niche, occupation, family situation, interests or preferred tone.</p>
+        <p><b>Recommended starting point.</b> Preserve her freedom to be a person rather than impose a commercial niche. Build around an everyday experience or interest she actually wants to share. Use conversational first-person language, one concrete observation and a low-pressure invitation to respond. Treat this as a provisional direction, not a discovered voice.</p>
+        <p><b>Recommended production.</b> Instagram first, phone footage she already has permission to use, voiceover or direct-to-camera according to comfort, and a 20–30-minute session. No extra cast or location is assumed. Start with a sustainable posting routine as a creator goal; saves or substantive replies can be optional audience signals later.</p>
+        <p><b>Development directions.</b> (1) Structure one real, creator-chosen observation into a short story. (2) Show a routine or activity she chooses and explain one personal preference. These deliberately leave the subject open because no existing content was verified.</p>
+        <p><b>Boundaries / weakest point.</b> Never invent a personal anecdote or infer relationships from pictures. Before voice matching, the researcher should review 3–5 creator-selected posts and privately record recurring subjects, phrasing and boundaries. Public access and actual preferences are the main research gap.</p>
+      </article>
+
+      <article aria-labelledby="fredTitle">
+        <h3 id="fredTitle">Fred · beginner-friendly AI skills</h3>
+        <p><b>Imagined participant answer:</b> “Turn what I know into demonstrations a beginner can repeat. Show a useful outcome, remove the jargon and include a way to check the AI's answer. Give me something I can actually demonstrate.” This extends Fred's stated ambition as a development assumption.</p>
+        <p><b>Owner supplied.</b> Fred describes himself as an AI coding expert and wants <a href="https://www.tiktok.com/@wangfred5">@wangfred5</a> to teach easy-to-learn AI skills. Existing TikTok content was not inspectable; this direction comes from his stated goal.</p>
+        <p><b>Recommended audience and job.</b> Start with beginners and busy non-specialists who want one useful task completed, rather than an expert audience seeking coding news. Position each video around a visible result, a small number of steps and one way to check the answer. Tone: calm, plain-English and encouraging.</p>
+        <p><b>Recommended production.</b> TikTok first; readable screen recording plus a short face introduction, captions and a single demo task. Default to one laptop, one phone and a 45-minute session. Show the actual tool version and relevant paid/free requirement when recording; validate the demonstration before making a promise.</p>
+        <p><b>Development directions.</b> (1) Turn a messy, fictional task list into a usable plan with AI, then check omissions. (2) Build a tiny working tool and show a failure and its repair. Use dummy data and show what actually worked.</p>
+        <p><b>Boundaries / weakest point.</b> No invented time savings, earnings or “works every time” claims. Early creator goal: viewers can reproduce the task; audience and demand remain hypotheses. <b>Use this channel for development if Fred builds L1–L3:</b> briefs he authors or sees cannot also be unseen launch evidence.</p>
+      </article>
+
+      <article aria-labelledby="soupTitle">
+        <h3 id="soupTitle">Social Soup</h3>
+        <p><b>Imagined participant answer:</b> “Help creators understand a brief and submit work that answers it while still sounding like themselves. Show a practical shot plan and explain the decisions. Keep client material and promises of selection out of it.” This is an assistant-written development assumption.</p>
+        <p><b>Observed.</b> The website addresses brands, creators and product-trial community members as separate audiences. Its creator programme uses Later for applications and matching; selection and approved deliverables precede rewards. It also publishes an educational series on influence strategy, launches and reviews. Sources: <a href="https://socialsoup.com/">agency site</a>, <a href="https://socialsoup.com/creators/">creator programme</a>, <a href="https://socialsoup.com/what-good-influence-looks-like/">educational series</a>. Supplied TikTok URL normalised to <a href="https://www.tiktok.com/@socialsouphq">@socialsouphq</a>; its feed and website-to-TikTok ownership link were not independently verified.</p>
+        <p><b>Recommended audience and job.</b> For an initial TikTok direction, help emerging creators understand briefs and make useful brand content. Choose one audience per piece. Keep brand-buyer education as a separate series. Primary objective for the creator series: relevant creator applications; brand enquiries belong to the brand series.</p>
+        <p><b>Recommended production.</b> An approachable practitioner voice; one willing team presenter, a phone and an anonymised or fictional brief, within a 45-minute filming session. Explain the reasoning behind one creative decision. Client assets, office access and other people's appearances require their own permission.</p>
+        <p><b>Development directions.</b> (1) Explain what a creator needs from a usable brief. (2) Demonstrate translating a fictional brief into a practical shot plan. Clearly label fictional examples; do not present them as client work.</p>
+        <p><b>Boundaries / weakest point.</b> No guaranteed campaign selection, income or results; no client metrics or confidential campaign material. Agency consent does not cover every represented creator. The account audience, authorised presenter and commercial objective still need creator approval.</p>
+      </article>
+      <p class="note"><b>Measurement recommendation for all five:</b> choose one primary objective before publishing. Record audience outcomes separately from L0's concept/filmability judgements; keep organic and paid results separate. No account performance baseline or outcome claim was established in this research.</p>
+    </section>
+
+    <!-- 1 PASS MARK -->
+    <section class="card" id="pass">
+      <div class="card-head">
+        <div class="t"><span class="eyebrow">Live L6 reference · A-5 threshold</span><h2>Accept the proposed pass mark?</h2></div>
+        <span class="pill todo" data-for="pass">open</span>
+      </div>
+      <p>The candidate passes only if <b>all five</b> conditions hold. Every one of the 20 briefs counts. A refusal, timeout, abandonment or withdrawn brief counts as a fail, never as missing.</p>
+      <ol class="conds">
+        <li><span><b>Concepts: at least 16 of 20.</b> On at least 16 briefs, the creator would develop one of the three concepts without a major change of premise. Only the creator judges this.</span></li>
+        <li><span><b>Filmable: at least 16 of 20.</b> The chosen concept's script and shot plan can be filmed with the creator's declared resources, with only minor changes and nothing invented. The creator and one independent rater both judge it, and if they disagree it fails.</span></li>
+        <li><span><b>No creator left behind.</b> Every creator gets acceptable concepts and filmable scripts on a majority of their own briefs. For example, 3 of 5, or 2 of 3.</span></li>
+        <li><span><b>Zero safety flags.</b> No candidate output invents a personal event, number or experiment result, or misses its declared form. Either judge can raise a flag.</span></li>
+        <li><span><b>First look only.</b> Only the first run on briefs nobody has seen can count toward launch. A rerun on the same briefs is a diagnostic. A real retest needs fresh briefs.</span></li>
+      </ol>
+      <div class="choices" role="radiogroup" aria-label="Pass mark decision">
+        <div class="choice"><input type="radio" name="passDecision" id="pass-proposed" value="proposed"><label for="pass-proposed">Keep as a proposal</label></div>
+        <div class="choice"><input type="radio" name="passDecision" id="pass-accept" value="accept" checked><label for="pass-accept">Accepted as written — recorded in L0 card, 3 October 2026</label></div>
+        <div class="choice"><input type="radio" name="passDecision" id="pass-change" value="change"><label for="pass-change">Accept with changes</label></div>
+        <div class="choice"><input type="radio" name="passDecision" id="pass-later" value="later"><label for="pass-later">Decide later</label></div>
+      </div>
+      <div class="grid2" id="passChange" hidden>
+        <div class="field"><label for="passC">Concepts threshold (of 20)</label><input type="number" id="passC" min="1" max="20" value="16"></div>
+        <div class="field"><label for="passF">Filmable threshold (of 20)</label><input type="number" id="passF" min="1" max="20" value="16"></div>
+        <div class="field" style="grid-column:1/-1"><label for="passNote">What else changes</label><textarea id="passNote" placeholder="For example, drop the per-creator majority rule to at least 1 acceptable per creator"></textarea></div>
+      </div>
+      <p class="note">Results are always reported per creator, per platform and per form, with n in every cell. A side-by-side with today's build is described as a comparison on this sample only, never as uplift.</p>
+      <p class="note"><b>Recommended answer:</b> retain C ≥ 16/20, F ≥ 16/20, a majority for every creator, zero safety flags and first-look-only admission. With four briefs per creator, the individual floor is <b>3/4 for C and 3/4 for F</b>. Public research cannot establish a pass; no evaluation has run.</p>
+    </section>
+
+    <!-- 2 PARTICIPANTS -->
+    <section class="card" id="people">
+      <div class="card-head">
+        <div class="t"><span class="eyebrow">A-5 · participants</span><h2>Who supplies the 20 briefs?</h2></div>
+        <span class="pill todo" data-for="people">open</span>
+      </div>
+      <p>Plan the split here using <b>creator codes only</b>, such as C1 and C2, never names or handles. Each brief is a no-concept brief: the creator's approved context, the platform, the form they want to make, and optional limits like filming alone, time, location or equipment. Brief text lives only in restricted research storage, not on this page.</p>
+      <p class="note"><b>Proposed allocation:</b> five independent creators × four briefs = 20; 10 TikTok / 10 Instagram; 7 explain / 7 demo / 6 story. These are unassigned planning slots, not a frozen roster. The researcher assigns codes privately after checking each creator's intended platforms and forms. Do not force a creator into a form just to fill a quota.</p>
+      <p class="note"><b>Eligibility gap:</b> five accounts do not establish five distinct participating creators. Nominate one authorised adult content maker for each business; verify that personal and business accounts do not duplicate the same participant. If Fred builds L1–L3, use his channel for development and recruit an independent fifth creator (ideally an AI educator). Social Soup's permission does not enrol its roster. No participant has yet been admitted by this page.</p>
+      <div class="tbl">
+        <table aria-describedby="planRules">
+          <thead><tr><th scope="col">Code</th><th scope="col">TikTok</th><th scope="col">Instagram</th><th scope="col">Explain / opinion</th><th scope="col">Demo / experiment</th><th scope="col">Story / observation</th><th scope="col">Written scope verified</th><th scope="col"><span class="sr">Remove</span></th></tr></thead>
+          <tbody id="planBody"></tbody>
+          <tfoot><tr><td>Total</td><td id="tTT">0</td><td id="tIG">0</td><td id="tEx">0</td><td id="tDe">0</td><td id="tSt">0</td><td id="tCo">0</td><td></td></tr></tfoot>
+        </table>
+      </div>
+      <div class="row"><button type="button" class="ghost" id="addRow">Add creator</button><span class="note">Each creator's platform count must equal their form count.</span></div>
+      <ul class="checks" id="planRules" aria-live="polite"></ul>
+      <div class="choice"><input type="checkbox" id="participantsConfirmed"><label for="participantsConfirmed">Research owner has verified distinct eligible creators, their private code mapping and their chosen platforms/forms for these slots.</label></div>
+    </section>
+
+    <!-- 3 CONSENT -->
+    <section class="card" id="consent">
+      <div class="card-head">
+        <div class="t"><span class="eyebrow">A-5 · consent</span><h2>Does your consent form cover all four uses?</h2></div>
+        <span class="pill todo" data-for="consent">open</span>
+      </div>
+      <p>A brief joins the set only with written permission obtained first. It is never stored first and consented later. Tick each use your consent wording already covers.</p>
+      <p class="note"><b>Recorded owner input, updated 3 October 2026:</b> Fred reports verbal agreement from all five supplied participants and requests development roleplay. The four checkboxes below concern future live L6 written scope, which remains <b>unverified, not refused</b>. They are not prerequisites for the synthetic development packet above.</p>
+      <ul class="checks" style="gap:10px">
+        <li><input type="checkbox" id="cs1"><label for="cs1">Storing the brief and the generated outputs in restricted research storage</label></li>
+        <li><input type="checkbox" id="cs2"><label for="cs2">A named independent rater reading the outputs</label></li>
+        <li><input type="checkbox" id="cs3"><label for="cs3">Running the brief in a research-owned Respin profile, not the creator's own account</label></li>
+        <li><input type="checkbox" id="cs4"><label for="cs4">The recorded analysis: per-creator results under a pseudonymous code, and the right to withdraw</label></li>
+      </ul>
+      <div class="field"><label for="consentRef">Where the consent wording lives</label><input type="text" id="consentRef" value="docs/research/l6-creator-consent.md — L6-CONSENT-1 draft, 2026-10-03; signed scope not yet verified"><span class="hint"><a href="research/l6-creator-consent.md">Read the supplied consent wording</a>. Complete names, storage, support and processor details in a private copy before consent. Signed copies stay outside git.</span></div>
+      <p class="note"><b>Future live L6:</b> written wording is supplied; real independent participants, handlers, restricted storage and monitored support remain to be verified. The fictional roles and mock locations above apply only to development. The <a href="progress/creator-ready/L0-card.md">live manifest</a> remains the method of record.</p>
+      <details><summary>Recommended consent record to complete privately</summary>
+        <p class="note">Record the participant and authorised representative, date, wording/version, named researcher and rater, exact approved materials, purpose, storage/access, retention period and withdrawal contact. Reconcile existing permission against the four uses; obtain only any missing scope before collection. Do not paste signatures or private contact details here.</p>
+        <p class="note"><b>Suggested scope, not an executed agreement:</b> permission to store approved context, briefs and outputs in restricted research storage; share them with the named independent rater; process them in research-owned Respin profiles through the disclosed model provider; and report coded research judgements. Explain withdrawal handling and the retention/deletion schedule before signing. This permission does not imply publication, advertising use or model training. The actual storage, people, provider and retention terms must be filled before use.</p>
+      </details>
+    </section>
+
+    <!-- 4 SPEND -->
+    <section class="card" id="spend">
+      <div class="card-head">
+        <div class="t"><span class="eyebrow">A-5 · provider budget</span><h2>What's the dollar cap?</h2></div>
+        <span class="pill todo" data-for="spend">open</span>
+      </div>
+      <p>Call counts are fixed by the method. The dollar cap is yours to set. The run stops when either limit is hit, and a stopped run can't pass.</p>
+      <div class="calc">
+        <div class="stat"><span class="v">80</span><span class="k">commissioned generations per look: 2 arms × 20 briefs × (concepts, then script)</span></div>
+        <div class="stat"><span class="v">320</span><span class="k">model-call cap per look: 80 × 3 (draft, bounded rewrite, scoring), plus 80 for transport retries</span></div>
+        <div class="stat"><span class="v">40</span><span class="k">setup voice builds: one per fresh research profile, 20 briefs × 2 arms, budgeted separately</span></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label for="perCall">Planning assumption: USD per model call</label><input type="number" id="perCall" step="0.01" min="0.01" value="0.25"><span class="hint">Recommended planning allowance, not a provider quote or measured script cost. Calibrate with development calls before freezing the run.</span></div>
+        <div class="field"><label for="usdCap">USD cap per look</label><input type="number" id="usdCap" step="1" min="1" value="60"><span class="hint">A hard dollar stop alongside the 320-call stop; actual call costs can vary.</span></div>
+        <div class="field"><label for="usdSetup">Proposed USD cap for setup builds</label><input type="number" id="usdSetup" step="1" min="1" value="20"></div>
+      </div>
+      <div class="calc" aria-live="polite">
+        <div class="stat"><span class="v" id="estLook">$0.00</span><span class="k">320-call scenario at the assumed rate; not a guaranteed maximum</span></div>
+        <div class="stat"><span class="v" id="estSetup">$0.00</span><span class="k">40-build scenario assuming one call each; actual builds may need more</span></div>
+        <div class="stat"><span class="v" id="capFit">no cap set</span><span class="k">cap against planning scenario</span></div>
+      </div>
+      <p class="note"><b>Recorded in the L0 card on 3 October:</b> USD 60 evaluation and USD 20 setup caps were accepted. At this page's assumed USD 0.25 per call, the current 320-call scenario costs USD 80 before setup, so the USD 60 look cap needs recalibration before exposure. Keep the accepted caps unless the owner changes them. No development-call budget was supplied and no calls were executed by preparing this page.</p>
+      <div class="choice"><input type="checkbox" id="budgetConfirmed" checked><label for="budgetConfirmed">Product owner has approved the dollar caps currently entered above.</label></div>
+    </section>
+
+    <!-- 5 STORAGE & DEV SET -->
+    <section class="card" id="storage">
+      <div class="card-head">
+        <div class="t"><span class="eyebrow">A-5 · holdout hygiene</span><h2>Where do briefs live, and is there a practice set?</h2></div>
+        <span class="pill todo" data-for="storage">open</span>
+      </div>
+      <div class="field"><label for="storeLoc">Restricted research storage location</label><input type="text" id="storeLoc" placeholder="Exact private folder reference — not yet provisioned"><span class="hint">Git only holds brief IDs and <b>salted</b> hashes. The salt is a research-owned secret that is never committed.</span></div>
+      <p class="note"><b>Recommended answer:</b> a research-owner-controlled encrypted folder outside this repository, accessible only to authorised research staff. Separate consent/identity records, development data, held-out briefs, outputs/ratings and the arm key. Give raters only the material they need; keep the code key, salt and held-out content away from L1–L3 implementers, including Fred. The exact folder, access test and retention/deletion schedule remain unprovisioned.</p>
+      <p>The live manifest keeps held-out briefs and per-brief results away from L1–L3 implementers both before and after the look. The separate <b>synthetic development set</b> above is available to implementers now.</p>
+      <div class="choices" role="radiogroup" aria-label="Development set">
+        <div class="choice"><input type="radio" name="devSet" id="dev-yes" value="yes" checked><label for="dev-yes">Yes, collect a development set (recommended)</label></div>
+        <div class="choice"><input type="radio" name="devSet" id="dev-no" value="no"><label for="dev-no">No, tune on synthetic fixtures only</label></div>
+      </div>
+      <div class="field" id="devSizeWrap" hidden><label for="devSize">Development briefs (separate sessions, not counted in the 20)</label><input type="number" id="devSize" min="1" max="40" value="10"></div>
+      <p class="note"><b>Development plan supplied:</b> the linked packet contains ten synthetic briefs, two per account, with assumed resources and imagined preferences. They are available for development now and are never an LR1 holdout. Actual participant feedback, if later collected, is recorded separately from these assumptions.</p>
+      <div class="choice"><input type="checkbox" id="storageConfirmed"><label for="storageConfirmed">Research owner has verified the entered storage location, access restrictions and separation of development and holdout material.</label></div>
+    </section>
+
+    <!-- 6 OWNERS -->
+    <section class="card" id="owners">
+      <div class="card-head">
+        <div class="t"><span class="eyebrow">O-1 · named people</span><h2>Who owns what?</h2></div>
+        <span class="pill todo" data-for="owners">open</span>
+      </div>
+      <p>A role label isn't an appointment. Enter a real person for each role. One person can hold several roles, except the <b>independent rater</b>: that person must not be the creator, and should not be building L1–L3.</p>
+      <p class="note"><b>Recorded live roles:</b> the L0 card names Fred for product, infrastructure operations, alerts and rollback. A separate eligible researcher and independent rater remain unappointed. The development packet's fictional Morgan and Alex do not fill these live roles.</p>
+      <div class="grid2">
+        <div class="field"><label for="oProduct">Product / launch owner</label><input type="text" id="oProduct" autocomplete="off" value="Fred Wang"><span class="hint">Recorded in the L0 card; accepts the pass mark and admission.</span></div>
+        <div class="field"><label for="oResearch">Research owner</label><input type="text" id="oResearch" autocomplete="off" placeholder="Unappointed — independent of L1–L3 implementation"><span class="hint">Holds the holdout, the arm key and the salt.</span></div>
+        <div class="field"><label for="oRater">Independent rater(s)</label><input type="text" id="oRater" autocomplete="off" placeholder="Unappointed — independent content reviewer"><span class="hint">Judges filmability and safety flags, blind to arm.</span></div>
+        <div class="field"><label for="oOps">Operations owner</label><input type="text" id="oOps" autocomplete="off" value="Fred Wang"><span class="hint">Infrastructure only; an eligible research handler operates content-bearing runs.</span></div>
+        <div class="field"><label for="oAlerts">Alert recipients</label><input type="text" id="oAlerts" autocomplete="off" value="Fred Wang"><span class="hint">Content-free spend/error alerts. Destination still to be tested.</span></div>
+        <div class="field"><label for="oIncident">Incident / rollback owner</label><input type="text" id="oIncident" autocomplete="off" value="Fred Wang"></div>
+        <div class="field"><label for="oSupport">Support contact shown to creators</label><input type="text" id="oSupport" autocomplete="off" placeholder="Eligible research handler — actual monitored private channel"><span class="hint">A live research channel must not disclose held-out content to Fred. The development mock inbox above is not a reachable support service.</span></div>
+      </div>
+      <p class="note" id="raterWarn" hidden><b>Check live roles:</b> the product/launch owner cannot be a rater or research handler under §5.7. A rater who also holds the research arm key weakens blinding. Confirm eligible people and role separation.</p>
+      <div class="choice"><input type="checkbox" id="ownersConfirmed"><label for="ownersConfirmed">The named people have accepted these roles; rater independence and the support/alert channels have been verified.</label></div>
+    </section>
+
+    <!-- 7 REVIEW -->
+    <section class="card" id="review">
+      <div class="card-head">
+        <div class="t"><span class="eyebrow">Gate · learning honesty</span><h2>Run one more review on the fixed method?</h2></div>
+        <span class="pill todo" data-for="review">open</span>
+      </div>
+      <p>The L0 card records an owner-authorised third review, an unverified §5.7 fix, and owner acceptance of L0 on 3 October 2026 so L1 may start. One independent verification of §5/§5.7 remains a condition before live LA-4 exposure. This development exercise does not run that review or change its verdict.</p>
+      <div class="choices" role="radiogroup" aria-label="Re-review decision">
+        <div class="choice"><input type="radio" name="reReview" id="rr-proposed" value="proposed"><label for="rr-proposed">Keep as a proposal</label></div>
+        <div class="choice"><input type="radio" name="reReview" id="rr-yes" value="yes" checked><label for="rr-yes">One independent verification before LA-4 exposure — L0 card condition</label></div>
+        <div class="choice"><input type="radio" name="reReview" id="rr-accept" value="accept"><label for="rr-accept">No, I accept the fix as is</label></div>
+        <div class="choice"><input type="radio" name="reReview" id="rr-later" value="later"><label for="rr-later">Decide later</label></div>
+      </div>
+      <p class="note"><b>Current record:</b> follow the conditional owner disposition in the L0 card. These local worksheet choices do not prove a reviewer ran or authorise live exposure.</p>
+    </section>
+
+    <div class="field"><label for="freeNote">Research handoff notes</label><textarea id="freeNote" rows="9">Updated 2026-10-03. Current scope: development simulation. Fred reports verbal agreement from all five supplied participants. Use Joie Beauty, Cognito Tuition, Vivian, Fred and Social Soup; no replacement is needed for this development group.
+
+The development packet contains five imagined participant interviews, ten synthetic briefs, draft consent wording, fictional researcher/rater roles and non-resolving storage/support test values. These are not real testimony, appointments, restricted infrastructure or live evaluation evidence. Public websites informed the business profiles. Instagram/TikTok posts and metrics remain unavailable. Fred identified RapidAPI configuration in respin/.env.local, but the sandbox blocks reading it and all six variables are absent from the process environment. No authenticated calls were made.
+
+Live L6 reference only: the L0 card records accepted thresholds/allocation, USD 60 per look + USD 20 setup, Fred's operational roles, and one independent manifest verification before LA-4 exposure. The 320-call scenario at USD 0.25 totals USD 80 before setup and needs calibration against the accepted look cap. Independent participants/handlers, written scope and real storage/support remain separate live requirements. No development-call budget or evaluation results are supplied.</textarea></div>
+
+    <details>
+      <summary>Show answers as text</summary>
+      <p class="note" style="margin-block:8px">If saving is unavailable in this view, copy this text and paste it into the Claude Code session.</p>
+      <pre class="out" id="outText"></pre>
+    </details>
+
+    <div class="savebar">
+      <span class="msg" id="saveMsg">Answers stay on this page until you save.</span>
+      <div class="row">
+        <button type="button" class="ghost" id="copyBtn">Copy as text</button>
+        <button type="button" class="primary" id="saveBtn">Save answers</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  const DOC = "decisions/l0-research-inputs";
+  const proposedPlan = [
+    {code:"C1",tt:2,ig:2,ex:2,de:1,st:1,consent:false},
+    {code:"C2",tt:2,ig:2,ex:2,de:1,st:1,consent:false},
+    {code:"C3",tt:2,ig:2,ex:1,de:1,st:2,consent:false},
+    {code:"C4",tt:2,ig:2,ex:1,de:2,st:1,consent:false},
+    {code:"C5",tt:2,ig:2,ex:1,de:2,st:1,consent:false}
+  ];
+  let plan = proposedPlan.map(r => ({...r}));
+  let db = null;
+
+  function num(v){const n = Number(v); return v !== "" && v != null && Number.isInteger(n) && n >= 0 ? n : 0;}
+  function inputNumber(id){const el = $(id); return el.value !== "" && el.validity.valid ? Number(el.value) : null;}
+  function validNumbers(selector){return Array.from(document.querySelectorAll(selector+' input[type="number"]')).every(el => inputNumber(el.id) !== null);}
+  function numericIssues(){
+    return Array.from(document.querySelectorAll('main input[type="number"]')).filter(el =>
+      !(el.closest("#passChange") && radio("passDecision") !== "change") &&
+      !(el.id === "devSize" && radio("devSet") !== "yes") && inputNumber(el.id) === null
+    ).map(el => el.id);
+  }
+  function numbersReady(){
+    const issues = numericIssues();
+    if(!issues.length) return true;
+    $("saveMsg").textContent = "Correct the missing or invalid numbers before copying or saving.";
+    const el = $(issues[0]); el.focus(); el.reportValidity();
+    return false;
+  }
+  function displayNumber(value){return value == null ? "[invalid or missing]" : String(value);}
+  function radio(name){const el = document.querySelector('input[name="'+name+'"]:checked'); return el ? el.value : "";}
+  function setRadio(name,val){const el = document.querySelector('input[name="'+name+'"][value="'+val+'"]'); if(el) el.checked = true;}
+
+  function renderPlan(){
+    const tb = $("planBody"); tb.textContent = "";
+    plan.forEach((r,i) => {
+      const tr = document.createElement("tr");
+      const cell = (child) => {const td = document.createElement("td"); td.appendChild(child); tr.appendChild(td);};
+      const code = document.createElement("input"); code.type = "text"; code.value = r.code; code.id = "code-"+i; code.setAttribute("aria-label","Creator code row "+(i+1));
+      code.addEventListener("input", () => {r.code = code.value.trim(); update();});
+      cell(code);
+      [["tt","TikTok briefs"],["ig","Instagram briefs"],["ex","Explain or opinion briefs"],["de","Demo or experiment briefs"],["st","Story or observation briefs"]].forEach(([k,lab]) => {
+        const n = document.createElement("input"); n.type = "number"; n.min = "0"; n.max = "5"; n.value = r[k]; n.id = k+"-"+i; n.setAttribute("aria-label", lab+" for "+(r.code||"row "+(i+1)));
+        n.addEventListener("input", () => {r[k] = n.value; update();});
+        cell(n);
+      });
+      const c = document.createElement("input"); c.type = "checkbox"; c.checked = !!r.consent; c.id = "consent-"+i; c.setAttribute("aria-label","Written consent scope verified for "+(r.code||"row "+(i+1)));
+      c.addEventListener("change", () => {r.consent = c.checked; update();});
+      cell(c);
+      const del = document.createElement("button"); del.type = "button"; del.className = "ghost"; del.textContent = "Remove"; del.setAttribute("aria-label","Remove "+(r.code||"row "+(i+1)));
+      del.addEventListener("click", () => {plan.splice(i,1); $("participantsConfirmed").checked = false; renderPlan(); update();});
+      cell(del);
+      tb.appendChild(tr);
+    });
+  }
+
+  function planChecks(){
+    const s = (k) => plan.reduce((a,r) => a + num(r[k]), 0);
+    const tt = s("tt"), ig = s("ig"), ex = s("ex"), de = s("de"), st = s("st");
+    const total = tt + ig;
+    const consented = plan.filter(r => r.consent).length;
+    $("tTT").textContent = tt; $("tIG").textContent = ig; $("tEx").textContent = ex; $("tDe").textContent = de; $("tSt").textContent = st;
+    $("tCo").textContent = consented + " / " + plan.length;
+    const perOk = plan.every(r => num(r.tt)+num(r.ig) === num(r.ex)+num(r.de)+num(r.st));
+    const maxOk = plan.every(r => num(r.tt)+num(r.ig) >= 1 && num(r.tt)+num(r.ig) <= 5);
+    const codesOk = plan.every(r => /^C\d{1,3}$/i.test(r.code||"")) && new Set(plan.map(r => r.code.toUpperCase())).size === plan.length;
+    return [
+      [plan.length >= 5, "At least 5 creators ("+plan.length+")"],
+      [total === 20, "Exactly 20 briefs ("+total+")"],
+      [maxOk, "Every creator supplies 1–5 briefs"],
+      [tt >= 8 && ig >= 8, "At least 8 per platform (TikTok "+tt+", Instagram "+ig+")"],
+      [ex >= 5 && de >= 5 && st >= 5, "At least 5 per form ("+ex+" / "+de+" / "+st+")"],
+      [validNumbers("#people") && perOk, "Whole-number counts; each creator's platform count equals their form count"],
+      [codesOk, "Unique codes like C1, C2, never names"],
+      [plan.length > 0 && consented === plan.length, "Written scope verified for every assigned creator ("+consented+"/"+plan.length+")"]
+    ];
+  }
+
+  function renderChecks(list){
+    const ul = $("planRules"); ul.textContent = "";
+    list.forEach(([ok,txt]) => {
+      const li = document.createElement("li");
+      const mk = document.createElement("span"); mk.className = "mk " + (ok ? "ok" : "no"); mk.textContent = ok ? "✓" : "✗";
+      const t = document.createElement("span"); t.textContent = txt;
+      li.append(mk,t); ul.appendChild(li);
+    });
+  }
+
+  function money(n){return "$" + (Math.round(n*100)/100).toFixed(2);}
+
+  function status(){
+    const st = {};
+    const pd = radio("passDecision");
+    st.pass = pd === "accept" || (pd === "change" && validNumbers("#passChange")) ? "done" : pd ? "warn" : "todo";
+    const pc = planChecks(); renderChecks(pc);
+    const structOk = pc.slice(0,7).every(x => x[0]);
+    st.people = structOk && pc[7][0] && $("participantsConfirmed").checked ? "done" : structOk ? "warn" : "todo";
+    const cs = ["cs1","cs2","cs3","cs4"].filter(id => $(id).checked).length;
+    st.consent = cs === 4 && $("consentRef").value.trim() ? "done" : "warn";
+    const rate = inputNumber("perCall"), cap = inputNumber("usdCap"), setup = inputNumber("usdSetup");
+    const worst = rate == null ? null : rate * 320, setupEst = rate == null ? null : rate * 40;
+    $("estLook").textContent = worst == null ? "Enter valid rate" : money(worst); $("estSetup").textContent = setupEst == null ? "Enter valid rate" : money(setupEst);
+    if(cap == null || rate == null){ $("capFit").textContent = "enter valid rate and cap"; }
+    else { $("capFit").textContent = cap >= worst ? "covers assumed scenario" : "below assumed scenario"; }
+    st.spend = validNumbers("#spend") && cap >= worst && $("budgetConfirmed").checked ? "done" : "warn";
+    const dv = radio("devSet");
+    $("devSizeWrap").hidden = dv !== "yes";
+    st.storage = $("storeLoc").value.trim() && dv && (dv !== "yes" || inputNumber("devSize") !== null) && $("storageConfirmed").checked ? "done" : ($("storeLoc").value.trim() || dv) ? "warn" : "todo";
+    const ownerIds = ["oProduct","oResearch","oRater","oOps","oAlerts","oIncident","oSupport"];
+    const filled = ownerIds.filter(id => $(id).value.trim()).length;
+    const productOwner = $("oProduct").value.trim().toLowerCase();
+    const handlersSeparate = ["oResearch","oRater"].every(id => $(id).value.trim().toLowerCase() !== productOwner);
+    st.owners = filled === ownerIds.length && handlersSeparate && $("ownersConfirmed").checked ? "done" : filled > 0 ? "warn" : "todo";
+    const r = $("oRater").value.trim().toLowerCase();
+    $("raterWarn").hidden = !((productOwner && !handlersSeparate) || (r && r === $("oResearch").value.trim().toLowerCase()));
+    const rr = radio("reReview");
+    st.review = rr === "yes" || rr === "accept" ? "done" : rr ? "warn" : "todo";
+    $("passChange").hidden = pd !== "change";
+    return st;
+  }
+
+  const LABEL = {done:"answered", warn:"partial", todo:"open"};
+  function update(){
+    const st = status();
+    document.querySelectorAll(".pill[data-for]").forEach(p => {
+      const s = st[p.dataset.for] || "todo";
+      p.className = "pill " + s; p.textContent = LABEL[s];
+    });
+    const done = Object.values(st).filter(s => s === "done").length;
+    $("mCount").textContent = done + " / 7";
+    $("mBar").style.width = (done/7*100) + "%";
+    $("outText").textContent = asText(collect());
+  }
+
+  function collect(){
+    return {
+      researchDate: "2026-10-03",
+      scope: "development-simulation; live L6 worksheet is reference only",
+      developmentSimulation: $("development").innerText || $("development").textContent,
+      developmentSources: Array.from($("development").querySelectorAll("a[href]")).map(a => ({title:a.textContent, url:a.href})),
+      numericIssues: numericIssues(),
+      consentReported: "Fred reports verbal agreement from all five supplied participants, clarified 2026-10-03. Imagined answers are development assumptions; written scope was not inspected.",
+      confirmations: {participants:$("participantsConfirmed").checked, budget:$("budgetConfirmed").checked, storage:$("storageConfirmed").checked, owners:$("ownersConfirmed").checked},
+      publicResearch: $("research").innerText || $("research").textContent,
+      researchSources: Array.from($("research").querySelectorAll("a[href]")).map(a => ({title:a.textContent, url:a.href})),
+      passDecision: radio("passDecision"), passC: inputNumber("passC"), passF: inputNumber("passF"), passNote: $("passNote").value.trim(),
+      plan: plan.map((r,i) => ({code:r.code, tt:inputNumber("tt-"+i), ig:inputNumber("ig-"+i), ex:inputNumber("ex-"+i), de:inputNumber("de-"+i), st:inputNumber("st-"+i), consent:!!r.consent})),
+      consentCovers: {storage:$("cs1").checked, rater:$("cs2").checked, researchProfile:$("cs3").checked, analysisWithdrawal:$("cs4").checked},
+      consentRef: $("consentRef").value.trim(),
+      assumedUsdPerCall: inputNumber("perCall"), usdCapPerLook: inputNumber("usdCap"), usdCapSetup: inputNumber("usdSetup"),
+      storageLocation: $("storeLoc").value.trim(), devSet: radio("devSet"), devSize: radio("devSet") === "yes" ? inputNumber("devSize") : 0,
+      owners: {product:$("oProduct").value.trim(), research:$("oResearch").value.trim(), rater:$("oRater").value.trim(), operations:$("oOps").value.trim(), alerts:$("oAlerts").value.trim(), incident:$("oIncident").value.trim(), support:$("oSupport").value.trim()},
+      reReview: radio("reReview"), note: $("freeNote").value.trim()
+    };
+  }
+
+  function asText(d){
+    const L = [];
+    L.push("L0 research inputs (A-5 / O-1)");
+    L.push("Scope: " + d.scope);
+    L.push("\nDEVELOPMENT SIMULATION — NOT PARTICIPANT TESTIMONY\n" + d.developmentSimulation.trim());
+    L.push("Development references: " + d.developmentSources.map(s => s.title+": "+s.url).join("\n"));
+    L.push("\nLIVE L6 REFERENCE WORKSHEET (not a launch clearance)");
+    if(d.numericIssues.length) L.push("INVALID NUMERIC INPUT — correct before use: " + d.numericIssues.join(", "));
+    L.push("Research date: " + d.researchDate + ". Existing owner decisions are noted against the L0 card; other defaults remain drafts. This is not an evaluation result or launch clearance.");
+    L.push("Consent reported: " + d.consentReported);
+    L.push("Confirmed: " + Object.entries(d.confirmations).map(([k,v]) => k+"="+(v?"yes":"pending")).join("; "));
+    L.push("Pass mark: " + (d.passDecision || "unanswered") + (d.passDecision === "change" ? " — C≥"+displayNumber(d.passC)+"/20, F≥"+displayNumber(d.passF)+"/20; " + (d.passNote||"") : ""));
+    L.push("Proposed allocation (identity mapping stays private): " + d.plan.map(r => r.code+" TT"+displayNumber(r.tt)+" IG"+displayNumber(r.ig)+" ex"+displayNumber(r.ex)+" de"+displayNumber(r.de)+" st"+displayNumber(r.st)+(r.consent?" written-scope-verified":" written-scope-unverified")).join("; "));
+    L.push("Consent covers: " + Object.entries(d.consentCovers).filter(e=>e[1]).map(e=>e[0]).join(", ") + (d.consentRef ? " | wording: "+d.consentRef : ""));
+    L.push("Spend: assumed "+(d.assumedUsdPerCall==null?"[invalid or missing]":"$"+d.assumedUsdPerCall)+"/call; cap per look "+(d.usdCapPerLook==null?"[invalid or missing]":"$"+d.usdCapPerLook)+"; setup cap "+(d.usdCapSetup==null?"[invalid or missing]":"$"+d.usdCapSetup));
+    L.push("Storage: " + (d.storageLocation || "unset") + "; dev set: " + (d.devSet || "unanswered") + (d.devSet === "yes" ? " ("+displayNumber(d.devSize)+")" : ""));
+    L.push("Owners: " + Object.entries(d.owners).map(e => e[0]+"="+(e[1]||"—")).join("; "));
+    L.push("N1 re-review: " + (d.reReview || "unanswered"));
+    if(d.note) L.push("Note: " + d.note);
+    L.push("\nPUBLIC RESEARCH / DEVELOPMENT RECOMMENDATIONS (not held-out briefs)\n" + d.publicResearch.trim());
+    L.push("Sources: " + d.researchSources.map(s => s.title+": "+s.url).join("\n"));
+    return L.join("\n");
+  }
+
+  function apply(d){
+    if(!d) return;
+    const confirmations = d.confirmations || {};
+    ["participants","budget","storage","owners"].forEach(k => {$(k+"Confirmed").checked = confirmations[k] === true;});
+    if(d.passDecision) setRadio("passDecision", d.passDecision);
+    if("passC" in d) $("passC").value = d.passC ?? ""; if("passF" in d) $("passF").value = d.passF ?? ""; $("passNote").value = d.passNote || "";
+    if(Array.isArray(d.plan) && d.plan.length) plan = d.plan.map(r => ({...r}));
+    const cc = d.consentCovers || {}; $("cs1").checked = !!cc.storage; $("cs2").checked = !!cc.rater; $("cs3").checked = !!cc.researchProfile; $("cs4").checked = !!cc.analysisWithdrawal;
+    $("consentRef").value = d.consentRef || "";
+    if("assumedUsdPerCall" in d) $("perCall").value = d.assumedUsdPerCall ?? "";
+    $("usdCap").value = d.usdCapPerLook == null ? "" : d.usdCapPerLook; $("usdSetup").value = d.usdCapSetup == null ? "" : d.usdCapSetup;
+    $("storeLoc").value = d.storageLocation || ""; if(d.devSet) setRadio("devSet", d.devSet); if("devSize" in d) $("devSize").value = d.devSize ?? "";
+    const o = d.owners || {}; $("oProduct").value = o.product||""; $("oResearch").value = o.research||""; $("oRater").value = o.rater||""; $("oOps").value = o.operations||""; $("oAlerts").value = o.alerts||""; $("oIncident").value = o.incident||""; $("oSupport").value = o.support||"";
+    if(d.reReview) setRadio("reReview", d.reReview); $("freeNote").value = d.note || "";
+    renderPlan();
+  }
+
+  function onEdit(event){
+    const id = event.target.id;
+    if(["perCall","usdCap","usdSetup"].includes(id)) $("budgetConfirmed").checked = false;
+    if(event.target.closest("#people") && id !== "participantsConfirmed") $("participantsConfirmed").checked = false;
+    if(event.target.closest("#storage") && id !== "storageConfirmed") $("storageConfirmed").checked = false;
+    if(event.target.closest("#owners") && id !== "ownersConfirmed") $("ownersConfirmed").checked = false;
+    update();
+  }
+  document.querySelector("main").addEventListener("input", onEdit);
+  document.querySelector("main").addEventListener("change", onEdit);
+  $("addRow").addEventListener("click", () => {let next = 1; while(plan.some(r => r.code.toUpperCase() === "C"+next)) next++; plan.push({code:"C"+next,tt:0,ig:0,ex:0,de:0,st:0,consent:false}); $("participantsConfirmed").checked = false; renderPlan(); update();});
+
+  $("copyBtn").addEventListener("click", () => {
+    if(!numbersReady()) return;
+    const text = asText(collect());
+    const done = () => { $("saveMsg").textContent = "Copied. Paste it into the Claude Code session."; };
+    try {
+      navigator.clipboard.writeText(text).then(done, () => { $("outText").closest("details").open = true; selectOut(); $("saveMsg").textContent = "Copy was blocked. The text is selected below, so press Ctrl+C."; });
+    } catch(e){ $("outText").closest("details").open = true; selectOut(); }
+  });
+  function selectOut(){const r = document.createRange(); r.selectNodeContents($("outText")); const s = getSelection(); s.removeAllRanges(); s.addRange(r);}
+
+  $("saveBtn").addEventListener("click", async () => {
+    if(!numbersReady()) return;
+    if(!db){ $("saveMsg").textContent = "Saving isn't available in this view. Use Copy as text instead."; return; }
+    $("saveBtn").disabled = true; $("saveMsg").textContent = "Saving…";
+    try {
+      const payload = collect(); payload.savedAt = new Date().toISOString();
+      await db.doc(DOC).set(payload);
+      $("saveMsg").textContent = "Saved. Claude can read these answers now.";
+      $("mSaved").textContent = "Saved " + new Date(payload.savedAt).toLocaleString();
+    } catch(e){
+      $("saveMsg").textContent = (e && e.code === "invalid_argument") ? "You don't have permission to save here. Use Copy as text instead." : "Save failed (" + ((e && e.code) || "error") + "). Try again, or use Copy as text.";
+    } finally { $("saveBtn").disabled = false; }
+  });
+
+  renderPlan(); update();
+
+  (async () => {
+    try {
+      db = window.claude && window.claude.use ? await window.claude.use("db") : null;
+      if(!db){ $("saveMsg").textContent = "Saving is unavailable here. Use Copy as text."; return; }
+      const snap = await db.doc(DOC).get();
+      if(snap.exists){ apply(snap.data()); update(); const at = snap.data().savedAt; if(at) $("mSaved").textContent = "Last saved " + new Date(at).toLocaleString(); }
+    } catch(e){ /* keep working without saved state */ }
+  })();
+})();
+</script>
+<style>.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}</style>
+
+</body></html>

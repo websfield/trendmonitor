@@ -22,9 +22,13 @@ export function LogOutcome({ state }: { state: LogResultState }) {
             form never sent one. */}
         Stored, labelled{" "}
         <strong>{evidenceStateCopy(state.evidenceState).label}</strong>.{" "}
+        {/* R-115 (audit Phase 2, P2-A1): every result this form can write is
+            self reported or has no numbers, and neither is ever counted. The
+            two sentences used to say it "can join a treatment group" and
+            "counts towards your own baseline". */}
         {state.joinsTreatmentGroup
-          ? "It can join a treatment group, because it names one of your drafts."
-          : "It counts towards your own baseline only: it names no draft of yours, so there is nothing to say what it tested."}{" "}
+          ? "It names one of your drafts, so it is filed with that draft. It is stored and shown, and it is not counted into a comparison: only a verified analytics connector could supply a counted result."
+          : "It names no draft of yours, so it never joins a treatment group. It is stored and shown, and it is not counted into a baseline: only a verified analytics connector could supply a counted result."}{" "}
         {/* THE REMEDY THIS USED TO PRINT WAS "log the same output over a
             different observation window", which invites a creator whose
             numbers were wrong to write a window they did not observe into an
@@ -35,9 +39,8 @@ export function LogOutcome({ state }: { state: LogResultState }) {
             on it being a real second observation; unconditioned, it is a
             recipe. So this states the constraint and offers nothing. */}
         Results are kept exactly as logged: this one cannot be edited or
-        removed, and it will be counted as it stands. A later observation of
-        the same post over a genuinely different period is a second result and
-        can be logged as one.
+        removed. A later observation of the same post over a genuinely
+        different period is a second result and can be logged as one.
       </p>
     );
   }

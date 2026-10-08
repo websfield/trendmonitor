@@ -83,6 +83,18 @@ jobs:
           cache: pnpm
           cache-dependency-path: respin/pnpm-lock.yaml
 
+      # DEV-SCOPE AUDIT, BLOCKING, BEFORE ANY DEPENDENCY CODE RUNS (P9-A3,
+      # register 2026-10-05 item 38). This job executes devDependencies —
+      # playwright, tsx, vitest — beside the vendor key, while respin.yml's
+      # blocking audit is `--prod` and never reads them. It runs ahead of
+      # Install (whose lifecycle scripts are the first dependency code to
+      # execute) and so ahead of the two steps that are issued the key. It
+      # reads the lockfile only; exceptions are respin/package.json's
+      # `pnpm.auditConfig.ignoreGhsas`, each with its SECURITY-EXCEPTIONS.md row.
+      - name: Dependency audit, dev scope included (high/critical fails)
+        id: dev-audit
+        run: pnpm -C respin audit --audit-level high
+
       # (1) Postgres through compose, container `respin-postgres`: the specs'
       # db-shortcut.ts and brain.ts shell `docker exec respin-postgres psql`.
       - name: Postgres (compose, healthcheck-gated)

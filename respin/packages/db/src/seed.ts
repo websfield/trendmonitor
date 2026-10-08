@@ -61,7 +61,9 @@ export const CONFIG_V1_SEED = {
     trendBrowse: 0,
   },
   allowances: { free: 25, creator: 250, pro: 2000, studio: 8000 },
-  pack: { credits: 1000, priceUsd: 10, validityMonths: 12 },
+  // `autoTopupMaxAttemptsPerMonth` (audit P3-R7): at the compiled ceiling;
+  // config may only lower it.
+  pack: { credits: 1000, priceUsd: 10, validityMonths: 12, autoTopupMaxAttemptsPerMonth: 100 },
   graceDays: 7,
   pauseMonths: { min: 1, max: 3 },
   // The band that counts as a monthly service period on a grant-bearing
@@ -126,6 +128,10 @@ export const CONFIG_V1_SEED = {
     // 1.00 USD per profile per window; see `schema.ts` for why the attempt cap
     // stays 10 and what an `unknown`-cost row does to the sum.
     maxUnchargedBillableCostMicroUsd: 1_000_000,
+    // Audit P3-R3 (R-158): the TOTAL billable spend per profile per window,
+    // successes included — 60 USD, owner-chosen as a runaway bound (just over
+    // 50 worst-case attempts at 1.199998 USD each); argued in `schema.ts`.
+    maxBillableCostMicroUsdPerWindow: 60_000_000,
     unchargedAttemptWindowMinutes: 60,
     // How much of one generation's prompt the framework library may occupy
     // (slice 7, R17). A SPEND DIAL — it sets the input-token floor of every
@@ -136,6 +142,10 @@ export const CONFIG_V1_SEED = {
     // install writes it, so only databases seeded before slice 7 need
     // `config:migrate` at all.
     frameworkContextCharBudget: 20_000,
+    // Launch L3 (R-152): the one character budget for the labelled recent
+    // work a concept or script prompt carries. A spend dial, argued beside the
+    // key in `packages/config/src/schema.ts`; 0 sends no history at all.
+    recentContextCharBudget: 4_000,
   },
   // The Spin hard gate owns its code refusal floor; this stored value can only
   // make it stricter. Seed it explicitly so fresh installs do not rely on a
@@ -171,6 +181,9 @@ export const CONFIG_V1_SEED = {
     // claim lease's per-stage ceiling. The parity test holds this equal to the
     // schema default.
     maxOutputTokens: 12_000,
+    // Audit P3-R2 (R-158): the assembled-input ceiling every creator-facing
+    // vendor call is checked against before it is made; argued in `schema.ts`.
+    maxInputTokens: 104_323,
     timeoutMs: 120_000,
     // The whole operation's deadline, retries included (production CHANGE 6).
     // Explicit here as well as defaulted in the schema, for the reason

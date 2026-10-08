@@ -28,6 +28,7 @@ import {
   ensureUserWorkspace,
   frameworks,
   generationAttempts,
+  generationFeedback,
   generations,
   seedAuthUser,
   seedDb,
@@ -63,6 +64,15 @@ import {
   GenerationRecoveryRequiredError,
   RevisionParentError,
 } from "../src/errors";
+import { CreativeRequestError } from "@respin/modes";
+import {
+  FORM_EXCERPT,
+  FULL_SCRIPT_COST,
+  formParams,
+  legacyIdeas,
+  v2Ideas,
+  v2Script,
+} from "./support/form-fixtures";
 import { anySlots } from "./support/run-slots";
 import { dbThatFailsWhen } from "./support/crash-db";
 import {
@@ -552,6 +562,8 @@ describe("revision, lineage and its price (R6/R7/R8)", () => {
       promptBundleVersion: "bundle-x",
       spinAutopsyId: null,
       spinAnalysisVersion: null,
+      creative: null,
+      origin: null,
     };
     expect(hashRequest({ ...base, parentGenerationId: null })).not.toBe(
       hashRequest({ ...base, parentGenerationId: "00000000-0000-4000-8000-0000000000ab" })
@@ -564,6 +576,81 @@ describe("revision, lineage and its price (R6/R7/R8)", () => {
     );
   });
 
+  it("R-148: the creative half is part of request identity — every field of it, and its absence", () => {
+    const base = {
+      mode: "ideation",
+      platform: PLATFORM,
+      input: "an idea",
+      brainActivationId: "00000000-0000-4000-8000-000000000001",
+      promptBundleVersion: "bundle-x",
+      parentGenerationId: null,
+      spinAutopsyId: null,
+      spinAnalysisVersion: null,
+      origin: null,
+    };
+    const limits = {
+      people: null,
+      maxMinutes: null,
+      locations: [] as string[],
+      equipment: [] as string[],
+      footage: null,
+    };
+    const auto = { formChoice: "auto" as const, constraints: limits };
+    const variants = [
+      null,
+      auto,
+      { ...auto, formChoice: "explain_opinion" as const },
+      { ...auto, formChoice: "demonstration_experiment" as const },
+      { ...auto, formChoice: "personal_story_observation" as const },
+      { ...auto, constraints: { ...limits, people: "solo" as const } },
+      { ...auto, constraints: { ...limits, people: "with_help" as const } },
+      { ...auto, constraints: { ...limits, maxMinutes: 10 } },
+      { ...auto, constraints: { ...limits, maxMinutes: 11 } },
+      { ...auto, constraints: { ...limits, locations: ["kitchen"] } },
+      { ...auto, constraints: { ...limits, equipment: ["kitchen"] } },
+      { ...auto, constraints: { ...limits, footage: "kitchen" } },
+      // A LIST IS NOT ITS JOINED STRING: one item "a,b" is not two items.
+      { ...auto, constraints: { ...limits, locations: ["a,b"] } },
+      { ...auto, constraints: { ...limits, locations: ["a", "b"] } },
+    ];
+    const hashes = variants.map((creative) => hashRequest({ ...base, creative }));
+    expect(new Set(hashes).size, "two different creative halves share one identity").toBe(
+      variants.length
+    );
+  });
+
+  it("R-148: a creator's text cannot forge the canonical form's separators inside the creative record", () => {
+    const base = {
+      mode: "ideation",
+      platform: PLATFORM,
+      input: "an idea",
+      brainActivationId: "00000000-0000-4000-8000-000000000001",
+      promptBundleVersion: "bundle-x",
+      parentGenerationId: null,
+      spinAutopsyId: null,
+      spinAnalysisVersion: null,
+      origin: null,
+    };
+    const limits = { people: null, maxMinutes: null, locations: [], equipment: [], footage: null };
+    // Two halves whose RAW concatenation would agree if the separators were not
+    // escaped: one footage note carrying a record separator, against the same
+    // text split across two fields.
+    const forged = hashRequest({
+      ...base,
+      creative: { formChoice: "auto", constraints: { ...limits, footage: "a\u0001b" } },
+    });
+    const split = hashRequest({
+      ...base,
+      creative: { formChoice: "auto", constraints: { ...limits, footage: "a", locations: ["b"] } },
+    });
+    expect(forged).not.toBe(split);
+    // NON-VACUITY: identical halves DO hash identically — the check is not
+    // passing because every call is unique.
+    expect(
+      hashRequest({ ...base, creative: { formChoice: "auto", constraints: limits } })
+    ).toBe(hashRequest({ ...base, creative: { formChoice: "auto", constraints: limits } }));
+  });
+
   it("two Spins with the same creator input but different server-derived autopsy revisions have different payloads", () => {
     const base = {
       mode: "analyseAndSpin",
@@ -572,6 +659,8 @@ describe("revision, lineage and its price (R6/R7/R8)", () => {
       brainActivationId: "00000000-0000-4000-8000-000000000001",
       promptBundleVersion: "bundle-x",
       parentGenerationId: null,
+      creative: null,
+      origin: null,
     } as const;
     expect(
       hashRequest({
@@ -716,6 +805,8 @@ describe("revision, lineage and its price (R6/R7/R8)", () => {
       parentGenerationId: null,
       spinAutopsyId: null,
       spinAnalysisVersion: null,
+      creative: null,
+      origin: null,
     };
     const FIELD_SEP = "\u0000";
     const RECORD_SEP = "\u0001";
@@ -1072,6 +1163,398 @@ describe("revision, lineage and its price (R6/R7/R8)", () => {
     expect(s.calls[0].prompt).not.toContain(library.name);
     expect(s.calls[0].prompt).toContain("Frameworks available: none this time");
   });
+
+  // ------------------------------------------- R-148 (launch L1) revisions
+
+  it("R-148: a revision of a v2 parent KEEPS v2, its form and its limits — and costs a revision, with no extra call", async () => {
+    const limits = { formChoice: "explain_opinion", constraints: { people: "solo", maxMinutes: 30 } };
+    const s = scripted([
+      JSON.stringify(v2Ideas(["explain_opinion"])),
+      killTestReply(["/rules/0"]),
+      JSON.stringify(v2Ideas(["explain_opinion"])),
+      killTestReply(["/rules/0"]),
+    ]);
+    const parent = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ creative: limits }), new Date()
+    );
+    expect(parent.generation.outcome).toBe("usable");
+    const revision = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ attemptId: "gen-2", input: "make the second one shorter", revisionOfAttemptId: "gen-1" }),
+      new Date()
+    );
+    expect(revision.generation.outcome).toBe("usable");
+    expect(revision.generation.parentId).toBe(parent.generation.id);
+    // INHERITED FROM THE STORED PARENT, not from anything the request said.
+    expect((revision.generation.request as Record<string, unknown>).creative).toEqual(
+      (parent.generation.request as Record<string, unknown>).creative
+    );
+    expect((revision.generation.output as Record<string, unknown>).contractVersion).toBe(2);
+    expect((revision.generation.output as Record<string, unknown>).requestedForm).toBe("explain_opinion");
+    // The revision's prompt carried the parent's form and limits.
+    expect(s.calls[2].prompt).toContain("Argue one claim");
+    expect(s.calls[2].prompt).toContain("The most time they have, in minutes: 30");
+    // THE SAME CALL SHAPE AS ANY REVISION (draft + scoring) at the revision price.
+    expect(s.calls).toHaveLength(4);
+    expect(revision.creditsChargedNow).toBe(REVISION_COST);
+  });
+
+  it("R-148: a revision of a 'Choose for me' SCRIPT keeps the form that script resolved to", async () => {
+    await setTier("creator");
+    await grant(FULL_SCRIPT_COST + REVISION_COST);
+    const s = scripted([
+      JSON.stringify(v2Script("personal_story_observation")),
+      killTestReply(["/rules/0"]),
+      JSON.stringify(v2Script("personal_story_observation")),
+      killTestReply(["/rules/0"]),
+    ]);
+    await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ mode: "ideaToScript", creative: { formChoice: "auto" } }), new Date()
+    );
+    // "Choose for me" on a SCRIPT adds no call: the draft and the scoring, as
+    // any script (round-1 billing Low).
+    expect(s.calls).toHaveLength(2);
+    const revision = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({
+        mode: "ideaToScript",
+        attemptId: "gen-2",
+        input: "tighten the opening",
+        revisionOfAttemptId: "gen-1",
+      }),
+      new Date()
+    );
+    const creative = (revision.generation.request as Record<string, unknown>).creative as {
+      formChoice: string;
+    };
+    expect(creative.formChoice).toBe("personal_story_observation");
+    expect((revision.generation.output as Record<string, unknown>).requestedForm).toBe(
+      "personal_story_observation"
+    );
+  });
+
+  it("L2 (R-151): a revision KEEPS its parent's form — a form swap is refused before anything runs, a limits-only override runs at the revision price", async () => {
+    // THE L1 CARD'S DEFERRAL, decided: a different form is a different script,
+    // which is a new commission at its mode's price — never a swap priced as a
+    // revision. Before L2 this override ran and charged `REVISION_COST`.
+    const s = scripted([
+      JSON.stringify(v2Ideas(["explain_opinion"])),
+      killTestReply(["/rules/0"]),
+      JSON.stringify(v2Ideas(["explain_opinion"])),
+      killTestReply(["/rules/0"]),
+    ]);
+    await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ creative: { formChoice: "explain_opinion" } }), new Date()
+    );
+    const callsBefore = s.calls.length;
+    const debitsBefore = (await debitsOf()).length;
+    const swap = await capture(() =>
+      generate(
+        db, owner, profileId, never(), anySlots(),
+        formParams({
+          attemptId: "gen-2",
+          input: "try it as a demonstration",
+          revisionOfAttemptId: "gen-1",
+          creative: { formChoice: "demonstration_experiment" },
+        }),
+        new Date()
+      )
+    );
+    expect(swap).toBeInstanceOf(CreativeRequestError);
+    expect((swap as CreativeRequestError).reason).toBe("revision_keeps_form");
+    expect(s.calls.length).toBe(callsBefore);
+    expect((await debitsOf()).length).toBe(debitsBefore);
+    expect(
+      (await db.select().from(generationAttempts)).map((a) => a.attemptId)
+    ).not.toContain("gen-2");
+    // THE SAME FORM WITH NEW LIMITS is the same piece made easier to film: it
+    // runs, as a revision, at the revision price.
+    const revision = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({
+        attemptId: "gen-3",
+        input: "make it quicker to film",
+        revisionOfAttemptId: "gen-1",
+        creative: { formChoice: "explain_opinion", constraints: { maxMinutes: 30 } },
+      }),
+      new Date()
+    );
+    expect(revision.generation.outcome).toBe("usable");
+    expect(revision.creditsChargedNow).toBe(REVISION_COST);
+    expect((revision.generation.output as Record<string, unknown>).requestedForm).toBe(
+      "explain_opinion"
+    );
+  });
+
+  it("R-148: a revision of a LEGACY parent stays legacy — and an override is refused before anything runs", async () => {
+    const s = scripted([
+      JSON.stringify(legacyIdeas()),
+      killTestReply(["/rules/0"]),
+      JSON.stringify(legacyIdeas()),
+      killTestReply(["/rules/0"]),
+    ]);
+    await generate(db, owner, profileId, s.provider, anySlots(), formParams(), new Date());
+    // The override: refused, with the closed reason, before the claim.
+    const err = await capture(() =>
+      generate(
+        db, owner, profileId, never(), anySlots(),
+        formParams({
+          attemptId: "gen-2",
+          input: "make it a story",
+          revisionOfAttemptId: "gen-1",
+          creative: { formChoice: "personal_story_observation" },
+        }),
+        new Date()
+      )
+    );
+    expect(err).toBeInstanceOf(CreativeRequestError);
+    expect((err as CreativeRequestError).reason).toBe("revision_keeps_legacy_format");
+    expect((await attemptsOf()).map((a) => a.attemptId)).toEqual(["gen-1"]);
+    // Without an override it runs, as legacy: no stamp, no creative half.
+    const revision = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ attemptId: "gen-3", input: "make it shorter", revisionOfAttemptId: "gen-1" }),
+      new Date()
+    );
+    expect(revision.generation.outcome).toBe("usable");
+    expect("contractVersion" in (revision.generation.output as object)).toBe(false);
+    expect((revision.generation.request as Record<string, unknown>).creative).toBeNull();
+  });
+
+  it("R-148 / REQ-I05: the PARENT's own words can never become a revision's 'material' basis", async () => {
+    // The parent invented an event and honestly marked it [check]. The revision
+    // then QUOTES that invented event as if it were the creator's material —
+    // exactly the laundering the basis corpus blanks the parent draft to stop.
+    const invented = "you drop the camera into the sink on the first take [check]";
+    const parentDoc = v2Ideas(["personal_story_observation"], {
+      0: {
+        premise: {
+          whatHappens: invented,
+          interest: "everyone has kept going on a shoot they should have stopped",
+          payoff: "the take worth keeping comes after checking the dial",
+          basis: { kind: "unconfirmed" },
+        },
+      },
+    });
+    const launders = v2Ideas(["personal_story_observation"], {
+      0: {
+        premise: {
+          whatHappens: "you drop the camera into the sink on the first take",
+          interest: "everyone has kept going on a shoot they should have stopped",
+          payoff: "the take worth keeping comes after checking the dial",
+          basis: { kind: "material", excerpt: "drop the camera into the sink on the first take" },
+        },
+      },
+    });
+    const s = scripted([
+      JSON.stringify(parentDoc),
+      killTestReply(["/rules/0"]),
+      JSON.stringify(launders),
+      JSON.stringify(launders),
+    ]);
+    const parent = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ creative: { formChoice: "personal_story_observation" } }), new Date()
+    );
+    expect(parent.generation.outcome).toBe("usable");
+    const revision = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ attemptId: "gen-2", input: "make the first one punchier", revisionOfAttemptId: "gen-1" }),
+      new Date()
+    );
+    // NON-VACUITY: the quote really IS in the revision's prompt, inside the
+    // parent draft — so the traceability corpus saw it, and only the basis
+    // corpus refused to count it.
+    expect(s.calls[2].prompt).toContain("drop the camera into the sink on the first take");
+    expect(revision.generation.outcome).toBe("honest_refusal");
+    expect(revision.generation.refusalReason).toContain("unsupported_experience");
+  });
+
+  it("R-148 round 1 (compliance BLOCK, revision half): a revision that RELABELS a parent's [check]ed event and drops the marker is refused", async () => {
+    await grant(10);
+    const parentEvent = "you drop the camera into the sink on the first take [check]";
+    const parentDoc = v2Ideas(["personal_story_observation"], {
+      0: {
+        premise: {
+          whatHappens: parentEvent,
+          interest: "everyone has kept going on a shoot they should have stopped",
+          payoff: "the take worth keeping comes after checking the dial",
+          basis: { kind: "unconfirmed" },
+        },
+      },
+    });
+    // The revision calls it an opinion, says the event in the PRESENT tense —
+    // which no tense-based shape can see — and drops the [check].
+    const relabelled = v2Ideas(["explain_opinion"], {
+      0: {
+        premise: {
+          whatHappens: "you drop the camera into the sink on the first take",
+          interest: "everyone has kept going on a shoot they should have stopped",
+          payoff: "the take worth keeping comes after checking the dial",
+          basis: { kind: "none" },
+        },
+      },
+    });
+    const s = scripted([
+      JSON.stringify(parentDoc),
+      killTestReply(["/rules/0"]),
+      JSON.stringify(relabelled),
+      JSON.stringify(relabelled),
+    ]);
+    const parent = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ creative: { formChoice: "auto" } }), new Date()
+    );
+    expect(parent.generation.outcome).toBe("usable");
+    const revision = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ attemptId: "gen-2", input: "make the first one punchier", revisionOfAttemptId: "gen-1" }),
+      new Date()
+    );
+    expect(revision.generation.outcome).toBe("honest_refusal");
+    expect(revision.generation.refusalReason).toContain("unsupported_experience");
+    // Stored on the kill test; the client-facing reason quotes nothing of the refused draft.
+    expect(JSON.stringify((revision.generation.killTest as { finalAttempt: { hardRules: unknown } }).finalAttempt.hardRules)).toContain("the draft this revises marked this unconfirmed");
+    // THE MONEY OF IT (billing round 2, Note C): the parent's draft and its
+    // scoring, then the revision's draft and its ONE rewrite — no scoring call
+    // for a refusal — and the refusal is charged at the revision price.
+    expect(s.calls).toHaveLength(4);
+    expect(revision.creditsChargedNow).toBe(REVISION_COST);
+  });
+
+  it("R-148 round 1 (tenancy Medium): a revision may not quote this product's own SCAFFOLD as the creator's words — each sentence of it", async () => {
+    await grant(20);
+    const s = scripted([
+      JSON.stringify(v2Ideas(["personal_story_observation"])),
+      killTestReply(["/rules/0"]),
+    ]);
+    await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ creative: { formChoice: "auto" } }), new Date()
+    );
+    // NON-VACUITY: every scaffold quote below really is in the revision's
+    // composed input (so the traceability corpus sees it) — only the basis
+    // corpus, built from the creator's own note, refuses it.
+    const composed = revisionInput("make the first one punchier", "D").toLowerCase();
+    const scaffold = [
+      "a revision of a draft you produced earlier",
+      "what the creator asked to change",
+      "rewrite it to answer the note above",
+    ];
+    for (const [i, excerpt] of scaffold.entries()) {
+      expect(composed, excerpt).toContain(excerpt);
+      const quoting = v2Ideas(["personal_story_observation"], {
+        0: {
+          premise: {
+            whatHappens: `you ${excerpt} and keep going`,
+            interest: "everyone has kept going on a shoot they should have stopped",
+            payoff: "the take worth keeping comes after checking the dial",
+            basis: { kind: "material", excerpt },
+          },
+        },
+      });
+      const r = scripted([JSON.stringify(quoting), JSON.stringify(quoting)]);
+      const revision = await generate(
+        db, owner, profileId, r.provider, anySlots(),
+        formParams({
+          attemptId: `scaffold-${i}`,
+          input: "make the first one punchier",
+          revisionOfAttemptId: "gen-1",
+        }),
+        new Date()
+      );
+      expect(revision.generation.outcome, excerpt).toBe("honest_refusal");
+      expect(
+        JSON.stringify((revision.generation.killTest as { finalAttempt: { hardRules: unknown } }).finalAttempt.hardRules),
+        excerpt
+      ).toContain("not in your brain or in what you gave this generation");
+      // Billing round 2, Note C: one draft and its one rewrite, no scoring
+      // call, charged at the revision price.
+      expect(r.calls, excerpt).toHaveLength(2);
+      expect(revision.creditsChargedNow, excerpt).toBe(REVISION_COST);
+    }
+  });
+
+  it("R-148: ...whereas a basis the PARENT's gate verified is carried, so a kept story keeps its quote", async () => {
+    const s = scripted([
+      JSON.stringify(v2Ideas(["personal_story_observation"])),
+      killTestReply(["/rules/0"]),
+      JSON.stringify(v2Ideas(["personal_story_observation"])),
+      killTestReply(["/rules/0"]),
+    ]);
+    await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ creative: { formChoice: "personal_story_observation" } }), new Date()
+    );
+    // The NOTE does not repeat the quote, and the parent draft is blanked out
+    // of the basis corpus — so the only thing that can vouch for it is the
+    // parent's own verified excerpt, carried.
+    const note = "make the first one punchier";
+    expect(note).not.toContain(FORM_EXCERPT);
+    const revision = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ attemptId: "gen-2", input: note, revisionOfAttemptId: "gen-1" }),
+      new Date()
+    );
+    expect(revision.generation.outcome).toBe("usable");
+  });
+
+  // ---------------------------------------------- launch L3 (R-152)
+
+  it("L3: a revision's PARENT is material, never history — excluded and recorded as such — while the creator's REACTION to it is still sent as a labelled note", async () => {
+    await grant(100);
+    const s = scripted([
+      JSON.stringify(legacyIdeas()),
+      killTestReply(["/rules/0"]),
+      JSON.stringify(legacyIdeas()),
+      killTestReply(["/rules/0"]),
+    ]);
+    const parent = await generate(
+      db, owner, profileId, s.provider, anySlots(), formParams({ attemptId: "p-1" }), new Date()
+    );
+    const [reaction] = await db
+      .insert(generationFeedback)
+      .values({
+        profileId,
+        workspaceId: ws,
+        generationId: parent.generation.id,
+        reaction: "too_generic",
+        note: "these could be anyone's",
+      })
+      .returning();
+    const revision = await generate(
+      db, owner, profileId, s.provider, anySlots(),
+      formParams({ attemptId: "r-1", input: "make them about my own shoots", revisionOfAttemptId: "p-1" }),
+      new Date()
+    );
+    expect(revision.generation.parentId).toBe(parent.generation.id);
+    const snap = (await attemptsOf()).find((a) => a.attemptId === "r-1")!.requestSnapshot as {
+      recentContext: {
+        records: { kind: string; id: string; labels: string[] }[];
+        exclusions: { kind: string; id: string; reason: string }[];
+      };
+    };
+    // THE PARENT IS NOT SENT TWICE: it is the revision's material, so it is an
+    // `already_material` exclusion and never a draft record.
+    expect(snap.recentContext.exclusions).toContainEqual({
+      kind: "draft",
+      id: parent.generation.id,
+      reason: "already_material",
+    });
+    expect(snap.recentContext.records.some((r) => r.id === parent.generation.id)).toBe(false);
+    // ...but the creator's reaction to it IS — the most relevant correction a
+    // revision can have — as a note, under its reaction label.
+    expect(snap.recentContext.records).toContainEqual(
+      expect.objectContaining({ kind: "note", id: reaction.id, labels: ["rejected_too_generic"] })
+    );
+    const prompt = s.calls[2].prompt;
+    expect(prompt).toContain("these could be anyone's");
+    // The parent draft still reaches the revision exactly as before (its input).
+    expect(prompt).toContain(legacyIdeas().ideas[0].thesis);
+  });
 });
 
 // ------------------------------------------- the residual, MEASURED not assumed
@@ -1102,6 +1585,8 @@ describe("what a revision's traceability corpus gains, and what it does NOT (REQ
     input,
     platform: PLATFORM,
     unvouchedSpecifics: unvouched,
+    creative: null,
+    recentWork: null,
   });
 
   const findingsFor = (

@@ -60,7 +60,7 @@
 // ---------------------------------------------------------------------------
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { and, asc, count, countDistinct, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql, sum } from "drizzle-orm";
+import { and, asc, count, countDistinct, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, lte, ne, not, notExists, notInArray, or, sql, sum } from "drizzle-orm";
 import type { DbLike, TxLike } from "./db-like";
 import { memberships, workspaces } from "./schema";
 import type { Membership, MembershipRole, Workspace } from "./schema";
@@ -71,6 +71,13 @@ import {
   assertFreshWorkspaceAuthority,
   assertWorkspaceLifecycleTransactionAccess,
 } from "./membership-lifecycle";
+import { boundedReadOrJoin } from "./render-transaction";
+import {
+  assertProfileReadAccess,
+  assertProfileReadTransactionAccess,
+  assertWorkspaceReadTransactionAccess,
+  newestWorkspaceDeletionAdmitsRead,
+} from "./read-grade-lifecycle";
 import { creditLedger, subscriptions } from "./billing-schema";
 import type { CreditLedgerRow, Subscription } from "./billing-schema";
 import { brainDocs, creatorProfiles, frameworks } from "./brain-schema";
@@ -101,6 +108,7 @@ import type {
 } from "./onboarding-schema";
 import {
   GENERATION_FEEDBACK_REACTIONS,
+  creativePieces,
   generationAttempts,
   generationFeedback,
   generations,
@@ -135,6 +143,8 @@ import {
 import { autopsies, autopsyCacheClaims, trackedNiches, trendItems, trendSources, trendTranscripts } from "./trends-schema";
 import { upsertSpendRollup } from "./spend-rollup";
 import { hasOpenPause } from "./pause";
+import { VENDOR_COMPLETE_HARD_CLEAR_MS } from "./generation-recovery";
+import { refusalIsClaimOnly } from "./generation-refusal";
 import {
   promotionProposals,
   proposalEvidenceFeedback,
@@ -170,12 +180,29 @@ import {
   type PromotionDecisionResult,
 } from "./promotion-ops";
 import {
+  cancelCreativePieceInScope,
+  createCreativePieceInScope,
+  linkCreativePieceScriptInScope,
+  readCreativePieceInScope,
+  readSavedGenerationContextInScope,
+  renewCreativePieceOperationInScope,
+  selectCreativePieceVersionInScope,
+  type CreateCreativePieceParams,
+  type CreativePieceMoveParams,
+  type CreativePieceRead,
+  type SavedGenerationContext,
+  type SelectCreativePieceVersionParams,
+  type RenewCreativePieceOperationParams,
+} from "./creative-work-ops";
+import type { CreativePiece } from "./generation-schema";
+import {
   BrainDocumentLimitError,
   BrainVersionLimitError,
   FeedbackDuplicateError,
   FeedbackNoteError,
   FeedbackReactionError,
   FeedbackTargetError,
+  FeedbackExclusionTargetError,
   GenerationLineageError,
   OnboardingInputLimitError,
   OnboardingInputFieldKeyError,
@@ -247,6 +274,19 @@ export type VerifiedWorkspaceId = string & {
   readonly [verifiedWorkspaceIdBrand]: true;
 };
 
+declare const readGradeWorkspaceIdBrand: unique symbol;
+/**
+ * THE READ GRADE'S workspace id (R-163, P5-R3). A DISTINCT brand on the
+ * `VerifiedWorkspaceId` pattern and deliberately not assignable to it: every
+ * @respin/credits entry point and every writer takes `VerifiedWorkspaceId`, so
+ * handing one of them a read-grade id is a compile error. That is the brand
+ * doing its job — `/brain`'s pause courtesy read cannot even be written under
+ * the read grade, and the page branches on grade before it.
+ */
+export type ReadGradeWorkspaceId = string & {
+  readonly [readGradeWorkspaceIdBrand]: true;
+};
+
 declare const verifiedProfileIdBrand: unique symbol;
 /**
  * A creator-profile id that has been verified to belong to a scope's workspace.
@@ -290,6 +330,17 @@ export type VerifiedUserId = string & {
 export function trustWorkspaceId(id: string): VerifiedWorkspaceId {
   return id as VerifiedWorkspaceId;
 }
+
+/** One held draft, as `/studio` lists it — never the candidate's bytes. */
+export type HeldGenerationAttempt = {
+  attemptId: string;
+  mode: string;
+  state: "vendor_complete";
+  vendorCompletedAt: Date;
+};
+
+/** The most held drafts one read returns. */
+export const HELD_GENERATION_ATTEMPTS_MAX = 20;
 
 export type WorkspaceCtx = {
   authUserId: string;
@@ -427,11 +478,11 @@ export const PROFILE_EXPORT_TABLES = [
   "frameworks",
   // Slice 7 (R10/R11). The creator's own reactions to their own outputs, plus
   // whatever they typed beside them — theirs to take, and its registry entry
-  // says why. Its export reader is the SAME query the one sanctioned raw
-  // accessor uses (`feedbackPage` below), not a second one:
-  // `tests/feedback-readers.test.ts` permits exactly one `.from(
-  // generationFeedback)` in the repo, and two branches sharing one helper is
-  // how this table gets an export without spending that permit.
+  // says why. Its export reader is the SAME query the raw-rows accessor uses
+  // (`feedbackPage` below), not a second one, so the export and the screen
+  // cannot drift apart. `tests/feedback-readers.test.ts` lists every query in
+  // this file that reads the table (`FEEDBACK_READERS`) and scans each for an
+  // aggregate.
   "generation_feedback",
   // Slice 8 fix pass (tenancy gate CHANGE 5, 2026-09-03). The SUBMITTED
   // sources a creator handed the product; `both()` excludes the ownerless
@@ -454,6 +505,9 @@ export const PROFILE_EXPORT_TABLES = [
   "promotion_proposals",
   "proposal_evidence_results",
   "proposal_evidence_feedback",
+  // Launch L2 (R-151). The creator's chosen concepts and their own stated
+  // ideas, with the script each one led to — theirs to take, raw.
+  "creative_pieces",
 ] as const;
 export type ProfileExportTable = (typeof PROFILE_EXPORT_TABLES)[number];
 
@@ -484,6 +538,11 @@ function clampPageNumber(
 
 const PROFILE_CAGE_KEY = Symbol.for("respin.scope.cage.profile");
 const WORKSPACE_CAGE_KEY = Symbol.for("respin.scope.cage.workspace");
+// The read grade's OWN cages (R-163). Never `workspaceCage`/`profileCage`:
+// `assertScoped` admits only those two, so every writer whose one runtime
+// fence is `assertScoped` keeps refusing a read-grade scope.
+const READ_GRADE_WORKSPACE_CAGE_KEY = Symbol.for("respin.scope.cage.read-grade.workspace");
+const READ_GRADE_PROFILE_CAGE_KEY = Symbol.for("respin.scope.cage.read-grade.profile");
 
 /**
  * The registries of scopes THIS module minted, keyed off `globalThis` so a
@@ -507,6 +566,8 @@ function sharedCage(key: symbol): WeakSet<object> {
 }
 const profileCage = sharedCage(PROFILE_CAGE_KEY);
 const workspaceCage = sharedCage(WORKSPACE_CAGE_KEY);
+const readGradeCage = sharedCage(READ_GRADE_WORKSPACE_CAGE_KEY);
+const readGradeProfileCage = sharedCage(READ_GRADE_PROFILE_CAGE_KEY);
 
 /**
  * A profile scope's database handle, held OUTSIDE the instance for the same
@@ -581,6 +642,49 @@ export function assertScoped(
   ) {
     throw new ScopeForgeryError("This value");
   }
+}
+
+/**
+ * THE READERS' ASSERTION (R-163, P5-R3) — beside `assertScoped`, never a
+ * widening of it. It admits all four cages, and it is called ONLY by the
+ * readers the read grade serves: `openBrainExport`, `readBrainHistory`,
+ * `pendingDeletionsForScope`, `selectedProfileForMember` and
+ * `billingContactStatus`. Widening `assertScoped` instead was the one-line
+ * green the plan names: it would admit a read-grade scope at runtime to every
+ * writer whose only fence is `assertScoped` — the seven Stripe actions among
+ * them — and `packages/credits/tests/actions.test.ts`'s checkout probe is the
+ * witness that goes red if it ever happens.
+ */
+export function assertReadScoped(
+  s: unknown
+): asserts s is
+  | ProfileScope
+  | WorkspaceScope
+  | ReadGradeProfileScope
+  | ReadGradeWorkspaceScope {
+  if (
+    typeof s !== "object" ||
+    s === null ||
+    !(
+      profileCage.has(s) ||
+      workspaceCage.has(s) ||
+      readGradeCage.has(s) ||
+      readGradeProfileCage.has(s)
+    )
+  ) {
+    throw new ScopeForgeryError("This value");
+  }
+}
+
+/** Duplication-safe grade check: cage membership, never `instanceof`. */
+export function isReadGradeScope(
+  s: unknown
+): s is ReadGradeWorkspaceScope | ReadGradeProfileScope {
+  return (
+    typeof s === "object" &&
+    s !== null &&
+    (readGradeCage.has(s) || readGradeProfileCage.has(s))
+  );
 }
 
 // ------------------------------------------------------------- the scopes
@@ -664,10 +768,13 @@ function lifecycleGuardedMethods<T extends object>(
           transactionArgs[index] = tx;
           return Reflect.apply(value, target, transactionArgs);
         };
-        const transaction = (db as DbLike).transaction;
-        return typeof transaction === "function"
-          ? transaction.call(db, invokeIn)
-          : invokeIn(db as TxLike);
+        // BOUNDED WHEN IT OPENS ITS OWN TRANSACTION (gate M2): every method in
+        // the two maps this guards (the workspace and profile accessors) is a
+        // pure SELECT, so the transaction is READ ONLY with the render
+        // budget's `lock_timeout` — the fence's shared membership lock cannot
+        // queue without limit behind a waiting deletion writer. Handed the
+        // caller's transaction (the branch above), nothing is bounded.
+        return boundedReadOrJoin(db, invokeIn);
       };
     },
   });
@@ -717,7 +824,11 @@ export class WorkspaceScope {
     role: MembershipRole,
     userId: VerifiedUserId,
     membershipVersion: number,
-    workspaceLifecycleVersion: number
+    workspaceLifecycleVersion: number,
+    // "read" builds the accessor map a `ReadGradeWorkspaceScope` borrows
+    // (R-163): same queries, the READ guard, and the instance is never caged
+    // and never escapes `readGradeAccessors`.
+    grade: "write" | "read" = "write"
   ) {
     // THE check (see the header): a token nothing outside this module holds.
     if (token !== MINT) throw new ScopeForgeryError("A WorkspaceScope");
@@ -784,11 +895,17 @@ export class WorkspaceScope {
         creatorProfiles: 0,
       },
       async (tx) => {
-        const authority = await assertWorkspaceLifecycleTransactionAccess(
-          tx,
-          userId as string,
-          workspaceId
-        );
+        // Fence 4. The write guard is byte-identical to before R-163; the
+        // read sibling keeps the graph locks and the epoch check and swaps
+        // only the lifecycle predicate (`assertWorkspaceReadAccess`).
+        const authority =
+          grade === "read"
+            ? await assertWorkspaceReadTransactionAccess(tx, userId as string, workspaceId)
+            : await assertWorkspaceLifecycleTransactionAccess(
+                tx,
+                userId as string,
+                workspaceId
+              );
         assertFreshWorkspaceAuthority(authority, {
           membershipVersion,
           workspaceLifecycleVersion,
@@ -796,7 +913,38 @@ export class WorkspaceScope {
       }
     );
     scopeDb.set(this, db);
-    workspaceCage.add(this);
+    if (grade === "write") workspaceCage.add(this);
+  }
+
+  /**
+   * The two workspace accessors the read grade serves, built by THIS class so
+   * the queries are the ones the cross-workspace suite already covers, and
+   * guarded by the read sibling of fence 4. Token-gated like the constructor.
+   */
+  static readGradeAccessors(
+    token: symbol,
+    db: DbLike,
+    workspaceId: string,
+    role: MembershipRole,
+    userId: VerifiedUserId,
+    membershipVersion: number,
+    workspaceLifecycleVersion: number
+  ): ReadGradeWorkspaceAccessors {
+    if (token !== MINT) throw new ScopeForgeryError("A read-grade accessor map");
+    const borrowed = new WorkspaceScope(
+      MINT,
+      db,
+      workspaceId as VerifiedWorkspaceId,
+      role,
+      userId,
+      membershipVersion,
+      workspaceLifecycleVersion,
+      "read"
+    );
+    return {
+      workspace: borrowed.accessors.workspace,
+      creatorProfiles: borrowed.accessors.creatorProfiles,
+    };
   }
 
   /** The ONE session-side mint. Membership is verified by `withWorkspace`. */
@@ -1156,6 +1304,64 @@ export type BrainAssetSummary = {
   feedback: number;
 };
 
+/**
+ * THE PLAN'S COUNT BOUNDS on recent context (launch L3: "at most five recent
+ * relevant concept/draft records and three selection/rejection notes"). A
+ * contract ceiling, not a spend dial — the dial is the one character budget,
+ * `config.generation.recentContextCharBudget`, which can only drop rows these
+ * bounds already admitted.
+ */
+export const RECENT_DRAFTS_MAX = 5;
+export const RECENT_NOTES_MAX = 3;
+
+/** What `recentContextCandidates` needs from the caller (launch L3). */
+export type RecentContextQuery = {
+  /** The modes whose drafts count as concept/draft records — the caller's list. */
+  modes: readonly string[];
+  /** The platform this operation is for: same-platform rows rank second. */
+  platform: string;
+  /** The creative piece this operation belongs to, or null: its rows rank first. */
+  currentPieceId: string | null;
+  /** Drafts the operation already carries as material (a revision's parent, a piece's source). */
+  excludeGenerationIds: readonly string[];
+};
+
+/** One reaction note and the draft it is about. */
+export type RecentContextNote = {
+  feedback: GenerationFeedbackRow;
+  about: Generation;
+};
+
+export type RecentContextCandidates = {
+  /** At most `RECENT_DRAFTS_MAX`, in relevance order. */
+  drafts: Generation[];
+  /** At most `RECENT_NOTES_MAX`, in relevance order. */
+  notes: RecentContextNote[];
+  /**
+   * Every reaction recorded on one of `drafts`, newest first — per-row facts.
+   * A reaction the creator left out of future drafts (R-174) is NOT here.
+   */
+  draftReactions: { generationId: string; reaction: GenerationFeedbackReaction }[];
+  /** Pieces that name one of `drafts` as their source or their selected script. */
+  pieces: CreativePiece[];
+  /**
+   * THE REACTIONS THE CREATOR LEFT OUT (audit P6-A1, R-174), as ids only, so
+   * the claim's snapshot can record each one as a `creator_excluded`
+   * exclusion. Two sources, deduplicated: a left-out note that ranked inside
+   * the first `RECENT_NOTES_MAX` of the relevance order (the window it would
+   * have taken a place in), and a left-out reaction on one of `drafts` (a
+   * label it would otherwise have carried).
+   */
+  creatorExcluded: string[];
+  /**
+   * Drafts withheld because EVERY reaction recorded on them was left out
+   * (Phase 6 tenancy gate, R-174), as ids: the ones that ranked inside the
+   * first `RECENT_DRAFTS_MAX` of the relevance order with that condition
+   * lifted. A draft with no reaction is not one of these.
+   */
+  creatorExcludedDrafts: string[];
+};
+
 export type ProfileAccessors = {
   profile: () => Promise<CreatorProfile[]>;
   brainDocs: () => Promise<BrainDoc[]>;
@@ -1388,6 +1594,25 @@ export type ProfileAccessors = {
     since: Date;
   }) => Promise<number>;
   /**
+   * ALL billable spend for a purpose in a window — successful calls included
+   * (audit P3-R3, decisions R-158). The uncharged sum above cannot see a
+   * success, so it cannot bound a caller whose every call succeeds; this one
+   * can, against `generation.maxBillableCostMicroUsdPerWindow`.
+   */
+  sumBillableCostMicroUsd: (params: {
+    purpose: string;
+    since: Date;
+  }) => Promise<number>;
+  /**
+   * THIS PROFILE'S HELD DRAFTS (audit P3-A4, R-157): generation attempts at
+   * `vendor_complete` — the vendor answered, the candidate is stored, nothing
+   * was charged — still inside the 24-hour window the worker's hard clear
+   * closes, by the database's clock. Ids, modes, states and
+   * `vendor_completed_at` ONLY: the candidate is creator content and never
+   * leaves through this read. Oldest first, bounded.
+   */
+  heldGenerationAttempts: () => Promise<HeldGenerationAttempt[]>;
+  /**
    * The profile's NEWEST coherent brain activation (slice 6, R9a).
    *
    * `generations.brain_activation_id` is NOT NULL, and its whole purpose is
@@ -1411,6 +1636,17 @@ export type ProfileAccessors = {
    * owns rather than a null this accessor guesses about.
    */
   latestBrainActivation: (
+    tx?: TxLike
+  ) => Promise<BrainActivationSnapshot[]>;
+  /**
+   * THIS PROFILE'S activation snapshots BY ID — the read a promotion review
+   * needs to check that an accepted proposal's recorded activation names its
+   * accepted document (audit Phase 2 gate, tenancy). It was a raw `tx.select`
+   * in `promotion-ops.ts`; a caller-supplied id now resolves only inside this
+   * profile and workspace, the `brainDocsByIds` rule.
+   */
+  brainActivationsByIds: (
+    ids: readonly string[],
     tx?: TxLike
   ) => Promise<BrainActivationSnapshot[]>;
   /** How many inputs this profile holds — the write-side ceiling's reader. */
@@ -1554,6 +1790,20 @@ export type ProfileAccessors = {
    */
   results: (page?: LedgerPage, tx?: TxLike) => Promise<ResultRow[]>;
   /**
+   * HOW MANY RESULTS THIS PROFILE HAS LOGGED (audit P6-R6, register item 8):
+   * `count(*)` under the same two-column predicate `resultsPage` reads with,
+   * no page and no ordering.
+   *
+   * A COUNT OF ONE'S OWN ROWS, NOT A COMPARISON. It groups nothing, filters
+   * on no verification state, lever or stratum, and no screen derives a
+   * judgement from it: Studio and first ideas use it only to say how many
+   * results the creator has logged (or that none are), so that sentence is
+   * true of the person reading it. Every evidence state counts, because the sentence
+   * is about rows logged, and its second half (nothing logged enters a
+   * comparison until a verified connector exists) is true of all of them.
+   */
+  countResults: (tx?: TxLike) => Promise<number>;
+  /**
    * THE COMPARISON POPULATION (slice 9a, C5) — the creator's own results, read
    * under an explicit bound that REPORTS whether it clipped, optionally
    * narrowed to one stratum in SQL.
@@ -1647,6 +1897,33 @@ export type ProfileAccessors = {
    * CLAMPED like every other growing list, and for the same reason.
    */
   generationsNewest: (page?: LedgerPage, tx?: TxLike) => Promise<Generation[]>;
+  /**
+   * THE BOUNDED RECENT WORK ONE CONCEPT OR SCRIPT PROMPT MAY CARRY (launch
+   * L3, R-152) — a COMPOSITION accessor over `generations`,
+   * `generation_feedback` and `creative_pieces`, every read predicated on BOTH
+   * scope columns, so no other profile's draft, reaction or piece can enter a
+   * prompt as this creator's history.
+   *
+   * THE BOUND IS HERE, NOT IN THE CALLER: at most `RECENT_DRAFTS_MAX` usable
+   * drafts of the caller's modes and `RECENT_NOTES_MAX` reaction notes, each
+   * ordered by the plan's deterministic relevance — rows of the CURRENT PIECE
+   * first, then the SAME PLATFORM, then newest `created_at`, `id` as the
+   * tie-break. No embeddings, no scoring. `draftReactions` and `pieces` are
+   * the per-row facts the caller labels the drafts with (a reaction code, a
+   * piece that chose one); nothing here counts or groups them (R11).
+   */
+  recentContextCandidates: (
+    query: RecentContextQuery,
+    tx?: TxLike
+  ) => Promise<RecentContextCandidates>;
+  /**
+   * Which of the named drafts and reaction notes STILL EXIST in this
+   * profile's scope (launch L3) — the settlement's erased-context check.
+   */
+  recentContextPresent: (
+    ids: { generationIds: readonly string[]; feedbackIds: readonly string[] },
+    tx?: TxLike
+  ) => Promise<{ generationIds: string[]; feedbackIds: string[] }>;
   promotionResultInputs: (tx?: TxLike) => Promise<PromotionResultInputs>;
   promotionFeedbackInputs: (tx?: TxLike) => Promise<PromotionFeedbackInputRow[]>;
   promotionProposalReview: (
@@ -1724,7 +2001,9 @@ export class ProfileScope {
     userId: VerifiedUserId,
     membershipVersion: number,
     workspaceLifecycleVersion: number,
-    profileLifecycleVersion: number
+    profileLifecycleVersion: number,
+    // "read": see `WorkspaceScope`'s constructor (R-163). Never caged.
+    grade: "write" | "read" = "write"
   ) {
     if (token !== MINT) throw new ScopeForgeryError("A ProfileScope");
     if (new.target !== ProfileScope) {
@@ -1748,14 +2027,20 @@ export class ProfileScope {
         eq(t.workspaceId as never, workspaceId)
       );
     /**
-     * THE ONLY QUERY IN THIS REPO THAT READS `generation_feedback` (R11).
+     * THE RAW-ROWS READER OF `generation_feedback` (R11) — the one the screen
+     * and the export share. It is NOT the only query in this file that reads
+     * the table: `brainAssetSummary` (a row count), `recentContextCandidates`
+     * (two reads: the notes and the per-draft reaction labels, launch L3),
+     * `recentContextPresent` (ids, L3), `promotionFeedbackInputs` and
+     * `promotionProposalReview` read it too. `tests/feedback-readers.test.ts`
+     * holds that population as a LIST (`FEEDBACK_READERS`), asserts it equals
+     * what this file contains, and scans every listed query for an aggregate.
      *
      * A local helper rather than two similar queries, because the accessor and
      * `exportPage`'s branch need the same rows in the same order with a
-     * different page size — and `tests/feedback-readers.test.ts` permits ONE
-     * raw reader. Two copies would spend a permit on a duplicate; one helper
-     * with a page-size parameter spends none, and it means the export and the
-     * screen cannot drift into different orderings of the same table.
+     * different page size. One helper with a page-size parameter means the
+     * export and the screen cannot drift into different orderings of the same
+     * table.
      *
      * NO AGGREGATION, DELIBERATELY. See the accessor's docblock: this slice
      * captures feedback and must be structurally unable to derive from it.
@@ -2084,6 +2369,12 @@ export class ProfileScope {
                 asc(proposalEvidenceFeedback.feedbackId)
               )
               .limit(EXPORT_PAGE_SIZE).offset(offset);
+          // Launch L2 (R-151): both scope columns, newest first, `id` tie-break.
+          case "creative_pieces":
+            return conn.select().from(creativePieces)
+              .where(both(creativePieces))
+              .orderBy(desc(creativePieces.createdAt), desc(creativePieces.id))
+              .limit(EXPORT_PAGE_SIZE).offset(offset);
         }
       },
       // NEWEST FIRST, with `id` as the tie-break — the ONE display order for a
@@ -2217,6 +2508,60 @@ export class ProfileScope {
         // `sum` returns a string (bigint) or null on an empty set.
         return row?.total == null ? 0 : Number(row.total);
       },
+      /**
+       * THE SAME PREDICATE AS `sumUnchargedBillableCostMicroUsd` MINUS ITS
+       * `consumedIncludedBuild = false` FILTER (audit P3-R3) — the one clause
+       * that hid every success from the only money bound. Same purpose, same
+       * billable outcomes, same window, same scope columns. An `unknown`-cost
+       * row contributes zero here too, and the attempt cap still bounds those.
+       */
+      sumBillableCostMicroUsd: async ({ purpose, since }, tx?: TxLike) => {
+        const [row] = await (tx ?? db)
+          .select({ total: sum(modelUsage.costMicroUsd) })
+          .from(modelUsage)
+          .where(
+            and(
+              both(modelUsage),
+              eq(modelUsage.purpose, purpose),
+              inArray(modelUsage.outcome, [...BILLABLE_USAGE_OUTCOMES]),
+              gte(modelUsage.createdAt, since)
+            )
+          );
+        return row?.total == null ? 0 : Number(row.total);
+      },
+      heldGenerationAttempts: async (tx?: TxLike) => {
+        const rows = await (tx ?? db)
+          // A NAMED PROJECTION, never `select()`: `candidate` is creator
+          // content and is not a column this read can return.
+          .select({
+            attemptId: generationAttempts.attemptId,
+            mode: generationAttempts.mode,
+            state: generationAttempts.state,
+            vendorCompletedAt: generationAttempts.vendorCompletedAt,
+          })
+          .from(generationAttempts)
+          .where(
+            and(
+              both(generationAttempts),
+              eq(generationAttempts.purpose, "generation"),
+              eq(generationAttempts.state, "vendor_complete"),
+              // The settlement's own hold bound (`VENDOR_COMPLETE_HARD_CLEAR_MS`,
+              // the one constant the worker's clear and the settlement read),
+              // on the database's clock — a draft past it is no longer
+              // finishable, and the worker's next tick clears it.
+              sql`${generationAttempts.vendorCompletedAt} >= now() - (${VENDOR_COMPLETE_HARD_CLEAR_MS}::int * interval '1 millisecond')`
+            )
+          )
+          .orderBy(asc(generationAttempts.vendorCompletedAt))
+          .limit(HELD_GENERATION_ATTEMPTS_MAX);
+        return rows.map((r) => ({
+          attemptId: r.attemptId,
+          mode: r.mode,
+          state: "vendor_complete" as const,
+          // NOT NULL for this state by `generation_attempts` CHECK.
+          vendorCompletedAt: r.vendorCompletedAt as Date,
+        }));
+      },
       countOwnPosts: async (tx?: TxLike) => {
         const [row] = await (tx ?? db)
           .select({ n: count() })
@@ -2254,6 +2599,13 @@ export class ProfileScope {
             desc(brainActivationSnapshots.id)
           )
           .limit(1),
+      brainActivationsByIds: (ids: readonly string[], tx?: TxLike) =>
+        ids.length === 0
+          ? Promise.resolve([])
+          : (tx ?? db)
+              .select()
+              .from(brainActivationSnapshots)
+              .where(and(both(brainActivationSnapshots), inArray(brainActivationSnapshots.id, [...ids]))),
       countOnboardingInputs: async (tx?: TxLike) => {
         const [row] = await (tx ?? db)
           .select({ n: count() })
@@ -2354,6 +2706,15 @@ export class ProfileScope {
           clampPageNumber(page.limit, 1, LEDGER_PAGE_MAX, 1),
           clampPageNumber(page.offset, 0, Number.MAX_SAFE_INTEGER, 0)
         ),
+      // Audit P6-R6: the count behind Studio's results sentence. The SAME
+      // predicate `resultsPage` reads with, and nothing else.
+      countResults: async (tx?: TxLike) => {
+        const [row] = await (tx ?? db)
+          .select({ n: count() })
+          .from(results)
+          .where(both(results));
+        return row?.n ?? 0;
+      },
       // Slice 9a (C5). THE COMPARISON POPULATION — see the type's docblock for
       // why this is a query and not a filter over `results()`'s page, and for
       // why the stratum is optional.
@@ -2474,6 +2835,213 @@ export class ProfileScope {
           .orderBy(desc(generations.createdAt), desc(generations.id))
           .limit(clampPageNumber(page.limit, 1, LEDGER_PAGE_MAX, 1))
           .offset(clampPageNumber(page.offset, 0, Number.MAX_SAFE_INTEGER, 0)),
+      // Launch L3 (R-152). Every value from the caller is READ ONCE INTO A
+      // LOCAL and shape-checked (C-40), so a cast cannot smuggle a non-string
+      // into a SQL parameter or widen the bound. A malformed id is dropped
+      // rather than sent (22P02 is an oracle — `UUID_RE`'s own note).
+      recentContextCandidates: async (query: RecentContextQuery, tx?: TxLike) => {
+        const conn = tx ?? db;
+        const modes = (Array.isArray(query?.modes) ? query.modes : []).filter(
+          (m): m is string => typeof m === "string" && m.length > 0
+        );
+        if (modes.length === 0) {
+          return {
+            drafts: [],
+            notes: [],
+            draftReactions: [],
+            pieces: [],
+            creatorExcluded: [],
+            creatorExcludedDrafts: [],
+          };
+        }
+        const platform = typeof query?.platform === "string" ? query.platform : "";
+        const rawPiece = query?.currentPieceId;
+        const pieceId =
+          typeof rawPiece === "string" && UUID_RE.test(rawPiece) ? rawPiece : null;
+        const exclude = (
+          Array.isArray(query?.excludeGenerationIds) ? query.excludeGenerationIds : []
+        ).filter((id): id is string => typeof id === "string" && UUID_RE.test(id));
+        // THE PLAN'S RELEVANCE, AS TWO RANK EXPRESSIONS AND A TIE-BREAK: the
+        // current piece's rows first (its scripts name it in
+        // `request.origin.pieceId`), then the same platform, then newest
+        // `created_at` with `id` deciding a tie — deterministic for a fixed
+        // set of rows, which `recent-context.test.ts` drives.
+        // NO PIECE, NO RANK TERM — never a constant in its place: a bare
+        // integer literal in ORDER BY is a COLUMN POSITION in Postgres
+        // (`ORDER BY 1` sorts by `id`); this read's first draft used one and
+        // came back oldest-first, which `recent-context.test.ts` case 1 caught.
+        const pieceRank =
+          pieceId === null
+            ? []
+            : [sql<number>`CASE WHEN ${generations.request} -> 'origin' ->> 'pieceId' = ${pieceId} THEN 0 ELSE 1 END`];
+        const platformRank = sql<number>`CASE WHEN ${generations.request} ->> 'platform' = ${platform} THEN 0 ELSE 1 END`;
+        // A DRAFT WHOSE EVERY REACTION THE CREATOR LEFT OUT IS NOT SENT EITHER
+        // (Phase 6 tenancy gate, owner-delegated; R-174). Leaving out a
+        // rejection used to strip the label and keep the rejected draft as
+        // neutral history, so a concept the creator turned down came back
+        // unmarked. "At least one reaction, and none still in use" is the
+        // condition: a draft with no reaction at all is ordinary history, and
+        // a draft with one reaction left out and another kept stays, carrying
+        // the kept one. Correlated on both scope columns, like every read here.
+        const reactionOn = (excluded: boolean) =>
+          conn
+            .select({ one: sql`1` })
+            .from(generationFeedback)
+            .where(
+              and(
+                both(generationFeedback),
+                eq(generationFeedback.generationId, generations.id),
+                excluded
+                  ? isNotNull(generationFeedback.historyExcludedAt)
+                  : isNull(generationFeedback.historyExcludedAt)
+              )
+            );
+        const everyReactionLeftOut = and(exists(reactionOn(true)), notExists(reactionOn(false)))!;
+        const draftScope = and(
+          both(generations),
+          eq(generations.outcome, "usable"),
+          inArray(generations.mode, modes),
+          ...(exclude.length > 0 ? [notInArray(generations.id, exclude)] : [])
+        );
+        const drafts = await conn
+          .select()
+          .from(generations)
+          .where(and(draftScope, not(everyReactionLeftOut)))
+          .orderBy(...pieceRank, platformRank, desc(generations.createdAt), desc(generations.id))
+          .limit(RECENT_DRAFTS_MAX);
+        // WHICH LEFT-OUT DRAFTS WOULD HAVE BEEN IN THE DRAFTS WINDOW, for the
+        // snapshot: the same order and bound with that condition lifted, ids
+        // and the condition only.
+        const draftWindowWithExcluded = await conn
+          .select({ id: generations.id, leftOut: sql<boolean>`${everyReactionLeftOut}` })
+          .from(generations)
+          .where(draftScope)
+          .orderBy(...pieceRank, platformRank, desc(generations.createdAt), desc(generations.id))
+          .limit(RECENT_DRAFTS_MAX);
+        // A NOTE MAY BE ABOUT A DRAFT THAT IS ITSELF EXCLUDED — a reaction to a
+        // revision's own parent is the most relevant correction there is — so
+        // `exclude` does not apply here; the mode population does.
+        //
+        // A NOTE THE CREATOR LEFT OUT IS NEVER A CANDIDATE (audit P6-A1,
+        // R-174), and it takes no place in the window: the next most relevant
+        // note is read in its stead.
+        const notes = await conn
+          .select({ feedback: generationFeedback, about: generations })
+          .from(generationFeedback)
+          .innerJoin(
+            generations,
+            and(eq(generations.id, generationFeedback.generationId), both(generations))
+          )
+          .where(
+            and(
+              both(generationFeedback),
+              inArray(generations.mode, modes),
+              isNull(generationFeedback.historyExcludedAt)
+            )
+          )
+          .orderBy(
+            ...pieceRank,
+            platformRank,
+            desc(generationFeedback.createdAt),
+            desc(generationFeedback.id)
+          )
+          .limit(RECENT_NOTES_MAX);
+        // WHICH LEFT-OUT NOTES WOULD HAVE BEEN IN THAT WINDOW: the same order
+        // and bound with the exclusion lifted, ids and the stamp only, so the
+        // snapshot can say what the creator's choice kept out.
+        const windowWithExcluded = await conn
+          .select({ id: generationFeedback.id, excludedAt: generationFeedback.historyExcludedAt })
+          .from(generationFeedback)
+          .innerJoin(
+            generations,
+            and(eq(generations.id, generationFeedback.generationId), both(generations))
+          )
+          .where(and(both(generationFeedback), inArray(generations.mode, modes)))
+          .orderBy(
+            ...pieceRank,
+            platformRank,
+            desc(generationFeedback.createdAt),
+            desc(generationFeedback.id)
+          )
+          .limit(RECENT_NOTES_MAX);
+        const draftIds = drafts.map((d) => d.id);
+        const reactionRows =
+          draftIds.length === 0
+            ? []
+            : await conn
+                .select({
+                  generationId: generationFeedback.generationId,
+                  reaction: generationFeedback.reaction,
+                  feedbackId: generationFeedback.id,
+                  excludedAt: generationFeedback.historyExcludedAt,
+                })
+                .from(generationFeedback)
+                .where(
+                  and(both(generationFeedback), inArray(generationFeedback.generationId, draftIds))
+                )
+                .orderBy(desc(generationFeedback.createdAt), desc(generationFeedback.id));
+        // A LEFT-OUT REACTION IS NOT A LABEL EITHER: "leave this out of future
+        // drafts" covers the reaction, not only its note.
+        const draftReactions = reactionRows
+          .filter((r) => r.excludedAt === null)
+          .map((r) => ({ generationId: r.generationId, reaction: r.reaction }));
+        const creatorExcluded = [
+          ...new Set([
+            ...windowWithExcluded.filter((r) => r.excludedAt !== null).map((r) => r.id),
+            ...reactionRows.filter((r) => r.excludedAt !== null).map((r) => r.feedbackId),
+          ]),
+        ];
+        const creatorExcludedDrafts = draftWindowWithExcluded
+          .filter((r) => r.leftOut === true)
+          .map((r) => r.id);
+        const pieces =
+          draftIds.length === 0
+            ? []
+            : await conn
+                .select()
+                .from(creativePieces)
+                .where(
+                  and(
+                    both(creativePieces),
+                    or(
+                      inArray(creativePieces.sourceGenerationId, draftIds),
+                      inArray(creativePieces.selectedGenerationId, draftIds)
+                    )
+                  )
+                )
+                .orderBy(asc(creativePieces.id));
+        return { drafts, notes, draftReactions, pieces, creatorExcluded, creatorExcludedDrafts };
+      },
+      recentContextPresent: async (
+        ids: { generationIds: readonly string[]; feedbackIds: readonly string[] },
+        tx?: TxLike
+      ) => {
+        const conn = tx ?? db;
+        const valid = (list: unknown): string[] =>
+          (Array.isArray(list) ? list : []).filter(
+            (id): id is string => typeof id === "string" && UUID_RE.test(id)
+          );
+        const generationIds = valid(ids?.generationIds);
+        const feedbackIds = valid(ids?.feedbackIds);
+        const presentGenerations =
+          generationIds.length === 0
+            ? []
+            : await conn
+                .select({ id: generations.id })
+                .from(generations)
+                .where(and(both(generations), inArray(generations.id, generationIds)));
+        const presentFeedback =
+          feedbackIds.length === 0
+            ? []
+            : await conn
+                .select({ id: generationFeedback.id })
+                .from(generationFeedback)
+                .where(and(both(generationFeedback), inArray(generationFeedback.id, feedbackIds)));
+        return {
+          generationIds: presentGenerations.map((r) => r.id),
+          feedbackIds: presentFeedback.map((r) => r.id),
+        };
+      },
       promotionResultInputs: async (tx?: TxLike) => ({
         strategyMetricVersions: await this.accessors.strategyMetricVersions(tx),
         population: await this.accessors.comparableResults(undefined, tx),
@@ -2682,15 +3250,21 @@ export class ProfileScope {
         countReferencePosts: 0,
         countUnchargedBillableAttempts: 1,
         sumUnchargedBillableCostMicroUsd: 1,
+        sumBillableCostMicroUsd: 1,
+        heldGenerationAttempts: 0,
         latestBrainActivation: 0,
+        brainActivationsByIds: 1,
         countOnboardingInputs: 0,
         modelUsage: 0,
         firstBillableAttempt: 1,
         referenceCorpusAsOf: 1,
         generationFeedback: 1,
         results: 1,
+        countResults: 0,
         comparableResults: 1,
         generationsNewest: 1,
+        recentContextCandidates: 1,
+        recentContextPresent: 1,
         promotionResultInputs: 0,
         promotionFeedbackInputs: 0,
         promotionProposalReview: 1,
@@ -2699,12 +3273,22 @@ export class ProfileScope {
         eligibleFrameworks: 0,
       },
       async (tx) => {
-        const authority = await assertProfileLifecycleTransactionAccess(
-          tx,
-          userId as string,
-          workspaceId,
-          profileId
-        );
+        // Fence 5: the write guard byte-identical; the read sibling keeps the
+        // locks, the profile predicate and the epoch check.
+        const authority =
+          grade === "read"
+            ? await assertProfileReadTransactionAccess(
+                tx,
+                userId as string,
+                workspaceId,
+                profileId
+              )
+            : await assertProfileLifecycleTransactionAccess(
+                tx,
+                userId as string,
+                workspaceId,
+                profileId
+              );
         assertFreshProfileAuthority(authority, {
           membershipVersion,
           workspaceLifecycleVersion,
@@ -2712,7 +3296,39 @@ export class ProfileScope {
         });
       }
     );
-    profileCage.add(this);
+    if (grade === "write") profileCage.add(this);
+  }
+
+  /** The three profile accessors the read grade serves (R-163); see `WorkspaceScope.readGradeAccessors`. */
+  static readGradeAccessors(
+    token: symbol,
+    db: DbLike | TxLike,
+    workspaceId: string,
+    profileId: VerifiedProfileId,
+    role: MembershipRole,
+    userId: VerifiedUserId,
+    membershipVersion: number,
+    workspaceLifecycleVersion: number,
+    profileLifecycleVersion: number
+  ): ReadGradeProfileAccessors {
+    if (token !== MINT) throw new ScopeForgeryError("A read-grade accessor map");
+    const borrowed = new ProfileScope(
+      MINT,
+      db,
+      workspaceId as VerifiedWorkspaceId,
+      profileId,
+      role,
+      userId,
+      membershipVersion,
+      workspaceLifecycleVersion,
+      profileLifecycleVersion,
+      "read"
+    );
+    return {
+      brainDocsByKind: borrowed.accessors.brainDocsByKind,
+      exportPage: borrowed.accessors.exportPage,
+      onboardingInputsByIds: borrowed.accessors.onboardingInputsByIds,
+    };
   }
 
   /**
@@ -2760,6 +3376,221 @@ export class ProfileScope {
   toString(): string {
     return `ProfileScope(${this.profileId})${this.#cage ? "" : ""}`;
   }
+}
+
+// ------------------------------------------------------- the read grade
+
+/**
+ * What a read-grade workspace scope can read: the workspace row and its active
+ * creator profiles. Two accessors, both reads, both through fence 4's READ
+ * sibling — the whole list, and an addition is a decision (R-163).
+ */
+export type ReadGradeWorkspaceAccessors = Pick<
+  WorkspaceAccessors,
+  "workspace" | "creatorProfiles"
+>;
+
+/**
+ * What a read-grade profile scope can read: brain versions by kind (history),
+ * and the export's two accessors. Through fence 5's READ sibling.
+ */
+export type ReadGradeProfileAccessors = Pick<
+  ProfileAccessors,
+  "brainDocsByKind" | "exportPage" | "onboardingInputsByIds"
+>;
+
+/**
+ * THE ONE SANCTIONED NON-WRITABLE SCOPE (R-163, P5-R3).
+ *
+ * Minted ONLY by `withWorkspace(ctx, { grade: "read" })`, and only when the
+ * chosen membership joins a workspace that is `tombstoned` and whose newest
+ * workspace deletion is in the read window (`newestWorkspaceDeletionAdmitsRead`) — so a creator can
+ * export their brain, read its history and cancel the deletion during grace.
+ *
+ * Read-only by construction, three ways, each witnessed in
+ * `with-workspace.test.ts`:
+ *   - by TYPE: a distinct class with a distinct id brand
+ *     (`ReadGradeWorkspaceId`), so no writer's signature accepts it;
+ *   - by CAGE: it lives in `readGradeCage`, which `assertScoped` does not
+ *     admit, so the `assertScoped`-only writers refuse it at runtime;
+ *   - by LIFECYCLE: every accessor re-runs the read guard, which re-reads the
+ *     newest deletion, so the scope stops reading once erasure begins.
+ */
+export class ReadGradeWorkspaceScope {
+  readonly #cage = true;
+  readonly grade = "read" as const;
+  readonly workspaceId: ReadGradeWorkspaceId;
+  readonly role: MembershipRole;
+  readonly membershipVersion: number;
+  readonly workspaceLifecycleVersion: number;
+  readonly userId: VerifiedUserId;
+  readonly accessors: ReadGradeWorkspaceAccessors;
+
+  private constructor(
+    token: symbol,
+    db: DbLike,
+    workspaceId: ReadGradeWorkspaceId,
+    role: MembershipRole,
+    userId: VerifiedUserId,
+    membershipVersion: number,
+    workspaceLifecycleVersion: number
+  ) {
+    if (token !== MINT) throw new ScopeForgeryError("A ReadGradeWorkspaceScope");
+    if (new.target !== ReadGradeWorkspaceScope) {
+      throw new ScopeForgeryError("A ReadGradeWorkspaceScope subclass");
+    }
+    this.workspaceId = workspaceId;
+    this.role = role;
+    this.userId = userId;
+    this.membershipVersion = membershipVersion;
+    this.workspaceLifecycleVersion = workspaceLifecycleVersion;
+    this.accessors = WorkspaceScope.readGradeAccessors(
+      MINT,
+      db,
+      workspaceId,
+      role,
+      userId,
+      membershipVersion,
+      workspaceLifecycleVersion
+    );
+    scopeDb.set(this, db);
+    readGradeCage.add(this);
+  }
+
+  /** The ONE mint; `withWorkspace` verified the membership and the deletion window. */
+  static mintVerified(
+    db: DbLike,
+    workspaceId: string,
+    role: MembershipRole,
+    userId: VerifiedUserId,
+    membershipVersion: number,
+    workspaceLifecycleVersion: number,
+    token: symbol
+  ): ReadGradeWorkspaceScope {
+    return new ReadGradeWorkspaceScope(
+      token,
+      db,
+      workspaceId as ReadGradeWorkspaceId,
+      role,
+      userId,
+      membershipVersion,
+      workspaceLifecycleVersion
+    );
+  }
+
+  toString(): string {
+    return `ReadGradeWorkspaceScope(${this.workspaceId})${this.#cage ? "" : ""}`;
+  }
+}
+
+/** The profile-grained read grade: minted only from a `ReadGradeWorkspaceScope` (fence 6). */
+export class ReadGradeProfileScope {
+  readonly #cage = true;
+  readonly grade = "read" as const;
+  readonly workspaceId: ReadGradeWorkspaceId;
+  readonly profileId: VerifiedProfileId;
+  readonly role: MembershipRole;
+  readonly userId: VerifiedUserId;
+  readonly membershipVersion: number;
+  readonly workspaceLifecycleVersion: number;
+  readonly profileLifecycleVersion: number;
+  readonly accessors: ReadGradeProfileAccessors;
+
+  private constructor(
+    token: symbol,
+    db: DbLike | TxLike,
+    workspaceId: ReadGradeWorkspaceId,
+    profileId: VerifiedProfileId,
+    role: MembershipRole,
+    userId: VerifiedUserId,
+    membershipVersion: number,
+    workspaceLifecycleVersion: number,
+    profileLifecycleVersion: number
+  ) {
+    if (token !== MINT) throw new ScopeForgeryError("A ReadGradeProfileScope");
+    if (new.target !== ReadGradeProfileScope) {
+      throw new ScopeForgeryError("A ReadGradeProfileScope subclass");
+    }
+    this.workspaceId = workspaceId;
+    this.profileId = profileId;
+    this.role = role;
+    this.userId = userId;
+    this.membershipVersion = membershipVersion;
+    this.workspaceLifecycleVersion = workspaceLifecycleVersion;
+    this.profileLifecycleVersion = profileLifecycleVersion;
+    this.accessors = ProfileScope.readGradeAccessors(
+      MINT,
+      db,
+      workspaceId,
+      profileId,
+      role,
+      userId,
+      membershipVersion,
+      workspaceLifecycleVersion,
+      profileLifecycleVersion
+    );
+    scopeDb.set(this, db);
+    readGradeProfileCage.add(this);
+  }
+
+  /**
+   * Fence 6's read branch: `ProfileScope.mint`'s shape, with the non-
+   * transactional READ sibling (`assertProfileReadAccess`) in place of the
+   * write fence, and the same single refusal for foreign, absent and
+   * malformed ids.
+   */
+  static async mint(
+    db: DbLike | TxLike,
+    scope: ReadGradeWorkspaceScope,
+    profileId: string
+  ): Promise<ReadGradeProfileScope> {
+    assertReadScoped(scope);
+    // ...and specifically the read grade's workspace cage: a write-grade or a
+    // profile-grained scope does not mint here.
+    if (!readGradeCage.has(scope)) throw new ScopeForgeryError("This value");
+    if (!UUID_RE.test(profileId)) throw new ProfileAccessError();
+    const authority = await assertProfileReadAccess(
+      db,
+      scope.userId as string,
+      scope.workspaceId as string,
+      profileId
+    ).catch(() => {
+      throw new ProfileAccessError();
+    });
+    assertFreshWorkspaceAuthority(authority, scope);
+    return new ReadGradeProfileScope(
+      MINT,
+      db,
+      scope.workspaceId,
+      profileId as VerifiedProfileId,
+      authority.role,
+      scope.userId,
+      authority.version,
+      authority.workspaceLifecycleVersion,
+      authority.profileLifecycleVersion
+    );
+  }
+
+  toString(): string {
+    return `ReadGradeProfileScope(${this.profileId})${this.#cage ? "" : ""}`;
+  }
+}
+
+/**
+ * The profile mint for a READER that accepts either grade (R-163): a write
+ * scope gets `ProfileScope.mint`, unchanged; a read-grade scope gets
+ * `ReadGradeProfileScope.mint`. Called only by the enumerated readers.
+ */
+export async function mintReadableProfileScope(
+  db: DbLike | TxLike,
+  scope: WorkspaceScope | ReadGradeWorkspaceScope,
+  profileId: string
+): Promise<ProfileScope | ReadGradeProfileScope> {
+  assertReadScoped(scope);
+  if (readGradeCage.has(scope)) {
+    return ReadGradeProfileScope.mint(db, scope as ReadGradeWorkspaceScope, profileId);
+  }
+  return ProfileScope.mint(db, scope as WorkspaceScope, profileId);
 }
 
 /** Duplication-safe scope grain; class identity is not a security boundary. */
@@ -3100,6 +3931,17 @@ export type ProfileWriteCapabilities = {
     usage: RecordModelUsageParams,
     tx: TxLike
   ) => Promise<ModelUsageRow>;
+  /**
+   * Give back THIS attempt's included-build claim (audit Phase 3 gate,
+   * billing note). The claim commits with the usage row at step 8b, before
+   * the free build's output is stored; when that store is refused, the
+   * creator has no output and must not have spent the free build on it.
+   * Returns whether a claim row was removed.
+   */
+  releaseIncludedBuildClaim: (
+    claim: { purpose: string; attemptId: string },
+    tx: TxLike
+  ) => Promise<boolean>;
   writeBrainDoc: (
     doc: WriteBrainDocParams,
     tx: TxLike,
@@ -3203,7 +4045,9 @@ export type ProfileWriteCapabilities = {
    */
   readGenerationAttempt: (
     attemptId: string,
-    tx: TxLike
+    tx: TxLike,
+    /** `lock: true` reads the row FOR UPDATE (the settlement's 24 h check). */
+    options?: { lock?: boolean }
   ) => Promise<GenerationAttempt | undefined>;
   /**
    * RECORD ONE STRUCTURED REACTION to one of this creator's outputs (slice 7,
@@ -3230,6 +4074,76 @@ export type ProfileWriteCapabilities = {
     params: RecordGenerationFeedbackParams,
     tx: TxLike
   ) => Promise<GenerationFeedbackRow>;
+  /**
+   * "LEAVE THIS OUT OF FUTURE DRAFTS" (audit P6-A1, R-174): stamp one of this
+   * profile's reactions so `recentContextCandidates` never offers it as
+   * labelled history again, neither as a note nor as a label on its draft.
+   *
+   * IDEMPOTENT: a reaction already left out is returned as it is, with its
+   * first instant, and nothing is written. One direction only; the
+   * `generation_feedback_event_immutable` trigger refuses clearing it and
+   * every change to the reaction itself. Owner or editor, the
+   * `recordGenerationFeedback` gate. A foreign, missing or malformed id is
+   * `FeedbackExclusionTargetError`, byte-identical for all three.
+   *
+   * IT DERIVES NOTHING AND CHANGES NO BRAIN (R11, R-8): it narrows what a
+   * later prompt may be shown and nothing else. Proposals from feedback read
+   * reactions through `promotionFeedbackInputs`, which this does not touch.
+   */
+  excludeGenerationFeedbackFromHistory: (
+    feedbackId: string,
+    tx: TxLike
+  ) => Promise<GenerationFeedbackRow>;
+  /**
+   * CREATE ONE CREATIVE PIECE (launch L2, R-151): a stored concept chosen, or
+   * the creator's own idea entered. ZERO COST — no ledger row, no model call —
+   * and the operation id the confirmation will display is minted by the
+   * database here. Owner or editor; refused under an open pause (selection is
+   * the first step of a spend). The physical write is
+   * `createCreativePieceInScope` in `creative-work-ops.ts`.
+   */
+  createCreativePiece: (
+    params: CreateCreativePieceParams,
+    tx: TxLike
+  ) => Promise<CreativePiece>;
+  /**
+   * One piece with its scoped source and selected generations; `undefined`
+   * for foreign, missing or malformed ids.
+   */
+  readCreativePiece: (
+    pieceId: string,
+    tx: TxLike
+  ) => Promise<CreativePieceRead | undefined>;
+  /** "New generation": another operation id, re-quoted, version-guarded. */
+  renewCreativePieceOperation: (
+    params: RenewCreativePieceOperationParams,
+    tx: TxLike
+  ) => Promise<CreativePiece>;
+  /** Back out of a piece with no script yet. Version-guarded, zero cost. */
+  cancelCreativePiece: (
+    params: CreativePieceMoveParams,
+    tx: TxLike
+  ) => Promise<CreativePiece>;
+  /**
+   * LAUNCH L4 (R-153): what the saved recording pack shows around one stored
+   * generation — its parent, the piece it is a version of, the piece's source
+   * concept and its versions. Scoped; `undefined` for a foreign, missing or
+   * malformed id. A READ: every role, never pause-gated (a paused or empty
+   * workspace keeps its read rights).
+   */
+  readSavedGenerationContext: (
+    generationId: string,
+    tx: TxLike
+  ) => Promise<SavedGenerationContext | undefined>;
+  /**
+   * LAUNCH L4 (R-153): "Use this version" — move a scripted piece's selection
+   * to another of its usable versions. Zero cost, version-guarded; owner or
+   * editor; refused under an open pause like every other piece move.
+   */
+  selectCreativePieceVersion: (
+    params: SelectCreativePieceVersionParams,
+    tx: TxLike
+  ) => Promise<CreativePiece>;
   /**
    * LOG ONE RESULT against this creator's own record (slice 9a, R5-R9).
    *
@@ -3402,6 +4316,18 @@ export type ClaimGenerationAttemptParams = {
   mode: string;
   /** Lowercase hex sha256 of the assembled request. CHECKed by the table. */
   payloadSha256: string;
+  /**
+   * Launch L2 (R-151): lowercase hex sha256 of the CLIENT INTENT, the value a
+   * same-id submission is compared on. REQUIRED — a claim this build writes
+   * always carries it, and the table's equality CHECK refuses one without its
+   * snapshot.
+   */
+  intentSha256: string;
+  /**
+   * Launch L2 (R-151): the durable versioned request snapshot, bound to the
+   * claim in the same INSERT. Its shape is `packages/credits`'.
+   */
+  requestSnapshot: Record<string, unknown>;
 };
 
 export type ClaimGenerationAttemptResult = {
@@ -3459,6 +4385,16 @@ export type SettleGenerationParams = {
   /** The ledger row that paid for it, or null for a zero-cost mode. */
   debitLedgerId: string | null;
   /**
+   * TRUE WHEN NOBODY WAS CHARGED FOR THIS OPERATION'S USAGE BECAUSE ITS
+   * REFUSAL WAS THE CLAIM SCAN'S ALONE (owner decision 2026-10-07, R-173).
+   * The operation's `model_usage` rows are then left UNCONSUMED — system
+   * spend, still counted by both uncharged-attempt caps — rather than marked
+   * consumed as a charged settlement's are. `settleGeneration` DERIVES the
+   * value from `killTest` and refuses a caller value that disagrees; it is
+   * required so the caller states what it priced.
+   */
+  usageIsSystemSpend: boolean;
+  /**
    * THE OUTPUT THIS ONE REVISES (slice 7, R6), or absent for an original.
    *
    * A PLAIN STRING, like `profileId` at every other boundary in this package,
@@ -3474,6 +4410,13 @@ export type SettleGenerationParams = {
    * and the column's own default handles the absent case.
    */
   parentId?: string;
+  /**
+   * Launch L2 (R-151): the creative piece this script was commissioned for, or
+   * absent. SEPARATE FROM `parentId` — `parent_id` stays same-mode revision
+   * lineage; a piece's script is an original of its mode. The settlement
+   * records the piece's selection in this same transaction.
+   */
+  pieceId?: string;
 };
 
 export type SettleGenerationResult = {
@@ -3801,6 +4744,10 @@ export const WRITE_PAUSE_POLICY: Readonly<
     exempt:
       "A-7 exemption 2: the settlement tail. It records spend ALREADY INCURRED; refusing it would lose the record of money we have spent, and the act to gate is the generation, not its receipt.",
   },
+  releaseIncludedBuildClaim: {
+    exempt:
+      "The compensation for a refused store, and a pause is one of the refusals that triggers it (`writeBrainDoc` is gated): refusing the release under a pause would keep the free build spent on an output that was never stored.",
+  },
   writeBrainDoc: "gated",
   confirmBrainDocFields: "gated",
   activateBrainDoc: "gated",
@@ -3821,8 +4768,23 @@ export const WRITE_PAUSE_POLICY: Readonly<
     exempt:
       "A-7 exemption 1 again, and NAMED HERE because slice 7 added it without touching the list (billing gate, 2026-09-02): a closed reaction code plus the creator's own words about their own output is input they submitted, not an entitlement they spend. It derives nothing (R11), so a paused workspace gains no capability by writing one.",
   },
+  excludeGenerationFeedbackFromHistory: {
+    exempt:
+      "Audit P6-A1 (R-174): it NARROWS what the product may do with the creator's own words — one reaction stops being shown to later drafts — and spends nothing, calls no vendor and writes no brain. Refusing it under a pause would keep using a note the creator has asked us to stop using, which is the wrong direction for a frozen workspace to fail in.",
+  },
   readGenerationForAttempt: "read",
   readGenerationAttempt: "read",
+  // Launch L2 (R-151): choosing a concept, "New generation" and cancelling are
+  // each the first step of (or a step back from) a spend, so a paused
+  // workspace — "frozen and read-only" — refuses them; reading a piece is not.
+  createCreativePiece: "gated",
+  readCreativePiece: "read",
+  renewCreativePieceOperation: "gated",
+  cancelCreativePiece: "gated",
+  // Launch L4 (R-153): reading a saved generation's context is a read; moving
+  // a piece's selection is a piece move like the two above.
+  readSavedGenerationContext: "read",
+  selectCreativePieceVersion: "gated",
   recordResult: {
     exempt:
       "A-7 exemption 1, and the difference from `recordGenerationFeedback` is stated rather than inherited: a comparison IS derived from these rows (contract C5), which feedback's warrant could lean on and this one cannot. It is still input the creator submitted — numbers they observed about their own post, in a window that has already passed and cannot be re-observed later — so refusing it under a pause would silently destroy an observation rather than defer it, which is A-7's exemption exactly. What a paused workspace gains by logging one is nothing an entitlement can price: the comparison is a read of the creator's own rows, it spends no credits, calls no vendor and writes no brain. REVISIT TRIGGER: the first path on which logging a result causes a priced action (9b's proposal construction, if it is ever made automatic rather than requested).",
@@ -4069,6 +5031,23 @@ export function writeCapabilities(
           });
       }
       return row;
+    },
+
+    releaseIncludedBuildClaim: async (claim, tx) => {
+      assertOwnerOrEditor(scope.role, "release an included-build claim");
+      // THIS profile's claim for THIS attempt only — never another attempt's,
+      // so a release can only undo the claim the failed attempt itself made.
+      const removed = await tx
+        .delete(firstBillableAttempts)
+        .where(
+          and(
+            both(firstBillableAttempts),
+            eq(firstBillableAttempts.purpose, claim.purpose),
+            eq(firstBillableAttempts.attemptId, claim.attemptId)
+          )
+        )
+        .returning({ attemptId: firstBillableAttempts.attemptId });
+      return removed.length > 0;
     },
 
     writeBrainDoc: async (doc, tx, expectedEditableBaseId) => {
@@ -4731,6 +5710,20 @@ export function writeCapabilities(
       const purpose = params.purpose;
       const mode = params.mode;
       const payloadSha256 = params.payloadSha256;
+      const intentSha256 = params.intentSha256;
+      const requestSnapshot = params.requestSnapshot;
+      // L2 (R-151): both are REQUIRED. A missing one is a caller that did not
+      // bind its request to the claim, refused here by name rather than by the
+      // table's equality CHECK as a raw 23514.
+      if (
+        typeof intentSha256 !== "string" ||
+        !/^[0-9a-f]{64}$/.test(intentSha256) ||
+        typeof requestSnapshot !== "object" ||
+        requestSnapshot === null ||
+        Array.isArray(requestSnapshot)
+      ) {
+        throw new GenerationAttemptStateError(attemptId, "claimed");
+      }
       const [inserted] = await tx
         .insert(generationAttempts)
         .values({
@@ -4738,6 +5731,8 @@ export function writeCapabilities(
           purpose,
           mode,
           payloadSha256,
+          intentSha256,
+          requestSnapshot,
           ...ids,
         })
         .onConflictDoNothing()
@@ -4817,6 +5812,24 @@ export function writeCapabilities(
       assertOwnerOrEditor(scope.role, "settle a generation for this creator");
       const attemptId = params.attemptId;
       const outcome = params.outcome;
+      // R-173's SYSTEM-SPEND FLAG IS DERIVED HERE, from the kill test this
+      // call stores (billing verification, 2026-10-07), never trusted from the
+      // caller: an honest refusal whose final hard rules are all the claim
+      // scan's. The caller's value must AGREE — a disagreement is a settlement
+      // computed from a different record, refused before anything is written —
+      // and a system-spend settlement can carry no debit.
+      const usageIsSystemSpend =
+        outcome === "honest_refusal" && refusalIsClaimOnly(params.killTest);
+      if (params.usageIsSystemSpend !== usageIsSystemSpend) {
+        throw new Error(
+          "settleGeneration: usageIsSystemSpend disagrees with the stored kill test (R-173)"
+        );
+      }
+      if (usageIsSystemSpend && params.debitLedgerId !== null) {
+        throw new Error(
+          "settleGeneration: a claim-only refusal is free and carries no debit (R-173)"
+        );
+      }
       // READ ONCE INTO A LOCAL (C-40) and then RESOLVE IT AGAINST THE SCOPE.
       // `params` is a plain object type, so a getter could hand one id to the
       // check and another to the insert — which on THIS field would mean the
@@ -4905,6 +5918,43 @@ export function writeCapabilities(
         )
         .returning();
       if (!attempt) throw new GenerationAttemptStateError(attemptId, "settled");
+      // R-173: a free claim refusal charged nobody, so its rows stay
+      // unconsumed (system spend) and stay inside the uncharged caps.
+      if (!usageIsSystemSpend) {
+        // THE DRAFT-1 FIX (launch L2, L1 billing NOTE 1; R-151) — GENERATION
+        // PURPOSE ONLY. Every `model_usage` row a generation writes is written
+        // `consumed_included_build = false` at call time (the creator has not
+        // been charged yet), so a draft whose operation settles NO generation —
+        // a rewrite that fails to parse, a vendor failure, a post-call refusal, a
+        // crash — stays counted by both uncharged accessors. HERE, in the same
+        // transaction as the debit and the generation, this operation's rows are
+        // marked consumed: the creator was charged for them. The predicate names
+        // the attempt AND the claim's own purpose (read off the RETURNED claim,
+        // never a parameter), so no other purpose's row — the onboarding voice
+        // build's included-build flag above all (A-11 fence) — can be touched.
+        await tx
+          .update(modelUsage)
+          .set({ consumedIncludedBuild: true })
+          .where(
+            and(
+              both(modelUsage),
+              eq(modelUsage.attemptId, attempt.attemptId),
+              eq(modelUsage.purpose, attempt.purpose),
+              eq(modelUsage.consumedIncludedBuild, false)
+            )
+          );
+      }
+      // THE PIECE'S SELECTION, IN THE SAME TRANSACTION (launch L2). Read once
+      // into a local (C-40); `linkCreativePieceScriptInScope` never refuses —
+      // see its docblock.
+      const pieceId = params.pieceId;
+      if (pieceId !== undefined) {
+        await linkCreativePieceScriptInScope(
+          scope,
+          { pieceId, generationId: generation.id },
+          tx
+        );
+      }
       return { generation, attempt };
     },
 
@@ -4917,15 +5967,55 @@ export function writeCapabilities(
       return row;
     },
 
-    readGenerationAttempt: async (attemptId, tx) => {
-      const [row] = await tx
+    readGenerationAttempt: async (attemptId, tx, options) => {
+      const query = tx
         .select()
         .from(generationAttempts)
         .where(
           and(both(generationAttempts), eq(generationAttempts.attemptId, attemptId))
         )
         .limit(1);
+      // THE CLAIM ROW'S LOCK (launch L2, P3-R1): the settlement reads the claim
+      // FOR UPDATE inside its workspace-locked transaction, so the 24-hour
+      // predicate it checks cannot be overtaken by the worker's hard clear
+      // (`FOR UPDATE SKIP LOCKED` there) between the check and the write.
+      const [row] = options?.lock === true ? await query.for("update") : await query;
       return row;
+    },
+
+    // ------------------------------------------- launch L2, R-151: the piece
+    createCreativePiece: async (params, tx) => {
+      assertOwnerOrEditor(scope.role, "choose a concept for this creator");
+      if (await hasOpenPause(tx, scope.workspaceId)) {
+        throw new WorkspacePausedError();
+      }
+      return createCreativePieceInScope(scope, params, tx);
+    },
+    readCreativePiece: async (pieceId, tx) =>
+      readCreativePieceInScope(scope, pieceId, tx),
+    renewCreativePieceOperation: async (params, tx) => {
+      assertOwnerOrEditor(scope.role, "start a new generation for this creator");
+      if (await hasOpenPause(tx, scope.workspaceId)) {
+        throw new WorkspacePausedError();
+      }
+      return renewCreativePieceOperationInScope(scope, params, tx);
+    },
+    cancelCreativePiece: async (params, tx) => {
+      assertOwnerOrEditor(scope.role, "cancel a piece for this creator");
+      if (await hasOpenPause(tx, scope.workspaceId)) {
+        throw new WorkspacePausedError();
+      }
+      return cancelCreativePieceInScope(scope, params, tx);
+    },
+    // ------------------------------------- launch L4, R-153: the saved pack
+    readSavedGenerationContext: async (generationId, tx) =>
+      readSavedGenerationContextInScope(scope, generationId, tx),
+    selectCreativePieceVersion: async (params, tx) => {
+      assertOwnerOrEditor(scope.role, "choose a version of this creator's piece");
+      if (await hasOpenPause(tx, scope.workspaceId)) {
+        throw new WorkspacePausedError();
+      }
+      return selectCreativePieceVersionInScope(scope, params, tx);
     },
 
     // ------------------------------------------------------ slice 7, R10
@@ -5019,6 +6109,50 @@ export function writeCapabilities(
         .returning();
       if (!row) throw new FeedbackDuplicateError();
       return row;
+    },
+
+    // ------------------------------------------------------ audit P6-A1, R-174
+    excludeGenerationFeedbackFromHistory: async (feedbackId, tx) => {
+      // THE SAME GATE AS RECORDING ONE: a viewer may not decide what a
+      // creator's later drafts are shown.
+      assertOwnerOrEditor(scope.role, "leave a reaction out of this creator's future drafts");
+      const id = feedbackId;
+      if (typeof id !== "string" || !UUID_RE.test(id)) {
+        throw new FeedbackExclusionTargetError();
+      }
+      // RESOLVED THROUGH THE SCOPE FIRST, so a foreign id and a missing one
+      // reach the same refusal; and an already-excluded row is returned as it
+      // is, with its first instant (idempotent, nothing written).
+      const [current] = await tx
+        .select()
+        .from(generationFeedback)
+        .where(and(both(generationFeedback), eq(generationFeedback.id, id)))
+        .limit(1);
+      if (!current) throw new FeedbackExclusionTargetError();
+      if (current.historyExcludedAt !== null) return current;
+      // THE ONE COLUMN, FROM THE DATABASE CLOCK, and only while it is still
+      // NULL: two concurrent presses write one instant, and the loser reads
+      // the winner's row back below rather than overwriting it (the trigger
+      // would refuse the overwrite anyway).
+      const [row] = await tx
+        .update(generationFeedback)
+        .set({ historyExcludedAt: sql`now()` })
+        .where(
+          and(
+            both(generationFeedback),
+            eq(generationFeedback.id, id),
+            isNull(generationFeedback.historyExcludedAt)
+          )
+        )
+        .returning();
+      if (row) return row;
+      const [settled] = await tx
+        .select()
+        .from(generationFeedback)
+        .where(and(both(generationFeedback), eq(generationFeedback.id, id)))
+        .limit(1);
+      if (!settled) throw new FeedbackExclusionTargetError();
+      return settled;
     },
 
     // ------------------------------------------------------ slice 9a, R5-R9
@@ -5242,6 +6376,7 @@ export function writeCapabilities(
   const txArgumentByCapability = {
     appendOnboardingInput: 1,
     recordModelUsage: 1,
+    releaseIncludedBuildClaim: 1,
     writeBrainDoc: 1,
     confirmBrainDocFields: 1,
     activateBrainDoc: 1,
@@ -5252,6 +6387,13 @@ export function writeCapabilities(
     readGenerationForAttempt: 1,
     readGenerationAttempt: 1,
     recordGenerationFeedback: 1,
+    excludeGenerationFeedbackFromHistory: 1,
+    createCreativePiece: 1,
+    readCreativePiece: 1,
+    renewCreativePieceOperation: 1,
+    cancelCreativePiece: 1,
+    readSavedGenerationContext: 1,
+    selectCreativePieceVersion: 1,
     recordResult: 2,
     refreshPromotionProposals: 1,
     appendPromotionSummaryForProposal: 1,
@@ -5260,6 +6402,7 @@ export function writeCapabilities(
   const rolesByCapability = {
     appendOnboardingInput: ["owner"],
     recordModelUsage: ["owner", "editor", "viewer"],
+    releaseIncludedBuildClaim: ["owner", "editor"],
     writeBrainDoc: ["owner"],
     confirmBrainDocFields: ["owner"],
     activateBrainDoc: ["owner"],
@@ -5270,6 +6413,13 @@ export function writeCapabilities(
     readGenerationForAttempt: ["owner", "editor", "viewer"],
     readGenerationAttempt: ["owner", "editor", "viewer"],
     recordGenerationFeedback: ["owner", "editor"],
+    excludeGenerationFeedbackFromHistory: ["owner", "editor"],
+    createCreativePiece: ["owner", "editor"],
+    readCreativePiece: ["owner", "editor", "viewer"],
+    renewCreativePieceOperation: ["owner", "editor"],
+    cancelCreativePiece: ["owner", "editor"],
+    readSavedGenerationContext: ["owner", "editor", "viewer"],
+    selectCreativePieceVersion: ["owner", "editor"],
     recordResult: ["owner", "editor"],
     refreshPromotionProposals: ["owner"],
     appendPromotionSummaryForProposal: ["owner"],
@@ -5907,10 +7057,64 @@ export async function loadReferenceSafetyContext(
   };
 }
 
+/**
+ * Raised when the identity's only workspace is tombstoned by a pending
+ * deletion and the caller asked for the WRITE grade (R-163). A refusal with a
+ * way forward (CLAUDE.md 2026-07-30): the page names `/settings/account`,
+ * where the deletion can be cancelled and the export taken.
+ */
+export class WorkspacePendingDeletionError extends WorkspaceAccessError {
+  constructor() {
+    super(
+      "withWorkspace: workspace is pending deletion — cancel the deletion or export your data from /settings/account"
+    );
+    this.name = "WorkspacePendingDeletionError";
+  }
+}
+
+export type WorkspaceGradeOptions = Readonly<{ grade: "write" | "read" }>;
+
+/**
+ * The session-side scope mint (T1) — membership verified, then scoped.
+ *
+ * `grade: "write"` (the default) is exactly the pre-R-163 contract: only an
+ * ACTIVE workspace mints, and an identity whose only workspace is tombstoned
+ * is refused — now with `WorkspacePendingDeletionError`, which names the page
+ * that can act on it, instead of "user has no workspace".
+ *
+ * `grade: "read"` (R-163, P5-R3) is asked for by exactly three callers
+ * (`readScopeForUser`: `/api/export`, `/settings/account`, `/brain`). The
+ * membership join admits a `tombstoned` workspace too; then
+ *   - an ACTIVE chosen workspace still mints the write grade (`WorkspaceScope`);
+ *   - a TOMBSTONED one mints a `ReadGradeWorkspaceScope`, and only while its
+ *     newest workspace deletion is in the read window (`newestWorkspaceDeletionAdmitsRead`);
+ *   - with no explicit `ctx.workspaceId`, an ACTIVE membership is preferred:
+ *     an identity holding one active and one tombstoned workspace gets the
+ *     active one, and reaches the tombstoned one's read grade only by naming
+ *     it (the explicit form is honoured through membership, as ever). The
+ *     page-side selector that would name it is the deferral ledger's row.
+ */
+// Overload ORDER matters: `ReturnType<typeof withWorkspace>` reads the LAST
+// signature, and every existing caller means the write grade by it.
+export async function withWorkspace(
+  db: DbLike,
+  ctx: WorkspaceCtx,
+  options: Readonly<{ grade: "read" }>
+): Promise<WorkspaceScope | ReadGradeWorkspaceScope>;
+export async function withWorkspace(
+  db: DbLike,
+  ctx: WorkspaceCtx,
+  options: Readonly<{ grade: "write" }>
+): Promise<WorkspaceScope>;
 export async function withWorkspace(
   db: DbLike,
   ctx: WorkspaceCtx
-): Promise<WorkspaceScope> {
+): Promise<WorkspaceScope>;
+export async function withWorkspace(
+  db: DbLike,
+  ctx: WorkspaceCtx,
+  options: WorkspaceGradeOptions = { grade: "write" }
+): Promise<WorkspaceScope | ReadGradeWorkspaceScope> {
   const user = await db.query.users.findFirst({
     where: (u, { eq: eqOp }) => eqOp(u.authUserId, ctx.authUserId),
   });
@@ -5923,17 +7127,23 @@ export async function withWorkspace(
     throw new WorkspaceAccessError("withWorkspace: identity is tombstoned");
   }
 
+  // Fence 1. The write grade joins ACTIVE workspaces only, byte-for-byte as
+  // before R-163; the read grade also admits a tombstoned one, and decides
+  // below whether its deletion is still in the read window.
   const userMembershipRows = await db
     .select({
       membership: memberships,
       workspaceLifecycleVersion: workspaces.lifecycleVersion,
+      workspaceLifecycleState: workspaces.lifecycleState,
     })
     .from(memberships)
     .innerJoin(
       workspaces,
       and(
         eq(workspaces.id, memberships.workspaceId),
-        eq(workspaces.lifecycleState, "active")
+        options.grade === "read"
+          ? inArray(workspaces.lifecycleState, ["active", "tombstoned"])
+          : eq(workspaces.lifecycleState, "active")
       )
     )
     .where(
@@ -5942,7 +7152,14 @@ export async function withWorkspace(
         eq(memberships.lifecycleState, "active")
       )
     );
-  const userMemberships = userMembershipRows.map((row) => row.membership);
+  const activeRows = userMembershipRows.filter(
+    (row) => row.workspaceLifecycleState === "active"
+  );
+  const candidates =
+    ctx.workspaceId === undefined && activeRows.length > 0
+      ? activeRows
+      : userMembershipRows;
+  const userMemberships = candidates.map((row) => row.membership);
 
   let membership: Membership | undefined;
   if (ctx.workspaceId !== undefined) {
@@ -5956,12 +7173,34 @@ export async function withWorkspace(
   } else if (userMemberships.length === 1) {
     membership = userMemberships[0];
   } else if (userMemberships.length === 0) {
+    if (options.grade === "write" && (await hasPendingDeletionMembership(db, user.id))) {
+      throw new WorkspacePendingDeletionError();
+    }
     throw new WorkspaceAccessError(
       "withWorkspace: user has no workspace — run ensureUserWorkspace first"
     );
   } else {
     throw new WorkspaceAccessError(
       "withWorkspace: user belongs to multiple workspaces — an explicit workspaceId is required"
+    );
+  }
+
+  const chosen = candidates.find((row) => row.membership.id === membership.id)!;
+  if (chosen.workspaceLifecycleState !== "active") {
+    // Only the read grade can reach here (the write join admits no other).
+    if (!(await newestWorkspaceDeletionAdmitsRead(db, membership.workspaceId))) {
+      throw new WorkspaceAccessError(
+        "withWorkspace: workspace is being erased and can no longer be read"
+      );
+    }
+    return ReadGradeWorkspaceScope.mintVerified(
+      db,
+      membership.workspaceId,
+      membership.role,
+      user.id as VerifiedUserId,
+      membership.version,
+      chosen.workspaceLifecycleVersion,
+      MINT
     );
   }
 
@@ -5974,7 +7213,25 @@ export async function withWorkspace(
     // the auth id itself — `confirmed_by` is a FK into `users`.
     user.id as VerifiedUserId,
     membership.version,
-    userMembershipRows.find((row) => row.membership.id === membership.id)!
-      .workspaceLifecycleVersion
+    chosen.workspaceLifecycleVersion
   );
+}
+
+/** Does this identity hold an active membership in a workspace tombstoned by a readable deletion? */
+async function hasPendingDeletionMembership(db: DbLike, userId: string): Promise<boolean> {
+  const rows = await db
+    .select({ workspaceId: memberships.workspaceId })
+    .from(memberships)
+    .innerJoin(
+      workspaces,
+      and(
+        eq(workspaces.id, memberships.workspaceId),
+        eq(workspaces.lifecycleState, "tombstoned")
+      )
+    )
+    .where(and(eq(memberships.userId, userId), eq(memberships.lifecycleState, "active")));
+  for (const row of rows) {
+    if (await newestWorkspaceDeletionAdmitsRead(db, row.workspaceId)) return true;
+  }
+  return false;
 }

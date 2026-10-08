@@ -13,7 +13,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { ARTIFACTS_ROOT, BLOCKING_NOTE_PREFIX, SKIPPED_NOTE_PREFIX } from "../e2e/support/artifacts";
 import { MAIN_CHAPTERS, PERSONAS } from "../e2e/support/main-chapters";
-import { main, scanJourneyTrees } from "../scripts/scan-journey-notes";
+import { blockingLinePattern, main, scanJourneyTrees } from "../scripts/scan-journey-notes";
 import { uploadPathLines, uploadPopulation, workflowText } from "./journeys-upload-population";
 
 const execFileAsync = promisify(execFile);
@@ -62,14 +62,31 @@ describe("scanJourneyTrees", () => {
 
   it("a planted BLOCKING note fails (only a `[note] BLOCKING…` line counts)", () => {
     const { artifacts, report } = cleanTrees();
+    // THE PLANT IS A DIFFERENT LITERAL FROM THE CONSTANT UNDER TEST (P1-R8).
+    // Built from `BLOCKING_NOTE_PREFIX`, it would agree with the scan whatever
+    // that constant became — a test that cannot fail on the defect it guards.
+    // The journeys write the word "BLOCKING", so the plant spells it.
     writeFileSync(
       join(artifacts, "solo-creator", "console.log"),
-      `[note] ${BLOCKING_NOTE_PREFIX} APP BUG: Creator-tier checkout did not complete\n`,
+      `[note] BLOCKING APP BUG: Creator-tier checkout did not complete\n`,
       { flag: "a" }
     );
     const problems = scanJourneyTrees(artifacts, report);
     expect(problems.map((p) => p.kind)).toEqual(["blocking-note"]);
     expect(main([artifacts, report])).toBe(1);
+  });
+
+  it("the prefix is ESCAPED: a metacharacter prefix matches its own note and nothing looser (P1-R8)", () => {
+    // `.` and `*` would turn "A.B*" into a pattern matching "AxB" and "A";
+    // escaped, it matches only the literal prefix.
+    const pattern = blockingLinePattern("A.B* (x)");
+    expect(pattern.test("[note] A.B* (x) something broke")).toBe(true);
+    expect(pattern.test("[note] AxBBB (x) something broke")).toBe(false);
+    expect(pattern.test("[note] A something broke")).toBe(false);
+    // ...and the shipped prefix is the word the journeys write and the plant
+    // above spells, so a change to the constant is red in two places.
+    expect(BLOCKING_NOTE_PREFIX).toBe("BLOCKING");
+    expect(blockingLinePattern(BLOCKING_NOTE_PREFIX).test("[note] BLOCKING x")).toBe(true);
   });
 
   it("a missing main-chapter screenshot fails, per persona", () => {

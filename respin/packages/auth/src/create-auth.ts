@@ -326,6 +326,45 @@ function authMailFailureCode(error: unknown): string {
 }
 
 /**
+ * THE CREDENTIAL AND MAIL ENDPOINTS' RATE RULES — each tighter than the global
+ * floor (60 a minute per client), keyed by the installed router's own paths.
+ *
+ * A KEY IS A CLAIM ABOUT THE INSTALLED ROUTER, and a wrong one fails OPEN:
+ * better-auth matches a key exactly (or by `wildcardMatch` when it holds a
+ * `*`), so a key naming no route silently leaves that endpoint at the floor.
+ * That is what `"/forget-password"` did until audit P1-R9 (register 2026-10-05
+ * item 10): better-auth@1.6.28 serves password reset at
+ * `/request-password-reset`, and `/send-verification-email` — which drains
+ * the same daily auth-mail quota — had no rule at all.
+ * `packages/auth/tests/rate-limit.test.ts` asserts every key against the
+ * installed route set (`auth.api[*].path`) and drives one real 429 per key
+ * through `auth.handler`.
+ *
+ * A route parameter (`/reset-password/:token`) is never a key: it matches no
+ * request path. A parameterised route is covered by a `*` key or not at all.
+ */
+export const AUTH_RATE_LIMIT_RULES: Readonly<
+  Record<string, Readonly<{ window: number; max: number }>>
+> = {
+  "/sign-in/email": { window: 60, max: 5 },
+  "/sign-up/email": { window: 3600, max: 10 },
+  "/request-password-reset": { window: 3600, max: 5 },
+  "/reset-password": { window: 3600, max: 5 },
+  "/send-verification-email": { window: 3600, max: 5 },
+};
+
+/**
+ * Installed routes this deployment does not serve over HTTP (audit P1-A2).
+ *
+ * `/verify-password` checks a session's password at the global floor with no
+ * per-account limit — a password-guessing oracle for a stolen session. Nothing
+ * here calls the route: both reauthentication checks call `better-auth/crypto`'s
+ * `verifyPassword` directly (`packages/db/src/auth-lifecycle.ts`). better-auth
+ * answers a disabled path with 404 before its rate limiter runs.
+ */
+export const AUTH_DISABLED_PATHS: readonly string[] = ["/verify-password"];
+
+/**
  * Factory (testability: tests inject a PGlite db and run REAL sign-up flows).
  * The runtime instance is built lazily in server.ts — no env read at import.
  */
@@ -352,7 +391,21 @@ export function createAuth(db: DbLike, opts: CreateAuthOptions = {}) {
       },
     },
     secret: opts.secret ?? process.env.BETTER_AUTH_SECRET,
+    // PINNED OFF, not inherited (R-166, gate security Low). R-164's Google
+    // challenge trusts `sub` only because the linked `google` account row is
+    // the person's; both of these would let that row, or the address the
+    // recovery mail goes to, change under them. Verified against the installed
+    // @better-auth/core 1.6.28 `types/init-options.d.mts`: both default false
+    // today — pinned so an upgrade or a stray option cannot turn them on.
+    // `packages/auth/tests/auth.test.ts` asserts both, and drives a real
+    // change-email request to its refusal.
+    account: { accountLinking: { allowDifferentEmails: false } },
+    user: { changeEmail: { enabled: false } },
+    // Required as an absolute https: URL in production by the startup
+    // preflight (`auth_base_url`, audit P1-A2): unset, better-auth derives the
+    // base of every mailed link from the request's Host header.
     baseURL: opts.baseURL ?? process.env.BETTER_AUTH_URL,
+    disabledPaths: [...AUTH_DISABLED_PATHS],
     // AUTH RATE LIMITING, EXPLICIT (audit 2026-08-17 #20).
     //
     // Nothing was passed before, and the installed package's default is not a
@@ -378,19 +431,13 @@ export function createAuth(db: DbLike, opts: CreateAuthOptions = {}) {
       // anything without a custom rule below.
       window: 60,
       max: 60,
-      // The CREDENTIAL endpoints, which is where #20's risk actually is: these
-      // are the paths an attacker sprays. Each is tighter than the floor.
-      //
-      // The paths are Better Auth's own route names for the email/password
-      // provider this app enables; a typo here fails OPEN (the global rule
-      // applies instead), so `tests/auth.test.ts` drives the real endpoints
-      // rather than asserting this object.
-      customRules: {
-        "/sign-in/email": { window: 60, max: 5 },
-        "/sign-up/email": { window: 3600, max: 10 },
-        "/forget-password": { window: 3600, max: 5 },
-        "/reset-password": { window: 3600, max: 5 },
-      },
+      // The CREDENTIAL and MAIL endpoints, which is where #20's risk actually
+      // is: these are the paths an attacker sprays. Each is tighter than the
+      // floor. A key naming no installed route fails OPEN (the floor applies
+      // instead), so `packages/auth/tests/rate-limit.test.ts` asserts every
+      // key against the installed router and drives a real 429 per key —
+      // see `AUTH_RATE_LIMIT_RULES`.
+      customRules: { ...AUTH_RATE_LIMIT_RULES },
     },
     // WHOSE request is it? (R-26, enforced — see `resolveTrustedProxies`.)
     // Every rule above keys on the resolved client IP, so an unresolvable IP

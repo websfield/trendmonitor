@@ -34,7 +34,7 @@ const scopeState = vi.hoisted(() => ({
   withWorkspace: vi.fn(),
   ledger: vi.fn(),
   subscription: vi.fn(),
-  getBalance: vi.fn(),
+  getDisplayBalance: vi.fn(),
   getBillingState: vi.fn(),
   usageRunwayFor: vi.fn(),
   selectedProfileForMember: vi.fn(),
@@ -66,7 +66,7 @@ vi.mock("@respin/db", async (importOriginal) => ({
 vi.mock("@respin/credits/app-server", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@respin/credits/app-server")>()),
   respinCredits: {
-    getBalance: scopeState.getBalance,
+    getDisplayBalance: scopeState.getDisplayBalance,
     getBillingState: scopeState.getBillingState,
     usageRunwayFor: scopeState.usageRunwayFor,
   },
@@ -157,7 +157,7 @@ beforeEach(() => {
     workspace: { id: "ws_1", name: "Workspace" },
   });
   scopeState.withWorkspace.mockResolvedValue(okScope());
-  scopeState.getBalance.mockResolvedValue({ balance: 1250, asOf: NOW });
+  scopeState.getDisplayBalance.mockResolvedValue({ balance: 1250, asOf: NOW, settling: false });
   scopeState.getBillingState.mockResolvedValue({ tier: "creator", state: "active" });
   scopeState.usageRunwayFor.mockResolvedValue({
     state: "no_spend",
@@ -207,7 +207,7 @@ describe("/usage page component: the wiring no test executed (round-3 NOTE)", ()
     // The gate is a gate, not a formality: nothing was scoped or read.
     expect(scopeState.ensureUserWorkspace).not.toHaveBeenCalled();
     expect(scopeState.withWorkspace).not.toHaveBeenCalled();
-    expect(scopeState.getBalance).not.toHaveBeenCalled();
+    expect(scopeState.getDisplayBalance).not.toHaveBeenCalled();
     expect(scopeState.ledger).not.toHaveBeenCalled();
   });
 
@@ -240,13 +240,13 @@ describe("/usage page component: the wiring no test executed (round-3 NOTE)", ()
     const out = await renderUsage();
     expect(out).toContain('data-testid="workspace-access-error"');
     // The page must not have gone on to read anything.
-    expect(scopeState.getBalance).not.toHaveBeenCalled();
+    expect(scopeState.getDisplayBalance).not.toHaveBeenCalled();
     // ...and the package message's identifiers stay in the log, not the page.
     expect(out).not.toContain(LOT_UUID);
   });
 
   it("a failing balance derivation is CONTAINED: honest copy, no balance element, history still rendered", async () => {
-    scopeState.getBalance.mockRejectedValue(
+    scopeState.getDisplayBalance.mockRejectedValue(
       new LedgerIntegrityError(`row ${LOT_UUID} over-consumes`)
     );
     const out = await renderUsage();
@@ -385,6 +385,12 @@ describe("Phase 1 T7: injected panel state stays test-only", () => {
       ["(product)/studio/feedback-block.tsx", 0],
       ["(product)/studio/generation-outcome.tsx", 0],
       ["(product)/studio/lineage-view.tsx", 0],
+      // Launch L2 (R-151): the entrances and the piece confirmation render the
+      // concept batch and the script through `GenerationOutcome`, so the L1
+      // blocks they carry must never sit inside a fold either.
+      ["(product)/studio/entrances.tsx", 0],
+      ["(product)/studio/piece-confirmation.tsx", 0],
+      ["(product)/studio/studio-view.tsx", 0],
       ["(product)/onboarding/first-ideas/first-ideas-panel.tsx", 1],
       ["(product)/onboarding/first-ideas/first-ideas-result.tsx", 0],
       ["ui/banner.tsx", 0],

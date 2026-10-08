@@ -108,7 +108,22 @@ export type MeasuredAs = "timestamptz" | "epoch_millis";
  */
 export type RetentionPrecondition =
   | Readonly<{ kind: "state_in"; column: string; values: readonly string[] }>
+  | Readonly<{ kind: "state_not_in"; column: string; values: readonly string[] }>
   | Readonly<{ kind: "column_not_null"; column: string }>;
+
+/**
+ * R-165 (gate H1): a HELD receipt's payload is the only copy of the money a
+ * tombstoned workspace was paid, so no payload clock may take it — the replay
+ * needs it if the deletion is cancelled, and the workspace's own erasure lifts
+ * the amount into the durable `refund_owed` record before it clears it. Every
+ * `stripe_events` payload producer honours this (`HELD_PAYLOAD_PRODUCERS`,
+ * pinned in `tests/held-money-payload.test.ts`).
+ */
+export const NOT_HELD: RetentionPrecondition = {
+  kind: "state_not_in",
+  column: "outcome",
+  values: ["held_tombstoned"],
+};
 
 /**
  * The value a redacted column takes. `empty_jsonb` rather than NULL because
@@ -382,7 +397,7 @@ export const RETENTION_MEASURES = [
   {
     table: "stripe_events", rowClass: "stripe_customer_attributed", fieldSet: "provider_payload",
     measuredFrom: "received_at", measuredAs: "timestamptz",
-    precondition: null,
+    precondition: NOT_HELD,
     effect: redact({ column: "payload", to: "empty_jsonb" }),
     why: "C5: redact after 90 days, retaining content-free audit metadata. NOT NULL, so it is emptied rather than nulled. The finance extract runs in the SAME transaction, BEFORE this.",
   },
@@ -396,14 +411,14 @@ export const RETENTION_MEASURES = [
   {
     table: "stripe_events", rowClass: "stripe_unattributed", fieldSet: "provider_payload",
     measuredFrom: "received_at", measuredAs: "timestamptz",
-    precondition: null,
+    precondition: NOT_HELD,
     effect: redact({ column: "payload", to: "empty_jsonb" }),
     why: "C5: redact after 90 days, retaining content-free audit metadata. NOT NULL, so it is emptied rather than nulled. The finance extract runs in the SAME transaction, BEFORE this.",
   },
   {
     table: "stripe_events", rowClass: "stripe_workspace_attributed", fieldSet: "provider_payload",
     measuredFrom: "received_at", measuredAs: "timestamptz",
-    precondition: null,
+    precondition: NOT_HELD,
     effect: redact({ column: "payload", to: "empty_jsonb" }),
     why: "C5: redact after 90 days, retaining content-free audit metadata. NOT NULL, so it is emptied rather than nulled. The finance extract runs in the SAME transaction, BEFORE this.",
   },

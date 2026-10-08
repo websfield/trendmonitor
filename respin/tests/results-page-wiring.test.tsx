@@ -414,6 +414,28 @@ describe("/results page component: the happy path", () => {
     expect(out).toContain("not a complete proposal history");
   });
 
+  it("the page hands the client panel the TRANSPORT shape — a planted DB-only field never reaches its props (P2-A5)", async () => {
+    const SENTINEL = "DB-ONLY-PAGE-SENTINEL";
+    db.promotionProposalHistory.mockResolvedValue([{ id: "proposal-1" }]);
+    db.promotionProposalReview.mockResolvedValue({
+      proposal: { id: "proposal-1", source: "feedback", status: "proposed", strength: "repeated", payload: { value: "v" }, familyKey: SENTINEL, workspaceId: SENTINEL },
+      resultEvidence: [],
+      feedbackEvidence: [{ feedbackId: "f1", generationId: "g1", profileId: SENTINEL }],
+      baseBrainDocId: SENTINEL,
+      mergedContent: { avoid: ["v"] },
+      claims: [{ pointer: "/avoid/0", displayedValue: "v", sourceEvidence: { quote: "q", inputId: SENTINEL, inputClass: "feedback_summary" } }],
+      freshnessToken: "page-token",
+      learningEligibility: { kind: "structured_feedback", occurrences: 3 },
+      alreadyPresent: false,
+      plantedTopLevel: SENTINEL,
+    });
+    const page = (await ResultsPage()) as unknown as { props: { promotionPanel?: { props: { reviews: unknown } } } };
+    const reviews = page.props.promotionPanel?.props.reviews;
+    // NON-VACUITY: the review really crossed.
+    expect(JSON.stringify(reviews)).toContain("page-token");
+    expect(JSON.stringify(reviews)).not.toContain(SENTINEL);
+  });
+
   it("an unavailable proposal-history reader names the operational state", async () => {
     db.promotionProposalHistory.mockRejectedValue(new Error("proposal history failed"));
     const out = await render();

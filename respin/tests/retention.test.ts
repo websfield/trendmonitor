@@ -51,6 +51,10 @@ const ALLOWED = new Map<string, string>([
     "the dispatcher, and it only WRITES (D-M1-1 records the raw event so a redelivery can be told from a first delivery). It never reads the column back.",
   ],
   [
+    "packages/db/src/deletion-executor.ts",
+    "R-165 (audit P5-A1): inside the erasure transaction and BEFORE the subject purge redacts it, the executor reads ONLY `amount_total`/`amount_paid`/`amount_received` and `currency` off the workspace's `held_tombstoned` events, to list them as refund owed by the operator. Ids and amounts only, never a person; and the purge right after still blanks the column.",
+  ],
+  [
     "packages/db/src/lifecycle-subjects.ts",
     "the deletion executor's subject capture selects ONLY the event id for a workspace, so the receipt ids survive the FK being nulled; it names the table and never the payload column (Phase 10b-1 Task 4).",
   ],

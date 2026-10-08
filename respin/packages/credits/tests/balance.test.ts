@@ -6,13 +6,15 @@ import { describe, expect, it } from "vitest";
 import {
   createTestDb,
   creditLedger,
+  hasOpenPause,
   pausePeriods,
   schema,
+  seedDb,
   trustWorkspaceId,
   type TestDb,
   type VerifiedWorkspaceId,
 } from "@respin/db";
-import { deriveBalance } from "../src/balance";
+import { committedFoldInTx, deriveBalance } from "../src/balance";
 import { effectiveExpiry, foldLedger } from "../src/fold";
 import {
   FOLD_DURATION_METRIC,
@@ -533,5 +535,141 @@ describe("fold metrics: the escape hatch R-20/D-M1-7 named can now actually fire
     }
     expect(seen.map((m) => m.rowCount)).toEqual([1, 2]);
     expect(seen.map((m) => m.workspaceId)).toEqual([a, b]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC10 (audit Phase 8, P8-R1) — WHICH PAUSE TRUTH THE COMMITTED FOLD READS.
+//
+// The master plan's deferral row "Pause's two stored truths" names this
+// fallback as the first new consumer that must choose between the MIRROR
+// (`subscriptions.paused_at`) and the AUTHORITY (`pause_periods`). It reads the
+// authority alone — the table `hasOpenPause` reads, which is what `/studio`'s
+// picker asks (`respinCredits.hasOpenPause`). A disagreement is planted in
+// BOTH directions, and in each the fold's frozen clock agrees with the
+// authority's answer, never the mirror's. The free-mint gate (the one mirror
+// reader on the fold path) is skipped: the committed fold writes nothing.
+// ---------------------------------------------------------------------------
+describe("AC10: the committed fold reads pause_periods alone, never the mirror", () => {
+  async function workspaceWithLot(db: TestDb) {
+    const ws = await mkWorkspace(db);
+    const now = Date.now();
+    await insertRows(db, ws, [
+      { delta: 40, kind: "grant", createdAt: new Date(now - 3_600_000), expiresAt: new Date(now + 10 * 86_400_000) },
+    ]);
+    return ws;
+  }
+
+  it("mirror says PAUSED, authority says not: the fold's clock runs, matching hasOpenPause = false", async () => {
+    const db = await createTestDb();
+    const ws = await workspaceWithLot(db);
+    await db.insert(schema.subscriptions).values({
+      workspaceId: ws,
+      stripeCustomerId: "cus_mirror_only",
+      stripeSubscriptionId: "sub_mirror_only",
+      status: "active",
+      pausedAt: new Date(Date.now() - 60_000),
+    });
+    const view = await db.transaction((tx) => committedFoldInTx(tx, ws));
+    const authority = await db.transaction((tx) => hasOpenPause(tx, ws));
+    expect(authority).toBe(false);
+    expect(view.lots).toHaveLength(1);
+    expect(view.lots[0].frozen).toBe(authority);
+    expect(view.lots[0].effectiveExpiresAt).not.toBeNull();
+  });
+
+  it("authority says PAUSED, mirror says not: the fold's clock is frozen, matching hasOpenPause = true", async () => {
+    const db = await createTestDb();
+    const ws = await workspaceWithLot(db);
+    await db.insert(pausePeriods).values({ workspaceId: ws, startedAt: new Date(Date.now() - 60_000) });
+    const view = await db.transaction((tx) => committedFoldInTx(tx, ws));
+    const authority = await db.transaction((tx) => hasOpenPause(tx, ws));
+    expect(authority).toBe(true);
+    expect(view.lots[0].frozen).toBe(authority);
+    expect(view.lots[0].effectiveExpiresAt).toBeNull();
+  });
+
+  it("the free-mint gate (and its mirror read) is skipped: a Free workspace due its allowance gets no row from the committed fold", async () => {
+    const db = await createTestDb();
+    await seedDb(db);
+    const ws = await mkWorkspace(db);
+    const rows = async () => (await db.select().from(creditLedger)).filter((r) => r.workspaceId === ws);
+    const view = await db.transaction((tx) => committedFoldInTx(tx, ws));
+    expect(view.balance).toBe(0);
+    expect(await rows()).toEqual([]);
+    // The LOCKED derive is what mints it — the difference is the skip.
+    const settled = await deriveBalance(db, ws);
+    expect(settled.balance).toBeGreaterThan(0);
+    expect((await rows()).map((r) => r.refType)).toEqual(["free_allowance"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC8 (audit Phase 8, P8-R1) — the committed fold IS `foldLedger`'s answer,
+// emits `settling: true`, and writes nothing; a planted second summation is
+// red against the same witness.
+// ---------------------------------------------------------------------------
+describe("AC8: the committed fold is foldLedger, measured, and writes nothing", () => {
+  it("equals foldLedger over the same committed rows, emits settling: true, writes no row", async () => {
+    const db = await createTestDb();
+    const ws = await mkWorkspace(db);
+    const now = Date.now();
+    await insertRows(db, ws, [
+      { delta: 100, kind: "grant", createdAt: new Date(now - 7_200_000), expiresAt: new Date(now - 3_600_000) },
+      { delta: 50, kind: "pack", createdAt: new Date(now - 7_200_000), expiresAt: new Date(now + 86_400_000) },
+      { delta: -20, kind: "debit", createdAt: new Date(now - 7_000_000) },
+    ]);
+    const metrics: FoldMetric[] = [];
+    setFoldMetricSink((m) => metrics.push(m));
+    try {
+      const before = (await db.select().from(creditLedger)).filter((r) => r.workspaceId === ws);
+      const view = await db.transaction((tx) => committedFoldInTx(tx, ws));
+      const after = (await db.select().from(creditLedger)).filter((r) => r.workspaceId === ws);
+      const pauses = (await db.select().from(pausePeriods)).filter((p) => p.workspaceId === ws);
+      // (i) the one fold — its answer over the very rows it read.
+      expect(view.balance).toBe(foldLedger(before, pauses, view.asOf).balance);
+      // The expired grant's remainder (80) is OUT of the number already, and
+      // its expiry row is NOT written (ii): the fold counts only live lots.
+      expect(view.balance).toBe(50);
+      expect(after).toEqual(before);
+      // (iv) measured, flagged.
+      expect(metrics).toEqual([expect.objectContaining({ workspaceId: ws, settling: true, rowCount: 3 })]);
+    } finally {
+      setFoldMetricSink(null);
+    }
+  });
+
+  it("PLANTED: a second summation (sum of deltas) disagrees with the fold on the same history — so the equality above is a real witness", async () => {
+    const db = await createTestDb();
+    const ws = await mkWorkspace(db);
+    const now = Date.now();
+    await insertRows(db, ws, [
+      { delta: 100, kind: "grant", createdAt: new Date(now - 7_200_000), expiresAt: new Date(now - 3_600_000) },
+      { delta: 50, kind: "pack", createdAt: new Date(now - 7_200_000), expiresAt: new Date(now + 86_400_000) },
+    ]);
+    const view = await db.transaction((tx) => committedFoldInTx(tx, ws));
+    const rows = (await db.select().from(creditLedger)).filter((r) => r.workspaceId === ws);
+    const naiveSum = rows.reduce((s, r) => s + r.delta, 0);
+    expect(naiveSum).toBe(150);
+    expect(view.balance).not.toBe(naiveSum);
+  });
+
+  it("the source: committedFoldInTx calls foldLedger and contains no summation over deltas", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, resolve } = await import("node:path");
+    const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/balance.ts"), "utf8").replace(/\r\n/g, "\n");
+    const body = src.slice(src.indexOf("export async function committedFoldInTx"), src.indexOf("export async function getDisplayBalance"));
+    expect(body.length).toBeGreaterThan(100);
+    expect(body).toMatch(/foldLedger\(rows, pauses, viewAt\)/);
+    const summation = /\.reduce\(|\bdelta\b/;
+    expect(body).not.toMatch(summation);
+    // ...and a planted summation inside it is caught by the same predicate.
+    const planted = body.replace(
+      "const fold = foldLedger(rows, pauses, viewAt);",
+      "const fold = { balance: rows.reduce((s, r) => s + r.delta, 0), lots: [] };"
+    );
+    expect(planted).not.toBe(body);
+    expect(planted).toMatch(summation);
   });
 });

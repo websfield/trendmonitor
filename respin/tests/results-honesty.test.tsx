@@ -82,7 +82,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { RESULT_NOTE_MAX } from "@respin/db";
+import { CHECK, RESULT_NOTE_MAX } from "@respin/db";
 import {
   CLAIM_SPECIMENS,
   FORBIDDEN_CLAIMS,
@@ -95,6 +95,7 @@ import {
 } from "../app/(product)/billing-errors";
 import {
   COMPARISON_BASIS,
+  METRIC_VERSIONS_NOTE,
   DESCRIPTIVE_NOT_PROOF,
   PAST_NOT_PREDICTION,
   TWO_LEVERS_NOTE,
@@ -287,6 +288,7 @@ const renderPromotion = (
       refreshAction={promotionAction}
       reviewAction={promotionAction}
       decideAction={promotionAction}
+      checkMarker={CHECK}
     />
     {/* The panel opens this only after reviewPromotionAction reconstructs a
         fresh review. Rendering it here drives the full-review state through
@@ -295,6 +297,7 @@ const renderPromotion = (
       review={promotionReviews[0]!}
       access={access}
       decideAction={promotionAction}
+      checkMarker={CHECK}
     />
   </>
 );
@@ -778,5 +781,45 @@ describe("R20 is asserted POSITIVELY, because nothing else would notice its remo
     expect(PAST_NOT_PREDICTION).toMatch(RESULTS_POSITIVE_ASSERTIONS[0].must);
     expect(DESCRIPTIVE_NOT_PROOF).toMatch(RESULTS_POSITIVE_ASSERTIONS[1].must);
     expect(TWO_LEVERS_NOTE).toMatch(RESULTS_POSITIVE_ASSERTIONS[2].must);
+  });
+});
+
+// AUDIT PHASE 2, P2-A5: the versions sentence and `COMPARISON_BASIS` said
+// opposite things — "results measured under different versions are never
+// compared" against "matching declarations from more than one version of your
+// strategy ARE compared", which is what the code does (the stratum keys on
+// `metricDeclarationKey`, not on a version). Both now carry the same four
+// tuple clauses.
+describe("the metric-versions sentence agrees with the comparison basis (P2-A5)", () => {
+  const CLAUSES = ["key, label, unit, and direction", "more than one version of your strategy"];
+  const FALSE = /different versions are never compared/i;
+
+  it("both sentences carry the four tuple clauses and the cross-version clause", () => {
+    for (const clause of CLAUSES) {
+      expect(COMPARISON_BASIS, clause).toContain(clause);
+      expect(METRIC_VERSIONS_NOTE, clause).toContain(clause);
+    }
+    expect(METRIC_VERSIONS_NOTE).not.toMatch(FALSE);
+  });
+
+  it("the rendered /results page carries the corrected sentence and never the false one", () => {
+    const html = renderToStaticMarkup(
+      <ResultsView
+        state={{
+          kind: "ready",
+          profileName: "Ada",
+          metric: { label: "Follows", key: "follows_per_1k", unit: "follows", direction: "higher_is_better" },
+          results: [],
+          moreResults: false,
+          comparisonError: null,
+          comparisons: [],
+        }}
+      />
+    );
+    const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    expect(text).toContain("key, label, unit, and direction");
+    expect(text).not.toMatch(FALSE);
+    // PLANTED: the old sentence is what this predicate catches.
+    expect("results measured under different versions are never compared with each other").toMatch(FALSE);
   });
 });

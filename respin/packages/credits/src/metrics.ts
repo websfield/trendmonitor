@@ -53,6 +53,12 @@ export type FoldMetric = {
   /** Ledger rows this fold replayed — the O(n) that D-M1-7 is about. */
   rowCount: number;
   durationMs: number;
+  /**
+   * True for the COMMITTED FOLD (`committedFoldInTx`, audit Phase 8 P8-R1): a
+   * display read that skipped the locked mint and materialisation. Absent or
+   * false for the locked derive.
+   */
+  settling?: boolean;
 };
 
 export type FoldMetricSink = (m: FoldMetric) => void;
@@ -61,7 +67,7 @@ function defaultSink(m: FoldMetric): void {
   // One line, machine-readable, naming both metrics by their committed names so
   // a log-based collector needs no mapping table.
   console.info(
-    `[respin-metric] ${FOLD_ROW_COUNT_METRIC}=${m.rowCount} ${FOLD_DURATION_METRIC}=${m.durationMs} workspace=${m.workspaceId}`
+    `[respin-metric] ${FOLD_ROW_COUNT_METRIC}=${m.rowCount} ${FOLD_DURATION_METRIC}=${m.durationMs} workspace=${m.workspaceId}${m.settling ? " settling=true" : ""}`
   );
   // The one trigger a single sample can honestly assert (see the constant).
   if (m.rowCount >= FOLD_ROW_COUNT_REVISIT_TRIGGER) {
@@ -182,7 +188,10 @@ export type UnchargedAttemptCapMetric = {
    * which is exactly the failure the counter exists to prevent ("the first
    * abuse of an unmeasured channel is learned about from an invoice").
    */
-  bound: "attempts" | "cost";
+  //
+  // `window_cost` (audit P3-R3, R-158) is the TOTAL-spend bound — successful
+  // calls included — which the two uncharged bounds cannot see.
+  bound: "attempts" | "cost" | "window_cost";
   /** Spend in the window, and the money cap — present on a cost refusal. */
   costMicroUsd?: number;
   capMicroUsd?: number;
@@ -209,7 +218,7 @@ function defaultCapSink(m: UnchargedAttemptCapMetric): void {
   // yet and a log line that needs a join is not one.
   // `bound` FIRST after the name, because it decides how to read the rest.
   const money =
-    m.bound === "cost"
+    m.bound === "cost" || m.bound === "window_cost"
       ? ` cost_micro_usd=${m.costMicroUsd ?? "unknown"} cap_micro_usd=${m.capMicroUsd ?? "unknown"}`
       : "";
   console.warn(
@@ -336,5 +345,164 @@ export function emitFrameworkOfferDroppedMetric(
     offerSink(m);
   } catch (err) {
     warnSinkThrew("framework offer", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// "MONEY MAY HAVE MOVED AND WE CANNOT PROVE IT" (audit P3-R7).
+//
+// `maybeAutoTopup` converts every post-dispatch uncertainty into a durable
+// reconciliation result. Its operator signal was a bare `console.warn` inside
+// `stripe/auto-topup.ts` — the one money metric that bypassed the sink
+// indirection every sibling here has, so no collector and no test could
+// observe it. PAYLOAD: the source code and the signed random attempt id —
+// never a Stripe error, a customer id or card data.
+
+/** The metric name. Changing it is a decision edit, like its siblings. */
+export const AUTO_TOPUP_RECONCILIATION_METRIC = "auto_topup_reconciliation_required";
+
+export type AutoTopupReconciliationMetric = {
+  /** Which provider step could not be proven (a closed code). */
+  source: string;
+  /** The attempt the v1 reconciler is run against. */
+  attemptId: string;
+};
+
+export type AutoTopupReconciliationMetricSink = (m: AutoTopupReconciliationMetric) => void;
+
+function defaultReconciliationSink(m: AutoTopupReconciliationMetric): void {
+  console.warn(
+    `[respin-metric] ${AUTO_TOPUP_RECONCILIATION_METRIC}=1 source=${m.source} attempt=${m.attemptId}`
+  );
+}
+
+let reconciliationSink: AutoTopupReconciliationMetricSink = defaultReconciliationSink;
+
+/** Point the reconciliation metric somewhere else (a collector, or a test). */
+export function setAutoTopupReconciliationMetricSink(
+  next: AutoTopupReconciliationMetricSink | null
+): void {
+  reconciliationSink = next ?? defaultReconciliationSink;
+}
+
+/** Emit one sample. Never throws into the money path that is reporting it. */
+export function emitAutoTopupReconciliationMetric(m: AutoTopupReconciliationMetric): void {
+  try {
+    reconciliationSink(m);
+  } catch (err) {
+    warnSinkThrew("auto-top-up reconciliation", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A PAID CALL WHOSE SPEND ROW COULD NOT BE WRITTEN (audit P3-R5, launch L2).
+//
+// `generate.ts`'s `meteredCall` writes one `model_usage` row per provider call
+// and, when that write fails, tries ONCE more in a fresh transaction. When the
+// second write fails too, the vendor has been paid and no row says so — and
+// the uncharged bounds count only rows. This is the one place those numbers
+// survive: an operator can reconstruct the spend from the event stream, keyed
+// by attempt id. Nothing reconstructs it automatically.
+//
+// PAYLOAD: the attempt id and four numbers. Never the prompt, the reply, the
+// model's text or any creator content — the closed shape below is the whole
+// payload, and its default line prints exactly these fields.
+
+/** The metric name. Changing it is a decision edit, like its siblings. */
+export const GENERATION_SPEND_UNRECORDED_METRIC =
+  "respin.credits.generation.spend_unrecorded";
+
+export type GenerationSpendUnrecordedMetric = {
+  attemptId: string;
+  tokensIn: number;
+  tokensOut: number;
+  /** The priced cost, or `null` when it cannot be priced (no usage, no price row). */
+  costMicroUsd: bigint | null;
+};
+
+export type GenerationSpendUnrecordedMetricSink = (
+  m: GenerationSpendUnrecordedMetric
+) => void;
+
+function defaultSpendUnrecordedSink(m: GenerationSpendUnrecordedMetric): void {
+  console.warn(
+    `[respin-metric] ${GENERATION_SPEND_UNRECORDED_METRIC}=1 attempt=${m.attemptId} tokens_in=${m.tokensIn} tokens_out=${m.tokensOut} cost_micro_usd=${m.costMicroUsd ?? "unknown"}`
+  );
+}
+
+let spendUnrecordedSink: GenerationSpendUnrecordedMetricSink =
+  defaultSpendUnrecordedSink;
+
+/** Point the metric somewhere else (a collector, or a test's recorder). */
+export function setGenerationSpendUnrecordedMetricSink(
+  next: GenerationSpendUnrecordedMetricSink | null
+): void {
+  spendUnrecordedSink = next ?? defaultSpendUnrecordedSink;
+}
+
+/**
+ * Emit one unrecorded spend. NEVER throws into the caller: it runs on a path
+ * that is already failing, and a sink that threw would replace the failure the
+ * caller is about to record with a telemetry stack trace.
+ */
+export function emitGenerationSpendUnrecordedMetric(
+  m: GenerationSpendUnrecordedMetric
+): void {
+  try {
+    spendUnrecordedSink(m);
+  } catch (err) {
+    warnSinkThrew("generation spend unrecorded", err);
+  }
+}
+
+// ------------------------------------------- included build not given back
+//
+// THE FREE FIRST BUILD WAS CLAIMED AND ITS OUTPUT WAS NOT STORED (audit Phase
+// 3 gate, billing note). `runInference` claims the included build with the
+// usage row at step 8b, then stores the output in the step-9 transaction. When
+// that store is refused, `runInference` gives the claim back in a fresh
+// transaction — and when THAT write fails too, the creator's free build stays
+// spent on an output they never received. This is the one place that fact
+// surfaces; an operator removes the claim row by attempt id.
+//
+// PAYLOAD: ids only — never the reply or any creator content.
+
+/** The metric name. Changing it is a decision edit, like its siblings. */
+export const INCLUDED_BUILD_RELEASE_FAILED_METRIC =
+  "respin.credits.inference.included_build_release_failed";
+
+export type IncludedBuildReleaseFailedMetric = {
+  attemptId: string;
+  purpose: string;
+};
+
+export type IncludedBuildReleaseFailedMetricSink = (
+  m: IncludedBuildReleaseFailedMetric
+) => void;
+
+function defaultIncludedBuildReleaseFailedSink(m: IncludedBuildReleaseFailedMetric): void {
+  console.warn(
+    `[respin-metric] ${INCLUDED_BUILD_RELEASE_FAILED_METRIC}=1 attempt=${m.attemptId} purpose=${m.purpose}`
+  );
+}
+
+let includedBuildReleaseFailedSink: IncludedBuildReleaseFailedMetricSink =
+  defaultIncludedBuildReleaseFailedSink;
+
+/** Point the metric somewhere else (a collector, or a test's recorder). */
+export function setIncludedBuildReleaseFailedMetricSink(
+  next: IncludedBuildReleaseFailedMetricSink | null
+): void {
+  includedBuildReleaseFailedSink = next ?? defaultIncludedBuildReleaseFailedSink;
+}
+
+/** Emit one failed release. NEVER throws into the caller (the path is already failing). */
+export function emitIncludedBuildReleaseFailedMetric(
+  m: IncludedBuildReleaseFailedMetric
+): void {
+  try {
+    includedBuildReleaseFailedSink(m);
+  } catch (err) {
+    warnSinkThrew("included build release failed", err);
   }
 }

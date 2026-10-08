@@ -356,6 +356,9 @@ describe("sanctioned @respin/db surface from app/** (tenancy T1)", () => {
   it("allows the SHARED COPY vocabulary and still denies the brain write surface", async () => {
     const shared = [
       "PLACEHOLDER_ABSENCE",
+      // Audit Phase 2 (P2-R8): the `[check]` marker's one home, for the
+      // server-reachable files that decide against it.
+      "CHECK",
       "INTERVIEW_PLACEHOLDER_ABSENCE",
       "VOICE_FIELD_LABELS",
       "STRATEGY_FIELD_LABELS",
@@ -1162,6 +1165,25 @@ describe("slice 6 R1: @respin/modes joins the boundary DELIBERATELY", () => {
     }
   });
 
+  it("`outputTextUnits` stays UNREACHABLE from app/** (audit Phase 2, P2-R6)", async () => {
+    // The Spin projection used to be a hand-listed five-of-ten field list; it
+    // is now the facade's `presentedTextUnits`. The tempting shortcut —
+    // importing the package's own population — must stay red, by name, by
+    // deep entry and by path, and neither facade the app may read re-exports
+    // it.
+    const named = 'import { outputTextUnits } from "@respin/modes";\nexport const y = outputTextUnits;\n';
+    expect(await denied("app/(product)/trends/fixture.ts", named)).toBe(true);
+    for (const spec of ["@respin/modes/src/output", "../../../packages/modes/src/output"]) {
+      expect(
+        await denied("app/(product)/trends/fixture.ts", `import { outputTextUnits } from "${spec}";\nexport const y = outputTextUnits;\n`),
+        spec
+      ).toBe(true);
+    }
+    for (const facade of ["packages/credits/src/app-server.ts", "packages/db/src/index.ts"]) {
+      expect(readFileSync(resolve(respinRoot, facade), "utf8"), facade).not.toMatch(/\boutputTextUnits\b/);
+    }
+  });
+
   it("packages/** MAY reach its root — stage C composes the generation there", async () => {
     // The direction that makes this a boundary rather than a wall. If this
     // flips, `packages/credits/src/generate.ts` cannot be written at all.
@@ -1260,6 +1282,21 @@ describe("slice 8 dedicated worker package surface", () => {
       { filePath: resolve(respinRoot, "app/fixture/route.ts") },
     );
     expect(appResults.flatMap((result) => result.messages).some((message) => message.ruleId === "no-restricted-imports")).toBe(true);
+  });
+
+  it("audit P3-R1(b): scripts/** take @respin/credits/operator-server and NOT the app facade; app/** and worker/** may not take operator-server", async () => {
+    const restricted = async (code: string, file: string) =>
+      (await eslint.lintText(code, { filePath: resolve(respinRoot, file) }))
+        .flatMap((result) => result.messages)
+        .filter((message) => message.ruleId === "no-restricted-imports");
+    const operatorImport =
+      'import { operatorSettleCandidate } from "@respin/credits/operator-server";\nexport const x = operatorSettleCandidate;\n';
+    expect(await restricted(operatorImport, "scripts/fixture.ts")).toEqual([]);
+    expect(
+      await restricted('import { respinCredits } from "@respin/credits/app-server";\nexport const x = respinCredits;\n', "scripts/fixture.ts")
+    ).not.toEqual([]);
+    expect(await restricted(operatorImport, "app/fixture/route.ts")).not.toEqual([]);
+    expect(await restricted(operatorImport, "worker/fixture.ts")).not.toEqual([]);
   });
 
   it("admits the R-124 S3 journal adapter and its composition names in the worker (10b-1 Task 5)", async () => {

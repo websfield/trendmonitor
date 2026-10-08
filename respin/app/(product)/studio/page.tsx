@@ -22,26 +22,53 @@
 // operation, at operation time. If this page and those gates ever disagree, the
 // gates are right and the creator sees a refusal with copy.
 import { requireUser } from "@respin/auth";
-import { FEEDBACK_NOTE_MAX, GENERATION_FEEDBACK_REACTIONS, respinDb } from "@respin/db";
 import {
+  BRAIN_EDIT_VALUE_MAX,
+  FEEDBACK_NOTE_MAX,
+  GENERATION_FEEDBACK_REACTIONS,
+  OWN_IDEA_MAX,
+  respinDb,
+} from "@respin/db";
+import {
+  CREATIVE_CONSTRAINT_BOUNDS,
+  CREATIVE_FORM_OPTIONS,
+  CREATIVE_PEOPLE_OPTIONS,
+  FIND_CONCEPT_MODE,
   generationOp,
-  modeOffers,
+  modeLabel,
   priceOf,
+  studioModeOffers,
   respinCredits,
 } from "@respin/credits/app-server";
+import { displayBalanceFor } from "../display-balance";
 import { getActiveConfigServer } from "@respin/config/app-server";
 import { rethrowNextControlFlow } from "../../../lib/next-control-flow";
 import { AccessRefusal } from "../access-refusal";
 import { billingErrorDisplay } from "../billing-errors";
 import { logRefusal } from "../safe-log";
 import { scopeForUser } from "../workspace-scope";
-import { generateAction, recordFeedbackAction } from "./actions";
-import { generateBlock, studioErrorFor, studioRefusalCopy } from "./copy";
+import {
+  cancelPieceAction,
+  commissionPieceAction,
+  findConceptAction,
+  generateAction,
+  newGenerationAction,
+  recordFeedbackAction,
+  excludeFeedbackFromHistoryAction,
+  rememberForFutureDraftsAction,
+  resumeHeldDraftAction,
+  selectConceptAction,
+  startOwnIdeaAction,
+} from "./actions";
+import { generateBlock, pieceViewFor, studioErrorFor, studioRefusalCopy } from "./copy";
+import type { PieceConfirmationProps } from "./piece-confirmation";
 import {
   generateCostSentence,
+  inputLimitSentence,
   revisionCostSentence,
   type ModeChoiceView,
 } from "./run-copy";
+import type { HeldDraftLine } from "./studio-panel";
 import { StudioView } from "./studio-view";
 
 export const dynamic = "force-dynamic";
@@ -58,6 +85,8 @@ export default async function StudioPage(props: {
   const error = studioErrorFor(
     typeof search.e === "string" ? search.e : undefined
   );
+  // Set only by `cancelPieceAction`'s redirect; carries no data.
+  const pieceCancelled = search.cancelled === "1";
 
   // Scoping is a REFUSAL PATH, not an assumption: `scopeForUser` bootstraps
   // before the scope read so this page cannot lose the first-login race against
@@ -88,6 +117,9 @@ export default async function StudioPage(props: {
     return (
       <StudioView
         profileName={null}
+        piece={null}
+        pieceError={null}
+        entrances={null}
         run={null}
         error={error}
         onboardingHref="/onboarding"
@@ -236,7 +268,13 @@ export default async function StudioPage(props: {
     }
   };
 
-  const modes: ModeChoiceView[] = modeOffers(tier).map((offer) => ({
+  // STUDIO'S VIEW OF THE OFFERS (Phase 6 compliance gate): Spin, the
+  // similarity-gated mode, needs an autopsy chosen on `/trends`, and
+  // `generate` refuses it from this picker every time, so it is not offered
+  // here. The filter is the facade's
+  // (`studioModeOffers`, derived from the spec's similarity gate), so this
+  // page still names no mode.
+  const modes: ModeChoiceView[] = studioModeOffers(tier).map((offer) => ({
     id: offer.id,
     label: offer.label,
     status: offer.status,
@@ -244,6 +282,9 @@ export default async function StudioPage(props: {
     // cost of a mode the plan excludes would put a price tag on a refusal,
     // which is the sales shape R15 keeps off these screens.
     cost: offer.status === "available" ? priceFor(offer.id, false) : null,
+    // R-148: whether the creative form control belongs beside this mode — the
+    // facade's answer, so this page names no mode.
+    takesCreativeForm: offer.takesCreativeForm,
   }));
 
   // THE REVISION PRICE IS MODE-INDEPENDENT (R8) and is read as such: the key
@@ -255,41 +296,203 @@ export default async function StudioPage(props: {
   const revisionCost =
     firstOffered === undefined ? null : priceFor(firstOffered.id, true);
 
+  // ONE DISPLAY READ, NEVER A SECOND LOCKED FOLD (audit Phase 8, P8-R1): the
+  // layout already reads the rail's number this way; this page's read is the
+  // same non-blocking one, and `settling` reaches the cost sentence so a
+  // committed-fold number is never stated as final. The page decides nothing
+  // from it — "insufficient" is decided only inside `generate`.
   let balance: number | null = null;
+  let balanceSettling = false;
   try {
-    const view = await respinCredits.getBalance(scope.workspaceId);
+    const view = await displayBalanceFor(scope.workspaceId);
     balance = view.balance;
+    balanceSettling = view.settling;
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[studio] balance unavailable", err);
   }
 
   const refusalCopy = studioRefusalCopy();
+  const block = generateBlock({
+    isViewer: scope.role === "viewer",
+    paused,
+    brainActivated,
+  });
+
+  // LAUNCH L2 (R-151): THE CONFIRMATION OF A CHOSEN PIECE, read from the
+  // database by its id in the URL — which is what makes the selection, its
+  // server-minted operation id and its quote survive a reload. A COURTESY
+  // READ like every other one here: a foreign, missing or cancelled piece
+  // renders the refusal copy instead, and `generate` re-resolves the piece
+  // (scope, operation id, quote) itself at the press.
+  const pieceParam = typeof search.piece === "string" ? search.piece : null;
+  let piece: PieceConfirmationProps | null = null;
+  let pieceError: { title: string; detail: string } | null = null;
+  if (pieceParam !== null) {
+    try {
+      const view = await respinCredits.creativePieceView(scope, profile.id, pieceParam);
+      piece = {
+        piece: pieceViewFor(view),
+        commissionAction: commissionPieceAction.bind(null, profile.id, view.pieceId),
+        newGenerationAction: newGenerationAction.bind(null, profile.id, view.pieceId),
+        cancelAction: cancelPieceAction.bind(null, profile.id, view.pieceId),
+        formOptions: CREATIVE_FORM_OPTIONS,
+        peopleOptions: CREATIVE_PEOPLE_OPTIONS,
+        creativeBounds: CREATIVE_CONSTRAINT_BOUNDS,
+        block,
+        refusalCopy,
+        fallbackCopy: refusalCopy.unknown,
+      };
+    } catch (err) {
+      rethrowNextControlFlow(err);
+      pieceError = billingErrorDisplay(err);
+      logRefusal("[studio] piece unavailable", err, {
+        profileId: profile.id,
+        workspaceId: scope.workspaceId,
+      });
+    }
+  }
+
+  // THE NO-CONCEPT READINESS — the server's deterministic rule, read as a
+  // courtesy so the one clarifying question is asked up front. `null` when
+  // the read failed: the hint stays optional and `generate` asks it instead.
+  let conceptReady: boolean | null = null;
+  try {
+    conceptReady = await respinCredits.conceptContextReady(scope, profile.id);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[studio] concept readiness unavailable", err);
+  }
+
+  // THE STANDALONE REFERENCE BREAKDOWN — THREE STATES, never a guessed plan
+  // fact: in the plan (offered), not in the plan (visibly withheld), or
+  // UNKNOWN when the read failed — neutral copy and the trends link, because
+  // the trends page and its writer decide. The read is the tier against the
+  // pasted-reference tier list and nothing else (`pastedReferenceInPlan`), so
+  // this render takes no workspace money lock for it (audit P8-R1; the page's
+  // own balance read above is the pre-L2 one L5 owns).
+  let referenceInPlan: boolean | null = null;
+  try {
+    referenceInPlan = await respinCredits.pastedReferenceInPlan(scope.workspaceId, new Date());
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[studio] reference plan unavailable", err);
+  }
+
+  // LAUNCH L4 (R-153): THE WAY BACK TO A SAVED RECORDING PACK after the tab
+  // was closed — this profile's most recent stored drafts, each linking to its
+  // saved page. A COURTESY READ: scoped, no provider, no ledger, no lock; a
+  // failure renders a neutral line instead of a list.
+  let recentPacks: Awaited<ReturnType<typeof respinCredits.recentSavedGenerations>> | null = null;
+  try {
+    recentPacks = await respinCredits.recentSavedGenerations(scope, profile.id);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[studio] recent saved drafts unavailable", err);
+  }
+
+  // AUDIT P6-R6 (register item 8): HOW MANY RESULTS THIS CREATOR HAS LOGGED,
+  // through the scoped count (`ProfileScope.accessors.countResults` behind
+  // `ProfileScope.mint`). A COURTESY READ with a failure that SAYS so: `null`
+  // renders "could not read", never the zero sentence, which would be the
+  // false claim this read exists to remove.
+  let resultCount: number | null = null;
+  try {
+    resultCount = await respinDb.countResults(scope, profile.id);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[studio] result count unavailable", err);
+  }
+
+  // AUDIT P3-A4 (R-157): THIS CREATOR'S HELD DRAFTS — finished by the model,
+  // stored, not charged — each with the time the worker's clear removes it. A
+  // COURTESY READ like the list above (scoped, no provider, no ledger): a
+  // failure renders a neutral line, never a missing section that reads as "no
+  // held drafts". `heldDrafts` returns ids, modes and times, never content.
+  let held: HeldDraftLine[] | null = null;
+  try {
+    held = (await respinCredits.heldDrafts(scope, profile.id)).map((draft) => ({
+      attemptId: draft.attemptId,
+      modeLabel: modeLabel(draft.mode),
+      heldUntil: draft.heldUntil.toISOString(),
+    }));
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[studio] held drafts unavailable", err);
+  }
 
   return (
     <StudioView
       profileName={profile.displayName}
+      recentPacks={recentPacks}
+      piece={piece}
+      pieceError={pieceError}
+      pieceCancelled={pieceCancelled && piece === null}
+      entrances={{
+        findConceptAction: findConceptAction.bind(null, profile.id),
+        selectConceptAction: selectConceptAction.bind(null, profile.id),
+        startOwnIdeaAction: startOwnIdeaAction.bind(null, profile.id),
+        conceptReady,
+        // The SAME offer the panel prices (B-5): the mode the press runs.
+        findConceptOffer: modes.find((m) => m.id === FIND_CONCEPT_MODE) ?? null,
+        formOptions: CREATIVE_FORM_OPTIONS,
+        peopleOptions: CREATIVE_PEOPLE_OPTIONS,
+        creativeBounds: CREATIVE_CONSTRAINT_BOUNDS,
+        ownIdeaMax: OWN_IDEA_MAX,
+        reference:
+          referenceInPlan === null
+            ? { status: "unknown", href: "/trends" }
+            : referenceInPlan
+              ? { status: "available", href: "/trends" }
+              : { status: "not_in_plan" },
+        block,
+        refusalCopy,
+        fallbackCopy: refusalCopy.unknown,
+      }}
       run={{
         // A BOUND ARGUMENT, not a hidden field — the same shape `/brain`'s
         // forms use. Still untrusted input on the wire; `mintProfileScope` is
         // what refuses a foreign id.
         action: generateAction.bind(null, profile.id),
+        // Audit P3-A4: "Finish this draft", bound to the profile like every
+        // other control here; it posts only the held attempt's id.
+        held: {
+          drafts: held,
+          resumeAction: resumeHeldDraftAction.bind(null, profile.id),
+        },
+        // Audit P3-R2: the ceiling in words, from the config read above —
+        // `null` (the courtesy read failed) says there is a limit without a
+        // number.
+        inputLimitSentence: inputLimitSentence(content?.llm.maxInputTokens ?? null),
         feedbackAction: recordFeedbackAction.bind(null, profile.id),
+        // Audit P6-A1 (R-174): "Leave this out of future drafts", bound to the
+        // profile; it posts only the stored reaction's id.
+        excludeAction: excludeFeedbackFromHistoryAction.bind(null, profile.id),
+        resultCount,
+        // Launch L3 (R-152): "Remember this for future drafts" — a PROPOSED
+        // Kill Test edit, confirmed and activated on the Brain page.
+        rememberAction: rememberForFutureDraftsAction.bind(null, profile.id),
+        rememberValueMax: BRAIN_EDIT_VALUE_MAX,
+        // Proposing a brain edit is the owner's act (R-118); the server's own
+        // gate refuses anyone else, and the panel says so instead of offering
+        // the press (L3 gate, T-L3).
+        rememberAllowed: scope.role === "owner",
         modes,
-        costSentence: generateCostSentence(modes, balance),
+        costSentence: generateCostSentence(modes, balance, balanceSettling),
         revisionCostSentence: revisionCostSentence(revisionCost),
         revisionCost,
+        // R-148: the closed set of form choices and the bounds the parse
+        // enforces, from the facade — the panel offers exactly these.
+        formOptions: CREATIVE_FORM_OPTIONS,
+        peopleOptions: CREATIVE_PEOPLE_OPTIONS,
+        creativeBounds: CREATIVE_CONSTRAINT_BOUNDS,
         // THE CLOSED REACTION SET, FROM THE DATABASE'S OWN ENUM. The screen
         // renders one control per member, so it cannot offer a code
         // `recordGenerationFeedback` would refuse — the `INTERVIEW_FIELDS`
         // precedent, and the reason a hand-copied list is not allowed here.
         reactions: GENERATION_FEEDBACK_REACTIONS,
         noteMax: FEEDBACK_NOTE_MAX,
-        block: generateBlock({
-          isViewer: scope.role === "viewer",
-          paused,
-          brainActivated,
-        }),
+        block,
         activeKinds,
         brainHref: "/brain",
         usageHref: "/usage",

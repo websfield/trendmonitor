@@ -12,14 +12,14 @@
 // `number` and `date` shapes, so a stray "3" in a fixture hook would make the
 // pipeline rewrite for a reason the test did not intend — the hook-length case
 // below is the ONE fixture that trips a hard rule, and it trips exactly one.
-import type { ScriptOutput } from "@respin/modes";
+import type { ScriptOutput, ScriptOutputV1 } from "@respin/modes";
 
 export const PLATFORM = "tiktok";
 
 /** A valid hooks document that passes every hard rule. */
 export function hooksOutput(
   over: Partial<{ hookTexts: string[]; weakestPoint: string }> = {}
-): ScriptOutput {
+): ScriptOutputV1 {
   const texts = over.hookTexts ?? [
     "the part nobody tells you about starting out",
     "what changed when i stopped planning every shot",
@@ -73,4 +73,24 @@ export function killTestReply(ruleIds: readonly string[]): string {
       note: "it does not do the thing this criterion rules out",
     })),
   });
+}
+
+/**
+ * R-173's three outcomes, planted in the one field every mode's document has
+ * and the claim scan refuses on for every hard shape: `/whyThisPerforms/
+ * reasoning`. CLAIM_ONLY trips `forbidden_claim` and nothing else; MIXED_CAUSE
+ * adds an invented currency figure, which `traceability.ts` refuses as
+ * `invented_specific` — a second, non-claim cause.
+ */
+export const CLAIM_ONLY_REASONING =
+  "this draft is guaranteed to work for anyone who films it";
+export const MIXED_CAUSE_REASONING =
+  "this draft is guaranteed to work, and it made me $4,000 last month";
+
+/** The same document with its reasoning replaced. */
+export function withReasoning<T extends { whyThisPerforms: { reasoning: string; weakestPoint: string } }>(
+  doc: T,
+  reasoning: string
+): T {
+  return { ...doc, whyThisPerforms: { ...doc.whyThisPerforms, reasoning } };
 }

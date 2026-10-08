@@ -19,6 +19,24 @@ on:
     paths:
       - "respin/**"
       - ".github/workflows/**"
+  # A DAILY RUN, so a newly published advisory is seen without anyone editing
+  # respin/ (P9-R10; the audit aged a month on push-only triggers — register
+  # 2026-10-05 item 13). It also re-reads SECURITY-EXCEPTIONS.md's review-by
+  # dates through tests/journeys-workflow-triggers.test.ts, so a lapsed
+  # exception turns this run red on its date.
+  #
+  # WHO SEES A RED SCHEDULED RUN: a `schedule:` run has no pull-request author,
+  # so GitHub's own workflow-failure notification goes to the user who last
+  # committed THIS FILE — the repository owner keeps that commit. The failing
+  # audit step prints the advisories into the job log, so the notification
+  # links to the cause. Paging beyond GitHub's notification is deploy-side:
+  # todos.md T-24.
+  schedule:
+    - cron: "23 4 * * *"
+
+# The token floor, pinned as the other two Respin workflows pin it (P9-R10).
+permissions:
+  contents: read
 
 jobs:
   gate:
@@ -46,12 +64,15 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://respin:respin_ci@localhost:5432/respin
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      # Every action pinned by a 40-hex commit SHA (P9-R10; the same pins as
+      # respin-visual.yml and respin-journeys.yml, each resolved with
+      # `git ls-remote` against its tag on 2026-10-05).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         # version comes from respin/package.json "packageManager"
         with:
           package_json_file: respin/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -108,14 +129,30 @@ jobs:
       # low are reported by the non-blocking summary below so they are visible
       # without gating every PR on a transitive advisory nobody can action.
       #
+      # `--prod` SCOPE: this blocking step excludes devDependencies. The dev
+      # tree (the browser test runner, tsx, vitest...) is audited, blocking, in
+      # respin-journeys.yml before any dependency code runs in the job that
+      # holds the vendor key — the one place a dev-only package runs beside a
+      # secret (P9-A3).
+      #
+      # `if: ${{ !cancelled() }}` (P9-A3, gate round 1): this used to be the
+      # LAST step and so was skipped on any red earlier step — a PR red for a
+      # lint error never learned it had also added a vulnerable dependency. Not
+      # `always()`, which would also run it on a cancelled run.
+      #
       # EXCEPTION PROCESS: there is no ignore-list flag here on purpose — an
       # allowlist inside the workflow is an exception nobody reviews. To accept
-      # a specific advisory, add a `pnpm.auditConfig.ignoreCves` entry in
-      # respin/package.json with a comment naming the advisory, why it is not
-      # reachable from this code, and who to ask — so the exception lands in a
-      # reviewed diff rather than in CI configuration.
+      # a specific advisory, add its GHSA id to `pnpm.auditConfig.ignoreGhsas`
+      # in respin/package.json (the key pnpm reads; a CVE-keyed ignore list is
+      # silently ineffective for a GHSA id) AND a dated row with a review-by
+      # date in respin/SECURITY-EXCEPTIONS.md naming the advisory, why it is
+      # not reachable from this code, and who to ask — so the exception lands
+      # in a reviewed diff rather than in CI configuration.
+      # tests/journeys-workflow-triggers.test.ts holds both halves: every id
+      # has a row, and no row's review-by date has passed.
       - name: Dependency audit (high/critical fails)
+        if: ${{ !cancelled() }}
         run: pnpm audit --audit-level high --prod
       - name: Dependency audit — full report (never fails the build)
-        if: always()
+        if: ${{ !cancelled() }}
         run: pnpm audit || true

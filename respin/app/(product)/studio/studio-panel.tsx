@@ -28,7 +28,7 @@
 import { useActionState, useState } from "react";
 import { buttonClass } from "../../ui/button";
 import { SubmitButton } from "../onboarding/submit-button";
-import { FeedbackBlock } from "./feedback-block";
+import { FeedbackBlock, RememberBlock } from "./feedback-block";
 import { GenerationOutcome } from "./generation-outcome";
 import { LineageList } from "./lineage-view";
 // EVERYTHING THIS FILE IMPORTS FROM THE SCREEN COMES FROM `./run-copy.ts`, and
@@ -37,23 +37,41 @@ import { LineageList } from "./lineage-view";
 // of this import doing exactly that; the build's own error would have named
 // `dns`, not the import.
 import {
-  NO_RESULTS_BASIS,
+  FINISH_HELD_DRAFT_LABEL,
+  HELD_DRAFTS_HEADING,
+  HELD_DRAFTS_NOTE,
+  HELD_DRAFTS_UNAVAILABLE,
+  heldUntilText,
+  FILMING_LIMITS_HELP,
+  FILMING_LIMITS_SUMMARY,
+  FORM_CONTROL_HELP,
+  FORM_CONTROL_LEGEND,
   priceLineFor,
+  resultsBasisSentence,
   NO_STREAM_NOTE,
   PLATFORM_OPTIONS,
   PREPARING_LABEL,
+  REVISION_KEEPS_FORM_NOTE,
   REVISION_NOTE_HELP,
   REVISION_SAME_MODE_NOTE,
+  SEQUEL_HELP,
+  SEQUEL_LABEL,
   lineageChoiceLabel,
   inForceSentence,
   modeAvailabilityNote,
   type ActiveBrainKind,
+  type CreativeBoundsView,
+  type FormOptionView,
   type ModeChoiceView,
 } from "./run-copy";
 import {
+  IDLE_EXCLUDE_STATE,
   IDLE_FEEDBACK_STATE,
+  IDLE_REMEMBER_STATE,
   IDLE_STUDIO_STATE,
+  type ExcludeState,
   type FeedbackState,
+  type RememberState,
   type StudioActionState,
 } from "./run-state";
 
@@ -75,19 +93,77 @@ const control: React.CSSProperties = {
   fontSize: "1rem",
 };
 
+/** One held draft, as plain values (audit P3-A4). */
+export type HeldDraftLine = {
+  attemptId: string;
+  modeLabel: string;
+  /** ISO instant the worker's clear removes it. */
+  heldUntil: string;
+};
+
 export type StudioPanelProps = {
   action: (
     prev: StudioActionState,
     formData: FormData
   ) => Promise<StudioActionState>;
+  /**
+   * Audit P3-A4 (R-157): this creator's HELD drafts and the "Finish this
+   * draft" action. `drafts` is `null` when the courtesy read failed. Absent on
+   * a fixture that renders no held list.
+   */
+  held?: {
+    drafts: readonly HeldDraftLine[] | null;
+    resumeAction: (
+      prev: StudioActionState,
+      formData: FormData
+    ) => Promise<StudioActionState>;
+  };
+  /**
+   * Audit P3-R2: the input ceiling in words, from the server-read
+   * `llm.maxInputTokens` — visible text, never a `maxLength`.
+   */
+  inputLimitSentence?: string;
   feedbackAction: (
     prev: FeedbackState,
     formData: FormData
   ) => Promise<FeedbackState>;
   /**
-   * Every mode this product has, with its label, whether this workspace may
-   * press it, and what it costs — RESOLVED SERVER-SIDE from `modeOffers(tier)`
-   * and the active config. This screen holds no mode list of its own; see
+   * Audit P6-A1 (R-174): "Leave this out of future drafts", offered beside a
+   * recorded reaction. Optional so a fixture that renders no feedback need
+   * not pass one; the page always does.
+   */
+  excludeAction?: (
+    prev: ExcludeState,
+    formData: FormData
+  ) => Promise<ExcludeState>;
+  /**
+   * HOW MANY RESULTS THIS CREATOR HAS LOGGED (audit P6-R6, register item 8):
+   * the page's scoped `respinDb.countResults` read, or `null` when that read
+   * failed. It selects which sentence `resultsBasisSentence` says; `null`
+   * says the count could not be read and never falls back to "none".
+   */
+  resultCount: number | null;
+  /**
+   * Launch L3 (R-152): "Remember this for future drafts" — writes a PROPOSED
+   * Kill Test version, never an active one.
+   */
+  rememberAction: (
+    prev: RememberState,
+    formData: FormData
+  ) => Promise<RememberState>;
+  /** The per-field ceiling the creator-edit path enforces, from `@respin/db`. */
+  rememberValueMax: number;
+  /**
+   * Whether this seat may propose a brain edit: the page's resolved
+   * `scope.role === "owner"` (R-118). Editors and viewers are told why instead
+   * of being offered a press the server refuses (L3 gate, T-L3).
+   */
+  rememberAllowed: boolean;
+  /**
+   * Every mode Studio offers, with its label, whether this workspace may
+   * press it, and what it costs — RESOLVED SERVER-SIDE from
+   * `studioModeOffers(tier)` (every mode but the ones that run only from
+   * /trends) and the active config. This screen holds no mode list of its own; see
    * `./copy.ts` for why a screen-side tier→mode map is refused.
    */
   modes: readonly ModeChoiceView[];
@@ -105,6 +181,16 @@ export type StudioPanelProps = {
    * revised for 2 that is a money lie on the control that spends it.
    */
   revisionCost: number | null;
+  /**
+   * R-148: the creative form choices, "Choose for me" first, and the two
+   * who-films values — both RESOLVED SERVER-SIDE from the credits facade, so
+   * this file holds no form vocabulary. Offered only beside a mode whose
+   * `takesCreativeForm` the server set; the operation refuses anything else.
+   */
+  formOptions: readonly FormOptionView[];
+  peopleOptions: readonly FormOptionView[];
+  /** The bounds `parseCreativeRequest` enforces, advertised on the inputs. */
+  creativeBounds: CreativeBoundsView;
   /** The closed reaction vocabulary, from the database's own enum. */
   reactions: readonly string[];
   /** The note ceiling, stated where it binds. */
@@ -122,13 +208,159 @@ export type StudioPanelProps = {
   fallbackCopy: { title: string; detail: string };
 };
 
+/**
+ * The form choice and the optional filming limits (R-148).
+ *
+ * UNCONTROLLED INPUTS, read by the action from the form's own data — there is
+ * nothing here for client state to decide. Every input has a visible label;
+ * the two choice groups are fieldsets with legends, so a screen reader hears
+ * the question before the options. The `max`/`maxLength` values are the
+ * parse's own bounds, ADVERTISED, never relied on: a hand-built post goes
+ * straight past them to `parseCreativeRequest`, which is the gate.
+ */
+export function CreativeFormControl({
+  formOptions,
+  peopleOptions,
+  bounds,
+  defaultForm,
+  idPrefix = "studio",
+}: {
+  formOptions: readonly FormOptionView[];
+  peopleOptions: readonly FormOptionView[];
+  bounds: CreativeBoundsView;
+  /**
+   * Launch L2: the option checked first — a chosen concept's own resolved form
+   * (L1: "developing a stored concept defaults to its stored resolved form").
+   * Absent, or not one of the options, means the first option ("Choose for me").
+   */
+  defaultForm?: string | null;
+  /** Prefix for the input ids, so two controls on one page never share one. */
+  idPrefix?: string;
+}) {
+  const checkedForm = formOptions.some((o) => o.id === defaultForm)
+    ? defaultForm
+    : formOptions[0]?.id;
+  // A comma-separated box carries up to `listMax` entries of
+  // `itemMaxCodePoints` each, plus a separator.
+  const listChars = bounds.listMax * (bounds.itemMaxCodePoints + 2);
+  return (
+    <fieldset data-testid="studio-form-control" style={{ marginBottom: "1rem" }}>
+      <legend>{FORM_CONTROL_LEGEND}</legend>
+      {formOptions.map((option) => (
+        <label
+          key={option.id}
+          style={{ display: "block", minHeight: "44px", lineHeight: "44px" }}
+        >
+          <input
+            type="radio"
+            name="formChoice"
+            value={option.id}
+            defaultChecked={option.id === checkedForm}
+            data-testid="studio-form-option"
+          />{" "}
+          {option.label}
+        </label>
+      ))}
+      <p className="muted" data-testid="studio-form-help">
+        {FORM_CONTROL_HELP}
+      </p>
+      {/*
+        A FIELDSET, NOT A NATIVE FOLD: the limits are binding once filled in,
+        so they stay on the page, and `tests/page-wiring.test.tsx` pins the
+        panel's native folds at the one it already has.
+      */}
+      <fieldset data-testid="studio-filming-limits">
+        <legend>{FILMING_LIMITS_SUMMARY}</legend>
+        <p className="muted">{FILMING_LIMITS_HELP}</p>
+        <fieldset>
+          <legend>Who films it?</legend>
+          <label style={{ display: "block", minHeight: "44px", lineHeight: "44px" }}>
+            <input type="radio" name="people" value="" defaultChecked /> Not saying
+          </label>
+          {peopleOptions.map((option) => (
+            <label
+              key={option.id}
+              style={{ display: "block", minHeight: "44px", lineHeight: "44px" }}
+            >
+              <input type="radio" name="people" value={option.id} /> {option.label}
+            </label>
+          ))}
+        </fieldset>
+        <p>
+          <label htmlFor={`${idPrefix}-max-minutes`}>
+            The most minutes you have to film it
+          </label>
+          <br />
+          <input
+            id={`${idPrefix}-max-minutes`}
+            name="maxMinutes"
+            type="number"
+            inputMode="numeric"
+            min={bounds.minutesMin}
+            max={bounds.minutesMax}
+            step={1}
+            style={control}
+          />
+        </p>
+        <p>
+          <label htmlFor={`${idPrefix}-locations`}>
+            Places you can film, separated by commas
+          </label>
+          <br />
+          <input
+            id={`${idPrefix}-locations`}
+            name="locations"
+            type="text"
+            maxLength={listChars}
+            style={{ ...control, width: "100%" }}
+          />
+        </p>
+        <p>
+          <label htmlFor={`${idPrefix}-equipment`}>
+            Equipment you have, separated by commas
+          </label>
+          <br />
+          <input
+            id={`${idPrefix}-equipment`}
+            name="equipment"
+            type="text"
+            maxLength={listChars}
+            style={{ ...control, width: "100%" }}
+          />
+        </p>
+        <p>
+          <label htmlFor={`${idPrefix}-footage`}>Footage you already have</label>
+          <br />
+          <textarea
+            id={`${idPrefix}-footage`}
+            name="footage"
+            rows={3}
+            maxLength={bounds.footageMaxCodePoints}
+            style={{ width: "100%", fontSize: "1rem" }}
+          />
+        </p>
+      </fieldset>
+    </fieldset>
+  );
+}
+
 export function StudioPanel({
   action,
+  held,
+  inputLimitSentence,
   feedbackAction,
+  excludeAction,
+  resultCount,
+  rememberAction,
+  rememberValueMax,
+  rememberAllowed,
   modes,
   costSentence,
   revisionCostSentence,
   revisionCost,
+  formOptions,
+  peopleOptions,
+  creativeBounds,
   reactions,
   noteMax,
   block,
@@ -147,6 +379,23 @@ export function StudioPanel({
   const [feedback, feedbackFormAction, feedbackPending] = useActionState(
     feedbackAction,
     IDLE_FEEDBACK_STATE
+  );
+  const [remembered, rememberFormAction, rememberPending] = useActionState(
+    rememberAction,
+    IDLE_REMEMBER_STATE
+  );
+  // Audit P6-A1: a no-op stand-in when no exclusion action is passed, so the
+  // hook order never moves (the `resumed` pattern below).
+  const [excludedState, excludeFormAction, excludePending] = useActionState(
+    excludeAction ?? (async (prev: ExcludeState) => prev),
+    IDLE_EXCLUDE_STATE
+  );
+  // Audit P3-A4: "Finish this draft" has its own state — its outcome is a
+  // settled held draft (or a held refusal), rendered under the held list. A
+  // no-op stand-in when there is no held list, so the hook order never moves.
+  const [resumed, resumeFormAction, resumePending] = useActionState(
+    held?.resumeAction ?? (async (prev: StudioActionState) => prev),
+    IDLE_STUDIO_STATE
   );
 
   const offered = modes.filter((m) => m.status === "available");
@@ -180,6 +429,18 @@ export function StudioPanel({
     state.latest.status === "usable" || state.latest.status === "honest_refusal"
       ? state.latest.generationId
       : null;
+  // "LEAVE THIS OUT" ONLY WHERE IT DOES SOMETHING (Phase 6 gate, LOW): recent
+  // work is read only by the modes that take the creative form control
+  // (R-152 (b)), so a reaction to a hook set or a caption never reaches a
+  // later prompt and a control promising to keep it out would be a no-op. The
+  // flag is the server's own `takesCreativeForm` for the run's mode.
+  const latestModeId =
+    state.latest.status === "usable" || state.latest.status === "honest_refusal"
+      ? state.latest.modeId
+      : null;
+  const latestReadsHistory =
+    latestModeId !== null &&
+    modes.some((m) => m.id === latestModeId && m.takesCreativeForm === true);
 
   // WHAT THIS PRESS COSTS, which is NOT the selected mode's price when a parent
   // is chosen: R8 prices a revision as `creditCosts.revision` whatever it
@@ -218,11 +479,16 @@ export function StudioPanel({
       <p className="muted" data-testid="studio-cost">
         {costSentence}
       </p>
-      {/* R21's n = 0 sentence. It sits above the control, not under the
+      {/* R21's results sentence, now TWO-BRANCH on the creator's own scoped
+          count and naming the recent-work channel for the modes that read it
+          (audit P6-R6, R-174). It sits above the control, not under the
           result: the claim it forecloses is one a reader would otherwise form
           while deciding to press. */}
       <p className="muted" data-testid="studio-no-results-basis">
-        {NO_RESULTS_BASIS}
+        {resultsBasisSentence(
+          resultCount,
+          modes.filter((m) => m.takesCreativeForm === true).map((m) => m.label)
+        )}
       </p>
       <p className="muted" data-testid="studio-no-stream">
         {NO_STREAM_NOTE}
@@ -268,7 +534,7 @@ export function StudioPanel({
         <form action={formAction}>
           {/*
             THE MODE IS A CHOICE NOW (slice 7, R1), and every option was
-            resolved server-side by `modeOffers(tier)` — this file holds no mode
+            resolved server-side by `studioModeOffers(tier)` — this file holds no mode
             id and no tier map. It is still untrusted input on the wire:
             `modeSpec` refuses a string that is not a mode and
             `assertModeAllowed` refuses one this plan does not include or one we
@@ -375,10 +641,39 @@ export function StudioPanel({
             </select>
             <br />
             <span className="muted">
-              The disclosure guidance in the draft is written for the platform
-              you pick.
+              Pick the platform you will post this draft on.
             </span>
           </p>
+          {/*
+            R-148 — THE CREATIVE FORM CONTROL, beside the two modes the server
+            marked `takesCreativeForm` and nowhere else. Its absence from the
+            form IS the "no creative request" answer the action reads, so a
+            mode without the control can never send one by accident.
+
+            A REVISION DOES NOT OFFER IT: the operation keeps a v2 parent's
+            form and limits and keeps a legacy parent legacy, and the note
+            says so rather than presenting a control the server would
+            override or refuse.
+          */}
+          {effectiveMode?.takesCreativeForm && parent === null ? (
+            <CreativeFormControl
+              formOptions={formOptions}
+              peopleOptions={peopleOptions}
+              bounds={creativeBounds}
+            />
+          ) : null}
+          {effectiveMode?.takesCreativeForm && parent !== null ? (
+            <p className="muted" data-testid="studio-revision-keeps-form">
+              {REVISION_KEEPS_FORM_NOTE}
+            </p>
+          ) : null}
+          {/*
+            LAUNCH L3 (R-152 item c) — THE SEQUEL REQUEST, beside the two modes
+            that read recent work and nowhere else (the operation refuses one on
+            any other mode). UNCHECKED BY DEFAULT and never set for the creator:
+            a sequel is something they ask for, not something inferred.
+          */}
+          {effectiveMode?.takesCreativeForm ? <SequelControl idPrefix="studio" /> : null}
           <p>
             <label htmlFor="studio-input">
               {parent === null
@@ -397,6 +692,14 @@ export function StudioPanel({
               This is sent to our model provider along with the brain you
               activated for this creator. Nothing else of yours is sent.
             </span>
+            {inputLimitSentence !== undefined ? (
+              <>
+                <br />
+                <span className="muted" data-testid="studio-input-limit">
+                  {inputLimitSentence}
+                </span>
+              </>
+            ) : null}
           </p>
           {/*
             THE PENDING LABEL NAMES WHAT IS IN FLIGHT AND CLAIMS NO VENDOR CALL,
@@ -429,6 +732,21 @@ export function StudioPanel({
         fallbackCopy={fallbackCopy}
       />
 
+      {held !== undefined ? (
+        <HeldDrafts
+          drafts={held.drafts}
+          formAction={resumeFormAction}
+          pending={resumePending}
+        />
+      ) : null}
+      {held !== undefined ? (
+        <GenerationOutcome
+          state={resumed.latest}
+          refusalCopy={refusalCopy}
+          fallbackCopy={fallbackCopy}
+        />
+      ) : null}
+
       {/*
         R9 — THE LINEAGE, READABLE. Which output came from which, and what the
         note said. It is a PURE component (`./lineage-view.tsx`) rather than
@@ -455,8 +773,107 @@ export function StudioPanel({
           state={feedback}
           refusalCopy={refusalCopy}
           fallbackCopy={fallbackCopy}
+          exclude={
+            excludeAction === undefined || !latestReadsHistory
+              ? undefined
+              : { formAction: excludeFormAction, pending: excludePending, state: excludedState }
+          }
+        />
+      ) : null}
+      {/*
+        LAUNCH L3 (R-152 item a) — "REMEMBER THIS FOR FUTURE DRAFTS", beside the
+        reaction and separate from it: the reaction stays local evidence about
+        one draft, this box is the creator writing a rule, which becomes a
+        PROPOSED brain edit they still confirm and activate on the Brain page.
+      */}
+      {feedbackTargetId !== null ? (
+        <RememberBlock
+          canPropose={rememberAllowed}
+          brainHref={brainHref}
+          valueMax={rememberValueMax}
+          formAction={rememberFormAction}
+          pending={rememberPending}
+          state={remembered}
+          refusalCopy={refusalCopy}
+          fallbackCopy={fallbackCopy}
         />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * LAUNCH L3 (R-152 item c) — THE SEQUEL REQUEST, one control for every form
+ * whose mode reads recent work: the main Studio form (beside those modes only),
+ * and — launch L4, the L3 card's BN-2 — "Find concepts" and the piece's script
+ * confirmation, whose modes always read it. UNCHECKED BY DEFAULT and never set
+ * for the creator; the actions read only its own value, `"1"`. `idPrefix`
+ * keeps the help text's id unique when several forms share the page.
+ */
+/**
+ * HELD DRAFTS (audit P3-A4, R-157): each with the time it is removed and a
+ * "Finish this draft" control that posts ITS attempt id — never a resubmission
+ * of generate params. PURE, so a static render can drive every branch: a
+ * failed read says so, an empty list renders nothing.
+ */
+export function HeldDrafts({
+  drafts,
+  formAction,
+  pending,
+}: {
+  drafts: readonly HeldDraftLine[] | null;
+  formAction: (formData: FormData) => void;
+  pending: boolean;
+}) {
+  if (drafts !== null && drafts.length === 0) return null;
+  return (
+    <div className="panel" data-testid="studio-held-drafts" style={{ marginTop: "1rem" }}>
+      <h3 style={{ marginTop: 0 }}>{HELD_DRAFTS_HEADING}</h3>
+      {drafts === null ? (
+        <p className="muted" data-testid="studio-held-unavailable">
+          {HELD_DRAFTS_UNAVAILABLE}
+        </p>
+      ) : (
+        <>
+          <p className="muted">{HELD_DRAFTS_NOTE}</p>
+          <ul>
+            {drafts.map((draft) => (
+              <li key={draft.attemptId} data-testid="studio-held-draft">
+                <form action={formAction}>
+                  <input type="hidden" name="heldAttemptId" value={draft.attemptId} />
+                  <span>
+                    {draft.modeLabel} — held until {heldUntilText(draft.heldUntil)}.{" "}
+                  </span>
+                  <button type="submit" className={buttonClass("secondary")} disabled={pending}>
+                    {FINISH_HELD_DRAFT_LABEL}
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function SequelControl({ idPrefix }: { idPrefix: string }) {
+  const helpId = `${idPrefix}-sequel-help`;
+  return (
+    <p>
+      <label style={{ display: "block", minHeight: "44px", lineHeight: "44px" }}>
+        <input
+          type="checkbox"
+          name="sequel"
+          value="1"
+          aria-describedby={helpId}
+          data-testid={`${idPrefix}-sequel`}
+        />{" "}
+        {SEQUEL_LABEL}
+      </label>
+      <span className="muted" id={helpId}>
+        {SEQUEL_HELP}
+      </span>
+    </p>
   );
 }

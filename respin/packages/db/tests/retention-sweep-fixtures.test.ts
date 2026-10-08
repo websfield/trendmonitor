@@ -107,11 +107,15 @@ const FAMILIES = {
       updatedAt: new Date(),
     });
     await db.insert(rateLimit).values({ id: "rl-fixture", key: "sign-in:9.9.9.9", count: 1, lastRequest: Date.now() });
+    // ONE instant for both ends: two clock reads a millisecond apart made the
+    // window 24 h + 1 ms, which `public_sample_spin_buckets_window_shape`
+    // refuses (an intermittent live-run failure, 2026-10-06).
+    const bucketStartedAt = new Date();
     await db.insert(publicSampleSpinBuckets).values({
       ipHmac: "a".repeat(64),
       keyVersion: "v1",
-      bucketStartedAt: new Date(),
-      expiresAt: new Date(Date.now() + DAY),
+      bucketStartedAt,
+      expiresAt: new Date(bucketStartedAt.getTime() + DAY),
       admitted: 1,
     });
     await db.insert(verification).values({
@@ -194,6 +198,7 @@ const FAMILIES = {
         expiresAt: new Date(Date.now() + DAY),
         updatedAt: new Date(),
         reauthenticatedAt: new Date(),
+        reauthenticatedMethod: "password",
       });
     }
     const log = journal();
@@ -283,6 +288,7 @@ const FAMILIES = {
       expiresAt: new Date(Date.now() + DAY),
       updatedAt: new Date(),
       reauthenticatedAt: new Date(),
+      reauthenticatedMethod: "password",
     });
     const [third] = await db.insert(users).values({ authUserId: "del-third-auth" }).returning();
     expect(third).toBeDefined();

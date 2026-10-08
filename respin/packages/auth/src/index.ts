@@ -32,5 +32,16 @@ export {
   requireAdmin,
   requireUser,
   reauthenticateCurrentSessionWithPassword,
+  // R-164: the Google re-authentication challenge and its billing arm.
+  beginGoogleReauthenticationForCurrentSession,
+  completeGoogleReauthenticationForCurrentSession,
+  currentSessionGoogleReauthentication,
   type SessionUser,
 } from "./server";
+export {
+  GOOGLE_REAUTH_CALLBACK_PATH,
+  GOOGLE_REAUTH_REFUSAL_CODES,
+  GoogleReauthenticationRefused,
+  googleReauthLogCode,
+  type GoogleReauthRefusalCode,
+} from "./google-reauth";

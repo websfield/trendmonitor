@@ -5,7 +5,7 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import { and, count, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { user as authUser, session } from "./auth-schema";
 import { subscriptions } from "./billing-schema";
 import { creatorProfiles } from "./brain-schema";
@@ -18,6 +18,7 @@ import {
 } from "./deletion-external-commands";
 import type {
   DeletionJournalPort,
+  HeldMoneyReplayPort,
   MembershipRestorePolicyPort,
   RecoveryDeliveryReconciliationRequest,
   RecoveryDeliveryPort,
@@ -44,11 +45,14 @@ import {
   lockWorkspaceMembershipGraph,
   sortedWorkspaceIds,
 } from "./membership-lifecycle";
+import { newestWorkspaceDeletionAdmitsRead } from "./read-grade-lifecycle";
 import { memberships, users, workspaces } from "./schema";
 import { autopsyCacheClaims } from "./trends-schema";
 import {
+  assertReadScoped,
   assertScoped,
   isWorkspaceScope,
+  type ReadGradeWorkspaceScope,
   type WorkspaceScope,
 } from "./with-workspace";
 
@@ -117,6 +121,22 @@ function validKey(value: string): boolean {
   return value.length >= 8 && value.length <= 200 && value.trim() === value;
 }
 
+/**
+ * A deletion operation that COUNTS as under way: anything but an unreserved
+ * draft (R-166, gate H2). A draft — `requested` with no journal reservation —
+ * has no externally visible transition (the rule `requestScopedDeletion`'s
+ * rebinding already relies on), and no executor, sweep or seam ever advances
+ * one: the wedge sweep reaches reserved operations only. So a predicate that
+ * WAITS on an operation, or treats its target as already being deleted, must
+ * not count a draft, or it waits on something nothing will finish. The three
+ * such predicates: `workspacesUnderDeletionInTx` (here), and
+ * `nestedRequestedOperations` / `nestedActiveProfileOperations` in
+ * `deletion-executor.ts`.
+ */
+export function deletionOperationUnderWay() {
+  return sql`NOT (${deletionOperations.state} = 'requested' AND ${deletionOperations.journalIntentPlanDigest} IS NULL)`;
+}
+
 function validRecoverySecret(value: string): boolean {
   if (!/^[A-Za-z0-9_-]{43}$/.test(value)) return false;
   const decoded = Buffer.from(value, "base64url");
@@ -147,6 +167,22 @@ export async function databaseNow(tx: TxLike): Promise<Date> {
   return value;
 }
 
+/**
+ * The domain user a session belongs to — identity only, no clock, no
+ * freshness. Used to choose WHICH identity lock to take before the clocked
+ * proof (`requireReauthenticatedSession`) runs under it.
+ */
+async function sessionDomainUserId(tx: TxLike, sessionId: string): Promise<string> {
+  const [row] = await tx
+    .select({ userId: users.id })
+    .from(session)
+    .innerJoin(users, eq(users.authUserId, session.userId))
+    .where(eq(session.id, sessionId))
+    .limit(1);
+  if (!row) refuse("foreign_session");
+  return row.userId;
+}
+
 function resolveReauthWindow(maxAgeMs: number | undefined): number {
   const value = maxAgeMs ?? DELETION_REAUTH_MAX_AGE_MS;
   if (!Number.isSafeInteger(value) || value <= 0 || value > DELETION_REAUTH_MAX_AGE_MS) {
@@ -155,6 +191,15 @@ function resolveReauthWindow(maxAgeMs: number | undefined): number {
   return value;
 }
 
+/**
+ * The deletion guard: a fresh, PASSWORD-written stamp on this exact session
+ * (R-166, gate Low). R-164's Google stamp was built for billing and is
+ * admitted there; deletion and cancellation of a deletion are not billing
+ * actions, and before R-164 the password arm was their only writer, so a
+ * Google stamp (`reauthenticated_method = 'google'`) — or one with no method
+ * recorded — refuses `reauthentication_method_not_accepted`. A Google-only
+ * person stays where they were before R-164 for deletion.
+ */
 async function requireReauthenticatedSession(
   tx: TxLike,
   sessionId: string,
@@ -169,6 +214,7 @@ async function requireReauthenticatedSession(
       authUserId: users.authUserId,
       sessionAuthUserId: session.userId,
       reauthenticatedAt: session.reauthenticatedAt,
+      reauthenticatedMethod: session.reauthenticatedMethod,
       expiresAt: session.expiresAt,
     })
     .from(users)
@@ -196,10 +242,14 @@ async function requireReauthenticatedSession(
   ) {
     refuse("reauthentication_missing_or_stale");
   }
+  if (proof.reauthenticatedMethod !== "password") refuse("reauthentication_method_not_accepted");
   return { userId: proof.userId, authUserId: proof.authUserId };
 }
 
 const TRANSITIONS: Readonly<Record<DeletionOperationState, readonly DeletionOperationState[]>> = {
+  // No `requested -> cancelled` edge (R-162): an edge from `requested` would
+  // bypass the journal. A wedged `requested` is the worker's resume sweep's
+  // job (`resumeWedgedDeletionOperations`), never a button's.
   requested: ["journal_pending"],
   journal_pending: ["tombstoned", "cancelled"],
   tombstoned: ["external_actions_pending", "cancelled", "blocked"],
@@ -208,7 +258,24 @@ const TRANSITIONS: Readonly<Record<DeletionOperationState, readonly DeletionOper
   erasing: ["verifying", "blocked"],
   verifying: ["complete", "blocked"],
   complete: [],
-  blocked: ["tombstoned", "external_actions_pending", "grace", "erasing", "verifying"],
+  // TWO resume targets, the two `handleBlocked` in deletion-executor.ts
+  // resumes (`external_actions_pending`, `erasing`); every other resume state
+  // waits for an operator. This list named five until R-162, three of them
+  // edges nothing produced. The database check
+  // `deletion_operations_blocked_resume_shape` (lifecycle-schema.ts,
+  // migrations 0038/0043) still admits all five as a stored
+  // `blocked_resume_state`, and is left wider DELIBERATELY: a wider constraint
+  // refuses nothing a narrower one would let through, and this table is what
+  // refuses the transition.
+  //
+  // `cancelled` (R-162): every pre-erasure predecessor of `blocked` could
+  // cancel and `blocked` itself could not, so a failed pre-grace fence
+  // stranded the deletion with no way out. The exit is bounded by the same
+  // grace window as every other cancellation, and a `blocked` whose resume
+  // state is `erasing`/`verifying` is refused as `erasure_started`
+  // (`requireScopedCancellationAuthorityInTx`) — irreversible commands may have
+  // run, so it never cancels.
+  blocked: ["external_actions_pending", "erasing", "cancelled"],
   cancelled: [],
 };
 
@@ -582,8 +649,12 @@ export async function appendJournalTransitionInTx(
   ) {
     refuse("journal_plan_step_mismatch");
   }
+  // A cancellation is not a reconciliation and has no resume target (R-162):
+  // without this exception a real `blocked` row was refused here even after
+  // `TRANSITIONS.blocked` admitted `cancelled`.
   if (
     operation.state === "blocked" &&
+    toState !== "cancelled" &&
     operation.blockedResumeState !== toState
   ) {
     refuse("blocked_reconciliation_target_mismatch");
@@ -848,7 +919,15 @@ async function lockIdentityWorkspaces(
 export async function assertBillingContactReleased(
   tx: TxLike,
   userId: string,
-  workspaceIds: readonly string[]
+  workspaceIds: readonly string[],
+  /**
+   * Workspaces under (or entering) their own deletion (R-160, the P5-R1
+   * cascade). Their Stripe customer's personal fields are cleared by that
+   * deletion's own erasing commands, and the identity erasure waits for it
+   * (`handleGrace`'s nested-operation hold), so they are not a handover the
+   * person could ever perform: for a sole owner there is nobody to hand to.
+   */
+  excludedWorkspaceIds: readonly string[] = []
 ): Promise<void> {
   // Two populations, because membership and contact can diverge: a contact
   // who was demoted or who left the workspace is still on the customer object,
@@ -857,7 +936,13 @@ export async function assertBillingContactReleased(
   // role — an editor or viewer of a pre-C3 workspace is refused too, because
   // the unknown contact may be a demoted ex-owner, and only an owner can
   // accept (T-R2-5 records the population and the operator remedy).
-  const bound = eq(subscriptions.billingContactUserId, userId);
+  const bound =
+    excludedWorkspaceIds.length === 0
+      ? eq(subscriptions.billingContactUserId, userId)
+      : and(
+          eq(subscriptions.billingContactUserId, userId),
+          notInArray(subscriptions.workspaceId, [...excludedWorkspaceIds])
+        );
   const unknownInMembership =
     workspaceIds.length === 0
       ? null
@@ -875,21 +960,41 @@ export async function assertBillingContactReleased(
   }
 }
 
-/** The two release rules every identity path asserts together. */
-async function assertWorkspacesReleasable(
+/**
+ * The workspaces among `workspaceIds` that already carry a NON-TERMINAL,
+ * UNDER-WAY workspace deletion (any state but `complete`/`cancelled`, a
+ * reserved `requested` included, an unreserved draft NOT — R-166). A workspace
+ * being deleted is not abandoned by its last owner leaving: its own operation
+ * decides it (R-160, P5-R1). A draft decides nothing, so a sole-owned
+ * workspace carrying one is cascaded, and the cascade adopts the draft
+ * (`reserveIdentityCascadeInTx`).
+ */
+async function workspacesUnderDeletionInTx(
   tx: TxLike,
-  userId: string,
   workspaceIds: readonly string[]
-): Promise<void> {
-  await assertNotLastOwner(tx, userId, workspaceIds);
-  await assertBillingContactReleased(tx, userId, workspaceIds);
+): Promise<ReadonlySet<string>> {
+  if (workspaceIds.length === 0) return new Set();
+  const rows = await tx
+    .select({ workspaceId: deletionOperations.workspaceId })
+    .from(deletionOperations)
+    .where(
+      and(
+        eq(deletionOperations.scope, "workspace"),
+        inArray(deletionOperations.workspaceId, [...workspaceIds]),
+        notInArray(deletionOperations.state, ["complete", "cancelled"]),
+        deletionOperationUnderWay()
+      )
+    );
+  return new Set(rows.flatMap((row) => (row.workspaceId ? [row.workspaceId] : [])));
 }
 
-async function assertNotLastOwner(
+/** The workspaces in `workspaceIds` this person is the only active owner of. */
+async function soleOwnedWorkspacesInTx(
   tx: TxLike,
   userId: string,
   workspaceIds: readonly string[]
-): Promise<void> {
+): Promise<readonly string[]> {
+  const sole: string[] = [];
   for (const workspaceId of workspaceIds) {
     const [target] = await tx
       .select({ role: memberships.role })
@@ -913,33 +1018,289 @@ async function assertNotLastOwner(
           eq(memberships.lifecycleState, "active")
         )
       );
-    if (owners <= 1) refuse("last_owner");
+    if (owners <= 1) sole.push(workspaceId);
+  }
+  return sole;
+}
+
+/**
+ * The release rules every identity path asserts, in two modes (R-160, P5-R1).
+ *
+ * `cascade` (request, reservation, resume): a workspace this person is the
+ * last owner of is NOT a refusal. It is returned, and the reservation
+ * cascade-requests its deletion with the identity's (`reserveIdentityCascadeInTx`).
+ * Before R-160 it refused `last_owner` and printed a remedy — an operator
+ * adding an owner, an owner invitation — that names two surfaces which do not
+ * exist, so a solo creator's erasure had no terminating path.
+ *
+ * `final` (the tombstone transaction): by then every such workspace carries
+ * its cascaded operation, so `assertNotLastOwner` excludes it; a sole-owned
+ * workspace WITHOUT one is a population that changed after the reservation,
+ * and refuses rather than leaving a live workspace with no owner.
+ *
+ * In both modes the billing-contact rule is asserted over the workspaces that
+ * STAY (neither already deleting nor cascading).
+ */
+async function assertWorkspacesReleasable(
+  tx: TxLike,
+  userId: string,
+  workspaceIds: readonly string[],
+  mode: "cascade" | "final"
+): Promise<readonly string[]> {
+  const deleting = await workspacesUnderDeletionInTx(tx, workspaceIds);
+  const kept = workspaceIds.filter((workspaceId) => !deleting.has(workspaceId));
+  const cascade =
+    mode === "final"
+      ? (await assertNotLastOwner(tx, userId, workspaceIds), [])
+      : await soleOwnedWorkspacesInTx(tx, userId, kept);
+  const staying = kept.filter((workspaceId) => !cascade.includes(workspaceId));
+  await assertBillingContactReleased(tx, userId, staying, [...deleting, ...cascade]);
+  return cascade;
+}
+
+/**
+ * Refuses when this person is the last active owner of a workspace that is
+ * NOT already under a non-terminal deletion (R-160, P5-R1). The population
+ * excludes deleting workspaces: before R-160 it did not, so a workspace that
+ * was itself being deleted still refused its owner's erasure.
+ */
+async function assertNotLastOwner(
+  tx: TxLike,
+  userId: string,
+  workspaceIds: readonly string[]
+): Promise<void> {
+  const deleting = await workspacesUnderDeletionInTx(tx, workspaceIds);
+  const sole = await soleOwnedWorkspacesInTx(
+    tx,
+    userId,
+    workspaceIds.filter((workspaceId) => !deleting.has(workspaceId))
+  );
+  if (sole.length > 0) refuse("last_owner");
+}
+
+/**
+ * The idempotency-key prefix of a cascaded workspace deletion. A NAME only:
+ * which identity cascaded a row is the server-owned
+ * `cascade_parent_operation_id` (R-166), and a client key carrying this prefix
+ * is refused (`requestScopedDeletion`), so no client can mint a key that reads
+ * as a cascade.
+ */
+export const IDENTITY_CASCADE_KEY_PREFIX = "identity-cascade:";
+
+function identityCascadeKey(identityOperationId: string, workspaceId: string): string {
+  return `${IDENTITY_CASCADE_KEY_PREFIX}${identityOperationId}:${workspaceId}`;
+}
+
+/**
+ * Reserve one workspace deletion per sole-owned workspace, in the SAME
+ * transaction that reserves the identity's own journal plan (R-160, P5-R1).
+ *
+ * Each row is created already RESERVED — its `requested -> journal_pending ->
+ * tombstoned` plan digest and effective instant persisted before any journal
+ * append — which is the property `prepareJournalPlan` exists for: a rollback
+ * after an object-store write retries the exact same bytes. The identity's
+ * reservation is the commit point for both, so the tombstone transaction
+ * (`finalizeIdentityDeletionRequest`) finalizes these in-transaction. The
+ * worker's wedge sweep (`resumeWedgedDeletionOperations`) finishes a wedged
+ * pair by resuming the IDENTITY, and skips a cascaded row on its own.
+ *
+ * The authority is the identity request's: the same requester, the same
+ * session digest, and the owner membership's live epochs, bound into the
+ * scoped plan exactly as `requestScopedDeletion` binds them. The typed-name
+ * confirmation is replaced by the cascade key, which names both operations.
+ */
+async function reserveIdentityCascadeInTx(
+  tx: TxLike,
+  identity: DeletionOperation,
+  workspaceIds: readonly string[],
+  now: Date
+): Promise<void> {
+  if (!identity.userId || identity.scope !== "identity" || !identity.requestSessionDigest) {
+    refuse("cascade_identity_invalid");
+  }
+  for (const workspaceId of workspaceIds) {
+    const [owner] = await tx
+      .select({
+        membershipVersion: memberships.version,
+        workspaceLifecycleVersion: workspaces.lifecycleVersion,
+      })
+      .from(memberships)
+      .innerJoin(workspaces, eq(workspaces.id, memberships.workspaceId))
+      .where(
+        and(
+          eq(memberships.userId, identity.userId),
+          eq(memberships.workspaceId, workspaceId),
+          eq(memberships.role, "owner"),
+          eq(memberships.lifecycleState, "active"),
+          eq(workspaces.lifecycleState, "active")
+        )
+      )
+      .limit(1);
+    if (!owner) refuse("cascade_owner_changed");
+    const idempotencyKey = identityCascadeKey(identity.id, workspaceId);
+    // R-166 (gate H2): an UNRESERVED draft on this workspace is ADOPTED — it
+    // has no externally visible transition, so the cascade rebinds it in place
+    // (as `requestScopedDeletion` rebinds a draft), keeping its id. Inserting
+    // beside it would violate `deletion_operations_active_workspace_target_uq`;
+    // skipping the workspace would leave it sole-owned with no operation. A
+    // RESERVED operation here is impossible by construction
+    // (`workspacesUnderDeletionInTx` excluded it from the cascade) and refuses.
+    const existing = await activeOperationForTarget(tx, "workspace", workspaceId);
+    if (
+      existing &&
+      (existing.state !== "requested" ||
+        existing.journalIntentPlanDigest !== null ||
+        existing.journalIntentBaseVersion !== null ||
+        existing.journalIntentEffectiveAt !== null)
+    ) {
+      refuse("cascade_target_conflict");
+    }
+    // The id is bound into the plan digest: an adoption keeps the draft's.
+    const draft = {
+      id: existing?.id ?? randomUUID(),
+      scope: "workspace" as const,
+      targetKey: targetKey("workspace", { workspaceId }),
+      workspaceId,
+      profileId: null,
+      profilePriorState: null,
+      requesterUserId: identity.userId,
+      requesterDigest: requesterDigest(identity.userId),
+      requestSessionDigest: identity.requestSessionDigest,
+      requestMembershipVersion: owner.membershipVersion,
+      requestWorkspaceLifecycleVersion: owner.workspaceLifecycleVersion,
+      requestProfileLifecycleVersion: null,
+      idempotencyKey,
+      payloadHash: requestHash("workspace", workspaceId, idempotencyKey),
+    };
+    const reserved = {
+      ...draft,
+      cascadeParentOperationId: identity.id,
+      requestedAt: now,
+      journalIntentBaseVersion: 0,
+      journalIntentPlanDigest: journalPlanDigest(
+        REQUEST_TOMBSTONE_STEPS,
+        scopedRequestAuthorityBinding(draft)
+      ),
+      journalIntentEffectiveAt: now,
+    };
+    if (!existing) {
+      await tx.insert(deletionOperations).values(reserved);
+      continue;
+    }
+    // `reserved.id` IS `existing.id`, so the SET leaves the key unchanged.
+    const [adopted] = await tx
+      .update(deletionOperations)
+      .set({ ...reserved, updatedAt: now })
+      .where(
+        and(
+          eq(deletionOperations.id, existing.id),
+          eq(deletionOperations.state, "requested"),
+          isNull(deletionOperations.journalIntentPlanDigest),
+          isNull(deletionOperations.journalIntentBaseVersion),
+          isNull(deletionOperations.journalIntentEffectiveAt)
+        )
+      )
+      .returning({ id: deletionOperations.id });
+    if (!adopted) refuse("cascade_target_conflict");
   }
 }
 
 /**
+ * THE CASCADE, RE-MEASURED before the tombstone transaction (R-160). A
+ * co-owner can leave a workspace between the identity's reservation and its
+ * tombstone; that workspace is then sole-owned and not in the cascade the
+ * reservation wrote. Without this the tombstone transaction refused
+ * `last_owner` on every replay — a reserved request no retry could finish.
+ * Its own committed transaction, under the identity's graph locks, so the
+ * cascaded rows are reserved before any journal append (`prepareJournalPlan`'s
+ * rule). A no-op once the identity has left `requested`, and while its
+ * recovery window has expired (that request is abandoned, not cascaded).
+ */
+async function topUpIdentityCascade(db: DbLike, operationId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [snapshot] = await tx
+      .select()
+      .from(deletionOperations)
+      .where(eq(deletionOperations.id, operationId))
+      .limit(1);
+    if (!snapshot?.userId || snapshot.scope !== "identity" || snapshot.state !== "requested") return;
+    const workspaceIds = await lockIdentityWorkspaces(tx, snapshot.userId);
+    const [current] = await tx
+      .select()
+      .from(deletionOperations)
+      .where(eq(deletionOperations.id, operationId))
+      .limit(1);
+    if (!current?.userId || current.state !== "requested" || current.journalIntentPlanDigest === null) return;
+    const now = await databaseNow(tx);
+    if (!current.recoveryExpiresAt || current.recoveryExpiresAt.getTime() <= now.getTime()) return;
+    const cascade = await assertWorkspacesReleasable(tx, current.userId, workspaceIds, "cascade");
+    await reserveIdentityCascadeInTx(tx, current, cascade, now);
+  });
+}
+
+/**
+ * This identity operation's cascaded workspace deletions still in `requested`,
+ * by the server-owned parent column (R-166) — never by a key pattern.
+ */
+async function pendingIdentityCascadeInTx(
+  tx: TxLike,
+  identity: DeletionOperation
+): Promise<readonly DeletionOperation[]> {
+  if (!identity.userId) return [];
+  return tx
+    .select()
+    .from(deletionOperations)
+    .where(
+      and(
+        eq(deletionOperations.scope, "workspace"),
+        eq(deletionOperations.requesterUserId, identity.userId),
+        eq(deletionOperations.cascadeParentOperationId, identity.id),
+        eq(deletionOperations.state, "requested")
+      )
+    )
+    .orderBy(asc(deletionOperations.workspaceId));
+}
+
+/**
  * The operations an owner page may list for a scope: every non-terminal
- * operation on this workspace or on this user. Lives HERE, beside the rules
- * that write those rows, rather than as a raw read in the app facade, so the
- * one module that owns `deletion_operations` semantics also owns what
- * "pending" means (10b-1 phase review, tenancy item). The cage (AC-13) runs
- * first: a forged scope is refused before its ids are read.
+ * operation on this workspace, on this user, or REQUESTED by this user. Lives
+ * HERE, beside the rules that write those rows, rather than as a raw read in
+ * the app facade, so the one module that owns `deletion_operations` semantics
+ * also owns what "pending" means (10b-1 phase review, tenancy item). The cage
+ * (AC-13) runs first: a forged scope is refused before its ids are read.
+ *
+ * THREE ARMS (R-161, P5-R2). The `userId` arm sees identity operations only —
+ * a scoped operation's `user_id` is NULL by schema constraint
+ * (`deletion_operations_target_shape`). So a scoped deletion is reachable by
+ * its `workspaceId` arm alone, and while bootstrap minted a replacement
+ * workspace the moment the original was tombstoned, the deletion vanished
+ * from the only page that can cancel it. The `requesterUserId` arm keeps the
+ * person's own requests visible whichever workspace the page is showing.
+ *
+ * Accepts the READ grade (`assertReadScoped`, R-163): during a workspace
+ * deletion's grace the only scope its owner can hold is a
+ * `ReadGradeWorkspaceScope`, and this is the read that shows them the
+ * deletion they can cancel.
  */
 export async function pendingDeletionsForScope(
   db: DbLike,
-  scope: WorkspaceScope
+  scope: WorkspaceScope | ReadGradeWorkspaceScope
 ): Promise<readonly DeletionOperation[]> {
   // Deliberately visible to EVERY member of the workspace, not only owners: a
   // pending workspace or profile deletion changes what every member can do,
   // and the page renders only id, scope, state and dates — no profile name,
   // no requester.
-  assertScoped(scope);
+  assertReadScoped(scope);
   return db
     .select()
     .from(deletionOperations)
     .where(
       and(
-        or(eq(deletionOperations.workspaceId, scope.workspaceId), eq(deletionOperations.userId, scope.userId)),
+        or(
+          eq(deletionOperations.workspaceId, scope.workspaceId),
+          eq(deletionOperations.userId, scope.userId),
+          eq(deletionOperations.requesterUserId, scope.userId)
+        ),
         inArray(deletionOperations.state, PENDING_DELETION_STATES)
       )
     )
@@ -1029,11 +1390,34 @@ async function finalizeIdentityDeletionRequest(
       refuse("request_reservation_changed");
     }
     if (!recoveryExpired) {
-      await assertWorkspacesReleasable(tx, userId, workspaceIds);
+      await assertWorkspacesReleasable(tx, userId, workspaceIds, "final");
     }
     const activeForTarget = await activeOperationForTarget(tx, "identity", userId);
     if (!activeForTarget || activeForTarget.id !== current.id) {
       refuse("active_identity_operation_conflict");
+    }
+    // The cascade (R-160): every workspace this person was the last owner of
+    // was reserved for deletion beside this identity's plan. It tombstones in
+    // THIS transaction, so the identity never tombstones while one of its
+    // sole-owned workspaces is still live. On the expired-recovery
+    // abandonment below the identity is cancelled instead, and its cascade —
+    // reserved, never journalled — is discarded with it.
+    const cascade = await pendingIdentityCascadeInTx(tx, current);
+    if (recoveryExpired) {
+      for (const operation of cascade) {
+        if (operation.journalVersion !== 0) refuse("cascade_already_journalled");
+        await tx.delete(deletionOperations).where(
+          and(
+            eq(deletionOperations.id, operation.id),
+            eq(deletionOperations.state, "requested"),
+            eq(deletionOperations.journalVersion, 0)
+          )
+        );
+      }
+    } else {
+      for (const operation of cascade) {
+        await finalizeScopedDeletionRequestInTx(tx, operation, journal);
+      }
     }
 
     let advanced = await appendJournalTransitionInTx(
@@ -1190,6 +1574,7 @@ async function reserveIdentityDeletionRequest(
       if (await hasReservedJournalPlan(tx, snapshot.id, planDigest)) return;
       const workspaceIds = await lockIdentityWorkspaces(tx, snapshot.userId!);
       const now = await databaseNow(tx);
+      let cascade: readonly string[] = [];
       const [current] = await tx
         .select()
         .from(deletionOperations)
@@ -1234,7 +1619,12 @@ async function reserveIdentityDeletionRequest(
         ) {
           refuse("recovery_not_confirmed");
         }
-        await assertWorkspacesReleasable(tx, snapshot.userId!, workspaceIds);
+        cascade = await assertWorkspacesReleasable(
+          tx,
+          snapshot.userId!,
+          workspaceIds,
+          "cascade"
+        );
       }
       const activeForTarget = await activeOperationForTarget(
         tx,
@@ -1244,6 +1634,9 @@ async function reserveIdentityDeletionRequest(
       if (!activeForTarget || activeForTarget.id !== current.id) {
         refuse("active_identity_operation_conflict");
       }
+      // Reserved in the same transaction as the identity's own plan, so the
+      // two commit points are one (R-160).
+      await reserveIdentityCascadeInTx(tx, current, cascade, now);
     },
   });
 }
@@ -1294,7 +1687,7 @@ async function persistReconciledIdentityRecovery(
     if (delivery.outcome === "confirmed") {
       const now = await databaseNow(tx);
       // ONE CODE PER CONDITION. This was a single `delivery_receipt_mismatch`
-      // covering eleven distinct checks, so a refusal said nothing about which
+      // covering thirteen distinct checks, so a refusal said nothing about which
       // invariant failed -- and when the Docker suites first ran together and
       // this started refusing under load, the code could not tell an identity
       // mismatch from a clock ordering problem. Every code below is
@@ -1529,11 +1922,11 @@ export async function requestIdentityDeletion(
         existing.recoveryDeliveryStatus === "pending" ||
         existing.recoveryDeliveryStatus === "unknown"
       ) {
-        await assertWorkspacesReleasable(tx, identity.id, workspaceIds);
+        await assertWorkspacesReleasable(tx, identity.id, workspaceIds, "cascade");
         return existing;
       }
     }
-    await assertWorkspacesReleasable(tx, identity.id, workspaceIds);
+    await assertWorkspacesReleasable(tx, identity.id, workspaceIds, "cascade");
     plaintext = randomBytes(32).toString("base64url");
     if (!validRecoverySecret(plaintext)) refuse("recovery_secret_invalid_format");
     const attempt = (existing?.recoveryDeliveryAttempt ?? 0) + 1;
@@ -1551,15 +1944,24 @@ export async function requestIdentityDeletion(
       lastFailureCode: null,
     };
     if (existing) {
+      // A delivery-retry rotation mints a NEW single-use link, so its expiry
+      // restarts with it (R-162, P5-R6) — the way the scoped path's rebind
+      // restarts `requestedAt`. Before, the rotation set
+      // `recoveryDeliveryAttemptedAt` and left `recoveryExpiresAt` at the first
+      // attempt's clock, so a retried email arrived with days already gone
+      // from its seven-day window. Safe to move: no journal plan is reserved
+      // while delivery has failed (asserted in the predicate below), and the
+      // reservation is what binds `recoveryExpiresAt`.
       const [rotated] = await tx
         .update(deletionOperations)
-        .set(values)
+        .set({ ...values, recoveryExpiresAt: new Date(now.getTime() + DELETION_GRACE_MS) })
         .where(
           and(
             eq(deletionOperations.id, existing.id),
             eq(deletionOperations.state, "requested"),
             eq(deletionOperations.recoveryDeliveryStatus, "failed"),
-            eq(deletionOperations.recoveryDeliveryAttempt, existing.recoveryDeliveryAttempt)
+            eq(deletionOperations.recoveryDeliveryAttempt, existing.recoveryDeliveryAttempt),
+            isNull(deletionOperations.journalIntentPlanDigest)
           )
         )
         .returning();
@@ -1704,7 +2106,7 @@ export async function requestIdentityDeletion(
     }
     const receiptNow = await db.transaction((tx) => databaseNow(tx));
     // The SAME authority as the request path. This was a second hand-written
-    // copy of the same eleven conditions; two copies of a rule are two rules,
+    // copy of the same thirteen conditions; two copies of a rule are two rules,
     // and only one of them gets fixed.
     const reconcileMismatch = deliveryReceiptMismatchCode(delivery, deliveryRequest, prepared, receiptNow);
     if (reconcileMismatch !== null) refuse(reconcileMismatch);
@@ -1766,6 +2168,7 @@ export async function requestIdentityDeletion(
     sessionId: params.sessionId,
     reauthMaxAgeMs: params.reauthMaxAgeMs,
   });
+  await topUpIdentityCascade(db, prepared.id);
   const operation = await finalizeIdentityDeletionRequest(
     db,
     prepared.id,
@@ -1848,7 +2251,7 @@ export async function resumeIdentityDeletionRequest(
       current.recoveryDeliveryStatus === "confirmed" &&
       current.recoveryDeliveryReceiptDigest
     ) {
-      await assertWorkspacesReleasable(tx, current.userId, workspaceIds);
+      await assertWorkspacesReleasable(tx, current.userId, workspaceIds, "cascade");
       return { operation: current, recoveryExpired: false, reconciliation: null };
     }
     if (current.recoveryDeliveryStatus === "failed") {
@@ -1865,7 +2268,7 @@ export async function resumeIdentityDeletionRequest(
     ) {
       refuse("recovery_delivery_attempt_incomplete");
     }
-    await assertWorkspacesReleasable(tx, current.userId, workspaceIds);
+    await assertWorkspacesReleasable(tx, current.userId, workspaceIds, "cascade");
     return {
       operation: current,
       recoveryExpired: false,
@@ -1909,6 +2312,7 @@ export async function resumeIdentityDeletionRequest(
   }
   if (operation.state === "requested") {
     await reserveIdentityDeletionRequest(db, operation.id);
+    await topUpIdentityCascade(db, operation.id);
     operation = await finalizeIdentityDeletionRequest(db, operation.id, ports.journal);
   }
   return identityDeletionRequestResult(operation);
@@ -1968,6 +2372,21 @@ async function finalizeScopedDeletionRequest(
   expected: DeletionOperation,
   journal: DeletionJournalPort
 ): Promise<DeletionOperation> {
+  return db.transaction((tx) => finalizeScopedDeletionRequestInTx(tx, expected, journal));
+}
+
+/**
+ * The scoped tombstone transaction's body, callable inside a caller's
+ * transaction: the identity cascade (R-160) finalizes its reserved workspace
+ * deletions in the identity's own tombstone transaction. Every advisory lock
+ * here is transaction-scoped and re-entrant, so the identity path's locks
+ * (identity first, then every workspace in lexical order) already cover these.
+ */
+async function finalizeScopedDeletionRequestInTx(
+  tx: TxLike,
+  expected: DeletionOperation,
+  journal: DeletionJournalPort
+): Promise<DeletionOperation> {
   if (
     (expected.scope !== "profile" && expected.scope !== "workspace") ||
     !expected.workspaceId
@@ -1978,138 +2397,136 @@ async function finalizeScopedDeletionRequest(
   const workspaceId = expected.workspaceId;
   const targetId = scope === "profile" ? expected.profileId : workspaceId;
   if (!targetId) refuse("operation_not_available");
-  return db.transaction(async (tx) => {
-    if (expected.requesterUserId) {
-      await lockIdentityMembershipGraph(tx, expected.requesterUserId);
-    }
-    await lockWorkspaceMembershipGraph(tx, workspaceId);
-    const [current] = await tx
-      .select()
-      .from(deletionOperations)
-      .where(
-        and(
-          eq(deletionOperations.id, expected.id),
-          eq(deletionOperations.scope, scope)
-        )
+  if (expected.requesterUserId) {
+    await lockIdentityMembershipGraph(tx, expected.requesterUserId);
+  }
+  await lockWorkspaceMembershipGraph(tx, workspaceId);
+  const [current] = await tx
+    .select()
+    .from(deletionOperations)
+    .where(
+      and(
+        eq(deletionOperations.id, expected.id),
+        eq(deletionOperations.scope, scope)
       )
-      .limit(1);
-    if (!current) refuse("operation_not_available");
-    if (current.state !== "requested") return current;
-    const now = await databaseNow(tx);
+    )
+    .limit(1);
+  if (!current) refuse("operation_not_available");
+  if (current.state !== "requested") return current;
+  const now = await databaseNow(tx);
 
-    const requestPlanDigest = journalPlanDigest(
-      REQUEST_TOMBSTONE_STEPS,
-      scopedRequestAuthorityBinding(current)
-    );
-    if (!hasExactJournalReservation(current, requestPlanDigest)) {
-      refuse("request_reservation_changed");
+  const requestPlanDigest = journalPlanDigest(
+    REQUEST_TOMBSTONE_STEPS,
+    scopedRequestAuthorityBinding(current)
+  );
+  if (!hasExactJournalReservation(current, requestPlanDigest)) {
+    refuse("request_reservation_changed");
+  }
+  let advanced = await appendJournalTransitionInTx(
+    tx,
+    current,
+    "journal_pending",
+    journal,
+    now,
+    {
+      steps: REQUEST_TOMBSTONE_STEPS,
+      authorityBindingDigest: scopedRequestAuthorityBinding(current),
+      planIndex: 0,
     }
-    let advanced = await appendJournalTransitionInTx(
-      tx,
-      current,
-      "journal_pending",
-      journal,
-      now,
-      {
-        steps: REQUEST_TOMBSTONE_STEPS,
-        authorityBindingDigest: scopedRequestAuthorityBinding(current),
-        planIndex: 0,
-      }
-    );
-    advanced = await appendJournalTransitionInTx(
-      tx,
-      advanced,
-      "tombstoned",
-      journal,
-      now,
-      {
-        steps: REQUEST_TOMBSTONE_STEPS,
-        authorityBindingDigest: scopedRequestAuthorityBinding(current),
-        planIndex: 1,
-      }
-    );
-    if (scope === "profile") {
-      await tx
-        .update(autopsyCacheClaims)
-        .set({
-          status: "parked",
-          activeSystemAttemptId: null,
-          leaseExpiresAt: null,
-          lastFailureCode: "profile_tombstoned",
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(autopsyCacheClaims.rightsScope, "profile_private"),
-            eq(autopsyCacheClaims.profileId, targetId),
-            eq(autopsyCacheClaims.workspaceId, workspaceId),
-            inArray(autopsyCacheClaims.status, ["pending", "failed"])
-          )
-        );
-      const [tombstoned] = await tx
-        .update(creatorProfiles)
-        .set({
-          state: "deletion_tombstoned",
-          lifecycleVersion: sql`${creatorProfiles.lifecycleVersion} + 1`,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(creatorProfiles.id, targetId),
-            eq(creatorProfiles.workspaceId, workspaceId),
-            inArray(creatorProfiles.state, ["active", "archived"])
-          )
-        )
-        .returning({ id: creatorProfiles.id });
-      if (!tombstoned) refuse("profile_changed_while_tombstoning");
-    } else {
-      await tx
-        .update(autopsyCacheClaims)
-        .set({
-          status: "parked",
-          activeSystemAttemptId: null,
-          leaseExpiresAt: null,
-          lastFailureCode: "workspace_tombstoned",
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(autopsyCacheClaims.rightsScope, "profile_private"),
-            eq(autopsyCacheClaims.workspaceId, workspaceId),
-            inArray(autopsyCacheClaims.status, ["pending", "failed"])
-          )
-        );
-      const [tombstoned] = await tx
-        .update(workspaces)
-        .set({
-          lifecycleState: "tombstoned",
-          lifecycleVersion: sql`${workspaces.lifecycleVersion} + 1`,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(workspaces.id, workspaceId),
-            eq(workspaces.lifecycleState, "active")
-          )
-        )
-        .returning({ id: workspaces.id });
-      if (!tombstoned) refuse("workspace_changed_while_tombstoning");
+  );
+  advanced = await appendJournalTransitionInTx(
+    tx,
+    advanced,
+    "tombstoned",
+    journal,
+    now,
+    {
+      steps: REQUEST_TOMBSTONE_STEPS,
+      authorityBindingDigest: scopedRequestAuthorityBinding(current),
+      planIndex: 1,
     }
-    const [acknowledged] = await tx
-      .update(deletionOperations)
+  );
+  if (scope === "profile") {
+    await tx
+      .update(autopsyCacheClaims)
       .set({
-        acknowledgedAt: now,
-        tombstonedAt: now,
-        graceExpiresAt: new Date(
-          current.requestedAt.getTime() + DELETION_GRACE_MS
-        ),
+        status: "parked",
+        activeSystemAttemptId: null,
+        leaseExpiresAt: null,
+        lastFailureCode: "profile_tombstoned",
         updatedAt: now,
       })
-      .where(eq(deletionOperations.id, advanced.id))
-      .returning();
-    if (!acknowledged) refuse("operation_acknowledgement_conflict");
-    return acknowledged;
-  });
+      .where(
+        and(
+          eq(autopsyCacheClaims.rightsScope, "profile_private"),
+          eq(autopsyCacheClaims.profileId, targetId),
+          eq(autopsyCacheClaims.workspaceId, workspaceId),
+          inArray(autopsyCacheClaims.status, ["pending", "failed"])
+        )
+      );
+    const [tombstoned] = await tx
+      .update(creatorProfiles)
+      .set({
+        state: "deletion_tombstoned",
+        lifecycleVersion: sql`${creatorProfiles.lifecycleVersion} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(creatorProfiles.id, targetId),
+          eq(creatorProfiles.workspaceId, workspaceId),
+          inArray(creatorProfiles.state, ["active", "archived"])
+        )
+      )
+      .returning({ id: creatorProfiles.id });
+    if (!tombstoned) refuse("profile_changed_while_tombstoning");
+  } else {
+    await tx
+      .update(autopsyCacheClaims)
+      .set({
+        status: "parked",
+        activeSystemAttemptId: null,
+        leaseExpiresAt: null,
+        lastFailureCode: "workspace_tombstoned",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(autopsyCacheClaims.rightsScope, "profile_private"),
+          eq(autopsyCacheClaims.workspaceId, workspaceId),
+          inArray(autopsyCacheClaims.status, ["pending", "failed"])
+        )
+      );
+    const [tombstoned] = await tx
+      .update(workspaces)
+      .set({
+        lifecycleState: "tombstoned",
+        lifecycleVersion: sql`${workspaces.lifecycleVersion} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(workspaces.id, workspaceId),
+          eq(workspaces.lifecycleState, "active")
+        )
+      )
+      .returning({ id: workspaces.id });
+    if (!tombstoned) refuse("workspace_changed_while_tombstoning");
+  }
+  const [acknowledged] = await tx
+    .update(deletionOperations)
+    .set({
+      acknowledgedAt: now,
+      tombstonedAt: now,
+      graceExpiresAt: new Date(
+        current.requestedAt.getTime() + DELETION_GRACE_MS
+      ),
+      updatedAt: now,
+    })
+    .where(eq(deletionOperations.id, advanced.id))
+    .returning();
+  if (!acknowledged) refuse("operation_acknowledgement_conflict");
+  return acknowledged;
 }
 
 async function requestScopedDeletion(
@@ -2120,7 +2537,10 @@ async function requestScopedDeletion(
   journal: DeletionJournalPort,
   profileTargetId?: string
 ): Promise<DeletionOperation> {
-  if (!validKey(params.idempotencyKey)) refuse("invalid_idempotency_key");
+  // R-166: the cascade's key prefix is the server's; a client key carrying it is refused.
+  if (!validKey(params.idempotencyKey) || params.idempotencyKey.startsWith(IDENTITY_CASCADE_KEY_PREFIX)) {
+    refuse("invalid_idempotency_key");
+  }
   assertScoped(authority);
   if (
     !isWorkspaceScope(authority) ||
@@ -2550,16 +2970,202 @@ export function resumeWorkspaceDeletionRequest(
   return resumeScopedDeletionRequest(db, operationId, "workspace", authority, journal);
 }
 
+/**
+ * System-only resume of a RESERVED scoped request (R-162): no session, no
+ * scope. The exact authority-bound reservation is the commit point — the same
+ * rule `requireReservedScopedCancellationInTx` already applies to a reserved
+ * cancellation — because `beforeReserve` re-proved the requester's session,
+ * owner membership, epochs and typed name in the transaction that wrote it.
+ * A crash between that reservation and the tombstone transaction used to leave
+ * the operation in `requested` with no caller anywhere able to finish it: the
+ * two session-side seams above need a scope the worker cannot mint.
+ */
+export async function resumeReservedScopedDeletionRequest(
+  db: DbLike,
+  operationId: string,
+  journal: DeletionJournalPort
+): Promise<DeletionOperation> {
+  const [operation] = await db
+    .select()
+    .from(deletionOperations)
+    .where(eq(deletionOperations.id, operationId))
+    .limit(1);
+  if (
+    !operation ||
+    (operation.scope !== "profile" && operation.scope !== "workspace") ||
+    !operation.workspaceId
+  ) {
+    refuse("operation_not_available");
+  }
+  if (operation.state !== "requested") return operation;
+  if (
+    !hasExactJournalReservation(
+      operation,
+      journalPlanDigest(REQUEST_TOMBSTONE_STEPS, scopedRequestAuthorityBinding(operation))
+    )
+  ) {
+    refuse("request_reservation_changed");
+  }
+  return finalizeScopedDeletionRequest(db, operation, journal);
+}
+
+/** How long a reservation must have stood before the sweep treats it as wedged. */
+export const DELETION_WEDGE_RESUME_AFTER_MS = 5 * 60_000;
+/** How many wedges one tick resumes (each seam is a few transactions and a journal append). */
+export const DELETION_WEDGE_SWEEP_LIMIT = 10;
+/** How many reserved rows one tick classifies; the skipped ones cost one read each. */
+const DELETION_WEDGE_SCAN_MAX = 200;
+
+export type DeletionWedgeSeam =
+  | "identity_request"
+  | "scoped_request"
+  | "scoped_cancellation"
+  | "identity_cancellation";
+
+export type DeletionWedgeOutcome = Readonly<{
+  operationId: string;
+  scope: DeletionScope;
+  seam: DeletionWedgeSeam | null;
+  /** `resumed`: the seam ran and returned; `refused`: it threw (code below); `skipped`: not this sweep's to finish. */
+  result: "resumed" | "refused" | "skipped";
+  code: string;
+}>;
+
+/**
+ * THE CALLER THE RESUME SEAMS NEVER HAD (R-162, P5-R4). Every seam below was
+ * exported and tested and reachable from nothing, so a crash between a
+ * journal reservation and the transaction it reserves wedged the operation
+ * permanently. The worker tick runs this before the executor.
+ *
+ * The population is every non-terminal operation carrying a reservation older
+ * than `DELETION_WEDGE_RESUME_AFTER_MS`, and it is classified by WHAT the
+ * reservation is, never by a label: an exact request plan (`requested`), an
+ * exact scoped cancellation plan, or — for identity — any plan that is not one
+ * of the executor's own one-step transitions, which the executor resumes
+ * itself on its next tick (`prepareJournalPlan` returns an identical plan).
+ *
+ *   identity  requested  -> resumeIdentityDeletionRequest (also finalizes its cascade)
+ *   scoped    requested  -> resumeReservedScopedDeletionRequest, EXCEPT a cascade
+ *                            row, which is its identity's to finalize (skipped)
+ *   scoped    other      -> resumeScopedDeletionCancellation, iff the plan is
+ *                            exactly that operation's cancellation plan
+ *   identity  other      -> resumeIdentityDeletionCancellation, iff the plan is
+ *                            not an executor transition
+ *
+ * A refusal is CAUGHT per operation so one poisoned row does not starve the
+ * rest, and is therefore COUNTED: the tick summary carries `wedgesRefused`
+ * and the worker raises an alert on it (CLAUDE.md 2026-09-09).
+ */
+export async function resumeWedgedDeletionOperations(
+  db: DbLike,
+  ports: Readonly<{
+    journal: DeletionJournalPort;
+    recoveryDelivery: RecoveryDeliveryPort;
+    membershipRestore: MembershipRestorePolicyPort;
+  }>,
+  options: Readonly<{ olderThanMs?: number; limit?: number }> = {}
+): Promise<readonly DeletionWedgeOutcome[]> {
+  const olderThanMs = options.olderThanMs ?? DELETION_WEDGE_RESUME_AFTER_MS;
+  const candidates = await db
+    .select()
+    .from(deletionOperations)
+    .where(
+      and(
+        notInArray(deletionOperations.state, ["complete", "cancelled"]),
+        sql`${deletionOperations.journalIntentPlanDigest} IS NOT NULL`,
+        sql`${deletionOperations.journalIntentEffectiveAt} < clock_timestamp() - make_interval(secs => ${olderThanMs / 1_000})`
+      )
+    )
+    .orderBy(asc(deletionOperations.journalIntentEffectiveAt))
+    // The bound applies to the SEAMS run, not to the rows read: an executor's
+    // own long-held reservation is skipped here, and a limit on the read
+    // would let enough of them starve a real wedge behind them.
+    .limit(DELETION_WEDGE_SCAN_MAX);
+  const limit = options.limit ?? DELETION_WEDGE_SWEEP_LIMIT;
+  const outcomes: DeletionWedgeOutcome[] = [];
+  let run = 0;
+  for (const operation of candidates) {
+    const seam = wedgeSeamFor(operation);
+    if (seam === null) {
+      outcomes.push({ operationId: operation.id, scope: operation.scope, seam, result: "skipped", code: "not_a_wedge" });
+      continue;
+    }
+    // R-166: a cascaded row by its server-owned parent column, not its key.
+    if (seam === "scoped_request" && operation.cascadeParentOperationId !== null) {
+      outcomes.push({ operationId: operation.id, scope: operation.scope, seam, result: "skipped", code: "cascade_awaits_identity" });
+      continue;
+    }
+    if (run >= limit) break;
+    run += 1;
+    try {
+      const after =
+        seam === "identity_request"
+          ? (await resumeIdentityDeletionRequest(db, operation.id, ports)).operation
+          : seam === "scoped_request"
+            ? await resumeReservedScopedDeletionRequest(db, operation.id, ports.journal)
+            : seam === "scoped_cancellation"
+              ? await resumeScopedDeletionCancellation(db, operation.id, ports.journal, ports.membershipRestore)
+              : (await resumeIdentityDeletionCancellation(db, operation.id, ports)).operation;
+      outcomes.push({ operationId: operation.id, scope: operation.scope, seam, result: "resumed", code: after.state });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const code = (message.startsWith("deletion_refused:") ? message.slice("deletion_refused:".length) : "resume_failed")
+        .replace(/[^A-Za-z0-9_:.-]/g, "_")
+        .slice(0, 120);
+      outcomes.push({ operationId: operation.id, scope: operation.scope, seam, result: "refused", code });
+    }
+  }
+  return outcomes;
+}
+
+function wedgeSeamFor(operation: DeletionOperation): DeletionWedgeSeam | null {
+  const reservation = operation.journalIntentPlanDigest;
+  if (reservation === null) return null;
+  if (operation.state === "requested") {
+    return operation.scope === "identity" ? "identity_request" : "scoped_request";
+  }
+  const cancellation: readonly JournalPlanStep[] = [{ from: operation.state, to: "cancelled" }];
+  if (operation.scope !== "identity") {
+    return reservation === journalPlanDigest(cancellation, scopedCancellationAuthorityBinding(operation))
+      ? "scoped_cancellation"
+      : null;
+  }
+  const executorPlans = TRANSITIONS[operation.state]
+    .filter((to) => to !== "cancelled")
+    .map((to) => journalPlanDigest([{ from: operation.state, to }]));
+  if (operation.state === "erasing" || operation.state === "verifying") return null;
+  return executorPlans.includes(reservation) ? null : "identity_cancellation";
+}
+
 type ScopedCancellationAuthority = Readonly<{
   operation: DeletionOperation & { workspaceId: string };
   requesterDigest: string;
 }>;
 
+/**
+ * WHO CANCELS (R-166, gate M4): any active owner may (R-162), so the
+ * requester is not the answer. Recorded in the transaction that reserves the
+ * cancellation's journal plan — the commit point; a resume after it has no
+ * session to name anyone — as the canceller's id (scrubbed by their identity
+ * erasure) and digest (a receipt fact, like `requester_digest`). Only while
+ * unreserved, so a reservation already made keeps its canceller.
+ */
+async function recordScopedCancellerInTx(
+  tx: TxLike,
+  operationId: string,
+  cancellerUserId: string
+): Promise<void> {
+  await tx
+    .update(deletionOperations)
+    .set({ cancelledByUserId: cancellerUserId, cancelledByDigest: requesterDigest(cancellerUserId) })
+    .where(and(eq(deletionOperations.id, operationId), isNull(deletionOperations.journalIntentPlanDigest)));
+}
+
 async function requireScopedCancellationAuthorityInTx(
   tx: TxLike,
   operationId: string,
   params: Omit<ScopedRequestParams, "idempotencyKey" | "typedName">
-): Promise<ScopedCancellationAuthority> {
+): Promise<ScopedCancellationAuthority & Readonly<{ cancellerUserId: string }>> {
   let [operation] = await tx
     .select()
     .from(deletionOperations)
@@ -2570,24 +3176,30 @@ async function requireScopedCancellationAuthorityInTx(
       )
     )
     .limit(1);
-  if (
-    !operation ||
-    operation.scope === "identity" ||
-    !operation.workspaceId ||
-    !operation.requesterUserId
-  ) {
+  if (!operation || operation.scope === "identity" || !operation.workspaceId) {
     refuse("operation_not_available");
   }
-  const expectedRequesterUserId = operation.requesterUserId;
-  await lockIdentityMembershipGraph(tx, expectedRequesterUserId);
-  await lockWorkspaceMembershipGraph(tx, operation.workspaceId);
+  const workspaceId = operation.workspaceId;
+  // ANY ACTIVE OWNER of the target workspace may cancel (R-162, P5-R5) — not
+  // only the requester, whose session a co-owner cannot present. Requiring the
+  // requester was the deadlock: an owner who requested a workspace deletion
+  // and then their own account's had their sessions revoked and their
+  // membership suspended, so nobody could ever cancel the workspace. The
+  // canceller is whoever holds the reauthenticated session; the identity lock
+  // is theirs, taken before the workspace lock (the global order).
+  // WHO, before the locks — but no clock: the session's freshness and the
+  // grace cutoff are measured only after both graph locks (the source scan in
+  // `deletion-lifecycle.test.ts` pins that order).
+  const actorUserId = await sessionDomainUserId(tx, params.sessionId);
+  await lockIdentityMembershipGraph(tx, actorUserId);
+  await lockWorkspaceMembershipGraph(tx, workspaceId);
   const now = await databaseNow(tx);
   const proof = await requireReauthenticatedSession(
     tx,
     params.sessionId,
     now,
     params.reauthMaxAgeMs,
-    expectedRequesterUserId
+    actorUserId
   );
   [operation] = await tx
     .select()
@@ -2595,32 +3207,25 @@ async function requireScopedCancellationAuthorityInTx(
     .where(
       and(
         eq(deletionOperations.id, operationId),
-        eq(deletionOperations.requesterUserId, proof.userId),
+        eq(deletionOperations.workspaceId, workspaceId),
         inArray(deletionOperations.scope, ["profile", "workspace"])
       )
     )
     .limit(1);
-  if (
-    !operation ||
-    operation.scope === "identity" ||
-    !operation.workspaceId ||
-    operation.requesterUserId !== proof.userId
-  ) {
+  if (!operation || operation.scope === "identity" || !operation.workspaceId) {
     refuse("operation_not_available");
   }
-  const [owner] = await tx
-    .select({ id: memberships.id })
-    .from(memberships)
-    .where(
-      and(
-        eq(memberships.userId, proof.userId),
-        eq(memberships.workspaceId, operation.workspaceId),
-        eq(memberships.role, "owner"),
-        eq(memberships.lifecycleState, "active")
-      )
-    )
-    .limit(1);
-  if (!owner) refuse("owner_required");
+  // The membership, not the workspace, is what must be live: during a
+  // workspace deletion the workspace row IS tombstoned.
+  await requireOwnerMembership(tx, proof.userId, workspaceId);
+  // A `blocked` operation whose resume state is irreversible work never
+  // cancels (R-162): the erasing-phase provider commands may have run.
+  if (
+    operation.state === "blocked" &&
+    (operation.blockedResumeState === "erasing" || operation.blockedResumeState === "verifying")
+  ) {
+    refuse("erasure_started");
+  }
   if (
     operation.state !== "cancelled" &&
     (!operation.graceExpiresAt || now.getTime() >= operation.graceExpiresAt.getTime())
@@ -2634,6 +3239,7 @@ async function requireScopedCancellationAuthorityInTx(
   return {
     operation: operation as DeletionOperation & { workspaceId: string },
     requesterDigest: operation.requesterDigest,
+    cancellerUserId: proof.userId,
   };
 }
 
@@ -2713,7 +3319,8 @@ async function applyScopedCancellationInTx(
   authority: ScopedCancellationAuthority,
   cancellationSteps: readonly JournalPlanStep[],
   authorityBindingDigest: string,
-  journal: DeletionJournalPort
+  journal: DeletionJournalPort,
+  membershipRestore: MembershipRestorePolicyPort | undefined
 ): Promise<DeletionOperation> {
   const now = await databaseNow(tx);
   const operation = authority.operation;
@@ -2790,15 +3397,147 @@ async function applyScopedCancellationInTx(
     if (periodEnd?.status === "succeeded") {
       await enqueueExternalCommandInTx(tx, cancelled, "stripe_subscription_reopen");
     }
+    if (membershipRestore) {
+      await restoreStrandedMembershipsInTx(tx, operation.workspaceId, membershipRestore, now);
+    }
   }
   return cancelled;
 }
+
+/**
+ * THE SECOND WAY OUT OF `deletion_suspended` (R-162, P5-R5), so the state has
+ * a path out that can run more than once. An identity cancellation restores
+ * every membership it suspended — into an active workspace, and into one that
+ * is tombstoned by a still-cancellable workspace deletion
+ * (`workspaceAdmitsMembershipRestoreInTx`), because membership and workspace
+ * lifecycle are one state and the workspace's own operation decides access.
+ * A membership it could NOT restore (`workspace_unavailable`) used to stay
+ * suspended forever, even after its workspace came back; this re-runs the
+ * restore for exactly those rows when the workspace's deletion is cancelled:
+ * suspended by an identity operation that is itself `cancelled`, with that
+ * operation's snapshot still recording `workspace_unavailable`.
+ */
+async function restoreStrandedMembershipsInTx(
+  tx: TxLike,
+  workspaceId: string,
+  membershipRestore: MembershipRestorePolicyPort,
+  now: Date
+): Promise<readonly string[]> {
+  const stranded = await tx
+    .select({ membership: memberships, snapshot: deletionMembershipSnapshots })
+    .from(memberships)
+    .innerJoin(
+      deletionOperations,
+      and(
+        eq(deletionOperations.id, memberships.suspensionOperationId),
+        eq(deletionOperations.scope, "identity"),
+        eq(deletionOperations.state, "cancelled")
+      )
+    )
+    .innerJoin(
+      deletionMembershipSnapshots,
+      and(
+        eq(deletionMembershipSnapshots.operationId, deletionOperations.id),
+        eq(deletionMembershipSnapshots.membershipId, memberships.id),
+        eq(deletionMembershipSnapshots.outcome, "workspace_unavailable")
+      )
+    )
+    .innerJoin(users, and(eq(users.id, memberships.userId), eq(users.lifecycleState, "active")))
+    .where(
+      and(
+        eq(memberships.workspaceId, workspaceId),
+        eq(memberships.lifecycleState, "deletion_suspended")
+      )
+    );
+  const restored: string[] = [];
+  for (const { membership, snapshot } of stranded) {
+    if (
+      membership.suspendedRole !== snapshot.role ||
+      membership.suspendedVersion !== snapshot.membershipVersion ||
+      membership.version !== snapshot.membershipVersion + 1
+    ) {
+      continue;
+    }
+    const decision = await membershipRestore.mayRestore(
+      {
+        operationId: snapshot.operationId,
+        userId: membership.userId,
+        membershipId: membership.id,
+        workspaceId,
+        role: snapshot.role,
+        membershipVersion: snapshot.membershipVersion,
+      },
+      tx
+    );
+    if (!decision.allowed) continue;
+    const [row] = await tx
+      .update(memberships)
+      .set({
+        role: snapshot.role,
+        lifecycleState: "active",
+        suspendedRole: null,
+        suspendedVersion: null,
+        suspensionOperationId: null,
+        version: membership.version + 1,
+      })
+      .where(
+        and(
+          eq(memberships.id, membership.id),
+          eq(memberships.version, membership.version),
+          eq(memberships.lifecycleState, "deletion_suspended")
+        )
+      )
+      .returning({ id: memberships.id });
+    if (!row) continue;
+    await tx
+      .update(deletionMembershipSnapshots)
+      .set({ outcome: "restored", outcomeAt: now })
+      .where(
+        and(
+          eq(deletionMembershipSnapshots.id, snapshot.id),
+          eq(deletionMembershipSnapshots.outcome, "workspace_unavailable")
+        )
+      );
+    restored.push(membership.id);
+  }
+  return restored;
+}
+
+/**
+ * May an identity cancellation restore a membership into this workspace?
+ * Active: yes. Tombstoned: only while its newest workspace deletion is still
+ * in the read grade's window (`newestWorkspaceDeletionAdmitsRead`) — the
+ * person needs the membership back to cancel it (R-162). Erasing, verifying,
+ * blocked on the way to either (R-166, gate M2), complete, or no such
+ * operation: no.
+ */
+async function workspaceAdmitsMembershipRestoreInTx(
+  tx: TxLike,
+  workspaceId: string
+): Promise<boolean> {
+  const [workspace] = await tx
+    .select({ state: workspaces.lifecycleState })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId))
+    .limit(1);
+  if (!workspace) return false;
+  if (workspace.state === "active") return true;
+  return newestWorkspaceDeletionAdmitsRead(tx, workspaceId);
+}
+
+export type ScopedCancellationPorts = Readonly<{
+  /** R-165: replays money held while the workspace was tombstoned, after the cancellation commits. */
+  heldMoney?: HeldMoneyReplayPort;
+  /** R-162: restores memberships an earlier identity cancellation could not. */
+  membershipRestore?: MembershipRestorePolicyPort;
+}>;
 
 export async function cancelScopedDeletion(
   db: DbLike,
   operationId: string,
   params: Omit<ScopedRequestParams, "idempotencyKey" | "typedName">,
-  journal: DeletionJournalPort
+  journal: DeletionJournalPort,
+  ports: ScopedCancellationPorts = {}
 ): Promise<DeletionOperation> {
   const [planSnapshot] = await db
     .select()
@@ -2818,11 +3557,12 @@ export async function cancelScopedDeletion(
           authorityBindingDigest,
            beforeReserve: async (tx, planDigest) => {
              if (await hasReservedJournalPlan(tx, operationId, planDigest)) return;
-             await requireScopedCancellationAuthorityInTx(tx, operationId, params);
+             const authority = await requireScopedCancellationAuthorityInTx(tx, operationId, params);
+             await recordScopedCancellerInTx(tx, operationId, authority.cancellerUserId);
           },
         })
       : null;
-  return db.transaction(async (tx) => {
+  const cancelled = await db.transaction(async (tx) => {
     const authority = cancellationPlanDigest
       ? await requireReservedScopedCancellationInTx(
           tx,
@@ -2835,9 +3575,19 @@ export async function cancelScopedDeletion(
       authority,
       cancellationSteps,
       authorityBindingDigest,
-      journal
+      journal,
+      ports.membershipRestore
     );
   });
+  // AFTER the commit, in its own transactions, one per event (R-165): the
+  // replay takes the workspace's billing locks, which the cancellation does
+  // not hold, and an event that fails to replay must not undo a cancellation
+  // that already restored the workspace. It stays held, and the worker's
+  // deletion tick replays it and counts a failure into its alert.
+  if (cancelled.scope === "workspace" && cancelled.workspaceId && ports.heldMoney) {
+    await ports.heldMoney.replayHeldEvents(cancelled.workspaceId);
+  }
+  return cancelled;
 }
 
 /**
@@ -2848,7 +3598,8 @@ export async function cancelScopedDeletion(
 export async function resumeScopedDeletionCancellation(
   db: DbLike,
   operationId: string,
-  journal: DeletionJournalPort
+  journal: DeletionJournalPort,
+  membershipRestore?: MembershipRestorePolicyPort
 ): Promise<DeletionOperation> {
   const [snapshot] = await db
     .select()
@@ -2881,7 +3632,8 @@ export async function resumeScopedDeletionCancellation(
       authority,
       cancellationSteps,
       authorityBindingDigest,
-      journal
+      journal,
+      membershipRestore
     );
   });
 }
@@ -3302,12 +4054,11 @@ async function applyIdentityCancellationInTx(
     ) {
       outcome = "changed";
     } else {
-      const [workspace] = await tx
-        .select({ state: workspaces.lifecycleState })
-        .from(workspaces)
-        .where(eq(workspaces.id, snapshot.workspaceId))
-        .limit(1);
-      if (!workspace || workspace.state !== "active") {
+      // One state, not two that drift (R-162, P5-R5): a workspace tombstoned
+      // by a still-cancellable deletion takes its member back, so the person
+      // can reach the page that cancels it. Before, this was
+      // `workspace_unavailable` and the membership stayed suspended forever.
+      if (!(await workspaceAdmitsMembershipRestoreInTx(tx, snapshot.workspaceId))) {
         outcome = "workspace_unavailable";
       } else {
         const decision = await ports.membershipRestore.mayRestore(
@@ -3600,6 +4351,11 @@ async function validateWorkerTransitionInTx(
     refuse("irreversible_transition_requires_erasure_transaction");
   }
   assertDeletionTransition(operation.state, toState);
+  // The third copy of the blocked guard. It needs no `cancelled` exception,
+  // unlike `appendJournalTransitionInTx`'s (R-162): the worker refuses a
+  // cancellation above (`cancellation_requires_scope_authority`), and the
+  // compiler narrows `toState` here so that writing the exception is a type
+  // error — the cancellation path is the scope-authority append, never this.
   if (operation.state === "blocked" && operation.blockedResumeState !== toState) {
     refuse("blocked_reconciliation_target_mismatch");
   }

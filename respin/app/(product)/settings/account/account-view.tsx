@@ -18,6 +18,7 @@ import {
   REQUESTS_CLOSED_COPY,
   RETAINED_COPY,
   WORKSPACE_DELETE_COPY,
+  WORKSPACE_DELETION_PENDING_COPY,
 } from "./copy";
 
 export type FormAction = string | ((formData: FormData) => void | Promise<void>);
@@ -46,6 +47,12 @@ export type AccountViewProps = {
   requestsOpen: { identity: boolean; workspace: boolean };
   billingContact: BillingContactView;
   pending: readonly PendingDeletion[];
+  /**
+   * The page holds the READ grade (R-163): this workspace is tombstoned by a
+   * pending deletion. Its write controls render closed — the server refuses
+   * them anyway — and the cancel above is the way forward.
+   */
+  workspacePendingDeletion?: boolean;
   notice: string | null;
   error: string | null;
   actions: {
@@ -64,7 +71,11 @@ function billingContactSentence(contact: BillingContactView): string {
 }
 
 export function AccountView(props: AccountViewProps) {
-  const canAcceptContact = props.isOwner && props.billingContact.hasCustomer && !props.billingContact.isCurrentUser;
+  const canAcceptContact =
+    props.isOwner &&
+    !props.workspacePendingDeletion &&
+    props.billingContact.hasCustomer &&
+    !props.billingContact.isCurrentUser;
   return (
     <section>
       <h1>{ACCOUNT_TITLE}</h1>
@@ -122,7 +133,9 @@ export function AccountView(props: AccountViewProps) {
       <h2>Delete this workspace</h2>
       <p>{WORKSPACE_DELETE_COPY}</p>
       <p>{NO_REFUND_COPY}</p>
-      {!props.requestsOpen.workspace ? (
+      {props.workspacePendingDeletion ? (
+        <p className="muted" data-testid="workspace-deletion-pending">{WORKSPACE_DELETION_PENDING_COPY}</p>
+      ) : !props.requestsOpen.workspace ? (
         <p className="muted" data-testid="workspace-requests-closed">{REQUESTS_CLOSED_COPY}</p>
       ) : props.isOwner ? (
         <form action={props.actions.requestWorkspace} data-testid="request-workspace-deletion">

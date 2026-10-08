@@ -127,6 +127,27 @@ export function isProbeArtifactPath(filePath: string): boolean {
 }
 
 /**
+ * True ONLY for a path some suite actually plants: one of `PLANTED_PROBE_PATHS`
+ * exactly, or a file inside one of the two probe DIRECTORIES those paths live
+ * in. Workspace-relative, either separator.
+ *
+ * NARROWER THAN `isProbeArtifactPath` ON PURPOSE (audit P1-R6 follow-up,
+ * 2026-10-05). The `__*` prefix is the gitignore convention for scratch, and a
+ * scan that skips it skips ANY `__foo.ts` — including a real production file,
+ * which `tests/safe-log.test.ts`'s raw-error and wire-id scans then never
+ * read. A scan whose only reason to skip is "another suite's plant may exist
+ * mid-run" skips exactly those plants and reads everything else.
+ */
+export function isPlantedProbePath(filePath: string): boolean {
+  const path = filePath.split("\\").join("/");
+  if ((Object.values(PLANTED_PROBE_PATHS) as string[]).includes(path)) return true;
+  const segments = path.split("/");
+  return segments
+    .slice(0, -1)
+    .some((segment) => (PROBE_DIRECTORY_NAMES as readonly string[]).includes(segment));
+}
+
+/**
  * The `.gitignore` lines that make the paths above uncommittable.
  *
  * Pinned here and asserted against the INSTALLED git in

@@ -29,6 +29,7 @@ import {
   CheckoutReconciliationRequiredError,
   TierCheckoutAuthorityError,
   TierCheckoutRolloutError,
+  BalanceIsolationError,
   ClockSkewError,
   CustomerMappingLostError,
   InvoiceRecoveryUnavailableError,
@@ -39,6 +40,9 @@ import {
   NotPausedError,
   NotRecoverableError,
   PackPriceMismatchError,
+  TierPriceChangedError,
+  TierPriceMismatchError,
+  TierPriceUnavailableError,
   PackPriceNotMappedError,
   PackPriceUnavailableError,
   PauseLengthError,
@@ -64,6 +68,9 @@ import {
   NotEnoughPostsError,
   InsufficientCreditsError,
   LlmError,
+  // Audit P3-R2 (R-158): the assembled-input ceiling's refusal, re-exported as
+  // a VALUE by the facade because `app/**` may not import `@respin/llm`.
+  LlmInputTooLargeError,
   ProfileArchivedError,
   RunSlotBusyError,
   TopupInFlightError,
@@ -86,6 +93,10 @@ import {
   GenerationRecoveryRequiredError,
   GenerationUnchargedAttemptCapError,
   GenerationUnchargedCostCapError,
+  // Audit P3-R3 / P3-A4 (R-158, R-157).
+  GenerationWindowCostCapError,
+  GenerationHeldError,
+  HeldDraftUnavailableError,
   KillTestError,
   ModeNotInPlanError,
   NoCreatorRulesError,
@@ -98,6 +109,15 @@ import {
   // nothing was spent, and neither sells anything.
   RevisionParentError,
   UnknownEntitlementTierError,
+  // R-148 (launch L1): the creative form control's one refusal, raised BEFORE
+  // any claim or provider call, branched on its closed `reason` below.
+  CreativeRequestError,
+  // Launch L2 (R-151): a confirmed quote that moved, and the no-concept
+  // entrance with nothing confirmed to start from.
+  GenerationQuoteChangedError,
+  ConceptContextInsufficientError,
+  // Launch L4 (R-153): a saved-page revision the page never offered.
+  RevisionPresetError,
   // SLICE 8c (R8/R13) — the two refusals `submitPastedReference` adds. Both
   // are raised BEFORE any row is written and before any credit moves, so both
   // copies say so; the tier one names the plans and sells nothing (the
@@ -119,6 +139,10 @@ import {
   ECHO_NO_GUARANTEE_CLAUSE,
   NOTHING_SAVED_CLAUSE,
 } from "./refusal-clauses";
+// R-176 (plan label R-159): the support address, read on the server in ONE
+// module, and the pure sentence that names it or promises nothing.
+import { supportContact } from "../support-contact";
+import { withContact } from "../support-copy";
 import {
   BrainEditBusyError,
   BrainEditEmptyError,
@@ -152,6 +176,8 @@ import {
   ScopeForgeryError,
   UsageRawError,
   WorkspaceAccessError,
+  // R-163: the write grade's refusal for a pending-deletion-only identity.
+  WorkspacePendingDeletionError,
   WorkspacePausedError,
   // Slice 3b, Stage B1 — the interview draft's two typed refusals.
   InterviewAnswerError,
@@ -169,6 +195,8 @@ import {
   FeedbackNoteError,
   FeedbackDuplicateError,
   FeedbackTargetError,
+  // Audit P6-A1 (R-174): "Leave this out of future drafts".
+  FeedbackExclusionTargetError,
   FrameworkAccessError,
   FrameworkStaleError,
   FrameworkContentError,
@@ -208,6 +236,18 @@ import {
   PromotionPayloadError,
   PromotionFreshnessError,
   PromotionDecisionError,
+  // Launch L2 (R-151): the creative piece refusal (closed `reason`) and the
+  // e2e transport-selection refusal (a server that selected the fake where it
+  // may not). Both on the root export, both with copy below.
+  CreativePieceError,
+  LlmTransportSelectionError,
+  // Audit Phase 8 (R-177): the lock-order guard's refusal, the render
+  // budget's, and the budget's refusal to open inside an open transaction
+  // (gate M2). None is a creator's to fix; each carries copy so none can
+  // render as "Something went wrong".
+  LockOrderError,
+  RenderLockTimeoutError,
+  RenderTransactionNestingError,
 } from "@respin/db";
 
 /**
@@ -254,7 +294,13 @@ export const BILLING_ERROR_CODES = [
   "customer_mapping_lost",
   "ledger_integrity",
   "clock_skew",
+  // Audit Phase 8 (P8-A2, P8-A1, P8-R1; R-177).
+  "balance_isolation",
+  "lock_order",
+  "render_lock_timeout",
+  "render_transaction_nesting",
   "config_unavailable",
+  "workspace_pending_deletion",
   "workspace_access",
   // Audit 2026-08-17 remediation (R1).
   "subscription_paused",
@@ -262,6 +308,9 @@ export const BILLING_ERROR_CODES = [
   "pack_price_not_mapped",
   "pack_price_unavailable",
   "pack_price_mismatch",
+  "tier_price_unavailable",
+  "tier_price_mismatch",
+  "tier_price_changed",
   // Audit 2026-08-17 remediation (R2) — the `incomplete` remedy.
   "invoice_recovery_unavailable",
   "not_recoverable",
@@ -436,9 +485,55 @@ export const BILLING_ERROR_CODES = [
   "revision_parent_not_revisable",
   "revision_parent_different_mode",
   "revision_parent_unreadable",
+  // R-148 (launch L1). TWO CODES FOR ONE CLASS, the `RevisionParentError`
+  // precedent: "the form or limit you sent is not one we accept" and "that
+  // draft predates forms, so its revision keeps its format" have different
+  // remedies, and the second is not something the creator got wrong at all.
+  "creative_request",
+  "creative_revision_legacy",
+  // Launch L2 (R-151): a revision keeps its parent's form — a different form
+  // is a new commission, not a swap at the revision price.
+  "creative_revision_form",
+  // Launch L2 (R-151): the creative piece. Four reasons, four sentences, and a
+  // neutral fallback for a reason this build does not know.
+  "creative_piece",
+  "creative_piece_not_found",
+  "creative_piece_source",
+  "creative_piece_stale",
+  "creative_piece_not_commissionable",
+  "generation_quote_changed",
+  "concept_context_needed",
+  // AUDIT P3-R2 (R-158) — THE INPUT CEILING. One class, seven codes, the
+  // `RevisionParentError` precedent: the refusal's remedy depends on WHICH
+  // part of the assembled prompt is largest (`LlmInputTooLargeError.
+  // largestPart`), and "trim your Voice document" is false advice for a
+  // creator whose paste is the problem. `input_too_large_posts` is the
+  // onboarding branch: that caller bounds the whole prompt and names no part.
+  "input_too_large",
+  "input_too_large_voice",
+  "input_too_large_strategy",
+  "input_too_large_killtest",
+  "input_too_large_frameworks",
+  "input_too_large_input",
+  "input_too_large_posts",
+  // AUDIT P3-R3 (R-158) — the per-window TOTAL, successes included.
+  "generation_window_cost_cap",
+  // AUDIT P3-A4 (R-157) — A HELD DRAFT. Three reasons, three remedies (wait
+  // for the pause to end, top up, or simply try again), one shared truth:
+  // nothing was charged, and the draft is finishable from /studio until its
+  // hold time. And "Finish this draft" naming an attempt this creator cannot
+  // finish.
+  "generation_held_paused",
+  "generation_held_balance",
+  "generation_held_transient",
+  "held_draft_unavailable",
+  "llm_transport_refused",
+  // Launch L4 (R-153): the saved recording pack's revision presses.
+  "revision_preset",
   "generation_lineage",
   "feedback_reaction",
   "feedback_target",
+  "feedback_exclusion_target",
   "feedback_note",
   "feedback_duplicate",
   "framework_access",
@@ -529,13 +624,22 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   { cls: CustomerMappingLostError, code: "customer_mapping_lost" },
   { cls: LedgerIntegrityError, code: "ledger_integrity" },
   { cls: ClockSkewError, code: "clock_skew" },
+  { cls: BalanceIsolationError, code: "balance_isolation" },
+  { cls: LockOrderError, code: "lock_order" },
+  { cls: RenderLockTimeoutError, code: "render_lock_timeout" },
+  { cls: RenderTransactionNestingError, code: "render_transaction_nesting" },
   { cls: ConfigUnavailableError, code: "config_unavailable" },
+  // BEFORE its base `WorkspaceAccessError` (the list is walked in order).
+  { cls: WorkspacePendingDeletionError, code: "workspace_pending_deletion" },
   { cls: WorkspaceAccessError, code: "workspace_access" },
   { cls: SubscriptionPausedError, code: "subscription_paused" },
   { cls: NotChargeableError, code: "not_chargeable" },
   { cls: PackPriceNotMappedError, code: "pack_price_not_mapped" },
   { cls: PackPriceUnavailableError, code: "pack_price_unavailable" },
   { cls: PackPriceMismatchError, code: "pack_price_mismatch" },
+  { cls: TierPriceUnavailableError, code: "tier_price_unavailable" },
+  { cls: TierPriceMismatchError, code: "tier_price_mismatch" },
+  { cls: TierPriceChangedError, code: "tier_price_changed" },
   { cls: InvoiceRecoveryUnavailableError, code: "invoice_recovery_unavailable" },
   { cls: NotRecoverableError, code: "not_recoverable" },
   { cls: WorkspacePausedError, code: "workspace_paused" },
@@ -688,9 +792,29 @@ const HANDLERS: { cls: ErrorClass; code: BillingErrorCode }[] = [
   // reachable only through an instance branch would read to that test as a
   // class with no copy.
   { cls: RevisionParentError, code: "revision_parent" },
+  // R-148. The FALLBACK for a `CreativeRequestError`; `billingErrorCode`
+  // branches on its `reason` first, so a legacy-format revision is told the
+  // truth about why rather than that its request was malformed.
+  { cls: CreativeRequestError, code: "creative_request" },
+  // Launch L2 (R-151). The piece's ENTRY IS THE FALLBACK: `billingErrorCode`
+  // branches on its `reason` first.
+  { cls: CreativePieceError, code: "creative_piece" },
+  { cls: GenerationQuoteChangedError, code: "generation_quote_changed" },
+  // Audit P3-R2/R3/A4. `LlmInputTooLargeError` and `GenerationHeldError` are
+  // FALLBACK entries: `billingErrorCode` branches on the instance first.
+  // `LlmInputTooLargeError` is not an `LlmError`, so the vendor branches above
+  // cannot take it whatever the walk order.
+  { cls: LlmInputTooLargeError, code: "input_too_large" },
+  { cls: GenerationWindowCostCapError, code: "generation_window_cost_cap" },
+  { cls: GenerationHeldError, code: "generation_held_transient" },
+  { cls: HeldDraftUnavailableError, code: "held_draft_unavailable" },
+  { cls: ConceptContextInsufficientError, code: "concept_context_needed" },
+  { cls: RevisionPresetError, code: "revision_preset" },
+  { cls: LlmTransportSelectionError, code: "llm_transport_refused" },
   { cls: GenerationLineageError, code: "generation_lineage" },
   { cls: FeedbackReactionError, code: "feedback_reaction" },
   { cls: FeedbackTargetError, code: "feedback_target" },
+  { cls: FeedbackExclusionTargetError, code: "feedback_exclusion_target" },
   { cls: FeedbackNoteError, code: "feedback_note" },
   { cls: FeedbackDuplicateError, code: "feedback_duplicate" },
   { cls: FrameworkAccessError, code: "framework_access" },
@@ -763,6 +887,10 @@ export const INSTANCE_BRANCH_CODES: Readonly<
     "revision_parent_not_revisable",
     "revision_parent_different_mode",
     "revision_parent_unreadable",
+    // The `??` fallback is a code the branch RETURNS, so it is listed here
+    // too (launch L2, E-25(iii): the derivation test reads every literal the
+    // branch can return, fallbacks included).
+    "revision_parent",
   ],
   // Slice 8c. Four fields, four sentences — see the codes' own block above.
   PastedReferenceInputError: [
@@ -770,6 +898,43 @@ export const INSTANCE_BRANCH_CODES: Readonly<
     "pasted_reference_title",
     "pasted_reference_transcript",
     "pasted_reference_niche",
+    // The `??` fallback (`billing-errors.ts`' `PASTED_REFERENCE_FIELD_CODES[
+    // err.field] ?? "pasted_reference_input"`), named by the L2 scanner.
+    "pasted_reference_input",
+  ],
+  // R-148 (launch L1), entry added in launch L2 (E-25(iii)): it had an
+  // instance branch and no entry here, so a screen deriving its codes from
+  // this map could not see `creative_revision_legacy`.
+  CreativeRequestError: [
+    "creative_revision_legacy",
+    "creative_revision_form",
+    "creative_request",
+  ],
+  // Audit P3-R2: the largest part decides the remedy; no part (the
+  // onboarding caller) is the posts branch; any other part is the fallback.
+  LlmInputTooLargeError: [
+    "input_too_large_voice",
+    "input_too_large_strategy",
+    "input_too_large_killtest",
+    "input_too_large_frameworks",
+    "input_too_large_input",
+    "input_too_large_posts",
+    "input_too_large",
+  ],
+  // Audit P3-A4: three held reasons, and the transient code as the fallback
+  // for a reason this build does not know.
+  GenerationHeldError: [
+    "generation_held_paused",
+    "generation_held_balance",
+    "generation_held_transient",
+  ],
+  // Launch L2 (R-151): the creative piece's four reasons and its fallback.
+  CreativePieceError: [
+    "creative_piece_not_found",
+    "creative_piece_source",
+    "creative_piece_stale",
+    "creative_piece_not_commissionable",
+    "creative_piece",
   ],
 };
 
@@ -810,6 +975,90 @@ export const HANDLED_ERROR_CLASS_NAMES: string[] = HANDLERS.map(
 );
 
 export type BillingErrorCopy = { title: string; detail: string };
+
+/**
+ * THE CODES WHOSE REMEDY ENDS WITH A PERSON (audit P6-R6 amendment, R-176).
+ *
+ * Every one of these entries told the creator to reach support while no channel existed
+ * (measured 2026-10-05: 13 lines in this file sending the creator to support;
+ * measured 2026-10-07: 18 more asking the creator to "tell us"). Their `BILLING_ERROR_COPY`
+ * text now keeps only the remedy the creator can act on, and
+ * `billingErrorCopy` appends `contactSentence` when `RESPIN_SUPPORT_EMAIL` is
+ * set, so the promise exists exactly when the channel does. A LIST, not a
+ * predicate over the copy (Respin rule 7): a new code that should send people
+ * to support is a list edit, and `tests/support-contact.test.tsx` pins this
+ * list to the measured population.
+ */
+export const SUPPORT_CONTACT_CODES: readonly BillingErrorCode[] = [
+  "ledger_integrity",
+  "provenance",
+  "brain_version_limit",
+  "onboarding_input_limit",
+  "auth_mail_refused",
+  "scope_forgery",
+  "usage_raw",
+  "brain_schema_shape",
+  "brain_claim_walk",
+  "export_classification",
+  "comparison_stratum",
+  "comparison_input",
+  "unknown",
+  // THE SECOND PREDICATE (measured 2026-10-07, R-176): eighteen entries that
+  // asked the creator to "tell us" with no channel to tell us through. Same
+  // treatment: the stored text keeps the remedy, the address is appended.
+  "autotopup_shortfall",
+  "llm_attempt_recorded",
+  "brain_pointer_divergence",
+  "evidence_unreadable",
+  "llm_truncated",
+  "uncharged_attempt_cap",
+  "input_too_large_frameworks",
+  "generation_window_cost_cap",
+  "llm_transport_refused",
+  "unpriced_operation",
+  "generation_uncharged_cost_cap",
+  "generation_uncharged_attempt_cap",
+  "reference_unusable",
+  "generation_unusable",
+  "kill_test_failed",
+  "generation_lineage",
+  "unknown_entitlement_tier",
+  "refund_source_never_expires",
+];
+
+/**
+ * The copy for one code, with the contact line appended for a
+ * `SUPPORT_CONTACT_CODES` member when there is a channel.
+ *
+ * `support` DEFAULTS TO THE SERVER READ, evaluated at the call: this module is
+ * server-only (it imports `@respin/credits/app-server`, and
+ * `tests/client-bundle-boundary.test.ts` keeps it out of client bundles), so
+ * every caller of `billingErrorDisplay` / `billingErrorFromCode` and every
+ * screen-copy resolver that falls back to this table reads the address in the
+ * request that renders the sentence. A test passes it explicitly.
+ */
+export function billingErrorCopy(
+  code: BillingErrorCode,
+  support: string | null = supportContact()
+): BillingErrorCopy {
+  return withSupportContactFor(code, BILLING_ERROR_COPY[code], support);
+}
+
+/**
+ * The same rule for a SCREEN'S OVERRIDE of a code's copy (`/studio`,
+ * `/onboarding`, the frameworks page): an override of a
+ * `SUPPORT_CONTACT_CODES` member gets the contact line exactly as the shared
+ * entry would, so overriding the words never drops the channel.
+ */
+export function withSupportContactFor(
+  code: BillingErrorCode,
+  copy: BillingErrorCopy,
+  support: string | null = supportContact()
+): BillingErrorCopy {
+  return SUPPORT_CONTACT_CODES.includes(code)
+    ? { title: copy.title, detail: withContact(copy.detail, support) }
+    : copy;
+}
 
 /**
  * Every message names what happened and what the reader can DO. Where the
@@ -902,7 +1151,31 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   ledger_integrity: {
     title: "Your credit history could not be read",
     detail:
-      "This will not fix itself on a retry, and it is not something you can correct from here. Nothing was charged and no credits were spent. Please contact support; the refusal code, error type and any server-derived context are recorded for an operator.",
+      "This will not fix itself on a retry, and it is not something you can correct from here. Nothing was charged and no credits were spent. The refusal code, error type and any server-derived context are recorded for an operator.",
+  },
+  // Audit Phase 8 (R-177). Each is refused BEFORE any write, which is what
+  // lets the copy say nothing changed.
+  balance_isolation: {
+    title: "Your balance could not be read just now",
+    detail:
+      "Nothing was charged or changed. Reload the page. The refusal code and error type are recorded for an operator.",
+  },
+  lock_order: {
+    title: "This action was stopped before it changed anything",
+    detail:
+      "Nothing was charged or changed. It was refused by a safety check that keeps two operations on this workspace from blocking each other. Try again; the refusal code and error type are recorded for an operator.",
+  },
+  render_lock_timeout: {
+    title: "This page waited too long for this workspace",
+    detail:
+      "Another operation on this workspace held something this page needed for more than five seconds, so the page stopped waiting rather than hang. Nothing was charged or changed. Reload in a moment.",
+  },
+  // A programming error refused before any statement ran (gate M2): a bounded
+  // read was asked to open inside an open transaction.
+  render_transaction_nesting: {
+    title: "This page could not be read safely",
+    detail:
+      "A read was stopped before it ran because it would have changed how another operation waits. Nothing was charged or changed. Reload the page; the refusal code and error type are recorded for an operator.",
   },
   clock_skew: {
     title: "The server clock and the database clock disagree",
@@ -913,6 +1186,13 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "Runtime configuration is missing or invalid",
     detail:
       "Prices, allowances and credit costs all come from a versioned config row, and this server has none it can read — so nothing is being guessed. An operator needs to seed the database (`pnpm db:seed`) or append a valid version at /admin/config.",
+  },
+  // R-163: a refusal with a way forward (CLAUDE.md 2026-07-30). The page it
+  // names is one of the three that hold the read grade during grace.
+  workspace_pending_deletion: {
+    title: "This workspace is scheduled for deletion",
+    detail:
+      "Its pages are closed while the deletion is pending. Open /settings/account to cancel the deletion; until it erases, your brain's history stays readable on /brain and its export stays available.",
   },
   workspace_access: {
     title: "You do not have access to this workspace",
@@ -955,6 +1235,23 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     detail:
       "Stripe and the app disagree about what a pack costs, so the charge was refused rather than guessing which price is right — nothing was charged, and you have not been billed twice. This is an operator problem: compare the Stripe dashboard with /admin/config, where the app's figure is corrected. The refusal code and error type are recorded without either amount.",
   },
+  // Phase 6 billing gate (R-175): the plan price Stripe would charge is
+  // checked against the price this product states before a Checkout opens.
+  tier_price_unavailable: {
+    title: "This plan's price cannot be charged right now",
+    detail:
+      "The Stripe price behind this plan is not a monthly, fixed-amount price in US dollars, or it is archived, so no Checkout was opened and nothing was charged. This is an operator problem: the Stripe price needs fixing or remapping in /admin/config. Your current plan is unchanged.",
+  },
+  tier_price_changed: {
+    title: "The price changed while you were checking out",
+    detail:
+      "The price for this plan was changed while your Checkout was being prepared, so nothing was opened or charged. Try again: the new price is checked before anything happens.",
+  },
+  tier_price_mismatch: {
+    title: "This plan's price does not match the price we show",
+    detail:
+      "Stripe would charge a different amount for this plan from the price this product states, so no Checkout was opened and nothing was charged. You will not be billed an amount you were not shown. This is an operator problem: a new Stripe price at the stated amount needs to be mapped in /admin/config. Your current plan is unchanged.",
+  },
   // Audit 2026-08-17 remediation (R2) — the `incomplete` remedy's two refusals.
   invoice_recovery_unavailable: {
     title: "There is no invoice left to pay",
@@ -995,12 +1292,12 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   autotopup_shortfall: {
     title: "Something went wrong on our side",
     detail:
-      "A top-up was requested for an amount that does not make sense, which is a fault in our code rather than anything you did. Nothing was charged. Please tell us what you were doing when this appeared.",
+      "A top-up was requested for an amount that does not make sense, which is a fault in our code rather than anything you did. Nothing was charged. The refusal is recorded for an operator.",
   },
   llm_attempt_recorded: {
     title: "The model answered, but not usably",
     detail:
-      "The provider returned something we could not use, and it charged us for the attempt — so this one counted: if this was your first run for this creator, that run is now used. Nothing was taken from your credit balance. Try again; if it keeps happening, tell us rather than rewording anything, because this attempt sends a fixed message of ours and nothing you wrote.",
+      "The provider returned something we could not use, and it charged us for the attempt — so this one counted: if this was your first run for this creator, that run is now used. Nothing was taken from your credit balance. Try again without rewording anything: this attempt sends a fixed message of ours and nothing you wrote.",
   },
   debit_refused_after_call: {
     title: "The run completed but could not be charged",
@@ -1025,7 +1322,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   provenance: {
     title: "A quoted line did not match your own words",
     detail:
-      "Every claim in a brain has to point at something you actually wrote, and one of the quotes did not appear where it said it did — so it was refused rather than stored. Nothing was saved and no credits were spent. Try the build again; if it keeps happening, contact support. The refusal code and error type are recorded without the quote.",
+      "Every claim in a brain has to point at something you actually wrote, and one of the quotes did not appear where it said it did — so it was refused rather than stored. Nothing was saved and no credits were spent. Try the build again. The refusal code and error type are recorded without the quote.",
   },
   brain_edit_unchanged: {
     title: "Nothing in that submission was different",
@@ -1055,12 +1352,12 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   brain_version_limit: {
     title: "This creator's Brain history is full",
     detail:
-      "This creator profile has reached the retained Brain-version limit, so another immutable version was not stored. Export the complete history, then contact support before making more revisions. The version already in force is unchanged.",
+      "This creator profile has reached the retained Brain-version limit, so another immutable version was not stored, and this profile cannot take more versions. The version already in force is unchanged, and your export keeps the complete history.",
   },
   onboarding_input_limit: {
     title: "That creator input cannot be stored",
     detail:
-      "The normalized input is blank or too long, one of its fields is too long, or this creator profile has reached its retained-input limit. Shorten the input and try again. If the profile is full, contact support before adding more material.",
+      "The normalized input is blank or too long, one of its fields is too long, or this creator profile has reached its retained-input limit. Shorten the input and try again. If the profile is full, it cannot take more material.",
   },
   export_busy: {
     title: "A complete export is already being prepared",
@@ -1080,7 +1377,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   auth_mail_refused: {
     title: "We could not send that email right now",
     detail:
-      "The product's email allowance for today or this month is used up, or the address on the account could not be resolved. Nothing was sent. Try again later; if this keeps happening, contact support.",
+      "The product's email allowance for today or this month is used up, or the address on the account could not be resolved. Nothing was sent. Try again later.",
   },
   // Covers BOTH delivery statuses the error carries: a definitive provider
   // refusal and an indeterminate exchange (timeout, 5xx, idempotent replay).
@@ -1132,12 +1429,12 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   scope_forgery: {
     title: "The action was refused before it touched any data",
     detail:
-      "A safety check that guards which workspace and which profile an action may reach did not pass. That is never something you can cause by using the product normally, so it means a bug rather than a mistake on your part. Nothing was read and nothing was written. Please contact support; the refusal code, error type and any server-derived context are recorded.",
+      "A safety check that guards which workspace and which profile an action may reach did not pass. That is never something you can cause by using the product normally, so it means a bug rather than a mistake on your part. Nothing was read and nothing was written. The refusal code, error type and any server-derived context are recorded.",
   },
   usage_raw: {
     title: "The action was refused before anything was recorded",
     detail:
-      "A safety check on what may be stored alongside a usage record did not pass, so nothing was written. Nothing you typed was lost and no credits were spent. This is never something you can cause by using the product normally, so it means a bug rather than a mistake on your part. Please contact support; the refusal code, error type and any server-derived context are recorded.",
+      "A safety check on what may be stored alongside a usage record did not pass, so nothing was written. Nothing you typed was lost and no credits were spent. This is never something you can cause by using the product normally, so it means a bug rather than a mistake on your part. The refusal code, error type and any server-derived context are recorded.",
   },
   // Slice 3b, Stage B1. The interview screen replaces this GENERIC copy with
   // one that names the exact field, drawn entirely from its own closed
@@ -1172,7 +1469,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   brain_pointer_divergence: {
     title: "We could not line the evidence up with the fields",
     detail:
-      "This one is ours, not yours. The model answered and we could not match its quotes to the fields they belong to, so nothing was written rather than storing a version you would never be able to confirm. Your run was made and counted. Please try again, and tell us if it repeats.",
+      "This one is ours, not yours. The model answered and we could not match its quotes to the fields they belong to, so nothing was written rather than storing a version you would never be able to confirm. Your run was made and counted. Please try again. The refusal is recorded for an operator.",
   },
   brain_kind_not_writable: {
     title: "This part of your brain is not written from onboarding",
@@ -1182,12 +1479,12 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   brain_schema_shape: {
     title: "The brain document shapes are misconfigured",
     detail:
-      "A safety check that runs when the server starts found a brain-document shape that would let a claim be stored without a way for you to confirm it. This is never something you can cause by using the product; it means a bug. Contact support; the refusal code and error type are recorded, but the field value is not logged.",
+      "A safety check that runs when the server starts found a brain-document shape that would let a claim be stored without a way for you to confirm it. This is never something you can cause by using the product; it means a bug. The refusal code and error type are recorded, but the field value is not logged.",
   },
   brain_claim_walk: {
     title: "The action was refused before anything was stored",
     detail:
-      "The server could not agree with itself about which parts of a brain document are claims you would need to confirm, so it refused rather than storing a document you could not fully review. Nothing was saved and no credits were spent. Please contact support if it keeps happening; the refusal code and error type are recorded without the document content.",
+      "The server could not agree with itself about which parts of a brain document are claims you would need to confirm, so it refused rather than storing a document you could not fully review. Nothing was saved and no credits were spent. The refusal code and error type are recorded without the document content.",
   },
   brain_content_walk: {
     title: "That document was too deeply nested to check",
@@ -1240,12 +1537,12 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   evidence_unreadable: {
     title: "Part of this brain draft could not be shown",
     detail:
-      "One of the quotes recorded for this draft does not match the post it names, so the page stopped rather than showing you a quote it cannot prove came from you. Nothing was changed and nothing you saved was lost. This is not something you can fix — tell us, and build a fresh draft in the meantime.",
+      "One of the quotes recorded for this draft does not match the post it names, so the page stopped rather than showing you a quote it cannot prove came from you. Nothing was changed and nothing you saved was lost. This is not something you can fix; build a fresh draft in the meantime, and the refusal is recorded for an operator.",
   },
   export_classification: {
     title: "The export is missing a registered data reader",
     detail:
-      "A creator-data table is marked for export but the exporter has no scoped reader for it, so the download stopped rather than silently omit data. This is an operator problem, not something you can fix in the form. Please contact support; the refusal code and error type are recorded, and an operator can compare the export registry with its scoped readers.",
+      "A creator-data table is marked for export but the exporter has no scoped reader for it, so the download stopped rather than silently omit data. This is an operator problem, not something you can fix in the form. The refusal code and error type are recorded, and an operator can compare the export registry with its scoped readers.",
   },
   post_attestation: {
     title: "That post was not saved",
@@ -1313,7 +1610,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
       // `FALSE_ON_THIS_SCREEN` pattern would have narrowed that control
       // silently — the 2026-08-29 population lesson, in the fix for a copy
       // defect. It is widened, with a planted specimen.
-      "The answer came back longer than this server's reply-length limit allows, so nothing usable arrived. Nothing was taken from your credit balance, and it did NOT use up your first run for this creator — your next run is still that first one. This is a server setting rather than anything you did, and trying again will hit the same limit until an operator raises it, so tell us rather than retrying.",
+      "The answer came back longer than this server's reply-length limit allows, so nothing usable arrived. Nothing was taken from your credit balance, and it did NOT use up your first run for this creator — your next run is still that first one. This is a server setting rather than anything you did, and trying again will hit the same limit until an operator raises it, so retrying will not help; the refusal is recorded for an operator.",
   },
   uncharged_attempt_cap: {
     title: "This creator's runs keep failing on our side",
@@ -1327,7 +1624,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     // windowed sibling `generation_uncharged_attempt_cap` does; the split is
     // asserted against the config in `tests/usage-honesty.test.tsx`.
     detail:
-      "Runs for this creator have repeatedly failed in a way that cost us money and cost you nothing, so the product has stopped trying rather than keep burning them. Nothing was spent, no model was called, and your first run for this creator is untouched. There is nothing for you to change — this is a fault on our side; please tell us so we can fix it.",
+      "Runs for this creator have repeatedly failed in a way that cost us money and cost you nothing, so the product has stopped trying rather than keep burning them. Nothing was spent, no model was called, and your first run for this creator is untouched. There is nothing for you to change: this is a fault on our side, and it is recorded for an operator.",
   },
   // ---------------------------------------------------- SLICE 6: generation
   //
@@ -1365,6 +1662,139 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     detail:
       "Plans differ in which modes they include, and this workspace's plan does not include the one that was asked for. Nothing was spent and no model was called. The billing page shows what this workspace is on today.",
   },
+  creative_request: {
+    title: "That form or filming limit is not one the studio accepts",
+    detail:
+      "The request carried a creative form, or a filming limit, that the studio form does not offer: an unknown form, a form for a mode that does not take one, or a limit that is too long or not a whole number of minutes. It stopped before anything ran, so nothing was spent and no model was called. Choose the form and the limits again on the studio page.",
+  },
+  creative_revision_legacy: {
+    title: "That draft keeps its original format",
+    detail:
+      "The draft you are revising was made before creative forms existed, so its revision keeps that format and cannot take a form or filming limits. Nothing was spent and no model was called. Send the revision without a form, or start a new draft to use one.",
+  },
+  // Launch L2 (R-151).
+  creative_revision_form: {
+    title: "A revision keeps the form of the draft it revises",
+    detail:
+      "A revision makes the same draft better — shorter, easier to film — in the same form. A different form is a different script, which is a new commission priced as one, not a revision. Nothing was spent and no model was called. Send the revision without changing the form, or develop the concept again in the form you want.",
+  },
+  creative_piece: {
+    title: "That concept could not be used",
+    detail:
+      "The concept or piece this page sent could not be used as it was, so nothing was changed. Nothing was spent and no model was called. Reload the page and choose again.",
+  },
+  creative_piece_not_found: {
+    title: "That concept is not available here",
+    detail:
+      "The concept or piece this page named is not available on this creator profile, so nothing was changed. Nothing was spent and no model was called. Reload the page and choose from this creator's own concepts.",
+  },
+  creative_piece_source: {
+    title: "There is no concept at that position to develop",
+    detail:
+      "The output this page named has no concept at that position — or it is not a set of concepts — so nothing was chosen. Nothing was spent and no model was called. Reload the page and choose one of the concepts shown.",
+  },
+  creative_piece_stale: {
+    title: "This page was out of date",
+    detail:
+      "The piece changed since this page was shown — another tab may have started a new generation or cancelled it — so nothing was changed. Nothing was spent and no model was called. Reload to see where it stands now.",
+  },
+  creative_piece_not_commissionable: {
+    title: "This piece cannot be developed any more",
+    detail:
+      "This piece was cancelled, or the request did not match what a piece can commission, so nothing was started. Nothing was spent and no model was called. Choose the concept again to start a fresh piece.",
+  },
+  generation_quote_changed: {
+    title: "The script's price changed since it was shown",
+    detail:
+      "The price shown when you chose this concept is no longer the current one, so the script was not started — you are never charged a price you were not shown. Nothing was spent and no model was called. Press New generation to see the current price, then confirm again.",
+  },
+  // AUDIT P3-R2 (R-158). Every one of these is TRUE BY CONSTRUCTION about
+  // money: the ceiling is checked before any vendor call and before any spend
+  // row, so "nothing was spent" is the refusal's own position. Each names the
+  // part and the act that shrinks it; no copy offers an automatic trim, because
+  // silently dropping context would change the output without saying so.
+  input_too_large: {
+    title: "This request is too large to send",
+    detail:
+      "Everything this draft would carry — your brain, the frameworks it is offered, what you pasted and the instructions — adds up to more than one request may hold, so nothing was sent to the model and nothing was spent. Shorten what you pasted, or trim the longest document on your Brain page, then run it again.",
+  },
+  input_too_large_voice: {
+    title: "Your Voice document is too large for one request",
+    detail:
+      "The largest part of this request is your Voice document, and with everything else it carries the request is over the limit one request may hold — so nothing was sent to the model and nothing was spent. Trim some Voice entries on your Brain page, then run it again.",
+  },
+  input_too_large_strategy: {
+    title: "Your Strategy document is too large for one request",
+    detail:
+      "The largest part of this request is your Strategy document, and with everything else it carries the request is over the limit one request may hold — so nothing was sent to the model and nothing was spent. Trim some Strategy entries on your Brain page, then run it again.",
+  },
+  input_too_large_killtest: {
+    title: "Your Kill Test document is too large for one request",
+    detail:
+      "The largest part of this request is your Kill Test document, and with everything else it carries the request is over the limit one request may hold — so nothing was sent to the model and nothing was spent. Trim some Kill Test rules on your Brain page, then run it again.",
+  },
+  input_too_large_frameworks: {
+    title: "This request is too large to send",
+    detail:
+      "The largest part of this request is the frameworks it is offered, and with everything else it carries the request is over the limit one request may hold — so nothing was sent to the model and nothing was spent. Shorten what you pasted or trim the longest document on your Brain page, then run it again.",
+  },
+  input_too_large_input: {
+    title: "What you pasted is too long for one request",
+    detail:
+      "The largest part of this request is what you typed or pasted, and with everything else it carries the request is over the limit one request may hold — so nothing was sent to the model and nothing was spent. Shorten it, then run it again.",
+  },
+  input_too_large_posts: {
+    title: "The saved posts are too long to read in one request",
+    detail:
+      "Together, the posts this run would read are over the limit one request may hold — so nothing was sent to the model and nothing was spent, and your first run for this creator was not used. Remove or shorten some of the posts you pasted, then run it again.",
+  },
+  // AUDIT P3-R3 (R-158). NOT the uncharged copy: this creator was being
+  // charged, nothing failed, and the remedy is time.
+  generation_window_cost_cap: {
+    title: "This creator has hit the hourly generation ceiling",
+    detail:
+      "Generations for this creator in the last hour have reached the ceiling we set to stop a runaway — a bound no ordinary use reaches. Nothing was spent and no model was called this time. It clears on its own as the hour moves on.",
+  },
+  // AUDIT P3-A4 (R-157). The draft is FINISHED AND HELD — never "lost", never
+  // "held" without the path and the time. The time is on /studio beside the
+  // draft, read from the attempt itself.
+  generation_held_paused: {
+    title: "Your draft is finished and held while the workspace is paused",
+    detail:
+      "The model answered and your draft is stored, but this workspace is paused, so it was not charged and not added to your drafts. It is held for 24 hours from when the model answered — the exact time is shown with it under Held drafts on Studio. Resume from Billing, then press Finish this draft. If the time passes first, the draft is removed and nothing is charged.",
+  },
+  generation_held_balance: {
+    title: "Your draft is finished and held until your balance covers it",
+    detail:
+      "The model answered and your draft is stored, but your balance could not cover its price, so it was not charged and not added to your drafts. It is held for 24 hours from when the model answered — the exact time is shown with it under Held drafts on Studio. Buy an overage pack or turn on auto-top-up from Billing, then press Finish this draft. If the time passes first, the draft is removed and nothing is charged.",
+  },
+  generation_held_transient: {
+    title: "Your draft is finished and held for a moment",
+    detail:
+      "The model answered and your draft is stored, but saving it met a brief conflict on our side, so it was not charged and not added to your drafts. It is held for 24 hours from when the model answered — the exact time is shown with it under Held drafts on Studio. Press Finish this draft there. If the time passes first, the draft is removed and nothing is charged.",
+  },
+  // ONLY "no such held draft for this creator": a finished draft replays, and
+  // one past its hold time is the recovery terminal — each has its own code.
+  held_draft_unavailable: {
+    title: "That draft cannot be finished here",
+    detail:
+      "There is no held draft with that reference for this creator — the page may be out of date. Nothing was charged. Reload Studio to see the drafts that are still held.",
+  },
+  concept_context_needed: {
+    title: "Tell us what your videos are about first",
+    detail:
+      "Your confirmed brain does not yet say what you make, so there is nothing safe to build concepts from — and the studio will not invent it. In one sentence, say what your videos are about, then try again. Nothing was spent and no model was called.",
+  },
+  revision_preset: {
+    title: "That revision is not one this page offers",
+    detail:
+      "The page sent a revision it does not offer, so nothing was started. Nothing was spent and no model was called. Reload the page and choose one of the revisions shown.",
+  },
+  llm_transport_refused: {
+    title: "This server is set up for testing only",
+    detail:
+      "This server was started with a test-only setting that is refused outside a test environment, so the request did not run. Nothing was spent and no model was called. This is a fault on our side, not something you did, and it is recorded for an operator.",
+  },
   unknown_mode: {
     title: "That is not one of this product's modes",
     detail:
@@ -1373,7 +1803,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   unpriced_operation: {
     title: "This build could not price that run",
     detail:
-      "Rather than charge a number nobody chose, the run stopped before it started. Nothing was spent and no model was called. This is a fault in the build rather than anything you did; please tell us so an operator can fix it.",
+      "Rather than charge a number nobody chose, the run stopped before it started. Nothing was spent and no model was called. This is a fault in the build rather than anything you did, and it is recorded for an operator to fix.",
   },
   generation_uncharged_cost_cap: {
     // SAME SENTENCE TO THE CREATOR AS ITS SIBLING, and deliberately so: which
@@ -1382,9 +1812,15 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     // fault, nothing spent, self-clearing inside the window. Saying "you have
     // spent too much" would be false: these are attempts they were not charged
     // for.
-    title: "Too many failed drafts for this creator just now",
+    //
+    // TWO CAUSES SINCE R-173, AND THE COPY NAMES BOTH (billing verification,
+    // 2026-10-07): a draft stopped only because it made a claim this product
+    // won't make is free and counts here too, and for that cause there IS a
+    // remedy the creator owns. "A fault on our side" is said only of the
+    // other cause, where it is true.
+    title: "Too many uncharged drafts for this creator just now",
     detail:
-      `Recent drafts for this creator kept failing in a way that costs us money and costs you nothing, so we have paused new ones for a short while rather than keep burning them. Nothing was spent and no model was called this time, and no credits were used. ${UNCHARGED_CAP_WINDOW_CLAUSE} It is a fault on our side rather than anything you did — please tell us if it keeps happening.`,
+      `Recent drafts for this creator stopped before anything was charged, so we have paused new ones for a short while. Nothing was spent and no model was called this time, and no credits were used. ${UNCHARGED_CAP_WINDOW_CLAUSE} If those drafts were stopped because they made a claim this product won't make, ask for a draft without that claim. If they failed for any other reason, the fault is on our side rather than anything you did.`,
   },
   generation_uncharged_attempt_cap: {
     // THE OPPOSITE RULE FROM `uncharged_attempt_cap` ABOVE, and that is the
@@ -1410,10 +1846,16 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     // value an operator can change without touching this file.
     //
     // IT STILL DOES NOT PROMISE A FIX. "Clears on its own" and "is fixed" are
-    // different claims: the cause repeats until we deal with it, which is why
-    // the ask to tell us survives the rewrite.
-    title: "Generations for this creator keep failing on our side",
-    detail: `Drafts for this creator have repeatedly failed in a way that cost us money and cost you nothing, so the product has stopped trying rather than keep burning them. Nothing was spent and no model was called this time. ${UNCHARGED_CAP_WINDOW_CLAUSE} The failure itself is ours and will keep happening until we fix the cause, so please tell us.`,
+    // different claims: the cause repeats until we deal with it. The ask to
+    // "tell us" it used to carry promised a channel that did not exist; since
+    // R-176 the copy says the failure is recorded, and `billingErrorCopy`
+    // appends the operator-set support address when there is one.
+    //
+    // TWO CAUSES SINCE R-173 (billing verification, 2026-10-07), as on its
+    // sibling: a free claim refusal counts here, and its remedy is the
+    // creator's; the "ours" sentence is said only of the other cause.
+    title: "Drafts for this creator keep stopping before they are charged",
+    detail: `Drafts for this creator have repeatedly stopped before anything was charged, so the product has paused new ones. Nothing was spent and no model was called this time. ${UNCHARGED_CAP_WINDOW_CLAUSE} If they were stopped because they made a claim this product won't make, ask for a draft without that claim. If they failed for any other reason, the failure is ours and will keep happening until we fix the cause; it is recorded for an operator.`,
   },
   generation_in_flight: {
     title: "That draft is already running",
@@ -1471,23 +1913,24 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     // now checked at `runGeneration` entry, before any vendor call.
     title: "This trend could not be used as a reference",
     detail:
-      "The analysis behind this trend is not in a shape the copy check can compare a draft against, so nothing was generated. Nothing was spent and no model was called. This is our side of it rather than anything about what you wrote — try a different trend, and tell us if it keeps happening on this one.",
+      "The analysis behind this trend is not in a shape the copy check can compare a draft against, so nothing was generated. Nothing was spent and no model was called. This is our side of it rather than anything about what you wrote — try a different trend.",
   },
   generation_unusable: {
     // OUR PARSE FAILURE, and the money sentence is the point (slice card
     // question 4): the vendor charged us and the creator is not charged.
     title: "The model's answer was not usable",
     detail:
-      "The answer came back in a shape this product could not read, so nothing was stored — a half-parsed draft is worse than none. Nothing was taken from your credit balance. This is our side of the exchange rather than anything you did; try again, and tell us if it keeps happening.",
+      "The answer came back in a shape this product could not read, so nothing was stored — a half-parsed draft is worse than none. Nothing was taken from your credit balance. This is our side of the exchange rather than anything you did; try again.",
   },
   kill_test_failed: {
     // THE SCORING CALL'S FAILURE, not the kill test finding fault with a draft.
     // A draft that fails the hard rules twice is an HONEST REFUSAL rendered on
     // the studio page with its reasons and a sharper angle — it is the product
-    // working (REQ-C03), it is charged for, and it is not an error code at all.
+    // working (REQ-C03), it is charged for (except a refusal caused only by
+    // the claim scan, which is free — R-173), and it is not an error code at all.
     title: "The check on your own criteria did not complete",
     detail:
-      "Your draft is scored against the kill-test criteria you wrote, and that scoring step did not return something readable, so the run stopped rather than reporting a verdict it did not have. Nothing was taken from your credit balance. Try again, and tell us if it keeps happening.",
+      "Your draft is scored against the kill-test criteria you wrote, and that scoring step did not return something readable, so the run stopped rather than reporting a verdict it did not have. Nothing was taken from your credit balance. Try again.",
   },
   no_creator_rules: {
     title: "This creator has no kill-test criteria yet",
@@ -1556,7 +1999,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     // generated" wording about work that has by then already happened.
     title: "That revision could not be stored against the output it revises",
     detail:
-      "The link between this revision and the draft it came from could not be made, so the revision was not stored. Nothing was taken from your credit balance. Reopen the output you meant to revise and try again; if it keeps happening, tell us rather than retrying, because this one is on our side.",
+      "The link between this revision and the draft it came from could not be made, so the revision was not stored. Nothing was taken from your credit balance. Reopen the output you meant to revise and try again; if it keeps happening, retrying will not help, because this one is on our side.",
   },
   feedback_reaction: {
     title: "That reaction is not one this product has",
@@ -1567,6 +2010,14 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     title: "That output is not available on this creator profile",
     detail:
       "The feedback was not recorded, because the draft it is about could not be found for this creator. Reopen the output from this creator's own drafts and leave the feedback from there. Nothing was changed and nothing was spent.",
+  },
+  // Audit P6-A1 (R-174). The reaction EXISTS somewhere, so this copy never
+  // says it "was not recorded"; it says it is not one this profile can
+  // address, which is the byte-identical answer for foreign and missing ids.
+  feedback_exclusion_target: {
+    title: "That reaction is not on this creator profile",
+    detail:
+      "It was not left out of future drafts, because it is not one of the reactions recorded for this creator. Reload Studio and use the control beside a reaction you recorded here. Nothing was changed and nothing was spent.",
   },
   feedback_note: {
     title: "That note could not be saved with your reaction",
@@ -1633,7 +2084,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   unknown_entitlement_tier: {
     title: "We could not tell what your plan includes",
     detail:
-      "This build has no answer for the plan on this workspace, so nothing was changed rather than guessed at. That is about our configuration, not about your plan, and nothing you can change from here will fix it. Nothing was spent. Please tell us; the shared framework library is unaffected meanwhile.",
+      "This build has no answer for the plan on this workspace, so nothing was changed rather than guessed at. That is about our configuration, not about your plan, and nothing you can change from here will fix it. Nothing was spent. The shared framework library is unaffected meanwhile.",
   },
   // ------------------------------------------------------- SLICE 8c (R13)
   //
@@ -1690,7 +2141,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
     // with an explicit expiry — rather than anything the reader can press.
     title: "A refund you are owed could not be dated",
     detail:
-      "An autopsy you paid for could not be completed, so its credits are due back to you — but the credits that paid for it came from a grant with no expiry date, and rather than invent an expiry for the returned ones the refund stopped. Nothing was taken from your balance and the return is still owed, not lost. This is ours to resolve: an operator can return the credits as an adjustment with an explicit expiry. Please tell us; the refusal code and error type are recorded.",
+      "An autopsy you paid for could not be completed, so its credits are due back to you — but the credits that paid for it came from a grant with no expiry date, and rather than invent an expiry for the returned ones the refund stopped. Nothing was taken from your balance and the return is still owed, not lost. This is ours to resolve: an operator can return the credits as an adjustment with an explicit expiry. The refusal code and error type are recorded.",
   },
   // ----------------------------------------------------- SLICE 9A: /results
   //
@@ -1710,7 +2161,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   result_treatment_key: {
     title: "That result was not logged, because what it tested could not be identified",
     detail:
-      "A result about one of your drafts carries a record of what that draft was built from — the framework, the mode, and the version of your brain that was in force — and for this one, part of that record is missing or unreadable. Nothing was stored and nothing was spent. Rather than guess, this refuses: a treatment named wrongly would put your post in a group it does not belong to. You can log the same result right now by choosing the option that says it is not about one of your Respin drafts — it still counts towards your own baseline, and it says plainly that nothing here can name what it tested.",
+      "A result about one of your drafts carries a record of what that draft was built from — the framework, the mode, and the version of your brain that was in force — and for this one, part of that record is missing or unreadable. Nothing was stored and nothing was spent. Rather than guess, this refuses: a treatment named wrongly would put your post in a group it does not belong to. You can log the same result right now by choosing the option that says it is not about one of your Respin drafts — it is stored and shown, it is not counted into a baseline (only a verified analytics connector could supply a counted result), and it says plainly that nothing here can name what it tested.",
   },
   result_input: {
     title: "That result was not logged",
@@ -1833,7 +2284,7 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   comparison_stratum: {
     title: "That comparison could not be set up",
     detail:
-      "The population this comparison was asked to cover was not one the product could describe, so no comparison is shown. This is a fault on our side, not something wrong with the results you logged: you caused none of it and there is nothing on the form to correct. Reload the page and try again; if it keeps happening, please contact support, because the refusal code and error type are recorded.",
+      "The population this comparison was asked to cover was not one the product could describe, so no comparison is shown. This is a fault on our side, not something wrong with the results you logged: you caused none of it and there is nothing on the form to correct. Reload the page and try again; the refusal code and error type are recorded.",
   },
   /**
    * A COMPARISON COULD NOT BE COMPUTED FROM STORED ROWS (slice 9a).
@@ -1917,12 +2368,12 @@ export const BILLING_ERROR_COPY: Record<BillingErrorCode, BillingErrorCopy> = {
   comparison_input: {
     title: "That comparison could not be computed",
     detail:
-      "The product could not build a comparison out of results it had already stored, so no comparison is shown. This is a fault on our side, not something wrong with the results you logged: nothing you entered caused it and there is nothing on the form to correct. Reload the page and try again; if it keeps happening, please contact support, because the refusal code and error type are recorded.",
+      "The product could not build a comparison out of results it had already stored, so no comparison is shown. This is a fault on our side, not something wrong with the results you logged: nothing you entered caused it and there is nothing on the form to correct. Reload the page and try again; the refusal code and error type are recorded.",
   },
   unknown: {
     title: "Something went wrong",
     detail:
-      "The action did not complete and nothing was charged. Try again; if it keeps happening, contact support. The refusal code, error type and any server-derived context are recorded without exception details.",
+      "The action did not complete and nothing was charged. Try again. The refusal code, error type and any server-derived context are recorded without exception details.",
   },
 };
 
@@ -1965,6 +2416,33 @@ const REVISION_PARENT_CODES: Readonly<Record<string, BillingErrorCode>> = {
   not_revisable: "revision_parent_not_revisable",
   different_mode: "revision_parent_different_mode",
   parent_unreadable: "revision_parent_unreadable",
+};
+
+/**
+ * `LlmInputTooLargeError.largestPart` -> the code whose remedy is true for it
+ * (audit P3-R2). A part this build does not know reads the generic code.
+ */
+const INPUT_TOO_LARGE_PART_CODES: Readonly<Record<string, BillingErrorCode>> = {
+  "brain.voice": "input_too_large_voice",
+  "brain.strategy": "input_too_large_strategy",
+  "brain.killtest": "input_too_large_killtest",
+  frameworks: "input_too_large_frameworks",
+  input: "input_too_large_input",
+};
+
+/** `GenerationHeldError.reason` -> its remedy's code (audit P3-A4). */
+const GENERATION_HELD_CODES: Readonly<Record<string, BillingErrorCode>> = {
+  paused: "generation_held_paused",
+  insufficient_balance: "generation_held_balance",
+  transient: "generation_held_transient",
+};
+
+/** `CreativePieceError.reason` -> the sentence that is true for it (launch L2). */
+const CREATIVE_PIECE_CODES: Readonly<Record<string, BillingErrorCode>> = {
+  not_found: "creative_piece_not_found",
+  source_unusable: "creative_piece_source",
+  stale: "creative_piece_stale",
+  not_commissionable: "creative_piece_not_commissionable",
 };
 
 export function billingErrorCode(err: unknown): BillingErrorCode {
@@ -2022,8 +2500,34 @@ export function billingErrorCode(err: unknown): BillingErrorCode {
   // for a creator whose link was the problem. The `??` is live for the same
   // rolling-deploy reason as the branch above, and is driven with a field cast
   // in through `as never` by `tests/billing-ui.test.tsx`.
+  // SAME REASON, FIFTH INSTANCE (R-148). `CreativeRequestError.reason` is a
+  // closed code; the one reason with a different true sentence gets its own
+  // code, and every other reason — an unknown form, a form sent for a mode
+  // that takes none, a malformed limit — reads the neutral one, which names
+  // no value (the refusal must not echo what was refused).
+  if (err instanceof CreativeRequestError) {
+    if (err.reason === "revision_keeps_legacy_format") return "creative_revision_legacy";
+    if (err.reason === "revision_keeps_form") return "creative_revision_form";
+    return "creative_request";
+  }
+  // SAME REASON, SIXTH INSTANCE (launch L2, R-151). `CreativePieceError.reason`
+  // is a closed code and its four values are four true sentences; the `??` is
+  // live for the rolling-deploy reason the branches above give.
+  if (err instanceof CreativePieceError) {
+    return CREATIVE_PIECE_CODES[err.reason] ?? "creative_piece";
+  }
   if (err instanceof PastedReferenceInputError) {
     return PASTED_REFERENCE_FIELD_CODES[err.field] ?? "pasted_reference_input";
+  }
+  // AUDIT P3-R2 (R-158): the remedy is the LARGEST PART's. A null part is the
+  // onboarding caller, which bounds the whole prompt — its remedy is the posts.
+  if (err instanceof LlmInputTooLargeError) {
+    if (err.largestPart === null) return "input_too_large_posts";
+    return INPUT_TOO_LARGE_PART_CODES[err.largestPart] ?? "input_too_large";
+  }
+  // AUDIT P3-A4 (R-157): a held draft's reason names its remedy.
+  if (err instanceof GenerationHeldError) {
+    return GENERATION_HELD_CODES[err.reason] ?? "generation_held_transient";
   }
   for (const h of HANDLERS) {
     if (err instanceof h.cls) return h.code;
@@ -2045,7 +2549,7 @@ export function billingErrorDisplay(err: unknown): BillingErrorCopy & {
   code: BillingErrorCode;
 } {
   const code = billingErrorCode(err);
-  return { code, ...BILLING_ERROR_COPY[code] };
+  return { code, ...billingErrorCopy(code) };
 }
 
 /** Copy for a `?e=` code carried back from a server action's redirect. */
@@ -2054,5 +2558,5 @@ export function billingErrorFromCode(
 ): (BillingErrorCopy & { code: BillingErrorCode }) | null {
   if (value === undefined || value === null || value === "") return null;
   const code: BillingErrorCode = isBillingErrorCode(value) ? value : "unknown";
-  return { code, ...BILLING_ERROR_COPY[code] };
+  return { code, ...billingErrorCopy(code) };
 }

@@ -236,13 +236,27 @@ export const STUDIO_POSITIVE_ASSERTIONS: readonly {
     must: /nothing appears until[\s\S]*part-written draft is never shown/i,
   },
   {
-    label: "says no result of this creator's has been logged (n = 0)",
+    label: "says what this creator's results do, by branch, and names the recent-work channel",
     testId: "studio-no-results-basis",
     where: "form",
-    // `/no results/` alone was passed by "No results yet." — which implies
-    // results are coming and says nothing about what the product holds. The
-    // n = 0 claim is two facts: none logged, and not being measured.
-    must: /no results of yours have been logged[\s\S]*not measuring you/i,
+    // TWO-BRANCH, NOT DELETED (audit P6-R6; register item 8). The marker used
+    // to require "no results of yours have been logged" on every render, which
+    // made this harness CEMENT a sentence that is false for any creator who
+    // has used `/results`. It now requires ONE of the three branches
+    // `resultsBasisSentence` can say, each as its facts rather than a label:
+    //   - zero: none logged AND not being measured (`/no results/` alone was
+    //     passed by "No results yet.", which says nothing the product holds);
+    //   - a positive count: the count, "none of them" ("it does not change"
+    //     for exactly one), and the VERIFIED
+    //     precondition R-115 sets on any of it entering a comparison;
+    //   - a failed read: that the count could not be read, never "none".
+    // ...AND, after it, the channel R-152 (b)/(d) opened and R-174 ratified:
+    // either the modes that read recent work and that it is "labelled
+    // history", or, on a screen whose modes read none, "nothing else of
+    // yours". A
+    // sentence that drops the channel is red here whatever its first half
+    // says.
+    must: /(?:no results of yours have been logged[\s\S]*not measuring you|you have logged \d+ results?\.[\s\S]*(?:none of them|it does not change)[\s\S]*verified|could not read how many results you have logged)[\s\S]*(?:labelled history|nothing else of yours)/i,
   },
   {
     label: "renders the hooks the operation returned",

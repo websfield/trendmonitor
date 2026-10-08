@@ -91,6 +91,25 @@ describe("ShellRail", () => {
       <ShellRail workspaceName="W" credits={250} />
     );
     expect(html).toContain("250 credits");
+    expect(html).not.toContain("may change");
+    expect(html).not.toContain("data-settling");
+  });
+
+  it("SETTLING (audit Phase 8, P8-R1): the committed fold renders WITH its indication, never as final", () => {
+    const html = renderToStaticMarkup(
+      <ShellRail workspaceName="W" credits={250} settling />
+    );
+    expect(html).toContain("250 credits (may change)");
+    expect(html).toContain('data-settling="true"');
+  });
+
+  it("SETTLING is not a refusal, and a refusal stays the refusal render", () => {
+    // Contention renders a number (settling); only a failed or refused read is null.
+    const refused = renderToStaticMarkup(
+      <ShellRail workspaceName="W" credits={null} settling />
+    );
+    expect(refused).not.toContain("shell-credits");
+    expect(refused).not.toContain("may change");
   });
 });
 
@@ -111,7 +130,7 @@ describe("the layout binds every failed balance read to the refusal render", () 
     const src = repoFile("app/(product)/layout.tsx");
     expect(src).toMatch(NULL_MAPPING);
     // layout.tsx keeps every authority — requireUser, ensureUserWorkspace,
-    // withWorkspace, getBalance and this refusal mapping — and hands the
+    // withWorkspace, getDisplayBalance and this refusal mapping — and hands the
     // result to the pure shell. The rail itself now lives in product-shell.
     expect(src).toContain("<ProductShell");
     expect(src).toMatch(/credits=\{credits\}/);
@@ -134,7 +153,7 @@ describe("the layout binds every failed balance read to the refusal render", () 
     const mutated = `catch (err) {
     rethrowNextControlFlow(err);
     credits = null;
-    credits = (await respinCredits.getBalance(workspace.id)).balance;
+    credits = (await respinCredits.getDisplayBalance(workspace.id)).balance;
   }`;
     expect(NULL_MAPPING.test(mutated)).toBe(false);
   });

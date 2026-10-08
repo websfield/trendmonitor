@@ -54,6 +54,14 @@ export async function requestWorkspaceDeletionAction(formData: FormData): Promis
   redirect(`${ACCOUNT_PATH}?ok=workspace_requested`);
 }
 
+/**
+ * Cancel a profile or workspace deletion. ANY active owner of the target
+ * workspace may (R-162): the package checks owner membership itself against
+ * the reauthenticated session, and takes no scope — the workspace is
+ * tombstoned, so no write-grade scope exists to hand it. Money Stripe
+ * collected while the workspace was tombstoned is replayed by the worker's
+ * deletion tick once the workspace is active again (R-165).
+ */
 export async function cancelScopedDeletionAction(formData: FormData): Promise<void> {
   await requireUser();
   try {

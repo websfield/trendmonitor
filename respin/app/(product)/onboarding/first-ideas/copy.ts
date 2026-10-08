@@ -97,17 +97,17 @@ export function firstIdeasCountNote(count: number): string {
 export const FIRST_IDEAS_NEXT =
   "From here on, everything happens in the Studio: the same brain, the other modes, and a revision control on anything you want changed. Nothing about this step is special — it is one output, priced and stored like the rest, and it is in your export.";
 
-/**
- * R21's n = 0 statement, on the screen where it is most tempting to break.
- *
- * This is a creator's FIRST output, in their first session, and the product has
- * logged no result of theirs at all — so any hint that these ideas were shaped
- * by what works for them would be a claim about evidence that does not exist.
- * `/studio` carries the same sentence for the same reason; the shared wording
- * is deliberate, because two screens saying it differently is two claims.
+/*
+ * R21's results statement is NOT declared here any more (audit P6-R6, register
+ * item 8). It said "No results of yours have been logged" to every creator,
+ * which is false for one who has used `/results`, and its last clause ("built
+ * from the brain you confirmed and from what you type in, and nothing else")
+ * has been false since launch L3 for this very mode, which reads recent work
+ * as labelled history. The panel renders `resultsBasisSentence` from
+ * `../../studio/run-copy.ts`, the ONE function `/studio` renders too, with this
+ * creator's scoped result count and the history-reading modes the server named,
+ * so the two screens cannot say it differently.
  */
-export const FIRST_IDEAS_NO_RESULTS_BASIS =
-  "Nothing here is based on how your posts have done. No results of yours have been logged — this product holds none, and it is not measuring you. These are built from the brain you confirmed and from what you type in, and nothing else.";
 
 /** Why the control is not offered, when a brain has not been activated. */
 export const FIRST_IDEAS_NEEDS_BRAIN =

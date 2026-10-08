@@ -3,7 +3,7 @@
 // action in ./actions.ts, and every rule those actions enforce lives in
 // packages/credits (skill B7: the money paths were integration-tested in
 // phases 2–3, before this page existed).
-import { requireUser } from "@respin/auth";
+import { isGoogleConfigured, requireUser } from "@respin/auth";
 import {
   hasLiveStripeSubscription,
   isStripeConfigured,
@@ -167,6 +167,13 @@ export default async function BillingSettingsPage(props: {
         typeof errParam === "string" ? errParam : undefined
       )}
       showCancel={search.cancel === "1"}
+      // R-164: offered whenever Google sign-in is configured; the start route
+      // refuses a session with no linked Google account.
+      googleReauth={{
+        available: isGoogleConfigured(),
+        startHref: "/api/reauth/google/start",
+        confirmed: search.reauth === "google",
+      }}
       actions={{
         subscribe: subscribeAction,
         pack: buyPackAction,

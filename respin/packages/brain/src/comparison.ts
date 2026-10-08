@@ -375,11 +375,51 @@ function median(values: readonly number[]): number {
     : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
+/** The post a row observes: its draft, or the row itself when it names none. */
+function postOf(result: ComparisonResultInput): string {
+  const generation: unknown = result.generationId;
+  return typeof generation === "string" && generation.trim() !== "" ? `generation:${generation}` : `result:${result.id}`;
+}
+
+/**
+ * ONE OBSERVATION PER POST (R-170, audit Phase 2 P2-A1). `n` used to be
+ * `rows.length`, so one post logged over three nested windows was "n = 3" — a
+ * population of one post reaching the minimum that is meant to be three posts.
+ * Each post is now represented by ONE row: the observation whose window ends
+ * latest (the most mature reading of that post), ties broken by the later
+ * start, then by id, so the choice is deterministic. Only that row enters the
+ * median and the cohort's `resultIds`, which is what keeps
+ * `packages/brain/src/proposal.ts`' recomputation from the joined evidence
+ * exact (`treatment.n === treatmentEvidence.length`). The other observations
+ * stay stored and listed; they are not counted twice.
+ */
+function onePerPost<T extends { result: ComparisonResultInput }>(entries: readonly T[]): T[] {
+  const chosen = new Map<string, T>();
+  const later = (a: ComparisonResultInput, b: ComparisonResultInput) =>
+    a.observedTo.getTime() !== b.observedTo.getTime()
+      ? a.observedTo.getTime() > b.observedTo.getTime()
+      : a.observedFrom.getTime() !== b.observedFrom.getTime()
+        ? a.observedFrom.getTime() > b.observedFrom.getTime()
+        : a.id > b.id;
+  for (const entry of entries) {
+    const key = postOf(entry.result);
+    const current = chosen.get(key);
+    if (current === undefined || later(entry.result, current.result)) chosen.set(key, entry);
+  }
+  const keep = new Set(chosen.values());
+  return entries.filter((entry) => keep.has(entry));
+}
+
 function populationOf(
   rows: readonly ComparisonResultInput[],
   values: readonly number[],
   truncated: boolean
 ): Population {
+  // `rows` is ALREADY one per post (`onePerPost`), so its length is the count
+  // of distinct posts (R-170) — asserted here rather than trusted.
+  if (new Set(rows.map(postOf)).size !== rows.length) {
+    throw new ComparisonInputError("a population was handed two observations of one post; n counts posts (R-170)");
+  }
   const resultIds = rows.map((row) => row.id);
   // TRUNCATION DOMINATES EVERY OTHER STATE, INCLUDING `none`. A clipped read
   // that returned no row for this population is not evidence that the creator
@@ -511,11 +551,13 @@ export function buildLeverComparisons(args: {
       .map((result) => ({ result, value: per1k(result, lever) }))
       .filter((entry): entry is { result: ComparisonResultInput; value: number } => entry.value !== null);
 
-    const treatmentRows = measured.filter(({ result }) => normalisedKey(result) === treatmentKey);
-    const treatmentIds = new Set(treatmentRows.map(({ result }) => result.id));
-    const baselineRows = measured.filter(
+    const treatmentAll = measured.filter(({ result }) => normalisedKey(result) === treatmentKey);
+    const treatmentIds = new Set(treatmentAll.map(({ result }) => result.id));
+    // ONE ROW PER POST on each side (R-170): n counts distinct posts.
+    const treatmentRows = onePerPost(treatmentAll);
+    const baselineRows = onePerPost(measured.filter(
       ({ result }) => !treatmentIds.has(result.id) && normalisedKey(result) !== treatmentKey
-    );
+    ));
 
     // BOTH SIDES, ALWAYS TOGETHER. A clipped read does not say WHICH side
     // lost rows — the rows nobody read carry no key — so a comparison built
@@ -811,7 +853,17 @@ export function buildComparisonGroups(args: {
     }
   }
 
-  // One group per (stratum, treatment key), over the rows that HAVE a key.
+  // One group per (stratum, treatment key), over the rows that HAVE a key AND
+  // could fill it.
+  //
+  // NO GROUP NOTHING CAN EVER FILL (audit Phase 2, P2-A1). Groups were built
+  // from every key-carrying result, self-reported ones included — and since
+  // R-115 a self-reported row enters no population, so its group's treatment
+  // was `none` forever while the screen said "N more results in the same group
+  // would make one", directly under the notice that verified analytics are not
+  // connected. A group is now headed only by a row that is NUMERICALLY
+  // ELIGIBLE: connector verified and reporting at least one lever. Every other
+  // row still feeds every baseline it matches, through the whole row set.
   const heads = new Map<
     string,
     { result: ComparisonResultInput; treatmentKey: string }
@@ -819,6 +871,7 @@ export function buildComparisonGroups(args: {
   for (const result of results) {
     const treatmentKey = normalisedKey(result);
     if (treatmentKey === null) continue;
+    if (!isNumerical(result) || LEVERS.every((lever) => per1k(result, lever) === null)) continue;
     const key = tupleKey([
       ...stratumParts(result, metricDeclarationKey(declarationByResultId.get(result.id)!)),
       treatmentKey,

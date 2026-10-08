@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => {
     ProfileAccessError,
     ExportBusyError,
     requireUser: vi.fn(),
-    scopeForUser: vi.fn(),
+    readScopeForUser: vi.fn(),
     openBrainExport: vi.fn(),
     logRefusal: vi.fn(() => "unknown"),
   };
@@ -23,7 +23,7 @@ vi.mock("@respin/db", () => ({
   respinDb: { openBrainExport: mocks.openBrainExport },
 }));
 vi.mock("../app/(product)/workspace-scope", () => ({
-  scopeForUser: mocks.scopeForUser,
+  readScopeForUser: mocks.readScopeForUser,
 }));
 vi.mock("../app/(product)/safe-log", () => ({
   logRefusal: mocks.logRefusal,
@@ -43,7 +43,7 @@ async function* chunks(values: readonly string[]): AsyncIterable<string> {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireUser.mockResolvedValue(USER);
-  mocks.scopeForUser.mockResolvedValue(SCOPE);
+  mocks.readScopeForUser.mockResolvedValue(SCOPE);
   mocks.openBrainExport.mockImplementation(
     async (_scope: unknown, _profileId: string, format: "json" | "markdown") =>
       chunks(format === "json" ? [JSON_EXPORT.slice(0, 8), JSON_EXPORT.slice(8)] : [MARKDOWN_EXPORT])
@@ -57,7 +57,7 @@ describe("GET /api/export", () => {
     await expect(
       GET(new Request("http://localhost/api/export?profile=foreign&format=json"))
     ).rejects.toBe(refusal);
-    expect(mocks.scopeForUser).not.toHaveBeenCalled();
+    expect(mocks.readScopeForUser).not.toHaveBeenCalled();
     expect(mocks.openBrainExport).not.toHaveBeenCalled();
   });
 
@@ -65,7 +65,7 @@ describe("GET /api/export", () => {
     const response = await GET(
       new Request("http://localhost/api/export?profile=profile-1&format=json")
     );
-    expect(mocks.scopeForUser).toHaveBeenCalledWith(USER);
+    expect(mocks.readScopeForUser).toHaveBeenCalledWith(USER);
     expect(mocks.openBrainExport).toHaveBeenCalledWith(SCOPE, "profile-1", "json");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe(
@@ -147,7 +147,7 @@ describe("GET /api/export", () => {
       new Request("http://localhost/api/export?profile=profile-1&format=html")
     );
     expect(response.status).toBe(400);
-    expect(mocks.scopeForUser).not.toHaveBeenCalled();
+    expect(mocks.readScopeForUser).not.toHaveBeenCalled();
     expect(mocks.openBrainExport).not.toHaveBeenCalled();
   });
 
@@ -157,7 +157,9 @@ describe("GET /api/export", () => {
       "utf8"
     );
     expect(source).toContain("await requireUser()");
-    expect(source).toContain("await scopeForUser(user)");
+    // R-163: the READ grade, so the export answers 200 during a workspace
+    // deletion's grace instead of the write grade's refusal.
+    expect(source).toContain("await readScopeForUser(user)");
     expect(source).toContain(
       "await respinDb.openBrainExport(scope, profileId, format)"
     );

@@ -12,9 +12,57 @@ import {
 } from "../src/access";
 import { autopsy, AutopsyAnalysisError, cacheKeyFor, type AutopsyModelPort, type AutopsyStageResult, type AutopsyStorePort } from "../src/autopsy";
 import { BASELINE_RECENT_OBSERVATIONS, medianRecentViews, OutlierInputError, scoreOutlier, selectBaseline } from "../src/outlier";
-import { measureSaturation, SaturationMeasurementError } from "../src/saturation";
+import { measureSaturation, SATURATION_UNMEASURED_REASONS, SaturationMeasurementError } from "../src/saturation";
 import { submitted, TREND_SOURCE_ADAPTERS, YouTubeMetadataError, youtube, YOUTUBE_DATA_API_ORIGIN } from "../src/sources";
-import { assertExactlyCompliantAdapters } from "../src/trend-source";
+import { assertExactlyCompliantAdapters, TREND_SOURCE_NAMES } from "../src/trend-source";
+
+/**
+ * `packages/db/src/trends-schema.ts`, read as a FILE: this package depends on
+ * nothing, so the database's vocabulary is compared by reading its source
+ * (the `pasted-reference.ts` precedent below), never by importing it.
+ */
+const TRENDS_SCHEMA = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "..", "db", "src", "trends-schema.ts"),
+  "utf8"
+);
+
+/** The members of a `pgEnum("name", [...])` declared in that file. */
+function enumValues(source: string, name: string): string[] {
+  const m = source.match(new RegExp(`pgEnum\\("${name}",\\s*\\[([^\\]]*)\\]`));
+  if (!m) throw new Error(`pgEnum ${name} not found`);
+  return [...m[1]!.matchAll(/"([^"]+)"/g)].map((v) => v[1]!);
+}
+
+/** The reasons the saturation CHECK admits: both arms of its CASE. */
+function checkReasons(source: string): string[] {
+  const m = source.match(/saturationUnmeasuredReason\} = CASE WHEN [^']*'unavailable' THEN '([a-z_]+)' ELSE '([a-z_]+)' END/);
+  if (!m) throw new Error("the saturation reason CHECK was not found");
+  return [m[1]!, m[2]!];
+}
+
+describe("P2-R11: the trends vocabulary has one authority, and every copy is asserted against it", () => {
+  it("TREND_SOURCE_NAMES equals the `trend_source_kind` enum's values", () => {
+    expect([...TREND_SOURCE_NAMES].sort()).toEqual(enumValues(TRENDS_SCHEMA, "trend_source_kind").sort());
+  });
+
+  it("PLANTED: a third name on either side is red", () => {
+    const planted = TRENDS_SCHEMA.replace('pgEnum("trend_source_kind", ["youtube", "submitted"])', 'pgEnum("trend_source_kind", ["youtube", "submitted", "tiktok"])');
+    expect(planted).not.toBe(TRENDS_SCHEMA);
+    expect([...TREND_SOURCE_NAMES].sort()).not.toEqual(enumValues(planted, "trend_source_kind").sort());
+    expect([...TREND_SOURCE_NAMES, "tiktok"].sort()).not.toEqual(enumValues(TRENDS_SCHEMA, "trend_source_kind").sort());
+  });
+
+  it("the saturation reason union equals the storage CHECK's set (`no_population` included)", () => {
+    expect([...SATURATION_UNMEASURED_REASONS].sort()).toEqual(checkReasons(TRENDS_SCHEMA).sort());
+  });
+
+  it("PLANTED: a third reason in the CHECK, or one dropped from the union, is red", () => {
+    const planted = TRENDS_SCHEMA.replace("THEN 'no_population' ELSE", "THEN 'no_baseline' ELSE");
+    expect(planted).not.toBe(TRENDS_SCHEMA);
+    expect([...SATURATION_UNMEASURED_REASONS].sort()).not.toEqual(checkReasons(planted).sort());
+    expect(["incomplete_provenance"]).not.toEqual(checkReasons(TRENDS_SCHEMA).sort());
+  });
+});
 
 describe("R1: the source registry is exactly the compliant source set", () => {
   it("derives its two adapters from one source registry", () => {
@@ -121,15 +169,18 @@ describe("R4: submitted transcripts use the reference-intake port", () => {
     ]);
   });
 
-  it("propagates a quote-budget refusal without creating a bypass", async () => {
+  it("a refusal is a typed error thrown THROUGH the port, never a reason (P2-R11)", async () => {
+    // The port has no refusal arm; what the production port raises — tier,
+    // pause, role, balance, content — reaches the caller as itself.
+    class PlantedTierError extends Error {}
     await expect(
       submitted.submit({
         profileId: "p1",
         url: "https://youtu.be/abc",
-        transcript: "too much quotation",
-        referenceIntake: { async intakeReferenceTranscript() { return { accepted: false, reason: "quote_budget_exceeded" }; } },
+        transcript: "a transcript",
+        referenceIntake: { async intakeReferenceTranscript() { throw new PlantedTierError("tier"); } },
       })
-    ).rejects.toMatchObject({ code: "quote_budget_exceeded" });
+    ).rejects.toBeInstanceOf(PlantedTierError);
   });
 
   it("HAS A PRODUCTION CALLER (slice 8c, R-96/R-98): `@respin/credits` implements the port over the metered paste", () => {
@@ -150,10 +201,13 @@ describe("R4: submitted transcripts use the reference-intake port", () => {
     expect(adapter).toMatch(/async intakeReferenceTranscript\(input\)/);
     expect(adapter).toMatch(/await submitPastedReference\(/);
     expect(adapter).toMatch(/accepted: true, referenceInputId/);
-    // ...and it never fabricates the port's one refusal reason: the only place
-    // the literal appears in that file is the TYPE of the port it implements.
-    const fabricated = adapter.match(/reason: "quote_budget_exceeded"/g) ?? [];
-    expect(fabricated, "the production port must not relabel a refusal as a quote-budget one").toHaveLength(1);
+    // ...and the port has NO refusal arm any more (P2-R11): the adapter's
+    // re-typed union carries none, and no reason literal is fabricated.
+    const port = adapter.slice(adapter.indexOf("export function pastedReferenceIntakePort("));
+    expect(port.length, "the port function was not found").toBeGreaterThan(100);
+    const fabricated = port.match(/reason:\s*"/g) ?? [];
+    expect(fabricated, "the production port must not carry a refusal reason").toHaveLength(0);
+    expect(port).not.toMatch(/accepted: false/);
   });
 });
 

@@ -251,7 +251,8 @@ export function tightenOnlySampleRate(raw: string | undefined): number {
  * to let it go.
  *
  * Its single `underlying(` call is the one outbound call site this module adds,
- * and it is entry 7 of `tests/no-scraping.test.ts`'s measured allowlist.
+ * and it is one of the seven entries of `tests/no-scraping.test.ts`'s measured
+ * allowlist (R-141), where its first argument is asserted to be `input`.
  */
 export function originPinnedFetch(origin: string, underlying: typeof fetch = fetch): typeof fetch {
   const pinned = new URL(origin).origin;

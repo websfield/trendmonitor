@@ -21,7 +21,7 @@
 //                               period-end cancellation is still owed
 import { ActivationContributionRefusal, applyActivationContributionInTx, type ActivationExclusions } from "./activation";
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
-import { subscriptions } from "./billing-schema";
+import { stripeEvents, subscriptions } from "./billing-schema";
 import { purgeSubjectStripePayloadsInTx } from "./retention-receiver";
 import {
   JSON_PATH_INVENTORY,
@@ -47,6 +47,7 @@ import {
   appendJournalTransitionInTx,
   assertBillingContactReleased,
   databaseNow,
+  deletionOperationUnderWay,
   prepareJournalPlan,
   transitionDeletionOperation,
   type JournalPlanStep,
@@ -57,6 +58,7 @@ import type { MigrationInventory } from "./lifecycle-inventory";
 import { deriveExpectedResidueProbes, LIFECYCLE_PROBES } from "./lifecycle-probes";
 import {
   deletionExternalCommands,
+  deletionOperationTransitions,
   deletionOperations,
   type DeletionExternalCommand,
   type DeletionExternalCommandKind,
@@ -102,6 +104,16 @@ export const DELETION_EXECUTOR_MAX_COMMAND_ATTEMPTS = EXTERNAL_COMMAND_MAX_ATTEM
  */
 export const DELETION_EXECUTOR_MAX_ERASURE_FAILURES = 3;
 export const DELETION_EXECUTOR_TICK_LIMIT = 10;
+/**
+ * R-166 (gate H2): a WAITING code (`WAITING_CODES`) is not a retry and never
+ * blocks, so without a bound it can persist forever with nothing paged. A wait
+ * older than this — measured from when the wait could first begin: the grace
+ * expiry for a `grace` operation, else the operation's latest transition — is
+ * counted as `stalledWaits`, and the worker pages on it. A day: every wait is
+ * on a provider command (minutes) or a nested operation that is itself
+ * reserved and advancing.
+ */
+export const DELETION_WAIT_ALERT_AFTER_MS = 24 * 60 * 60_000;
 const DUE_STATES: readonly DeletionOperationState[] = [
   "tombstoned",
   "external_actions_pending",
@@ -253,6 +265,24 @@ export type DeletionExecutorOptions = Readonly<{
   activationExclusions: ActivationExclusions;
   leaseMs?: number;
   limit?: number;
+  /** Tests only; production uses `DELETION_WAIT_ALERT_AFTER_MS`. */
+  waitAlertAfterMs?: number;
+}>;
+
+/**
+ * Money Stripe collected for a workspace while it was tombstoned and that no
+ * cancellation replayed (R-165): the erasure completes, the receipt stays, and
+ * the OPERATOR owes the refund. Ids and amounts only. No automatic refund is
+ * built. The durable record is the `stripe_events` row itself
+ * (`outcome = 'refund_owed'`, written by `recordRefundOwedInTx`); this list
+ * is the tick's copy of it, and the worker alerts on it.
+ */
+export type RefundOwed = Readonly<{
+  stripeEventId: string;
+  type: string;
+  /** Smallest currency unit, as Stripe reported it; null if the payload carried none. */
+  amount: number | null;
+  currency: string | null;
 }>;
 
 export type DeletionTickOutcome = Readonly<{
@@ -261,6 +291,10 @@ export type DeletionTickOutcome = Readonly<{
   from: DeletionOperationState;
   to: DeletionOperationState | null;
   code: string;
+  /** Present on a completed workspace erasure that held money (R-165). */
+  refundOwed?: readonly RefundOwed[];
+  /** R-166: a waiting outcome whose wait is older than the alert bound. */
+  stalled?: true;
 }>;
 
 export type DeletionLifecycleTickSummary = Readonly<{
@@ -269,6 +303,10 @@ export type DeletionLifecycleTickSummary = Readonly<{
   waiting: number;
   blocked: number;
   erased: number;
+  /** Held Stripe events listed as refund owed by this tick's erasures (R-165). */
+  refundOwed: number;
+  /** R-166: waiting outcomes older than `DELETION_WAIT_ALERT_AFTER_MS`; the worker pages on non-zero. */
+  stalledWaits: number;
   outcomes: readonly DeletionTickOutcome[];
 }>;
 
@@ -449,7 +487,28 @@ async function handleExternalActions(db: DbLike, operation: DeletionOperation, p
   return outcome(operation, advanced.state, "pre_grace_commands_succeeded");
 }
 
+/**
+ * The profile deletions under way inside a workspace whose own deletion has
+ * left grace (R-166). An unreserved profile DRAFT is not counted — nothing
+ * advances one — and is RETIRED here first: it can never be reserved now (its
+ * reservation needs the workspace active), it has no journal entry, proof or
+ * command (an unreserved row has none by construction; the restrict foreign
+ * keys would refuse this delete loudly if one existed), and left in place its
+ * `profile_id` would hold the profile row the workspace's erasure removes.
+ */
 async function nestedActiveProfileOperations(tx: TxLike, workspaceId: string): Promise<number> {
+  await tx
+    .delete(deletionOperations)
+    .where(
+      and(
+        eq(deletionOperations.scope, "profile"),
+        eq(deletionOperations.workspaceId, workspaceId),
+        eq(deletionOperations.state, "requested"),
+        isNull(deletionOperations.journalIntentPlanDigest),
+        isNull(deletionOperations.journalIntentBaseVersion),
+        isNull(deletionOperations.journalIntentEffectiveAt)
+      )
+    );
   const rows = await tx
     .select({ id: deletionOperations.id })
     .from(deletionOperations)
@@ -457,10 +516,120 @@ async function nestedActiveProfileOperations(tx: TxLike, workspaceId: string): P
       and(
         eq(deletionOperations.scope, "profile"),
         eq(deletionOperations.workspaceId, workspaceId),
-        sql`${deletionOperations.state} NOT IN ('complete', 'cancelled')`
+        sql`${deletionOperations.state} NOT IN ('complete', 'cancelled')`,
+        deletionOperationUnderWay()
       )
     );
   return rows.length;
+}
+
+/**
+ * The scoped deletions this person REQUESTED that are still undecided and
+ * UNDER WAY (R-160, R-166). An identity's erasure waits for them: its
+ * cascaded sole-owner workspaces (and any workspace it asked to delete before)
+ * erase first, through their own operations, which also clear the provider
+ * copy of the billing contact the identity erasure re-checks. A cancelled one
+ * stops counting at once. An unreserved draft never counts (gate H2): nothing
+ * advances it, so counting it was a wait with no end; a draft on a workspace
+ * the person solely owns was adopted by the cascade, and any other stays
+ * rebindable by that workspace's remaining owners.
+ */
+async function nestedRequestedOperations(tx: TxLike, userId: string): Promise<number> {
+  const rows = await tx
+    .select({ id: deletionOperations.id })
+    .from(deletionOperations)
+    .where(
+      and(
+        inArray(deletionOperations.scope, ["profile", "workspace"]),
+        eq(deletionOperations.requesterUserId, userId),
+        sql`${deletionOperations.state} NOT IN ('complete', 'cancelled')`,
+        deletionOperationUnderWay()
+      )
+    );
+  return rows.length;
+}
+
+/**
+ * Amount and currency off a money event's payload, by its type (R-165). ONE
+ * reader for both refund-owed writers: the erasure (`recordRefundOwedInTx`)
+ * and the webhook's late-money branch in @respin/credits.
+ */
+export function stripeMoneyAmount(type: string, payload: unknown): Pick<RefundOwed, "amount" | "currency"> {
+  const object = (payload as { data?: { object?: Record<string, unknown> } } | null)?.data?.object;
+  const field =
+    type === "invoice.paid"
+      ? "amount_paid"
+      : type === "payment_intent.succeeded"
+        ? "amount_received"
+        : type.startsWith("checkout.session.")
+          ? "amount_total"
+          : null;
+  const amount = field && typeof object?.[field] === "number" ? (object[field] as number) : null;
+  const currency = typeof object?.currency === "string" ? object.currency : null;
+  return { amount, currency };
+}
+
+/**
+ * THE DURABLE REFUND-OWED RECORD (R-165, gate M1). Inside the erasure
+ * transaction and BEFORE the payload purge, every receipt still held for this
+ * workspace becomes `outcome = 'refund_owed'`, carrying its amount, currency
+ * and this operation's id (migration 0065; the trigger lets a held receipt take
+ * this outcome once and never leave it). The operator reads
+ * `SELECT id, type, refund_owed_amount, refund_owed_currency FROM stripe_events
+ * WHERE outcome = 'refund_owed'`; the tick's list is a copy, not the record.
+ */
+/**
+ * The COMPLETED workspace deletion that erased this workspace, if it was
+ * erased (R-166, billing follow-up). After erasure the workspace row survives
+ * under its pseudonymous id, tombstoned, and the retained `subscriptions` row
+ * still maps the Stripe customer to it — so money that settles LATE resolves
+ * here. The erasure receipt names the same pseudonymous id; that is the link,
+ * and it carries no person.
+ */
+export async function erasedWorkspaceOperationIdInTx(tx: TxLike, workspaceId: string): Promise<string | null> {
+  const [row] = await tx
+    .select({ id: deletionOperations.id })
+    .from(deletionOperations)
+    .where(
+      and(
+        eq(deletionOperations.scope, "workspace"),
+        eq(deletionOperations.workspaceId, workspaceId),
+        eq(deletionOperations.state, "complete")
+      )
+    )
+    .orderBy(desc(deletionOperations.requestedAt))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+async function recordRefundOwedInTx(
+  tx: TxLike,
+  workspaceId: string,
+  operationId: string
+): Promise<readonly RefundOwed[]> {
+  const rows = await tx
+    .select({ id: stripeEvents.id, type: stripeEvents.type, payload: stripeEvents.payload })
+    .from(stripeEvents)
+    .where(and(eq(stripeEvents.workspaceId, workspaceId), eq(stripeEvents.outcome, "held_tombstoned")))
+    .orderBy(asc(stripeEvents.id))
+    .for("update");
+  const owed: RefundOwed[] = [];
+  for (const row of rows) {
+    const { amount, currency } = stripeMoneyAmount(row.type, row.payload);
+    const [moved] = await tx
+      .update(stripeEvents)
+      .set({
+        outcome: "refund_owed",
+        refundOwedAmount: amount,
+        refundOwedCurrency: currency,
+        refundOwedOperationId: operationId,
+      })
+      .where(and(eq(stripeEvents.id, row.id), eq(stripeEvents.outcome, "held_tombstoned")))
+      .returning({ id: stripeEvents.id });
+    if (!moved) throw new LifecycleExecutorRefusal("held_receipt_changed");
+    owed.push({ stripeEventId: row.id, type: row.type, amount, currency });
+  }
+  return owed;
 }
 
 async function handleGrace(db: DbLike, operation: DeletionOperation, ports: DeletionExecutorPorts) {
@@ -474,7 +643,14 @@ async function handleGrace(db: DbLike, operation: DeletionOperation, ports: Dele
   const hold = erasureHold(operation.scope);
   if (hold !== null) return outcome(operation, null, `erasure_disabled:${hold}`);
   if (operation.scope === "workspace" && operation.workspaceId) {
-    const nested = await db.transaction((tx) => nestedActiveProfileOperations(tx, operation.workspaceId!));
+    const nested = await db.transaction(async (tx) => {
+      await lockScopeInTx(tx, operation);
+      return nestedActiveProfileOperations(tx, operation.workspaceId!);
+    });
+    if (nested > 0) return outcome(operation, null, "nested_operation_active");
+  }
+  if (operation.scope === "identity" && operation.userId) {
+    const nested = await db.transaction((tx) => nestedRequestedOperations(tx, operation.userId!));
     if (nested > 0) return outcome(operation, null, "nested_operation_active");
   }
   const advanced = await transitionDeletionOperation(db, operation.id, "erasing", ports.journal);
@@ -500,6 +676,8 @@ export type ErasureResult = Readonly<{
   receipt: ErasureReceipt;
   receiptDigest: string;
   residue: number;
+  /** R-165: held Stripe money on the erased workspace — the operator's refund list. */
+  refundOwed: readonly RefundOwed[];
 }>;
 
 const ERASURE_STEPS = [
@@ -624,6 +802,14 @@ export async function eraseOperation(
     // this target: `stripe_events` rows carry no user link, only a workspace
     // and a customer. Finance facts are lifted out first, in this same
     // transaction, by the same extractor the retention sweep uses.
+    // R-165: the held money becomes the durable refund-owed record HERE, in
+    // this transaction and before the purge below clears the payloads its
+    // amounts come from. Only this workspace's own erasure does this; every
+    // other payload producer skips a held receipt.
+    const refundOwed =
+      operation.scope === "workspace" && operation.workspaceId
+        ? await recordRefundOwedInTx(tx, operation.workspaceId, operation.id)
+        : [];
     if (operation.scope === "identity" && operation.userId) {
       await purgeSubjectStripePayloadsInTx(tx, { userId: operation.userId });
     } else if (operation.scope === "workspace" && operation.workspaceId) {
@@ -687,6 +873,7 @@ export async function eraseOperation(
       receipt,
       receiptDigest: digestReceipt(receipt),
       residue,
+      refundOwed,
     };
   });
   return erasure.catch(async (error: unknown) => {
@@ -727,7 +914,8 @@ async function handleErasing(
   if (summary.pending > 0) return outcome(operation, null, "external_command_pending");
   try {
     const erased = await eraseOperation(db, operation.id, ports, options);
-    return outcome(operation, erased.operation.state, `erased:${erased.receiptDigest.slice(0, 16)}`);
+    const done = outcome(operation, erased.operation.state, `erased:${erased.receiptDigest.slice(0, 16)}`);
+    return erased.refundOwed.length > 0 ? { ...done, refundOwed: erased.refundOwed } : done;
   } catch (error) {
     // Every erasure failure — residue, a constraint, a refusal — becomes
     // `blocked` with the code ON THE ROW (the runbook's contract), and resumes
@@ -877,12 +1065,15 @@ export async function advanceDeletionOperations(
     let code: string | null = null;
     let countsAsRetry = false;
     try {
-      const result = await advanceOne(db, operation, ports, options);
-      outcomes.push(result);
+      let result = await advanceOne(db, operation, ports, options);
       if (result.to === null && !NORMAL_HOLD_CODES.some((prefix) => result.code.startsWith(prefix))) {
         code = result.code;
         countsAsRetry = !WAITING_CODES.some((prefix) => result.code.startsWith(prefix));
+        if (!countsAsRetry && (await waitIsStalled(db, operation, options))) {
+          result = { ...result, stalled: true };
+        }
       }
+      outcomes.push(result);
     } catch (error) {
       code = failureCode(error);
       countsAsRetry = true;
@@ -897,6 +1088,37 @@ export async function advanceDeletionOperations(
     waiting: outcomes.filter((item) => item.to === null).length,
     blocked: outcomes.filter((item) => item.to === "blocked").length,
     erased: outcomes.filter((item) => item.to === "complete").length,
+    refundOwed: outcomes.reduce((total, item) => total + (item.refundOwed?.length ?? 0), 0),
+    stalledWaits: outcomes.filter((item) => item.stalled === true).length,
     outcomes,
   };
+}
+
+/**
+ * Whether a WAITING operation has waited past the alert bound (R-166). The
+ * wait can first begin at the grace expiry for a `grace` operation (its only
+ * wait is on nested operations, after grace), else when it entered its
+ * current state — its latest journal transition. Database time.
+ */
+async function waitIsStalled(
+  db: DbLike,
+  operation: DeletionOperation,
+  options: DeletionExecutorOptions
+): Promise<boolean> {
+  const boundMs = options.waitAlertAfterMs ?? DELETION_WAIT_ALERT_AFTER_MS;
+  const [row] = await db
+    .select({
+      enteredAt: sql<Date | string | null>`max(${deletionOperationTransitions.createdAt})`,
+      now: sql<Date | string>`clock_timestamp()`,
+    })
+    .from(deletionOperationTransitions)
+    .where(eq(deletionOperationTransitions.operationId, operation.id));
+  const now = new Date(row?.now ?? Date.now());
+  const started =
+    operation.state === "grace" && operation.graceExpiresAt
+      ? operation.graceExpiresAt
+      : row?.enteredAt
+        ? new Date(row.enteredAt)
+        : null;
+  return started !== null && now.getTime() - started.getTime() > boundMs;
 }

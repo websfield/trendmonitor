@@ -49,7 +49,7 @@ import { reconcileMissingLegacyAutoTopups } from "../src/stripe/auto-topup-rollo
 import { reconcileBoundAutoTopupAttempts } from "../src/stripe/auto-topup-v1-reconcile";
 import { autoTopupAuthorityMetadata } from "../src/stripe/auto-topup-authority";
 import { AUTO_TOPUP_IDEMPOTENCY_SAFE_RETRY_MS } from "../src/stripe/auto-topup";
-import { handleStripeEvent } from "../src/stripe/webhooks";
+import { handleStripeEvent, replayHeldStripeEvents } from "../src/stripe/webhooks";
 
 const KEY_FINGERPRINT =
   "sha256:fe3b3de1339e7ec571414d65c6f3091e4c11ebbae40b7b09031308abf4a734ab";
@@ -468,6 +468,64 @@ describe("auto-top-up protocol rollout", () => {
     await expect(reconcileBoundAutoTopupAttempts(db)).rejects.toThrow(
       /finalized receipt without settlement/
     );
+  });
+
+  it("R-166 (billing Low): a v1 auto-top-up success on a TOMBSTONED workspace is HELD, then replays exactly once when the workspace is active again", async () => {
+    const db = await createTestDb();
+    await seedAuthUser(db, "v1-held-user");
+    await seedDb(db);
+    await activateEmptyProtocol(db);
+    const { workspaceId, authority } = await insertBoundV1Attempt(db, "held_replay");
+    const setLifecycle = (lifecycleState: "active" | "tombstoned") =>
+      db.update(schema.workspaces).set({ lifecycleState }).where(eq(schema.workspaces.id, workspaceId));
+    await setLifecycle("tombstoned");
+    const pi = {
+      id: authority.paymentIntentId,
+      object: "payment_intent",
+      amount: authority.amountCents,
+      currency: authority.currency,
+      customer: authority.customerId,
+      created: 10,
+      livemode: false,
+      status: "succeeded",
+      metadata: autoTopupAuthorityMetadata(workspaceId, authority),
+    };
+    const event = {
+      id: "evt_v1_held_replay",
+      object: "event",
+      api_version: "2025-12-15.clover",
+      created: 11,
+      data: { object: pi },
+      livemode: false,
+      pending_webhooks: 0,
+      request: null,
+      type: "payment_intent.succeeded",
+    };
+    const minted = async () =>
+      db.select().from(creditLedger).where(eq(creditLedger.autoTopupAttemptId, authority.id));
+    expect(await handleStripeEvent(db, event as never)).toBe("held_tombstoned");
+    expect(await minted()).toHaveLength(0);
+
+    // The deletion is cancelled: the workspace is active again.
+    await setLifecycle("active");
+    expect(await replayHeldStripeEvents(db, workspaceId)).toEqual({
+      replayed: 1,
+      alreadySettled: 0,
+      failed: 0,
+      stillHeld: 0,
+    });
+    expect(await minted()).toHaveLength(1);
+    const [receipt] = await db.select().from(stripeEvents).where(eq(stripeEvents.id, event.id));
+    expect(receipt?.outcome).toBe("processed");
+    // Exactly once: a second replay finds nothing held, and a redelivery is a duplicate.
+    expect(await replayHeldStripeEvents(db, workspaceId)).toEqual({
+      replayed: 0,
+      alreadySettled: 0,
+      failed: 0,
+      stillHeld: 0,
+    });
+    await expect(handleStripeEvent(db, event as never)).rejects.toMatchObject({ name: "DuplicateStripeEvent" });
+    expect(await minted()).toHaveLength(1);
   });
 
   it("refuses provider-only success A while a different complete attempt B is pending", async () => {

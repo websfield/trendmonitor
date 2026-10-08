@@ -2,6 +2,7 @@
   "name": "@respin/credits",
   "version": "0.0.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -9,7 +10,8 @@
     ".": "./src/index.ts",
     "./app-server": "./src/app-server.ts",
     "./webhook-server": "./src/webhook-server.ts",
-    "./deletion-server": "./src/deletion-server.ts"
+    "./deletion-server": "./src/deletion-server.ts",
+    "./operator-server": "./src/operator-server.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

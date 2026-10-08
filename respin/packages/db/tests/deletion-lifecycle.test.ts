@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashPassword } from "better-auth/crypto";
-import { and, eq, like } from "drizzle-orm";
+import { and, eq, like, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { account, rateLimit, session, user as authUser } from "../src/auth-schema";
 import { subscriptions } from "../src/billing-schema";
@@ -25,6 +25,7 @@ import {
   cancelScopedDeletion,
   DELETION_GRACE_MS,
   DELETION_REAUTH_MAX_AGE_MS,
+  IDENTITY_CASCADE_KEY_PREFIX,
   requestIdentityDeletion,
   requestProfileDeletion,
   requestWorkspaceDeletion,
@@ -35,7 +36,10 @@ import {
   resumeWorkspaceDeletionRequest,
   transitionDeletionOperation,
   readIdentityCancellationStatus,
+  pendingDeletionsForScope,
+  resumeWedgedDeletionOperations,
 } from "../src/deletion-lifecycle";
+import { NO_SEAT_CAP_RESTORE_POLICY } from "../src/deletion-ports";
 import { deriveActivationCohorts, NO_ACTIVATION_EXCLUSIONS } from "../src/activation";
 import { runRetentionTick } from "../src/retention-receiver";
 import type {
@@ -59,7 +63,12 @@ import {
 } from "../src/lifecycle-schema";
 import { memberships, users, workspaces } from "../src/schema";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
-import { ProfileScope, withWorkspace } from "../src/with-workspace";
+import {
+  isReadGradeScope,
+  ProfileScope,
+  withWorkspace,
+  WorkspacePendingDeletionError,
+} from "../src/with-workspace";
 
 const NOW = new Date();
 const HOUR = 60 * 60 * 1_000;
@@ -131,6 +140,7 @@ async function addSession(
     expiresAt: new Date(NOW.getTime() + HOUR),
     updatedAt: NOW,
     reauthenticatedAt,
+    reauthenticatedMethod: "password",
   });
 }
 
@@ -159,33 +169,61 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     db = await createTestDb();
   });
 
-  it("keeps the state graph forward-only and cancellation before erasing", () => {
+  it("keeps the state graph forward-only, and asserts EVERY (state, cancelled) pair accepted or refused", () => {
     const accepted: readonly [DeletionOperationState, DeletionOperationState][] = [
       ["requested", "journal_pending"],
       ["journal_pending", "tombstoned"],
       ["tombstoned", "external_actions_pending"],
-      ["tombstoned", "cancelled"],
       ["external_actions_pending", "grace"],
-      ["external_actions_pending", "cancelled"],
       ["grace", "erasing"],
-      ["grace", "cancelled"],
       ["erasing", "verifying"],
       ["verifying", "complete"],
-      ["blocked", "grace"],
+      // R-162: the TWO resume targets `handleBlocked` produces, and no other.
+      ["blocked", "external_actions_pending"],
+      ["blocked", "erasing"],
     ];
     for (const [from, to] of accepted) {
       expect(() => assertDeletionTransition(from, to)).not.toThrow();
     }
     for (const [from, to] of [
       ["tombstoned", "requested"],
-      ["erasing", "cancelled"],
-      ["verifying", "cancelled"],
       ["complete", "grace"],
       ["blocked", "requested"],
+      // R-162: the three resume edges nothing produced are gone.
+      ["blocked", "tombstoned"],
+      ["blocked", "grace"],
+      ["blocked", "verifying"],
     ] as const) {
       expect(() => assertDeletionTransition(from, to)).toThrow(
         `deletion_refused:invalid_transition:${from}:${to}`
       );
+    }
+    // THE PAIR TABLE (R-162, P5-R4): every state, cancellation decided. The
+    // table is keyed by the ENUM, so a new state is a red test until decided.
+    const cancellation: Readonly<Record<DeletionOperationState, "accepted" | "refused">> = {
+      // No `requested -> cancelled`: it would bypass the journal.
+      requested: "refused",
+      journal_pending: "accepted",
+      tombstoned: "accepted",
+      external_actions_pending: "accepted",
+      grace: "accepted",
+      // R-162: blocked's way out. Bounded by the grace window and refused
+      // as `erasure_started` when its resume state is irreversible work.
+      blocked: "accepted",
+      erasing: "refused",
+      verifying: "refused",
+      complete: "refused",
+      cancelled: "refused",
+    };
+    expect(Object.keys(cancellation).sort()).toEqual([...deletionOperationState.enumValues].sort());
+    for (const state of deletionOperationState.enumValues) {
+      if (cancellation[state] === "accepted") {
+        expect(() => assertDeletionTransition(state, "cancelled"), state).not.toThrow();
+      } else {
+        expect(() => assertDeletionTransition(state, "cancelled"), state).toThrow(
+          `deletion_refused:invalid_transition:${state}:cancelled`
+        );
+      }
     }
   });
 
@@ -388,6 +426,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
       .update(session)
       .set({
         reauthenticatedAt,
+        reauthenticatedMethod: "password",
         expiresAt: new Date(checkedAt.getTime() + expiryOffsetMs),
       })
       .where(eq(session.id, "session-proof-boundary"));
@@ -557,47 +596,114 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     ).toEqual(Array.from({ length: 5 }, () => ({ consumedAt: expect.any(Date) })));
   });
 
-  it("refuses stale proof and a last owner before delivery or journal work", async () => {
+  it("R-160: a last owner's account deletion CASCADES its workspace instead of refusing; stale proof still refuses", async () => {
     const target = await bootstrap(db, "last-owner-auth", "Last Owner");
     const delivery: RecoveryDeliveryPort = {
-      deliverIdentityRecovery: vi.fn(),
+      deliverIdentityRecovery: vi.fn(async (request) => confirmedDeliveryResult(request)),
       reconcileIdentityRecovery: vi.fn(),
     };
     const journal = confirmedJournal();
 
-    await expect(
-      requestIdentityDeletion(
-        db,
-        {
-          sessionId: "session-last-owner-auth",
-          idempotencyKey: "identity-last-owner",
-        },
-        { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
-      )
-    ).rejects.toThrow("deletion_refused:last_owner");
-    expect(delivery.deliverIdentityRecovery).not.toHaveBeenCalled();
-    expect(journal.requests).toHaveLength(0);
+    // RE-DECIDED (R-160). This test pinned `last_owner` here: the sole owner
+    // of their own workspace could never request their own erasure, and the
+    // printed remedy named two surfaces that do not exist.
+    const result = await requestIdentityDeletion(
+      db,
+      {
+        sessionId: "session-last-owner-auth",
+        idempotencyKey: "identity-last-owner",
+      },
+      { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
+    );
+    expect(result).toMatchObject({ acknowledged: true, operation: { state: "tombstoned" } });
+    const [cascaded] = await db
+      .select()
+      .from(deletionOperations)
+      .where(and(eq(deletionOperations.scope, "workspace"), eq(deletionOperations.workspaceId, target.workspace.id)));
+    expect(cascaded).toMatchObject({
+      state: "tombstoned",
+      requesterUserId: target.user.id,
+      idempotencyKey: `identity-cascade:${result.operation.id}:${target.workspace.id}`,
+    });
+    expect(
+      (await db.select({ state: workspaces.lifecycleState }).from(workspaces).where(eq(workspaces.id, target.workspace.id)))[0]
+    ).toEqual({ state: "tombstoned" });
+    // A workspace with no owner is a state only a deletion may hold: every
+    // workspace the person was the last owner of carries a non-terminal
+    // deletion of its own, journalled before the identity's.
+    expect(journal.requests.map((r) => `${r.scope}:${r.toState}`)).toEqual([
+      "workspace:journal_pending",
+      "workspace:tombstoned",
+      "identity:journal_pending",
+      "identity:tombstoned",
+    ]);
+    const ownerless = await db.execute(sql`
+      SELECT w.id FROM workspaces w
+      WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id = w.id AND m.role = 'owner' AND m.lifecycle_state = 'active')
+        AND NOT EXISTS (SELECT 1 FROM deletion_operations d WHERE d.scope = 'workspace' AND d.workspace_id = w.id AND d.state NOT IN ('complete', 'cancelled'))
+    `);
+    expect((ownerless as unknown as { rows: unknown[] }).rows).toEqual([]);
 
     await db
       .update(session)
       .set({ reauthenticatedAt: new Date(Date.now() - DELETION_REAUTH_MAX_AGE_MS - 1_000) })
       .where(eq(session.id, "session-last-owner-auth"));
-    const lastOwnerScope = await withWorkspace(db, { authUserId: "last-owner-auth" });
+    const stale = await bootstrap(db, "stale-proof-auth", "Stale Proof");
+    await db
+      .update(session)
+      .set({ reauthenticatedAt: new Date(Date.now() - DELETION_REAUTH_MAX_AGE_MS - 1_000) })
+      .where(eq(session.id, "session-stale-proof-auth"));
+    const staleScope = await withWorkspace(db, { authUserId: "stale-proof-auth" });
     await expect(
       requestWorkspaceDeletion(
         db,
-        lastOwnerScope,
+        staleScope,
         {
-          sessionId: "session-last-owner-auth",
+          sessionId: "session-stale-proof-auth",
           idempotencyKey: "workspace-stale-proof",
-          typedName: target.workspace.name,
+          typedName: stale.workspace.name,
         },
         journal.port
       )
     ).rejects.toThrow("deletion_refused:reauthentication_missing_or_stale");
   });
 
-  it("keeps a reversible workspace tombstone in the last-owner guard until membership erasure", async () => {
+  it.each([
+    ["a GOOGLE stamp (R-164's billing arm)", "google"],
+    ["a stamp with NO recorded method", null],
+  ] as const)("R-166: the deletion guard refuses %s — only a password stamp authorises a deletion", async (_label, method) => {
+    const owner = await bootstrap(db, "method-auth", "Method");
+    await db.update(session).set({ reauthenticatedMethod: method }).where(eq(session.id, "session-method-auth"));
+    const scope = await withWorkspace(db, { authUserId: "method-auth" });
+    await expect(
+      requestWorkspaceDeletion(
+        db,
+        scope,
+        { sessionId: "session-method-auth", idempotencyKey: "workspace-method", typedName: owner.workspace.name },
+        confirmedJournal().port
+      )
+    ).rejects.toThrow("deletion_refused:reauthentication_method_not_accepted");
+    expect(await db.select().from(deletionOperations)).toEqual([]);
+  });
+
+  it("R-166: a client idempotency key carrying the cascade prefix is refused — only the server mints cascade keys", async () => {
+    const owner = await bootstrap(db, "prefix-auth", "Prefix");
+    const scope = await withWorkspace(db, { authUserId: "prefix-auth" });
+    await expect(
+      requestWorkspaceDeletion(
+        db,
+        scope,
+        {
+          sessionId: "session-prefix-auth",
+          idempotencyKey: `${IDENTITY_CASCADE_KEY_PREFIX}forged-0000`,
+          typedName: owner.workspace.name,
+        },
+        confirmedJournal().port
+      )
+    ).rejects.toThrow("deletion_refused:invalid_idempotency_key");
+  });
+
+  it("R-160: a workspace ALREADY under deletion leaves the last-owner population; its owner's account deletion proceeds without a second cascade", async () => {
     const target = await bootstrap(db, "workspace-remedy-auth", "Workspace Remedy");
     const scope = await withWorkspace(db, { authUserId: "workspace-remedy-auth" });
     const journal = confirmedJournal();
@@ -616,29 +722,10 @@ describe("Phase 10b-1 deletion lifecycle", () => {
       reconcileIdentityRecovery: vi.fn(),
     };
 
-    await expect(
-      requestIdentityDeletion(
-        db,
-        {
-          sessionId: "session-workspace-remedy-auth",
-          idempotencyKey: "identity-after-workspace-remedy",
-        },
-        { recoveryDelivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
-      )
-    ).rejects.toThrow("deletion_refused:last_owner");
-    expect(recoveryDelivery.deliverIdentityRecovery).not.toHaveBeenCalled();
-
-    // Task 4's irreversible workspace erasure removes the membership. Until
-    // that boundary, the reversible seven-day tombstone must not permit an
-    // identity deletion that could be followed by workspace cancellation.
-    await db
-      .delete(memberships)
-      .where(
-        and(
-          eq(memberships.userId, target.user.id),
-          eq(memberships.workspaceId, target.workspace.id)
-        )
-      );
+    // RE-DECIDED (R-160). This pinned `last_owner` until the workspace's
+    // membership was erased — a refusal whose only remedy was waiting out an
+    // irreversible erasure. The workspace's own deletion decides it; the
+    // person's account deletion is no longer held hostage to it.
     await expect(
       requestIdentityDeletion(
         db,
@@ -649,6 +736,13 @@ describe("Phase 10b-1 deletion lifecycle", () => {
         { recoveryDelivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
       )
     ).resolves.toMatchObject({ acknowledged: true, operation: { state: "tombstoned" } });
+    // ...and no second workspace operation was minted for the same workspace.
+    expect(
+      await db
+        .select({ id: deletionOperations.id })
+        .from(deletionOperations)
+        .where(and(eq(deletionOperations.scope, "workspace"), eq(deletionOperations.workspaceId, target.workspace.id)))
+    ).toHaveLength(1);
   });
 
   it("leaves identity/session/membership active when recovery delivery fails", async () => {
@@ -1110,7 +1204,7 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     }
   });
 
-  it("rechecks the last-owner invariant after reservation and before journal replay", async () => {
+  it("R-160: a co-owner who leaves AFTER the reservation is caught by the cascade top-up, not by a dead-end refusal", async () => {
     const { target, survivor } = await identityFixture(db);
     const delivery: RecoveryDeliveryPort = {
       deliverIdentityRecovery: vi.fn(async (request) => confirmedDeliveryResult(request)),
@@ -1146,27 +1240,10 @@ describe("Phase 10b-1 deletion lifecycle", () => {
         )
       );
 
-    await expect(
-      requestIdentityDeletion(db, params, { recoveryDelivery: delivery, journal, activationExclusions: NO_ACTIVATION_EXCLUSIONS })
-    ).rejects.toThrow("deletion_refused:last_owner");
-    expect(attempted).toHaveLength(1);
-    expect(
-      await db
-        .select({ state: deletionOperations.state })
-        .from(deletionOperations)
-        .where(eq(deletionOperations.idempotencyKey, params.idempotencyKey))
-    ).toEqual([{ state: "requested" }]);
-    expect(
-      await db.select({ state: users.lifecycleState }).from(users).where(eq(users.id, target.user.id))
-    ).toEqual([{ state: "active" }]);
-
-    // The refusal is remediable: restore another owner, then replay the exact
-    // reserved request. No redelivery or authority rebinding is needed.
-    await db.insert(memberships).values({
-      userId: survivor.user.id,
-      workspaceId: target.workspace.id,
-      role: "owner",
-    });
+    // RE-DECIDED (R-160). The replay used to refuse `last_owner` here, and
+    // every later replay refused the same way: a reserved request no retry
+    // could finish. The top-up re-measures the sole-owned set under the graph
+    // locks and reserves the newly sole-owned workspace's deletion first.
     const recovered = await requestIdentityDeletion(db, params, {
       recoveryDelivery: delivery,
       journal,
@@ -1174,8 +1251,22 @@ describe("Phase 10b-1 deletion lifecycle", () => {
     });
     expect(recovered).toMatchObject({ acknowledged: true, operation: { state: "tombstoned" } });
     expect(delivery.deliverIdentityRecovery).toHaveBeenCalledTimes(1);
-    expect(attempted).toHaveLength(3);
-    expect(attempted[1]).toEqual(attempted[0]);
+    // The identity's first attempt is replayed byte-for-byte AFTER the
+    // cascaded workspace's two appends.
+    expect(attempted.map((r) => `${r.scope}:${r.toState}`)).toEqual([
+      "identity:journal_pending",
+      "workspace:journal_pending",
+      "workspace:tombstoned",
+      "identity:journal_pending",
+      "identity:tombstoned",
+    ]);
+    expect(attempted[3]).toEqual(attempted[0]);
+    expect(
+      await db
+        .select({ state: deletionOperations.state })
+        .from(deletionOperations)
+        .where(and(eq(deletionOperations.scope, "workspace"), eq(deletionOperations.workspaceId, target.workspace.id)))
+    ).toEqual([{ state: "tombstoned" }]);
   });
 
   it("finishes an authority-bound scoped request after journal uncertainty and later demotion", async () => {
@@ -2561,6 +2652,7 @@ describe("activation denominator through the real request path (learning gate, r
       expiresAt: new Date(NOW.getTime() + HOUR),
       updatedAt: NOW,
       reauthenticatedAt: NOW,
+      reauthenticatedMethod: "password",
     });
     const again = await requestIdentityDeletion(
       db,
@@ -2578,5 +2670,585 @@ describe("the pending-states list is bound to the enum (consolidating review, ro
     const terminal = new Set(["complete", "cancelled"]);
     const expected = deletionOperationState.enumValues.filter((state) => !terminal.has(state)).sort();
     expect([...PENDING_DELETION_STATES].sort()).toEqual(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit Phase 5 — the erasure lifecycle's dead ends (R-160 … R-163).
+// ---------------------------------------------------------------------------
+
+const REFUSING_DELIVERY: RecoveryDeliveryPort = {
+  deliverIdentityRecovery: async () => {
+    throw new Error("deletion_refused:no_delivery_in_this_test");
+  },
+  reconcileIdentityRecovery: async () => {
+    throw new Error("deletion_refused:no_delivery_in_this_test");
+  },
+};
+
+/** A journal whose FIRST append throws — the process dying after the reservation committed. */
+function crashingOnceJournal() {
+  const confirmed = confirmedJournal();
+  let crashed = false;
+  const port: DeletionJournalPort = {
+    appendTransition: vi.fn(async (request) => {
+      if (!crashed) {
+        crashed = true;
+        throw new Error("simulated process loss after the reservation committed");
+      }
+      return confirmed.port.appendTransition(request);
+    }),
+  };
+  return { port, requests: confirmed.requests };
+}
+
+async function operationRow(db: TestDb, id: string): Promise<DeletionOperation> {
+  const [row] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, id));
+  return row!;
+}
+
+/**
+ * Every session's proof stamped NOW, not at module load: the file-level `NOW`
+ * the shared `addSession` default uses is minutes old by the time these tests
+ * run in a loaded suite, and the reauthentication window is ten minutes — the
+ * live run measured exactly that flake on the two slowest tests here.
+ */
+async function freshProofs(db: TestDb): Promise<void> {
+  await db.update(session).set({ reauthenticatedAt: new Date(), expiresAt: new Date(Date.now() + HOUR) });
+}
+
+describe("Phase 5 — the erasure lifecycle reaches a terminal state", () => {
+  let db: TestDb;
+
+  beforeEach(async () => {
+    db = await createTestDb();
+  });
+
+  it("AC2/AC3 (R-161, R-163): no replacement workspace; the read grade sees the deletion; ANY page cancels it to exactly one workspace", async () => {
+    const solo = await bootstrap(db, "solo-auth", "Solo");
+    await freshProofs(db);
+    const scope = await withWorkspace(db, { authUserId: "solo-auth" });
+    const journal = confirmedJournal();
+    const requested = await requestWorkspaceDeletion(
+      db,
+      scope,
+      { sessionId: "session-solo-auth", idempotencyKey: "solo-ws-delete", typedName: solo.workspace.name },
+      journal.port
+    );
+    expect(requested.state).toBe("tombstoned");
+
+    // The next render's bootstrap mints NOTHING: it returns the tombstoned
+    // workspace as the existing authority (`bootstrap.test.ts` re-decides
+    // the pinned replacement for the no-operation case).
+    const again = await ensureUserWorkspace(db, { authUserId: "solo-auth", name: "Solo" });
+    expect(again).toMatchObject({ created: false, workspace: { id: solo.workspace.id, lifecycleState: "tombstoned" } });
+    expect(await db.select().from(memberships).where(eq(memberships.userId, solo.user.id))).toHaveLength(1);
+
+    // The write grade refuses WITH A WAY FORWARD; the read grade mints.
+    await expect(withWorkspace(db, { authUserId: "solo-auth" })).rejects.toBeInstanceOf(WorkspacePendingDeletionError);
+    const read = await withWorkspace(db, { authUserId: "solo-auth" }, { grade: "read" });
+    expect(isReadGradeScope(read)).toBe(true);
+    expect(read.workspaceId).toBe(solo.workspace.id);
+    const pending = await pendingDeletionsForScope(db, read);
+    expect(pending.map((op) => op.id)).toEqual([requested.id]);
+
+    // The cancel takes a session proof, never a scope (there is no write
+    // scope to give it), and checks owner membership itself.
+    const cancelled = await cancelScopedDeletion(db, requested.id, { sessionId: "session-solo-auth" }, journal.port);
+    expect(cancelled.state).toBe("cancelled");
+    const after = await withWorkspace(db, { authUserId: "solo-auth" });
+    expect(isReadGradeScope(after)).toBe(false);
+    expect(after.workspaceId).toBe(solo.workspace.id);
+    expect(
+      await db
+        .select({ id: workspaces.id })
+        .from(workspaces)
+        .innerJoin(memberships, eq(memberships.workspaceId, workspaces.id))
+        .where(eq(memberships.userId, solo.user.id))
+    ).toEqual([{ id: solo.workspace.id }]);
+  });
+
+  it("AC14 (R-165): cancelScopedDeletion runs the held-money replay AFTER its commit, once, for the restored workspace", async () => {
+    const solo = await bootstrap(db, "held-port-auth", "Held Port");
+    await freshProofs(db);
+    const scope = await withWorkspace(db, { authUserId: "held-port-auth" });
+    const journal = confirmedJournal();
+    const requested = await requestWorkspaceDeletion(
+      db,
+      scope,
+      { sessionId: "session-held-port-auth", idempotencyKey: "held-port-ws", typedName: solo.workspace.name },
+      journal.port
+    );
+    const seen: string[] = [];
+    const heldMoney = {
+      replayHeldEvents: vi.fn(async (workspaceId: string) => {
+        // The cancellation has COMMITTED: the workspace the replay will mint
+        // into is already active when it runs.
+        const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+        seen.push(`${workspaceId}:${row!.lifecycleState}`);
+        return { replayed: 0, alreadySettled: 0, failed: 0, stillHeld: 0 };
+      }),
+    };
+    await cancelScopedDeletion(db, requested.id, { sessionId: "session-held-port-auth" }, journal.port, { heldMoney });
+    expect(seen).toEqual([`${solo.workspace.id}:active`]);
+    expect(heldMoney.replayHeldEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it("R-161: the requesterUserId arm keeps a scoped request visible from ANOTHER workspace's page", async () => {
+    const { target, survivor } = await identityFixture(db);
+    await freshProofs(db);
+    await db.insert(memberships).values({ userId: target.user.id, workspaceId: survivor.workspace.id, role: "owner" });
+    const survivorWorkspaceScope = await withWorkspace(db, { authUserId: "target-auth", workspaceId: survivor.workspace.id });
+    const journal = confirmedJournal();
+    const requested = await requestWorkspaceDeletion(
+      db,
+      survivorWorkspaceScope,
+      { sessionId: "session-target-auth", idempotencyKey: "cross-ws-delete", typedName: survivor.workspace.name },
+      journal.port
+    );
+    const ownScope = await withWorkspace(db, { authUserId: "target-auth", workspaceId: target.workspace.id });
+    // Neither the workspace arm (another workspace) nor the user arm (NULL on
+    // a scoped row, by schema) matches; the requester arm does.
+    expect((await pendingDeletionsForScope(db, ownScope)).map((op) => op.id)).toEqual([requested.id]);
+  });
+
+  it("R-162 (P5-R5): ANY active owner cancels; a non-owner is refused; the canceller need not be the requester", async () => {
+    const { target, survivor } = await identityFixture(db);
+    await freshProofs(db);
+    await seedAuthUser(db, "editor-auth");
+    const editor = await ensureUserWorkspace(db, { authUserId: "editor-auth", name: "Editor" });
+    await addSession(db, "editor-auth", "session-editor-auth");
+    await db.insert(memberships).values({ userId: editor.user.id, workspaceId: target.workspace.id, role: "editor" });
+    const scope = await withWorkspace(db, { authUserId: "target-auth", workspaceId: target.workspace.id });
+    const journal = confirmedJournal();
+    const requested = await requestWorkspaceDeletion(
+      db,
+      scope,
+      { sessionId: "session-target-auth", idempotencyKey: "co-owner-cancel", typedName: target.workspace.name },
+      journal.port
+    );
+    await expect(
+      cancelScopedDeletion(db, requested.id, { sessionId: "session-editor-auth" }, journal.port)
+    ).rejects.toThrow("deletion_refused:owner_required");
+    const cancelled = await cancelScopedDeletion(db, requested.id, { sessionId: "session-survivor-auth" }, journal.port);
+    expect(cancelled).toMatchObject({ state: "cancelled", requesterUserId: target.user.id });
+    expect(survivor.user.id).not.toBe(target.user.id);
+  });
+
+  it("AC5 (R-162): a real BLOCKED operation cancels through cancelScopedDeletion; one blocked on erasure refuses", async () => {
+    const solo = await bootstrap(db, "blocked-auth", "Blocked");
+    await freshProofs(db);
+    const scope = await withWorkspace(db, { authUserId: "blocked-auth" });
+    const journal = confirmedJournal();
+    const requested = await requestWorkspaceDeletion(
+      db,
+      scope,
+      { sessionId: "session-blocked-auth", idempotencyKey: "blocked-ws", typedName: solo.workspace.name },
+      journal.port
+    );
+    await transitionDeletionOperation(db, requested.id, "external_actions_pending", journal.port);
+    const blocked = await transitionDeletionOperation(db, requested.id, "blocked", journal.port);
+    expect(blocked).toMatchObject({ state: "blocked", blockedResumeState: "external_actions_pending" });
+    // The real path: prepareJournalPlan → appendJournalTransitionInTx's
+    // blocked guard (which refused `blocked_reconciliation_target_mismatch`
+    // here until R-162) → the workspace restored.
+    const cancelled = await cancelScopedDeletion(db, requested.id, { sessionId: "session-blocked-auth" }, journal.port);
+    expect(cancelled).toMatchObject({ state: "cancelled", blockedResumeState: null });
+    expect(journal.requests.at(-1)).toMatchObject({ fromState: "blocked", toState: "cancelled" });
+    expect((await db.select().from(workspaces).where(eq(workspaces.id, solo.workspace.id)))[0]!.lifecycleState).toBe("active");
+
+    // Blocked on IRREVERSIBLE work never cancels.
+    const second = await bootstrap(db, "blocked-erasing-auth", "Blocked Erasing");
+    await freshProofs(db);
+    const secondScope = await withWorkspace(db, { authUserId: "blocked-erasing-auth" });
+    const op = await requestWorkspaceDeletion(
+      db,
+      secondScope,
+      { sessionId: "session-blocked-erasing-auth", idempotencyKey: "blocked-erasing-ws", typedName: second.workspace.name },
+      journal.port
+    );
+    await db
+      .update(deletionOperations)
+      .set({ state: "blocked", blockedResumeState: "erasing" })
+      .where(eq(deletionOperations.id, op.id));
+    await expect(
+      cancelScopedDeletion(db, op.id, { sessionId: "session-blocked-erasing-auth" }, journal.port)
+    ).rejects.toThrow("deletion_refused:erasure_started");
+  });
+
+  it("AC6 (R-162): a crash between a reservation and its transaction is finished by the worker sweep — scoped, identity and cancellation", async () => {
+    // (1) A scoped request: the reservation committed, the tombstone
+    // transaction's first journal append died with the process.
+    const solo = await bootstrap(db, "wedge-auth", "Wedge");
+    await freshProofs(db);
+    const scope = await withWorkspace(db, { authUserId: "wedge-auth" });
+    const crashing = crashingOnceJournal();
+    await expect(
+      requestWorkspaceDeletion(
+        db,
+        scope,
+        { sessionId: "session-wedge-auth", idempotencyKey: "wedge-ws", typedName: solo.workspace.name },
+        crashing.port
+      )
+    ).rejects.toThrow("simulated process loss");
+    const [wedged] = await db.select().from(deletionOperations).where(eq(deletionOperations.idempotencyKey, "wedge-ws"));
+    expect(wedged).toMatchObject({ state: "requested" });
+    expect(wedged!.journalIntentPlanDigest).toMatch(/^[0-9a-f]{64}$/);
+
+    // (2) An identity request wedged the same way.
+    const { target } = await identityFixture(db);
+    await freshProofs(db);
+    const delivery: RecoveryDeliveryPort = {
+      deliverIdentityRecovery: vi.fn(async (request) => confirmedDeliveryResult(request)),
+      reconcileIdentityRecovery: vi.fn(),
+    };
+    const identityCrash = crashingOnceJournal();
+    await expect(
+      requestIdentityDeletion(
+        db,
+        { sessionId: "session-target-auth", idempotencyKey: "wedge-identity" },
+        { recoveryDelivery: delivery, journal: identityCrash.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
+      )
+    ).rejects.toThrow("simulated process loss");
+    const [wedgedIdentity] = await db
+      .select()
+      .from(deletionOperations)
+      .where(and(eq(deletionOperations.scope, "identity"), eq(deletionOperations.userId, target.user.id)));
+    expect(wedgedIdentity).toMatchObject({ state: "requested" });
+
+    // Nothing else could finish these: the executor claims only acknowledged
+    // operations. The sweep (no session, no scope) does — from a DIFFERENT
+    // journal instance, as a restarted worker would hold.
+    const restarted = confirmedJournal();
+    const outcomes = await resumeWedgedDeletionOperations(
+      db,
+      { journal: restarted.port, recoveryDelivery: REFUSING_DELIVERY, membershipRestore: NO_SEAT_CAP_RESTORE_POLICY },
+      { olderThanMs: 0 }
+    );
+    expect(outcomes.filter((o) => o.result === "resumed").map((o) => `${o.seam}:${o.code}`).sort()).toEqual([
+      "identity_request:tombstoned",
+      "scoped_request:tombstoned",
+    ]);
+    expect(outcomes.filter((o) => o.result === "refused")).toEqual([]);
+    expect((await operationRow(db, wedged!.id)).state).toBe("tombstoned");
+    expect((await operationRow(db, wedgedIdentity!.id)).state).toBe("tombstoned");
+
+    // (3) A cancellation wedged after ITS reservation.
+    const cancelCrash = crashingOnceJournal();
+    await expect(
+      cancelScopedDeletion(db, wedged!.id, { sessionId: "session-wedge-auth" }, cancelCrash.port)
+    ).rejects.toThrow("simulated process loss");
+    expect((await operationRow(db, wedged!.id)).state).toBe("tombstoned");
+    const second = await resumeWedgedDeletionOperations(
+      db,
+      { journal: restarted.port, recoveryDelivery: REFUSING_DELIVERY, membershipRestore: NO_SEAT_CAP_RESTORE_POLICY },
+      { olderThanMs: 0 }
+    );
+    expect(second.find((o) => o.operationId === wedged!.id)).toMatchObject({
+      seam: "scoped_cancellation",
+      result: "resumed",
+      code: "cancelled",
+    });
+    expect((await operationRow(db, wedged!.id)).state).toBe("cancelled");
+    // ...and a reservation younger than the threshold is left to its live path.
+    expect(
+      await resumeWedgedDeletionOperations(db, {
+        journal: restarted.port,
+        recoveryDelivery: REFUSING_DELIVERY,
+        membershipRestore: NO_SEAT_CAP_RESTORE_POLICY,
+      })
+    ).toEqual([]);
+  });
+
+  it("AC6 (R-162): a wedged IDENTITY CANCELLATION — a reservation that is none of the executor's plans — is classified and resumed by the sweep", async () => {
+    const { target } = await identityFixture(db);
+    await freshProofs(db);
+    const password = "phase-5-wedged-cancel-password";
+    await db.insert(account).values({
+      id: "credential-target-auth",
+      accountId: "target-auth",
+      providerId: "credential",
+      userId: "target-auth",
+      password: await hashPassword(password),
+    });
+    let secret = "";
+    const delivery: RecoveryDeliveryPort = {
+      deliverIdentityRecovery: vi.fn(async (request) => {
+        secret = request.secret;
+        return confirmedDeliveryResult(request);
+      }),
+      reconcileIdentityRecovery: vi.fn(),
+    };
+    const journal = confirmedJournal();
+    const identity = await requestIdentityDeletion(
+      db,
+      { sessionId: "session-target-auth", idempotencyKey: "wedged-identity-cancel" },
+      { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
+    );
+    expect(identity.operation.state).toBe("tombstoned");
+    const rateLimitKeyDigest = sha("phase-5-wedged-cancel-client");
+    const recovery = await beginIdentityCancellationRecoverySession(db, identity.operation.id, secret, rateLimitKeyDigest);
+    const proof = await createIdentityCancellationProofWithPassword(
+      db,
+      identity.operation.id,
+      recovery.recoverySession,
+      password,
+      rateLimitKeyDigest
+    );
+    // The cancellation's reservation commits; its journal append dies.
+    const crashing = crashingOnceJournal();
+    await expect(
+      cancelIdentityDeletion(
+        db,
+        identity.operation.id,
+        secret,
+        { proofId: proof.proofId, cancellationReceipt: proof.cancellationReceipt },
+        { journal: crashing.port, membershipRestore: NO_SEAT_CAP_RESTORE_POLICY }
+      )
+    ).rejects.toThrow("simulated process loss");
+    const wedged = await operationRow(db, identity.operation.id);
+    expect(wedged.state).toBe("tombstoned");
+    // THE SHAPE: a reservation on an identity row that is NOT any of the
+    // executor's one-step transition plans from this state.
+    expect(wedged.journalIntentPlanDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(
+      ["external_actions_pending", "blocked"].map((to) =>
+        sha(JSON.stringify({ schema: 1, steps: [{ from: "tombstoned", to }] }))
+      )
+    ).not.toContain(wedged.journalIntentPlanDigest);
+
+    const outcomes = await resumeWedgedDeletionOperations(
+      db,
+      { journal: confirmedJournal().port, recoveryDelivery: REFUSING_DELIVERY, membershipRestore: NO_SEAT_CAP_RESTORE_POLICY },
+      { olderThanMs: 0 }
+    );
+    expect(outcomes).toEqual([
+      { operationId: identity.operation.id, scope: "identity", seam: "identity_cancellation", result: "resumed", code: "cancelled" },
+    ]);
+    expect((await operationRow(db, identity.operation.id)).state).toBe("cancelled");
+    expect(
+      (await db.select().from(memberships).where(eq(memberships.userId, target.user.id))).map((m) => m.lifecycleState)
+    ).toEqual(["active"]);
+  });
+
+  it("AC6 (R-162): an executor's OWN identity reservation is left to the executor, never resumed as a cancellation", async () => {
+    await identityFixture(db);
+    await freshProofs(db);
+    const delivery: RecoveryDeliveryPort = {
+      deliverIdentityRecovery: vi.fn(async (request) => confirmedDeliveryResult(request)),
+      reconcileIdentityRecovery: vi.fn(),
+    };
+    const journal = confirmedJournal();
+    const identity = await requestIdentityDeletion(
+      db,
+      { sessionId: "session-target-auth", idempotencyKey: "executor-reservation" },
+      { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
+    );
+    // The executor's tombstoned -> external_actions_pending plan, reserved and
+    // then interrupted (its next tick would resume it with the same plan).
+    const crashing = crashingOnceJournal();
+    await expect(
+      transitionDeletionOperation(db, identity.operation.id, "external_actions_pending", crashing.port)
+    ).rejects.toThrow("simulated process loss");
+    expect((await operationRow(db, identity.operation.id)).journalIntentPlanDigest).toMatch(/^[0-9a-f]{64}$/);
+    const outcomes = await resumeWedgedDeletionOperations(
+      db,
+      { journal: confirmedJournal().port, recoveryDelivery: REFUSING_DELIVERY, membershipRestore: NO_SEAT_CAP_RESTORE_POLICY },
+      { olderThanMs: 0 }
+    );
+    expect(outcomes).toEqual([
+      { operationId: identity.operation.id, scope: "identity", seam: null, result: "skipped", code: "not_a_wedge" },
+    ]);
+    expect((await operationRow(db, identity.operation.id)).state).toBe("tombstoned");
+  });
+
+  it("AC10 (P5-R6): a delivery-retry rotation RESETS recoveryExpiresAt — two rotations, the second later than the first", async () => {
+    await bootstrap(db, "rotate-auth", "Rotate");
+    await bootstrap(db, "rotate-co-auth", "Rotate Co");
+    const failing: RecoveryDeliveryPort = {
+      deliverIdentityRecovery: vi.fn(async () => ({
+        outcome: "failed" as const,
+        failureCode: "provider_rejected" as const,
+      })),
+      reconcileIdentityRecovery: vi.fn(),
+    };
+    const params = { sessionId: "session-rotate-auth", idempotencyKey: "rotate-identity" } as const;
+    const journal = confirmedJournal();
+    const expiries: number[] = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const result = await requestIdentityDeletion(db, params, {
+        recoveryDelivery: failing,
+        journal: journal.port,
+        activationExclusions: NO_ACTIVATION_EXCLUSIONS,
+      });
+      expect(result).toMatchObject({ acknowledged: false, delivery: "failed" });
+      expiries.push(result.operation.recoveryExpiresAt!.getTime());
+    }
+    // The first value is the creation; the next two are ROTATIONS.
+    expect(expiries[1]).toBeGreaterThan(expiries[0]!);
+    expect(expiries[2]).toBeGreaterThan(expiries[1]!);
+    expect(journal.requests).toHaveLength(0);
+  });
+
+  it("P5-R5: workspace-then-identity — the identity cancellation restores the membership INTO the pending-deletion workspace, and its owner cancels it; nothing stays suspended", async () => {
+    const { target, survivor } = await identityFixture(db);
+    await freshProofs(db);
+    // The target is the SOLE owner of a second workspace too — the survivor's
+    // co-ownership covers only `target.workspace`.
+    await db.delete(memberships).where(and(eq(memberships.userId, survivor.user.id), eq(memberships.workspaceId, target.workspace.id)));
+    const password = "phase-5-restore-password";
+    await db.insert(account).values({
+      id: "credential-target-auth",
+      accountId: "target-auth",
+      providerId: "credential",
+      userId: "target-auth",
+      password: await hashPassword(password),
+    });
+    const journal = confirmedJournal();
+    const scope = await withWorkspace(db, { authUserId: "target-auth" });
+    const workspaceOp = await requestWorkspaceDeletion(
+      db,
+      scope,
+      { sessionId: "session-target-auth", idempotencyKey: "ws-then-identity", typedName: target.workspace.name },
+      journal.port
+    );
+    let secret = "";
+    const delivery: RecoveryDeliveryPort = {
+      deliverIdentityRecovery: vi.fn(async (request) => {
+        secret = request.secret;
+        return confirmedDeliveryResult(request);
+      }),
+      reconcileIdentityRecovery: vi.fn(),
+    };
+    // The workspace is ALREADY deleting, so it is not in the last-owner
+    // population and is not cascaded a second time.
+    const identity = await requestIdentityDeletion(
+      db,
+      { sessionId: "session-target-auth", idempotencyKey: "identity-after-ws" },
+      { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
+    );
+    expect(identity.operation.state).toBe("tombstoned");
+    const [suspended] = await db.select().from(memberships).where(eq(memberships.userId, target.user.id));
+    expect(suspended!.lifecycleState).toBe("deletion_suspended");
+
+    const rateLimitKeyDigest = sha("phase-5-restore-client");
+    const recovery = await beginIdentityCancellationRecoverySession(db, identity.operation.id, secret, rateLimitKeyDigest);
+    const proof = await createIdentityCancellationProofWithPassword(
+      db,
+      identity.operation.id,
+      recovery.recoverySession,
+      password,
+      rateLimitKeyDigest
+    );
+    const report = await cancelIdentityDeletion(
+      db,
+      identity.operation.id,
+      secret,
+      { proofId: proof.proofId, cancellationReceipt: proof.cancellationReceipt },
+      { journal: journal.port, membershipRestore: NO_SEAT_CAP_RESTORE_POLICY }
+    );
+    // ONE STATE, NOT TWO THAT DRIFT: restored, though the workspace is still
+    // tombstoned — it was `workspace_unavailable` and stranded before R-162.
+    expect(report.restoredMembershipIds).toEqual([suspended!.id]);
+    expect(report.conflicts).toEqual([]);
+    const status = await readIdentityCancellationStatus(db, identity.operation.id, proof.cancellationReceipt);
+    expect(status).toMatchObject({ restoredMembershipIds: [suspended!.id], conflicts: [] });
+    // The person signs in again: the read grade shows the deletion, and they
+    // cancel it with a fresh session.
+    await addSession(db, "target-auth", "session-target-again");
+    await freshProofs(db);
+    const read = await withWorkspace(db, { authUserId: "target-auth" }, { grade: "read" });
+    expect((await pendingDeletionsForScope(db, read)).map((op) => op.id)).toEqual([workspaceOp.id]);
+    await cancelScopedDeletion(db, workspaceOp.id, { sessionId: "session-target-again" }, journal.port, {
+      membershipRestore: NO_SEAT_CAP_RESTORE_POLICY,
+    });
+    expect(await db.select().from(memberships).where(eq(memberships.lifecycleState, "deletion_suspended"))).toEqual([]);
+  });
+
+  it.each([
+    ["erasing", { state: "erasing" as const }],
+    // R-166 (gate M2): `blocked` on the way to erasing is outside the window too.
+    ["blocked, resuming into erasing", { state: "blocked" as const, blockedResumeState: "erasing" as const }],
+  ])("P5-R5: a membership the identity cancellation could NOT restore (workspace deletion %s) has a second way out when its workspace's deletion is cancelled", async (_label, plant) => {
+    const { target, survivor } = await identityFixture(db);
+    await freshProofs(db);
+    const journal = confirmedJournal();
+    const password = "phase-5-stranded-password";
+    await db.insert(account).values({
+      id: "credential-target-auth",
+      accountId: "target-auth",
+      providerId: "credential",
+      userId: "target-auth",
+      password: await hashPassword(password),
+    });
+    // The target co-owns `target.workspace` with the survivor, and requests
+    // its deletion, then their own account's.
+    const scope = await withWorkspace(db, { authUserId: "target-auth" });
+    const workspaceOp = await requestWorkspaceDeletion(
+      db,
+      scope,
+      { sessionId: "session-target-auth", idempotencyKey: "stranded-ws", typedName: target.workspace.name },
+      journal.port
+    );
+    let secret = "";
+    const delivery: RecoveryDeliveryPort = {
+      deliverIdentityRecovery: vi.fn(async (request) => {
+        secret = request.secret;
+        return confirmedDeliveryResult(request);
+      }),
+      reconcileIdentityRecovery: vi.fn(),
+    };
+    const identity = await requestIdentityDeletion(
+      db,
+      { sessionId: "session-target-auth", idempotencyKey: "stranded-identity" },
+      { recoveryDelivery: delivery, journal: journal.port, activationExclusions: NO_ACTIVATION_EXCLUSIONS }
+    );
+    // A state the first path cannot restore into (the workspace's deletion
+    // already erasing, as it could be by the time the person returns) —
+    // planted directly, then put back, so the SECOND path is what is tested.
+    await db.update(deletionOperations).set(plant).where(eq(deletionOperations.id, workspaceOp.id));
+    const rateLimitKeyDigest = sha("phase-5-stranded-client");
+    const recovery = await beginIdentityCancellationRecoverySession(db, identity.operation.id, secret, rateLimitKeyDigest);
+    const proof = await createIdentityCancellationProofWithPassword(db, identity.operation.id, recovery.recoverySession, password, rateLimitKeyDigest);
+    const report = await cancelIdentityDeletion(
+      db,
+      identity.operation.id,
+      secret,
+      { proofId: proof.proofId, cancellationReceipt: proof.cancellationReceipt },
+      { journal: journal.port, membershipRestore: NO_SEAT_CAP_RESTORE_POLICY }
+    );
+    expect(report.conflicts.map((c) => c.outcome)).toEqual(["workspace_unavailable"]);
+    // The conflict is what `/recover-deletion` now renders — not "no
+    // memberships were restored" as if nothing were wrong.
+    const status = await readIdentityCancellationStatus(db, identity.operation.id, proof.cancellationReceipt);
+    expect(status.conflicts.map((c) => c.outcome)).toEqual(["workspace_unavailable"]);
+    await db
+      .update(deletionOperations)
+      .set({ state: "grace", blockedResumeState: null })
+      .where(eq(deletionOperations.id, workspaceOp.id));
+    // The co-owner cancels the workspace deletion; the stranded membership
+    // comes back with it.
+    await cancelScopedDeletion(db, workspaceOp.id, { sessionId: "session-survivor-auth" }, journal.port, {
+      membershipRestore: NO_SEAT_CAP_RESTORE_POLICY,
+    });
+    const [restored] = await db
+      .select()
+      .from(memberships)
+      .where(and(eq(memberships.userId, target.user.id), eq(memberships.workspaceId, target.workspace.id)));
+    expect(restored).toMatchObject({ lifecycleState: "active", role: "owner", suspensionOperationId: null });
+    const [snapshot] = await db
+      .select()
+      .from(deletionMembershipSnapshots)
+      .where(eq(deletionMembershipSnapshots.operationId, identity.operation.id));
+    expect(snapshot!.outcome).toBe("restored");
+    // R-166 (gate M4): the CO-OWNER cancelled, not the requester — and the
+    // receipt records who, by id and by digest, in the reserving transaction.
+    const [cancelledOp] = await db.select().from(deletionOperations).where(eq(deletionOperations.id, workspaceOp.id));
+    expect(cancelledOp).toMatchObject({
+      state: "cancelled",
+      requesterUserId: target.user.id,
+      cancelledByUserId: survivor.user.id,
+      cancelledByDigest: sha(`respin:deletion-requester:v1:${survivor.user.id}`),
+    });
   });
 });

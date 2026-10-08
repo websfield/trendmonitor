@@ -145,6 +145,9 @@ function preconditionSql(measure: RetentionMeasure): SQL {
     return sql`${ident(precondition.column)} IS NOT NULL`;
   }
   const values = precondition.values.map((value) => sql`${value}`);
+  if (precondition.kind === "state_not_in") {
+    return sql`${ident(precondition.column)}::text NOT IN (${sql.join(values, sql`, `)})`;
+  }
   return sql`${ident(precondition.column)}::text IN (${sql.join(values, sql`, `)})`;
 }
 
@@ -373,9 +376,16 @@ export async function purgeSubjectStripePayloadsInTx(
           UNION
           SELECT workspace_id FROM "deletion_membership_snapshots" WHERE user_id = ${subject.userId}
         `;
+  // NEVER a held receipt (R-165, gate H1): a CO-OWNER's identity erasure
+  // reaches every workspace the person belonged to, including one tombstoned
+  // and still in grace — whose held money must replay if its deletion is
+  // cancelled. The held workspace's OWN erasure has already moved its held
+  // rows to `refund_owed` (`recordRefundOwedInTx`) when this runs, so they are
+  // purged there and only there.
   const claimed = (await tx.execute(sql`
     SELECT id FROM "stripe_events"
     WHERE payload::text <> '{}'
+      AND outcome <> 'held_tombstoned'
       AND (
         workspace_id IN (${workspaceIds})
         OR stripe_customer_id IN (

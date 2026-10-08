@@ -18,7 +18,23 @@
 //   a hope.
 import { describe, expect, it } from "vitest";
 
-import { MODE_BRIEFS, modeBriefText } from "../src/assemble";
+import {
+  GenerationAssemblyError,
+  CREATIVE_RULES,
+  MODE_BRIEFS,
+  contractOf,
+  creativeCheckContextFor,
+  modeBriefText,
+  type CreativeContext,
+  type GenerationContext,
+} from "../src/assemble";
+import {
+  BASIS_EXCERPT_MIN_CONTENT_WORDS,
+  BASIS_EXCERPT_MIN_WORDS,
+  BASIS_RELATED_MIN_CONTENT_WORDS,
+  CREATIVE_FORM_MODES,
+  CREATIVE_FORMS,
+} from "../src/creative";
 import { HARD_RULE_IDS, remedyFor, type HardRuleFinding } from "../src/hard-rules";
 import { honestRefusal, runKillTest } from "../src/kill-test";
 import {
@@ -31,6 +47,20 @@ import {
   SOURCE_RUN_WORDS,
   SUMMARY_REGISTER_SHAPES,
   WEAKEST_POINT_MIN_WORDS,
+  EVENT_SHAPES,
+  SHOT_HELPER_SHAPES,
+  SHOT_KIT_SHAPES,
+  declaredCovers,
+  eventShapeIn,
+  excerptIsInMaterial,
+  excerptRelatesTo,
+  filmingItemDeclared,
+  stampServerChecks,
+  eventConfirmationFor,
+  CONTINUATION_SHAPE,
+  EVENT_CONFIRMATION_ITEM,
+  EVENT_SCAN_EXCLUDED,
+  EVENT_SCAN_POPULATION,
   contentOverlap,
   sameContentWords,
   sameFlattenedText,
@@ -51,6 +81,13 @@ import { CLEAN_HOOKS, asReply } from "./support/fixtures";
 import {
   CAPTION_OUTPUT,
   CONTEXT_FOR,
+  HONEST_RESTATING_BEAT,
+  IDEATION_V2_MIXED,
+  REAL_EXCERPT,
+  NO_LIMITS,
+  ideationV2,
+  scriptV2,
+  v2Context,
   FIVE_WORDINGS_OF_ONE,
   IDEAS_AS_TOPICS,
   IDEATION_OUTPUT,
@@ -63,14 +100,43 @@ import {
   SUMMARISED_SOURCE,
 } from "./support/mode-fixtures";
 
-const parsed = (mode: ModeId, doc: unknown) =>
-  parseScriptOutput({ text: asReply(doc), mode });
+const parsed = (
+  mode: ModeId,
+  doc: unknown,
+  context: GenerationContext = CONTEXT_FOR[mode]
+) => parseScriptOutput({ text: asReply(doc), mode, contract: contractOf(context) });
 
 const DISTANT_SPIN_REFERENCE = {
   subjectTerms: ["aquarium", "coral lighting"],
   hook: "The reef light setting I stopped using",
   structure: { beatCount: 7, turnBeat: 5 },
 } as const;
+
+/**
+ * The parsed document AS THE PIPELINE GATES IT: a v2 draft carries the server's
+ * structural decision on every undeclared filming resource before any check
+ * runs (`stampServerChecks`, R-150 point 2).
+ */
+const marked = (mode: ModeId, doc: unknown, context: GenerationContext = CONTEXT_FOR[mode]) => {
+  const out = parsed(mode, doc, context);
+  return out.contractVersion === 2 && context.creative !== null
+    ? stampServerChecks(out, context.creative.constraints)
+    : out;
+};
+
+/** The same checks over the UNSTAMPED draft — the backstop if the stamp were skipped. */
+const rawChecks = (
+  mode: ModeId,
+  doc: unknown,
+  context = CONTEXT_FOR[mode]
+): HardRuleFinding[] =>
+  scanModeChecks({
+    mode,
+    output: parsed(mode, doc, context),
+    input: context.input,
+    frameworks: context.frameworks,
+    creative: creativeCheckContextFor(context),
+  });
 
 /** Run the per-mode checks over a document, in the mode's own context. */
 const checks = (
@@ -80,9 +146,12 @@ const checks = (
 ): HardRuleFinding[] =>
   scanModeChecks({
     mode,
-    output: parsed(mode, doc),
+    output: marked(mode, doc, context),
     input: context.input,
     frameworks: context.frameworks,
+    // FROM THE SAME CONTEXT, as `runKillTest` derives it (R-148): `null` for
+    // every legacy context above, the creative half for a v2 one.
+    creative: creativeCheckContextFor(context),
   });
 
 const rules = (findings: readonly HardRuleFinding[]) =>
@@ -928,6 +997,156 @@ describe("KNOWN_MODE_CHECK_GAPS: what these stand-ins are MEASURED not to catch"
           },
         ],
       }),
+    // R-148 (launch L1). THE QUOTE IS REAL, RELATED BY TWO WORDS, AND THE EVENT
+    // IS NOT: the relatedness floor (round-1 compliance gate) now refuses an
+    // invented event that shares nothing with the quote, so the residue is an
+    // invented event that happens to reuse two of the quote's words.
+    "real-quote-unrelated-event": () => {
+      const doc = ideationV2(["personal_story_observation"]);
+      doc.ideas[0] = {
+        ...doc.ideas[0],
+        premise: {
+          ...doc.ideas[0].premise,
+          whatHappens: "the lens change shatters the mirror and the whole shoot ends",
+        },
+      };
+      // ROUND 4: an INVENTED OBJECT on a vouched verb — "burned" is the
+      // quote's own, the kitchen is not.
+      const loaf = "I burned the first loaf and kept filming anyway";
+      const kitchen = ideationV2(["personal_story_observation"]);
+      kitchen.ideas = kitchen.ideas.map((idea, i) => ({
+        ...idea,
+        premise: {
+          ...idea.premise,
+          whatHappens: "the first loaf burns while you keep filming",
+          ...(i === 0 ? { interest: "I burned the whole kitchen down making the first loaf" } : {}),
+          basis: { kind: "material", excerpt: loaf } as never,
+        },
+      }));
+      return [
+        ...checks("ideation", doc, v2Context("personal_story_observation")),
+        ...checks(
+          "ideation",
+          kitchen,
+          v2Context("personal_story_observation", NO_LIMITS, {}, { ...SEEDED_CONTEXT, input: loaf })
+        ),
+      ];
+    },
+    // THE FALSE POSITIVE, honest document: the creator declared "phone", the
+    // concept needs a "smartphone" — the same object. In the product it is
+    // MARKED [check]; the gate refuses it only when it arrives unmarked.
+    "same-kit-different-name": () => {
+      const doc = ideationV2(["explain_opinion"]);
+      doc.ideas = doc.ideas.map((idea) => ({
+        ...idea,
+        filming: { ...idea.filming, location: "kitchen [check]", equipment: ["smartphone"] },
+      }));
+      return rawChecks(
+        "ideation",
+        doc,
+        v2Context("explain_opinion", { ...NO_LIMITS, equipment: ["phone"] })
+      );
+    },
+    // PRESENT-TENSE NARRATION: an invented event the past-tense shapes cannot see.
+    "event-narrated-without-past-tense": () => {
+      const doc = ideationV2(["explain_opinion"]);
+      doc.ideas[0] = {
+        ...doc.ideas[0],
+        premise: {
+          ...doc.ideas[0].premise,
+          whatHappens: "a stranger knocks your tripod over halfway through your best take",
+        },
+      };
+      // WHAT COVERS THIS GAP, ASSERTED (round-3 compliance gate, High): the
+      // same document still carries the confirmation item.
+      expect(eventConfirmationFor(marked("ideation", doc, v2Context("explain_opinion")))).toBe(
+        EVENT_CONFIRMATION_ITEM
+      );
+      return checks("ideation", doc, v2Context("explain_opinion"));
+    },
+    // R-150 point 4: an OPINION in the grammar of a narrated event — refused.
+    "honest-line-reads-as-event": () => {
+      const doc = ideationV2(["explain_opinion"]);
+      doc.ideas[0] = {
+        ...doc.ideas[0],
+        premise: {
+          ...doc.ideas[0].premise,
+          interest: "you used to need a crew for this, and now one phone is enough",
+        },
+      };
+      return checks("ideation", doc, v2Context("explain_opinion"));
+    },
+    // ROUND 4: what pass (c) still lets through — an invention in NO shape
+    // glued onto a restated run. The confirmation item is what covers it.
+    "shared-run-carries-invention": () => {
+      const script = scriptV2("explain_opinion");
+      const doc = {
+        ...script,
+        beats: script.beats.map((b, i) =>
+          i === 0 ? { ...b, vo: "today I shot the same lens change over and over and it made me famous" } : b
+        ),
+      };
+      expect(eventConfirmationFor(marked("ideaToScript", doc, v2Context("explain_opinion")))).toBe(
+        EVENT_CONFIRMATION_ITEM
+      );
+      return checks("ideaToScript", doc, v2Context("explain_opinion"));
+    },
+    // AN ANALYSIS FIELD is outside the scanned population.
+    "event-in-unscanned-field": () =>
+      checks(
+        "ideation",
+        {
+          ...ideationV2(["explain_opinion"]),
+          whyThisPerforms: {
+            ...IDEATION_OUTPUT.whyThisPerforms,
+            reasoning: "This format doubled my views last month, so it opens on the cost first.",
+          },
+        },
+        v2Context("explain_opinion")
+      ),
+    // KIT IN THE NARRATIVE, solo with nothing but a phone declared.
+    "kit-named-in-narrative": () => {
+      const script = scriptV2("explain_opinion");
+      return checks(
+        "ideaToScript",
+        {
+          ...script,
+          premise: { ...script.premise, whatHappens: "you fly the drone over the kitchen roof and land it on the bench" },
+        },
+        v2Context("explain_opinion", { ...NO_LIMITS, people: "solo", equipment: ["phone"], locations: ["kitchen"] })
+      ).filter((f) => f.rule === "filming_outside_limits");
+    },
+    // A MISSPELT or run-together approved name is a different token.
+    "custom-name-misspelt": () => {
+      const doc = ideationV2(["explain_opinion"]);
+      doc.ideas[0] = { ...doc.ideas[0], framework: "the opne loop", frameworkProvenance: "custom" as never };
+      doc.ideas[1] = { ...doc.ideas[1], framework: "TheOpenLoop", frameworkProvenance: "custom" as never };
+      return checks("ideation", doc, v2Context("explain_opinion"));
+    },
+    // ANY-ORDER CONTAINMENT refuses a name that merely uses the words.
+    "custom-name-shares-approved-words": () => {
+      const doc = ideationV2(["explain_opinion"]);
+      doc.ideas[0] = {
+        ...doc.ideas[0],
+        framework: "open question, closed loop",
+        frameworkProvenance: "custom" as never,
+      };
+      return checks("ideation", doc, v2Context("explain_opinion"));
+    },
+    // KIT AND HELP OUTSIDE THE MARKER LISTS, under a solo declaration.
+    "shot-map-kit-not-in-list": () => {
+      const script = scriptV2("explain_opinion");
+      return checks(
+        "ideaToScript",
+        {
+          ...script,
+          shotMap: [
+            { beatIndex: 0, shot: "film it from above on a pole camera", note: "your sister holds the phone" },
+          ],
+        },
+        v2Context("explain_opinion", { ...NO_LIMITS, people: "solo" })
+      );
+    },
   };
 
   const missed = KNOWN_MODE_CHECK_GAPS.filter(
@@ -992,5 +1211,1540 @@ describe("KNOWN_MODE_CHECK_GAPS: what these stand-ins are MEASURED not to catch"
     for (const gap of KNOWN_MODE_CHECK_GAPS) {
       expect(MODE_CHECK_IDS, gap.id).toContain(gap.check);
     }
+  });
+});
+
+// --------------------------------------------- R-148: the creative checks
+
+describe("R-148: the creative checks are DATA on exactly the two form modes", () => {
+  it("the four creative checks are declared by CREATIVE_FORM_MODES and by nothing else", () => {
+    // THE DERIVATION, extended: the list of modes that take the form control is
+    // the population, and a mode on it that forgot a check — or a mode off it
+    // that declared one — is a red test rather than a silently unenforced form.
+    const creative = [
+      "creative_form",
+      "premise_basis",
+      "filming_limits",
+      "framework_provenance",
+    ] as const;
+    for (const id of MODE_IDS) {
+      const declared = modeSpec(id).checks;
+      for (const check of creative) {
+        expect(declared.includes(check), `${id} / ${check}`).toBe(
+          CREATIVE_FORM_MODES.includes(id)
+        );
+      }
+    }
+    expect([...CREATIVE_FORM_MODES].sort()).toEqual(["ideaToScript", "ideation"]);
+  });
+
+  it("on a LEGACY document the creative checks have nothing to read — a v1 batch is unchanged", () => {
+    expect(checks("ideation", IDEATION_OUTPUT)).toEqual([]);
+    expect(checks("ideaToScript", SCRIPT_OUTPUT)).toEqual([]);
+  });
+});
+
+describe("R-148: all three explicit form choices, and Choose for me", () => {
+  it.each(CREATIVE_FORMS)(
+    "an explicit %s concept batch in that form is clean",
+    (form) => {
+      expect(checks("ideation", ideationV2([form]), v2Context(form))).toEqual([]);
+    }
+  );
+
+  it.each(CREATIVE_FORMS)(
+    "an explicit %s script in that form, with that form's pivot, is clean",
+    (form) => {
+      expect(checks("ideaToScript", scriptV2(form), v2Context(form))).toEqual([]);
+    }
+  );
+
+  it("Choose for me accepts each concept in ITS OWN supported form", () => {
+    expect(checks("ideation", IDEATION_V2_MIXED, v2Context("auto"))).toEqual([]);
+  });
+
+  it("an EXPLICIT choice binds every concept: a mismatch is a form_mismatch at that concept's form", () => {
+    const found = checks("ideation", IDEATION_V2_MIXED, v2Context("explain_opinion"));
+    const mismatches = found.filter((f) => f.rule === "form_mismatch");
+    // Ideas 0 and 2 are a story and a demonstration; idea 1 is the requested form.
+    expect(mismatches.map((f) => f.field)).toEqual(["/ideas/0/form", "/ideas/2/form"]);
+    expect(mismatches.every((f) => f.shape === "not-requested-form")).toBe(true);
+  });
+
+  it("...and binds a script too", () => {
+    const found = checks(
+      "ideaToScript",
+      scriptV2("explain_opinion"),
+      v2Context("demonstration_experiment")
+    );
+    expect(found.map((f) => [f.rule, f.field])).toContainEqual(["form_mismatch", "/form"]);
+  });
+
+  it("a demonstration whose pivot is marked as a turn is the wrong kind — and a story marked as a reveal too", () => {
+    const demo = scriptV2("demonstration_experiment");
+    const asTurn = {
+      ...demo,
+      beats: demo.beats.map((b) => (b.isTurn ? { ...b, pivot: "turn" } : b)),
+    };
+    const found = checks("ideaToScript", asTurn, v2Context("demonstration_experiment"));
+    expect(found.map((f) => [f.rule, f.shape])).toEqual([["form_mismatch", "pivot-wrong-kind"]]);
+    const story = scriptV2("personal_story_observation");
+    const asReveal = {
+      ...story,
+      beats: story.beats.map((b) => (b.isTurn ? { ...b, pivot: "reveal" } : b)),
+    };
+    expect(
+      checks("ideaToScript", asReveal, v2Context("auto")).map((f) => f.shape)
+    ).toEqual(["pivot-wrong-kind"]);
+  });
+});
+
+describe("R-148: an invented event or result is quoted or marked — never asserted", () => {
+  const storyWith = (basis: unknown, whatHappens?: string) => {
+    const doc = ideationV2(["personal_story_observation"]);
+    doc.ideas = doc.ideas.map((idea) => ({
+      ...idea,
+      premise: {
+        ...idea.premise,
+        ...(whatHappens === undefined ? {} : { whatHappens }),
+        basis: basis as typeof idea.premise.basis,
+      },
+    }));
+    return doc;
+  };
+  const story = v2Context("personal_story_observation");
+  const shapesOf = (found: readonly HardRuleFinding[]) =>
+    found.filter((f) => f.rule === "unsupported_experience").map((f) => f.shape);
+
+  it("a story quoting a line that is NOT in the creator's material is refused", () => {
+    const found = checks(
+      "ideation",
+      storyWith({ kind: "material", excerpt: "I won the regional baking final that spring" }),
+      story
+    );
+    expect(shapesOf(found)).toEqual([
+      "excerpt-not-in-material",
+      "excerpt-not-in-material",
+      "excerpt-not-in-material",
+    ]);
+    expect(found[0].field).toBe("/ideas/0/premise/basis/excerpt");
+  });
+
+  it("the SAME quote, present in the creator's own input, is accepted — case and punctuation aside", () => {
+    expect(
+      shapesOf(
+        checks(
+          "ideation",
+          storyWith({ kind: "material", excerpt: "Shot the SAME lens change, over and over!" }),
+          story
+        )
+      )
+    ).toEqual([]);
+  });
+
+  it("a quote stitched across two brain sentences is not found — each document is matched alone", () => {
+    // `writes in short plain sentences` + `never hedges` are two voice lines.
+    expect(
+      excerptIsInMaterial("short plain sentences never hedges", SEEDED_CONTEXT.brain.voice)
+    ).toBe(false);
+    expect(
+      excerptIsInMaterial("writes in short plain sentences", SEEDED_CONTEXT.brain.voice)
+    ).toBe(true);
+  });
+
+  it("a quote too short to be a source, or one that is itself [check]ed, is refused", () => {
+    expect(
+      shapesOf(checks("ideation", storyWith({ kind: "material", excerpt: "the same lens" }), story))
+    ).toContain("excerpt-too-short");
+    expect(
+      shapesOf(
+        checks(
+          "ideation",
+          storyWith({ kind: "material", excerpt: "shot the same lens change [check]" }),
+          story
+        )
+      )
+    ).toContain("excerpt-is-unconfirmed");
+    expect(BASIS_EXCERPT_MIN_WORDS).toBe(4);
+    expect(BASIS_EXCERPT_MIN_CONTENT_WORDS).toBe(2);
+  });
+
+  it("an UNCONFIRMED story without a [check] where the event goes is refused; with one it passes", () => {
+    const unmarked = storyWith({ kind: "unconfirmed" }, "you drop the camera into the sink");
+    expect(shapesOf(checks("ideation", unmarked, story))).toEqual([
+      "unconfirmed-without-check",
+      "unconfirmed-without-check",
+      "unconfirmed-without-check",
+    ]);
+    const marked = storyWith({ kind: "unconfirmed" }, "you drop the camera into the sink [check]");
+    expect(shapesOf(checks("ideation", marked, story))).toEqual([]);
+  });
+
+  it("a DEMONSTRATION's unconfirmed result needs its [check] in the payoff, not elsewhere", () => {
+    const doc = ideationV2(["demonstration_experiment"]);
+    const resultAsserted = {
+      ...doc,
+      ideas: doc.ideas.map((idea) => ({
+        ...idea,
+        premise: { ...idea.premise, payoff: "the prepared take holds focus the whole way through" },
+      })),
+    };
+    expect(
+      checks("ideation", resultAsserted, v2Context("demonstration_experiment")).map(
+        (f) => [f.shape, f.field]
+      )[0]
+    ).toEqual(["unconfirmed-without-check", "/ideas/0/premise/payoff"]);
+  });
+
+  it("an event form with NO basis at all is refused — and so is an EXPLANATION whose text describes an event (round-1 BLOCK)", () => {
+    expect(shapesOf(checks("ideation", storyWith({ kind: "none" }), story))).toContain(
+      "no-basis-for-event"
+    );
+    // An explanation that describes no event and no result is clean…
+    expect(
+      checks("ideation", ideationV2(["explain_opinion"]), v2Context("explain_opinion"))
+    ).toEqual([]);
+    // …and one that DOES is refused, whatever its label: the label is the
+    // model's, and no model label may switch the basis rule off.
+    const doc = ideationV2(["explain_opinion"]);
+    doc.ideas[0] = {
+      ...doc.ideas[0],
+      premise: {
+        ...doc.ideas[0].premise,
+        payoff: "your views doubled within a week",
+      },
+    };
+    const found = checks("ideation", doc, v2Context("explain_opinion"));
+    expect(found.map((f) => [f.rule, f.shape, f.field])).toEqual([
+      ["unsupported_experience", "event-without-basis:result-claim", "/ideas/0/premise/payoff"],
+    ]);
+  });
+
+  it("an explanation that CHOOSES to quote is held to the quote", () => {
+    const doc = ideationV2(["explain_opinion"]);
+    doc.ideas = doc.ideas.map((idea) => ({
+      ...idea,
+      premise: {
+        ...idea.premise,
+        basis: { kind: "material" as const, excerpt: "a quote nobody ever wrote down" },
+      },
+    })) as unknown as typeof doc.ideas;
+    expect(
+      checks("ideation", doc, v2Context("explain_opinion")).map((f) => f.shape)
+    ).toContain("excerpt-not-in-material");
+  });
+
+  it("a REVISION's basis corpus is the creator's own NOTE — never the scaffold or the parent draft; carried, verified excerpts count", () => {
+    // `generate.ts` builds a revision's input as the note plus product text;
+    // the basis corpus is built from the server-derived `creatorNote` alone.
+    const parentDraft = "/ideas/0/premise/whatHappens: a stranger knocked the tripod over mid take";
+    const note = "make the second one shorter";
+    const scaffold =
+      "This is a revision of a draft you produced earlier. What the creator asked to change:";
+    const input = `${scaffold}\n${note}\n${parentDraft}`;
+    const base: GenerationContext = { ...SEEDED_CONTEXT, input };
+    const ctx = (over: Partial<CreativeContext> = {}) =>
+      v2Context("personal_story_observation", NO_LIMITS, { creatorNote: note, ...over }, base);
+    const quoting = (excerpt: string, whatHappens: string) =>
+      storyWith({ kind: "material", excerpt }, whatHappens);
+    // The parent draft is not quotable…
+    expect(
+      shapesOf(
+        checks(
+          "ideation",
+          quoting("a stranger knocked the tripod over mid take", "a stranger knocked the tripod over"),
+          ctx()
+        )
+      )
+    ).toContain("excerpt-not-in-material");
+    // …and neither is the product's own scaffold (round-1 tenancy gate, Medium).
+    for (const excerpt of ["a draft you produced earlier", "what the creator asked to change"]) {
+      expect(
+        shapesOf(checks("ideation", quoting(excerpt, `you ${excerpt}`), ctx())),
+        excerpt
+      ).toContain("excerpt-not-in-material");
+    }
+    // What the parent's OWN gate verified travels as `carriedBasis` and counts.
+    expect(
+      shapesOf(
+        checks(
+          "ideation",
+          quoting("a stranger knocked the tripod over mid take", "a stranger knocked the tripod over [check]"),
+          ctx({ carriedBasis: ["a stranger knocked the tripod over mid take"] })
+        )
+      )
+    ).toEqual([]);
+    // A note that is not inside the input is refused — it is not the note the
+    // prompt was built from.
+    expect(() =>
+      checks("ideation", ideationV2(["explain_opinion"]), ctx({ creatorNote: "words nobody sent" }))
+    ).toThrow(/creator note/);
+  });
+});
+
+describe("R-148: declared filming limits are binding, undeclared resources stay unknown", () => {
+  const withFilming = (filming: Record<string, unknown>) => {
+    const doc = ideationV2(["explain_opinion"]);
+    return {
+      ...doc,
+      ideas: doc.ideas.map((idea) => ({ ...idea, filming: { ...idea.filming, ...filming } })),
+    };
+  };
+  const limitsOf = (found: readonly HardRuleFinding[]) =>
+    found.filter((f) => f.rule === "filming_outside_limits").map((f) => [f.shape, f.field]);
+
+  it("solo declared refuses a concept that needs help", () => {
+    const found = checks(
+      "ideation",
+      withFilming({ people: "with_help" }),
+      v2Context("explain_opinion", { ...NO_LIMITS, people: "solo" })
+    );
+    expect(limitsOf(found)[0]).toEqual(["needs-help", "/ideas/0/filming/people"]);
+  });
+
+  it("a time limit is a ceiling", () => {
+    const ctx = v2Context("explain_opinion", { ...NO_LIMITS, maxMinutes: 20 });
+    expect(limitsOf(checks("ideation", withFilming({ minutes: 20 }), ctx))).toEqual([]);
+    expect(limitsOf(checks("ideation", withFilming({ minutes: 21 }), ctx))[0]).toEqual([
+      "over-time",
+      "/ideas/0/filming/minutes",
+    ]);
+  });
+
+  it("UNDECLARED EQUIPMENT is DECIDED by the server as structure — the model's words untouched, no rewrite — and the gate refuses it only if it arrives unstamped and unmarked", () => {
+    const ctx = v2Context("explain_opinion", { ...NO_LIMITS, equipment: ["phone", "tripod"], locations: ["kitchen"] });
+    // Covered items are left exactly as written and are not flagged.
+    const covered = marked("ideation", withFilming({ equipment: ["your phone", "tripods"] }), ctx);
+    if (covered.contractVersion !== 2) throw new Error("expected v2");
+    expect(covered.ideas?.[0].filming.equipment).toEqual(["your phone", "tripods"]);
+    expect(covered.serverChecks?.filming[0]).toEqual({ at: "/ideas/0", location: false, equipment: [] });
+    expect(limitsOf(checks("ideation", withFilming({ equipment: ["your phone", "tripods"] }), ctx))).toEqual([]);
+    // An uncovered item is FLAGGED by the server — its text is not changed —
+    // so the gate has nothing to refuse…
+    const light = withFilming({ equipment: ["phone", "ring light"] });
+    const out = marked("ideation", light, ctx);
+    if (out.contractVersion !== 2) throw new Error("expected v2");
+    expect(out.ideas?.[0].filming.equipment).toEqual(["phone", "ring light"]);
+    expect(out.serverChecks?.filming[0].equipment).toEqual([1]);
+    expect(limitsOf(checks("ideation", light, ctx))).toEqual([]);
+    // …and the BACKSTOP refuses the same item if the stamp were skipped.
+    expect(limitsOf(rawChecks("ideation", light, ctx))[0]).toEqual([
+      "undeclared-equipment",
+      "/ideas/0/filming/equipment/1",
+    ]);
+    // An item the model already marked keeps its own text exactly.
+    const premarked = marked("ideation", withFilming({ equipment: ["ring light [check]"] }), ctx);
+    if (premarked.contractVersion !== 2) throw new Error("expected v2");
+    expect(premarked.ideas?.[0].filming.equipment).toEqual(["ring light [check]"]);
+    // "phone on a tripod" names TWO things and is covered only if both were declared.
+    expect(declaredCovers("phone on a tripod", ["phone"])).toBe(false);
+    expect(declaredCovers("phone on a tripod", ["phone on a tripod"])).toBe(true);
+  });
+
+  it("an undeclared PLACE is marked the same way", () => {
+    const ctx = v2Context("explain_opinion", { ...NO_LIMITS, locations: ["kitchen", "car"] });
+    const park = marked("ideation", withFilming({ location: "the park" }), ctx);
+    if (park.contractVersion !== 2) throw new Error("expected v2");
+    expect(park.ideas?.[0].filming.location).toBe("the park");
+    expect(park.serverChecks?.filming.map((e) => e.location)).toEqual([true, true, true]);
+    expect(limitsOf(rawChecks("ideation", withFilming({ location: "the park", equipment: [] }), ctx))[0]).toEqual([
+      "undeclared-location",
+      "/ideas/0/filming/location",
+    ]);
+    const kitchen = marked("ideation", withFilming({ location: "your kitchen" }), ctx);
+    if (kitchen.contractVersion !== 2) throw new Error("expected v2");
+    expect(kitchen.ideas?.[0].filming.location).toBe("your kitchen");
+    expect(kitchen.serverChecks?.filming[0].location).toBe(false);
+  });
+
+  it("STRICT READING (R-148 point 3; R-149 item 1 as amended): with NOTHING declared, EVERY place and piece of kit is marked — an empty list covers nothing", () => {
+    // The round-1 compliance gate's own measurement: nothing declared, a rented
+    // rooftop studio, a drone, a motorised gimbal and two ring lights used to
+    // pass with no finding and render as fact.
+    const doc = withFilming({
+      location: "a rented rooftop studio",
+      equipment: ["drone", "motorised gimbal", "two ring lights"],
+    });
+    const out = marked("ideation", doc, v2Context("explain_opinion"));
+    if (out.contractVersion !== 2) throw new Error("expected v2");
+    expect(out.ideas?.[0].filming).toMatchObject({
+      location: "a rented rooftop studio",
+      equipment: ["drone", "motorised gimbal", "two ring lights"],
+    });
+    expect(out.serverChecks?.filming[0]).toEqual({ at: "/ideas/0", location: true, equipment: [0, 1, 2] });
+    // Unmarked, the backstop refuses all four.
+    expect(
+      limitsOf(rawChecks("ideation", doc, v2Context("explain_opinion"))).filter(
+        ([, field]) => String(field).startsWith("/ideas/0/")
+      )
+    ).toHaveLength(4);
+    // One authority: an empty declaration covers nothing, even an item made only of grammar words.
+    expect(filmingItemDeclared("here", [])).toBe(false);
+    expect(filmingItemDeclared("phone", [])).toBe(false);
+    expect(filmingItemDeclared("phone", ["phone"])).toBe(true);
+  });
+
+  it("declared limits bind the SHOT MAP: help under solo is refused, undeclared kit is marked", () => {
+    const solo = v2Context("explain_opinion", { ...NO_LIMITS, people: "solo", equipment: ["phone"] });
+    const script = scriptV2("explain_opinion");
+    const needsHelp = {
+      ...script,
+      shotMap: [
+        { beatIndex: 0, shot: "a friend holds the second camera over your shoulder", note: "keep it steady" },
+      ],
+    };
+    expect(limitsOf(checks("ideaToScript", needsHelp, solo))).toContainEqual([
+      "shot-needs-help",
+      "/shotMap/0/shot",
+    ]);
+    const drone = {
+      ...script,
+      shotMap: [{ beatIndex: 0, shot: "a slow drone pass over the kitchen roof", note: "phone only for the close" }],
+    };
+    const out = marked("ideaToScript", drone, solo);
+    expect(out.shotMap?.[0].shot).toBe("a slow drone pass over the kitchen roof");
+    expect(out.shotMap?.[0].note).toBe("phone only for the close");
+    if (out.contractVersion !== 2) throw new Error("expected v2");
+    expect(out.serverChecks?.shotMap).toEqual([{ index: 0, shot: true, note: false }]);
+    expect(limitsOf(checks("ideaToScript", drone, solo))).toEqual([]);
+    expect(limitsOf(rawChecks("ideaToScript", drone, solo))).toContainEqual([
+      "shot-undeclared-equipment",
+      "/shotMap/0/shot",
+    ]);
+    // Kit the creator DID declare is left alone.
+    const tripod = v2Context("explain_opinion", { ...NO_LIMITS, equipment: ["tripod"] });
+    const steady = { ...script, shotMap: [{ beatIndex: 0, shot: "locked off on the tripod", note: "n" }] };
+    const kept = marked("ideaToScript", steady, tripod);
+    if (kept.contractVersion !== 2) throw new Error("expected v2");
+    expect(kept.shotMap?.[0].shot).toBe("locked off on the tripod");
+    expect(kept.serverChecks?.shotMap).toEqual([]);
+  });
+
+  it("NON-VACUITY: every shot-map marker shape matches its own specimen", () => {
+    for (const shape of [...SHOT_KIT_SHAPES, ...SHOT_HELPER_SHAPES]) {
+      expect(new RegExp(shape.pattern.source, shape.pattern.flags).test(shape.specimen), shape.id).toBe(true);
+    }
+  });
+});
+
+describe("R-148 / REQ-D02: custom structure is labelled, never promoted", () => {
+  const customNamed = (name: string, provenance: "custom" | "offered" = "custom") => {
+    const doc = ideationV2(["explain_opinion"]);
+    return {
+      ...doc,
+      ideas: doc.ideas.map((idea, i) =>
+        i === 0 ? { ...idea, framework: name, frameworkProvenance: provenance } : idea
+      ),
+    };
+  };
+  const ruleShapes = (found: readonly HardRuleFinding[]) =>
+    found.map((f) => [f.rule, f.shape]);
+
+  it("a custom structure with a name of its own passes, and is not held to the offered list", () => {
+    expect(
+      checks("ideation", customNamed("the burnt loaf arc"), v2Context("explain_opinion"))
+    ).toEqual([]);
+  });
+
+  it("a custom structure CLAIMING an offered framework's name is refused", () => {
+    expect(
+      ruleShapes(checks("ideation", customNamed("my cost reveal twist"), v2Context("explain_opinion")))
+    ).toEqual([["custom_framework_name", "custom-carries-approved-name"]]);
+  });
+
+  it("...and so is one claiming an APPROVED framework the budget did not offer", () => {
+    const ctx = v2Context("explain_opinion", NO_LIMITS, {
+      approvedFrameworkNames: ["slow burn"],
+    });
+    expect(
+      ruleShapes(checks("ideation", customNamed("a slow burn for kitchens"), ctx))
+    ).toEqual([["custom_framework_name", "custom-carries-approved-name"]]);
+    // A whole-word match only: "slowburner" carries no approved name.
+    expect(checks("ideation", customNamed("the slowburner"), ctx)).toEqual([]);
+  });
+
+  it("an OFFERED label on a name nobody offered is still refused by the eligibility check", () => {
+    expect(
+      ruleShapes(checks("ideation", customNamed("the burnt loaf arc", "offered"), v2Context("explain_opinion")))
+    ).toEqual([["framework_not_offered", "not-in-library"]]);
+  });
+
+  it("an OFFERED label when NOTHING was offered is a false provenance claim under v2", () => {
+    const ctx = v2Context("explain_opinion", NO_LIMITS, {}, { ...SEEDED_CONTEXT, frameworks: [] });
+    const found = checks("ideation", ideationV2(["explain_opinion"]), ctx);
+    expect(new Set(ruleShapes(found).map((r) => r.join("/")))).toEqual(
+      new Set(["framework_not_offered/offered-but-none-offered"])
+    );
+    // ...whereas a legacy batch with no library is still left alone, as before.
+    expect(
+      checks("ideation", IDEATION_OUTPUT, { ...SEEDED_CONTEXT, frameworks: [] })
+    ).toEqual([]);
+  });
+});
+
+describe("R-148: the document's version and the request's creative half must agree", () => {
+  it("a v2 document checked WITHOUT its creative context is an assembly refusal, not a pass", () => {
+    const output = parseScriptOutput({
+      text: asReply(IDEATION_V2_MIXED),
+      mode: "ideation",
+      contract: { version: 2, requestedForm: "auto" },
+    });
+    expect(() =>
+      scanModeChecks({
+        mode: "ideation",
+        output,
+        input: SEEDED_CONTEXT.input,
+        frameworks: SEEDED_CONTEXT.frameworks,
+        creative: null,
+      })
+    ).toThrow(GenerationAssemblyError);
+  });
+
+  it("a creative context over a LEGACY document is refused too — its form was never applied", () => {
+    expect(() =>
+      scanModeChecks({
+        mode: "ideation",
+        output: parsed("ideation", IDEATION_OUTPUT),
+        input: SEEDED_CONTEXT.input,
+        frameworks: SEEDED_CONTEXT.frameworks,
+        creative: creativeCheckContextFor(v2Context("auto")),
+      })
+    ).toThrow(GenerationAssemblyError);
+  });
+
+  it("a stamped form that is not the context's form is refused", () => {
+    const output = parsed("ideation", IDEATION_V2_MIXED, v2Context("auto"));
+    expect(() =>
+      scanModeChecks({
+        mode: "ideation",
+        output,
+        input: SEEDED_CONTEXT.input,
+        frameworks: SEEDED_CONTEXT.frameworks,
+        creative: creativeCheckContextFor(v2Context("explain_opinion")),
+      })
+    ).toThrow(GenerationAssemblyError);
+  });
+
+  it("the creative findings reach the kill test, so a revision re-runs them (R7)", () => {
+    const findings = runKillTest({
+      output: parsed("ideation", IDEATION_V2_MIXED, v2Context("explain_opinion")),
+      mode: "ideation",
+      context: v2Context("explain_opinion"),
+    });
+    expect(findings.hardRules.some((f) => f.rule === "form_mismatch")).toBe(true);
+  });
+});
+
+// ------------------------- round-1 compliance gate (2026-10-03): the class fix
+
+describe("ROUND 1: no model label and no missing declaration switches an integrity rule off", () => {
+  /** A batch whose FIRST concept is relabelled and carries the given premise text. */
+  const relabelled = (
+    form: "explain_opinion" | "personal_story_observation" | "demonstration_experiment",
+    premise: Partial<Record<"whatHappens" | "interest" | "payoff", string>>,
+    basis: unknown = { kind: "none" }
+  ) => {
+    const doc = ideationV2(["explain_opinion"]);
+    doc.ideas[0] = {
+      ...doc.ideas[0],
+      form: form as never,
+      premise: { ...doc.ideas[0].premise, ...premise, basis: basis as never },
+    };
+    return doc;
+  };
+  /** THROUGH THE REAL GATE, as the reviewer measured it: `runKillTest` over the pipeline's marked draft. */
+  const killTest = (doc: unknown, context: GenerationContext, mode: ModeId = "ideation") =>
+    runKillTest({ output: marked(mode, doc, context), mode, context }).hardRules;
+  const experience = (found: readonly HardRuleFinding[]) =>
+    found.filter((f) => f.rule === "unsupported_experience").map((f) => [f.shape, f.field]);
+
+  it("NON-VACUITY: every event shape matches its own specimen — and ordinary present-tense premises match none", () => {
+    for (const shape of EVENT_SHAPES) {
+      expect(shape.pattern.test(shape.specimen), shape.id).toBe(true);
+      expect(eventShapeIn(shape.specimen), shape.id).toBe(shape.id);
+    }
+    for (const honest of [
+      "you change the lens again and again and keep almost none of the takes",
+      "you film the same shot twice, once without prep and once after a short checklist",
+      "the take worth keeping comes after checking the dial",
+      "you need a better reason, not a better camera",
+      "we proceed one beat at a time",
+      "everyone has kept going on a shoot they should have stopped",
+      "here is the dial nobody checks before a lens change",
+    ]) {
+      expect(eventShapeIn(honest), honest).toBeNull();
+    }
+  });
+
+  it("REVIEWER CASE 1: an explicit explain_opinion premise inventing a result is REFUSED", () => {
+    const found = killTest(
+      relabelled("explain_opinion", { payoff: "your views doubled within a week" }),
+      v2Context("explain_opinion")
+    );
+    expect(experience(found)).toEqual([
+      ["event-without-basis:result-claim", "/ideas/0/premise/payoff"],
+    ]);
+  });
+
+  it("REVIEWER CASE 2: a story relabelled explain_opinion under Choose for me is REFUSED", () => {
+    const found = killTest(
+      relabelled("explain_opinion", { whatHappens: "I burned the first loaf on camera and kept filming anyway" }),
+      v2Context("auto")
+    );
+    expect(experience(found)).toEqual([
+      ["event-without-basis:first-person-past", "/ideas/0/premise/whatHappens"],
+    ]);
+  });
+
+  it("REVIEWER CASE 3: a demonstration's OWNED result labelled explain_opinion is REFUSED — an ownerless everyday verb no longer is (R-150 point 4)", () => {
+    const found = killTest(
+      relabelled("explain_opinion", { payoff: "my cheap lights won every round" }),
+      v2Context("auto")
+    );
+    expect(experience(found)).toEqual([
+      ["event-without-basis:owned-result", "/ideas/0/premise/payoff"],
+    ]);
+    // THE NARROWING, measured: "won" with no owner is how people state an
+    // opinion, and is recorded in `event-narrated-without-past-tense`.
+    expect(eventShapeIn("the cheap lights won every round")).toBeNull();
+  });
+
+  it("REVIEWER CASE 4: a revision relabelling a parent's [check]ed event and dropping the [check] is REFUSED — in any tense", () => {
+    const parentPassage = "you drop the camera into the sink on the first take [check]";
+    const ctx = v2Context("auto", NO_LIMITS, { carriedUnconfirmed: [parentPassage] });
+    const found = killTest(
+      relabelled("explain_opinion", {
+        whatHappens: "you drop the camera into the sink on the first take",
+      }),
+      ctx
+    );
+    expect(experience(found)).toEqual([
+      ["parent-unconfirmed-unmarked", "/ideas/0/premise/whatHappens"],
+    ]);
+    // KEEPING the marker is fine…
+    expect(
+      experience(killTest(relabelled("explain_opinion", { whatHappens: parentPassage }), ctx))
+    ).toEqual([]);
+    // …and so is the creator's own note now carrying the fact.
+    const confirmed = v2Context(
+      "auto",
+      NO_LIMITS,
+      {
+        carriedUnconfirmed: [parentPassage],
+        creatorNote: "yes, I really did drop the camera into the sink on the first take",
+      },
+      { ...SEEDED_CONTEXT, input: "yes, I really did drop the camera into the sink on the first take" }
+    );
+    expect(
+      experience(
+        killTest(
+          relabelled("explain_opinion", { whatHappens: "you drop the camera into the sink on the first take" }),
+          confirmed
+        )
+      )
+    ).toEqual([]);
+  });
+
+  it("an event in an UNCONFIRMED premise's unmarked line is refused too — the label cannot route around it", () => {
+    const found = killTest(
+      relabelled(
+        "demonstration_experiment",
+        { whatHappens: "we tried it on a cheap lens first", payoff: "it holds focus [check]" },
+        { kind: "unconfirmed" }
+      ),
+      v2Context("auto")
+    );
+    expect(experience(found)).toEqual([
+      ["event-without-basis:first-person-past", "/ideas/0/premise/whatHappens"],
+    ]);
+  });
+
+  it("an explanation's UNCONFIRMED basis needs its [check] too — explain_opinion is no longer exempt", () => {
+    const found = killTest(
+      relabelled("explain_opinion", {}, { kind: "unconfirmed" }),
+      v2Context("explain_opinion")
+    );
+    expect(experience(found)).toEqual([["unconfirmed-without-check", "/ideas/0/premise/whatHappens"]]);
+  });
+
+  it("a v2 SCRIPT's beats are read too: a narrated event in a beat is refused with no basis", () => {
+    const script = scriptV2("explain_opinion");
+    const narrated = {
+      ...script,
+      beats: script.beats.map((b, i) => (i === 0 ? { ...b, vo: "last year I lost a whole shoot to this dial" } : b)),
+    };
+    expect(experience(killTest(narrated, v2Context("explain_opinion"), "ideaToScript"))).toEqual([
+      ["event-without-basis:first-person-past", "/beats/0/vo"],
+    ]);
+  });
+
+  it("an UNCONFIRMED script premise needs [check] in a beat the creator will say, not only in the premise", () => {
+    const demo = scriptV2("demonstration_experiment");
+    const unmarkedBeats = {
+      ...demo,
+      beats: demo.beats.map((b) => ({ ...b, vo: b.vo.replace(" [check]", "") })),
+    };
+    expect(
+      experience(killTest(unmarkedBeats, v2Context("demonstration_experiment"), "ideaToScript"))
+    ).toEqual([["unconfirmed-script-beats-unmarked", "/beats"]]);
+    expect(experience(killTest(demo, v2Context("demonstration_experiment"), "ideaToScript"))).toEqual([]);
+  });
+
+  it("a REAL quote about something ELSE is refused — the relatedness floor", () => {
+    // The reviewer's laundering: an invented event, vouched for by a genuine but
+    // unrelated line of the creator's.
+    const found = killTest(
+      relabelled(
+        "personal_story_observation",
+        { whatHappens: "a stranger knocks the tripod over halfway through your best take" },
+        { kind: "material", excerpt: "kept almost none of it" }
+      ),
+      v2Context("personal_story_observation")
+    );
+    expect(experience(found)).toEqual([
+      ["excerpt-unrelated", "/ideas/0/premise/basis/excerpt"],
+    ]);
+    expect(BASIS_RELATED_MIN_CONTENT_WORDS).toBe(2);
+    expect(excerptRelatesTo("shot the same lens change over and over", "you change the lens again")).toBe(true);
+    expect(excerptRelatesTo("shot the same lens change over and over", "you change the light")).toBe(false);
+  });
+
+  it("a custom name may not carry an approved name under ANY spelling — hyphens, apostrophes, plurals", () => {
+    const customNamed = (name: string) => {
+      const doc = ideationV2(["explain_opinion"]);
+      doc.ideas[0] = { ...doc.ideas[0], framework: name, frameworkProvenance: "custom" as never };
+      return doc;
+    };
+    for (const name of ["Open-Loop remix", "the cost-reveal twist", "Cost Reveals", "the open loop's cousin"]) {
+      expect(
+        killTest(customNamed(name), v2Context("explain_opinion")).map((f) => [f.rule, f.shape]),
+        name
+      ).toContainEqual(["custom_framework_name", "custom-carries-approved-name"]);
+    }
+    // …and a name of its own still passes.
+    expect(killTest(customNamed("the burnt loaf arc"), v2Context("explain_opinion"))).toEqual([]);
+  });
+
+  it("the custom-name finding names only the model's own name, never the approved one it clashed with", () => {
+    const doc = ideationV2(["explain_opinion"]);
+    doc.ideas[0] = { ...doc.ideas[0], framework: "my slow burn twist", frameworkProvenance: "custom" as never };
+    const found = killTest(
+      doc,
+      v2Context("explain_opinion", NO_LIMITS, { approvedFrameworkNames: ["The Slow Burn"] })
+    ).find((f) => f.rule === "custom_framework_name");
+    expect(found?.excerpt).toContain("my slow burn twist");
+    expect(found?.excerpt).not.toContain("The Slow Burn");
+  });
+});
+
+// ------------------------- round-2 compliance gate (2026-10-03): R-150
+
+describe("ROUND 2 (R-150 point 1): the event scan is PER LINE and NEVER GATED by a label or a basis kind", () => {
+  /** THROUGH THE REAL GATE: `runKillTest` over the pipeline's stamped draft. */
+  const killTest = (doc: unknown, context: GenerationContext, mode: ModeId = "ideation") =>
+    runKillTest({ output: marked(mode, doc, context), mode, context }).hardRules;
+  const experience = (found: readonly HardRuleFinding[]) =>
+    found.filter((f) => f.rule === "unsupported_experience").map((f) => [f.shape, f.field]);
+  /** A concept batch whose FIRST concept has the given form, premise text and basis. */
+  const first = (
+    form: "explain_opinion" | "personal_story_observation" | "demonstration_experiment",
+    premise: Partial<Record<"whatHappens" | "interest" | "payoff", string>>,
+    basis: unknown
+  ) => {
+    const doc = ideationV2(["explain_opinion"]);
+    doc.ideas[0] = {
+      ...doc.ideas[0],
+      form: form as never,
+      premise: { ...doc.ideas[0].premise, ...premise, basis: basis as never },
+    };
+    return doc;
+  };
+  const QUOTED = { kind: "material", excerpt: REAL_EXCERPT };
+
+  it("B1: a story with a VALID quote whose `interest` invents a hire is REFUSED at that line", () => {
+    const found = killTest(
+      first(
+        "personal_story_observation",
+        {
+          whatHappens: "you change the lens again and again and keep almost none of the takes",
+          interest: "I hired a second shooter for the whole weekend",
+        },
+        QUOTED
+      ),
+      v2Context("personal_story_observation")
+    );
+    expect(experience(found)).toEqual([
+      ["event-without-basis:first-person-past", "/ideas/0/premise/interest"],
+    ]);
+  });
+
+  it("B1b: a story with a VALID quote whose payoff invents a result is REFUSED", () => {
+    const found = killTest(
+      first(
+        "personal_story_observation",
+        { payoff: "the video went viral and your channel doubled" },
+        QUOTED
+      ),
+      v2Context("personal_story_observation")
+    );
+    expect(experience(found)).toEqual([
+      ["event-without-basis:result-claim", "/ideas/0/premise/payoff"],
+    ]);
+  });
+
+  it("B2: Choose for me, labelled demonstration, a real quote on the payoff, an invented win in whatHappens — REFUSED", () => {
+    const found = killTest(
+      first(
+        "demonstration_experiment",
+        {
+          whatHappens: "we won the regional award with the second take",
+          payoff: "the same lens change over and over finally holds focus",
+        },
+        QUOTED
+      ),
+      v2Context("auto")
+    );
+    expect(experience(found)).toEqual([
+      ["event-without-basis:first-person-past", "/ideas/0/premise/whatHappens"],
+    ]);
+  });
+
+  it("B3: a story SCRIPT with a valid quote and a beat inventing a sale and an award — REFUSED at the beat", () => {
+    const script = scriptV2("personal_story_observation");
+    const found = killTest(
+      {
+        ...script,
+        beats: script.beats.map((b, i) =>
+          i === 2 ? { ...b, vo: "then I sold the footage to a studio and won an award for it" } : b
+        ),
+      },
+      v2Context("personal_story_observation"),
+      "ideaToScript"
+    );
+    expect(experience(found)).toEqual([
+      ["event-without-basis:first-person-past", "/beats/2/vo"],
+    ]);
+  });
+
+  it("the SAME scan runs under every basis kind — material, unconfirmed and none all read the line", () => {
+    const invented = { interest: "I hired a second shooter for the whole weekend" };
+    for (const basis of [QUOTED, { kind: "unconfirmed" }, { kind: "none" }]) {
+      const found = killTest(
+        first("explain_opinion", { ...invented, payoff: "the take worth keeping comes after checking the dial [check]" }, basis),
+        v2Context("auto")
+      );
+      expect(experience(found), JSON.stringify(basis)).toContainEqual([
+        "event-without-basis:first-person-past",
+        "/ideas/0/premise/interest",
+      ]);
+    }
+  });
+
+  it("PER LINE: a [check] on one line of a field does not cover an unmarked event on the next", () => {
+    const found = killTest(
+      first(
+        "explain_opinion",
+        { whatHappens: "I burned the first loaf [check]\nwe sold every loaf by noon" },
+        { kind: "unconfirmed" }
+      ),
+      v2Context("auto")
+    );
+    expect(experience(found)).toEqual([
+      ["event-without-basis:first-person-past", "/ideas/0/premise/whatHappens"],
+    ]);
+    // …and marking that line too clears it.
+    expect(
+      experience(
+        killTest(
+          first(
+            "explain_opinion",
+            { whatHappens: "I burned the first loaf [check]\nwe sold every loaf by noon [check]" },
+            { kind: "unconfirmed" }
+          ),
+          v2Context("auto")
+        )
+      )
+    ).toEqual([]);
+  });
+
+  it("PASS (b): a line relating to its OWN unit's verified quote passes; the same line under an unverified quote does not", () => {
+    const line = { whatHappens: "I shot the lens change until the light went" };
+    expect(experience(killTest(first("personal_story_observation", line, QUOTED), v2Context("auto")))).toEqual([]);
+    expect(
+      experience(
+        killTest(
+          first("personal_story_observation", line, { kind: "material", excerpt: "I shot the lens change at noon" }),
+          v2Context("auto")
+        )
+      )
+    ).toEqual([
+      ["excerpt-not-in-material", "/ideas/0/premise/basis/excerpt"],
+      ["event-without-basis:first-person-past", "/ideas/0/premise/whatHappens"],
+    ]);
+  });
+
+  it("PASS (c) / E3: an honest beat that restates the creator's input passes — and the same beat with no such input is refused", () => {
+    const script = scriptV2("explain_opinion");
+    expect(script.beats[0].vo).toBe(HONEST_RESTATING_BEAT);
+    expect(eventShapeIn(HONEST_RESTATING_BEAT)).toBe("first-person-past");
+    expect(experience(killTest(script, v2Context("explain_opinion"), "ideaToScript"))).toEqual([]);
+    const otherInput = { ...SEEDED_CONTEXT, input: "a note about lighting a small kitchen" };
+    expect(
+      experience(
+        killTest(script, v2Context("explain_opinion", NO_LIMITS, {}, otherInput), "ideaToScript")
+      )
+    ).toEqual([["event-without-basis:first-person-past", "/beats/0/vo"]]);
+  });
+
+  it("E2: an unconfirmed script's [check] must sit on a beat that says the premise's event", () => {
+    const demo = scriptV2("demonstration_experiment");
+    const unrelatedMark = {
+      ...demo,
+      beats: demo.beats.map((b, i) =>
+        i === 1
+          ? { ...b, vo: b.vo.replace(" [check]", "") }
+          : i === 2
+            ? { ...b, vo: `${b.vo} [check]` }
+            : b
+      ),
+    };
+    expect(
+      experience(killTest(unrelatedMark, v2Context("demonstration_experiment"), "ideaToScript"))
+    ).toEqual([["unconfirmed-script-beats-unmarked", "/beats"]]);
+  });
+
+  it("every narrated field outside the premise is read too: hook, thesis, on-screen text, caption", () => {
+    const script = scriptV2("explain_opinion");
+    const cases: [string, unknown][] = [
+      ["/hooks/0/text", { ...script, hooks: script.hooks.map((h, i) => (i === 0 ? { ...h, text: "I lost a whole shoot to this dial" } : h)) }],
+      ["/thesis/statement", { ...script, thesis: { ...script.thesis, statement: "My views doubled the week I stopped reshooting" } }],
+      ["/onScreenText/0/text", { ...script, onScreenText: [{ atSeconds: 1, text: "we sold out in a day" }] }],
+      ["/caption/text", { ...script, caption: { ...script.caption, text: "I quit my job last year to film this" } }],
+    ];
+    for (const [field, doc] of cases) {
+      const found = experience(killTest(doc, v2Context("explain_opinion"), "ideaToScript"));
+      expect(found.map(([, f]) => f), field).toEqual([field]);
+    }
+  });
+
+  it("THE POPULATION IS A LIST: every string field of a full v2 concept batch and script is scanned or excluded with a reason — and every listed field exists", () => {
+    const leaves = (value: unknown, path: string): string[] => {
+      if (typeof value === "string") return [path];
+      if (Array.isArray(value)) return value.flatMap((v) => leaves(v, path));
+      if (value !== null && typeof value === "object") {
+        return Object.entries(value).flatMap(([k, v]) => leaves(v, path === "" ? k : `${path}.${k}`));
+      }
+      return [];
+    };
+    const ctx = v2Context("auto", { ...NO_LIMITS, equipment: ["phone"] });
+    const script = marked(
+      "ideaToScript",
+      { ...scriptV2("personal_story_observation") },
+      ctx
+    );
+    const batch = marked("ideation", ideationV2(["personal_story_observation"]), ctx);
+    const found = new Set([...leaves(script, ""), ...leaves(batch, "")]);
+    const listed = new Set<string>([...EVENT_SCAN_POPULATION, ...Object.keys(EVENT_SCAN_EXCLUDED)]);
+    for (const path of found) expect(listed.has(path), `${path} is in neither list`).toBe(true);
+    for (const path of listed) expect(found.has(path), `${path} is listed and no fixture carries it`).toBe(true);
+    for (const path of EVENT_SCAN_POPULATION) {
+      expect(path in EVENT_SCAN_EXCLUDED, `${path} is in both lists`).toBe(false);
+    }
+  });
+});
+
+describe("ROUND 2 (R-150 points 4 and 5): the event shapes — recall widened, false positives narrowed, every one a literal with a specimen", () => {
+  it("NON-VACUITY: every shape matches its own specimen, and a context shape's context matches it too", () => {
+    for (const shape of EVENT_SHAPES) {
+      expect(shape.pattern.test(shape.specimen), shape.id).toBe(true);
+      if (shape.context) expect(shape.context.test(shape.specimen), `${shape.id} context`).toBe(true);
+      expect(eventShapeIn(shape.specimen), shape.id).toBe(shape.id);
+    }
+  });
+
+  // The reviewer's eight strings. Four were quoted truncated ("…"); each
+  // completion below is ours, and adds only what a past-tense line carries.
+  it.each([
+    ["I quit my job last year to film this full time", "base-form-past"],
+    ["we put the camera down and walked away from the shoot", "base-form-past"],
+    ["I hit record and the oven caught fire", "base-form-past"],
+    ["I nearly gave up on the channel", "first-person-past"],
+    ["we both cried when the first order shipped", "first-person-past"],
+    ["I’d already filmed it twice", "contracted-pluperfect"],
+    ["I set the camera on the shelf and it fell", "base-form-past"],
+    ["me and my sister opened a bakery", "first-person-past"],
+  ])("RECALL: '%s' is read as %s", (line, shape) => {
+    expect(eventShapeIn(line)).toBe(shape);
+  });
+
+  it("RECALL reaches the gate: two of the reviewer's strings are refused through runKillTest", () => {
+    for (const line of ["me and my sister opened a bakery", "I hit record and the oven caught fire"]) {
+      const doc = ideationV2(["explain_opinion"]);
+      doc.ideas[0] = { ...doc.ideas[0], premise: { ...doc.ideas[0].premise, whatHappens: line } };
+      const found = runKillTest({
+        output: marked("ideation", doc, v2Context("explain_opinion")),
+        mode: "ideation",
+        context: v2Context("explain_opinion"),
+      }).hardRules.filter((f) => f.rule === "unsupported_experience");
+      expect(found.map((f) => f.field), line).toEqual(["/ideas/0/premise/whatHappens"]);
+    }
+  });
+
+  it("compound subjects both ways, and the base form needs a past word on its line", () => {
+    expect(eventShapeIn("my sister and I opened a bakery")).toBe("first-person-past");
+    expect(eventShapeIn("I set the camera on the shelf and press record")).toBeNull();
+    expect(eventShapeIn("I put the lid on before the steam builds")).toBeNull();
+  });
+
+  it("FALSE POSITIVES NARROWED: an everyday result verb needs an owner, and the generic you of advice is not narration", () => {
+    for (const honest of [
+      "the cheap lights won every round",
+      "it worked better than the expensive one",
+      "the shot dropped out of focus halfway",
+      "the setting you skipped is the one your viewer notices first",
+      "the room tone you ignored is why your edit sounds cheap",
+      "a setting you never checked costs more than nerves",
+      "the economy grew and so did the gear budgets",
+    ]) {
+      expect(eventShapeIn(honest), honest).toBeNull();
+    }
+    for (const [owned, shape] of [
+      ["my views jumped after the first post", "owned-result"],
+      ["our channel grew all summer", "owned-result"],
+      ["we lost the light at four", "first-person-past"],
+      ["and you dropped the camera into the sink", "second-person-past"],
+      ["last year you lost a whole shoot to it", "second-person-past"],
+    ] as const) {
+      expect(eventShapeIn(owned), owned).toBe(shape);
+    }
+  });
+
+  it("the remedy says the draft names no source — never that the event is not in the creator's material", () => {
+    expect(remedyFor("unsupported_experience")).toContain("names no source that says it");
+    expect(remedyFor("unsupported_experience")).not.toContain("not in your own material");
+  });
+});
+
+describe("ROUND 2 (R-150 point 2): the server's filming decision is STRUCTURE, so the model's text is read as written", () => {
+  const C4_FILMING = {
+    location: "the bakery on Elm Street",
+    equipment: ["a camera rented for $400", "drone bought in 2019"],
+    people: "solo" as const,
+    minutes: 20,
+  };
+  const c4 = () => {
+    const doc = ideationV2(["explain_opinion"]);
+    doc.ideas[0] = { ...doc.ideas[0], filming: C4_FILMING as never };
+    return doc;
+  };
+  const solo = () => v2Context("explain_opinion", { ...NO_LIMITS, people: "solo" });
+
+  it("C4: undeclared specifics in a filming plan are REPORTED by traceability exactly as if no server decision existed", () => {
+    const context = solo();
+    const stamped = marked("ideation", c4(), context);
+    const unstamped = parsed("ideation", c4(), context);
+    if (stamped.contractVersion !== 2) throw new Error("expected v2");
+    // The model's words are untouched, and the decision is the structural field.
+    expect(stamped.ideas?.[0].filming.location).toBe("the bakery on Elm Street");
+    expect(stamped.ideas?.[0].filming.equipment).toEqual(C4_FILMING.equipment);
+    expect(stamped.serverChecks?.filming[0]).toEqual({ at: "/ideas/0", location: true, equipment: [0, 1] });
+    const withStamp = runKillTest({ output: stamped, mode: "ideation", context });
+    const withoutStamp = runKillTest({ output: unstamped, mode: "ideation", context });
+    expect(withStamp.traceability).toEqual(withoutStamp.traceability);
+    const tokens = withStamp.traceability
+      .filter((f) => f.field.startsWith("/ideas/0/filming/"))
+      .map((f) => f.token)
+      .join(" | ");
+    for (const specific of ["Elm Street", "400", "2019"]) expect(tokens).toContain(specific);
+    expect(withStamp.hardRules.filter((f) => f.rule === "invented_specific").length).toBe(
+      withoutStamp.hardRules.filter((f) => f.rule === "invented_specific").length
+    );
+    expect(withStamp.hardRules.some((f) => f.rule === "invented_specific")).toBe(true);
+    // …and the only difference the stamp makes is that the filming backstop is satisfied.
+    expect(withStamp.hardRules.filter((f) => f.rule === "filming_outside_limits")).toEqual([]);
+    expect(withoutStamp.hardRules.some((f) => f.rule === "filming_outside_limits")).toBe(true);
+  });
+
+  it("the stamp NEVER writes the marker into the model's text, anywhere in the document", () => {
+    const context = v2Context("explain_opinion");
+    const script = scriptV2("explain_opinion");
+    const doc = {
+      ...script,
+      shotMap: [{ beatIndex: 0, shot: "a slow drone pass over the kitchen roof", note: "gimbal for the close" }],
+    };
+    const out = marked("ideaToScript", doc, context);
+    if (out.contractVersion !== 2) throw new Error("expected v2");
+    const { serverChecks, ...rest } = out;
+    expect(JSON.stringify(rest)).not.toContain("[check]");
+    expect(serverChecks).toEqual({
+      filming: [{ at: "", location: true, equipment: [0] }],
+      shotMap: [{ index: 0, shot: true, note: true }],
+    });
+  });
+});
+
+describe("ROUND 3 (R-150 point 3): the confirmation item is on EVERY version-2 output — no condition a reply can influence", () => {
+  it("is the server's sentence, word for word, and reads right for a demonstration still to be filmed", () => {
+    expect(EVENT_CONFIRMATION_ITEM).toBe(
+      "Before you film: confirm every event and result here really happened (or will be filmed as shown), or mark it [check]."
+    );
+  });
+
+  // THE REGISTER'S OWN EXAMPLE and the reviewer's beats: each passes the gate
+  // (they are the recorded recall gap), and each still carries the item.
+  const REGISTER_EXAMPLE = "a stranger knocks your tripod over halfway through your best take";
+  const REVIEWER_BEATS = [
+    "my neighbour knocked the light over in the middle of the take",
+    "I swam out to the buoy with the camera in a bag",
+    "I quit my job to do this",
+  ];
+
+  it.each([["explain_opinion"], ["auto"]] as const)(
+    "the register example under %s: usable in ONE call with no finding — and the item is there",
+    async (formChoice) => {
+      const doc = ideationV2(["explain_opinion"]);
+      doc.ideas[0] = { ...doc.ideas[0], premise: { ...doc.ideas[0].premise, whatHappens: REGISTER_EXAMPLE } };
+      let calls = 0;
+      const run = await runGeneration({
+        mode: "ideation",
+        context: v2Context(formChoice),
+        generate: async () => {
+          calls += 1;
+          return asReply(doc);
+        },
+      });
+      expect(calls).toBe(1);
+      if (run.status !== "usable") throw new Error("expected usable");
+      expect(run.killTest.finalAttempt.hardRules).toEqual([]);
+      expect(eventConfirmationFor(run.output)).toBe(EVENT_CONFIRMATION_ITEM);
+    }
+  );
+
+  it.each(REVIEWER_BEATS)("a script beat '%s' passes the gate and still carries the item", async (vo) => {
+    const script = scriptV2("explain_opinion");
+    const doc = { ...script, beats: script.beats.map((b, i) => (i === 2 ? { ...b, vo } : b)) };
+    const run = await runGeneration({
+      mode: "ideaToScript",
+      context: v2Context("auto"),
+      generate: async () => asReply(doc),
+    });
+    if (run.status !== "usable") throw new Error("expected usable");
+    expect(run.killTest.finalAttempt.hardRules).toEqual([]);
+    expect(eventConfirmationFor(run.output)).toBe(EVENT_CONFIRMATION_ITEM);
+  });
+
+  it("an honest explanation that narrates nothing, with no basis, carries it too — and a legacy output never does", () => {
+    const out = marked("ideation", ideationV2(["explain_opinion"]), v2Context("explain_opinion"));
+    expect(eventConfirmationFor(out)).toBe(EVENT_CONFIRMATION_ITEM);
+    expect(eventConfirmationFor(parsed("ideation", IDEATION_OUTPUT))).toBeNull();
+  });
+
+  it("its only input is the server-stamped version: the form and basis a reply writes cannot remove it", () => {
+    for (const forms of [
+      ["explain_opinion"],
+      ["personal_story_observation"],
+      ["demonstration_experiment"],
+    ] as const) {
+      const out = marked("ideation", ideationV2(forms), v2Context("auto"));
+      expect(eventConfirmationFor(out), forms[0]).toBe(EVENT_CONFIRMATION_ITEM);
+    }
+  });
+});
+
+describe("ROUND 3: every match is judged on its own clause, inside the creator's own words", () => {
+  const killTest = (doc: unknown, context: GenerationContext, mode: ModeId = "ideation") =>
+    runKillTest({ output: marked(mode, doc, context), mode, context }).hardRules;
+  const experience = (found: readonly HardRuleFinding[]) =>
+    found.filter((f) => f.rule === "unsupported_experience").map((f) => [f.shape, f.field]);
+  const withBeat = (vo: string) => {
+    const script = scriptV2("explain_opinion");
+    return { ...script, beats: script.beats.map((b, i) => (i === 2 ? { ...b, vo } : b)) };
+  };
+  const story = (premise: Partial<Record<"whatHappens" | "interest" | "payoff", string>>) => {
+    const doc = ideationV2(["personal_story_observation"]);
+    doc.ideas[0] = { ...doc.ideas[0], premise: { ...doc.ideas[0].premise, ...premise } };
+    return doc;
+  };
+
+  it("PASS (a) ADJACENCY: a [check] in another sentence, or another clause, covers nothing", () => {
+    expect(
+      experience(
+        killTest(
+          withBeat("the dial [check]. I sold the footage to a studio and won an award for it"),
+          v2Context("explain_opinion"),
+          "ideaToScript"
+        )
+      )
+    ).toEqual([["event-without-basis:first-person-past", "/beats/2/vo"]]);
+    expect(
+      experience(
+        killTest(
+          withBeat("I quit my job [check] and my channel tripled within a month"),
+          v2Context("explain_opinion"),
+          "ideaToScript"
+        )
+      )
+    ).toEqual([["event-without-basis:result-claim", "/beats/2/vo"]]);
+    // Each clause marked: clean.
+    expect(
+      experience(
+        killTest(
+          withBeat("I quit my job [check] and my channel tripled within a month [check]"),
+          v2Context("explain_opinion"),
+          "ideaToScript"
+        )
+      )
+    ).toEqual([]);
+  });
+
+  it("PASS (b): a real quote never vouches for a verb or a result that is not in it", () => {
+    const story_ = v2Context("personal_story_observation");
+    for (const line of [
+      "the lens change I shot over and over went viral",
+      "we made a fortune from the same lens change",
+      "the same lens change shot over and over doubled my views",
+    ]) {
+      expect(experience(killTest(story({ interest: line }), story_)), line).toEqual([
+        [expect.stringMatching(/^event-without-basis:/), "/ideas/0/premise/interest"],
+      ]);
+    }
+    // NON-VACUITY: the quote's own verb, in a clause about it, still passes.
+    expect(experience(killTest(story({ interest: "I shot the lens change until the light went" }), story_))).toEqual([]);
+  });
+
+  it("PASS (c): only a match INSIDE the creator's own run passes — input, brain and declared-limit runs alike", () => {
+    // From the input: the restatement passes, the award glued onto it does not.
+    expect(
+      experience(
+        killTest(
+          withBeat("today I shot the same lens change over and over and I won an award for it"),
+          v2Context("explain_opinion"),
+          "ideaToScript"
+        )
+      )
+    ).toEqual([["event-without-basis:first-person-past", "/beats/2/vo"]]);
+    expect(
+      experience(
+        killTest(
+          withBeat("today I shot the same lens change over and over and it went viral"),
+          v2Context("explain_opinion"),
+          "ideaToScript"
+        )
+      )
+    ).toEqual([["event-without-basis:result-claim", "/beats/2/vo"]]);
+    // From the brain.
+    const brainRun: GenerationContext = {
+      ...SEEDED_CONTEXT,
+      brain: { ...SEEDED_CONTEXT.brain, strategy: ["last year my channel grew slowly"] },
+    };
+    expect(
+      experience(killTest(withBeat("last year my channel tripled"), v2Context("explain_opinion", NO_LIMITS, {}, brainRun), "ideaToScript"))
+    ).toEqual([["event-without-basis:result-claim", "/beats/2/vo"]]);
+    expect(
+      experience(killTest(withBeat("last year my channel grew slowly"), v2Context("explain_opinion", NO_LIMITS, {}, brainRun), "ideaToScript"))
+    ).toEqual([]);
+    // From a declared limit.
+    const declared = v2Context("explain_opinion", { ...NO_LIMITS, locations: ["the bakery on main street"] });
+    expect(
+      experience(killTest(withBeat("the first batch sold out at the bakery on main street"), declared, "ideaToScript"))
+    ).toEqual([["event-without-basis:result-claim", "/beats/2/vo"]]);
+  });
+
+  it("DISPLAYED FREE TEXT is read by the same rule: a shot note and a hook mechanic", () => {
+    const script = scriptV2("explain_opinion");
+    const note = {
+      ...script,
+      shotMap: [{ beatIndex: 0, shot: "close on the dial", note: "hold up the trophy I won at the festival for this clip" }],
+    };
+    expect(experience(killTest(note, v2Context("explain_opinion"), "ideaToScript"))).toEqual([
+      ["event-without-basis:first-person-past", "/shotMap/0/note"],
+    ]);
+    const mechanic = {
+      ...script,
+      hooks: script.hooks.map((h, i) => (i === 0 ? { ...h, mechanic: "the award I won with this hook" } : h)),
+    };
+    expect(experience(killTest(mechanic, v2Context("explain_opinion"), "ideaToScript"))).toEqual([
+      ["event-without-basis:first-person-past", "/hooks/0/mechanic"],
+    ]);
+  });
+
+  it("the prompt says viewer-addressed past tense and 'we've all' lines count, and offers no 'share two words' route", () => {
+    const rules = CREATIVE_RULES.join("\n");
+    expect(rules).toContain('Lines that speak to the viewer in the past tense ("you dropped the camera") and "we\'ve all…" lines count as events too');
+    expect(rules).not.toMatch(/share at least \d+ meaning words with the quoted excerpt/);
+    // …and the two examples it names really are read as events.
+    expect(eventShapeIn("you dropped the camera")).not.toBeNull();
+    expect(eventShapeIn("we've all been there")).not.toBeNull();
+  });
+
+  it("the stamp marks shot-map kit PER FIELD: kit named only in the note flags the note", () => {
+    const script = scriptV2("explain_opinion");
+    const out = marked(
+      "ideaToScript",
+      { ...script, shotMap: [{ beatIndex: 0, shot: "close on the dial", note: "steady it on the gimbal" }] },
+      v2Context("explain_opinion")
+    );
+    if (out.contractVersion !== 2) throw new Error("expected v2");
+    expect(out.serverChecks?.shotMap).toEqual([{ index: 0, shot: false, note: true }]);
+  });
+});
+
+describe("ROUND 2: a custom name may not carry an approved name — connectors, run-together and suffix forms", () => {
+  const approved = v2Context("explain_opinion", NO_LIMITS, {
+    approvedFrameworkNames: ["Before and After", "The Confession Arc"],
+  });
+  const customNamed = (name: string) => {
+    const doc = ideationV2(["explain_opinion"]);
+    doc.ideas[0] = { ...doc.ideas[0], framework: name, frameworkProvenance: "custom" as never };
+    return doc;
+  };
+  it.each(["Before & After", "Before/After", "OpenLoop", "Cost Revealed", "The Confessional Arc", "Loop, Open"])(
+    "'%s' is REFUSED",
+    (name) => {
+      expect(
+        runKillTest({
+          output: marked("ideation", customNamed(name), approved),
+          mode: "ideation",
+          context: approved,
+        }).hardRules.map((f) => [f.rule, f.shape])
+      ).toContainEqual(["custom_framework_name", "custom-carries-approved-name"]);
+    }
+  );
+
+  it("…and a name of its own, including one that merely contains an approved name's letters, still passes", () => {
+    for (const name of ["the burnt loaf arc", "the slowburner", "after hours"]) {
+      expect(checks("ideation", customNamed(name), approved), name).toEqual([]);
+    }
+  });
+});
+
+// ------------------------- round-4 compliance gate (2026-10-03): the classes
+
+describe("ROUND 4: mark ownership is by POSITION — one [check] can never satisfy two events", () => {
+  const killTest = (doc: unknown, context: GenerationContext, mode: ModeId = "ideation") =>
+    runKillTest({ output: marked(mode, doc, context), mode, context }).hardRules;
+  const experience = (found: readonly HardRuleFinding[]) =>
+    found.filter((f) => f.rule === "unsupported_experience").map((f) => [f.shape, f.field]);
+  const beat = (vo: string, context: GenerationContext = v2Context("explain_opinion")) => {
+    const script = scriptV2("explain_opinion");
+    return experience(
+      killTest({ ...script, beats: script.beats.map((b, i) => (i === 2 ? { ...b, vo } : b)) }, context, "ideaToScript")
+    );
+  };
+
+  // The reviewer's joiners, each with ONE mark (refused) and with one mark per
+  // event (clean). "I quit" is read because "tripled" says it is past.
+  it.each([
+    ["comma", "I quit my job [check], my channel tripled", "I quit my job [check], my channel tripled [check]"],
+    ["spaced em dash", "I quit my job [check] — my channel tripled", "I quit my job [check] — my channel tripled [check]"],
+    ["glued —and", "I quit my job [check]—and my channel tripled", "I quit my job [check]—and my channel tripled [check]"],
+    ["glued —", "I quit my job [check]—my channel tripled", "I quit my job [check]—my channel tripled [check]"],
+    [",and", "I quit my job [check],and my channel tripled", "I quit my job [check],and my channel tripled [check]"],
+    [", yet", "I quit my job [check], yet my channel tripled", "I quit my job [check], yet my channel tripled [check]"],
+    ["plus", "I quit my job [check] plus my channel tripled", "I quit my job [check] plus my channel tripled [check]"],
+    ["&", "I quit my job [check] & my channel tripled", "I quit my job [check] & my channel tripled [check]"],
+    [", though", "I quit my job [check], though my channel tripled", "I quit my job [check], though my channel tripled [check]"],
+    ["or", "I quit my job [check] or my channel tripled", "I quit my job [check] or my channel tripled [check]"],
+    ["parenthesis", "I quit my job [check] (my channel tripled)", "I quit my job [check] (my channel tripled [check])"],
+    ["leading When", "When I quit my job [check], my channel tripled", "When I quit my job [check], my channel tripled [check]"],
+  ])("%s: one mark covers only the event before it", (_joiner, oneMark, eachMarked) => {
+    expect(beat(oneMark), oneMark).toEqual([["event-without-basis:result-claim", "/beats/2/vo"]]);
+    expect(beat(eachMarked), eachMarked).toEqual([]);
+  });
+
+  it("a mark belongs to the event BEFORE it: the second event's mark does not reach back to the first", () => {
+    expect(beat("I quit my job, my channel tripled [check]")).toEqual([
+      ["event-without-basis:base-form-past", "/beats/2/vo"],
+    ]);
+  });
+
+  it("the prompt says one [check] marks only the event before it, whatever joins the next", () => {
+    expect(CREATIVE_RULES.join("\n")).toContain('Each "[check]" marks only the event just before it');
+  });
+
+  it("a span never runs past its own sentence: a mark after the full stop covers nothing before it", () => {
+    expect(beat("I won the regional final. [check]")).toEqual([
+      ["event-without-basis:first-person-past", "/beats/2/vo"],
+    ]);
+    expect(beat("I won the regional final [check].")).toEqual([]);
+  });
+});
+
+describe("ROUND 4: a coordinated past verb shares its subject and is its own event (CONTINUATION_SHAPE)", () => {
+  const killTest = (doc: unknown, context: GenerationContext, mode: ModeId = "ideation") =>
+    runKillTest({ output: marked(mode, doc, context), mode, context }).hardRules;
+  const experience = (found: readonly HardRuleFinding[]) =>
+    found.filter((f) => f.rule === "unsupported_experience").map((f) => [f.shape, f.field]);
+  const beat = (vo: string, context: GenerationContext = v2Context("explain_opinion")) => {
+    const script = scriptV2("explain_opinion");
+    return experience(
+      killTest({ ...script, beats: script.beats.map((b, i) => (i === 2 ? { ...b, vo } : b)) }, context, "ideaToScript")
+    );
+  };
+
+  it("NON-VACUITY: the literal matches its specimen, and the specimen is refused as a continuation", () => {
+    expect(CONTINUATION_SHAPE.pattern.test(CONTINUATION_SHAPE.specimen)).toBe(true);
+    expect(beat(CONTINUATION_SHAPE.specimen)).toEqual([["event-without-basis:continuation", "/beats/2/vo"]]);
+  });
+
+  it.each([
+    "today I shot the same lens change over and over and won an award for it",
+    "I quit my job last year [check] and won an award for it",
+    "we packed the van [check], drove to the coast and sold every print",
+    "I burned the first loaf [check] — sold the rest by noon",
+    "you dropped the camera [check] but then caught it before it hit the floor",
+  ])("'%s' is refused at the unmarked continuation", (vo) => {
+    expect(beat(vo)).toEqual([["event-without-basis:continuation", "/beats/2/vo"]]);
+  });
+
+  it("a runGeneration REWRITE that keeps the continuation unmarked ends in an honest refusal, not a usable draft", async () => {
+    const script = scriptV2("explain_opinion");
+    const doc = {
+      ...script,
+      beats: script.beats.map((b, i) => (i === 2 ? { ...b, vo: "I quit my job last year [check] and won an award for it" } : b)),
+    };
+    let calls = 0;
+    const run = await runGeneration({
+      mode: "ideaToScript",
+      context: v2Context("auto"),
+      generate: async () => {
+        calls += 1;
+        return asReply(doc);
+      },
+    });
+    expect(calls).toBe(2);
+    expect(run.status).toBe("refused");
+  });
+
+  it("an honest continuation the creator wrote passes on their own run, and a 'and red lights' is no verb", () => {
+    // The seeded input stays (the fixture's opening beat restates it); the loaf line joins it.
+    const loaf: GenerationContext = {
+      ...SEEDED_CONTEXT,
+      input: `${SEEDED_CONTEXT.input}\nI burned the first loaf and kept filming anyway`,
+    };
+    expect(beat("I burned the first loaf and kept filming anyway", v2Context("explain_opinion", NO_LIMITS, {}, loaf))).toEqual([]);
+    expect(beat(HONEST_RESTATING_BEAT + " and kept almost none of it")).toEqual([]);
+    expect(beat("I shot it [check] and red lights filled the frame")).toEqual([]);
+  });
+
+  it("the continuation is read ONLY after a first- or second-person subject: 'the oven caught fire and burned' is not one", () => {
+    expect(beat("the oven caught fire and burned the tray")).toEqual([]);
+  });
+});
+
+describe("ROUND 4: a revision restating a parent's [check]ed passage needs its OWN mark", () => {
+  const PARENT = "a stranger knocks your tripod over halfway through your best take [check]";
+  const RESTATED = "a stranger knocks your tripod over halfway through your best take";
+  const ctx = v2Context("auto", NO_LIMITS, { carriedUnconfirmed: [PARENT] });
+  const beat = (vo: string) => {
+    const script = scriptV2("explain_opinion");
+    const doc = { ...script, beats: script.beats.map((b, i) => (i === 2 ? { ...b, vo } : b)) };
+    return runKillTest({ output: marked("ideaToScript", doc, ctx), mode: "ideaToScript", context: ctx })
+      .hardRules.filter((f) => f.rule === "unsupported_experience")
+      .map((f) => [f.shape, f.field]);
+  };
+
+  it("(a) a [check] in ANOTHER SENTENCE of the same beat covers nothing", () => {
+    expect(beat(`${RESTATED}. Then the light goes [check]`)).toEqual([
+      ["parent-unconfirmed-unmarked", "/beats/2/vo"],
+    ]);
+  });
+
+  it("(b) a [check] on ANOTHER LINE covers nothing", () => {
+    expect(beat(`${RESTATED}\nthe light goes [check]`)).toEqual([
+      ["parent-unconfirmed-unmarked", "/beats/2/vo"],
+    ]);
+  });
+
+  it("its own mark — after it, or inside it — clears it", () => {
+    expect(beat(`${RESTATED} [check]. Then the light goes`)).toEqual([]);
+    expect(beat("a stranger knocks your tripod over [check] halfway through your best take")).toEqual([]);
+  });
+});
+
+describe("ROUND 4, REVERSED BY AUDIT P1-R1: the model's disclosure is not presented, so it is not read (R-154)", () => {
+  it("an invented event in the disclosure guidance no longer refuses — the same event in a beat still does", () => {
+    // Round 4 added the two fields BECAUSE Studio rendered them. Nothing does
+    // now, and a refusal is debited, so refusing over text no creator reads
+    // would charge a credit for nothing.
+    const script = scriptV2("explain_opinion");
+    const doc = { ...script, disclosure: { ...script.disclosure, guidance: "I won an award for saying a tool helped" } };
+    const context = v2Context("explain_opinion");
+    const found = runKillTest({ output: marked("ideaToScript", doc, context), mode: "ideaToScript", context })
+      .hardRules.filter((f) => f.rule === "unsupported_experience")
+      .map((f) => [f.shape, f.field]);
+    expect(found).toEqual([]);
+    // NON-VACUITY: the sentence is an event the rule refuses in a field a
+    // creator reads, so the empty list above is the field, not the sentence.
+    const inBeat = { ...script, beats: script.beats!.map((b, i) => (i === 0 ? { ...b, vo: "I won an award for saying a tool helped" } : b)) };
+    const beatFound = runKillTest({ output: marked("ideaToScript", inBeat, context), mode: "ideaToScript", context })
+      .hardRules.filter((f) => f.rule === "unsupported_experience")
+      .map((f) => f.field);
+    expect(beatFound).toContain("/beats/0/vo");
+  });
+
+  it("…the render site no longer shows it, and the two fields are EXCLUDED with that reason", async () => {
+    // A render site that started showing the model's section again would be
+    // the R-121 breach `tests/disclosure-presenters.test.ts` exists to catch —
+    // and this pin, which reads the render site, would have to move with it.
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { resolve, dirname } = await import("node:path");
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../../app/(product)/studio/generation-outcome.tsx"),
+      "utf8"
+    );
+    expect(src).not.toContain("{doc.disclosure.guidance}");
+    expect(src).not.toContain("{doc.disclosure.platform}");
+    expect(src).toContain("{DISCLOSURE_LINE[doc.disclosure.kind]}");
+    expect(EVENT_SCAN_POPULATION).not.toContain("disclosure.guidance" as never);
+    expect(EVENT_SCAN_POPULATION).not.toContain("disclosure.platform" as never);
+    expect(EVENT_SCAN_EXCLUDED["disclosure.guidance"]).toMatch(/never presented/);
+    expect(EVENT_SCAN_EXCLUDED["disclosure.platform"]).toMatch(/never presented/);
+  });
+});
+
+describe("ROUND 4: -t past spellings fold to -ed, and the honest-paraphrase count is pinned", () => {
+  /** Measured on this build; `honest-line-reads-as-event` states the same number. */
+  const MEASURED_LOAF_REFUSALS = 3;
+  const LOAF = "I burned the first loaf and kept filming anyway";
+  const loafContext = v2Context("personal_story_observation", NO_LIMITS, {}, { ...SEEDED_CONTEXT, input: LOAF });
+  const story = (whatHappens: string) => {
+    const doc = ideationV2(["personal_story_observation"]);
+    doc.ideas[0] = {
+      ...doc.ideas[0],
+      premise: { ...doc.ideas[0].premise, whatHappens, basis: { kind: "material", excerpt: LOAF } as never },
+    };
+    return doc;
+  };
+  const refusedAt0 = (whatHappens: string) =>
+    runKillTest({ output: marked("ideation", story(whatHappens), loafContext), mode: "ideation", context: loafContext })
+      .hardRules.some((f) => f.rule === "unsupported_experience" && f.field.startsWith("/ideas/0/"));
+
+  it("'I burnt the first loaf and kept filming anyway' passes against the quote 'I burned the first loaf…'", () => {
+    expect(refusedAt0("I burnt the first loaf and kept filming anyway")).toBe(false);
+    // NON-VACUITY: a verb the quote does not have is still refused.
+    expect(refusedAt0("I sold the first loaf and kept filming anyway")).toBe(true);
+  });
+
+  // THE NUMBER `honest-line-reads-as-event` STATES, pinned. Our own nine
+  // honest paraphrases of one story, author-written — indicative, never a rate.
+  const HONEST_LOAF_PARAPHRASES = [
+    "I burnt the first loaf and kept filming anyway",
+    "I burned my first loaf but kept the camera rolling",
+    "the first loaf burned and I kept filming",
+    "I scorched the first loaf and kept filming anyway",
+    "I burned the first loaf and carried on filming",
+    "my first loaf burned and I filmed anyway",
+    "I'd burned the first loaf, so I kept filming",
+    "I burned the very first loaf and kept on filming anyway",
+    "we burned the first loaf and kept filming regardless",
+  ];
+  it("refuses exactly the count the register records", () => {
+    const refused = HONEST_LOAF_PARAPHRASES.filter(refusedAt0);
+    expect(HONEST_LOAF_PARAPHRASES).toHaveLength(9);
+    expect(refused.length, refused.join(" | ")).toBe(MEASURED_LOAF_REFUSALS);
+    const gap = KNOWN_MODE_CHECK_GAPS.find((g) => g.id === "honest-line-reads-as-event");
+    expect(gap?.what).toContain(`refuse ${MEASURED_LOAF_REFUSALS} of 9`);
   });
 });

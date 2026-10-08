@@ -1,6 +1,6 @@
 # Phase 10 — Accessibility: surface-wide titles, landmarks and tables (split from Phase 7 per gate-rules §11)
 
-Depends on: Phase 7 (the `Banner` arrival prop, the relocated `FocusOnMount` and the `tests/a11y-wiring.test.tsx` file this phase extends all land there; three files — `account-view.tsx`, `usage-view.tsx`, `landing-sections.tsx` — are edited by both phases with disjoint edits, so this phase runs after, never beside). Owner: `respin-engineer`. Est. 2–3 h.
+Depends on: Phase 7 (the `Banner` arrival prop, the relocated `FocusOnMount` and the `tests/a11y-wiring.test.tsx` file this phase extends all land there; three files — `account-view.tsx`, `usage-view.tsx`, `landing-sections.tsx` — are edited by both phases with disjoint edits, so this phase runs after, never beside). Owner: `respin-engineer`. Est. 2–3 h; **5–7 h with the 2026-10-05 additions** (an estimate).
 **Read first:** Phase 7's objective and its two codebase-review corrections; the plan-gate batch-0 generalist report's §11 disposition (`docs/progress/respin-audit-remediation-2026-09-19-plan-review.md`, "§11 plan-size finding") — this file exists because Phase 7's Task 5 was thirteen unrelated one-attribute edits with ~40 line citations, the shape the reviewer's simulation fidelity was lowest on.
 
 ## Objective
@@ -26,6 +26,30 @@ Ids carry the Phase 7 requirement they came from.
 - **P10-R5 (from P7-R6, LOW: inline errors).** Interview inline errors are associated with their `aria-invalid` fields through `aria-describedby` (`onboarding/interview/interview-view.tsx:120-155`).
 - **P10-R6 (from P7-R6, LOW: table scope and landmarks).** `scope="col"` on every `<th>` of all five data tables — the population is every file under `app/` containing `<table` (measured 2026-09-21: `app/ui/ledger-table.tsx`, `usage/usage-view.tsx`, `(admin)/admin/activation/activation-view.tsx`, `(admin)/admin/config/config-view.tsx`, `(admin)/admin/model-spend/model-spend-view.tsx`; none of their `<th>` carry `scope`), asserted by a scan over that population rather than a hand list. A `<main>` landmark and a skip link on the marketing pages: there is **no** `app/(marketing)/layout.tsx` (verified absent 2026-09-21) — the marketing pages compose `LandingHeader`/`LandingFooter` from `landing-sections.tsx` directly, so the landmark lands **in a new `app/(marketing)/layout.tsx`** (row 16; the one form that covers `/`, `/legal`, `/changelog` and `/for/[audience]` without touching each page), with the skip-link target id on the `<main>` it renders and the header's first focusable as the link's home (row 15).
 - **P10-R7 (from P7-R6, LOW: the busy pattern).** `auth-form.tsx:131,139`'s `disabled={busy}` becomes the `aria-disabled` + `aria-busy` pattern `onboarding/submit-button.tsx:64-71` documents from a real-browser measurement ("`disabled` removes the element from the focus order, so the browser drops focus to `<body>`"), so a sign-in press does not drop a keyboard user's place.
+  - **Amendment 2026-10-05 (register item 46's sub-item).** One more producer of the pattern: the visual spec locks it in. `e2e/visual/visual.spec.ts:328` asserts `toBeDisabled()` on the sign-in/sign-up "Working…" button. It becomes an `aria-disabled="true"` assertion plus a focus-stays assertion, in the same change as the `auth-form.tsx` edit, or the visual run reddens on the fix.
+
+
+### 2026-10-05 register additions
+
+Homed here from `docs/progress/audit/2026-10-05.md`. Every `file:line` below was re-read on 2026-10-05, except where a sub-item says it was not.
+
+- **P10-A1 (item 34's live-region half — MEDIUM; a rule-7 shape). The D-L1 live-region fix reached only part of its population.** Completion is announced only where a status region is filled on mount. `generation-outcome.tsx:764-765` wraps the **whole draft** in `role="status"`. The correct pattern already exists: a pre-mounted status region whose text changes on completion (`app/(product)/studio/piece-confirmation.tsx:168-180`).
+  **The producer population** is every client component that awaits a server action through `useActionState`, measured 2026-10-05 with `grep -rln "useActionState\|useFormState" app --include=*.tsx`. That gives **21** files:
+  - admin: `admin/config/config-view.tsx`;
+  - brain: `brain/edit-form.tsx`;
+  - onboarding: `candidate-safety-panel.tsx`, `first-ideas/first-ideas-panel.tsx`, `first-ideas/first-ideas-result.tsx`, `run-inference-panel.tsx`, `run-outcome.tsx`;
+  - results: `log-outcome.tsx`, `log-panel.tsx`, `promotion-panel.tsx`;
+  - studio: `entrances.tsx`, `feedback-block.tsx`, `frameworks/framework-panel.tsx`, `generation-outcome.tsx`, `lineage-view.tsx`, `piece-confirmation.tsx`, `saved/revise-panel.tsx`, `studio-panel.tsx`;
+  - trends: `paste-panel.tsx`, `spin-panel.tsx`, `track-niche-panel.tsx`.
+  **Fix:** one shared `CompletionStatus` component (in `app/ui/`) on the `piece-confirmation.tsx` pattern. It is mounted before the press and carries one short completion sentence, never the result body. `generation-outcome.tsx` drops `role="status"` from the draft wrapper. A test lists the 21 producers, asserts each renders `CompletionStatus` or sits on a written exemption with its reason, and asserts the list equals the grep, two-way. A 22nd producer is red until listed. Live announcement stays unverified (R-133, never a blocker). Proof: AC9.
+- **P10-A2 (item 34's truncation half — MEDIUM). Silent `maxLength` truncation contradicts the repo's recorded rule and its own copy.** The rule is at `app/(product)/trends/paste-panel.tsx:205` ("NO `maxLength` (the onboarding precedent)"). The copy is `run-copy.ts:1043-1044` ("your words are kept exactly as you typed them"), shown beside `entrances.tsx:248`'s `maxLength={ownIdeaMax}`.
+  **The population**, measured with `grep -rn "maxLength=" app --include=*.tsx`, is **13 sites in 7 files**: `results/log-panel.tsx:449`; `studio/entrances.tsx:248`; `studio/feedback-block.tsx:112,304`; `studio/frameworks/framework-panel.tsx:163,192,235,271,283`; `studio/studio-panel.tsx:265,278,289`; `trends/track-niche-panel.tsx:88`.
+  **Fix:** remove every attribute. Each field states its limit as visible text with a live count, and the existing server refusal stays the control: refuse, never truncate. A source scan asserts zero `maxLength=` under `app/**`, with a planted one red. Phase 3's P3-R2 amendment keeps its new textarea in this shape. Proof: AC10.
+- **P10-A3 (item 46's new sub-items — LOW).**
+  - **Meter semantics.** `app/ui/meter.tsx:60` sets `role="meter"`; its value attributes are asserted against WAI-ARIA `meter` (`aria-valuenow`/`min`/`max` and a text alternative), or the role is changed.
+  - **Located at build.** The auto-top-up toggle's touch target, the small sign-in targets, the colour-only "hot" tags and the hand-copied `/for/*` fixture (`app/(marketing)/for/[audience]/page.tsx` is the route) are re-located by the build first step. This addendum did not pin their lines. Each is fixed to WCAG 2.2 2.5.8 (24 px) or 1.4.1, as applicable.
+  - **Deferred.** The mobile drawer's tab order is A11Y-1, accepted as a known defect under R-133 (`todos.md` T-22). It stays there.
+  Proof: AC11.
 
 ## Tasks
 
@@ -35,6 +59,7 @@ Ids carry the Phase 7 requirement they came from.
 | 2 | The mojibake; the two disabled-control reasons; the `<span>` label; the interview error association; the busy pattern | 4–10 (row 4 is the `<span>` label; this range read 5–10 until the 2026-09-21 Codex re-check) |
 | 3 | `scope="col"` across the five tables; the marketing `<main>` landmark and skip link | 11–16 |
 | 4 | The wiring test's Phase-10 assertions (table scope, labels, landmarks, associations) | 17 |
+| 5 | 2026-10-05: the completion-status producers (A1); refuse-not-truncate (A2); meter semantics and the re-located a11y LOWs (A3); the visual spec's `aria-disabled` (P10-R7 amendment) | 6, 18–23 |
 
 ## Files to create / modify
 
@@ -57,6 +82,14 @@ Ids carry the Phase 7 requirement they came from.
 | 15 | `app/(marketing)/landing-sections.tsx` | M | The skip link in `LandingHeader` targeting the layout's `<main>` — Phase 7 row 11 owns this file's marquee control; disjoint edit |
 | 16 | `app/(marketing)/layout.tsx` | N | `<main>` landmark for `/`, `/legal`, `/changelog`, `/for/[audience]` — **new**, no marketing layout exists |
 | 17 | `tests/a11y-wiring.test.tsx` | M (created by Phase 7 row 18 — absent on disk 2026-09-21, so this row edits a file that exists only once Phase 7 has landed) | Extends Phase 7's file: `scope="col"` on every `<th>` in every `<table`-bearing file under `app/` (population derived by scan), the Remove-button names, the `<main>` landmark on all four marketing renders, the `aria-describedby` associations (account ×2, recover-deletion, studio picker, interview fields), zero `â€¦` in the tree, and `auth-form`'s `aria-disabled` |
+| 18 | `app/ui/completion-status.tsx` | N | P10-A1: the shared pre-mounted completion region |
+| 19 | `tests/live-region-producers.test.ts` | N | P10-A1: the 21-producer list equals the `useActionState` grep two-way, and each producer uses `CompletionStatus` or carries its exemption; P10-A2: zero `maxLength=` under `app/**`. A planted 22nd producer and a planted `maxLength` are each red |
+| 20 | the 21 producer files listed in P10-A1 | M | P10-A1: each renders `CompletionStatus`, and `generation-outcome.tsx:764-765` drops the draft-wide `role="status"`. One row: one substitution across a measured list, on the Phase 8 row-9 precedent |
+| 21 | the 7 files carrying the 13 `maxLength` sites listed in P10-A2 | M | P10-A2: attribute removed, visible limit and live count added. One row: one substitution across a measured list |
+| 22 | `app/ui/meter.tsx` | M | P10-A3: `meter` value attributes, or the role changed (`:60`) |
+| 23 | `e2e/visual/visual.spec.ts` | M | P10-R7 amendment: `:328`'s `toBeDisabled()` becomes `aria-disabled` plus focus-stays |
+
+**2026-10-05 addendum: 23 rows (17 + 6), within the 25-row target.** Rows 20 and 21 are measured lists of 21 and 7 files. They are listed in P10-A1/A2 rather than as separate rows, the Phase 8 row-9 precedent for one substitution across a list.
 
 **17 rows; within the 25-row authoring target of `.claude/gate-rules.md` §11.** Sixteen of the seventeen came from Phase 7's rows 17–29 (row 10 is new: the reuse seam for the busy pattern, so row 6 does not re-derive a measured fix); Phase 7's row 27 was split into rows 13–14 so no row names three files. The task→row ranges above are derived from the table.
 
@@ -83,6 +116,9 @@ Ids carry the Phase 7 requirement they came from.
 | AC6 | Every `<th>` in every `<table`-bearing file under `app/` carries `scope="col"` (five files today, population derived by scan; a planted sixth without scope turns it red); each of the four marketing renders contains exactly one `<main>` and a skip link whose `href` targets it | card quotes the scan, the plant and the four landmark assertions |
 | AC7 | `auth-form.tsx`'s two submit controls render `aria-disabled` and `aria-busy` while busy and never `disabled` | card quotes the rendered attributes |
 | AC8 | Entry gate clean | card quotes the four results |
+| AC9 | `live-region-producers.test.ts` is green, and a planted 22nd `useActionState` file is red. `generation-outcome.tsx` has no `role="status"` around the draft. Each producer's completion sentence is a one-line status, never the result body | card quotes the list, the plant and the wrapper diff |
+| AC10 | Zero `maxLength=` under `app/**`, and a planted one is red. An over-limit own idea is refused by the server with the limit named, never truncated. `DEVELOP_IDEA_HELP`'s "kept exactly as you typed them" holds | card quotes the scan, the plant and the refusal |
+| AC11 | `meter.tsx`'s role and value attributes pass the a11y wiring test. Each re-located sub-item is quoted with its line and its fix. A11Y-1 is cited as accepted under R-133 | card quotes each |
 
 ### Requirement → AC mapping
 
@@ -97,6 +133,9 @@ Every requirement has an AC (tabulated 2026-09-21; the generalist found P7-R6's 
 | P10-R5 | AC5 |
 | P10-R6 | AC6 |
 | P10-R7 | AC7 |
+| P10-A1 | AC9 |
+| P10-A2 | AC10 |
+| P10-A3 | AC11 |
 
 ## Definition of done
 

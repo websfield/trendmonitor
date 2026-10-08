@@ -20,9 +20,17 @@ describe("the facade builds the public provider with NO SDK retry", () => {
   const start = source.indexOf("publicSampleSpin: async");
   const facade = source.slice(start, source.indexOf("};", start));
 
-  it("publicSampleSpin exists and constructs createAnthropicProvider with maxRetries: 0", () => {
+  it("publicSampleSpin exists and constructs its provider with maxRetries: 0", () => {
     expect(start).toBeGreaterThan(-1);
-    expect(facade).toMatch(/createAnthropicProvider\(\{[\s\S]*?maxRetries:\s*0[\s\S]*?\}\)/);
+    // Launch L2 (E-30): every door builds through the ONE factory `llmProvider`
+    // (it applies the transport-selection rule), and the public door passes
+    // `maxRetries: 0` to it...
+    expect(facade).toMatch(/llmProvider\(\{[\s\S]*?maxRetries:\s*0[\s\S]*?\}\)/);
+    // ...which hands that value, unchanged, to `createAnthropicProvider`.
+    const factoryStart = source.indexOf("function llmProvider(");
+    const factory = source.slice(factoryStart, source.indexOf("\n}\n", factoryStart));
+    expect(factoryStart).toBeGreaterThan(-1);
+    expect(factory).toMatch(/createAnthropicProvider\(\{[\s\S]*?maxRetries:\s*opts\.maxRetries[\s\S]*?\}\)/);
     // NON-VACUITY: the tenant facades build with the config's retries, and the
     // same regex must NOT match them.
     const tenant = source.slice(source.indexOf("generate: async"), source.indexOf("trackedNicheEntitlementFor: async"));

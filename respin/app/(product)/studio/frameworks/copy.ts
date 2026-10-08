@@ -14,7 +14,8 @@
 // and `next build` would fail naming `dns` rather than the import.
 import type { PrivateFrameworkEntitlement } from "@respin/db";
 import {
-  BILLING_ERROR_COPY,
+  billingErrorCopy,
+  withSupportContactFor,
   type BillingErrorCode,
   type BillingErrorCopy,
 } from "../../billing-errors";
@@ -168,7 +169,8 @@ export function frameworkErrorFor(
   if (!raw) return null;
   const known = (FRAMEWORK_ERROR_CODES as readonly string[]).includes(raw);
   const code = (known ? raw : "unknown") as BillingErrorCode;
-  return FRAMEWORK_OVERRIDES[code] ?? BILLING_ERROR_COPY[code];
+  const override = FRAMEWORK_OVERRIDES[code];
+  return override === undefined ? billingErrorCopy(code) : withSupportContactFor(code, override);
 }
 
 /** Every code this screen can render, with its words. Resolved server-side. */

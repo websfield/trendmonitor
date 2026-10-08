@@ -6,7 +6,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { buttonClass } from "../../../ui/button";
-import { AUDIENCES, getAudience } from "../../audiences";
+import { getAudience } from "../../audiences";
 import {
   ClosingBand,
   LandingFooter,
@@ -17,12 +17,13 @@ import {
   StepsBand,
 } from "../../landing-sections";
 import { SampleSpinOrMockup } from "../../sample-spin/sample-spin-section";
+import { landingPricing } from "../../pricing-load";
 
-export const dynamicParams = false;
-
-export function generateStaticParams() {
-  return AUDIENCES.map((a) => ({ audience: a.slug }));
-}
+// RENDERED PER REQUEST (audit P6-A3, R-175): the shared pricing section reads
+// the ACTIVE config, so this route can no longer be prerendered from the seed.
+// An unknown slug is still a 404, by `notFound()` below rather than by a
+// static params list.
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
   params,
@@ -41,6 +42,7 @@ export default async function AudienceLandingPage({
 }) {
   const a = getAudience((await params).audience);
   if (!a) notFound();
+  const pricing = await landingPricing();
 
   return (
     <div className="landing">
@@ -67,9 +69,9 @@ export default async function AudienceLandingPage({
       <SampleSpinOrMockup demo={a.demo} />
 
       <MarqueeTags />
-      <StepsBand />
+      <StepsBand terms={pricing.terms} />
       <RefusesBand />
-      <PricingSection />
+      <PricingSection pricing={pricing} />
       <ClosingBand />
       <LandingFooter />
     </div>

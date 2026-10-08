@@ -32,6 +32,7 @@ import {
   priceOf,
   respinCredits,
 } from "@respin/credits/app-server";
+import { displayBalanceFor } from "../../display-balance";
 import { getActiveConfigServer } from "@respin/config/app-server";
 import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
 import { AccessRefusal } from "../../access-refusal";
@@ -179,8 +180,11 @@ export default async function FirstIdeasPage(props: {
 
   let balance: number | null = null;
   try {
-    const view = await respinCredits.getBalance(scope.workspaceId);
-    balance = view.balance;
+    // Non-blocking (audit Phase 8, P8-R1). A SETTLING read states no balance:
+    // `firstIdeasCostSentence` presents its number as final, so the committed
+    // fold is left unsaid rather than shown as settled.
+    const view = await displayBalanceFor(scope.workspaceId);
+    balance = view.settling ? null : view.balance;
   } catch (err) {
     rethrowNextControlFlow(err);
     logRefusal("[first-ideas] balance unavailable", err);
@@ -204,6 +208,17 @@ export default async function FirstIdeasPage(props: {
             ? { reason: FIRST_IDEAS_NEEDS_BRAIN }
             : null;
 
+  // AUDIT P6-R6 (register item 8): HOW MANY RESULTS THIS CREATOR HAS LOGGED,
+  // through the scoped count. `null` on a failed read renders "could not
+  // read", never the zero sentence.
+  let resultCount: number | null = null;
+  try {
+    resultCount = await respinDb.countResults(scope, profile.id);
+  } catch (err) {
+    rethrowNextControlFlow(err);
+    logRefusal("[first-ideas] result count unavailable", err);
+  }
+
   const refusalCopy = studioRefusalCopy();
 
   return (
@@ -216,6 +231,13 @@ export default async function FirstIdeasPage(props: {
         action: firstIdeasAction.bind(null, profile.id),
         costSentence: firstIdeasCostSentence(cost, balance),
         block,
+        resultCount,
+        // WHETHER THIS MODE READS RECENT WORK, from the offer's own flag
+        // (`CREATIVE_FORM_MODES` behind `modeOffers`), so this page names no
+        // mode list. An offer the plan excludes still names it: the sentence
+        // describes the mode, and the block above says it cannot be pressed.
+        historyModeLabels:
+          offer !== undefined && offer.takesCreativeForm ? [offer.label] : [],
         refusalCopy,
         fallbackCopy: refusalCopy.unknown,
       }}

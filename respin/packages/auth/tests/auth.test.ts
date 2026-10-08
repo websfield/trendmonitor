@@ -229,3 +229,30 @@ describe("shared password authority ceiling", () => {
     expect(refused.status).toBe(400);
   });
 });
+
+describe("R-166: account linking and email change are pinned OFF", () => {
+  it("the built options carry both pins, and a real change-email request on a live session is refused", async () => {
+    const db = await createTestDb();
+    const auth = createAuth(db, {
+      baseURL: "http://localhost:3000",
+      secret: "pin-test-secret-not-a-real-one",
+      nodeEnv: "test",
+    });
+    expect(auth.options.account?.accountLinking?.allowDifferentEmails).toBe(false);
+    expect(auth.options.user?.changeEmail?.enabled).toBe(false);
+    const signedUp = await auth.api.signUpEmail({
+      body: { name: "Pinned", email: "pinned@test.dev", password: "correct-horse-battery" },
+      asResponse: true,
+    });
+    expect(signedUp.ok).toBe(true);
+    const cookie = signedUp.headers.get("set-cookie")!.split(";")[0]!;
+    const changed = await auth.api.changeEmail({
+      body: { newEmail: "someone-else@test.dev" },
+      headers: new Headers({ cookie }),
+      asResponse: true,
+    });
+    expect(changed.ok).toBe(false);
+    const [row] = await db.select({ email: schema.user.email }).from(schema.user);
+    expect(row?.email).toBe("pinned@test.dev");
+  });
+});

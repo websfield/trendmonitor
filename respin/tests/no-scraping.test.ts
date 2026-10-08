@@ -19,6 +19,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { originPinnedFetch } from "@respin/db";
+import { activationEmitterPorts } from "../worker/activation-emitter";
 import { PRODUCTION_ROOTS, sourceFilesUnder } from "./support/source-files";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -106,6 +107,61 @@ const OUTBOUND_ALLOWLIST: Readonly<Record<string, string>> = {
     "SDK-BORNE: endpoint guarded https-or-loopback at its construction. The assertion is the import boundary below",
 };
 
+/**
+ * THE URL EACH FETCH-SHAPED SITE MAY BE CALLED WITH — its first argument, read
+ * from the call in the source rather than described in a sentence (P1-R2's
+ * per-site `trend_sources.source_url` assertion). Each is a constant, a
+ * template over constants, a value built by named functions whose inputs are
+ * env, or — for the two wrappers — the `input` the wrapper has just compared
+ * to its pinned origin. A planted `fetch(row.sourceUrl)` in an ALLOWLISTED
+ * file is therefore as red as one in a new file.
+ */
+const FIRST_ARGUMENT: Readonly<Record<string, string>> = {
+  "packages/llm/src/anthropic.ts underlying(": "input",
+  "packages/db/src/telemetry-sinks.ts underlying(": "input",
+  "packages/db/src/telemetry-sinks.ts fetchImpl(": "payload.url",
+  "packages/auth/src/resend-mail.ts doFetch(": "`${RESEND_ORIGIN}${RESEND_SEND_PATH}`",
+  "app/(marketing)/sample-spin/sample-spin-panel.tsx fetch(": '"/api/demo"',
+};
+
+/**
+ * The first argument of the call whose `(` is at `open`, up to the first
+ * top-level comma or the closing paren. Strings and template literals are
+ * skipped whole, so a `,` or `)` inside one is text, not syntax.
+ */
+function firstArgumentAt(code: string, open: number): string {
+  let depth = 0;
+  for (let i = open + 1; i < code.length; i += 1) {
+    const c = code[i];
+    if (c === '"' || c === "'" || c === "`") {
+      for (i += 1; i < code.length && code[i] !== c; i += 1) {
+        if (code[i] === "\\") i += 1;
+      }
+      continue;
+    }
+    if (c === "(" || c === "[" || c === "{") depth += 1;
+    else if (c === ")" || c === "]" || c === "}") {
+      if (depth === 0) return code.slice(open + 1, i).trim();
+      depth -= 1;
+    } else if (c === "," && depth === 0) return code.slice(open + 1, i).trim();
+  }
+  return code.slice(open + 1).trim();
+}
+
+/** Every fetch-shaped call's first argument, as `<file> <callee>( <argument>`. */
+function outboundFirstArguments(sources: readonly { name: string; text: string }[]): string[] {
+  const found: string[] = [];
+  for (const { name, text } of sources) {
+    const code = blankComments(text);
+    OUTBOUND_CALL.lastIndex = 0;
+    for (let m = OUTBOUND_CALL.exec(code); m !== null; m = OUTBOUND_CALL.exec(code)) {
+      const site = `${name} ${m[0].replace(/\s+/g, " ").trim()}`;
+      found.push(`${site} ${firstArgumentAt(code, OUTBOUND_CALL.lastIndex - 1)}`);
+    }
+  }
+  return found.sort();
+}
+
 /** The modules whose outbound HTTP is SDK-borne, and therefore proved by imports. */
 const SDK_BORNE = [
   "packages/credits/src/stripe/adapter.ts",
@@ -129,6 +185,26 @@ function outboundSites(sources: readonly { name: string; text: string }[]): stri
 
 const FORBIDDEN = [
   { id: "scraping dependency", pattern: /\b(?:puppeteer|playwright|cheerio|selenium|scrapy|yt-dlp)\b/i, specimen: 'import "puppeteer";' },
+  // GATE M3: THE HTTP CLIENTS THE OUTBOUND ALLOWLIST'S CALL SHAPE CANNOT SEE.
+  // `undici`, `got` and `axios` make requests through their own callees
+  // (`request(`, `got(`, `axios.get(`), so a client library is refused by
+  // NAME — as an import, a require or a manifest dependency — rather than
+  // trusted to route through an allowlisted `fetch`. Measured 2026-10-05:
+  // none is imported or declared anywhere in the scanned population (the one
+  // `undici` in the tree is prose in a comment, which the blanking removes).
+  {
+    id: "HTTP client library",
+    pattern: /(?:\bfrom\s*["'](?:undici|got|axios)(?:\/[^"']*)?["']|\b(?:import|require)\s*\(\s*["'](?:undici|got|axios)(?:\/[^"']*)?["']\s*\)|\bimport\s*["'](?:undici|got|axios)["']|^(?:undici|got|axios)$)/m,
+    specimen: 'import { request } from "undici";',
+  },
+  // ...and Node's own: an import of `node:http`/`node:https` (or the bare
+  // `http`/`https`) is how a raw `request(` or `get(` reaches the network
+  // without any callee token the allowlist scan reads.
+  {
+    id: "node http module",
+    pattern: /(?:\bfrom\s*["'](?:node:)?https?["']|\b(?:import|require)\s*\(\s*["'](?:node:)?https?["']\s*\))/,
+    specimen: 'import { request } from "node:https";',
+  },
   { id: "caption endpoint", pattern: /\/youtube\/v3\/captions\b/i, specimen: 'const path = "/youtube/v3/captions?key=fixture";' },
   { id: "media download endpoint", pattern: /\/(?:media|download)\b/i, specimen: 'const path = "/media/download?key=fixture";' },
 ] as const;
@@ -145,7 +221,15 @@ const FORBIDDEN = [
  * it from four hand-listed trees onto the shared root list — they sit at the
  * workspace root, which no walked tree covered.
  */
-const RUNNER_CONFIGS = new Set(["playwright.config.ts", "playwright.visual.config.ts"]);
+const RUNNER_CONFIGS = new Set([
+  "playwright.config.ts",
+  "playwright.visual.config.ts",
+  // Launch L2 (E-30): the Free actual-app journey's own runner config (its own
+  // dev server, port and isolated database). A local verification tool like the
+  // other two, added BY NAME — the list is the population (CLAUDE.md
+  // non-negotiable 7), so a look-alike file is still scanned.
+  "playwright.l2.config.ts",
+]);
 
 /**
  * Source with its comments blanked — the scan reads CODE.
@@ -227,17 +311,56 @@ describe("R1/R3: no scraper or caption/media download route in any package, the 
     expect(names.some((name) => /\.test\.tsx?$/.test(name))).toBe(false);
     expect(names.some((name) => name.split("/").includes("tests"))).toBe(false);
     // A shrinking population is a weakened guard: the count is asserted, not
-    // merely logged. RE-MEASURED 2026-09-21 on the shared roots: 175 packages
-    // + 137 app + 20 worker + 8 root-level + 5 scripts + 3 lib = 348 source
-    // files, + 9 manifests (root + 8 packages). The previous figure was 223
-    // over four hand-listed trees.
-    expect(sourceFiles.length).toBeGreaterThanOrEqual(340);
+    // merely logged. RE-MEASURED 2026-10-05 (P1-R2, AC6) on the shared roots:
+    // 182 packages + 147 app + 20 worker + 9 root-level + 5 scripts + 3 lib =
+    // 366 source files, + 9 manifests (root + 8 packages). The floor IS the
+    // measurement: a file leaving the population is red until somebody
+    // re-measures and records why. Earlier figures: 348 on 2026-09-21 (the
+    // first shared-root count), 223 over four hand-listed trees before it.
+    expect(sourceFiles.length).toBeGreaterThanOrEqual(366);
     expect(manifests).toHaveLength(1 + PACKAGES.length);
     expect(sources.map((source) => source.text).join("\n").length).toBeGreaterThan(100_000);
   });
 
   it.each(FORBIDDEN)("NON-VACUITY: finds planted $id in a source file", ({ pattern, specimen }) => {
     expect(offenders(pattern, [{ name: "planted.ts", text: specimen }])).toEqual(["planted.ts"]);
+  });
+
+  it("NON-VACUITY (gate M3): one planted specimen per HTTP client NAME and per node module spelling", () => {
+    const client = FORBIDDEN.find((f) => f.id === "HTTP client library")!;
+    const node = FORBIDDEN.find((f) => f.id === "node http module")!;
+    for (const text of [
+      'import { request } from "undici";',
+      'import got from "got";',
+      'import axios from "axios";',
+      'const { fetch } = require("undici");',
+      'const got = await import("got");',
+      'import "axios";',
+    ]) {
+      expect(offenders(client.pattern, [{ name: "worker/plant.ts", text }]), text).toEqual(["worker/plant.ts"]);
+    }
+    // ...and in a manifest's dependency-name list, the derived shape the real
+    // manifests are scanned in.
+    for (const name of ["undici", "got", "axios"]) {
+      expect(
+        offenders(client.pattern, [{ name: "plant (dependency names)", text: dependencyNamesOf({ dependencies: { next: "^15", [name]: "^1" } }) }]),
+        name
+      ).toEqual(["plant (dependency names)"]);
+    }
+    for (const text of [
+      'import { request } from "node:https";',
+      'import { get } from "node:http";',
+      'import https from "https";',
+      'const http = require("http");',
+      'const { request } = await import("node:https");',
+    ]) {
+      expect(offenders(node.pattern, [{ name: "worker/plant.ts", text }]), text).toEqual(["worker/plant.ts"]);
+    }
+    // NOT the names inside longer words or in prose.
+    for (const text of ["const gotten = 1;", "// undici raises on a closed stream", 'import { x } from "./http-status";']) {
+      expect(offenders(client.pattern, [{ name: "a.ts", text }]), text).toEqual([]);
+      expect(offenders(node.pattern, [{ name: "a.ts", text }]), text).toEqual([]);
+    }
   });
 
   it("R-141: every outbound call site is on the allowlist, and every entry is still reached", () => {
@@ -249,6 +372,37 @@ describe("R1/R3: no scraper or caption/media download route in any package, the 
     for (const [site, reason] of Object.entries(OUTBOUND_ALLOWLIST)) {
       expect(reason.length, `${site} is allowlisted with no stated origin`).toBeGreaterThan(20);
     }
+  });
+
+  it("R-141: each fetch-shaped site is called with its pinned argument, and nothing else", () => {
+    // PER SITE, READ FROM THE CALL. The two-way list above proves WHICH sites
+    // exist; this proves WHAT each one fetches — every call in every listed
+    // file, so a second `fetch(...)` with a row's URL in an allowlisted file
+    // is red here even though its `<file> <callee>(` key is already listed.
+    const measured = outboundFirstArguments(sources.filter(({ name }) => !name.endsWith("(dependency names)")));
+    const expected = Object.entries(FIRST_ARGUMENT)
+      .map(([site, argument]) => `${site} ${argument}`)
+      .sort();
+    expect(measured).toEqual(expected);
+    // Every fetch-shaped allowlist entry carries its argument; only the two
+    // SDK constructors are proved by imports instead.
+    expect(Object.keys(FIRST_ARGUMENT).sort()).toEqual(
+      Object.keys(OUTBOUND_ALLOWLIST).filter((site) => !site.includes(" new ")).sort()
+    );
+  });
+
+  it("NON-VACUITY: a submitted URL fetched inside an ALLOWLISTED file is red, and the reader skips strings", () => {
+    const resend = sources.find(({ name }) => name === "packages/auth/src/resend-mail.ts");
+    expect(resend, "the mail port is not in the scanned population").toBeDefined();
+    const planted = `${resend!.text}\nexport const leak = (row: { sourceUrl: string }) => doFetch(row.sourceUrl, {});\n`;
+    expect(outboundFirstArguments([{ name: "packages/auth/src/resend-mail.ts", text: planted }])).toContain(
+      "packages/auth/src/resend-mail.ts doFetch( row.sourceUrl"
+    );
+    // The argument reader stops at the top-level comma, not at one inside a
+    // string or a nested call.
+    expect(firstArgumentAt('fetch("a,b)", { x: f(1, 2) })', 5)).toBe('"a,b)"');
+    expect(firstArgumentAt("fetch(build(a, b), init)", 5)).toBe("build(a, b)");
+    expect(firstArgumentAt("fetch(`${A}${B}`)", 5)).toBe("`${A}${B}`");
   });
 
   it("R-141: SDK-borne outbound modules cannot reach a submitted URL", () => {
@@ -287,6 +441,51 @@ describe("R1/R3: no scraper or caption/media download route in any package, the 
     }
     // A call named in PROSE is not a call site.
     expect(outboundSites([{ name: "worker/planted.ts", text: "// await fetch(row.sourceUrl);\n" }])).toEqual([]);
+  });
+
+  /**
+   * GATE L2: EVERY `sendOutbound` CALLER, as a list, each with how it hands
+   * the sender an origin-pinned fetch. `sendOutbound` posts `payload.url`;
+   * the pin is what makes "a submitted URL is never fetched" structural for
+   * it, so a third caller with a bare `fetch` must be a red test.
+   */
+  const SEND_OUTBOUND_CALLERS: Readonly<Record<string, RegExp>> = {
+    // `fetchImpl` is `originPinnedFetch(dsn.envelopeUrl, …)` whenever a DSN
+    // exists; with none, `captureError` returns "disabled" before the send.
+    "lib/telemetry.ts": /originPinnedFetch\(dsn\.envelopeUrl,/,
+    // `ports.fetchImpl` is built by `activationEmitterPorts` as
+    // `originPinnedFetch(sink.host, …)`; with no sink nothing is sent.
+    "worker/activation-emitter.ts": /fetchImpl:\s*sink === null \? fetchImpl : originPinnedFetch\(sink\.host, fetchImpl\)/,
+  };
+
+  it("L2: every sendOutbound caller is listed, and each passes an origin-pinned fetch", async () => {
+    const callers = sources
+      .filter(({ name }) => !name.endsWith("(dependency names)"))
+      .filter(({ name }) => name !== "packages/db/src/telemetry-sinks.ts")
+      .filter(({ text }) => /\bsendOutbound\s*\(/.test(blankComments(text)))
+      .map(({ name }) => name)
+      .sort();
+    expect(callers).toEqual(Object.keys(SEND_OUTBOUND_CALLERS).sort());
+    for (const [file, pinned] of Object.entries(SEND_OUTBOUND_CALLERS)) {
+      const code = blankComments(sources.find(({ name }) => name === file)!.text);
+      expect(code, `${file} builds no origin-pinned fetch for sendOutbound`).toMatch(pinned);
+    }
+    // BEHAVIOUR for the worker's caller, not only text: the fetch its ports
+    // hand `sendOutbound` refuses any origin but the configured sink's.
+    let reached = 0;
+    const ports = activationEmitterPorts(
+      null as never,
+      null as never,
+      { POSTHOG_HOST: "https://eu.posthog.example", POSTHOG_PROJECT_KEY: "phc_test" },
+      async () => {
+        reached += 1;
+        return new Response("");
+      }
+    );
+    await expect(ports.fetchImpl("https://evil.example/row-source-url")).rejects.toThrow(/may only reach/);
+    expect(reached).toBe(0);
+    await expect(ports.fetchImpl("https://eu.posthog.example/capture/")).resolves.toBeInstanceOf(Response);
+    expect(reached).toBe(1);
   });
 
   it("R-141: the origin-pinned wrapper refuses another origin before any fetch", async () => {

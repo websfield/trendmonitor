@@ -98,6 +98,15 @@ export type MetricDirection = "higher_is_better" | "lower_is_better";
 export type ComparisonResultInput = {
   id: string;
   profileId: string;
+  /**
+   * THE POST THIS OBSERVATION IS OF (R-170, audit Phase 2 P2-A1). A cohort's
+   * n counts DISTINCT POSTS, not observation rows: three logs of one draft
+   * over nested windows are one post observed three times, and counting them
+   * as three is how a single post reached "n = 3". `null` for a result that
+   * names no draft — each such row is its own post, because nothing
+   * identifies two of them as the same one.
+   */
+  generationId: string | null;
   platform: string;
   audienceClass: AudienceClass;
   metricKey: string;

@@ -1,7 +1,24 @@
 # Phase 9 — Operability truth and the dependency floor
 
-Depends on: Phases 1, 3, 4, 5, 8, 11 (the ORM bump is the last money-touching change, so its gate re-runs nothing — Phase 8 edits `packages/credits/src/{clock,balance,stripe/customers}.ts` and Phase 11, split from 8, edits `packages/credits/src/mode-access.ts` under its own billing full gate, so both precede it; Phase 1 for the shared source walker row 1 consumes. **Not Phase 10:** it edits only `app/**` a11y attributes and a marketing layout, touches no money path, and this phase consumes nothing it produces). Owner: `respin-engineer`. Est. 5–7 h.
+Depends on: Phases 1, 3, 4, 5, 8, 11 (the ORM bump is the last money-touching change, so its gate re-runs nothing — Phase 8 edits `packages/credits/src/{clock,balance,stripe/customers}.ts` and Phase 11, split from 8, edits `packages/credits/src/mode-access.ts` under its own billing full gate, so both precede it; Phase 1 for the shared source walker row 1 consumes. **Not Phase 10:** it edits only `app/**` a11y attributes and a marketing layout, touches no money path, and this phase consumes nothing it produces). Owner: `respin-engineer`. Est. 5–7 h. **Amended 2026-10-05: this file now holds Phase 9a (depends on none; runs second; est. 5–7 h) and Phase 9 (the dependencies above; runs last; est. 4–6 h). Both are estimates.** See the split section below.
 **Read first:** the codebase review §4's scope boundary — **deploy-side closure is not in this phase**, and §2's supply-chain paragraph (one bump answers both the advisory and the unmet peer).
+
+## 2026-10-05 split — Phase 9a runs second; the rest of Phase 9 stays last
+
+The 2026-10-05 register (`docs/progress/audit/2026-10-05.md`) ranks the restore drill **CRITICAL** (item 3). Its PASS was shown to be vacuous by execution, and it says to "pull the drill fixes forward of the rest". It also says the dependency-exception file's review trigger fired seven weeks ago (item 13). Neither needs anything a money phase builds. Only the ORM bump has to stay the last money-touching change. So this file now holds **two phases, run at two points in the serial order:**
+
+- **Phase 9a — the drill, the env authority and the gate witnesses. Runs second, after Phase 1. Depends on: none.**
+  - **Requirements.** P9-R3 and P9-R4 (moved unchanged), P9-R8 (T-23/T-24; register item 32 says these rows are owed now), P9-R10 and P9-R11 (moved unchanged), and **P9-R9's re-dating clause only.** `SECURITY-EXCEPTIONS.md` is re-dated now, records the missed M2 trigger as missed, and gets a new trigger: Phase 9's bump landing. The `drizzle-orm` row stays until that bump. Plus P9-A1, P9-A2, P9-A3, P9-A4 and P9-A7 below.
+  - **Rows.** 2 (the drill section and env block only), 3 (MinIO, the digest pin and the loopback bind), 4–7, 13, 14, 16 and 22 (the `license` field only), 18 (re-date only), 19–21, and 23–31.
+  - **ACs.** AC1 (the two recovery scripts' invocations only), AC3, AC8, AC9, AC11, AC13–AC16 and AC19.
+  - **Est. 5–7 h** (an estimate).
+  - **Gate: Respin brain tenancy, separate full gate.** The expiry refusal and the journal verification are the erasure guarantee's last line (REQ-A04). Billing is **not** selected: no money-path code changes, and the money-table check is a read-only `count(*)` inside an ops script. The card says so, so the billing reviewer can contest it.
+  - **Why a split and not a move into Phase 1.** Phase 1 is mid-gate with unreviewed repairs and sits at 42 rows. Moving these 22 rows there would make it about 64 rows under a gate whose selection (compliance, learning, tenancy) does not read shell scripts or CI. The split reuses this file's requirement text by reference. It adds one gate run and no new document.
+- **Phase 9 (the remainder) — runs last, unchanged in position. It depends on Phase 9a as well as on the phases below.** The two share rows 2, 3, 16 and 18. 9's bump removes the `drizzle-orm` row that 9a re-dated. 9's `runbook-counts.test.ts` (row 1) counts the runbook sections and the `docker-compose.yml` services 9a adds. So 9 starts only after 9a's gate reports.
+  - **Requirements.** P9-R1, P9-R2, P9-R5, P9-R6, P9-R7, P9-R9 (the bump, the `sharp`/`postcss` decision, the removal of the `drizzle-orm` row), P9-A5 and P9-A6.
+  - **Rows.** 1, 2 (everything but the drill section), 3 (the `:15` count only), 8–12, 15–17 (the version, the overrides and P9-A5/A6's root scripts), 18 (the row removal), and 32–34.
+  - **ACs.** AC1 (the rest), AC2, AC4–AC7, AC10, AC12, AC17 and AC18.
+  - **Gates** as written below.
 
 ## Objective
 
@@ -42,6 +59,83 @@ Two verdicts, both full gates. The bump is the reason both fire; the document wo
 - **P9-R9 (REG-42/43, HIGH).** `drizzle-orm` 0.44.7 → `^0.45.2`. This is simultaneously `GHSA-gpj5-g38j-94v9`'s fix and the satisfaction of `better-auth@1.6.28`'s declared peer — the auth vendor's tested range does not currently include the ORM version the auth tables run on. It lands as **its own commit** with the full billing and tenancy gates and the live-Postgres concurrency run, exactly as `SECURITY-EXCEPTIONS.md` prescribes. `sharp` and `postcss`: decide `overrides` or accept — the "fix via a `next` bump" rationale is stale, because the locked `next@15.5.23` pins both. `SECURITY-EXCEPTIONS.md` is re-dated with the missed M2 trigger **recorded as missed**.
 - **P9-R10 (REG-43's second/third, MEDIUM).** A `schedule:` on the audit workflow, so a newly published advisory is not invisible until someone next edits `respin/`. The product's code gate SHA-pins its three third-party actions and sets `permissions: contents: read`, as the repo's other two workflows already do. **Who sees a scheduled failure (generalist pre-mortem):** a scheduled run has no PR author, so the route is GitHub's own workflow-failure notification, which for `schedule:` runs goes to the user who last committed the workflow file — the workflow's comment names that (the repo owner keeps that commit) and the failing step prints the audit's JSON summary into the job log so the notification links to the cause; CI-schedule paging beyond GitHub's notification is deploy-side and joins T-24.
 - **P9-R11 (REG-44, LOW).** `respin.yml:106`'s exception comment names `ignoreCves` while the mechanism in use is `ignoreGhsas` — following the workflow's own instruction produces a silently ineffective key. Plus three pins, each with its own AC (AC11): the auth-schema generator is an unpinned `pnpm dlx` that writes into `packages/db/src/auth-schema.ts` (row 20 pins it to the installed `better-auth` version); `postgres:17-alpine` is unpinned by digest (row 3 pins `image: postgres:17-alpine@sha256:…` with the digest quoted from `docker image inspect`); no manifest carries a `license` field (the workspace-root and the eight package manifests under `respin/packages/` gain `"license": "UNLICENSED"` — private, not a grant — row 16).
+  - **Amendment 2026-10-05 (register item 13).** The comment now sits at `respin.yml:113` and the blocking audit step at `:117-118`. `SECURITY-EXCEPTIONS.md:41-42` still names "M2 entry" as the review trigger. P9-A3 adds the witness this requirement lacked.
+
+### 2026-10-05 register additions
+
+Homed here from `docs/progress/audit/2026-10-05.md`. Every `file:line` below was re-read on 2026-10-05. Each requirement names its half (9a or 9), per the split at the top of this file.
+
+- **P9-A1 (item 3 b/c, CRITICAL; and item 44's journal-listing LOW) — 9a. The drill's PASS has to mean something.** Four defects:
+  - (b) **The argv guard can skip `main()` entirely.** The guard at `scripts/restore-verify.ts:269` compares `import.meta.url` to `process.argv[1]`. Any percent-encodable character in the checkout path (a space) makes it skip `main()`. The process exits 0, and `restore-drill.sh:278-279` reads exit 0 as "verified".
+  - (c) **The money tables are not checked.** The drill's header promises to refuse unless "the money tables actually came back with rows in them" (`restore-drill.sh:5-7`). It counts `subscriptions`, `credit_ledger` and `stripe_events` (`:181-184`) but raises only on an empty `config_versions` (`:189-194`).
+  - **An expired backup is not refused.** The manifest's `expiresAt` is printed (`:82`) and never compared, so a backup taken before a deletion request un-deletes the erased identity with nothing to detect it.
+  - **Unreadable journal keys vanish.** `listJournalOperationIds` silently drops keys it cannot parse (`packages/db/src/deletion-journal-restore.ts:506-509`).
+
+  **Fix.**
+  - The guard compares resolved file paths (`fileURLToPath(import.meta.url)` against `path.resolve(process.argv[1])`).
+  - The drill requires the verifier's printed success marker, as well as a zero exit.
+  - The drill raises unless `subscriptions`, `credit_ledger` and `stripe_events` are non-empty.
+  - **`--allow-empty-money` is bounded, not an escape.** It is accepted **only in local-drill mode**: the journal endpoint is the loopback MinIO (`RESPIN_DELETION_JOURNAL_ENDPOINT` is `http://127.0.0.1:9000`, P9-R4's env block) **and** the backup file's manifest records a loopback source host. That needs a new `sourceHost` field: the database URL's host only, never a credential. `backup.sh` writes it into the manifest heredoc (`scripts/backup.sh:190-201`, which today records no host), so it lands with P9-A2's row 6. In any other mode the flag is a refusal naming why. When accepted it prints `EMPTY-MONEY-ALLOWED (local drill)` as the transcript's first and last line. T-23's closure proof refuses any transcript carrying that marker (master deferral ledger), so a production-shaped PASS can never rest on it.
+  - The drill refuses a manifest whose `expiresAt` is earlier than now, with the way forward printed: take a fresh backup.
+  - The listing counts unparseable keys and the verifier fails on a non-zero count.
+
+  Proof: AC13.
+- **P9-A2 (item 3 d, CRITICAL — the backup half) — 9a.** Five defects:
+  - **A null tombstone manifest is reported as success.** `backup.sh` records `activeTombstones=null` (`scripts/backup.sh:177-181`), then still exits 0 with a health line (`:289-291`). The drill refuses that manifest (`restore-drill.sh:78-80`), so the outage is found only at restore.
+  - **`psql` is used but never checked.** The tool preflight (`backup.sh:61-68`) checks `pg_dump`, `gpg` and `node`, but not `psql`, which `:169` uses.
+  - **A failed dump skips the expiry prune.** Under `set -euo pipefail` (`:26`), a failing `pg_dump` (`:117`) exits before the prune at `:227`, so expired backups that hold erased data outlive REQ-A04's bound for as long as dumps keep failing.
+  - **A moved backup reads as corrupt.** The checksum records the path as given (`sha256sum "$DUMP"`, `:128`).
+  - **The migrate remedy cannot authenticate.** It prints a password-stripped URL (`restore-drill.sh:252`, `DATABASE_URL=${TARGET_URL_SAFE}`). And `docs/operator/aws.md:151`'s drill command sets `RESTORE_SERVING_DISABLED=1` where the script requires `confirmed`.
+
+  **Fix.**
+  - A null manifest exits non-zero.
+  - `psql` joins the preflight.
+  - The prune runs from an `EXIT` trap, so it runs on every exit path.
+  - The checksum is written relative to the backup directory and verified from it.
+  - The remedy prints the command with the credential **variable** named, never a value.
+  - `aws.md:151` is corrected and pinned by `tests/shell-scripts.test.ts`.
+
+  Proof: AC14.
+- **P9-A3 (item 13, HIGH; and item 38's CI half) — 9a. The audit gate gets a witness.**
+  - **The gate has no witness.** Deleting the blocking step (`.github/workflows/respin.yml:117-118`) leaves the suite green. `respin.yml` is outside the SHA-pin and `permissions` rules that `tests/journeys-workflow-triggers.test.ts:479-494` applies to the visual workflow.
+  - **The blocking step does not always run.** It is the last step, so a red earlier step skips it.
+  - **The job holding the key is unaudited for dev dependencies.** The journeys job runs playwright and `tsx` with `ANTHROPIC_API_KEY` (`respin-journeys.yml:46`), but the blocking audit is `--prod`.
+
+  **Fix.** The workflow test is extended to `respin.yml` and asserts:
+  - the blocking audit step is present, with `if: always()`;
+  - every action is SHA-pinned, and `permissions: contents: read` is set;
+  - the comment names `ignoreGhsas`;
+  - every id in `package.json`'s `pnpm.auditConfig.ignoreGhsas` (`:16`) has a `SECURITY-EXCEPTIONS.md` row with an unexpired trigger.
+
+  Each of these is planted red once. `respin-journeys.yml` gains a dev-scope `pnpm audit --audit-level high` before the key is issued. `SECURITY-EXCEPTIONS.md` is re-dated now, recording the missed trigger as missed. Proof: AC15.
+- **P9-A4 (item 14, HIGH; and item 44's `env.example` LOW) — 9a. `env.example` is the env authority, asserted against the tree.** The register over-claims part of item 14, measured 2026-10-05:
+  - `respin/env.example` **does** carry `GOOGLE_CLIENT_ID`/`_SECRET` (`RUNBOOK.md` does not; P9-R7 adds them there).
+  - `ANTHROPIC_BASE_URL` is **deliberately ignored** (`packages/llm/src/anthropic.ts:43`; pinned by `packages/llm/tests/adapter.test.ts:84`).
+  - `RESPIN_DB_URI`, `RESPIN_MAINT_URI` and `RESPIN_DRILL_DB` are script-internal temporaries (`backup.sh:99,111`, `restore-drill.sh:100`), not operator inputs.
+
+  The real gap, measured with `grep -rhoE "process\.env\.[A-Z_][A-Z0-9_]*"` over `app`, `packages/*/src`, `worker`, `lib`, `scripts`, `instrumentation*.ts` and `middleware.ts`: 21 names, of which `RESPIN_LLM_TRANSPORT`, `RESPIN_ENV_FILE`, `NEXT_RUNTIME`, `NODE_ENV` and the three temporaries are absent from `env.example`. Separately, `RESPIN_SEED_FORCE` is read through `env.` at `packages/db/src/seed.ts:35`, and the scripts' `BACKUP_*`/`MAINTENANCE_URL` inputs are absent too. **Fix:** `env.example` lists every operator input. A new test derives the read set with the grep above plus the listed indirect readers (`seed.ts`, `worker/env.ts`, the shell scripts' required-variable checks). It asserts each name is in `env.example` or on a written exemption list with its reason: runtime-set, script-internal, or deliberately ignored. A new reader is red until listed (rule 7). The off-host **locations** of restore-critical secrets stay in T-23. Proof: AC16.
+- **P9-A7 (item 47's headers and bind — LOW) — 9a.**
+  - **No security headers.** `next.config.ts` sets none (no `headers` key), so the public Sample Spin can be framed.
+  - **Postgres listens on every interface.** The local Postgres port is published as `"5435:5432"` (`docker-compose.yml:19-20`).
+
+  **Fix:** `headers()` sets `Content-Security-Policy` with `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `Strict-Transport-Security` (production only), `Referrer-Policy` and `X-Content-Type-Options`; the port binds to `127.0.0.1:5435:5432`. The rest of item 47 is homed elsewhere:
+  - the untrusted-input clause → P8-R2;
+  - the framework summary → P8-A4;
+  - sign-up credit farming → P4-A8;
+  - `RESPIN_TRUSTED_PROXIES` honesty → the master's deferral ledger, since it needs the live topology.
+
+  Proof: AC19.
+- **P9-A5 (item 31's two documentation halves — MEDIUM) — 9.** `worker/main.ts:69-75` and the `system_worker_health` reader are P9-R5 and P9-R6, and paging is T-24. Two halves remain:
+  - **No worker recipe.** No inline-env `worker:start` recipe exists anywhere.
+  - **The README's billing walk dead-ends.** The walk (`respin/README.md:110` onward) ends at a subscribe the seeded tier-checkout rollout does not open (`0049_narrow_mentallo.sql:80` seeds the row), and the command that opens it is neither a root script nor documented.
+
+  **Fix:** `RUNBOOK.md` gets the inline-env `worker:start` recipe. The README names the rollout command, and it becomes a root `pnpm` script beside `stripe:auto-topup:rollout` (`package.json:36`); or, if the build finds the rollout must stay closed, the README stops at the step that works and says why. Proof: AC17.
+- **P9-A6 (item 44's remaining LOWs) — 9.** Three defects:
+  - **The production worker runs on `tsx`.** `worker:start` is `tsx worker/main.ts` (`package.json:38`), and the systemd unit runs the same (`ops/systemd/respin-worker.service:28`), while `worker/tsconfig.json:8` is `noEmit`.
+  - **`RUNBOOK.md` contradicts itself about where the code lives.** `:3` says the repository is pushed and "the 2026-07-14 'no remote backup' gap is closed". `:179` says the source is "under **local git**". The launch work L0–L4 also exists only on this disk (register item 14).
+  - **A stray empty file sits at the workspace root.** It is named `, migrationInventory([{name` (0 bytes, dated Sep 10). It is not this plan's to delete (golden rule 3).
+
+  **Fix:** a `worker:build` step emits JS, and `worker:start` and the unit run `node` on it. Or the card records why `tsx` stays, with a revisit trigger. Choosing between them is the build's first step, and a typecheck-only path is not accepted silently. The runbook states one truth: the last pushed commit, and what is uncommitted. The push itself is owed to the owner (master, *Owed to the owner*). The stray file is listed in the card as **owed to the owner** for a delete confirmation and is not removed by this phase. Proof: AC18.
 
 ## Tasks
 
@@ -53,6 +147,8 @@ Two verdicts, both full gates. The bump is the reason both fire; the document wo
 | 4 | The runbook's structure, inventory and forecast corrections; `todos.md` T-23/T-24 | 12–14 |
 | 5 | **Its own commit:** the ORM bump in the three package manifests, the sharp/postcss decision, `SECURITY-EXCEPTIONS.md` re-dating | 15–18 |
 | 6 | CI schedule, SHA pins, `permissions`, the `ignoreGhsas` comment, the three LOW pins (the `license` field lands in rows 15, 16 and 22 — every manifest under `respin/`) | 19–22 |
+| 7 | **9a**, 2026-10-05: the drill's honesty (A1), the backup failure modes (A2), the audit-gate witness and dev-scope audit (A3), `env.example` as asserted authority (A4), headers and the loopback bind (A7). Tasks 2 and 6, P9-R8's half of Task 4, and Task 5's re-dating also run in 9a | 2–7, 13, 14, 16, 18–31 |
+| 8 | **9**, 2026-10-05: the worker recipe and README walk (A5); the worker's production runtime, the one repository statement, and the stray file owed to the owner (A6) | 2, 16, 32–34 |
 
 ## Files to create / modify
 
@@ -80,8 +176,20 @@ Two verdicts, both full gates. The bump is the reason both fire; the document wo
 | 20 | `packages/auth/better-auth.cli.ts` | M | Pin the generator |
 | 21 | `repo: .github/workflows/respin-journeys.yml` | M | SHA pins to match |
 | 22 | `packages/auth/package.json`, `packages/brain/package.json`, `packages/llm/package.json`, `packages/modes/package.json`, `packages/trends/package.json` | M | `"license": "UNLICENSED"` — the five package manifests the ORM bump does not touch (one row: the same one-field addition, on the Phase 8 row-9 precedent); measured 2026-09-21: eight directories under `respin/packages/` carry a `package.json`, none carries a `license` field, and three of the eight are row 15's. Rowed on the 2026-09-21 Codex re-check: P9-R11 and row 16 named "the eight package manifests" and the table carried only the three |
+| 23 | `tests/restore-verify.test.ts` | M | P9-A1 (9a): the verifier runs `main()` from a checkout path containing a space; the drill-side marker assertion has a planted exit-0-without-marker case |
+| 24 | `packages/db/src/deletion-journal-restore.ts` | M | P9-A1 (9a): `:506-509` counts unparseable keys instead of dropping them; the verifier fails on a non-zero count |
+| 25 | `packages/db/tests/deletion-journal.test.ts` | M | P9-A1 (9a): a planted unparseable key is counted and fails verification |
+| 26 | `repo: docs/operator/aws.md` | M | P9-A2 (9a): the `:151` drill command is corrected (`RESTORE_SERVING_DISABLED=confirmed`, the required inputs named); `shell-scripts.test.ts` (row 7) pins it |
+| 27 | `tests/journeys-workflow-triggers.test.ts` | M | P9-A3 (9a): the existing SHA-pin and `permissions` rules (`:479-494`) extended to `respin.yml`; the blocking audit step is present with `if: always()`; the `ignoreGhsas` ↔ `SECURITY-EXCEPTIONS.md` unexpired-trigger equality. Each is planted red once |
+| 28 | `env.example` | M | P9-A4 (9a): every operator input the test derives |
+| 29 | `tests/env-example.test.ts` | N | P9-A4 (9a): the derived read set ⊆ `env.example` ∪ the written exemption list (runtime-set, script-internal, deliberately ignored), two-way; a planted new reader is red |
+| 30 | `next.config.ts` | M | P9-A7 (9a): `headers()` with CSP `frame-ancestors 'none'`, `X-Frame-Options`, HSTS (production), `Referrer-Policy`, `X-Content-Type-Options` |
+| 31 | `tests/security-headers.test.ts` | N | P9-A7 (9a): the header set is asserted on `/` and `/api/demo`; deleting `frame-ancestors` is red |
+| 32 | `README.md` | M | P9-A5 (9): the billing walk names the rollout command or stops at the step that works |
+| 33 | `worker/tsconfig.json` | M | P9-A6 (9): an emitting build for `worker:build` (or no change, if the card records why `tsx` stays) |
+| 34 | `ops/systemd/respin-worker.service` | M | P9-A6 (9): `ExecStart` (`:28`) runs the built entry under `node` |
 
-**22 rows; within the target** (row 22 added by the 2026-09-21 Codex re-check).
+**22 rows; within the target** (row 22 added by the 2026-09-21 Codex re-check). **2026-10-05 addendum: 34 rows (22 + 12).** Phase 9a's rows are 2–7, 13, 14, 16, 18–31: 23 rows. Phase 9's are 1–3, 8–12, 15–18 and 32–34: 16 rows. Rows 2, 3, 16 and 18 are shared, with disjoint edits. Each half is within the 25-row target. Rows 2 (the `worker:start` recipe and the one repository-location statement), 6, 7, 16, 18, 19 and 21 also carry addendum work.
 
 ## Edge cases and external failures
 
@@ -112,6 +220,13 @@ Two verdicts, both full gates. The bump is the reason both fire; the document wo
 | AC10 | Entry gate clean; `pnpm -C respin db:check` clean **on the pinned `drizzle-kit` 0.31.10 against the bumped ORM** (the compatibility witness); `TEST_DATABASE_URL=… pnpm -C respin test` green with the Docker concurrency suites live, **after** the bump | card quotes all three |
 | AC11 | The auth-schema generator invocation names a pinned version; `docker-compose.yml`'s `postgres` image carries a digest; every manifest under `respin/` carries a `license` field; the scheduled workflow's failure route is named in the workflow file | card quotes the four lines |
 | AC12 | `RUNBOOK.md` carries the four Respin-level headings (Rollback, Configuration, Observability, Backup & restore), names `worker:start`, `journalctl -u respin-worker` and `max_locks_per_transaction`, lists `GOOGLE_CLIENT_ID`/`_SECRET`, states `ANTHROPIC_API_KEY` once, and the `journal:forecast` section names the region as the one withholding cause with the `--region`, `--owner-ceiling-cents` and `--measured-*` flags | card quotes each heading and line |
+| AC13 | (9a) The verifier run from a checkout path containing a space executes `main()` and prints its marker. The drill fails on a planted verifier that exits 0 without the marker. A restore with an empty `credit_ledger` raises. `--allow-empty-money` is refused outside local-drill mode (a planted non-loopback endpoint is red). In local mode it prints the marker on the first and last lines. A manifest whose `expiresAt` is in the past is refused, with the fresh-backup remedy. A planted unparseable journal key fails verification. Each case is red on today's tree | card quotes the five runs |
+| AC14 | (9a) `backup.sh` exits non-zero when the tombstone query fails, and when `psql` is absent. With `pg_dump` planted to fail, the expiry prune still runs, and the transcript shows it. A backup directory moved elsewhere verifies its checksum. The migrate remedy prints no URL and names the credential variable. `aws.md:151` is pinned by `shell-scripts.test.ts` | card quotes each exit code and the moved-directory verification |
+| AC15 | (9a) Deleting `respin.yml`'s blocking audit step, unpinning one action, deleting `permissions`, and adding an `ignoreGhsas` id with no exception row each turn `journeys-workflow-triggers.test.ts` red. `respin-journeys.yml` runs a dev-scope audit before the key is issued. `SECURITY-EXCEPTIONS.md` records the M2 trigger as missed, with a new trigger | card quotes the four red plants and the re-dated block |
+| AC16 | (9a) `env-example.test.ts` is green with `env.example` complete. A planted `process.env.RESPIN_PLANTED` in `worker/` is red until listed. Each exemption carries its reason | card quotes the derived set, the exemption list and the red plant |
+| AC17 | (9) The `RUNBOOK.md` `worker:start` recipe runs as pasted on a clean shell (AC1's discipline). The README billing walk reaches either an open subscribe or a stated stop | card quotes both |
+| AC18 | (9) `worker:start` runs built JS under `node`, and `pnpm -C respin worker:typecheck` stays clean — or the card records why `tsx` stays, with its trigger. `RUNBOOK.md` makes one statement about where the code lives. The stray file is listed as owed to the owner | card quotes the start line, the runbook sentence and the owed line |
+| AC19 | (9a) `/` and `/api/demo` responses carry the header set (`security-headers.test.ts`), and deleting `frame-ancestors` is red. `docker compose config` shows the Postgres port bound to `127.0.0.1` | card quotes the headers and the port line |
 
 ### Requirement → AC mapping
 
@@ -130,10 +245,17 @@ Every requirement has an AC (tabulated 2026-09-21). AC10 is the entry gate on th
 | P9-R9 | AC6, AC7, AC10 |
 | P9-R10 | AC8, AC11 |
 | P9-R11 | AC8, AC11 (added — the generalist found its three pins AC-less) |
+| P9-A1 | AC13 |
+| P9-A2 | AC14 |
+| P9-A3 | AC15 |
+| P9-A4 | AC16 |
+| P9-A5 | AC17 |
+| P9-A6 | AC18 |
+| P9-A7 | AC19 |
 
 ## Definition of done
 
-Every AC passes; both full gates report PASS **on the bumped tree**; R-147 appended; `SECURITY-EXCEPTIONS.md` records the missed trigger as missed rather than silently re-dated; report card **Ready**; one card, one ledger line. `RUNBOOK.md:31`'s "Last production drill: NEVER" stays NEVER until T-23 closes — this phase makes the drill runnable, it does not claim it was run.
+**Amended 2026-10-05:** Phase 9a is done when its ACs pass (AC1's recovery-script half, AC3, AC8, AC9, AC11, AC13–AC16, AC19), its brain-tenancy full gate reports PASS, R-147 and the `SECURITY-EXCEPTIONS.md` re-dating are appended, and its card reads Ready. Phase 9 (the remainder) is done as below, with R-147 already landed by 9a. Every AC passes; both full gates report PASS **on the bumped tree**; R-147 appended; `SECURITY-EXCEPTIONS.md` records the missed trigger as missed rather than silently re-dated; report card **Ready**; one card, one ledger line. `RUNBOOK.md:31`'s "Last production drill: NEVER" stays NEVER until T-23 closes — this phase makes the drill runnable, it does not claim it was run.
 
 ## Reachability
 

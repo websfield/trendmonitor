@@ -17,6 +17,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createTestDb, type TestDb } from "@respin/db";
 import {
+  AUTH_DISABLED_PATHS,
+  AUTH_RATE_LIMIT_RULES,
   createAuth,
   NO_TRUSTED_PROXIES,
   rateLimitEnabled,
@@ -424,5 +426,161 @@ describe("R-26: behind a TWO-HOP proxy the limiter still keys per client", () =>
     // Under NODE_ENV=test the fallback is localhost, NOT `no-trusted-ip`.
     expect(keys.some((k) => k.startsWith("127.0.0.1|"))).toBe(true);
     expect(keys.some((k) => k.startsWith("no-trusted-ip|"))).toBe(false);
+  });
+});
+
+// ===== P1-R9 / P1-A2: every rule key is a route the INSTALLED router serves =====
+
+/**
+ * The installed route set — every endpoint better-auth registered, read off
+ * the built instance (`auth.api[*].path`), never typed by hand.
+ */
+function installedPaths(auth: ReturnType<typeof createAuth>): string[] {
+  return Object.values(auth.api as Record<string, { path?: unknown }>)
+    .map((endpoint) => endpoint.path)
+    .filter((path): path is string => typeof path === "string");
+}
+
+/** better-auth's OWN matcher, from its own dependency tree (not a copy). */
+async function installedWildcardMatch(): Promise<(pattern: string) => (path: string) => boolean> {
+  const require0 = createRequire(import.meta.url);
+  const baMain = require0.resolve("better-auth");
+  const nmRoot = baMain.slice(0, baMain.lastIndexOf("node_modules") + "node_modules".length);
+  const href = pathToFileURL(join(nmRoot, "better-auth", "dist", "utils", "wildcard.mjs")).href;
+  const { wildcardMatch } = (await import(/* @vite-ignore */ href)) as {
+    wildcardMatch: (pattern: string) => (path: string) => boolean;
+  };
+  return wildcardMatch;
+}
+
+/**
+ * Every key that would NOT govern a real request, with why.
+ *
+ * The installed matcher is `p.includes("*") ? wildcardMatch(p)(path) : p ===
+ * path`, so a key is live only if it is an installed path, or a `*` pattern
+ * that matches one. A `:param` key is refused outright: it IS an installed
+ * path string (so a bare set-membership test would pass it), but no request
+ * path ever contains `:token`, so it can never match.
+ */
+function deadKeys(
+  keys: readonly string[],
+  installed: readonly string[],
+  wildcardMatch: (pattern: string) => (path: string) => boolean
+): string[] {
+  const dead: string[] = [];
+  for (const key of keys) {
+    if (key.includes(":")) dead.push(`${key}: a route-parameter literal matches no request`);
+    else if (key.includes("*")) {
+      if (!installed.some((path) => wildcardMatch(key)(path))) dead.push(`${key}: matches no installed route`);
+    } else if (!installed.includes(key)) dead.push(`${key}: not an installed route`);
+  }
+  return dead;
+}
+
+/** One real POST through the handler to `path`, from a fixed client IP. */
+async function postAs(
+  auth: ReturnType<typeof createAuth>,
+  path: string,
+  ip: string,
+  body: Record<string, unknown>
+): Promise<Response> {
+  return auth.handler(
+    new Request(`${BASE}/api/auth${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": ip },
+      body: JSON.stringify(body),
+    })
+  );
+}
+
+/**
+ * A body per rule key. The limiter counts the request before the endpoint
+ * runs, so an invalid body reaches it as surely as a valid one — and an
+ * invalid sign-up creates no account.
+ */
+const BODY_FOR: Readonly<Record<string, Record<string, unknown>>> = {
+  "/sign-in/email": { email: "nobody@test.dev", password: "wrong-password-on-purpose" },
+  "/sign-up/email": { email: "nobody@test.dev", password: "x", name: "n" },
+  "/request-password-reset": { email: "nobody@test.dev", redirectTo: "/reset-password" },
+  "/reset-password": { newPassword: "x", token: "not-a-token" },
+  "/send-verification-email": { email: "nobody@test.dev" },
+};
+
+describe("P1-R9: the rate rules name routes the installed better-auth serves", () => {
+  let db: TestDb;
+  beforeEach(async () => {
+    db = await createTestDb();
+  });
+
+  it("every customRules key is an installed route (the install, not a hand list)", async () => {
+    const auth = mkAuth(db, "production");
+    const installed = installedPaths(auth);
+    // NON-VACUITY: the route set is the real router, not an empty read.
+    expect(installed.length).toBeGreaterThan(20);
+    expect(installed).toContain("/sign-in/email");
+    expect(installed).toContain("/reset-password/:token");
+    const wildcardMatch = await installedWildcardMatch();
+    expect(deadKeys(Object.keys(AUTH_RATE_LIMIT_RULES), installed, wildcardMatch)).toEqual([]);
+    // The two keys this requirement exists for.
+    expect(AUTH_RATE_LIMIT_RULES).toHaveProperty(["/request-password-reset"]);
+    expect(AUTH_RATE_LIMIT_RULES).toHaveProperty(["/send-verification-email"]);
+    // ...and the disabled paths are held to the same rule: a typo there fails
+    // open exactly as a rule key does (the route stays served).
+    expect(deadKeys(AUTH_DISABLED_PATHS, installed, wildcardMatch)).toEqual([]);
+  });
+
+  it("PLANTED dead keys are refused: the old name, a :param literal, an unmatched wildcard", async () => {
+    const installed = installedPaths(mkAuth(db, "production"));
+    const wildcardMatch = await installedWildcardMatch();
+    const planted = (key: string) =>
+      deadKeys(Object.keys({ ...AUTH_RATE_LIMIT_RULES, [key]: { window: 60, max: 1 } }), installed, wildcardMatch);
+    // The pre-P1-R9 key: not a route better-auth@1.6.28 registers.
+    expect(planted("/forget-password")).toEqual(["/forget-password: not an installed route"]);
+    // An installed path STRING that no request can match.
+    expect(installed).toContain("/reset-password/:token");
+    expect(planted("/reset-password/:token")).toEqual([
+      "/reset-password/:token: a route-parameter literal matches no request",
+    ]);
+    expect(planted("/nothing-here/*")).toEqual(["/nothing-here/*: matches no installed route"]);
+    // ...and the wildcard that DOES cover the parameterised route is admitted,
+    // so the rule is not "refuse every *".
+    expect(planted("/reset-password/*")).toEqual([]);
+  });
+
+  it.each(Object.entries(AUTH_RATE_LIMIT_RULES))(
+    "%s: a real request past its max is refused with 429 through auth.handler",
+    async (path, rule) => {
+      const auth = mkAuth(db, "production");
+      const body = BODY_FOR[path];
+      expect(body, `no request body for ${path} — add one so the key is driven`).toBeDefined();
+      // One IP per key, so no case borrows another's count.
+      const ip = `198.51.100.${10 + Object.keys(AUTH_RATE_LIMIT_RULES).indexOf(path)}`;
+      const statuses: number[] = [];
+      for (let i = 0; i <= rule.max; i += 1) statuses.push((await postAs(auth, path, ip, body)).status);
+      expect(statuses.slice(0, rule.max).every((s) => s !== 429), `statuses ${statuses.join(",")}`).toBe(true);
+      expect(statuses[rule.max], `statuses ${statuses.join(",")}`).toBe(429);
+    }
+  );
+
+  it("every rule key has a driven case, so the table cannot outgrow its proof", () => {
+    expect(Object.keys(BODY_FOR).sort()).toEqual(Object.keys(AUTH_RATE_LIMIT_RULES).sort());
+  });
+});
+
+describe("P1-A2: /verify-password is not served over HTTP", () => {
+  let db: TestDb;
+  beforeEach(async () => {
+    db = await createTestDb();
+  });
+
+  it("a POST through auth.handler is 404, while the route stays installed (so P1-R9's set is unchanged)", async () => {
+    const auth = mkAuth(db, "production");
+    expect(installedPaths(auth)).toContain("/verify-password");
+    const response = await postAs(auth, "/verify-password", "198.51.100.90", { password: "anything-at-all" });
+    expect(response.status).toBe(404);
+    // NON-VACUITY: a served neighbour on the same instance is not a 404, so
+    // the 404 is the disabled path and not a mis-built URL.
+    const neighbour = await postAs(auth, "/sign-in/email", "198.51.100.91", BODY_FOR["/sign-in/email"]);
+    expect(neighbour.status).not.toBe(404);
   });
 });

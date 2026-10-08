@@ -35,6 +35,9 @@ function appRestrictedImports({
             // Phase 10b-1 Task 8: the account copy quotes the executor's grace period.
             "DELETION_GRACE_MS",
             "WorkspaceAccessError",
+            // R-163: its subclass, so billing-errors can give the
+            // pending-deletion refusal copy that names /settings/account.
+            "WorkspacePendingDeletionError",
             // Phase 10a (G-15, C5): the startup preflight `instrumentation.ts`
             // runs at register(), and the PURE telemetry sink builders
             // `lib/telemetry.ts` composes with safe-log's allowlist. None of
@@ -71,7 +74,9 @@ function appRestrictedImports({
                   "journalEnablementDecision",
                   "validatePriceSnapshot",
                   "journalPurgeCandidates",
-                  "listJournalOperationIds",
+                  // R-155: renamed from listJournalOperationIds when the listing
+                  // began returning the keys it cannot parse as well.
+                  "listJournalOperations",
                   "loadJournalChain",
                   "planJournalRestore",
                   "compareRestoredState",
@@ -123,6 +128,11 @@ function appRestrictedImports({
                   "SYSTEM_WORKER_QUERY_POOL_CODE_CEILING",
                   "SystemAutopsyQueueCandidate",
                   "SystemWorkerOperationalState",
+                  // Audit P3-R1(a): the retention tick pages on the oldest
+                  // unsettled candidate's age before the 24-hour clear — two
+                  // inert constants, the threshold and the clear it precedes.
+                  "UNSETTLED_CANDIDATE_ALERT_MS",
+                  "VENDOR_COMPLETE_HARD_CLEAR_MS",
                   // Phase 10b-1 Task 4: the deletion lifecycle executor runs
                   // ONLY in this worker. One tick function, the fail-closed
                   // enablement default, the migration-inventory reader the
@@ -137,6 +147,12 @@ function appRestrictedImports({
                   "DeletionScope",
                   "ErasureEnablementPort",
                   "MigrationInventory",
+                  // R-162: the tick's wedge sweep — the caller the five resume
+                  // seams never had — the seat policy it restores memberships
+                  // under, and the delivery port type its refusing stub fills.
+                  "resumeWedgedDeletionOperations",
+                  "NO_SEAT_CAP_RESTORE_POLICY",
+                  "RecoveryDeliveryPort",
                   // Phase 10b-1 Task 5: the worker composes the R-124 external
                   // journal. Config validation and the store factory only — the
                   // restore verifier, the purge transport and the cost forecast
@@ -323,6 +339,15 @@ function appRestrictedImports({
             "BrainVersionView",
             "BrainClaimView",
             "PLACEHOLDER_ABSENCE",
+            // Audit Phase 2 (P2-R8). The `[check]` marker's one home for the
+            // SERVER-REACHABLE app files that decide against it
+            // (`brain-view.tsx`, `results/page.tsx`, `landing-sections.tsx`).
+            // An inert string, not a write surface. It does not open the
+            // client bundle: `tests/client-bundle-boundary.test.ts` still
+            // refuses any `@respin/*` value import in a "use client" graph, so
+            // a client file takes the marker as a prop from its server parent
+            // (`promotion-panel.tsx`) or reads `run-copy.ts`'s pinned copy.
+            "CHECK",
             // Slice 2b (renamed /admin/margin -> /admin/model-spend in
             // slice 2b-c). The reconciliation view types, and the
             // `MonthlySpendResult` shape `/usage` renders — all type-only
@@ -455,6 +480,10 @@ function appRestrictedImports({
             "FeedbackNoteError",
             "FeedbackDuplicateError",
             "FeedbackTargetError",
+            // Audit P6-A1 (R-174): "Leave this out of future drafts" named a
+            // reaction that is not this profile's. Mapped to copy in
+            // `billing-errors.ts` in the same change.
+            "FeedbackExclusionTargetError",
             "FrameworkAccessError",
             "FrameworkStaleError",
             "FrameworkContentError",
@@ -518,6 +547,22 @@ function appRestrictedImports({
             // surface. Nine throw sites rendered "Something went wrong"
             // without it.
             "ComparisonInputError",
+            // Launch L2 (R-151): two inert classes for `instanceof` in
+            // `billing-errors.ts` — the creative piece's closed-reason refusal
+            // and the e2e transport-selection refusal. No capability, no
+            // table: the piece's writes stay on `writeCapabilities`, reached
+            // only through `@respin/credits/app-server`.
+            "CreativePieceError",
+            "LlmTransportSelectionError",
+            // Audit Phase 8 (R-177): two more inert classes for `instanceof` in
+            // `billing-errors.ts` — the lock-order guard's refusal and the
+            // render budget's. No capability, no table.
+            "LockOrderError",
+            "RenderLockTimeoutError",
+            // Gate M2: the bounded read's refusal to open inside a transaction.
+            "RenderTransactionNestingError",
+            // The own-idea ceiling, stated where it binds on the Studio form.
+            "OWN_IDEA_MAX",
             // The note ceiling. `recordResult` refuses at 2,001 code points
             // with `ResultInputError`, and the form could not STATE the limit
             // without either importing this or typing `2000` into the screen —
@@ -607,6 +652,14 @@ function appRestrictedImports({
             "requireAdmin",
             "authHandlers",
             "isGoogleConfigured",
+            // R-164: the Google re-authentication challenge (the two route
+            // handlers) and its billing arm (the billing actions).
+            "beginGoogleReauthenticationForCurrentSession",
+            "completeGoogleReauthenticationForCurrentSession",
+            "currentSessionGoogleReauthentication",
+            "GOOGLE_REAUTH_CALLBACK_PATH",
+            // R-166: the two routes log only a code from the flow's closed list.
+            "googleReauthLogCode",
             "adminAllowed",
             "parseAdminAllowlist",
             // types
@@ -741,12 +794,18 @@ function appRestrictedImports({
                 // deletion command adapter (Phase 10b-1 Task 4). The app facade
                 // is a session-shaped surface the sessionless worker never uses.
                 ["@respin/credits/*", "!@respin/credits/deletion-server"]
-              : ["@respin/credits/*", "!@respin/credits/app-server"],
+              : operatorScriptSurface
+                ? // Audit P3-R1(b): an operator script's ONE door into credits
+                  // is the settle command's entrypoint — not the app facade.
+                  ["@respin/credits/*", "!@respin/credits/operator-server"]
+                : ["@respin/credits/*", "!@respin/credits/app-server"],
           message: webhookSurface
             ? "sanctioned @respin/credits entrypoints here: ./app-server (the wired facade) and ./webhook-server (the Stripe dispatcher, behind the signature check)"
             : systemWorkerSurface
               ? "worker/** may import only @respin/credits/deletion-server (the deletion command adapter); the app facade and the webhook dispatcher are app-only"
-              : "the only sanctioned deep import into @respin/credits is ./app-server (the wired facade) — ./webhook-server dispatches Stripe events and is app/api/stripe/** only",
+              : operatorScriptSurface
+                ? "scripts/** may import only @respin/credits/operator-server (the one-candidate settle command, audit P3-R1(b)); the app facade is a session surface"
+                : "the only sanctioned deep import into @respin/credits is ./app-server (the wired facade) — ./webhook-server dispatches Stripe events and is app/api/stripe/** only",
         },
         {
           group: adminSurface
@@ -863,7 +922,7 @@ function appRestrictedImports({
             ...(systemWorkerSurface
               ? ["!@respin/credits/deletion-server"]
               : operatorScriptSurface
-                ? []
+                ? ["!@respin/credits/operator-server"]
                 : ["!@respin/credits/app-server"]),
             // Phase 10b-1 Task 5 — the R-124 S3 journal adapter. The worker
             // (writer principal) and operator scripts (verifier/purge

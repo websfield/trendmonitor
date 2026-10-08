@@ -12,6 +12,9 @@ import type { DbLike } from "@respin/db";
 import { getActiveConfig } from "@respin/config";
 import { getStripe } from "./adapter";
 import { packCheckoutV1PriceKey } from "./pack-price";
+import { TIER_AMOUNTS_CENTS } from "./tier-prices";
+import { tierPriceDefect } from "./tier-price";
+import { PINNED_CURRENCY, priceDefect } from "./price-allowlist";
 
 const LOOKUP = {
   creator: "respin_creator_monthly",
@@ -20,10 +23,9 @@ const LOOKUP = {
   pack: "respin_pack_1000",
 } as const;
 
-// Launch defaults (R-7) for the three SUBSCRIPTION prices — indicative, and
-// the only authority for them: config maps a Stripe price id to a tier and to
-// an allowance, never to a subscription price (Stripe charges the subscription,
-// so there is no second number to disagree with).
+// The three SUBSCRIPTION prices live in `./tier-prices.ts` (audit P6-A3,
+// R-175), so the marketing page states the same numbers this script creates
+// in Stripe instead of a literal of its own.
 //
 // The PACK is different and is deliberately NOT here: config's `pack.priceUsd`
 // is charged directly by `maybeAutoTopup` (an off-session PaymentIntent it
@@ -33,7 +35,6 @@ const LOOKUP = {
 // manual checkout still charges $10 while auto-top-up silently charges $15
 // off-session for the same credits, a price the user was never shown. The pack
 // amount now comes from config below, and a disagreement is a refusal.
-const TIER_AMOUNTS_CENTS = { creator: 1000, pro: 6000, studio: 20000 };
 
 export async function stripeSetup(db: DbLike): Promise<void> {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -61,6 +62,59 @@ export async function stripeSetup(db: DbLike): Promise<void> {
   const { version, content } = await getActiveConfig(db);
   const packCents = Math.round(content.pack.priceUsd * 100);
 
+  // EVERY EXISTING PRICE IS CHECKED BEFORE ANYTHING IS WRITTEN TO STRIPE
+  // (Phase 6 billing re-run). The refusals below say "Nothing was changed in
+  // Stripe by this run", and that was false when they ran after the product
+  // and the missing prices had been created. Listing is a read; the checks
+  // run on what it returns; only then does this script create anything.
+  const existing = await stripe.prices.list({
+    lookup_keys: Object.values(LOOKUP) as string[],
+    limit: 10,
+  });
+  const byLookup = new Map(existing.data.map((p) => [p.lookup_key, p]));
+
+  for (const tier of ["creator", "pro", "studio"] as const) {
+    const price = byLookup.get(LOOKUP[tier]);
+    if (!price) continue;
+    // THE ONE PREDICATE Checkout also uses (`tierPriceDefect`): the
+    // allowlist over every payment-affecting field of `Price`
+    // (`./price-allowlist.ts`), at exactly `TIER_AMOUNTS_CENTS[tier]`. A refusal, like the pack's: the public page
+    // states these prices (R-175), and a Stripe price cannot be updated.
+    const defect = tierPriceDefect(price, tier);
+    if (defect !== null) {
+      throw new Error(
+        `TIER PRICE DIVERGENCE (${defect.kind}): Stripe ${tier} price ${price.id} (lookup_key ${LOOKUP[tier]}): ${defect.detail}. The ${tier} plan is stated at ${TIER_AMOUNTS_CENTS[tier]}c usd per month (TIER_AMOUNTS_CENTS, packages/credits/src/stripe/tier-prices.ts; R-175). REMEDY, pick one: (a) create a NEW Stripe price at ${TIER_AMOUNTS_CENTS[tier]}c usd, recurring every 1 month, per-unit and licensed (\`transfer_lookup_key: true\` moves ${LOOKUP[tier]} onto it), and re-run this script; or (b) if the existing price is the one you mean to sell, change TIER_AMOUNTS_CENTS and deploy, so the page and the charge move together. Nothing was changed in Stripe by this run`
+      );
+    }
+  }
+  const existingPack = byLookup.get(LOOKUP.pack);
+  // THE SAME ALLOWLIST AS CHECKOUT'S (`priceDefect`, `./price-allowlist.ts`)
+  // for the one-time pack price: any payment-affecting field outside its
+  // allowed values is a refusal; a wrong amount keeps its own message below.
+  const packDefect =
+    existingPack === undefined
+      ? null
+      : priceDefect(existingPack, {
+          type: "one_time",
+          amountCents: packCents,
+          amountAuthority: `the active config v${version}'s pack.priceUsd`,
+        });
+  if (existingPack && packDefect !== null && packDefect.kind !== "amount") {
+    throw new Error(
+      `PACK PRICE REFUSED (${packDefect.kind}): Stripe pack price ${existingPack.id} (lookup_key ${LOOKUP.pack}): ${packDefect.detail}. REMEDY: create a NEW one-time Stripe price at ${packCents}c usd, per-unit, with no currency options, quantity transform, custom amount or exclusive tax (\`transfer_lookup_key: true\` moves ${LOOKUP.pack} onto it), and re-run this script. Nothing was changed in Stripe by this run`
+    );
+  }
+  if (existingPack && packDefect?.kind === "amount") {
+    // THE DIVERGENCE CHECK, and the reason this script is worth re-running: a
+    // Stripe price's amount is IMMUTABLE (verified against the installed SDK —
+    // `PriceUpdateParams` has no `unit_amount`), so config drifting away from
+    // it cannot be repaired by an update, and the two charging paths would
+    // quietly disagree until a customer noticed. Refuse, and name both numbers.
+    throw new Error(
+      `PRICE DIVERGENCE: Stripe pack price ${existingPack.id} (lookup_key ${LOOKUP.pack}) charges ${existingPack.unit_amount ?? "null"}c, but the active config v${version} says pack.priceUsd=${content.pack.priceUsd} (${packCents}c). The manual pack Checkout charges the Stripe price; auto-top-up charges the config amount off-session — so right now the same 1,000 credits cost two different prices depending on how they are bought. A Stripe price amount cannot be updated. REMEDY, pick one: (a) set pack.priceUsd back to ${(existingPack.unit_amount ?? 0) / 100} in /admin/config; or (b) create a NEW Stripe price at ${packCents}c (\`transfer_lookup_key: true\` moves ${LOOKUP.pack} onto it) and then map the NEW price id as "pack" in stripePriceMap — the map is keyed by price id, so leaving the old id mapped keeps charging the old amount. Nothing was changed in Stripe by this run`
+    );
+  }
+
   const products = await stripe.products.list({ limit: 100 });
   let product = products.data.find((p) => p.name === "Respin");
   if (!product) {
@@ -70,12 +124,6 @@ export async function stripeSetup(db: DbLike): Promise<void> {
     console.log(`product exists: ${product.id}`);
   }
 
-  const existing = await stripe.prices.list({
-    lookup_keys: Object.values(LOOKUP) as string[],
-    limit: 10,
-  });
-  const byLookup = new Map(existing.data.map((p) => [p.lookup_key, p]));
-
   const results: Record<string, string> = {};
   const amounts: Record<string, number | null> = {};
   for (const tier of ["creator", "pro", "studio"] as const) {
@@ -84,42 +132,23 @@ export async function stripeSetup(db: DbLike): Promise<void> {
       price = await stripe.prices.create({
         product: product.id,
         lookup_key: LOOKUP[tier],
-        currency: "usd",
+        currency: PINNED_CURRENCY,
         unit_amount: TIER_AMOUNTS_CENTS[tier],
-        recurring: { interval: "month" },
+        recurring: { interval: "month", interval_count: 1, usage_type: "licensed" },
+        billing_scheme: "per_unit",
         nickname: `Respin ${tier} (monthly)`,
       });
       console.log(`created ${tier} price ${price.id} at ${TIER_AMOUNTS_CENTS[tier]}c`);
-    } else if (price.unit_amount !== TIER_AMOUNTS_CENTS[tier]) {
-      // NOT a refusal, unlike the pack (billing round-10 NOTE 5). The pack has
-      // TWO charging authorities — the Stripe price object for manual
-      // checkout and config's `pack.priceUsd` for the off-session
-      // auto-top-up PaymentIntent — so a divergence there really does charge
-      // two different prices for the same credits, and must stop the run. A
-      // TIER price has exactly one charger: Stripe itself. `stripePriceMap`
-      // records price-id → tier, never an amount, so nothing in this codebase
-      // can disagree with what Stripe charges.
-      //
-      // What IS worth saying out loud is that the literal below (R-7 launch
-      // defaults, and the only authority for the SEEDED amount) no longer
-      // describes what this lookup_key charges — someone changed the price in
-      // the dashboard, or this script seeded it at a different figure long
-      // ago. Until now that was undetectable: the script printed a price id
-      // with no amount beside it, so an operator pasting the map into
-      // /admin/config could map a $10 tier onto a $60 price and see nothing.
-      console.warn(
-        `WARNING: Stripe ${tier} price ${price.id} (lookup_key ${LOOKUP[tier]}) charges ${price.unit_amount ?? "null"}c, but this script's R-7 launch default for ${tier} is ${TIER_AMOUNTS_CENTS[tier]}c. Stripe is the only charger for a subscription tier, so this is NOT a two-authority divergence like the pack and nothing is refused — but check that the amount below is the one you mean to sell before pasting the map.`
-      );
     }
     results[price.id] = tier;
     amounts[price.id] = price.unit_amount ?? null;
   }
-  let packPrice = byLookup.get(LOOKUP.pack);
+  let packPrice = existingPack;
   if (!packPrice) {
     packPrice = await stripe.prices.create({
       product: product.id,
       lookup_key: LOOKUP.pack,
-      currency: "usd",
+      currency: PINNED_CURRENCY,
       // From config, never a literal — the manual pack Checkout charges THIS
       // object while auto-top-up charges config directly, so they must be one
       // number by construction.
@@ -128,15 +157,6 @@ export async function stripeSetup(db: DbLike): Promise<void> {
     });
     console.log(
       `created pack price ${packPrice.id} at ${packCents}c (config v${version} pack.priceUsd=${content.pack.priceUsd})`
-    );
-  } else if (packPrice.unit_amount !== packCents) {
-    // THE DIVERGENCE CHECK, and the reason this script is worth re-running: a
-    // Stripe price's amount is IMMUTABLE (verified against the installed SDK —
-    // `PriceUpdateParams` has no `unit_amount`), so config drifting away from
-    // it cannot be repaired by an update, and the two charging paths would
-    // quietly disagree until a customer noticed. Refuse, and name both numbers.
-    throw new Error(
-      `PRICE DIVERGENCE: Stripe pack price ${packPrice.id} (lookup_key ${LOOKUP.pack}) charges ${packPrice.unit_amount ?? "null"}c, but the active config v${version} says pack.priceUsd=${content.pack.priceUsd} (${packCents}c). The manual pack Checkout charges the Stripe price; auto-top-up charges the config amount off-session — so right now the same 1,000 credits cost two different prices depending on how they are bought. A Stripe price amount cannot be updated. REMEDY, pick one: (a) set pack.priceUsd back to ${(packPrice.unit_amount ?? 0) / 100} in /admin/config; or (b) create a NEW Stripe price at ${packCents}c (\`transfer_lookup_key: true\` moves ${LOOKUP.pack} onto it) and then map the NEW price id as "pack" in stripePriceMap — the map is keyed by price id, so leaving the old id mapped keeps charging the old amount. Nothing was changed in Stripe by this run`
     );
   } else {
     console.log(

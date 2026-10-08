@@ -623,17 +623,20 @@ export type NewResult = typeof results.$inferInsert;
  * all) rather than a number nobody enforces.
  *
  * WHAT IS IN IT, and the rule that decides: EXACTLY what the comparison reads,
- * PLUS `workspace_id`. The fifteen comparison fields are
+ * PLUS `workspace_id`. The sixteen comparison fields are
  * `@respin/brain`'s `ComparisonResultInput`, read from that file rather than
- * remembered. `workspace_id` is the sixteenth and is NOT one of them: it is
+ * remembered — `generation_id` joined them with R-170 (audit Phase 2, P2-A1),
+ * because a cohort's n counts distinct POSTS and the draft a row observes is
+ * what says two rows are one post. `workspace_id` is the seventeenth and is NOT
+ * one of them: it is
  * here because the CAGE's own tests assert both scope columns on every row a
  * scoped accessor returns, and a projection that dropped it would make the
  * workspace axis unassertable on the one read whose population is a whole
  * history. A tenancy assertion removed to save 16 bytes is not a saving.
  *
  * WHAT IS OUT, named so nobody has to diff two lists: `note` (the reason this
- * exists), the three `connector_*` columns, `generation_id` and `created_at`.
- * None can change a median. Adding one back is a deliberate edit to this
+ * exists), the three `connector_*` columns and `created_at`. None can change a
+ * median. Adding one back is a deliberate edit to this
  * object, which is the point of there being an object.
  *
  * IT IS NOT TYPED AS `ComparisonResultInput`, deliberately, even though the
@@ -648,8 +651,10 @@ export type NewResult = typeof results.$inferInsert;
 export const comparableResultProjection = {
   id: results.id,
   profileId: results.profileId,
-  // THE SIXTEENTH, and not one of the comparison's fifteen — see above.
+  // THE SEVENTEENTH, and not one of the comparison's sixteen — see above.
   workspaceId: results.workspaceId,
+  // R-170: the post a row observes, so n counts posts rather than rows.
+  generationId: results.generationId,
   platform: results.platform,
   audienceClass: results.audienceClass,
   metricKey: results.metricKey,

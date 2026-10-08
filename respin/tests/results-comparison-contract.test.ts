@@ -96,6 +96,8 @@ describe("the comparison's producer and consumer agree, without importing each o
     const consumed: Record<keyof ComparisonResultInput, true> = {
       id: true,
       profileId: true,
+      // R-170 (audit Phase 2, P2-A1): n counts distinct posts.
+      generationId: true,
       platform: true,
       audienceClass: true,
       metricKey: true,
@@ -116,7 +118,7 @@ describe("the comparison's producer and consumer agree, without importing each o
     // property that is also one. So this list cannot silently drift from the
     // type it mirrors.
     const consumedFields = Object.keys(consumed).sort();
-    expect(consumedFields.length).toBe(15);
+    expect(consumedFields.length).toBe(16);
     expect(projected).toEqual([...consumedFields, "workspaceId"].sort());
   });
 
@@ -165,9 +167,6 @@ describe("the comparison's producer and consumer agree, without importing each o
         "connectorSource",
         "connectorEventId",
         "connectorObservedAt",
-        // The treatment key already carries what the comparison needs to know
-        // about the output; the row's own id is what evidence joins key on.
-        "generationId",
         // Ordering is by `observed_to`, not by when the creator logged it.
         "createdAt",
       ].sort()

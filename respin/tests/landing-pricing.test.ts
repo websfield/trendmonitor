@@ -31,25 +31,69 @@
 // line whose `holds()` is false is not a typo, it is a sale of something the
 // branch cannot deliver (P6-R2: "a line that can be pinned to neither is a
 // line that should not ship").
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import { CONFIG_V1_SEED, subscriptions } from "@respin/db";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import { CONFIG_V1_SEED, createTestDb, seedDb, subscriptions } from "@respin/db";
+import { appendConfigVersion, getActiveConfig } from "@respin/config";
 import { modesIncludedIn, PASTED_REFERENCE_TIERS } from "@respin/credits";
+import { tierPricesCents } from "@respin/credits/app-server";
 import { CONNECTOR_NOT_OFFERED } from "../app/(product)/results/copy";
-import { MECHANIC_TAGS, PRICING } from "../app/(marketing)/pricing-copy";
+import { CUSTOM_STRUCTURE_NOTE } from "../app/(product)/studio/run-copy";
+import {
+  MECHANIC_TAGS,
+  PRICING_NUMBERS_UNAVAILABLE,
+  brainStepSentence,
+  formatUsd,
+  landingTermsOf,
+  pricingFinePrint,
+  pricingFor,
+  pricingMetersOf,
+  type LandingTerms,
+} from "../app/(marketing)/pricing-copy";
+import { landingPricing } from "../app/(marketing)/pricing-load";
+import { PricingSection } from "../app/(marketing)/landing-sections";
+import { AUDIENCES } from "../app/(marketing)/audiences";
+import { MODE_IDS, MODE_SPECS } from "../packages/modes/src/modes";
+import { MAX_GENERATION_ATTEMPTS } from "../packages/modes/src/kill-test";
+import { TRACEABILITY_LIMIT_NOTE } from "../packages/modes/src/traceability";
+
+// THE PAGES' OWN DEFAULT READ, redirected to a test database per case (Phase 6
+// billing gate, MEDIUM): `landingPricing()` called with no argument reads
+// `getActiveConfigForPublicPage`, so pointing that one export at a test
+// database drives `/` and `/for/*` through the exact loader the server runs.
+const live = vi.hoisted(() => ({
+  read: null as null | (() => Promise<{ version: number; content: unknown }>),
+}));
+vi.mock("@respin/config/app-server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@respin/config/app-server")>()),
+  getActiveConfigForPublicPage: () =>
+    live.read === null ? Promise.reject(new Error("no live read set for this case")) : live.read(),
+}));
 
 const TIER_KEYS = ["free", "creator", "pro", "studio"] as const;
 type TierKey = (typeof TIER_KEYS)[number];
 
-/** REQ-G01: Free, Creator $10, Pro $60, Studio $200. */
-const REQ_G01_PRICES: Record<TierKey, string> = {
-  free: "$0",
-  creator: "$10",
-  pro: "$60",
-  studio: "$200",
-};
+/**
+ * THE CARDS UNDER THE SEED CONFIG, which is what the pin table below reads.
+ *
+ * SINCE AUDIT P6-A3 (R-175) THE PAGE IS NOT BUILT FROM THE SEED: it renders
+ * `pricingFor(<the ACTIVE config>, tierPricesCents())` per request. The pins
+ * prove the mapping from a config to its lines; the "R-175" block at the end of
+ * this file proves the page follows an APPENDED version and fails closed to
+ * number-free copy, so the two together cover the claim.
+ */
+const PRICING = pricingFor(pricingMetersOf(CONFIG_V1_SEED), tierPricesCents());
+
+/**
+ * The fine-print and step-01 numbers under the seed config, DERIVED through
+ * the loader's own mapping (`landingTermsOf`), never copied field by field: a
+ * hand copy is a second mapping that agrees with the first only by care.
+ */
+const SEED_TERMS: LandingTerms = landingTermsOf(CONFIG_V1_SEED);
 
 const repoPath = (rel: string): string =>
   resolve(dirname(fileURLToPath(import.meta.url)), "..", rel);
@@ -347,11 +391,18 @@ describe("landing pricing traces to CONFIG_V1_SEED and REQ-G01", () => {
   });
 
   it.each(TIER_KEYS.map((k, i) => [k, i] as const))(
-    "%s: the price is REQ-G01's",
+    "%s: the price is `tierPricesCents`' (R-175), never a literal in the copy",
     (key, i) => {
-      expect(PRICING[i].amount).toBe(REQ_G01_PRICES[key]);
+      // Free has no subscription (B6): it is the default state, not a price.
+      expect(PRICING[i].amount).toBe(key === "free" ? "$0" : formatUsd(tierPricesCents()[key]));
     }
   );
+
+  it("NON-VACUITY: a changed price table changes the card, so the pin reads the table", () => {
+    const moved = pricingFor(CONFIG_V1_SEED, { creator: 1250, pro: 6000, studio: 20000 });
+    expect(moved[1].amount).toBe("$12.50");
+    expect(PRICING[1].amount).not.toBe(moved[1].amount);
+  });
 
   it("claims no feature line the config cannot ground (the priority-queue class)", () => {
     // The specific overclaim that shipped: a priority queue. Nothing in config
@@ -389,14 +440,12 @@ describe("landing pricing traces to CONFIG_V1_SEED and REQ-G01", () => {
   });
 
   it("the pack and pause fine print state the seeded values", () => {
-    // The sentence lives in the shared PricingSection (rendered by the main
-    // landing and every /for/<audience> variant); the numbers live in the
-    // seed. Bind them. JSX reflow collapses to single spaces at render;
-    // match the same way.
-    const src = repoFile("app/(marketing)/landing-sections.tsx").replace(
-      /\s+/g,
-      " "
-    );
+    // The sentence is `pricingFinePrint`, rendered by the shared
+    // PricingSection (the main landing and every /for/<audience> variant); its
+    // numbers are the ACTIVE config's since R-175, so the pin drives the
+    // function with the seed's terms and the R-175 block below drives an
+    // appended version through the real read.
+    const src = pricingFinePrint(SEED_TERMS);
     expect(CONFIG_V1_SEED.pack.validityMonths).toBe(12);
     expect(src).toContain("packs last 12 months");
     expect(CONFIG_V1_SEED.pauseMonths).toEqual({ min: 1, max: 3 });
@@ -479,14 +528,17 @@ describe("landing pricing traces to CONFIG_V1_SEED and REQ-G01", () => {
     // product's first real screen" — and `voiceCorpusMaxPosts` is 50. It also
     // said "in 20 minutes", which has no source anywhere in `docs/`; that
     // claim is gone rather than re-sourced, and this asserts it stays gone.
-    const src = repoFile("app/(marketing)/landing-sections.tsx").replace(
-      /\s+/g,
-      " "
-    );
+    // `brainStepSentence` since R-175: the step's numbers are the active
+    // config's, so the pin drives the function and the source checks below
+    // keep the removed claims out of the module that renders it.
+    const step = brainStepSentence(SEED_TERMS);
+    const src = repoFile("app/(marketing)/landing-sections.tsx").replace(/\s+/g, " ");
     const { minOwnPostsForVoice, voiceCorpusMaxPosts } = CONFIG_V1_SEED.onboarding;
-    expect(src).toContain(`at least ${minOwnPostsForVoice} of your own posts`);
-    expect(src).toContain(`up to ${voiceCorpusMaxPosts}`);
+    expect(step).toContain(`at least ${minOwnPostsForVoice} of your own posts`);
+    expect(step).toContain(`up to ${voiceCorpusMaxPosts}`);
     expect(src).not.toContain("20 minutes");
+    expect(step).not.toContain("20 minutes");
+    expect(repoFile("app/(marketing)/pricing-copy.ts")).not.toContain("20 minutes");
     // The featured flag was "MOST CREATORS", a population claim with no
     // population. A recommendation is this product's own opinion and needs no
     // denominator; a majority claim does.
@@ -683,5 +735,325 @@ describe("mechanic tags carry no invented metrics (REQ-I03 / non-negotiable 6)",
     expect(carriesMetric("[consensus break] 2.4x watch-through")).toBe(true);
     expect(carriesMetric("[receipt flash] 3.2 follows per 1k")).toBe(true);
     expect(carriesMetric("[hard cut ending] rewatch trigger")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT P6-A3 (register 2026-10-05 item 39; decisions R-175, plan label
+// R-158): THE PUBLIC NUMBERS COME FROM THE ACTIVE CONFIG.
+//
+// Until 2026-10-07 the cards were a constant pinned to `CONFIG_V1_SEED`, so an
+// admin's `appendConfigVersion` changed what a customer got while the page kept
+// the seed's numbers. These cases drive the REAL read (`getActiveConfig` over a
+// test database) through the page's own loader and render the section.
+
+const renderPricing = (pricing: Awaited<ReturnType<typeof landingPricing>>): string =>
+  renderToStaticMarkup(createElement(PricingSection, { pricing }));
+
+describe("R-175: the landing pricing follows the ACTIVE config, and fails closed without numbers", () => {
+  it("appending a config version with a changed Pro allowance moves the rendered card", async () => {
+    const db = await createTestDb();
+    await seedDb(db);
+    const seeded = await landingPricing(() => getActiveConfig(db));
+    const seedLine = `${CONFIG_V1_SEED.allowances.pro.toLocaleString("en-US")} credits each month`;
+    expect(seeded.configVersion).toBe(1);
+    expect(renderPricing(seeded)).toContain(seedLine);
+
+    const changed = CONFIG_V1_SEED.allowances.pro + 750;
+    const { content } = await getActiveConfig(db);
+    const version = await appendConfigVersion(
+      db,
+      {
+        ...content,
+        allowances: { ...content.allowances, pro: changed },
+        // The fine print's pack term moves with the version too.
+        pack: { ...content.pack, validityMonths: content.pack.validityMonths + 6 },
+      },
+      "landing-pricing-test"
+    );
+    const live = await landingPricing(() => getActiveConfig(db));
+    expect(live.configVersion).toBe(version);
+    const html = renderPricing(live);
+    expect(html).toContain(`${changed.toLocaleString("en-US")} credits each month`);
+    expect(html, "the page kept the seed's Pro allowance after a new version").not.toContain(seedLine);
+    // The other tiers still read their own (unchanged) numbers from the same version.
+    expect(html).toContain(`${content.allowances.creator.toLocaleString("en-US")} credits each month`);
+    expect(html).toContain(`packs last ${content.pack.validityMonths + 6} months`);
+    expect(html).not.toContain(`packs last ${content.pack.validityMonths} months`);
+  });
+
+  it("a failed config read renders the number-free cards and the billing pointer, never a seed number", async () => {
+    const failed = await landingPricing(() => Promise.reject(new Error("the database is unreachable")));
+    expect(failed.configVersion).toBeNull();
+    // NO DIGIT IN ANY LINE: every config-derived line lost its number.
+    for (const tier of failed.tiers) {
+      for (const line of tier.lines) expect(line, `${tier.name}: ${line}`).not.toMatch(/\d/);
+    }
+    const html = renderPricing(failed);
+    expect(html).toContain('data-testid="pricing-numbers-unavailable"');
+    expect(html).toContain(PRICING_NUMBERS_UNAVAILABLE);
+    // It asks for a reload and points nowhere: no signed-in page states the
+    // allowances or the pack period either (Phase 6 billing gate, LOW).
+    expect(html).toContain("Reload this page to see them.");
+    expect(html).not.toContain('href="/settings/billing"');
+    for (const tier of TIER_KEYS) {
+      expect(html).not.toContain(`${CONFIG_V1_SEED.allowances[tier].toLocaleString("en-US")} credits`);
+    }
+    expect(html).not.toContain(`${CONFIG_V1_SEED.concurrencyLimits.studio} generations`);
+    // The prices still render: they are `tierPricesCents`', not the config's.
+    expect(failed.tiers.map((t) => t.amount)).toEqual(PRICING.map((t) => t.amount));
+    // ...and the note never shows when the read succeeded.
+    expect(renderPricing({ tiers: PRICING, terms: SEED_TERMS, configVersion: 1 })).not.toContain(
+      "pricing-numbers-unavailable"
+    );
+    // The fine print names no pause or pack number on the fallback either.
+    expect(failed.terms).toBeNull();
+    expect(pricingFinePrint(null)).not.toMatch(/\d/);
+    expect(brainStepSentence(null)).not.toMatch(/\d/);
+  });
+
+  it("EVERY mapped key moves the page: a version with distinct values renders each on `/` and `/for/*`, through the pages' own read", async () => {
+    // Phase 6 billing gate (MEDIUM): one changed key proved one line. This
+    // moves EVERY key `pricingMetersOf` and `landingTermsOf` read to a value
+    // no other key holds, then asserts each rendered line names its own.
+    const db = await createTestDb();
+    await seedDb(db);
+    const { content } = await getActiveConfig(db);
+    const moved = {
+      ...content,
+      allowances: { free: 31, creator: 311, pro: 3_111, studio: 9_111 },
+      profileCaps: { free: 1, creator: 2, pro: 3, studio: 7 },
+      trackedNiches: { free: 0, creator: 4, pro: 6, studio: 13 },
+      concurrencyLimits: { ...content.concurrencyLimits, studio: 9 },
+      pauseMonths: { min: 2, max: 5 },
+      pack: { ...content.pack, validityMonths: 18 },
+      onboarding: { ...content.onboarding, minOwnPostsForVoice: 4, voiceCorpusMaxPosts: 44 },
+    };
+    const version = await appendConfigVersion(db, moved, "landing-pricing-every-key");
+    live.read = () => getActiveConfig(db);
+    try {
+      const { default: LandingPage } = await import("../app/(marketing)/page");
+      const { default: AudiencePage } = await import("../app/(marketing)/for/[audience]/page");
+      const pages: [string, string][] = [
+        ["/", renderToStaticMarkup(await LandingPage())],
+        ...(await Promise.all(
+          AUDIENCES.map(async (a): Promise<[string, string]> => [
+            `/for/${a.slug}`,
+            renderToStaticMarkup(await AudiencePage({ params: Promise.resolve({ audience: a.slug }) })),
+          ])
+        )),
+      ];
+      const expected = [
+        "31 credits each month",
+        "311 credits each month",
+        "3,111 credits each month",
+        "9,111 credits each month",
+        "1 creator profile<",
+        "2 creator profiles",
+        "3 creator profiles",
+        "7 creator profiles",
+        "6 tracked niches, once a source connects",
+        "13 tracked niches, once a source connects",
+        "9 generations in flight at once",
+        "2 to 5 months",
+        "packs last 18 months",
+        "at least 4 of your own posts, up to 44",
+      ];
+      expect(pages).toHaveLength(1 + AUDIENCES.length);
+      for (const [route, html] of pages) {
+        const text = html.replace(/&#x27;/g, "'");
+        for (const line of expected) expect(text, `${route}: ${line}`).toContain(line);
+        // ...and no SEED number survives beside the moved ones.
+        expect(text, route).not.toContain(`${CONFIG_V1_SEED.allowances.pro.toLocaleString("en-US")} credits`);
+        expect(text, route).not.toContain(`packs last ${CONFIG_V1_SEED.pack.validityMonths} months`);
+        expect(text, route).not.toContain(`at least ${CONFIG_V1_SEED.onboarding.minOwnPostsForVoice} of your own posts`);
+        expect(text, route).not.toContain("pricing-numbers-unavailable");
+      }
+      expect(version).toBeGreaterThan(1);
+    } finally {
+      live.read = null;
+    }
+  });
+
+  it("both landing routes are rendered per request (`dynamic = \"force-dynamic\"`), so the read is never a build-time snapshot", async () => {
+    // Phase 6 billing gate (MEDIUM): without this export Next prerenders the
+    // route at build, the read runs once against the build's database (or
+    // fails into the number-free copy), and every visitor gets that snapshot.
+    const landing = await import("../app/(marketing)/page");
+    const audience = await import("../app/(marketing)/for/[audience]/page");
+    expect((landing as { dynamic?: string }).dynamic).toBe("force-dynamic");
+    expect((audience as { dynamic?: string }).dynamic).toBe("force-dynamic");
+    // The audience route has no static params list to prerender from.
+    expect((audience as { generateStaticParams?: unknown }).generateStaticParams).toBeUndefined();
+  });
+
+  it("the number-free cards are still the same cards: same tiers, same CTAs, same non-numeric lines", () => {
+    const numberFree = pricingFor(null, tierPricesCents());
+    expect(numberFree.map((t) => [t.name, t.plan, t.cta])).toEqual(PRICING.map((t) => [t.name, t.plan, t.cta]));
+    for (const [i, tier] of PRICING.entries()) {
+      const plain = tier.lines.filter((line) => !/\d/.test(line));
+      for (const line of plain) expect(numberFree[i]!.lines).toContain(line);
+      // The fenced hedges survive the fallback too.
+      for (const line of numberFree[i]!.lines.filter((l) => /niches|Auto-top-up/.test(l))) {
+        expect(line).toMatch(/once a source connects|once activation completes/);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT P6-R3 / P6-R5 (merged C-7): THE THREE PROSE SENTENCES THAT DESCRIBE A
+// BOUND ARE PINNED TO THE CONSTANT THAT BOUNDS IT. Each pin reads the constant
+// and derives the words, so changing the constant reddens the pin until the
+// sentence moves with it. The page may not import `@respin/modes`; this root
+// test may (`packages/modes/src/*` by path).
+
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"] as const;
+const ORDINAL_WORDS = ["zeroth", "first", "second", "third", "fourth", "fifth"] as const;
+const TIMES_WORDS = ["never", "once", "twice", "three times"] as const;
+const capitalised = (word: string) => word[0]!.toUpperCase() + word.slice(1);
+const landingProse = () =>
+  stripComments(repoFile("app/(marketing)/landing-sections.tsx")).replace(/\s+/g, " ").replace(/&apos;/g, "'");
+
+/** The modes whose output is the timed-script shape: both beats AND a shot map required. */
+const timedScriptModes = (): string[] =>
+  Object.values(MODE_SPECS)
+    .filter((spec) => spec.required.includes("beats") && spec.required.includes("shotMap"))
+    .map((spec) => spec.id)
+    .sort();
+
+/**
+ * THE THREE PINS AS PREDICATES OF THEIR CONSTANT (Phase 6 gate, LOW): each takes
+ * the constant as a parameter, so the same function the real assertion runs is
+ * the one the plant runs at constant + 1. A plant that only checked the prose
+ * does not contain a hand-written string tested the string, not the pin.
+ */
+const modesPinHolds = (prose: string, modeCount: number, scriptModeCount: number): boolean =>
+  prose.includes(`${capitalised(NUMBER_WORDS[modeCount]!)} modes.`) &&
+  prose.includes(`The ${NUMBER_WORDS[scriptModeCount]} script modes give you a timed script`);
+
+const killTestPinHolds = (prose: string, attempts: number): boolean =>
+  prose.includes(`is rewritten ${TIMES_WORDS[attempts - 1]}; a ${ORDINAL_WORDS[attempts]} failure is refused`);
+
+/** The note's clauses and the landing sentence's words for each. */
+const CHECK_CLAUSES: readonly (readonly [note: string, landing: string])[] = [
+  ["offers a [check] marker instead of changing your words", "offers a [check] marker instead of changing your words"],
+  ["it is not about whether it is true", "not about whether a specific is true"],
+  ["about where a specific came from", "about provenance"],
+];
+
+const checkPinHolds = (note: string, prose: string): boolean =>
+  CHECK_CLAUSES.every(([inNote, onLanding]) => note.replace(/\s+/g, " ").includes(inNote) && prose.includes(onLanding));
+
+describe("P6-R3/R5: the three bound-describing sentences are pinned to their constants", () => {
+  it("the modes sentence: 'Seven' is MODE_IDS, 'four' is the specs that require beats and a shot map", () => {
+    expect(timedScriptModes()).toEqual(["analyseAndSpin", "footageToThesis", "ideaToScript", "sourceToReel"]);
+    expect(modesPinHolds(landingProse(), MODE_IDS.length, timedScriptModes().length)).toBe(true);
+  });
+
+  it("the kill-test sentence is MAX_GENERATION_ATTEMPTS: rewritten once, the second failure refused", () => {
+    expect(MAX_GENERATION_ATTEMPTS).toBe(2);
+    expect(killTestPinHolds(landingProse(), MAX_GENERATION_ATTEMPTS)).toBe(true);
+  });
+
+  it("the [check] sentence carries TRACEABILITY_LIMIT_NOTE's clauses (a consumer of Phase 2 AC8)", () => {
+    expect(checkPinHolds(TRACEABILITY_LIMIT_NOTE, landingProse())).toBe(true);
+  });
+
+  it("PLANTS: each pin, run at its constant + 1 (or a reworded note), FAILS", () => {
+    const prose = landingProse();
+    expect(modesPinHolds(prose, MODE_IDS.length + 1, timedScriptModes().length)).toBe(false);
+    expect(modesPinHolds(prose, MODE_IDS.length, timedScriptModes().length + 1)).toBe(false);
+    expect(killTestPinHolds(prose, MAX_GENERATION_ATTEMPTS + 1)).toBe(false);
+    const reworded = TRACEABILITY_LIMIT_NOTE.replace("instead of changing your words", "and may adjust your words");
+    expect(reworded).not.toBe(TRACEABILITY_LIMIT_NOTE);
+    expect(checkPinHolds(reworded, prose)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT P6-A2 (register 2026-10-05 item 33, claim half): THREE OUTBOUND CLAIMS
+// SCOPED TO WHAT SHIPS, each pinned to the shipped symbol that makes the scoped
+// sentence true.
+
+/** Every production file under `app/` with its text. */
+const appFiles = (): { file: string; text: string }[] => {
+  const out: { file: string; text: string }[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(repoPath(dir), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(rel);
+      else if (/\.(ts|tsx)$/.test(entry.name)) out.push({ file: rel, text: repoFile(rel) });
+    }
+  };
+  walk("app");
+  return out;
+};
+
+const REVIEWED = /reviewed (?:library )?mechanisms/i;
+
+describe("P6-A2: no marketing surface states an unenforced claim unscoped", () => {
+  it("'reviewed mechanisms': the three producers equal the grep, two-way, and each is scoped", () => {
+    const producers = appFiles()
+      .filter(({ text }) => REVIEWED.test(stripComments(text).replace(/\s+/g, " ")))
+      .map(({ file }) => file)
+      .sort();
+    // The hero moved from `page.tsx` to `landing-view.tsx` when the page became
+    // an async config read (P6-A3); the three producers are the same three.
+    expect(producers).toEqual(["app/(marketing)/landing-sections.tsx", "app/(marketing)/landing-view.tsx", "app/layout.tsx"]);
+    for (const file of producers) {
+      const code = stripComments(repoFile(file)).replace(/\s+/g, " ");
+      const hits = [...code.matchAll(/reviewed (?:library )?mechanisms[^."]*/gi)];
+      expect(hits.length, file).toBeGreaterThan(0);
+      for (const m of hits) {
+        expect(m[0], `${file}: "${m[0]}"`).toMatch(/^reviewed library mechanisms or your own frameworks/i);
+      }
+    }
+    // THE SHIPPED SYMBOLS behind the scoped sentence: shared library rows are
+    // recommendable only when a curator approved them, and a structure a draft
+    // invents is labelled as not reviewed, on the screen that renders it.
+    expect(repoCode("packages/db/src/with-workspace.ts")).toMatch(/eq\(frameworks\.curatorStatus, "approved"\)/);
+    expect(CUSTOM_STRUCTURE_NOTE).toMatch(/not reviewed by a curator/);
+    expect(repoCode("app/(product)/studio/generation-outcome.tsx")).toMatch(
+      /frameworkProvenance === "custom"[\s\S]{0,200}CUSTOM_STRUCTURE_NOTE/
+    );
+  });
+
+  it("no marketing surface promises a shot map covering the beats; only the shots a draft suggests", () => {
+    // The parser requires the shot-map SECTION and refuses a row pointing past
+    // the last beat, nothing more, so a map may cover some beats or none (Phase
+    // 6 gate, LOW). Every marketing string is read, not just the steps band.
+    const marketing = appFiles()
+      .filter(({ file }) => file.startsWith("app/(marketing)/") || file === "app/layout.tsx")
+      .map(({ file, text }) => [file, stripComments(text).replace(/\s+/g, " ")] as const);
+    expect(marketing.length).toBeGreaterThan(5);
+    for (const [file, code] of marketing) {
+      expect(code, file).not.toMatch(/every beat mapped|shot-mapped|a shot map for the beats/i);
+    }
+    expect(landingProse()).toContain("plus whatever shots the draft suggests");
+    // The shipped symbol: every timed-script mode REQUIRES the shot-map
+    // section; nothing requires a shot per beat.
+    for (const id of timedScriptModes()) {
+      expect(MODE_SPECS[id as keyof typeof MODE_SPECS].required).toContain("shotMap");
+    }
+  });
+
+  it("the solo-filming promise is scoped to the modes that run the filming check, with its limit stated", () => {
+    const checked = Object.values(MODE_SPECS)
+      .filter((spec) => spec.checks.includes("filming_limits"))
+      .map((spec) => spec.id)
+      .sort();
+    // `ideation` is the concept mode, `ideaToScript` the script mode: the copy
+    // says "concept and script drafts", and a third mode running the check is
+    // red here until the copy names it.
+    expect(checked).toEqual(["ideaToScript", "ideation"]);
+    const women = AUDIENCES.find((a) => a.slug === "women")!;
+    expect(women.sub).toContain("your concept and script drafts are checked against that");
+    expect(women.sub).toContain("the check can miss things");
+    for (const a of AUDIENCES) {
+      for (const text of [a.sub, a.metaDescription, a.h1Lead, a.h1Turn]) {
+        expect(text, a.slug).not.toMatch(/film(?:ed)? solo/i);
+      }
+    }
   });
 });

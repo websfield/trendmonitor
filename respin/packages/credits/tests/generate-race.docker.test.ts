@@ -33,6 +33,9 @@ import {
   brainActivationSnapshots,
   brainDocs,
   createDockerTestDb,
+  CreativePieceError,
+  creativePieces,
+  subscriptions,
   creditLedger,
   ensureUserWorkspace,
   generationAttempts,
@@ -45,10 +48,14 @@ import {
   type WorkspaceScope,
 } from "@respin/db";
 import type { LlmProvider } from "@respin/llm";
+import { appendConfigVersion, getActiveConfig } from "@respin/config";
 import { createProfile } from "../src/profiles";
-import { debitCredits } from "../src/ledger";
-import { generate } from "../src/generate";
+import { creativePieceView, renewCreativeOperation, selectConcept } from "../src/creative-work";
+import { deriveBalance } from "../src/balance";
+import { debitCredits, grantCredits } from "../src/ledger";
+import { generate, settleHeldAttempt } from "../src/generate";
 import {
+  GenerationHeldError,
   GenerationInFlightError,
   GenerationRecoveryRequiredError,
   PostCallDebitError,
@@ -56,11 +63,14 @@ import {
 import { anySlots } from "./support/run-slots";
 import { dbThatFailsWhen } from "./support/crash-db";
 import {
+  CLAIM_ONLY_REASONING,
   PLATFORM,
   hooksOutput,
   killTestReply,
   reply,
+  withReasoning,
 } from "./support/generation-fixtures";
+import { FORM_INPUT, v2Ideas, v2Script } from "./support/form-fixtures";
 
 const MAINTENANCE_URL = process.env.TEST_DATABASE_URL;
 
@@ -121,6 +131,50 @@ function heldProvider(): {
     inFlight,
     release: () => releaseFn(),
     callCount: () => state.calls,
+  };
+}
+
+/**
+ * A provider that HOLDS its first call until released, then answers each
+ * DRAFT call with the next of `drafts` and each scoring call with a pass —
+ * R-173's race instrument, so a free refusal and a charged press can be held
+ * in flight together and released into the settlement at the same moment.
+ */
+function heldDrafting(drafts: readonly string[]): {
+  provider: LlmProvider;
+  inFlight: Promise<void>;
+  release: () => void;
+} {
+  let signalInFlight!: () => void;
+  const inFlight = new Promise<void>((r) => {
+    signalInFlight = r;
+  });
+  let releaseFn!: () => void;
+  const released = new Promise<void>((r) => {
+    releaseFn = r;
+  });
+  const state = { calls: 0, drafts: 0 };
+  const usage = { tokensIn: 10, tokensOut: 5, raw: { input_tokens: 10, output_tokens: 5 } };
+  return {
+    inFlight,
+    release: () => releaseFn(),
+    provider: {
+      vendor: "held-drafting",
+      complete: async (req) => {
+        state.calls += 1;
+        if (state.calls === 1) {
+          signalInFlight();
+          await released;
+        }
+        if (req.system.startsWith("You score")) {
+          return { text: killTestReply(["/rules/0"]), servedModel: "claude-sonnet-5", usage };
+        }
+        const text = drafts[state.drafts];
+        state.drafts += 1;
+        if (text === undefined) throw new Error(`draft call ${state.drafts} was not scripted`);
+        return { text, servedModel: "claude-sonnet-5", usage };
+      },
+    },
   };
 }
 
@@ -333,7 +387,7 @@ describe.skipIf(!MAINTENANCE_URL)("generate under REAL concurrency", () => {
     expect(await inferenceDebits()).toHaveLength(1);
   });
 
-  it("a balance spent by ANOTHER CONNECTION mid-flight makes the settlement refuse ATOMICALLY", async () => {
+  it("a balance spent by ANOTHER CONNECTION mid-flight makes the settlement HOLD the draft ATOMICALLY (audit P3-A4)", async () => {
     await prewarmPool(4);
     const held = heldProvider();
     const run = generate(
@@ -368,7 +422,11 @@ describe.skipIf(!MAINTENANCE_URL)("generate under REAL concurrency", () => {
     );
     held.release();
 
-    await expect(run).rejects.toBeInstanceOf(PostCallDebitError);
+    // HELD, not refused (audit P3-A4, R-157): the short balance is a
+    // condition a top-up clears, so the paid output is kept.
+    const err = await run.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GenerationHeldError);
+    expect((err as Error).cause).toBeInstanceOf(PostCallDebitError);
     // NEITHER HALF COMMITTED — no usable generation exists unpaid, and no
     // debit exists without its generation.
     expect(
@@ -386,14 +444,58 @@ describe.skipIf(!MAINTENANCE_URL)("generate under REAL concurrency", () => {
       .from(modelUsage)
       .where(eq(modelUsage.attemptId, "drop-1"));
     expect(usage.length).toBeGreaterThan(0);
-    // ...and the attempt records the refusal without exposing output.
+    // ...and the attempt is HELD at `vendor_complete` with its candidate: no
+    // generation, no debit, nothing exposed — and finishable.
     const [attempt] = await harness.db
       .select()
       .from(generationAttempts)
       .where(eq(generationAttempts.attemptId, "drop-1"));
-    expect(attempt.state).toBe("refused");
+    expect(attempt.state).toBe("vendor_complete");
+    expect(attempt.candidate).not.toBeNull();
     expect(attempt.generationId).toBeNull();
     expect(attempt.debitLedgerId).toBeNull();
+  });
+
+  it("P3-A4: \"Finish this draft\" pressed TWICE AT ONCE, racing a same-id resubmission — exactly one settles, one debit, and no vendor is called", async () => {
+    await prewarmPool(6);
+    // A HELD draft: the balance is spent from another connection mid-flight.
+    const held = heldProvider();
+    const run = generate(harness.db, owner, profileId, held.provider, anySlots(), params("finish-race"), new Date());
+    await held.inFlight;
+    const minted = (await harness.db.select().from(creditLedger).where(eq(creditLedger.workspaceId, ws)))
+      .filter((r) => r.refType === "free_allowance")
+      .reduce((sum, r) => sum + r.delta, 0);
+    await harness.db.transaction((tx) =>
+      debitCredits(tx, { workspaceId: ws, cost: minted, refType: "test_drain", refId: "drain-finish", at: new Date(), configVersion: 1 })
+    );
+    held.release();
+    await expect(run).rejects.toBeInstanceOf(GenerationHeldError);
+    // The top-up.
+    await harness.db.transaction((tx) =>
+      grantCredits(tx, {
+        workspaceId: ws, amount: 100, expiresAt: new Date(Date.now() + 365 * 24 * 3600_000),
+        refType: "test", refId: "topup-finish", configVersion: 1,
+      })
+    );
+    const vendorCalls = held.callCount();
+    // THREE racers on one held candidate: two Finish presses and one same-id
+    // resubmission. Each reaches `settle`, and the claim row's lock under the
+    // workspace lock decides who debits.
+    const results = await Promise.all([
+      settleHeldAttempt(harness.db, owner, profileId, "finish-race", new Date()),
+      settleHeldAttempt(harness.db, owner, profileId, "finish-race", new Date()),
+      generate(harness.db, owner, profileId, never(), anySlots(), params("finish-race"), new Date()),
+    ]);
+    expect(results.filter((r) => !r.replayed)).toHaveLength(1);
+    expect(new Set(results.map((r) => r.generation.id)).size).toBe(1);
+    expect(results.reduce((sum, r) => sum + r.creditsChargedNow, 0)).toBe(
+      results.find((r) => !r.replayed)!.creditsChargedNow
+    );
+    const debits = (await inferenceDebits()).filter((d) => d.refId === "finish-race");
+    expect(debits).toHaveLength(1);
+    expect(held.callCount()).toBe(vendorCalls);
+    const [attempt] = await harness.db.select().from(generationAttempts).where(eq(generationAttempts.attemptId, "finish-race"));
+    expect(attempt.state).toBe("settled");
   });
 
   it("R14c: TWO CONCURRENT retries of one `vendor_complete` attempt — one settles, the other is handed the record, and no vendor is called", async () => {
@@ -482,6 +584,239 @@ describe.skipIf(!MAINTENANCE_URL)("generate under REAL concurrency", () => {
     expect(after.state).toBe("settled");
     // The candidate does not outlive the settlement that consumed it.
     expect(after.candidate).toBeNull();
+  });
+
+  // ------------------------------------------------ launch L2 (R-151)
+  //
+  // THE PAID CONFIRM -> SCRIPT PATH ON REAL POSTGRES (H-2 option C): a paid
+  // tier through the `setTier` authority pattern (`generate.test.ts`), a
+  // stored concept batch, a zero-cost selection, then the commission under the
+  // server-minted operation id — concurrently, twice, and after settling the
+  // balance to zero.
+
+  async function setTier(tier: "creator"): Promise<void> {
+    const { content } = await getActiveConfig(harness.db);
+    await appendConfigVersion(
+      harness.db,
+      { ...content, stripePriceMap: { ...content.stripePriceMap, [`price_${tier}`]: tier } },
+      "test-admin"
+    );
+    await harness.db.insert(subscriptions).values({
+      workspaceId: ws,
+      stripeCustomerId: `cus_${ws}`,
+      stripeSubscriptionId: `sub_${ws}`,
+      stripePriceId: `price_${tier}`,
+      status: "active",
+    });
+  }
+
+  const grant = (amount: number) =>
+    harness.db.transaction((tx) =>
+      grantCredits(tx, {
+        workspaceId: ws,
+        amount,
+        expiresAt: new Date(Date.now() + 365 * 24 * 3600_000),
+        refType: "test",
+        refId: `grant-${ws}-${amount}`,
+        configVersion: 1,
+      })
+    );
+
+  /** Replies by call kind: the scoring prompt, or `draft`. Optionally HELD. */
+  function byKind(draft: string, hold = false) {
+    let signalInFlight!: () => void;
+    const inFlight = new Promise<void>((r) => (signalInFlight = r));
+    let releaseFn!: () => void;
+    const released = new Promise<void>((r) => (releaseFn = r));
+    const state = { calls: 0 };
+    const provider: LlmProvider = {
+      vendor: "by-kind",
+      complete: async (req) => {
+        state.calls += 1;
+        if (hold && state.calls === 1) {
+          signalInFlight();
+          await released;
+        }
+        return {
+          text: req.system.startsWith("You score") ? killTestReply(["/rules/0"]) : draft,
+          servedModel: "claude-sonnet-5",
+          usage: { tokensIn: 10, tokensOut: 5, raw: { input_tokens: 10, output_tokens: 5 } },
+        };
+      },
+    };
+    return { provider, inFlight, release: () => releaseFn(), calls: () => state.calls };
+  }
+
+  async function chosenConcept(): Promise<{ pieceId: string; operationAttemptId: string }> {
+    const ideas = byKind(JSON.stringify(v2Ideas(["explain_opinion"])));
+    await generate(harness.db, owner, profileId, ideas.provider, anySlots(), {
+      mode: "ideation", attemptId: `ideas-${n}`, input: FORM_INPUT, platform: PLATFORM,
+      creative: { formChoice: "auto" },
+    }, new Date());
+    const piece = await selectConcept(
+      harness.db, owner, profileId, { sourceAttemptId: `ideas-${n}`, ideaIndex: 0 }, new Date()
+    );
+    return { pieceId: piece.pieceId, operationAttemptId: piece.operationAttemptId };
+  }
+
+  const scriptParams = (piece: { pieceId: string; operationAttemptId: string }) => ({
+    mode: "ideaToScript" as const,
+    attemptId: piece.operationAttemptId,
+    input: FORM_INPUT,
+    platform: PLATFORM,
+    pieceId: piece.pieceId,
+  });
+
+  it("L2 PAID CONFIRM -> SCRIPT: two CONCURRENT commissions of one piece's operation id — one claim, one debit, one dispatch, the piece linked once", async () => {
+    await prewarmPool(4);
+    await setTier("creator");
+    await grant(100);
+    const piece = await chosenConcept();
+    const held = byKind(JSON.stringify(v2Script("explain_opinion")), true);
+    const winner = generate(harness.db, owner, profileId, held.provider, anySlots(), scriptParams(piece), new Date());
+    await held.inFlight;
+    await expect(
+      generate(harness.db, owner, profileId, never(), anySlots(), scriptParams(piece), new Date())
+    ).rejects.toBeInstanceOf(GenerationInFlightError);
+    held.release();
+    const result = await winner;
+    expect(result.generation.outcome).toBe("usable");
+    expect(held.calls()).toBe(2);
+    expect(
+      await harness.db.select().from(generationAttempts).where(eq(generationAttempts.attemptId, piece.operationAttemptId))
+    ).toHaveLength(1);
+    const scriptDebits = (await inferenceDebits()).filter((d) => d.refId === piece.operationAttemptId);
+    expect(scriptDebits).toHaveLength(1);
+    // A sequential resubmission (a refresh, a lost response) replays.
+    const again = await generate(harness.db, owner, profileId, never(), anySlots(), scriptParams(piece), new Date());
+    expect(again.replayed).toBe(true);
+    expect(again.generation.id).toBe(result.generation.id);
+    const [row] = await harness.db.select().from(creativePieces).where(eq(creativePieces.id, piece.pieceId));
+    expect(row.state).toBe("scripted");
+    expect(row.selectedGenerationId).toBe(result.generation.id);
+    expect((await inferenceDebits()).filter((d) => d.refId === piece.operationAttemptId)).toHaveLength(1);
+  });
+
+  it("L2 on real Postgres: settle the script so the balance reaches ZERO, then resubmit the same id -> replay, never 'out of credits'", async () => {
+    await setTier("creator");
+    const { content } = await getActiveConfig(harness.db);
+    await grant(content.creditCosts.ideationBatch);
+    const piece = await chosenConcept();
+    await grant(content.creditCosts.fullScript);
+    const first = await generate(
+      harness.db, owner, profileId, byKind(JSON.stringify(v2Script("explain_opinion"))).provider,
+      anySlots(), scriptParams(piece), new Date()
+    );
+    expect(first.balanceAfter).toBe(0);
+    const again = await generate(harness.db, owner, profileId, never(), anySlots(), scriptParams(piece), new Date());
+    expect(again.replayed).toBe(true);
+    expect(again.creditsChargedNow).toBe(0);
+    expect((await inferenceDebits()).filter((d) => d.refId === piece.operationAttemptId)).toHaveLength(1);
+  });
+
+  it("L2 on real Postgres: two concurrent 'New generation' moves on one version — exactly one wins, the other is stale", async () => {
+    await prewarmPool(4);
+    await setTier("creator");
+    await grant(100);
+    const piece = await chosenConcept();
+    const view = await creativePieceView(harness.db, owner, profileId, piece.pieceId, new Date());
+    const results = await Promise.allSettled([
+      renewCreativeOperation(harness.db, owner, profileId, { pieceId: piece.pieceId, expectedVersion: view.version }, new Date()),
+      renewCreativeOperation(harness.db, owner, profileId, { pieceId: piece.pieceId, expectedVersion: view.version }, new Date()),
+    ]);
+    const won = results.filter((r) => r.status === "fulfilled");
+    const lost = results.filter((r) => r.status === "rejected");
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect(((lost[0] as PromiseRejectedResult).reason as CreativePieceError).reason).toBe("stale");
+    const [row] = await harness.db.select().from(creativePieces).where(eq(creativePieces.id, piece.pieceId));
+    expect(row.version).toBe(view.version + 1);
+    expect(row.operationAttemptId).not.toBe(piece.operationAttemptId);
+  });
+
+  it("R-173: a FREE claim refusal and CONCURRENT charged presses in one workspace — the free one never debits, each charged one debits exactly once", async () => {
+    await prewarmPool(8);
+    const claim = reply(withReasoning(hooksOutput(), CLAIM_ONLY_REASONING));
+    const before = (await deriveBalance(harness.db, ws)).balance;
+    // ONE free refusal racing TWO charged presses, all three held inside the
+    // vendor call and released into the settlement together: every settlement
+    // takes the same workspace lock, so a free settlement that skipped the
+    // lock's ordering — or a debit decided from the wrong candidate — shows up
+    // as a missing or extra row here.
+    const free = heldDrafting([claim, claim]);
+    const paidA = heldDrafting([reply(hooksOutput())]);
+    const paidB = heldDrafting([reply(hooksOutput())]);
+    const runs = [
+      generate(harness.db, owner, profileId, free.provider, anySlots(), params("free-race"), new Date()),
+      generate(harness.db, owner, profileId, paidA.provider, anySlots(), params("paid-race-a"), new Date()),
+      generate(harness.db, owner, profileId, paidB.provider, anySlots(), params("paid-race-b"), new Date()),
+    ];
+    await Promise.all([free.inFlight, paidA.inFlight, paidB.inFlight]);
+    // A SAME-ID resubmission of the free attempt while it is in flight is the
+    // in-flight refusal, not a second sequence.
+    await expect(
+      generate(harness.db, owner, profileId, never(), anySlots(), params("free-race"), new Date())
+    ).rejects.toBeInstanceOf(GenerationInFlightError);
+    free.release();
+    paidA.release();
+    paidB.release();
+    const [freeResult, a, b] = await Promise.all(runs);
+
+    expect(freeResult.generation.outcome).toBe("honest_refusal");
+    expect(freeResult.freeClaimRefusal).toBe(true);
+    expect(freeResult.creditsChargedNow).toBe(0);
+    expect(a.generation.outcome).toBe("usable");
+    expect(b.generation.outcome).toBe("usable");
+    const price = a.creditsChargedNow;
+    expect(price).toBeGreaterThan(0);
+    expect(b.creditsChargedNow).toBe(price);
+
+    const debits = await inferenceDebits();
+    expect(debits.map((d) => d.refId).sort()).toEqual(["paid-race-a", "paid-race-b"]);
+    expect(debits.every((d) => d.delta === -price)).toBe(true);
+    expect((await deriveBalance(harness.db, ws)).balance).toBe(before - 2 * price);
+    const [freeAttempt] = await harness.db
+      .select()
+      .from(generationAttempts)
+      .where(eq(generationAttempts.attemptId, "free-race"));
+    expect(freeAttempt.state).toBe("settled");
+    expect(freeAttempt.debitLedgerId).toBeNull();
+    // The free refusal's drafts are system spend: written, never consumed.
+    const freeUsage = await harness.db.select().from(modelUsage).where(eq(modelUsage.attemptId, "free-race"));
+    expect(freeUsage).toHaveLength(2);
+    expect(freeUsage.every((u) => u.consumedIncludedBuild === false)).toBe(true);
+
+    // TWO CONCURRENT REPLAYS of the settled free attempt: no vendor, no debit,
+    // and both say it was free.
+    const replays = await Promise.all([
+      generate(harness.db, owner, profileId, never(), anySlots(), params("free-race"), new Date()),
+      generate(harness.db, owner, profileId, never(), anySlots(), params("free-race"), new Date()),
+    ]);
+    for (const r of replays) {
+      expect(r.replayed).toBe(true);
+      expect(r.creditsChargedNow).toBe(0);
+      expect(r.freeClaimRefusal).toBe(true);
+    }
+    expect(await inferenceDebits()).toHaveLength(2);
+  });
+
+  it("R-173: a free claim refusal SETTLES even when another connection drains the balance mid-flight — nothing to hold, nothing debited", async () => {
+    await prewarmPool(4);
+    const claim = reply(withReasoning(hooksOutput(), CLAIM_ONLY_REASONING));
+    const free = heldDrafting([claim, claim]);
+    const run = generate(harness.db, owner, profileId, free.provider, anySlots(), params("free-drain"), new Date());
+    await free.inFlight;
+    const balance = (await deriveBalance(harness.db, ws)).balance;
+    await harness.db.transaction((tx) =>
+      debitCredits(tx, { workspaceId: ws, cost: balance, refType: "test_drain", refId: "drain-free", at: new Date(), configVersion: 1 })
+    );
+    free.release();
+    const result = await run;
+    expect(result.generation.outcome).toBe("honest_refusal");
+    expect(result.freeClaimRefusal).toBe(true);
+    expect(result.creditsChargedNow).toBe(0);
+    expect(result.balanceAfter).toBe(0);
+    expect(await inferenceDebits()).toHaveLength(0);
   });
 
   it("R-63: the generation debit's uniqueness is `credit_ledger_inference_debit_uq`, BY NAME", async () => {

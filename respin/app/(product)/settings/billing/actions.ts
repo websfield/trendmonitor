@@ -12,6 +12,7 @@
 // logged server-side, which is where its ids and instants belong.
 import { redirect } from "next/navigation";
 import {
+  currentSessionGoogleReauthentication,
   reauthenticateCurrentSessionWithPassword,
   requireUser,
 } from "@respin/auth";
@@ -172,13 +173,23 @@ export async function recoverInvoiceAction(formData: FormData): Promise<void> {
   redirect(url);
 }
 
+/**
+ * R-118's proof for THIS session, by one of the two listed arms (R-164,
+ * `BILLING_REAUTHENTICATION_ARMS` in @respin/db):
+ *   - a password typed now: the `credential` arm, unchanged;
+ *   - a blank password: the `google` arm, which admits only the stamp a
+ *     `max_age=0` Google challenge recorded on this session inside the
+ *     ten-minute window (`/api/reauth/google/start`). Nothing is created here.
+ * Either refusal is the same `BillingReauthenticationError`.
+ */
 async function billingReauthentication(
   formData: FormData
 ): Promise<Awaited<ReturnType<typeof reauthenticateCurrentSessionWithPassword>>> {
+  const password = String(formData.get("password") ?? "");
   try {
-    return await reauthenticateCurrentSessionWithPassword(
-      String(formData.get("password") ?? "")
-    );
+    return password === ""
+      ? await currentSessionGoogleReauthentication()
+      : await reauthenticateCurrentSessionWithPassword(password);
   } catch (err) {
     rethrowNextControlFlow(err);
     throw new BillingReauthenticationError();

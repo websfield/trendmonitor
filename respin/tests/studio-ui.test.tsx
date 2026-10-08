@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   CLAIM_SPECIMENS,
@@ -40,6 +40,9 @@ import {
   STUDIO_POSITIVE_ASSERTIONS,
 } from "./support/forbidden-claims";
 import { claimHits, specimensFor } from "./support/claim-scan";
+import { blankComments } from "./support/app-surface";
+import { CHECK } from "@respin/db";
+import { PRODUCTION_ROOTS, sourceFilesUnder } from "./support/source-files";
 import {
   GENERATION_SCREEN_DIRS,
   STREAM_SHAPES,
@@ -56,7 +59,70 @@ import {
   CODE_FOR_ERROR_CLASS,
   ERROR_CLASS_COVERED_BY_BASE,
   INSTANCE_BRANCH_CODES,
+  billingErrorCode,
 } from "../app/(product)/billing-errors";
+import {
+  commissionPieceAction,
+  findConceptAction,
+  generateAction,
+  rememberForFutureDraftsAction,
+} from "../app/(product)/studio/actions";
+import { reviseSavedAction, selectSavedVersionAction } from "../app/(product)/studio/saved/actions";
+import {
+  SavedView,
+  type SavedPackProps,
+  type SavedViewProps,
+} from "../app/(product)/studio/saved/saved-view";
+import {
+  md as md_,
+  packChecks,
+  packFileName,
+  recordingPackMarkdown,
+  scriptText,
+} from "../app/(product)/studio/saved/recording-pack";
+import { announce } from "../app/(product)/studio/saved/pack-actions";
+import {
+  CHECKS_HEADING,
+  CHECKS_UNREADABLE,
+  NOTHING_TO_EXPORT,
+  NOT_A_PIECE_NOTE,
+  NO_SHOOTING_PLAN,
+  ORIGINAL_NOTE,
+  PIECE_OTHER_SELECTED_SENTENCE,
+  REVISE_PLAN_BLOCK,
+  REVISE_REFUSED_ONLY,
+  SAVED_READ_FREE,
+  SAVED_STATE_COPY,
+  SCRIPT_HEADING,
+  SELECTED_STATUS,
+  SHOOTING_PLAN_HEADING,
+  USE_THIS_VERSION_HELP,
+  PAUSED_BLOCK,
+  VIEWER_BLOCK,
+  reviseCostSentence,
+  reviseDoneSentence,
+  savedPressBlocks,
+  sourceSentence,
+  CHECK_LEGEND,
+  COPIED_SCRIPT_STATUS,
+  COPY_PACK_FAILED_STATUS,
+  COPY_SCRIPT_FAILED_STATUS,
+  DISCLOSURE_ADVICE_WITHHELD,
+  EXPORT_FOOTER,
+  PACK_TEXT_LABEL,
+  REFERENCE_UNAVAILABLE,
+  REVISE_PRICE_UNREADABLE,
+  REVISE_REFERENCE_UNAVAILABLE,
+  REVISE_SOURCE_TO_REEL,
+  SAVED_QUOTE_CHANGED,
+  SCRIPT_TEXT_LABEL,
+  SOURCE_ATTRIBUTION,
+  SOURCE_CHECKED_REVISED,
+  SOURCE_CHECKED_SOURCE,
+  SPIN_GATE_PASSED,
+  alreadyRevisedSentence,
+  versionLinkLabel,
+} from "../app/(product)/studio/saved/saved-copy";
 import {
   STUDIO_ERROR_CODES,
   generateBlock,
@@ -64,18 +130,32 @@ import {
   studioRefusalCopy,
 } from "../app/(product)/studio/copy";
 import {
-  NO_RESULTS_BASIS,
+  EXCLUDED_FROM_HISTORY_SENTENCE,
+  EXCLUDE_FROM_HISTORY_HELP,
+  EXCLUDE_FROM_HISTORY_LABEL,
+  FILMING_LIMITS_HELP,
+  FORM_CONTROL_HELP,
+  historySentence,
+  resultsBasisSentence,
   NO_STREAM_NOTE,
   PLATFORM_OPTIONS,
   PREPARING_LABEL,
   FEEDBACK_HEADING,
   FEEDBACK_TODAY,
   LINEAGE_SCOPE_NOTE,
+  REMEMBER_HEADING,
+  REMEMBER_HELP,
+  REMEMBER_LABEL,
+  SEQUEL_HELP,
+  SEQUEL_LABEL,
+  rememberProposedSentence,
   REVISION_NOTE_HELP,
   REVISION_SAME_MODE_NOTE,
+  CHECK_MARKER,
   checkOffer,
   claimFamilyNote,
   DISCLOSURE_FIELD_PREFIX,
+  DISCLOSURE_LINE,
   feedbackNoteLimit,
   feedbackRecordedSentence,
   frameworksNotUsedSentence,
@@ -85,6 +165,7 @@ import {
   creatorRulesSentence,
   generateChargeSentence,
   generateCostSentence,
+  FREE_CLAIM_REFUSAL,
   inForceSentence,
   killTestSentence,
   lineageLineFor,
@@ -95,24 +176,104 @@ import {
   traceabilityFlagNote,
   traceabilityHeading,
   whyThisPerformsView,
+  CUSTOM_STRUCTURE_NOTE,
+  FILMING_UNCONFIRMED_NOTE,
+  FORM_CONTROL_LEGEND,
+  PEOPLE_SENTENCES,
+  PIVOT_SENTENCES,
+  basisSentence,
+  REMEMBER_OWNER_ONLY,
+  rememberAlreadyHeldSentence,
+  rememberLimitSentence,
   type ModeChoiceView,
 } from "../app/(product)/studio/run-copy";
 import {
   LINEAGE_VIEW_MAX,
+  savedPackFor,
   studioActionStateFor,
   studioStateFor,
 } from "../app/(product)/studio/projection";
 import { GenerationOutcome } from "../app/(product)/studio/generation-outcome";
 import { LineageList } from "../app/(product)/studio/lineage-view";
-import { FeedbackBlock } from "../app/(product)/studio/feedback-block";
-import { StudioView, type StudioViewProps } from "../app/(product)/studio/studio-view";
+import {
+  FeedbackBlock,
+  REMEMBER_TEXT_REFUSAL_CODES,
+  RememberBlock,
+} from "../app/(product)/studio/feedback-block";
+import { StudioView, pieceKey, type StudioViewProps } from "../app/(product)/studio/studio-view";
 import { StudioPanel } from "../app/(product)/studio/studio-panel";
-import { GENERATION_FEEDBACK_REACTIONS, FEEDBACK_NOTE_MAX } from "@respin/db";
+import { StudioEntrances, type StudioEntrancesProps } from "../app/(product)/studio/entrances";
+import {
+  PieceConfirmation,
+  type PieceConfirmationProps,
+  type PieceView,
+} from "../app/(product)/studio/piece-confirmation";
+import {
+  CHOOSE_CONCEPT_HELP,
+  FIND_CONCEPT_DONE_STATUS,
+  FIND_CONCEPT_HELP,
+  FIND_CONCEPT_HINT_LABEL,
+  FIND_CONCEPT_QUESTION,
+  OTHER_MODES_HEADING,
+  PIECE_CANCELLED_STATUS,
+  PIECE_OPERATION_NOTE,
+  PIECE_PLAN_BLOCK,
+  PIECE_SCRIPT_DONE_STATUS,
+  REFERENCE_ENTRANCE_BLOCKED,
+  REFERENCE_ENTRANCE_UNKNOWN,
+  RECENT_PACKS_EMPTY,
+  RECENT_PACKS_UNAVAILABLE,
+  REPLAY_SAVED_NOTE,
+  SAVED_PACK_LINK_LABEL,
+  savedPackHref,
+} from "../app/(product)/studio/run-copy";
+import {
+  BRAIN_EDIT_VALUE_MAX,
+  BrainEditUnchangedError,
+  CreativePieceError,
+  GENERATION_FEEDBACK_REACTIONS,
+  FEEDBACK_NOTE_MAX,
+  OWN_IDEA_MAX,
+  RECENT_DRAFTS_MAX,
+  RECENT_NOTES_MAX,
+  respinDb,
+} from "@respin/db";
+import {
+  CREATIVE_CONSTRAINT_BOUNDS,
+  CREATIVE_FORM_OPTIONS,
+  CREATIVE_PEOPLE_OPTIONS,
+  CreativeRequestError,
+  EVENT_CONFIRMATION_ITEM,
+  RevisionPresetError,
+  SAVED_REVISION_OPTIONS,
+  respinCredits,
+  type SavedGenerationView,
+} from "@respin/credits/app-server";
+// R-148 (launch L1): the generate ACTION is driven below with its session and
+// scope stubbed, so "the form control reaches the request" is asserted on the
+// params the operation actually receives. Partial mocks: nothing else this
+// file imports reaches `@respin/auth` or the scope helper.
+const actionMocks = vi.hoisted(() => ({
+  requireUser: vi.fn(),
+  scopeForUser: vi.fn(),
+}));
+vi.mock("@respin/auth", async (importActual) => ({
+  ...(await importActual<typeof import("@respin/auth")>()),
+  requireUser: actionMocks.requireUser,
+}));
+vi.mock("../app/(product)/workspace-scope", () => ({
+  scopeForUser: actionMocks.scopeForUser,
+}));
+
 import type {
   ClaimFlag,
+  ExcludeState,
   FeedbackState,
   KillTestSummary,
   LineageEntry,
+  RememberState,
+  SavedPackView,
+  SavedReviseState,
   ScriptDocument,
   StudioActionState,
   StudioRunState,
@@ -271,10 +432,7 @@ const HOOKS_DOCUMENT: ScriptDocument = {
     weakestPoint:
       "The third hook promises a secret and the body has to deliver one; if it does not, the opening is a bait.",
   },
-  disclosure: {
-    platform: "TikTok",
-    guidance: "Mark this as a paid partnership in the app before you post it.",
-  },
+  disclosure: { kind: "policy_check_required" },
 };
 
 const USABLE: StudioRunState = {
@@ -284,7 +442,7 @@ const USABLE: StudioRunState = {
   modeLabel: "Hooks",
   document: HOOKS_DOCUMENT,
   killTest: KILL_TEST,
-  charge: { creditsChargedNow: 5, balanceAfter: 20 },
+  charge: { creditsChargedNow: 5, balanceAfter: 20, freeClaimRefusal: false },
   // ZERO, NOT `null`: this run built an offer and everything fitted. The
   // drop case has its own fixture beside the R17 cases below.
   privateFrameworksNotUsed: 0,
@@ -307,17 +465,19 @@ const UNIVERSAL: Pick<ScriptDocument, "whyThisPerforms" | "disclosure"> = {
  * A FLAG-LEVEL CONCEALMENT FINDING — module-scope so BOTH the block's own
  * render test and the R20/R21 honesty scan can use the same one.
  *
- * `/disclosure/guidance` is the field that made this family matter: `runKillTest`
- * scans the product's own disclosure advice, and a sentence telling a creator to
- * leave the label off is the one finding that must reach them. Its `token` and
- * `unit` are ordinary English rather than a banned word, which is what lets the
- * honesty scan read this state's render (see `KILL_TEST.claims`).
+ * It sits in the CAPTION, a section the creator reads. It used to sit in
+ * `/disclosure/guidance`; since R-121 / audit P1-R1 the model's disclosure
+ * section is not shown, so a finding there is not presented either (its
+ * `unit` would be the model's disclosure prose) — that case is pinned in
+ * `tests/disclosure-presenters.test.ts`. Its `token` and `unit` are ordinary
+ * English rather than a banned word, which is what lets the honesty scan read
+ * this state's render (see `KILL_TEST.claims`).
  */
 const CONCEALMENT: ClaimFlag = {
   family: "concealment",
   enforcement: "flag",
   token: "skip the label",
-  field: "/disclosure/guidance",
+  field: "/caption/text",
   unit: "Most people skip the label on a short like this.",
 };
 
@@ -358,7 +518,7 @@ const HONEST_REFUSAL: StudioRunState = {
   sharperAngle:
     "Try the angle your own material already supports — a smaller claim you can show.",
   killTest: { ...KILL_TEST, outcome: "failed", attempts: 2, rewritten: true },
-  charge: { creditsChargedNow: 5, balanceAfter: 15 },
+  charge: { creditsChargedNow: 5, balanceAfter: 15, freeClaimRefusal: false },
   privateFrameworksNotUsed: 0,
 };
 
@@ -375,18 +535,21 @@ const MODES: ModeChoiceView[] = [
   { id: "m-a", label: "Footage to thesis", status: "available", cost: 12 },
   { id: "m-b", label: "Idea to script", status: "available", cost: 12 },
   { id: "m-c", label: "Source to reel", status: "available", cost: 12 },
-  { id: "m-d", label: "Analyse and spin", status: "available", cost: 12 },
   { id: "m-e", label: "Hooks", status: "available", cost: 5 },
   { id: "m-f", label: "Caption", status: "available", cost: 2 },
   { id: "m-g", label: "Ideation", status: "available", cost: 4 },
 ];
 
-/** Free's shape: three modes and four outside the plan. */
+/**
+ * Free's shape as Studio receives it: three modes and three outside the plan.
+ * Analyse and spin is not in either fixture since the Phase 6 compliance gate:
+ * `studioModeOffers` keeps it off Studio's picker on every tier, because it
+ * needs an autopsy chosen on /trends (asserted in `mode-access.test.ts`).
+ */
 const FREE_MODES: ModeChoiceView[] = [
   { id: "m-a", label: "Footage to thesis", status: "not_in_plan", cost: null },
   { id: "m-b", label: "Idea to script", status: "not_in_plan", cost: null },
   { id: "m-c", label: "Source to reel", status: "not_in_plan", cost: null },
-  { id: "m-d", label: "Analyse and spin", status: "not_in_plan", cost: null },
   { id: "m-e", label: "Hooks", status: "available", cost: 5 },
   { id: "m-f", label: "Caption", status: "available", cost: 2 },
   { id: "m-g", label: "Ideation", status: "available", cost: 4 },
@@ -397,13 +560,24 @@ const baseView: StudioViewProps = {
   run: {
     action: async () => IDLE_ACTION_STATE,
     feedbackAction: async () => ({ status: "idle" }) as const,
+    rememberAction: async () => ({ status: "idle" }) as const,
+    rememberValueMax: 2_000,
+    rememberAllowed: true,
     modes: MODES,
     costSentence: generateCostSentence(MODES, 25),
     revisionCostSentence: revisionCostSentence(2),
     revisionCost: 2,
+    // R-148: the facade's own values, so the view is rendered with the set the
+    // server really offers rather than a fixture copy of it.
+    formOptions: CREATIVE_FORM_OPTIONS,
+    peopleOptions: CREATIVE_PEOPLE_OPTIONS,
+    creativeBounds: CREATIVE_CONSTRAINT_BOUNDS,
     reactions: GENERATION_FEEDBACK_REACTIONS,
     noteMax: FEEDBACK_NOTE_MAX,
     block: null,
+    // Audit P6-R6: the creator's own scoped result count; zero is the
+    // fixture's default and every branch is driven in its own case.
+    resultCount: 0,
     activeKinds: ["Voice", "Strategy", "Kill test"],
     brainHref: "/brain",
     usageHref: "/usage",
@@ -477,6 +651,26 @@ describe("the pure decisions", () => {
     );
   });
 
+  it("generateCostSentence on a SETTLING balance says so, and decides nothing — even below the cost (audit Phase 8, P8-R1, AC1)", () => {
+    const one: ModeChoiceView[] = [
+      { id: "m-e", label: "Hooks", status: "available", cost: 5 },
+    ];
+    const settling = generateCostSentence(one, 2, true);
+    expect(settling).toContain("Hooks costs 5 credits");
+    expect(settling).toMatch(/2 credits for now/);
+    expect(settling).toMatch(/read without waiting for other activity on your workspace, so it may change/);
+    // It never claims a write is in progress (gate M1): a held lock proves only that.
+    expect(settling).not.toMatch(/being written|still settling|updating/);
+    expect(settling).toMatch(/checks it on the server before anything is spent/);
+    // NO insufficiency decision on a display number: a balance BELOW the cost
+    // gets no refusal, no top-up prompt, no "not enough".
+    expect(settling).not.toMatch(/not enough|insufficient|top up|buy/i);
+    // ...and a settled balance reads as before.
+    expect(generateCostSentence(one, 2, false)).toBe(
+      "Hooks costs 5 credits, every time — there is no included draft. You have 2 credits."
+    );
+  });
+
   it("revisionCostSentence prices a revision AS a revision (R8)", () => {
     // R8's whole content: `creditCosts.revision`, never the parent mode's key.
     // The screen states that rule in words as well as printing the number, so a
@@ -495,7 +689,7 @@ describe("the pure decisions", () => {
 
   it("modeAvailabilityNote reports all paid modes and Free's plan exclusions without a sale", () => {
     const note = modeAvailabilityNote(MODES);
-    expect(note).toMatch(/Every mode this product has is one of them/);
+    expect(note).toMatch(/Every mode offered on this page is one of them/);
     expect(note).not.toMatch(/not built|not part of/i);
 
     const free = modeAvailabilityNote(FREE_MODES);
@@ -511,7 +705,7 @@ describe("the pure decisions", () => {
     const all = modeAvailabilityNote(
       MODES.map((m) => ({ ...m, status: "available" as const }))
     );
-    expect(all).toMatch(/Every mode this product has is one of them/);
+    expect(all).toMatch(/Every mode offered on this page is one of them/);
     expect(all).not.toMatch(/not built|not part of/i);
   });
 
@@ -535,17 +729,66 @@ describe("the pure decisions", () => {
   });
 
   it("generateChargeSentence reports the real charge; zero is an answer, not an absence", () => {
-    expect(generateChargeSentence(5, 20)).toContain("That cost 5 credits.");
-    expect(generateChargeSentence(5, 20)).toContain("Your balance is now 20 credits.");
-    expect(generateChargeSentence(0, 20)).toContain(
+    expect(generateChargeSentence({ creditsChargedNow: 5, balanceAfter: 20, freeClaimRefusal: false })).toContain("That cost 5 credits.");
+    expect(generateChargeSentence({ creditsChargedNow: 5, balanceAfter: 20, freeClaimRefusal: false })).toContain("Your balance is now 20 credits.");
+    expect(generateChargeSentence({ creditsChargedNow: 5, balanceAfter: 20, freeClaimRefusal: false })).toContain("The entry is in your credit history");
+    expect(generateChargeSentence({ creditsChargedNow: 0, balanceAfter: 20, freeClaimRefusal: false })).toContain(
       "Nothing was taken from your credit balance"
     );
-    expect(generateChargeSentence(1, 1)).toContain("1 credit.");
+    // AUDIT P3-A2: a zero charge writes no ledger row, so it points at none.
+    expect(generateChargeSentence({ creditsChargedNow: 0, balanceAfter: 20, freeClaimRefusal: false })).not.toMatch(/credit history/);
+    expect(generateChargeSentence({ creditsChargedNow: 1, balanceAfter: 1, freeClaimRefusal: false })).toContain("1 credit.");
   });
 
   it("replayChargeSentence says nothing extra was spent", () => {
-    expect(replayChargeSentence(12)).toMatch(/nothing extra was spent/i);
-    expect(replayChargeSentence(12)).toContain("12 credits");
+    expect(replayChargeSentence(12, false)).toMatch(/nothing extra was spent/i);
+    expect(replayChargeSentence(12, false)).toContain("12 credits");
+  });
+
+  it("R-173: the FREE CLAIM REFUSAL says it in the owner's words; a free flag beside a debit never says free", () => {
+    expect(FREE_CLAIM_REFUSAL).toBe("We stopped this draft because it made a claim this product won't make; no credits were used.");
+    // Neutral (billing verification): a claim-only refusal can be concealment advice, not only a forecast.
+    expect(FREE_CLAIM_REFUSAL).not.toMatch(/promised a result/);
+    const free = generateChargeSentence({ creditsChargedNow: 0, balanceAfter: 20, freeClaimRefusal: true });
+    expect(free).toBe(`${FREE_CLAIM_REFUSAL} Your balance is 20 credits.`);
+    expect(free).not.toMatch(/nothing extra was spent|credit history|That cost/i);
+    // The settlement prices a free refusal at zero; a flag beside a debit is
+    // the charge, said as a charge.
+    const charged = generateChargeSentence({ creditsChargedNow: 5, balanceAfter: 15, freeClaimRefusal: true });
+    expect(charged).toContain("That cost 5 credits.");
+    expect(charged).not.toContain(FREE_CLAIM_REFUSAL);
+    // A REPLAY of a free refusal was never paid for.
+    const replay = replayChargeSentence(12, true);
+    expect(replay).toContain(FREE_CLAIM_REFUSAL);
+    expect(replay).not.toMatch(/already been paid for/);
+    expect(replayChargeSentence(12, false)).not.toContain(FREE_CLAIM_REFUSAL);
+  });
+
+  it("R-173: the honest-refusal panel's charge copy matches its outcome — free, or charged — and never says 'nothing extra was spent'", () => {
+    const free = decoded(renderOutcome({ ...HONEST_REFUSAL, charge: { creditsChargedNow: 0, balanceAfter: 20, freeClaimRefusal: true } }));
+    expect(free).toContain(FREE_CLAIM_REFUSAL);
+    expect(free).toMatch(/nothing was charged for it/);
+    expect(free).not.toMatch(/was charged for\.|That cost|nothing extra was spent/);
+    const charged = decoded(renderOutcome(HONEST_REFUSAL));
+    expect(charged).toContain("That cost 5 credits.");
+    expect(charged).toContain("This ran, and was charged for.");
+    expect(charged).not.toContain(FREE_CLAIM_REFUSAL);
+    expect(charged).not.toMatch(/nothing extra was spent/);
+    // A HELD free refusal finished by a press: the same sentence.
+    const held = decoded(renderOutcome({
+      status: "settled_held", generationId: "g", attemptId: "att-h", modeId: "hooks", modeLabel: "Hooks",
+      outcome: "honest_refusal", weakestPoint: null, refusalReason: "It made a claim.",
+      charge: { creditsChargedNow: 0, balanceAfter: 9, freeClaimRefusal: true },
+    }));
+    expect(held).toContain(FREE_CLAIM_REFUSAL);
+    expect(held).not.toMatch(/That cost|nothing extra was spent/);
+  });
+
+  it("R-173: the saved page's revision sentence says a free claim refusal was free, and a charged one what it cost", () => {
+    expect(reviseDoneSentence({ outcome: "honest_refusal", creditsChargedNow: 0, balanceAfter: 8, freeClaimRefusal: true })).toBe(
+      `The new version ended in an honest refusal, which is saved with its reasons. ${FREE_CLAIM_REFUSAL} Your balance is 8.`
+    );
+    expect(reviseDoneSentence({ outcome: "honest_refusal", creditsChargedNow: 2, balanceAfter: 6, freeClaimRefusal: false })).toMatch(/It cost 2 credits\./);
   });
 
   it("killTestSentence tells the three outcomes apart, and names the ONE rewrite", () => {
@@ -853,12 +1096,17 @@ describe("R19/REQ-I03: the traceability scan flags and offers [check], never edi
   });
 
   it("the [check] offer is ADDITIVE and sits beside the token, not in it", () => {
-    expect(checkOffer("412")).toBe("412 [check]");
+    // THE CONSTANT, not the literal (audit Phase 2, P2-R8): the offer is the
+    // marker's one home plus the token, whatever its spelling.
+    // The client-safe home equals the server home (audit Phase 2, P2-R8):
+    // `run-copy.ts` may not import `@respin/db`, so the agreement is held here.
+    expect(CHECK_MARKER).toBe(CHECK);
+    expect(checkOffer("412")).toBe(`412 ${CHECK}`);
     const html = renderOutcome(USABLE);
     expect(html).toContain('data-testid="studio-check-offer"');
-    expect(html).toContain("412 [check]");
+    expect(html).toContain(`412 ${CHECK}`);
     // The hook text itself carries no marker.
-    expect(html).not.toContain("It took 412 [check] takes");
+    expect(html).not.toContain(`It took 412 ${CHECK} takes`);
   });
 
   it("a flag-only finding is not presented as a rule violation", () => {
@@ -943,9 +1191,8 @@ describe("R19/REQ-I03: the traceability scan flags and offers [check], never edi
     expect(html).toContain(
       "2 other specifics were not found either — a plain number or a name, where an ordinary word can land, so these are a prompt to look, never a fault."
     );
-    expect(html.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
-    expect(html).toContain("names, numbers and dates are not listed here");
-    expect(html).toContain("recall aid, not a complete check.");
+    expect(html.match(/The disclosure line on this draft is this product's own sentence/g)).toHaveLength(1);
+    expect(html).toContain("not the draft's and not from your material, so it has nothing to list here.");
   });
 
   it("keeps a creator-owned TikTok finding distinct from disclosure guidance", () => {
@@ -969,21 +1216,29 @@ describe("R19/REQ-I03: the traceability scan flags and offers [check], never edi
     expect(html).toContain("TikTok [check]");
   });
 
-  it("keeps a synthetic hard disclosure traceability row visible", () => {
+  it("withholds a synthetic HARD disclosure traceability row too (R-121, audit P1-R1)", () => {
+    // THE BRANCH THE FILTER USED TO KEEP. A usable run cannot carry a hard
+    // traceability finding (`inventedSpecificFindings` turns each into a
+    // hard-rule finding, so the draft is rewritten or refused — pinned by
+    // `packages/modes/tests/kill-test.test.ts`), so this state is built by
+    // hand. Were it reachable, the row's `unit` is the model's disclosure
+    // prose, so it is not rendered either way.
     const html = decoded(
       renderOutcome({
         ...(USABLE as Extract<StudioRunState, { status: "usable" }>),
         killTest: {
           ...KILL_TEST,
           traceability: [
-            { kind: "currency", enforcement: "hard", token: "$4,000", field: `${DISCLOSURE_FIELD_PREFIX}guidance`, unit: "Within the first 3 seconds." },
+            { kind: "currency", enforcement: "hard", token: "$4,000", field: `${DISCLOSURE_FIELD_PREFIX}guidance`, unit: "SENTINEL-UNIT Within the first 3 seconds." },
           ],
         },
       })
     );
-    expect(html).toContain("$4,000 [check]");
-    expect(html).toContain("1 amount or date is");
-    expect(html.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
+    expect(html).not.toContain("$4,000 [check]");
+    expect(html).not.toContain("1 amount or date");
+    expect(html).not.toContain("SENTINEL-UNIT");
+    expect(html).not.toContain('data-testid="studio-traceability"');
+    expect(html.match(/The disclosure line on this draft is this product's own sentence/g)).toHaveLength(1);
   });
 
   it("does not render a traceability list for all-disclosure findings", () => {
@@ -1003,7 +1258,7 @@ describe("R19/REQ-I03: the traceability scan flags and offers [check], never edi
       "Every number, date and name outside the disclosure guidance in this draft was found in your brain or in what you typed in."
     );
     expect(html).not.toContain("Every name in this draft was found");
-    expect(html.match(/Any disclosure guidance is written by the product/g)).toHaveLength(1);
+    expect(html.match(/The disclosure line on this draft is this product's own sentence/g)).toHaveLength(1);
   });
 
   it("the LIMIT sentence comes from the operation, and app/** holds no copy of it", () => {
@@ -1067,9 +1322,9 @@ describe("REQ-I04/REQ-I05: what the draft says about itself reaches the creator"
    * `runKillTest` scans the model's OWN text for performance forecasts,
    * certainty promises and concealment advice, and writes every finding to
    * `generations.kill_test`. The hard-enforced ones reach a creator through the
-   * refusal's `why`; the flag-level ones reached nobody — including a
-   * concealment sentence sitting in the disclosure guidance this screen renders
-   * as the product's advice. A capability nothing can reach is not done.
+   * refusal's `why`; the flag-level ones reached nobody. A capability nothing
+   * can reach is not done. (Findings in the model's disclosure section are the
+   * exception, and stay unpresented — R-121, audit P1-R1.)
    */
   const withClaims = (claims: ClaimFlag[]) =>
     renderOutcome({
@@ -1108,7 +1363,12 @@ describe("REQ-I04/REQ-I05: what the draft says about itself reaches the creator"
     // genuinely different sentences, not one with a word swapped.
     const notes = ["performance", "certainty", "concealment"].map(claimFamilyNote);
     expect(new Set(notes).size).toBe(3);
-    expect(claimFamilyNote("performance")).toMatch(/no result of yours has been logged/i);
+    // SITE 2 IS COUNT-INDEPENDENT (audit P6-R6): a per-claim note has no
+    // count in reach, so it states the R-115 precondition and never how many
+    // results this creator has logged. "No result of yours has been logged"
+    // was false for every creator who had used `/results`.
+    expect(claimFamilyNote("performance")).toMatch(/until a verified analytics connector exists/i);
+    expect(claimFamilyNote("performance")).not.toMatch(/has been logged|have been logged|none logged|no result of yours|no results of yours/i);
     expect(claimFamilyNote("certainty")).toMatch(/does not make about anything/i);
     expect(claimFamilyNote("concealment")).toMatch(/does not tell you to leave that out/i);
     // An unknown family gets the neutral sentence, never one of the three.
@@ -1170,7 +1430,10 @@ describe("REQ-I04/REQ-I05: what the draft says about itself reaches the creator"
       ["/whyThisPerforms/reasoning", "/whyThisPerforms/reasoning"],
       ["/whyThisPerforms/reasoning"]
     );
-    expect(claimsHeading(hardSameField)).toMatch(/\b1 line in the explanation\b/);
+    // A HARD finding can sit in any presented field since R-173, so the
+    // sentence no longer says "in the explanation" (audit P6-A4).
+    expect(claimsHeading(hardSameField)).toMatch(/\b1 line in this draft made a claim this product may not make\b/);
+    expect(claimsHeading(hardSameField)).not.toMatch(/in the explanation/);
     expect(claimsHeading(hardSameField)).toMatch(/\b1 line in this draft\b/);
     expect(claimsHeading(hardSameField)).not.toMatch(/2 lines/);
   });
@@ -1207,6 +1470,24 @@ describe("REQ-I04/REQ-I05: what the draft says about itself reaches the creator"
       claimFamilyNote("concealment"),
       claimFamilyNote("unknown"),
       "What the draft says about itself",
+      // AUDIT P6-A4: the four rewritten `run-copy.ts` sentences and the
+      // lineage note (whose stale docblock was the fifth item), and every
+      // branch of the results sentence with its history clause (P6-R6).
+      feedbackNoteLimit(500),
+      feedbackRecordedSentence("off_voice", true),
+      FORM_CONTROL_HELP,
+      FILMING_LIMITS_HELP,
+      LINEAGE_SCOPE_NOTE,
+      resultsBasisSentence(0, ["Ideation", "Idea to script"]),
+      resultsBasisSentence(3, ["Ideation", "Idea to script"]),
+      resultsBasisSentence(1, []),
+      resultsBasisSentence(null, ["Ideation"]),
+      EXCLUDE_FROM_HISTORY_LABEL,
+      EXCLUDE_FROM_HISTORY_HELP,
+      EXCLUDED_FROM_HISTORY_SENTENCE,
+      // R-121, audit P1-R1: the disclosure line both product surfaces render
+      // in place of the model's disclosure section.
+      ...Object.values(DISCLOSURE_LINE),
     ];
     for (const text of ours) {
       expect(
@@ -1295,6 +1576,7 @@ describe("R14c: a replayed attempt says nothing was called and nothing charged",
     weakestPoint: "The claim in hook two needs a source.",
     refusalReason: null,
     balanceAfter: 20,
+    freeClaimRefusal: false,
   };
 
   it("renders the charge line, the stored weakest point, and no re-parsed draft", () => {
@@ -1434,7 +1716,11 @@ describe("studioStateFor projects what the operation returned", () => {
     finalAttempt: {
       hardRules: [],
       traceability: [{ kind: "date", enforcement: "hard", token: "2026-01-01", field: "/b", unit: "v", shape: "iso-date", startUtf16: 0, endUtf16: 10 }],
-      claims: [{ shape: "skip the label", family: "concealment", enforcement: "flag", token: "skip the label", field: "/disclosure/guidance", unit: "Most people skip the label on a short like this." }],
+      claims: [
+        { shape: "skip the label", family: "concealment", enforcement: "flag", token: "skip the label", field: "/caption/text", unit: "Most people skip the label on a short like this." },
+        // R-121, audit P1-R1 (carrier 7): stored, and dropped by the projection.
+        { shape: "skip the label", family: "concealment", enforcement: "flag", token: "skip the label", field: "/disclosure/guidance", unit: "SENTINEL-UNIT the model's own disclosure sentence." },
+      ],
     },
     refusal: null,
   };
@@ -1450,6 +1736,20 @@ describe("studioStateFor projects what the operation returned", () => {
       ...over,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     }) as any;
+
+  it("R-173: `freeClaimRefusal` is carried from the operation onto every charge-bearing state", () => {
+    const refused = {
+      status: "refused",
+      refusal: { headline: "H", why: ["W"], sharperAngle: "S" },
+      killTest: { ...killTest, outcome: "failed", attempts: 2, rewritten: true },
+    };
+    const free = studioStateFor(result({ run: refused, creditsChargedNow: 0, freeClaimRefusal: true, frameworkOffer: null }), "Hooks");
+    expect(free.status === "honest_refusal" ? free.charge.freeClaimRefusal : "wrong state").toBe(true);
+    const held = studioStateFor(result({ run: null, creditsChargedNow: 0, freeClaimRefusal: true }), "Hooks");
+    expect(held.status === "settled_held" ? held.charge.freeClaimRefusal : "wrong state").toBe(true);
+    const replay = studioStateFor(result({ run: null, replayed: true, creditsChargedNow: 0, freeClaimRefusal: true }), "Hooks");
+    expect(replay.status === "replayed" ? replay.freeClaimRefusal : "wrong state").toBe(true);
+  });
 
   it("the count comes from the OPERATION, and a replay has no answer", () => {
     // The projection half: the number on the screen is the one `generate`
@@ -1522,7 +1822,7 @@ describe("studioStateFor projects what the operation returned", () => {
           output: {
             hooks: [{ text: "H", mechanic: "M" }],
             whyThisPerforms: { reasoning: "R", weakestPoint: "W" },
-            disclosure: { platform: "TikTok", guidance: "G" },
+            disclosure: { platform: "SENTINEL-PLATFORM", guidance: "SENTINEL-GUIDANCE" },
           },
         },
       }),
@@ -1531,6 +1831,11 @@ describe("studioStateFor projects what the operation returned", () => {
     expect(state.status).toBe("usable");
     if (state.status !== "usable") throw new Error("unreachable");
     expect(state.document.hooks).toEqual([{ text: "H", mechanic: "M" }]);
+    // THE DISCLOSURE IS THE FACADE'S KIND, NOT THE MODEL'S SECTION (R-121,
+    // audit P1-R1): neither the model's guidance nor its platform crosses.
+    expect(state.document.disclosure).toEqual({ kind: "policy_check_required" });
+    expect(JSON.stringify(state)).not.toContain("SENTINEL-GUIDANCE");
+    expect(JSON.stringify(state)).not.toContain("SENTINEL-PLATFORM");
     // THE LABEL IS THE CALLER'S and comes from the STORED row's mode, never
     // from the string the browser posted — see `studioStateFor`'s docblock.
     expect(state.modeLabel).toBe("Hooks");
@@ -1551,11 +1856,57 @@ describe("studioStateFor projects what the operation returned", () => {
         family: "concealment",
         enforcement: "flag",
         token: "skip the label",
-        field: "/disclosure/guidance",
+        field: "/caption/text",
         unit: "Most people skip the label on a short like this.",
       },
     ]);
     expect(JSON.stringify(state)).not.toContain("FIRST_ATTEMPT_CLAIM");
+    // ...EXCEPT a finding in the model's disclosure section, whose `unit` is
+    // that section's prose: stored on the generation, not projected.
+    expect(JSON.stringify(state)).not.toContain("SENTINEL-UNIT");
+  });
+
+  it("SENTINEL: no sentence of a REFUSED draft is serialised — findings carry token and field, the reasons quote nothing, and a stored reason projects its headline only", async () => {
+    const { honestRefusal } = await import("../packages/modes/src/kill-test");
+    const DRAFT = "SENTINEL-DRAFT this hook is guaranteed to work";
+    const hardRules = [
+      { rule: "forbidden_claim", shape: "guarantee", field: "/hooks/0/text", excerpt: DRAFT, remedy: "Say what the idea does." },
+    ] as never;
+    const refusal = honestRefusal({ hardRules, traceability: [], claims: [] } as never);
+    const refusedKillTest = {
+      ...killTest,
+      outcome: "failed",
+      attempts: 2,
+      rewritten: true,
+      finalAttempt: {
+        hardRules,
+        traceability: [{ kind: "currency", enforcement: "hard", token: "$4,000", field: "/caption/text", unit: DRAFT, shape: "currency", startUtf16: 0, endUtf16: 6 }],
+        claims: [{ shape: "guarantee", family: "certainty", enforcement: "hard", token: "guarantee", field: "/hooks/0/text", unit: DRAFT }],
+      },
+    };
+    const fresh = studioStateFor(
+      result({ run: { status: "refused", refusal, killTest: refusedKillTest }, creditsChargedNow: 0, freeClaimRefusal: true, frameworkOffer: null }),
+      "Hooks"
+    );
+    expect(fresh.status).toBe("honest_refusal");
+    expect(JSON.stringify(fresh)).not.toContain("SENTINEL-DRAFT");
+    // NON-VACUITY: the token and field still travel.
+    expect(JSON.stringify(fresh)).toContain('"token":"guarantee"');
+    expect(JSON.stringify(fresh)).toContain('"field":"/hooks/0/text"');
+    // A STORED reason from before the fix carries the excerpt in its middle lines.
+    const stored = ["This one did not survive the kill test, so it is not being shown.", "forbidden_claim at /hooks/0/text: " + DRAFT + " — fix it", "Try a smaller claim."].join("\n");
+    for (const over of [{ replayed: true }, { replayed: false }]) {
+      const state = studioStateFor(
+        result({ ...over, run: null, generation: { ...generation, outcome: "honest_refusal", refusalReason: stored }, creditsChargedNow: 0, freeClaimRefusal: false }),
+        "Hooks"
+      );
+      expect(JSON.stringify(state)).not.toContain("SENTINEL-DRAFT");
+      expect(JSON.stringify(state)).toContain("did not survive the kill test");
+    }
+    // ...and the rendered panel keeps "The draft that failed is not shown" true.
+    const html = renderOutcome(fresh);
+    expect(html).not.toContain("SENTINEL-DRAFT");
+    expect(html).toContain("The draft that failed is not shown");
   });
 
   it("a refused run becomes the honest refusal, still carrying the charge", () => {
@@ -1578,7 +1929,8 @@ describe("studioStateFor projects what the operation returned", () => {
     expect(state.charge.creditsChargedNow).toBe(5);
   });
 
-  it("a replay is its own state — BOTH `replayed` and a null run are checked", () => {
+  it("THREE OUTCOMES, decided on `replayed` alone (audit P3-A2): a replay, and a SETTLED HELD DRAFT that charged", () => {
+    // A replay is `replayed: true` — whatever `run` says.
     for (const over of [
       { replayed: true, run: null },
       // A shape where the two disagree must still not render a stored draft as
@@ -1587,6 +1939,39 @@ describe("studioStateFor projects what the operation returned", () => {
     ]) {
       expect(studioStateFor(result(over), "Hooks").status).toBe("replayed");
     }
+    // `replayed: false, run: null` is the THIRD outcome — a held draft this
+    // press settled and charged. It was mapped to "replayed" until P3-A2,
+    // which printed "nothing extra was spent" over a real debit.
+    const settledHeld = studioStateFor(result({ replayed: false, run: null, creditsChargedNow: 3 }), "Hooks");
+    expect(settledHeld.status).toBe("settled_held");
+    if (settledHeld.status !== "settled_held") throw new Error("unreachable");
+    expect(settledHeld.charge).toEqual({ creditsChargedNow: 3, balanceAfter: 20 });
+    expect(settledHeld.attemptId).toBe("a1");
+  });
+
+  it("PLANTED: the pre-P3-A2 inversion (`run === null` read as a replay) is what the case above refuses", () => {
+    // The old predicate, written out: it sends the third outcome to "replayed".
+    const inverted = (r: { replayed: boolean; run: unknown }) => (r.replayed || r.run === null ? "replayed" : "other");
+    expect(inverted({ replayed: false, run: null })).toBe("replayed");
+    expect(studioStateFor(result({ replayed: false, run: null }), "Hooks").status).not.toBe(
+      inverted({ replayed: false, run: null })
+    );
+  });
+
+  it("the settled held draft's rendered text never says nothing was spent or that nothing ran; a ZERO-cost settle names no ledger entry", () => {
+    const charged = renderOutcome(studioStateFor(result({ replayed: false, run: null, creditsChargedNow: 3 }), "Hooks"));
+    expect(charged).toContain('data-testid="studio-settled-held"');
+    expect(decoded(charged)).toContain("That cost 3 credits.");
+    expect(decoded(charged)).toContain("The entry is in your credit history on the usage page.");
+    expect(decoded(charged)).not.toMatch(/nothing extra was spent/i);
+    expect(decoded(charged)).not.toMatch(/did not run anything/i);
+    expect(decoded(charged)).toContain(savedPackHref("a1"));
+    const free = renderOutcome(studioStateFor(result({ replayed: false, run: null, creditsChargedNow: 0 }), "Hooks"));
+    expect(decoded(free)).toContain("Nothing was taken from your credit balance");
+    expect(decoded(free)).not.toMatch(/credit history/);
+    // And a TRUE replay still says what is true for it.
+    const replay = renderOutcome(studioStateFor(result({ replayed: true, run: null, creditsChargedNow: 0 }), "Hooks"));
+    expect(decoded(replay)).toMatch(/nothing extra was spent/i);
   });
 });
 
@@ -1709,6 +2094,9 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
    */
   const STUDIO_SPEND_PATH_SOURCES = [
     "packages/credits/src/generate.ts",
+    // Audit P3-R2: the assembled-input ceiling `meteredCall` runs first — its
+    // refusal class is constructed here, in @respin/llm, not in generate.ts.
+    "packages/llm/src/input-ceiling.ts",
     "packages/credits/src/inference.ts",
     "packages/credits/src/fold.ts",
     "packages/credits/src/clock.ts",
@@ -1718,6 +2106,23 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
     "packages/modes/src/kill-test.ts",
     "packages/modes/src/output.ts",
     "packages/modes/src/modes.ts",
+    // Launch L2 (R-151): the creative piece's producers, LISTED — the
+    // selection, "New generation" and cancel actions run on this screen, and
+    // `generate` reads the piece through the db capability whose writer
+    // throws `CreativePieceError` (CLAUDE.md non-negotiable 7: a second
+    // producer is a list edit, never an automatic inclusion).
+    "packages/credits/src/creative-work.ts",
+    "packages/db/src/creative-work-ops.ts",
+    "packages/modes/src/creative.ts",
+    "packages/db/src/llm-transport-selection.ts",
+    // Launch L3 (R-152): two more producers on this screen, LISTED. The
+    // generation path now reads recent work (`recent-context.ts`), and the
+    // "Remember this for future drafts" action composes the creator-edit path
+    // (`feedback-ops.ts` -> `brain-ops.ts`), whose refusals render in the same
+    // closed copy set.
+    "packages/credits/src/recent-context.ts",
+    "packages/db/src/feedback-ops.ts",
+    "packages/db/src/brain-ops.ts",
   ];
 
   // `mode-access.ts` now also owns Performance Learning's configuration
@@ -1763,6 +2168,16 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
     ScopeForgeryError: "the workspace cage",
     // `withWorkspace`, reached by this PAGE's own `scopeForUser` call.
     WorkspaceAccessError: "the page's own scope read",
+    // Launch L3 (R-152): "Remember this for future drafts" reaches
+    // `caps.appendOnboardingInput` and `caps.writeBrainDoc` in with-workspace.ts
+    // through `editBrainDocument` — their owner gate, the reference-echo bar and
+    // the three storage ceilings, listed rather than scanned (the file is the
+    // whole capability surface, most of which this screen never reaches).
+    ProfileRoleError: "the creator-edit write's owner gate",
+    ReferenceEchoError: "the creator-edit write's reference-echo bar",
+    BrainVersionLimitError: "the creator-edit write's version ceiling",
+    BrainDocumentLimitError: "the creator-edit write's document ceiling",
+    OnboardingInputLimitError: "the creator-edit input's ceiling",
   };
 
   const spendPathSrc = [
@@ -1822,9 +2237,37 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
     CODE_FOR_ERROR_CLASS[name] ??
     CODE_FOR_ERROR_CLASS[ERROR_CLASS_COVERED_BY_BASE[name] ?? ""];
 
+  /**
+   * THROWN ON THE SPEND PATH, AND NOT A REFUSAL A CREATOR CAN RECEIVE — by
+   * list, each with its reason (audit P3-R2). `assertInputWithinCeiling`
+   * refuses a non-positive ceiling with a `RangeError`; a parsed config
+   * document cannot carry one (`llm.maxInputTokens` is `.int().min(1)`,
+   * defaulted), so only a cast-in document reaches it, and it is the loud
+   * programming-error shape on purpose.
+   */
+  const NOT_A_CREATOR_REFUSAL: Readonly<Record<string, string>> = {
+    RangeError: "the input ceiling's invalid-ceiling invariant — unreachable from a parsed config document",
+  };
+  /**
+   * An instance-branch code this screen's producers cannot reach, by list
+   * (audit P3-R2): `input_too_large_posts` needs `largestPart === null`, which
+   * only `runInference` (no recorded parts) produces; `meteredCall` always
+   * passes the prompt's `partSizes`. Its copy names the onboarding entitlement,
+   * which is exactly why it must not be in this screen's set.
+   */
+  const UNREACHABLE_BRANCH_CODES: Readonly<Record<string, string>> = {
+    input_too_large_posts: "the inference caller's no-parts branch; the studio always records parts",
+  };
+
   it("every class the spend path throws maps to a code this screen has copy for", () => {
     const codes = new Set<string>();
-    const names = [...thrownClassNames(spendPathSrc), ...Object.keys(ALSO_REACHABLE)];
+    const names = [...thrownClassNames(spendPathSrc), ...Object.keys(ALSO_REACHABLE)].filter(
+      (name) => !(name in NOT_A_CREATOR_REFUSAL)
+    );
+    // The exemptions are real producers, not stale entries.
+    for (const name of Object.keys(NOT_A_CREATOR_REFUSAL)) {
+      expect(thrownClassNames(spendPathSrc), name).toContain(name);
+    }
     for (const name of names) {
       const code = codeForClassName(name);
       expect(
@@ -1832,7 +2275,9 @@ describe("the screen's code set is DERIVED from what `generate` throws", () => {
         `${name} is thrown on the studio spend path but resolves to no billing error code`
       ).toBeDefined();
       codes.add(code as string);
-      for (const c of INSTANCE_BRANCH_CODES[name] ?? []) codes.add(c);
+      for (const c of INSTANCE_BRANCH_CODES[name] ?? []) {
+        if (!(c in UNREACHABLE_BRANCH_CODES)) codes.add(c);
+      }
     }
     const missing = [...codes].filter(
       (c) => !(STUDIO_ERROR_CODES as readonly string[]).includes(c)
@@ -2510,7 +2955,7 @@ describe("R21: /studio left NOT_BUILT_YET, and the removal is paid for", () => {
       document: {
         hooks: [],
         whyThisPerforms: { reasoning: "R", weakestPoint: " " },
-        disclosure: { platform: "TikTok", guidance: "G" },
+        disclosure: { kind: "policy_check_required" },
       },
       killTest: {
         ...KILL_TEST,
@@ -2518,7 +2963,7 @@ describe("R21: /studio left NOT_BUILT_YET, and the removal is paid for", () => {
         verdicts: [],
         traceability: [],
       },
-      charge: { creditsChargedNow: 0, balanceAfter: 0 },
+      charge: { creditsChargedNow: 0, balanceAfter: 0, freeClaimRefusal: false },
       privateFrameworksNotUsed: null,
     });
     const resultFailures = positiveFailures({ form: renderView(), result: gutted });
@@ -2562,21 +3007,102 @@ describe("R21: /studio left NOT_BUILT_YET, and the removal is paid for", () => {
     expect(renderView()).toContain('name="input"');
   });
 
-  it("the n = 0 statement is unconditional and denies holding evidence about the creator", () => {
-    // R21 in one assertion: the results loop is slice 9, so the product has
-    // logged nothing about this person and must not imply otherwise.
-    expect(NO_RESULTS_BASIS).toMatch(/no results of yours have been logged/i);
-    expect(NO_RESULTS_BASIS).toMatch(/not measuring you/i);
-    expect(NO_RESULTS_BASIS).toMatch(/built from the brain you confirmed/i);
-    // It renders on the FORM, before the press — the claim it forecloses is one
-    // a reader forms while deciding to spend, not after.
-    expect(renderView()).toContain('data-testid="studio-no-results-basis"');
-    // ...in every offered state, including the blocked ones.
-    for (const block of [null, { reason: "viewer" }]) {
-      expect(renderView({ run: { ...baseView.run!, block } })).toContain(
-        NO_RESULTS_BASIS.slice(0, 40)
-      );
-    }
+  // AUDIT P6-R6 (register item 8, HIGH): THIS CASE USED TO BE "the n = 0
+  // statement is unconditional", and it pinned a sentence that was false for
+  // every creator who had used `/results`. It now asserts the CONDITIONS — the
+  // branch the creator's own scoped count selects, and whether the screen's
+  // modes read recent work — so a reworded sentence stays green and a sentence
+  // that drops either fact is red.
+  describe("the results sentence is CONDITIONAL (P6-R6, R-174)", () => {
+    const basis = STUDIO_POSITIVE_ASSERTIONS.find((a) => a.testId === "studio-no-results-basis")!;
+    const ZERO = /no results of yours have been logged/i;
+    const COUNTED = /you have logged (\d+) results?\./i;
+    const HISTORY_MODES: ModeChoiceView[] = [
+      { id: "m-b", label: "Idea to script", status: "available", cost: 12, takesCreativeForm: true },
+      { id: "m-e", label: "Hooks", status: "available", cost: 5, takesCreativeForm: false },
+      { id: "m-g", label: "Ideation", status: "available", cost: 4, takesCreativeForm: true },
+    ];
+    const region = (run: Partial<NonNullable<StudioViewProps["run"]>>): string => {
+      const html = renderView({ run: { ...baseView.run!, ...run } });
+      const at = html.indexOf('data-testid="studio-no-results-basis"');
+      expect(at, "the marker is not rendered").toBeGreaterThan(-1);
+      return visibleCopy(html.slice(at, html.indexOf("</p>", at)));
+    };
+
+    it("zero renders the none-logged branch and never a count", () => {
+      const text = region({ resultCount: 0 });
+      expect(text).toMatch(ZERO);
+      expect(text).toMatch(/not measuring you/i);
+      expect(text).not.toMatch(COUNTED);
+      expect(basis.must.test(text)).toBe(true);
+    });
+
+    it("a positive count renders THAT count, none of them, and the verified precondition, and removes the zero sentence", () => {
+      for (const n of [1, 3, 41]) {
+        const text = region({ resultCount: n });
+        expect(text, `n=${n}`).not.toMatch(ZERO);
+        expect(COUNTED.exec(text)?.[1], `n=${n}: the count the page passed`).toBe(String(n));
+        // Singular for exactly one (Phase 6 gate, LOW): "1 result. It does
+        // not change a draft", never "1 results" or "none of them".
+        expect(text).toMatch(n === 1 ? /logged 1 result\. It does not change a draft/ : /none of them/i);
+        if (n === 1) expect(text).not.toMatch(/1 results|none of them/i);
+        expect(text).toMatch(/verified analytics connector/i);
+        expect(basis.must.test(text), `n=${n}`).toBe(true);
+        // The branch the creator reads is canon-clean (no `learn` stem, no
+        // performance claim).
+        expect(claimHits(text, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS), `n=${n}`).toEqual([]);
+      }
+    });
+
+    it("a failed count read says so and NEVER falls back to the zero sentence", () => {
+      const text = region({ resultCount: null });
+      expect(text).not.toMatch(ZERO);
+      expect(text).not.toMatch(COUNTED);
+      expect(text).toMatch(/could not read how many results/i);
+      expect(basis.must.test(text)).toBe(true);
+    });
+
+    it("the recent-work channel is named for exactly the modes that read it, and absent where none does", () => {
+      const withHistory = region({ resultCount: 0, modes: HISTORY_MODES });
+      expect(withHistory).toMatch(/labelled history/);
+      expect(withHistory).toContain("Idea to script and Ideation drafts also see");
+      expect(withHistory).not.toMatch(/Hooks drafts/);
+      expect(withHistory).not.toMatch(/nothing else of yours/);
+      expect(withHistory).toMatch(/never counts as evidence/);
+      // No mode reads history: "nothing else" is then true, and is what is said.
+      const without = region({ resultCount: 0, modes: MODES });
+      expect(without).toMatch(/nothing else of yours/);
+      expect(without).not.toMatch(/labelled history/);
+      expect(basis.must.test(withHistory)).toBe(true);
+      expect(basis.must.test(without)).toBe(true);
+    });
+
+    it("PLANTS: the harness reddens on a sentence that drops the channel, and stays green on a rewording that keeps the facts", () => {
+      const counted = resultsBasisSentence(3, ["Ideation"]);
+      const dropped = counted.replace(historySentence(["Ideation"]), "");
+      expect(dropped).not.toBe(counted);
+      expect(basis.must.test(dropped), "a sentence without the channel passed").toBe(false);
+      // The OLD unconditional sentence is red when a count exists: it says
+      // none logged and names no channel.
+      expect(
+        basis.must.test(
+          "Nothing here is based on how your posts have done. No results of yours have been logged — this product holds none, and it is not measuring you. A draft is built from the brain you confirmed and from what you type in."
+        )
+      ).toBe(false);
+      // A rewording that keeps every fact stays green: the harness reads the
+      // condition, not the words around it.
+      expect(
+        basis.must.test(
+          "You have logged 3 results. None of them alters a draft until a verified connector exists. Ideation drafts also read your recent drafts as labelled history."
+        )
+      ).toBe(true);
+    });
+
+    it("it renders on the FORM in every offered state, the blocked ones included", () => {
+      for (const block of [null, { reason: "viewer" }]) {
+        expect(region({ block, resultCount: 2 })).toMatch(COUNTED);
+      }
+    });
   });
 
   it("no rendered state predicts how a draft will do", () => {
@@ -3285,7 +3811,9 @@ describe("R6/R9: a revision, and a lineage a creator can read", () => {
     // not know that would reasonably call it a bug.
     expect(REVISION_NOTE_HELP).toMatch(/same checks from scratch/i);
     expect(REVISION_NOTE_HELP).toMatch(/can be refused where the first one passed/i);
-    expect(REVISION_NOTE_HELP).toMatch(/a refusal is charged for/i);
+    expect(REVISION_NOTE_HELP).toMatch(/a refusal is charged like any other run/i);
+    // R-173: ...except a refusal caused only by a promised result.
+    expect(REVISION_NOTE_HELP).toMatch(/a claim this product won't make: that one uses no credits/i);
     expect(REVISION_SAME_MODE_NOTE).toMatch(/stays in the mode/i);
     // ...and the panel really renders them, rather than the constants merely
     // existing (the lying-screen lesson: a constant nobody renders is copy
@@ -3618,7 +4146,10 @@ describe("R10/R12: feedback is captured, and the screen says what it does NOT do
     // words is the wrong place to round up.
     const limit = feedbackNoteLimit(FEEDBACK_NOTE_MAX);
     expect(limit).not.toMatch(/exactly as you type/i);
-    expect(limit).toMatch(/only line endings and unicode form are normalised/i);
+    // AUDIT P6-A4: it names the normalisation and makes no "as you typed"
+    // claim at all, caveated or not.
+    expect(limit).toMatch(/line endings and Unicode form made consistent and nothing else changed/);
+    expect(limit).not.toMatch(/as you typed/i);
     expect(feedbackRecordedSentence("off_voice", true)).not.toMatch(
       /word for word/i
     );
@@ -3627,11 +4158,34 @@ describe("R10/R12: feedback is captured, and the screen says what it does NOT do
   it("R12: it says what feedback DOES and DOES NOT do today", () => {
     const html = withResult();
     expect(html).toContain('data-testid="studio-feedback-today"');
-    // The three claims, each asserted: it is stored, nothing reads it, and a
-    // later slice may PROPOSE rather than apply.
+    // The claims, each asserted: it is stored, it does not change the brain,
+    // it IS shown to the next concept/script drafts as labelled history since
+    // launch L3 (R-152) — the old "Nothing reads it today" became false and is
+    // asserted ABSENT — and a later slice may PROPOSE rather than apply.
     expect(html).toMatch(/stored as a record of what you said/i);
-    expect(html).toMatch(/Nothing reads it today/i);
-    expect(html).toMatch(/it does not change your brain/i);
+    expect(html).not.toMatch(/Nothing reads it today/i);
+    expect(html).not.toMatch(/does not change the next draft/i);
+    expect(html).toMatch(/It does not change your brain/i);
+    expect(html).toMatch(/labelled history/i);
+    expect(html).toMatch(/never a fact about you/i);
+    expect(html).toMatch(/unless you ask for a sequel/i);
+    // L3 GATE, LEARNING LOW B-L1: the sentence names BOTH ways a reaction is
+    // shown, with the read's OWN bounds — every reaction rides as a label on
+    // each of up to RECENT_DRAFTS_MAX drafts, and only RECENT_NOTES_MAX
+    // reactions are shown with their notes. It used to say only the second,
+    // which under-stated what is sent.
+    const words: Record<number, string> = { 3: "three", 5: "five" };
+    expect(words[RECENT_DRAFTS_MAX], "add the number word for the new bound").toBeDefined();
+    expect(words[RECENT_NOTES_MAX], "add the number word for the new bound").toBeDefined();
+    expect(FEEDBACK_TODAY).toContain(
+      `up to ${words[RECENT_DRAFTS_MAX]} of your most relevant recent concept batches and scripts, each labelled with every reaction you recorded on it`
+    );
+    expect(FEEDBACK_TODAY).toContain(
+      `up to ${words[RECENT_NOTES_MAX]} of your most relevant recent reactions with the note you wrote`
+    );
+    expect(FEEDBACK_TODAY).not.toMatch(/Up to three of your most relevant recent reactions to concepts and scripts, with any note/);
+    // ...and the note-words filter (A-L2) is stated, not hidden.
+    expect(FEEDBACK_TODAY).toMatch(/a date, an amount, a percentage or a multiple/);
     expect(html).toMatch(/suggest/i);
     expect(html).toMatch(/approve or reject/i);
     expect(html).toMatch(/never applied to your brain without you|Nothing is ever applied to your brain without you/i);
@@ -3685,12 +4239,19 @@ describe("R10/R12: feedback is captured, and the screen says what it does NOT do
     // their own record.
     const kept = feedbackRecordedSentence("off_voice", true);
     expect(kept).toContain(reactionLabel("off_voice"));
-    expect(kept).toMatch(/note was stored with it, as you typed it/i);
+    expect(kept).toMatch(/Your note was stored with it\./);
+    // AUDIT P6-A4: no "as you typed it" beside a `normaliseContent` write.
+    expect(kept).not.toMatch(/as you typed/i);
+    expect(feedbackNoteLimit(500)).not.toMatch(/as you typed/i);
+    expect(feedbackNoteLimit(500)).toMatch(/line endings and Unicode form made consistent and nothing else changed/);
     const not = feedbackRecordedSentence("off_voice", false);
     expect(not).toMatch(/No note was sent with it/i);
-    // AND NEITHER THANKS THE CREATOR FOR TEACHING THE PRODUCT ANYTHING.
+    // AND NEITHER THANKS THE CREATOR FOR TEACHING THE PRODUCT ANYTHING. Since
+    // launch L3 the claim is the BRAIN's, not the whole product's: the next
+    // concept or script draft may be shown this reaction as history.
     for (const sentence of [kept, not]) {
-      expect(sentence).toMatch(/nothing in the product has changed because of it/i);
+      expect(sentence).toMatch(/your brain has not changed because of it/i);
+      expect(sentence).not.toMatch(/nothing in the product has changed/i);
     }
   });
 
@@ -3733,6 +4294,82 @@ describe("R10/R12: feedback is captured, and the screen says what it does NOT do
     });
     expect(unknownCode).toContain('data-testid="studio-feedback-refused"');
     expect(unknownCode).toContain(REFUSAL_COPY.unknown.title);
+  });
+
+  // AUDIT P6-A1 (R-174): "LEAVE THIS OUT OF FUTURE DRAFTS" — offered beside a
+  // recorded reaction, posting only that row's id, and saying what happened.
+  it("P6-A1: the leave-out control targets the stored reaction, and each of its states renders", () => {
+    const withExclude = (feedback: FeedbackState, exclude: ExcludeState) =>
+      decoded(
+        renderToStaticMarkup(
+          <FeedbackBlock
+            generationId="gen-1"
+            reactions={GENERATION_FEEDBACK_REACTIONS}
+            noteMax={FEEDBACK_NOTE_MAX}
+            formAction={() => {}}
+            pending={false}
+            state={feedback}
+            refusalCopy={REFUSAL_COPY}
+            fallbackCopy={REFUSAL_COPY.unknown}
+            exclude={{ formAction: () => {}, pending: false, state: exclude }}
+          />
+        )
+      );
+    const recorded: FeedbackState = {
+      status: "recorded",
+      generationId: "gen-1",
+      reaction: "off_voice",
+      noteKept: true,
+      feedbackId: "0196a0b0-0000-7000-8000-000000000001",
+    };
+    // Nothing recorded yet: no control, because there is nothing to leave out.
+    expect(withExclude({ status: "idle" }, { status: "idle" })).not.toContain('data-testid="studio-feedback-exclude"');
+    // Recorded: the control posts the STORED ROW's id and nothing else.
+    const offered = withExclude(recorded, { status: "idle" });
+    expect(offered).toContain('data-testid="studio-feedback-exclude"');
+    expect(offered).toContain(`name="feedbackId" value="${recorded.feedbackId}"`);
+    expect(offered).toContain(EXCLUDE_FROM_HISTORY_LABEL);
+    expect(offered).toContain(EXCLUDE_FROM_HISTORY_HELP);
+    // THE PROPOSAL PATH IS NAMED (Phase 6 tenancy and learning gates): leaving a
+    // reaction out of the history does not withdraw it from repeated-reaction
+    // proposals, and the control says so, with the creator's approval named.
+    expect(EXCLUDE_FROM_HISTORY_HELP).toContain(
+      "It can still count toward a suggested edit to your brain, which you approve or reject."
+    );
+    expect(EXCLUDE_FROM_HISTORY_HELP).toContain("Leaving it out cannot be undone.");
+    expect(EXCLUDE_FROM_HISTORY_HELP).not.toMatch(/from this page/);
+    // A recorded state from before the id existed offers no control.
+    const { feedbackId: _omit, ...withoutId } = recorded;
+    void _omit;
+    expect(withExclude(withoutId, { status: "idle" })).not.toContain('data-testid="studio-feedback-exclude"');
+    // Left out: the sentence, inside the persistent status region, and no
+    // second press offered for the same row.
+    const done = withExclude(recorded, { status: "excluded", feedbackId: recorded.feedbackId! });
+    expect(done).toContain(EXCLUDED_FROM_HISTORY_SENTENCE);
+    expect(done).not.toContain(`name="feedbackId"`);
+    // A stamp for a DIFFERENT row (an earlier reaction) does not read as this one.
+    expect(withExclude(recorded, { status: "excluded", feedbackId: "other" })).not.toContain(
+      EXCLUDED_FROM_HISTORY_SENTENCE
+    );
+    // Refused: the refusal's own copy.
+    const refused = withExclude(recorded, { status: "refused", code: "feedback_exclusion_target" });
+    expect(refused).toContain('data-testid="studio-feedback-exclude-refused"');
+    expect(refused).toContain(REFUSAL_COPY.feedback_exclusion_target.title);
+  });
+
+  it("D-L1: the recorded sentence renders INSIDE the persistent status region — there is exactly one status region, present from the first render", () => {
+    const statusRegion = (html: string) => {
+      const start = html.indexOf('data-testid="studio-feedback-status"');
+      expect(start, "the persistent region is missing").toBeGreaterThan(-1);
+      return html.slice(start, html.indexOf("</p>", start));
+    };
+    const idle = withResult();
+    expect(idle.match(/role="status"/g)).toHaveLength(1);
+    expect(statusRegion(idle)).not.toContain("Recorded:");
+    const recorded = withResult({ status: "recorded", generationId: "g", reaction: "off_voice", noteKept: true });
+    expect(recorded.match(/role="status"/g)).toHaveLength(1);
+    expect(statusRegion(recorded)).toContain('data-testid="studio-feedback-recorded"');
+    expect(statusRegion(recorded)).toContain(feedbackRecordedSentence("off_voice", true));
   });
 
   it("the action derives `noteKept` from the ROW, never from the parameter", () => {
@@ -3786,5 +4423,2062 @@ describe("R19: REQ-C07 and REQ-C08 are absent, and the screen implies neither", 
         .replace(/\/\*[\s\S]*?\*\//g, "");
       expect(/seriesPlanner|SERIES_PLAN/.test(src), file).toBe(false);
     }
+  });
+});
+
+// ----------------------------------- R-148 (launch L1): the creative form
+
+describe("R-148: the creative form control, the request it builds, and the v2 presenter", () => {
+  beforeEach(() => {
+    actionMocks.requireUser.mockResolvedValue({ id: "user-1", email: "anna@example.test", name: "Anna" });
+    actionMocks.scopeForUser.mockResolvedValue({ workspaceId: "workspace-1", role: "editor" });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** A plan where the FIRST offered mode takes the form control. */
+  const FORM_FIRST: ModeChoiceView[] = [
+    { id: "m-g", label: "Ideation", status: "available", cost: 4, takesCreativeForm: true },
+    { id: "m-e", label: "Hooks", status: "available", cost: 5, takesCreativeForm: false },
+  ];
+  const renderPanel = (modes: ModeChoiceView[]) =>
+    renderToStaticMarkup(<StudioPanel {...baseView.run!} modes={modes} />);
+  /** The `name` of every input inside the rendered form control. */
+  const controlNames = (html: string): string[] => {
+    const start = html.indexOf('data-testid="studio-form-control"');
+    // The control's OWN close: its filming-limits fieldset is its last child,
+    // so the two closes are adjacent exactly once, at the end.
+    const end = html.indexOf("</fieldset></fieldset>", start);
+    expect(start, "no form control rendered").toBeGreaterThan(-1);
+    expect(end, "the form control did not close where expected").toBeGreaterThan(start);
+    const control = html.slice(start, end);
+    return [...new Set([...control.matchAll(/name="([^"]+)"/g)].map((m) => m[1]))];
+  };
+
+  it("is offered beside a mode the server marked, with every option the facade lists and 'Choose for me' preselected", () => {
+    const html = renderPanel(FORM_FIRST);
+    expect(html).toContain('data-testid="studio-form-control"');
+    expect(html).toContain(`<legend>${FORM_CONTROL_LEGEND}</legend>`);
+    // ATTRIBUTE ORDER IS REACT'S, so each radio is read as a whole tag.
+    const radios = [...html.matchAll(/<input[^>]*name="formChoice"[^>]*>/g)].map((m) => m[0]);
+    const values = radios.map((tag) => /value="([^"]+)"/.exec(tag)?.[1]);
+    expect(values).toEqual(CREATIVE_FORM_OPTIONS.map((o) => o.id));
+    for (const option of CREATIVE_FORM_OPTIONS) expect(decoded(html)).toContain(option.label);
+    // "Choose for me" is first and is the one checked.
+    expect(CREATIVE_FORM_OPTIONS[0].label).toBe("Choose for me");
+    expect(radios.filter((tag) => /checked=""/.test(tag))).toHaveLength(1);
+    expect(radios.find((tag) => /checked=""/.test(tag))).toContain('value="auto"');
+    // Every filming input is LABELLED — a `for` that names its input's id.
+    for (const id of ["studio-max-minutes", "studio-locations", "studio-equipment", "studio-footage"]) {
+      expect(html, id).toContain(`for="${id}"`);
+      expect(html, id).toContain(`id="${id}"`);
+    }
+    // The advertised bounds are the parse's own, from the facade.
+    expect(html).toContain(`max="${CREATIVE_CONSTRAINT_BOUNDS.minutesMax}"`);
+    expect(html).toContain(`maxLength="${CREATIVE_CONSTRAINT_BOUNDS.footageMaxCodePoints}"`);
+  });
+
+  it("is NOT offered beside a mode that takes none — the form then sends no form choice at all", () => {
+    const html = renderPanel(MODES);
+    expect(html).not.toContain('data-testid="studio-form-control"');
+    expect(html).not.toContain('name="formChoice"');
+  });
+
+  it("THE FORM CONTROL REACHES THE REQUEST: every rendered name is read by the action, onto `params.creative`", async () => {
+    const names = controlNames(renderPanel(FORM_FIRST));
+    expect(names.sort()).toEqual(
+      ["equipment", "footage", "formChoice", "locations", "maxMinutes", "people"].sort()
+    );
+    const generateSpy = vi
+      .spyOn(respinCredits, "generate")
+      .mockRejectedValue(new CreativeRequestError("unknown_form"));
+    const values: Record<string, string> = {
+      formChoice: "demonstration_experiment",
+      people: "solo",
+      maxMinutes: "30",
+      locations: "kitchen, garage",
+      equipment: "phone, tripod",
+      footage: "two clips of the oven",
+    };
+    const fd = new FormData();
+    fd.set("mode", "m-g");
+    fd.set("input", "an idea");
+    fd.set("platform", "TikTok");
+    fd.set("revisionOf", "");
+    // KEYED ON THE RENDERED NAMES, so a renamed input is a red test here.
+    for (const name of names) fd.set(name, values[name]);
+    await generateAction("profile-1", IDLE_ACTION_STATE, fd);
+    expect(generateSpy).toHaveBeenCalledTimes(1);
+    const params = generateSpy.mock.calls[0][2];
+    expect(params.creative).toEqual({
+      formChoice: "demonstration_experiment",
+      constraints: {
+        people: "solo",
+        maxMinutes: 30,
+        // SPLIT, NOT TRIMMED: normalisation is the operation's parse, in one place.
+        locations: ["kitchen", " garage"],
+        equipment: ["phone", " tripod"],
+        footage: "two clips of the oven",
+      },
+    });
+  });
+
+  it("no form choice on the wire means NO creative request — never a defaulted one", async () => {
+    const generateSpy = vi
+      .spyOn(respinCredits, "generate")
+      .mockRejectedValue(new CreativeRequestError("unknown_form"));
+    const fd = new FormData();
+    fd.set("mode", "m-e");
+    fd.set("input", "an idea");
+    fd.set("platform", "TikTok");
+    fd.set("revisionOf", "");
+    await generateAction("profile-1", IDLE_ACTION_STATE, fd);
+    expect("creative" in generateSpy.mock.calls[0][2]).toBe(false);
+  });
+
+  it("a minute count that is not plain digits is handed on as NaN, for the operation to REFUSE", async () => {
+    const generateSpy = vi
+      .spyOn(respinCredits, "generate")
+      .mockRejectedValue(new CreativeRequestError("invalid_constraint", "maxMinutes"));
+    for (const [raw, expected] of [
+      ["0x10", Number.NaN],
+      ["1e2", Number.NaN],
+      ["12.5", Number.NaN],
+      ["12", 12],
+      ["", null],
+    ] as const) {
+      const fd = new FormData();
+      fd.set("mode", "m-g");
+      fd.set("input", "an idea");
+      fd.set("platform", "TikTok");
+      fd.set("formChoice", "auto");
+      fd.set("maxMinutes", raw);
+      await generateAction("profile-1", IDLE_ACTION_STATE, fd);
+      const sent = generateSpy.mock.calls.at(-1)![2].creative!.constraints!.maxMinutes;
+      if (expected === null) expect(sent, raw).toBeNull();
+      else if (Number.isNaN(expected)) expect(Number.isNaN(sent), raw).toBe(true);
+      else expect(sent, raw).toBe(expected);
+    }
+  });
+
+  it("a HOSTILE form choice is refused with copy, and never reaches a log line unclamped", async () => {
+    vi.spyOn(respinCredits, "generate").mockRejectedValue(
+      new CreativeRequestError("unknown_form")
+    );
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const hostile = '<img src=x onerror="alert(1)"> DROP TABLE';
+    const fd = new FormData();
+    fd.set("mode", "m-g");
+    fd.set("input", "an idea");
+    fd.set("platform", "TikTok");
+    fd.set("formChoice", hostile);
+    const state = await generateAction("profile-1", IDLE_ACTION_STATE, fd);
+    expect(state.latest).toEqual({ status: "refused", code: "creative_request" });
+    const line = JSON.stringify(logged.mock.calls);
+    expect(line).not.toContain("onerror");
+    expect(line).not.toContain("DROP TABLE");
+    // NON-VACUITY: the field IS logged — as the clamp's sentinel.
+    expect(line).toContain('"formChoice":"not-a-label"');
+  });
+
+  it("both creative refusals have their own copy on this screen, and say nothing was spent", () => {
+    for (const code of ["creative_request", "creative_revision_legacy"] as const) {
+      expect(STUDIO_ERROR_CODES).toContain(code);
+      expect(REFUSAL_COPY[code].detail).toMatch(/nothing was spent and no model was called/i);
+    }
+    expect(billingErrorCode(new CreativeRequestError("unknown_form"))).toBe("creative_request");
+    expect(billingErrorCode(new CreativeRequestError("invalid_constraint", "footage"))).toBe(
+      "creative_request"
+    );
+    expect(billingErrorCode(new CreativeRequestError("revision_keeps_legacy_format"))).toBe(
+      "creative_revision_legacy"
+    );
+    // The copy names NO value — it cannot echo what was refused.
+    expect(REFUSAL_COPY.creative_request.detail).not.toContain("silent");
+  });
+
+  it("a revision does not offer the control, and says the parent's form is kept", () => {
+    // `parent` is client state a static render cannot select, so the branch is
+    // asserted where it is decided: the control renders only with no parent,
+    // and the note only with one.
+    const src = read("app/(product)/studio/studio-panel.tsx");
+    expect(src).toContain("effectiveMode?.takesCreativeForm && parent === null ? (");
+    expect(src).toContain("effectiveMode?.takesCreativeForm && parent !== null ? (");
+    expect(src).toContain("{REVISION_KEEPS_FORM_NOTE}");
+  });
+
+  // ---- the presenter
+
+  const killTestV2 = {
+    outcome: "passed",
+    attempts: 1,
+    rewritten: false,
+    creatorRulesScored: false,
+    creatorRuleVerdicts: [],
+    traceabilityLimitNote: "LIMIT",
+    firstAttempt: { hardRules: [], traceability: [], claims: [] },
+    finalAttempt: { hardRules: [], traceability: [], claims: [] },
+    refusal: null,
+  };
+  const v2Result = (output: Record<string, unknown>) =>
+    ({
+      attemptId: "a1",
+      replayed: false,
+      generation: {
+        id: "gen-v2",
+        mode: "ideation",
+        outcome: "usable",
+        weakestPoint: "W",
+        refusalReason: null,
+        promptBundleVersion: "modes/ideation@abc",
+        rewriteCount: 0,
+      },
+      creditsChargedNow: 3,
+      balanceAfter: 20,
+      configVersion: 1,
+      resolvedTier: "free",
+      frameworkOffer: null,
+      run: { status: "usable", drafts: 1, promptBundleVersion: "x", killTest: killTestV2, output },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any;
+  const FILMING_LINE = { location: "kitchen", equipment: ["phone"], people: "solo", minutes: 20 };
+  const UNIVERSAL_V2 = {
+    whyThisPerforms: { reasoning: "R", weakestPoint: "the opening has not been tried on this audience" },
+    disclosure: { platform: "TikTok", guidance: "G" },
+  };
+  const V2_BATCH = {
+    contractVersion: 2,
+    requestedForm: "auto",
+    ideas: [
+      {
+        hook: "story hook",
+        thesis: "a story thesis that asserts something",
+        form: "personal_story_observation",
+        framework: "the evidence tutorial",
+        frameworkProvenance: "offered",
+        premise: {
+          whatHappens: "you change the lens again and again",
+          interest: "everyone has kept going too long",
+          payoff: "the take you keep",
+          basis: { kind: "material", excerpt: "shot the same lens change over and over" },
+        },
+        filming: FILMING_LINE,
+      },
+      {
+        hook: "demo hook",
+        thesis: "a demonstration thesis that asserts something",
+        form: "demonstration_experiment",
+        framework: "the burnt loaf arc",
+        frameworkProvenance: "custom",
+        premise: {
+          whatHappens: "you film it twice",
+          interest: "the difference is visible",
+          payoff: "the prepared take holds focus [check]",
+          basis: { kind: "unconfirmed" },
+        },
+        // The model's text as stored; the SERVER's decision is `serverChecks` below.
+        filming: { ...FILMING_LINE, location: "a rooftop", equipment: ["drone"], people: "with_help", minutes: 1 },
+      },
+      {
+        hook: "opinion hook",
+        thesis: "an opinion thesis that asserts something",
+        form: "explain_opinion",
+        framework: "the mirror",
+        frameworkProvenance: "offered",
+        premise: {
+          whatHappens: "you argue it to camera",
+          interest: "most people get it backwards",
+          payoff: "they know which setting to check",
+          basis: { kind: "none" },
+        },
+        filming: FILMING_LINE,
+      },
+    ],
+    ...UNIVERSAL_V2,
+    // R-150 point 2: the server's stored decision — concept 1's place and kit
+    // are not ones the creator listed; concepts 0 and 2 are fully declared.
+    serverChecks: {
+      filming: [
+        { at: "/ideas/0", location: false, equipment: [] },
+        { at: "/ideas/1", location: true, equipment: [0] },
+        { at: "/ideas/2", location: false, equipment: [] },
+      ],
+      shotMap: [],
+    },
+  };
+
+  it("a v2 concept batch renders what was asked for, each concept's form, premise, basis and filming needs", () => {
+    const state = studioStateFor(v2Result(V2_BATCH), "Ideation");
+    if (state.status !== "usable") throw new Error("expected usable");
+    expect(state.document.creative?.requestedFormLabel).toBe("Choose for me");
+    expect(state.document.ideas?.map((i) => i.creative?.formLabel)).toEqual([
+      "Personal story or observation",
+      "Demonstration or experiment",
+      "Explain or give an opinion",
+    ]);
+    const text = detailsText(renderOutcome(state));
+    expect(text).toContain("You asked for: Choose for me");
+    expect(text).toContain("Form: Personal story or observation");
+    expect(text).toContain("What happens: you change the lens again and again");
+    expect(text).toContain("Why it is interesting: everyone has kept going too long");
+    expect(text).toContain("The payoff: the take you keep");
+    expect(text).toContain(
+      "The line of yours this rests on. Check that it supports what happens: “shot the same lens change over and over”"
+    );
+    // THE SERVER'S STORED DECISIONS ARE RENDERED AS [check] by the facade's
+    // `presentedFilming` (R-150 point 2) — the stored text carries no marker —
+    // and explained ONCE for the document.
+    expect(state.document.ideas?.[1].creative?.filming.location).toEqual({
+      text: "a rooftop [check]",
+      unconfirmed: true,
+    });
+    expect(state.document.ideas?.[0].creative?.filming.equipment).toEqual([
+      { text: "phone", unconfirmed: false },
+    ]);
+    expect(renderOutcome(state).match(/data-testid="studio-filming-unconfirmed"/g) ?? []).toHaveLength(1);
+    expect(text).toContain(FILMING_UNCONFIRMED_NOTE);
+    expect(text).toContain("a rooftop [check]; drone [check]");
+    expect(text).toContain(basisSentence({ kind: "unconfirmed" }));
+    expect(text).toContain(basisSentence({ kind: "none" }));
+    expect(text).toContain(PEOPLE_SENTENCES.solo);
+    expect(text).toContain(PEOPLE_SENTENCES.with_help);
+    expect(text).toContain("Estimated filming time: 20 minutes.");
+    expect(text).toContain("Estimated filming time: 1 minute.");
+    // A CUSTOM structure is labelled, never presented as a library framework.
+    const customNotes = renderOutcome(state).match(/data-testid="studio-custom-structure"/g) ?? [];
+    expect(customNotes).toHaveLength(1);
+    expect(text).toContain(CUSTOM_STRUCTURE_NOTE);
+  });
+
+  it("the copy for a `none` basis CLAIMS NOTHING about the premise, and tells the creator to mark any event (round-1 compliance BLOCK)", () => {
+    // It used to say the premise "describes no event that needs a source" — a
+    // product-authored statement about model text the checks cannot vouch for.
+    const none = basisSentence({ kind: "none" });
+    expect(none).not.toMatch(/no event|describes no|needs no|explanation or opinion/i);
+    expect(none).toMatch(/no source given/i);
+    expect(none).toContain("[check]");
+    // And a quoted basis is labelled as something to CHECK, not as proof.
+    expect(basisSentence({ kind: "material", excerpt: "x y z w" })).toMatch(
+      /^The line of yours this rests on\. Check that it supports what happens/
+    );
+  });
+
+  it("R-150 point 2 / Low: the filming note renders ONCE per document, and for a server-marked SHOT-MAP line alone", () => {
+    const flaggedTwice = {
+      ...V2_BATCH,
+      serverChecks: {
+        ...V2_BATCH.serverChecks,
+        filming: V2_BATCH.serverChecks.filming.map((e) => ({ ...e, location: true })),
+      },
+    };
+    const twice = renderOutcome(studioStateFor(v2Result(flaggedTwice), "Ideation"));
+    expect(twice.match(/data-testid="studio-filming-unconfirmed"/g) ?? []).toHaveLength(1);
+    // A SCRIPT whose filming plan is fully declared and whose only server
+    // decision is one shot-map line still gets the note, and the line its mark.
+    const shotOnly = {
+      contractVersion: 2,
+      requestedForm: "explain_opinion",
+      thesis: { statement: "S", why: "W" },
+      framework: { name: "the evidence tutorial", why: "fits", provenance: "offered" },
+      hooks: [{ text: "h", mechanic: "m" }],
+      beats: [
+        { atSeconds: 0, vo: "open", isTurn: false },
+        { atSeconds: 6, vo: "the pivot", isTurn: true, pivot: "turn" },
+      ],
+      shotMap: [
+        { beatIndex: 0, shot: "a slow drone pass over the roof", note: "n" },
+        { beatIndex: 1, shot: "close on the dial", note: "n" },
+      ],
+      form: "explain_opinion",
+      premise: { whatHappens: "you argue it", interest: "i", payoff: "p", basis: { kind: "none" } },
+      filming: FILMING_LINE,
+      ...UNIVERSAL_V2,
+      serverChecks: {
+        filming: [{ at: "", location: false, equipment: [] }],
+        shotMap: [{ index: 0, shot: true, note: false }],
+      },
+    };
+    const state = studioStateFor(v2Result(shotOnly), "Idea to script");
+    if (state.status !== "usable") throw new Error("expected usable");
+    expect(state.document.shotMap).toEqual([
+      { beatIndex: 0, shot: "a slow drone pass over the roof [check]", note: "n", unconfirmed: true },
+      { beatIndex: 1, shot: "close on the dial", note: "n", unconfirmed: false },
+    ]);
+    // ROUND 3 (Low): kit named only in a NOTE marks the note, not the shot.
+    const noteOnly = studioStateFor(
+      v2Result({ ...shotOnly, serverChecks: { ...shotOnly.serverChecks, shotMap: [{ index: 1, shot: false, note: true }] } }),
+      "Idea to script"
+    );
+    if (noteOnly.status !== "usable") throw new Error("expected usable");
+    expect(noteOnly.document.shotMap?.[1]).toEqual({
+      beatIndex: 1,
+      shot: "close on the dial",
+      note: "n [check]",
+      unconfirmed: true,
+    });
+    const html = renderOutcome(state);
+    expect(html.match(/data-testid="studio-filming-unconfirmed"/g) ?? []).toHaveLength(1);
+    expect(detailsText(html)).toContain(FILMING_UNCONFIRMED_NOTE);
+    // …and with no server decision at all, no note.
+    const clean = renderOutcome(
+      studioStateFor(v2Result({ ...shotOnly, serverChecks: { ...shotOnly.serverChecks, shotMap: [] } }), "Idea to script")
+    );
+    expect(clean).not.toContain('data-testid="studio-filming-unconfirmed"');
+  });
+
+  it("R-150 point 3: the server's confirmation item renders, word for word, on EVERY v2 draft — a story batch and an opinion-only batch alike", () => {
+    expect(EVENT_CONFIRMATION_ITEM).toBe(
+      "Before you film: confirm every event and result here really happened (or will be filmed as shown), or mark it [check]."
+    );
+    const story = studioStateFor(v2Result(V2_BATCH), "Ideation");
+    if (story.status !== "usable") throw new Error("expected usable");
+    expect(story.document.creative?.eventConfirmation).toBe(EVENT_CONFIRMATION_ITEM);
+    const html = renderOutcome(story);
+    expect(html.match(/data-testid="studio-event-confirmation"/g) ?? []).toHaveLength(1);
+    expect(detailsText(html)).toContain(EVENT_CONFIRMATION_ITEM);
+    // An opinion-only batch with no basis carries it TOO (round-3 compliance
+    // gate, High): no model-written label or basis decides whether it shows.
+    const opinionOnly = {
+      ...V2_BATCH,
+      ideas: [V2_BATCH.ideas[2]],
+      serverChecks: { filming: [{ at: "/ideas/0", location: false, equipment: [] }], shotMap: [] },
+    };
+    const quiet = studioStateFor(v2Result(opinionOnly), "Ideation");
+    if (quiet.status !== "usable") throw new Error("expected usable");
+    expect(quiet.document.creative?.eventConfirmation).toBe(EVENT_CONFIRMATION_ITEM);
+    expect(renderOutcome(quiet).match(/data-testid="studio-event-confirmation"/g) ?? []).toHaveLength(1);
+    // The register's own recall-gap example, labelled an opinion with no basis.
+    const register = {
+      ...opinionOnly,
+      ideas: [
+        {
+          ...V2_BATCH.ideas[2],
+          premise: {
+            ...V2_BATCH.ideas[2].premise,
+            whatHappens: "a stranger knocks your tripod over halfway through your best take",
+          },
+        },
+      ],
+    };
+    const gap = studioStateFor(v2Result(register), "Ideation");
+    expect(detailsText(renderOutcome(gap))).toContain(EVENT_CONFIRMATION_ITEM);
+    // …and a LEGACY document never shows it.
+    const legacy = studioStateFor(
+      v2Result({ ideas: [{ hook: "h", thesis: "t", framework: "f" }], ...UNIVERSAL_V2 }),
+      "Ideation"
+    );
+    expect(renderOutcome(legacy)).not.toContain("studio-event-confirmation");
+  });
+
+  it("a v2 SCRIPT names its pivot in words — the reveal of a demonstration, the turn of a story", () => {
+    const script = (form: string, pivot: "turn" | "reveal") => ({
+      contractVersion: 2,
+      requestedForm: form,
+      thesis: { statement: "S", why: "W" },
+      framework: { name: "the evidence tutorial", why: "fits", provenance: "offered" },
+      hooks: [{ text: "h", mechanic: "m" }],
+      beats: [
+        { atSeconds: 0, vo: "open", isTurn: false },
+        { atSeconds: 6, vo: "the pivot", isTurn: true, pivot },
+      ],
+      form,
+      premise: {
+        whatHappens: "you film it twice",
+        interest: "visible",
+        payoff: "it holds [check]",
+        basis: { kind: "unconfirmed" },
+      },
+      filming: FILMING_LINE,
+      ...UNIVERSAL_V2,
+      serverChecks: { filming: [{ at: "", location: false, equipment: [] }], shotMap: [] },
+    });
+    const reveal = studioStateFor(v2Result(script("demonstration_experiment", "reveal")), "Idea to script");
+    const revealText = detailsText(renderOutcome(reveal));
+    expect(revealText).toContain(PIVOT_SENTENCES.reveal);
+    expect(revealText).not.toContain(PIVOT_SENTENCES.turn);
+    expect(revealText).toContain("You asked for: Demonstration or experiment");
+    expect(renderOutcome(reveal)).toContain('data-testid="studio-script-creative"');
+    const turn = studioStateFor(v2Result(script("personal_story_observation", "turn")), "Idea to script");
+    expect(detailsText(renderOutcome(turn))).toContain(PIVOT_SENTENCES.turn);
+    expect(PIVOT_SENTENCES.turn).not.toBe(PIVOT_SENTENCES.reveal);
+  });
+
+  it("a LEGACY document renders exactly as before: no creative block, and the turn's own sentence", () => {
+    const legacy = studioStateFor(
+      v2Result({
+        thesis: { statement: "S", why: "W" },
+        framework: { name: "cost reveal", why: "fits" },
+        hooks: [{ text: "h", mechanic: "m" }],
+        beats: [
+          { atSeconds: 0, vo: "open", isTurn: false },
+          { atSeconds: 6, vo: "the turn", isTurn: true },
+        ],
+        ...UNIVERSAL_V2,
+      }),
+      "Idea to script"
+    );
+    if (legacy.status !== "usable") throw new Error("expected usable");
+    expect(legacy.document.creative).toBeUndefined();
+    expect(legacy.document.framework).toEqual({ name: "cost reveal", why: "fits" });
+    const html = renderOutcome(legacy);
+    expect(html).not.toContain("studio-creative");
+    expect(html).not.toContain("studio-custom-structure");
+    expect(html).not.toContain("studio-form-label");
+    expect(detailsText(html)).toContain("This is the turn — where the piece changes direction.");
+  });
+
+  it("the v2 render passes the honesty canon — no performance claim, no guarantee", () => {
+    const FORBIDDEN: [string, RegExp][] = [
+      ...FORBIDDEN_CLAIMS.map(([l, re]) => [l, re] as [string, RegExp]),
+      ...PERFORMANCE_CLAIMS.map(([l, re]) => [l, re] as [string, RegExp]),
+    ];
+    const text = detailsText(renderOutcome(studioStateFor(v2Result(V2_BATCH), "Ideation")));
+    expect(claimHits(text, FORBIDDEN)).toEqual([]);
+    const panel = detailsText(visibleCopy(renderPanel(FORM_FIRST)));
+    expect(claimHits(panel, FORBIDDEN)).toEqual([]);
+  });
+});
+
+// ------------------------------------------------------------------
+// LAUNCH L2 (R-151): the entrances, the choice and the confirmation.
+//
+// Static renders of every new state, driven through the same honesty canon
+// and fold rules as the rest of this screen. THE OPERATION-ID ATTRIBUTE, THE
+// FREE PLAN BLOCK, LABELS, REQUIRED STATES and NO FOLD are asserted here; the
+// actual-app walk (reload survival) is `e2e/journeys/free-concept.spec.ts`.
+describe("L2: the Studio entrances and the piece confirmation", () => {
+  const FORBIDDEN_L2: [string, RegExp][] = [
+    ...FORBIDDEN_CLAIMS.map(([l, re]) => [l, re] as [string, RegExp]),
+    ...PERFORMANCE_CLAIMS.map(([l, re]) => [l, re] as [string, RegExp]),
+  ];
+  const OP_ID = "0f6d7c2e-3a1b-4c5d-8e9f-0a1b2c3d4e5f";
+  const conceptPiece = (planIncludesScript: boolean, credits: number | null = 3): PieceView => ({
+    pieceId: "11111111-2222-4333-8444-555555555555",
+    version: 1,
+    state: "selected",
+    operationAttemptId: OP_ID,
+    origin: {
+      kind: "concept",
+      hook: "the room tone you ignored is why your edit sounds cheap",
+      thesis: "audio decides whether a solo shoot reads as professional",
+      framework: "the confession arc",
+      formLabel: "Explain or give an opinion",
+      formId: "explain_opinion",
+      premise: { whatHappens: "you argue it to camera", interest: "most people get it backwards", payoff: "they know which setting to check" },
+    },
+    quote: { credits, configVersion: 4, planIncludesScript },
+  });
+  const pieceProps = (piece: PieceView, over: Partial<PieceConfirmationProps> = {}): PieceConfirmationProps => ({
+    piece,
+    commissionAction: async () => IDLE_ACTION_STATE,
+    newGenerationAction: async () => undefined,
+    cancelAction: async () => undefined,
+    formOptions: CREATIVE_FORM_OPTIONS,
+    peopleOptions: CREATIVE_PEOPLE_OPTIONS,
+    creativeBounds: CREATIVE_CONSTRAINT_BOUNDS,
+    block: null,
+    refusalCopy: REFUSAL_COPY,
+    fallbackCopy: REFUSAL_COPY.unknown,
+    ...over,
+  });
+  const entrancesProps = (over: Partial<StudioEntrancesProps> = {}): StudioEntrancesProps => ({
+    findConceptAction: async () => IDLE_ACTION_STATE,
+    selectConceptAction: async () => undefined,
+    startOwnIdeaAction: async () => undefined,
+    conceptReady: true,
+    formOptions: CREATIVE_FORM_OPTIONS,
+    peopleOptions: CREATIVE_PEOPLE_OPTIONS,
+    creativeBounds: CREATIVE_CONSTRAINT_BOUNDS,
+    ownIdeaMax: OWN_IDEA_MAX,
+    reference: { status: "available", href: "/trends" },
+    findConceptOffer: { id: "ideation", label: "Ideas", status: "available", cost: 3 },
+    block: null,
+    refusalCopy: REFUSAL_COPY,
+    fallbackCopy: REFUSAL_COPY.unknown,
+    ...over,
+  });
+  /** Every form control has a label naming it (keyboard and screen-reader reach). */
+  const unlabelled = (html: string): string[] => {
+    const ids = [...html.matchAll(/<(?:input|select|textarea)\b[^>]*\bid="([^"]+)"/g)].map((m) => m[1]);
+    const labelled = new Set([...html.matchAll(/<label\b[^>]*\bfor="([^"]+)"/g)].map((m) => m[1]));
+    const missing = ids.filter((id) => !labelled.has(id));
+    // Radios carry no id: each must sit INSIDE a <label>.
+    const radios = html.match(/<input type="radio"[^>]*>/g) ?? [];
+    const radiosInLabels = html.match(/<label[^>]*>\s*<input type="radio"/g) ?? [];
+    if (radios.length !== radiosInLabels.length) missing.push(`${radios.length - radiosInLabels.length} unlabelled radio(s)`);
+    return missing;
+  };
+
+  it("FREE (E-25(iv)): the confirmation states the configured price AND the named plan block — and offers no paid press", () => {
+    const html = renderToStaticMarkup(<PieceConfirmation {...pieceProps(conceptPiece(false))} />);
+    expect(html).toContain(`data-operation-id="${OP_ID}"`);
+    expect(html).toContain('data-testid="studio-piece-plan-block"');
+    expect(decoded(html)).toContain(PIECE_PLAN_BLOCK);
+    expect(decoded(html)).toContain("Writing this script costs 3 credits — the configured price (config version 4).");
+    expect(html).not.toContain('data-testid="studio-piece-commission"');
+    expect(html).not.toContain('data-testid="studio-piece-new-generation"');
+    // Backing out is still offered, and costs nothing.
+    expect(html).toContain('data-testid="studio-piece-cancel"');
+  });
+
+  it("PAID: the confirmation's paid press carries the SERVER-MINTED operation id, defaults to the concept's own form, and every control is labelled", () => {
+    const html = renderToStaticMarkup(<PieceConfirmation {...pieceProps(conceptPiece(true))} />);
+    expect(html).toContain('data-testid="studio-piece-commission"');
+    expect(html).toContain(`<input type="hidden" name="operationId" value="${OP_ID}"/>`);
+    expect(html).not.toContain('data-testid="studio-piece-plan-block"');
+    expect(html).toContain('data-testid="studio-piece-new-generation"');
+    expect(html).toMatch(/value="explain_opinion"[^>]*checked=""|checked=""[^>]*value="explain_opinion"/);
+    expect(unlabelled(html)).toEqual([]);
+    // An unreadable price is stated as unreadable, never invented.
+    const unpriced = decoded(renderToStaticMarkup(<PieceConfirmation {...pieceProps(conceptPiece(true, null))} />));
+    expect(unpriced).toContain("could not be read right now");
+  });
+
+  it("a BLOCKED workspace (viewer, paused, no brain) gets the reason and no paid press, no New generation", () => {
+    const html = renderToStaticMarkup(
+      <PieceConfirmation {...pieceProps(conceptPiece(true), { block: { reason: "This workspace is paused." } })} />
+    );
+    expect(html).toContain('data-testid="studio-piece-blocked"');
+    expect(html).not.toContain('data-testid="studio-piece-commission"');
+    expect(html).not.toContain('data-testid="studio-piece-new-generation"');
+  });
+
+  it("the ENTRANCES: find (with the one question when the brain cannot say what they make), develop (bounded), and the reference breakdown offered or visibly withheld", () => {
+    const ready = renderToStaticMarkup(<StudioEntrances {...entrancesProps()} />);
+    for (const id of ["studio-entrance-find", "studio-entrance-develop", "studio-entrance-reference"]) {
+      expect(ready).toContain(`data-testid="${id}"`);
+    }
+    expect(decoded(ready)).toContain(FIND_CONCEPT_HINT_LABEL);
+    expect(ready).not.toMatch(/id="studio-find-hint"[^>]*required=""/);
+    expect(ready).toContain(`maxLength="${OWN_IDEA_MAX}"`);
+    expect(ready).toContain('href="/trends"');
+    expect(unlabelled(ready)).toEqual([]);
+    const notReady = renderToStaticMarkup(<StudioEntrances {...entrancesProps({ conceptReady: false })} />);
+    expect(decoded(notReady)).toContain(FIND_CONCEPT_QUESTION);
+    expect(notReady).toMatch(/id="studio-find-hint"[^>]*required=""/);
+    const free = renderToStaticMarkup(<StudioEntrances {...entrancesProps({ reference: { status: "not_in_plan" } })} />);
+    expect(free).toContain('data-testid="studio-entrance-reference-blocked"');
+    expect(free).not.toContain('href="/trends"');
+  });
+
+  it("a v2 CONCEPT BATCH in the entrance renders through GenerationOutcome — the L1 blocks OUTSIDE any fold — with one zero-cost choice per concept naming its attempt and position", () => {
+    const output = {
+      contractVersion: 2,
+      requestedForm: "auto",
+      ideas: [0, 1, 2].map((i) => ({
+        hook: `hook ${["one", "two", "three"][i]}`,
+        thesis: "a thesis that asserts something",
+        form: "explain_opinion",
+        framework: "the mirror",
+        frameworkProvenance: "offered",
+        premise: { whatHappens: "you argue it to camera", interest: "most get it backwards", payoff: "they know what to check", basis: { kind: "none" } },
+        filming: { location: "kitchen", equipment: ["phone"], people: "solo", minutes: 20 },
+      })),
+      whyThisPerforms: { reasoning: "R", weakestPoint: "the opening has not been tried on this audience" },
+      disclosure: { platform: "TikTok", guidance: "G" },
+      serverChecks: {
+        filming: [0, 1, 2].map((i) => ({ at: `/ideas/${i}`, location: true, equipment: [0] })),
+        shotMap: [],
+      },
+    };
+    const killTest = {
+      outcome: "passed", attempts: 1, rewritten: false, creatorRulesScored: false, creatorRuleVerdicts: [],
+      traceabilityLimitNote: "LIMIT", firstAttempt: { hardRules: [], traceability: [], claims: [] },
+      finalAttempt: { hardRules: [], traceability: [], claims: [] }, refusal: null,
+    };
+    const result = {
+      attemptId: "ideas-attempt-1", replayed: false,
+      generation: { id: "gen-ideas", mode: "ideation", outcome: "usable", weakestPoint: "W", refusalReason: null, promptBundleVersion: "b", rewriteCount: 0, parentId: null },
+      creditsChargedNow: 3, balanceAfter: 20, configVersion: 1, resolvedTier: "free", frameworkOffer: null,
+      run: { status: "usable", drafts: 1, promptBundleVersion: "x", killTest, output },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const conceptState = studioActionStateFor(IDLE_ACTION_STATE, result, "Ideation", "");
+    const html = renderToStaticMarkup(<StudioEntrances {...entrancesProps({ conceptState })} />);
+    expect((html.match(/<details/g) ?? []).length).toBe(0);
+    expect(html.match(/data-testid="studio-event-confirmation"/g) ?? []).toHaveLength(1);
+    expect(html).toContain('data-testid="studio-filming-unconfirmed"');
+    expect(html.match(/data-testid="studio-choose-concept"/g) ?? []).toHaveLength(3);
+    expect(html.match(/name="sourceAttemptId" value="ideas-attempt-1"/g) ?? []).toHaveLength(3);
+    for (const i of [0, 1, 2]) expect(html).toContain(`name="ideaIndex" value="${i}"`);
+    expect(decoded(html)).toContain(CHOOSE_CONCEPT_HELP);
+    // ...and the same v2 state in the PANEL keeps both blocks outside its one fold.
+    const panel = renderToStaticMarkup(<StudioPanel {...baseView.run!} initialState={conceptState} />);
+    const folded = (panel.match(/<details[\s\S]*?<\/details>/g) ?? []).join("");
+    expect(panel).toContain('data-testid="studio-event-confirmation"');
+    expect(panel).toContain('data-testid="studio-filming-unconfirmed"');
+    expect(folded).not.toContain("studio-event-confirmation");
+    expect(folded).not.toContain("studio-filming-unconfirmed");
+    // HONESTY: the new states claim nothing this product cannot support.
+    for (const state of [
+      html,
+      renderToStaticMarkup(<PieceConfirmation {...pieceProps(conceptPiece(false))} />),
+      renderToStaticMarkup(<PieceConfirmation {...pieceProps(conceptPiece(true))} />),
+      renderToStaticMarkup(<StudioEntrances {...entrancesProps({ conceptReady: false, reference: { status: "not_in_plan" } })} />),
+      renderToStaticMarkup(<StudioEntrances {...entrancesProps({ reference: { status: "unknown", href: "/trends" } })} />),
+    ]) {
+      expect(claimHits(visibleCopy(state).toLowerCase(), FORBIDDEN_L2)).toEqual([]);
+    }
+  });
+
+  it("the VIEW puts the confirmation first and keeps the entrances and the other modes reachable", () => {
+    const html = renderView({
+      piece: pieceProps(conceptPiece(true)),
+      entrances: entrancesProps(),
+    });
+    const at = (id: string) => html.indexOf(`data-testid="${id}"`);
+    expect(at("studio-piece-confirmation")).toBeGreaterThan(-1);
+    expect(at("studio-piece-confirmation")).toBeLessThan(at("studio-entrances"));
+    expect(at("studio-entrances")).toBeLessThan(at("studio-generate"));
+    expect(decoded(html)).toContain(OTHER_MODES_HEADING);
+  });
+  // ------------------------------------------------ L2 CODE GATE (2026-10-04)
+
+  /** A usable v2 concept batch, as `findConceptAction` returns it. */
+  const usableConceptState = () => {
+    const output = {
+      contractVersion: 2,
+      requestedForm: "auto",
+      ideas: [0, 1, 2].map((i) => ({
+        hook: `hook ${i}`,
+        thesis: "a thesis that asserts something",
+        form: "explain_opinion",
+        framework: "the mirror",
+        frameworkProvenance: "offered",
+        premise: { whatHappens: "w", interest: "i", payoff: "p", basis: { kind: "none" } },
+        filming: { location: "kitchen", equipment: ["phone"], people: "solo", minutes: 20 },
+      })),
+      whyThisPerforms: { reasoning: "R", weakestPoint: "the opening has not been tried on this audience" },
+      disclosure: { platform: "TikTok", guidance: "G" },
+      serverChecks: { filming: [0, 1, 2].map((i) => ({ at: `/ideas/${i}`, location: true, equipment: [0] })), shotMap: [] },
+    };
+    const killTest = {
+      outcome: "passed", attempts: 1, rewritten: false, creatorRulesScored: false, creatorRuleVerdicts: [],
+      traceabilityLimitNote: "LIMIT", firstAttempt: { hardRules: [], traceability: [], claims: [] },
+      finalAttempt: { hardRules: [], traceability: [], claims: [] }, refusal: null,
+    };
+    const result = {
+      attemptId: "ideas-attempt-1", replayed: false,
+      generation: { id: "gen-ideas", mode: "ideation", outcome: "usable", weakestPoint: "W", refusalReason: null, promptBundleVersion: "b", rewriteCount: 0, parentId: null },
+      creditsChargedNow: 3, balanceAfter: 20, configVersion: 1, resolvedTier: "free", frameworkOffer: null,
+      run: { status: "usable", drafts: 1, promptBundleVersion: "x", killTest, output },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    return studioActionStateFor(IDLE_ACTION_STATE, result, "Ideation", "");
+  };
+  const statusText = (html: string, testId: string): string => {
+    const m = html.match(new RegExp(`data-testid="${testId}"[^>]*>([^<]*)<`));
+    return m ? decoded(m[1]) : "";
+  };
+
+  it("A-N3: the confirmation is KEYED by piece id and version, so ?piece=A -> ?piece=B (or New generation) is a fresh mount", () => {
+    const piece = pieceProps(conceptPiece(true));
+    const tree = StudioView({ ...baseView, piece, entrances: entrancesProps() }) as React.ReactElement<{ children: React.ReactNode[] }>;
+    const found: React.ReactElement[] = [];
+    const walk = (node: React.ReactNode): void => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node && typeof node === "object" && "type" in node) {
+        const el = node as React.ReactElement<{ children?: React.ReactNode }>;
+        if (el.type === PieceConfirmation) found.push(el);
+        walk(el.props.children);
+      }
+    };
+    walk(tree);
+    expect(found).toHaveLength(1);
+    expect(found[0].key).toBe(pieceKey(piece.piece));
+    expect(pieceKey({ pieceId: "a", version: 1 })).not.toBe(pieceKey({ pieceId: "b", version: 1 }));
+    expect(pieceKey({ pieceId: "a", version: 1 })).not.toBe(pieceKey({ pieceId: "a", version: 2 }));
+  });
+
+  it("C-1: the confirmation heading is focusable by script (tabindex -1); a cancel lands on a focusable status line", () => {
+    const html = renderToStaticMarkup(<PieceConfirmation {...pieceProps(conceptPiece(true))} />);
+    expect(html).toMatch(/<h2 id="studio-piece-heading" tabindex="-1"/);
+    const cancelled = renderView({ pieceCancelled: true, entrances: entrancesProps() });
+    expect(cancelled).toMatch(/<p tabindex="-1" role="status" data-testid="studio-piece-cancelled">/);
+    expect(decoded(cancelled)).toContain(PIECE_CANCELLED_STATUS);
+    expect(renderView({ entrances: entrancesProps() })).not.toContain("studio-piece-cancelled");
+  });
+
+  it("C-2: every cost statement is tied to the control it prices by aria-describedby", () => {
+    const piece = renderToStaticMarkup(<PieceConfirmation {...pieceProps(conceptPiece(true))} />);
+    expect(piece).toMatch(/<p id="studio-piece-quote"/);
+    expect(piece).toMatch(/aria-describedby="studio-piece-quote studio-piece-operation-note"[^>]*>Write the script/);
+    expect(piece).toMatch(/aria-describedby="studio-piece-new-generation-help"/);
+    expect(piece).toContain('id="studio-piece-new-generation-help"');
+    expect(piece).toMatch(/aria-describedby="studio-piece-cancel-help"/);
+    expect(piece).toContain('id="studio-piece-cancel-help"');
+    const entrances = renderToStaticMarkup(<StudioEntrances {...entrancesProps({ conceptState: usableConceptState() })} />);
+    expect(entrances).toMatch(/aria-describedby="studio-find-cost"/);
+    expect(entrances).toContain('id="studio-find-cost"');
+    expect(decoded(entrances)).toContain("Finding concepts costs 3 credits — the configured price.");
+    expect(entrances.match(/aria-describedby="studio-choose-help"/g) ?? []).toHaveLength(3);
+    expect(entrances).toContain('id="studio-choose-help"');
+    expect(entrances).toMatch(/aria-describedby="studio-develop-help"/);
+    expect(entrances).toContain('id="studio-develop-help"');
+  });
+
+  it("C-3: a concept_context_needed refusal marks the hint box invalid and points it at the refusal; no other state does", () => {
+    const refused = renderToStaticMarkup(
+      <StudioEntrances {...entrancesProps({ conceptState: { lineage: [], latest: { status: "refused", code: "concept_context_needed" } } })} />
+    );
+    expect(refused).toMatch(/<textarea[^>]*id="studio-find-hint"[^>]*aria-invalid="true"[^>]*aria-describedby="studio-find-refusal"/);
+    expect(refused).toMatch(/id="studio-find-refusal"[^>]*data-testid="studio-refusal"|data-testid="studio-refusal"[^>]*id="studio-find-refusal"|role="alert" id="studio-find-refusal"/);
+    const other = renderToStaticMarkup(
+      <StudioEntrances {...entrancesProps({ conceptState: { lineage: [], latest: { status: "refused", code: "insufficient_credits" } } })} />
+    );
+    expect(other).not.toContain("aria-invalid");
+    expect(renderToStaticMarkup(<StudioEntrances {...entrancesProps()} />)).not.toContain("aria-invalid");
+  });
+
+  it("C-4: success is announced in the polite status region — concepts, and the piece's script", () => {
+    expect(statusText(renderToStaticMarkup(<StudioEntrances {...entrancesProps()} />), "studio-find-status")).toBe("");
+    expect(statusText(renderToStaticMarkup(<StudioEntrances {...entrancesProps({ conceptState: usableConceptState() })} />), "studio-find-status")).toBe(FIND_CONCEPT_DONE_STATUS);
+    expect(statusText(renderToStaticMarkup(<PieceConfirmation {...pieceProps(conceptPiece(true))} />), "studio-piece-status")).toBe("");
+    expect(
+      statusText(renderToStaticMarkup(<PieceConfirmation {...pieceProps(conceptPiece(true), { commissionState: usableConceptState() })} />), "studio-piece-status")
+    ).toBe(PIECE_SCRIPT_DONE_STATUS);
+  });
+
+  it("A-3: an UNKNOWN reference plan renders neutral copy with the trends link — never the plan block", () => {
+    const html = renderToStaticMarkup(<StudioEntrances {...entrancesProps({ reference: { status: "unknown", href: "/trends" } })} />);
+    expect(html).toContain('data-testid="studio-entrance-reference-unknown"');
+    expect(decoded(html)).toContain(REFERENCE_ENTRANCE_UNKNOWN);
+    expect(html).toContain('href="/trends"');
+    expect(decoded(html)).not.toContain(REFERENCE_ENTRANCE_BLOCKED);
+  });
+
+  it("A-2 and the operation note: the copy states what is checked and what holds — no certainty claim, no fixed count, no replay promise", () => {
+    expect(FIND_CONCEPT_HELP).not.toMatch(/nothing is invented/i);
+    expect(FIND_CONCEPT_HELP).not.toMatch(/\bthree\b|\b3\b/i);
+    expect(FIND_CONCEPT_HELP).toContain("not of whether it is true");
+    expect(PIECE_OPERATION_NOTE).not.toMatch(/returns this same script/i);
+    expect(PIECE_OPERATION_NOTE).toContain("does not charge you twice");
+  });
+});
+
+// ------------------------------------------- launch L3 (R-152): the two controls
+
+describe("launch L3: the sequel request and \"Remember this for future drafts\"", () => {
+  beforeEach(() => {
+    actionMocks.requireUser.mockResolvedValue({ id: "user-1", email: "anna@example.test", name: "Anna" });
+    actionMocks.scopeForUser.mockResolvedValue({ workspaceId: "workspace-1", role: "owner" });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  const MODES_L3: ModeChoiceView[] = [
+    { id: "m-g", label: "Ideation", status: "available", cost: 4, takesCreativeForm: true },
+    { id: "m-e", label: "Hooks", status: "available", cost: 5, takesCreativeForm: false },
+  ];
+  const panel = (modes: ModeChoiceView[]) =>
+    renderToStaticMarkup(<StudioPanel {...baseView.run!} modes={modes} />);
+
+  it("the sequel box is offered beside a history-reading mode ONLY, and is never pre-ticked", () => {
+    const withHistory = panel(MODES_L3);
+    expect(withHistory).toContain('data-testid="studio-sequel"');
+    expect(withHistory).toContain(SEQUEL_LABEL);
+    const box = withHistory.slice(withHistory.indexOf('name="sequel"') - 200, withHistory.indexOf('name="sequel"') + 200);
+    expect(box).not.toMatch(/checked/);
+    const withoutHistory = panel([MODES_L3[1]]);
+    expect(withoutHistory).not.toContain('name="sequel"');
+  });
+
+  it("THE SEQUEL REACHES THE REQUEST only as the box's own value — anything else, and silence, is not a sequel", async () => {
+    const generateSpy = vi
+      .spyOn(respinCredits, "generate")
+      .mockRejectedValue(new CreativeRequestError("unknown_form"));
+    const send = async (sequel: string | null) => {
+      const fd = new FormData();
+      fd.set("mode", "m-g");
+      fd.set("input", "a part two of last week");
+      fd.set("platform", "TikTok");
+      fd.set("revisionOf", "");
+      if (sequel !== null) fd.set("sequel", sequel);
+      await generateAction("profile-1", IDLE_ACTION_STATE, fd);
+      return generateSpy.mock.calls.at(-1)![2];
+    };
+    expect((await send("1")).sequel).toBe(true);
+    // The input says "part two"; nothing is inferred from it.
+    expect("sequel" in (await send(null))).toBe(false);
+    expect("sequel" in (await send("yes"))).toBe(false);
+    expect("sequel" in (await send("true"))).toBe(false);
+  });
+
+  const remember = (state: RememberState, canPropose = true) =>
+    decoded(
+      renderToStaticMarkup(
+        <RememberBlock
+          canPropose={canPropose}
+          brainHref="/brain"
+          valueMax={BRAIN_EDIT_VALUE_MAX}
+          formAction={() => {}}
+          pending={false}
+          state={state}
+          refusalCopy={REFUSAL_COPY}
+          fallbackCopy={REFUSAL_COPY.unknown}
+        />
+      )
+    );
+
+  it("REMEMBER says it PROPOSES and applies nothing, and a proposal names its version and the Brain page", () => {
+    const idle = remember({ status: "idle" });
+    expect(idle).toContain('data-testid="studio-remember"');
+    expect(idle).toContain('name="preference"');
+    expect(idle).toContain(`maxLength="${BRAIN_EDIT_VALUE_MAX}"`);
+    expect(idle).toMatch(/proposed change/i);
+    expect(idle).toMatch(/Nothing uses it until you confirm and activate/i);
+    // NOT pre-filled from the reaction or its note (R11): the box is empty.
+    expect(idle).toMatch(/<textarea[^>]*name="preference"[^>]*><\/textarea>/);
+    const proposed = remember({ status: "proposed", version: 4 });
+    expect(proposed).toContain(rememberProposedSentence(4));
+    expect(proposed).toMatch(/It is not in force yet/);
+    expect(proposed).toContain('href="/brain"');
+    const refused = remember({ status: "refused", code: "profile_role", text: "", attempt: 1 });
+    expect(refused).toContain('data-testid="studio-remember-refused"');
+    expect(refused).toContain(REFUSAL_COPY.profile_role.title);
+  });
+
+  /** The persistent status region's inner markup. */
+  const rememberStatus = (html: string) => {
+    const start = html.indexOf('data-testid="studio-remember-status"');
+    expect(start, "the persistent region is missing").toBeGreaterThan(-1);
+    return html.slice(start, html.indexOf("</p>", start));
+  };
+  /** The textarea's opening tag and its content. */
+  const rememberBox = (html: string) => {
+    const start = html.indexOf("<textarea");
+    return html.slice(start, html.indexOf("</textarea>", start));
+  };
+
+  it("D-L1: a proposal and an already-held answer render INSIDE the one persistent status region", () => {
+    for (const state of [
+      { status: "idle" },
+      { status: "proposed", version: 4 },
+      { status: "already_held", version: 4, active: true },
+    ] as RememberState[]) {
+      expect(remember(state).match(/role="status"/g), state.status).toHaveLength(1);
+    }
+    expect(rememberStatus(remember({ status: "idle" }))).not.toContain("Kill Test");
+    const proposed = rememberStatus(remember({ status: "proposed", version: 4 }));
+    expect(proposed).toContain('data-testid="studio-remember-proposed"');
+    expect(proposed).toContain(rememberProposedSentence(4));
+    expect(proposed).toContain('href="/brain"');
+  });
+
+  it("D-L2: the box's limit is stated in the help text the box is described by — the db's own number", () => {
+    const html = remember({ status: "idle" });
+    const helpStart = html.indexOf('id="studio-remember-help"');
+    const help = html.slice(helpStart, html.indexOf("</p>", helpStart));
+    expect(help).toContain(rememberLimitSentence(BRAIN_EDIT_VALUE_MAX));
+    expect(help).toContain(String(BRAIN_EDIT_VALUE_MAX));
+    expect(rememberBox(html)).toContain('aria-describedby="studio-remember-help"');
+  });
+
+  it("D-L3: a refused press hands the typed rule back into the box, and a refusal ABOUT the text is tied to the box", () => {
+    const typed = "every shot is filmed by me alone";
+    const aboutText = remember({ status: "refused", code: "brain_edit_limit", text: typed, attempt: 1 });
+    const box = rememberBox(aboutText);
+    expect(box).toContain(typed);
+    expect(box).toContain('aria-invalid="true"');
+    expect(box).toContain('aria-describedby="studio-remember-help studio-remember-refused"');
+    expect(aboutText).toMatch(/role="alert" id="studio-remember-refused"/);
+    // A refusal that is NOT about the words still gives them back, and leaves
+    // the box valid.
+    const notAboutText = rememberBox(
+      remember({ status: "refused", code: "brain_edit_busy", text: typed, attempt: 2 })
+    );
+    expect(notAboutText).toContain(typed);
+    expect(notAboutText).not.toContain("aria-invalid");
+    expect(notAboutText).toContain('aria-describedby="studio-remember-help"');
+    // Idle and after a proposal the box is EMPTY — never pre-filled from
+    // anything but this box's own refused text (R11).
+    for (const state of [{ status: "idle" }, { status: "proposed", version: 2 }] as RememberState[]) {
+      expect(remember(state)).toMatch(/<textarea[^>]*name="preference"[^>]*><\/textarea>/);
+    }
+    // EVERY text-concerning code is one the remember press can return.
+    for (const code of REMEMBER_TEXT_REFUSAL_CODES) {
+      expect((STUDIO_ERROR_CODES as readonly string[]).includes(code), code).toBe(true);
+    }
+  });
+
+  it("D-L3: the action echoes the text on a refusal — clamped to the box's ceiling — and counts consecutive refusals so the form remounts", async () => {
+    vi.spyOn(respinDb, "rememberForFutureDrafts").mockRejectedValue(new BrainEditUnchangedError());
+    const fd = new FormData();
+    fd.set("preference", "[check]");
+    const first = await rememberForFutureDraftsAction("profile-1", { status: "idle" }, fd);
+    expect(first).toEqual({ status: "refused", code: "brain_edit_unchanged", text: "[check]", attempt: 1 });
+    const second = await rememberForFutureDraftsAction("profile-1", first, fd);
+    expect(second).toMatchObject({ status: "refused", attempt: 2 });
+    const huge = new FormData();
+    huge.set("preference", "x".repeat(BRAIN_EDIT_VALUE_MAX + 50));
+    const clamped = await rememberForFutureDraftsAction("profile-1", { status: "idle" }, huge);
+    expect(clamped.status === "refused" && [...clamped.text].length).toBe(BRAIN_EDIT_VALUE_MAX);
+    // ...and the panel keys the form on that count (static markup cannot run
+    // a reset, so the key is pinned in the source).
+    const src = read("app/(product)/studio/feedback-block.tsx");
+    expect(src).toMatch(/key=\{refused === null \? "remember" : `remember-refused-\$\{refused\.attempt\}`\}/);
+  });
+
+  it("C-L1: a press whose rule the editable version already holds writes nothing and SAYS so — active or proposed", async () => {
+    vi.spyOn(respinDb, "rememberForFutureDrafts").mockResolvedValue({
+      doc: { id: "d", version: 5, status: "active" } as never,
+      pointer: "/rules/0",
+      written: false,
+    });
+    const fd = new FormData();
+    fd.set("preference", "it must not sound like an advert");
+    const state = await rememberForFutureDraftsAction("profile-1", { status: "idle" }, fd);
+    expect(state).toEqual({ status: "already_held", version: 5, active: true });
+    const active = rememberStatus(remember({ status: "already_held", version: 5, active: true }));
+    expect(active).toContain(rememberAlreadyHeldSentence(5, true));
+    expect(active).toMatch(/Nothing new was saved/);
+    expect(active).not.toMatch(/not in force/);
+    const proposed = rememberStatus(remember({ status: "already_held", version: 6, active: false }));
+    expect(proposed).toContain(rememberAlreadyHeldSentence(6, false));
+    expect(proposed).toMatch(/not in force yet/);
+  });
+
+  it("T-L3: an editor or a viewer is told the box is the owner's, and offered no press", () => {
+    const html = remember({ status: "idle" }, false);
+    expect(html).toContain('data-testid="studio-remember-owner-only"');
+    expect(html).toContain(REMEMBER_OWNER_ONLY);
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain('name="preference"');
+    // ...through the PANEL, from the page's resolved role.
+    const panelFor = (rememberAllowed: boolean) =>
+      renderToStaticMarkup(
+        <StudioPanel
+          {...baseView.run!}
+          rememberAllowed={rememberAllowed}
+          initialState={{ lineage: [], latest: HONEST_REFUSAL }}
+        />
+      );
+    const owner = panelFor(true);
+    const editor = panelFor(false);
+    expect(owner).toContain('name="preference"');
+    expect(editor).not.toContain('name="preference"');
+    expect(editor).toContain('data-testid="studio-remember-owner-only"');
+    expect(read("app/(product)/studio/page.tsx")).toMatch(/rememberAllowed: scope\.role === "owner"/);
+  });
+
+  it("every remember refusal code has Studio copy, and the two re-worded ones say what happened HERE", () => {
+    for (const code of [
+      "brain_edit_unchanged", "brain_edit_busy", "brain_edit_limit", "brain-edit-all-check",
+      "provenance", "evidence_unreadable", "profile_role", "reference_echo",
+      "brain_version_limit", "brain_document_limit", "onboarding_input_limit",
+    ]) {
+      expect((STUDIO_ERROR_CODES as readonly string[]).includes(code), code).toBe(true);
+      expect(REFUSAL_COPY[code as keyof typeof REFUSAL_COPY], code).toBeDefined();
+    }
+    expect(REFUSAL_COPY.provenance.detail).not.toMatch(/build again/i);
+    expect(REFUSAL_COPY.brain_edit_unchanged.title).toMatch(/nothing to remember/i);
+  });
+
+  it("no L3 sentence claims learning, training, improvement or a guarantee", () => {
+    const surfaces = [
+      SEQUEL_LABEL,
+      SEQUEL_HELP,
+      REMEMBER_HEADING,
+      REMEMBER_HELP,
+      REMEMBER_LABEL,
+      rememberProposedSentence(2),
+      visibleCopy(remember({ status: "idle" })),
+      visibleCopy(remember({ status: "proposed", version: 2 })),
+      visibleCopy(remember({ status: "idle" }, false)),
+      rememberAlreadyHeldSentence(2, true),
+      rememberAlreadyHeldSentence(2, false),
+      rememberLimitSentence(BRAIN_EDIT_VALUE_MAX),
+      REMEMBER_OWNER_ONLY,
+      REFUSAL_COPY.provenance.detail,
+      REFUSAL_COPY.brain_edit_unchanged.detail,
+    ];
+    for (const surface of surfaces) {
+      expect(claimHits(surface, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS), surface.slice(0, 80)).toEqual([]);
+    }
+  });
+
+  it("the remember action hands the box's words to the db facade and returns the PROPOSED version, never the text", async () => {
+    const spy = vi
+      .spyOn(respinDb, "rememberForFutureDrafts")
+      .mockResolvedValue({ doc: { id: "d", version: 3 } as never, pointer: "/rules/2", written: true });
+    const fd = new FormData();
+    fd.set("preference", "every shot is filmed by me alone");
+    const state = await rememberForFutureDraftsAction("profile-1", { status: "idle" }, fd);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][2]).toEqual({ text: "every shot is filmed by me alone" });
+    expect(state).toEqual({ status: "proposed", version: 3 });
+    expect(JSON.stringify(state)).not.toContain("filmed");
+  });
+});
+
+// ------------------------------------------------------------------------
+// LAUNCH L4 (R-153): THE SAVED RECORDING PACK — the page, the copied script,
+// the Markdown export, the two presses, the link from a finished draft, and
+// the L3 card's BN-2 (the sequel box on "Find concepts" and the piece form).
+
+describe("launch L4 (R-153): the saved recording pack", () => {
+  const L4_PIECE: PieceConfirmationProps = {
+    piece: {
+      pieceId: "11111111-2222-4333-8444-555555555555",
+      version: 1,
+      state: "selected",
+      operationAttemptId: "0f6d7c2e-3a1b-4c5d-8e9f-0a1b2c3d4e5f",
+      origin: { kind: "own_idea", idea: "my own idea" },
+      quote: { credits: 3, configVersion: 4, planIncludesScript: true },
+    },
+    commissionAction: async () => IDLE_ACTION_STATE,
+    newGenerationAction: async () => undefined,
+    cancelAction: async () => undefined,
+    formOptions: CREATIVE_FORM_OPTIONS,
+    peopleOptions: CREATIVE_PEOPLE_OPTIONS,
+    creativeBounds: CREATIVE_CONSTRAINT_BOUNDS,
+    block: null,
+    refusalCopy: REFUSAL_COPY,
+    fallbackCopy: REFUSAL_COPY.unknown,
+  };
+  const L4_ENTRANCES: StudioEntrancesProps = {
+    findConceptAction: async () => IDLE_ACTION_STATE,
+    selectConceptAction: async () => undefined,
+    startOwnIdeaAction: async () => undefined,
+    conceptReady: true,
+    formOptions: CREATIVE_FORM_OPTIONS,
+    peopleOptions: CREATIVE_PEOPLE_OPTIONS,
+    creativeBounds: CREATIVE_CONSTRAINT_BOUNDS,
+    ownIdeaMax: OWN_IDEA_MAX,
+    reference: { status: "available", href: "/trends" },
+    findConceptOffer: { id: "ideation", label: "Ideas", status: "available", cost: 3 },
+    block: null,
+    refusalCopy: REFUSAL_COPY,
+    fallbackCopy: REFUSAL_COPY.unknown,
+  };
+  const USABLE_STATE_FOR_L4: StudioRunState = USABLE;
+
+  const PRODUCT_GUIDANCE =
+    "Before you post, check the platform's current rules on disclosing AI assistance and any paid partnership, and use the platform's own label where one applies. This product does not decide what those rules require.";
+
+  /** A stored v2 script as the facade's read returns it — already parsed, model disclosure replaced. */
+  function savedView(over: Partial<SavedGenerationView> = {}): SavedGenerationView {
+    const output = {
+      contractVersion: 2,
+      requestedForm: "explain_opinion",
+      form: "explain_opinion",
+      thesis: { statement: "you lose more takes to a setting you never checked", why: "a reshoot traces back to one dial" },
+      framework: { name: "the evidence tutorial", why: "the cost is the reshoot", provenance: "offered" },
+      hooks: [{ text: "you are shooting three takes when one would do", mechanic: "contradiction" }],
+      beats: [
+        { atSeconds: 0, vo: "most people change the lens before they check one dial", isTurn: false },
+        { atSeconds: 6, vo: "here is the dial nobody checks", isTurn: true, pivot: "turn" },
+        { atSeconds: 14, vo: "show the shot again with the dial set ![x](https://evil.test/p.png) <img src=x>", isTurn: false },
+      ],
+      shotMap: [{ beatIndex: 1, shot: "close on the dial with a gimbal", note: "hold it long enough to read" }],
+      onScreenText: [{ atSeconds: 7, text: "the dial nobody checks" }],
+      caption: { text: "the reshoot nobody sees", hashtags: ["filmmaking"] },
+      premise: {
+        whatHappens: "you change the lens again and again",
+        interest: "everyone has kept going on a shoot they should have stopped",
+        payoff: "the take worth keeping comes after checking the dial",
+        basis: { kind: "none" },
+      },
+      filming: { location: "kitchen", equipment: ["phone", "gimbal"], people: "solo", minutes: 20 },
+      serverChecks: {
+        filming: [{ at: "", location: true, equipment: [1] }],
+        shotMap: [{ index: 0, shot: true, note: false }],
+      },
+      whyThisPerforms: { reasoning: "it opens on a cost the viewer already paid", weakestPoint: "nothing here rests on a result you logged" },
+      disclosure: { platform: "TikTok", guidance: PRODUCT_GUIDANCE },
+    } as unknown as NonNullable<SavedGenerationView["output"]>;
+    return {
+      attemptId: "att-rev-1",
+      generationId: "gen-rev-1",
+      modeId: "ideaToScript",
+      modeLabel: "Idea to script",
+      createdAt: "2026-10-04T14:03:00.000Z",
+      platform: "TikTok",
+      outcome: "usable",
+      output,
+      weakestPoint: "nothing here rests on a result you logged",
+      killTest: {
+        outcome: "passed",
+        attempts: 1,
+        rewritten: false,
+        creatorRulesScored: true,
+        creatorRuleVerdicts: [{ ruleId: "/rules/0", passed: false, ruleText: "it must not sound like an advert" }],
+        traceabilityLimitNote: "LIMIT NOTE",
+        finalAttempt: {
+          traceability: [{ kind: "proper_noun", enforcement: "flag", token: "Lagos", field: "/hooks/0/text", unit: "I filmed in Lagos." }],
+          claims: [],
+          hardRules: [],
+        },
+        disclosureHardRulesWithheld: false,
+        refusal: null,
+      },
+      disclosure: { kind: "policy_check_required" },
+      disclosureGuidance: PRODUCT_GUIDANCE,
+      lineage: {
+        parent: { attemptId: "att-v1", modeLabel: "Idea to script" },
+        source: { attemptId: "att-ideas", ideaIndex: 1 },
+      },
+      piece: {
+        pieceId: "piece-1",
+        version: 3,
+        state: "scripted",
+        selectedAttemptId: "att-v1",
+        isSelected: false,
+        selectable: true,
+        versions: [
+          { attemptId: "att-v1", createdAt: "2026-10-04T13:00:00.000Z", outcome: "usable", isSelected: true, isThis: false, parentAttemptId: null },
+          { attemptId: "att-rev-1", createdAt: "2026-10-04T14:03:00.000Z", outcome: "usable", isSelected: false, isThis: true, parentAttemptId: "att-v1" },
+        ],
+        versionsTruncated: false,
+      },
+      reference: null,
+      revisions: [],
+      revisionsTruncated: false,
+      revision: { revisable: true, blocked: null, credits: 2, quoteConfigVersion: 7, inPlan: true },
+      ...over,
+    } as SavedGenerationView;
+  }
+
+  const noop = async () => {};
+  const reviseNoop = async (): Promise<SavedReviseState> => ({ status: "idle" });
+  function packProps(view: SavedGenerationView, over: Partial<SavedPackProps> = {}): SavedPackProps {
+    const pack = savedPackFor(view);
+    return {
+      kind: "pack",
+      pack,
+      scriptText: scriptText(pack),
+      markdown: recordingPackMarkdown(pack),
+      fileName: packFileName(pack),
+      selectAction: noop,
+      reviseAction: reviseNoop,
+      reviseOptions: SAVED_REVISION_OPTIONS,
+      reviseCostSentence: reviseCostSentence(view.revision.credits, view.createdAt),
+      reviseBlock: null,
+      selectBlock: null,
+      selectedStatus: false,
+      error: null,
+      refusalCopy: REFUSAL_COPY,
+      fallbackCopy: REFUSAL_COPY.unknown,
+      ...over,
+    };
+  }
+  const renderSaved = (props: SavedViewProps) => decoded(renderToStaticMarkup(<SavedView {...props} />));
+
+  it("renders SCRIPT, SHOOTING PLAN and CHECKS AND RATIONALE from the one stored version, with its lineage and selected-version state", () => {
+    const html = renderSaved(packProps(savedView()));
+    for (const id of ["saved-script", "saved-shooting-plan", "saved-checks", "saved-lineage", "saved-export", "saved-revise"]) {
+      expect(html, id).toContain(`data-testid="${id}"`);
+    }
+    for (const heading of [SCRIPT_HEADING, SHOOTING_PLAN_HEADING, CHECKS_HEADING]) {
+      expect(html).toContain(`>${heading}</h2>`);
+    }
+    // Every beat, the turn in words, the on-screen text and the caption.
+    expect(html).toContain("most people change the lens before they check one dial");
+    expect(html).toContain(PIVOT_SENTENCES.turn);
+    expect(html).toContain("the reshoot nobody sees");
+    // The SHOT CHECKLIST is checkboxes over the stored shot map, the server's mark on it.
+    expect(html).toMatch(/data-testid="saved-shot-checklist"[\s\S]*type="checkbox"/);
+    expect(html).toContain("close on the dial with a gimbal [check]");
+    // The filming plan lives in the shooting plan only, with the server's marks.
+    expect(html.match(/data-testid="studio-filming"/g)).toHaveLength(1);
+    expect(html).toContain("kitchen [check]");
+    expect(html).toContain("gimbal [check]");
+    expect(html).toContain(FILMING_UNCONFIRMED_NOTE);
+    // The server-authored confirmation item and the weakest point.
+    expect(html).toContain(EVENT_CONFIRMATION_ITEM);
+    expect(html).toContain("nothing here rests on a result you logged");
+    // Lineage: the parent and the source concept batch, both saved-pack links.
+    expect(html).toContain(`href="${savedPackHref("att-v1")}"`);
+    expect(html).toContain(`href="${savedPackHref("att-ideas")}"`);
+    expect(html).toContain(sourceSentence(1));
+    // Selected-version state: another version is selected; this one may be chosen.
+    expect(html).toContain(PIECE_OTHER_SELECTED_SENTENCE);
+    expect(html).toContain('data-testid="saved-select-form"');
+    expect(html).toMatch(/<input type="hidden" name="version" value="3"\/>/);
+    expect(html).toContain(USE_THIS_VERSION_HELP);
+    expect(html).toMatch(/aria-current="page"/);
+    // Reading costs nothing — and the page says so.
+    expect(html).toContain(SAVED_READ_FREE);
+  });
+
+  it("NEVER renders raw model-authored policy advice: the disclosure is the product's guidance, and the 'any disclosure guidance' note is absent", () => {
+    // The facade already replaced the model's section; a projection of a view
+    // that somehow still carried model text would show it — so plant one in
+    // the DTO and prove the SAVED renderer reads `disclosureGuidance` only.
+    const planted = savedView();
+    (planted.output as unknown as { disclosure: { guidance: string } }).disclosure.guidance = "PLANTED MODEL ADVICE zqxv";
+    const html = renderSaved(packProps(planted));
+    expect(html).toContain(PRODUCT_GUIDANCE);
+    expect(html).not.toContain('data-testid="studio-disclosure-provenance"');
+    const md = recordingPackMarkdown(savedPackFor(planted));
+    expect(md).toContain(PRODUCT_GUIDANCE.replace(/'/g, "'"));
+    expect(md).not.toContain("PLANTED MODEL ADVICE");
+    expect(scriptText(savedPackFor(planted))).not.toContain("PLANTED MODEL ADVICE");
+    expect(html).not.toContain("PLANTED MODEL ADVICE");
+  });
+
+  it("the MARKDOWN EXPORT and the COPIED SCRIPT carry the exact version, its open checks and the deterministic disclosure — and the export is injection-safe", () => {
+    const pack = savedPackFor(savedView());
+    const md = recordingPackMarkdown(pack);
+    const text = scriptText(pack);
+    for (const out of [md, text]) {
+      expect(out).toContain("most people change the lens before they check one dial");
+      expect(out).toContain("here is the dial nobody checks");
+      expect(out).toContain(EVENT_CONFIRMATION_ITEM);
+      expect(out).toContain(FILMING_UNCONFIRMED_NOTE);
+      expect(out).toContain("Weakest point: nothing here rests on a result you logged");
+      // A stored traceability flag and a failed creator rule are open checks.
+      expect(out).toContain('"Lagos"');
+      expect(out).toContain('This draft did not pass your rule "it must not sound like an advert".');
+      expect(out).toContain(basisSentence({ kind: "none" }));
+    }
+    expect(text).toContain(`Disclosure: ${PRODUCT_GUIDANCE}`);
+    expect(md).toContain("## Disclosure");
+    expect(md).toContain("- [ ] Beat 2: close on the dial with a gimbal [check]");
+    expect(md).toContain("kitchen [check]");
+    // MARKDOWN INJECTION: model text cannot become an image, a link or HTML.
+    expect(md).not.toContain("![x](https://evil.test/p.png)");
+    expect(md).toContain("!\\[x]\\(https\\://evil.test/p.png)");
+    expect(md).not.toMatch(/(^|[^\\])<img/);
+    expect(md).toContain("\\<img src=x\\>");
+    // [check] stays literal, and the file name is the attempt id, made safe.
+    expect(md).toContain("[check]");
+    expect(packFileName({ ...pack, attemptId: "../../etc/passwd" })).toBe("respin-recording-pack-etcpasswd.md");
+  });
+
+  it("export is PURE: building it twice from one view is identical, and reads nothing but the view", () => {
+    const pack = savedPackFor(savedView());
+    const frozen = JSON.parse(JSON.stringify(pack)) as SavedPackView;
+    expect(recordingPackMarkdown(pack)).toBe(recordingPackMarkdown(frozen));
+    expect(scriptText(pack)).toBe(scriptText(frozen));
+    expect(packChecks(pack)).toEqual(packChecks(frozen));
+    // The module imports no facade, database or network: only copy, types and the pure projection's output.
+    const src = read("app/(product)/studio/saved/recording-pack.ts");
+    expect(src).not.toMatch(/@respin\/(credits|db|config|llm|modes)|fetch\(|"use server"/);
+  });
+
+  it("a LEGACY draft (no version) reads, copies and exports: no creative half, no shooting plan, the weakest point still named", () => {
+    const legacyOutput = {
+      hooks: [{ text: "H one", mechanic: "M one" }],
+      whyThisPerforms: { reasoning: "R", weakestPoint: "W legacy" },
+      disclosure: { platform: "TikTok", guidance: PRODUCT_GUIDANCE },
+    } as unknown as NonNullable<SavedGenerationView["output"]>;
+    const view = savedView({ output: legacyOutput, piece: null, modeId: "hooks", modeLabel: "Hooks", lineage: { parent: null, source: null } });
+    const html = renderSaved(packProps(view));
+    expect(html).toContain("H one");
+    expect(html).toContain(NO_SHOOTING_PLAN);
+    expect(html).toContain(NOT_A_PIECE_NOTE);
+    expect(html).toContain(ORIGINAL_NOTE);
+    expect(html).not.toContain('data-testid="studio-creative"');
+    const md = recordingPackMarkdown(savedPackFor(view));
+    expect(md).toContain("1. H one (mechanic: M one)");
+    expect(md).toContain("Weakest point: W legacy");
+    expect(md).not.toContain(EVENT_CONFIRMATION_ITEM);
+  });
+
+  it("UNREADABLE stored checks are SAID on the page and in the export — never an empty list", () => {
+    const view = savedView({ killTest: null });
+    const html = renderSaved(packProps(view));
+    expect(html).toContain('data-testid="saved-checks-unreadable"');
+    expect(html).toContain(CHECKS_UNREADABLE);
+    expect(recordingPackMarkdown(savedPackFor(view))).toContain(CHECKS_UNREADABLE);
+  });
+
+  it("an HONEST REFUSAL version shows why and a sharper angle, offers no copy/export and no revision", () => {
+    const view = savedView({
+      outcome: "honest_refusal",
+      output: null,
+      weakestPoint: null,
+      killTest: {
+        ...savedView().killTest!,
+        outcome: "failed",
+        attempts: 2,
+        finalAttempt: { traceability: [], claims: [], hardRules: [{ rule: "antithesis", field: "/hooks/0/text", excerpt: null, remedy: "say the thing" }] },
+        refusal: { headline: "This one did not survive the kill test", sharperAngle: "Try the smaller claim" },
+      },
+      revision: { revisable: false, blocked: "honest_refusal", credits: 2, quoteConfigVersion: 7, inPlan: true },
+    });
+    const html = renderSaved(packProps(view, { reviseBlock: REVISE_REFUSED_ONLY, selectAction: null }));
+    expect(html).toContain('data-testid="saved-refusal"');
+    // The refused draft's sentence is not shown (billing verification): rule, field, remedy.
+    expect(html).toContain("antithesis at /hooks/0/text: say the thing");
+    expect(html).not.toContain("not x but y");
+    expect(html).toContain("Try the smaller claim");
+    expect(html).toContain(NOTHING_TO_EXPORT);
+    expect(html).not.toContain('data-testid="saved-pack-actions"');
+    expect(html).toContain(REVISE_REFUSED_ONLY);
+  });
+
+  it("the REVISE presses disclose the configured price and the parent BEFORE the press, and each points aria-describedby at that sentence", () => {
+    const html = renderSaved(packProps(savedView()));
+    expect(html).toContain(reviseCostSentence(2, "2026-10-04T14:03:00.000Z"));
+    expect(reviseCostSentence(2, "2026-10-04T14:03:00.000Z")).toContain("A revision currently costs 2 credits");
+    expect(reviseCostSentence(2, "2026-10-04T14:03:00.000Z")).toContain("2026-10-04 14:03 UTC");
+    expect(reviseCostSentence(null, "2026-10-04T14:03:00.000Z")).toMatch(/could not be read/);
+    for (const o of SAVED_REVISION_OPTIONS) {
+      const tag = html.match(new RegExp(`<button[^>]*data-testid="saved-revise-${o.id}"[^>]*>`))?.[0] ?? "";
+      expect(tag, o.id).toContain('type="submit"');
+      expect(tag, o.id).toContain('name="preset"');
+      expect(tag, o.id).toContain(`value="${o.id}"`);
+      expect(tag, o.id).toContain('aria-describedby="saved-revise-cost"');
+    }
+    // 44px targets on every press of the pack.
+    for (const testid of ["saved-copy-script", "saved-copy-pack", "saved-download-pack"]) {
+      expect(html).toMatch(new RegExp(`data-testid="${testid}"|style="min-height:44px[^"]*"[^>]*data-testid="${testid}"`));
+    }
+    expect(html.match(/min-height:44px/g)!.length).toBeGreaterThanOrEqual(6);
+    // A plan without the mode, a viewer and a pause each replace the presses with a reason.
+    for (const block of [REVISE_PLAN_BLOCK, "You have viewer access"]) {
+      const blocked = renderSaved(packProps(savedView(), { reviseBlock: block, selectAction: null, selectBlock: block }));
+      expect(blocked).not.toContain('name="preset"');
+      expect(blocked).toContain(block);
+      expect(blocked).not.toContain('data-testid="saved-select-form"');
+    }
+  });
+
+  it("WHICH PRESSES ARE OFFERED: a viewer and a pause block both writes; a plan without the mode and a refusal block only the revision; reading is never blocked", () => {
+    const open = { blocked: null, credits: 2, inPlan: true, isViewer: false, paused: false } as const;
+    expect(savedPressBlocks(open)).toEqual({ select: null, revise: null });
+    expect(savedPressBlocks({ ...open, isViewer: true })).toEqual({ select: VIEWER_BLOCK, revise: VIEWER_BLOCK });
+    expect(savedPressBlocks({ ...open, paused: true })).toEqual({ select: PAUSED_BLOCK, revise: PAUSED_BLOCK });
+    expect(savedPressBlocks({ ...open, inPlan: false })).toEqual({ select: null, revise: REVISE_PLAN_BLOCK });
+    // An unreadable plan offers the press: the server's own gate answers with copy.
+    expect(savedPressBlocks({ ...open, inPlan: null })).toEqual({ select: null, revise: null });
+    expect(savedPressBlocks({ ...open, blocked: "honest_refusal" })).toEqual({ select: null, revise: REVISE_REFUSED_ONLY });
+    for (const block of [VIEWER_BLOCK, PAUSED_BLOCK, REVISE_PLAN_BLOCK]) {
+      expect(block).toMatch(/read|Reading/);
+    }
+  });
+
+  it("LOADING, RESULT AND ERROR states complete in PERSISTENT live regions; a refusal is an alert with its copy", () => {
+    const html = renderSaved(packProps(savedView()));
+    // Both status regions exist BEFORE anything happens, so an announcement is
+    // a change inside a region the assistive tech already knows (L3 gate D-L1).
+    expect(html).toMatch(/role="status" aria-live="polite" data-testid="saved-pack-status"/);
+    expect(html).toMatch(/role="status" aria-live="polite" data-testid="saved-revise-status"/);
+    // The fallback text area carries the whole Markdown, labelled.
+    expect(html).toMatch(/<label for="saved-pack-text"[^>]*>The recording pack as Markdown<\/label>/);
+    // The press result sentences, and the selection status after the redirect.
+    expect(reviseDoneSentence({ outcome: "usable", creditsChargedNow: 2, balanceAfter: 8, freeClaimRefusal: false })).toBe("The new version is saved. It cost 2 credits. Your balance is 8.");
+    expect(reviseDoneSentence({ outcome: "replayed", creditsChargedNow: 0, balanceAfter: 8, freeClaimRefusal: false })).toMatch(/already finished/);
+    const selected = renderSaved(packProps(savedView(), { selectedStatus: true }));
+    expect(selected).toMatch(/tabindex="-1" role="status" data-testid="saved-selected-status"/);
+    expect(selected).toContain(SELECTED_STATUS);
+    const errored = renderSaved(packProps(savedView(), { error: studioErrorFor("creative_piece_stale") }));
+    expect(errored).toMatch(/role="alert" data-testid="saved-error"/);
+    expect(errored).toContain(REFUSAL_COPY.creative_piece_stale.title);
+    // Every revise refusal code the page can receive has copy on this screen.
+    expect(REFUSAL_COPY.revision_preset.title).toMatch(/not one this page offers/);
+  });
+
+  it("MISSING, PENDING, NOT STORED and UNREADABLE are honest, non-spending STATES with their own words", () => {
+    for (const copy of Object.values(SAVED_STATE_COPY)) {
+      const html = renderSaved({ kind: "state", copy });
+      expect(html).toContain('data-testid="saved-state-banner"');
+      expect(html).toContain(copy.title);
+      expect(html).toMatch(/Nothing was charged|never charges|not charged|none was charged|nothing was charged/i);
+      expect(html).not.toContain('name="preset"');
+    }
+  });
+
+  it("MOBILE AND DESKTOP read ONE projection: one grid whose columns collapse, no second tree, and the export carries what the page shows", () => {
+    const view = savedView();
+    const html = renderSaved(packProps(view));
+    expect(html).toMatch(/data-testid="saved-columns" style="display:grid;grid-template-columns:repeat\(auto-fit, minmax\(min\(100%, 22rem\), 1fr\)\)/);
+    expect(html.match(/data-testid="saved-script"/g)).toHaveLength(1);
+    expect(html.match(/data-testid="saved-shot-checklist"/g)).toHaveLength(1);
+    const pack = savedPackFor(view);
+    for (const b of pack.document!.beats!) {
+      expect(html).toContain(b.vo.split(" ![")[0]);
+      expect(recordingPackMarkdown(pack)).toContain(b.vo.split(" ![")[0]);
+    }
+  });
+
+  it("THE CLAIMS CANON holds over the page, the export and every saved-pack sentence", () => {
+    const html = renderSaved(packProps(savedView()));
+    const pack = savedPackFor(savedView());
+    const sentences = [
+      ...Object.values(SAVED_STATE_COPY).flatMap((c) => [c.title, c.detail]),
+      reviseCostSentence(2, "2026-10-04T14:03:00.000Z"),
+      reviseDoneSentence({ outcome: "usable", creditsChargedNow: 2, balanceAfter: 8, freeClaimRefusal: false }),
+      REVISE_PLAN_BLOCK, REVISE_REFUSED_ONLY, NOT_A_PIECE_NOTE, SAVED_READ_FREE,
+    ].join("\n");
+    for (const text of [detailsText(html), recordingPackMarkdown(pack), scriptText(pack), sentences]) {
+      expect(claimHits(text, FORBIDDEN_CLAIMS, PERFORMANCE_CLAIMS)).toEqual([]);
+    }
+  });
+
+  it("a FINISHED DRAFT links to its saved pack — usable, replayed and refused alike — and the replay no longer sends the creator to the export", () => {
+    const usable = decoded(renderOutcome({ ...USABLE_STATE_FOR_L4, attemptId: "att-9" }));
+    expect(usable).toContain(`href="${savedPackHref("att-9")}"`);
+    expect(usable).toContain(SAVED_PACK_LINK_LABEL);
+    const replayed = decoded(renderOutcome({
+      status: "replayed", generationId: "g", attemptId: "att-9", modeId: "hooks", modeLabel: "Hooks",
+      outcome: "usable", weakestPoint: "W", refusalReason: null, balanceAfter: 3, freeClaimRefusal: false,
+    }));
+    expect(replayed).toContain(REPLAY_SAVED_NOTE);
+    expect(replayed).toContain(`href="${savedPackHref("att-9")}"`);
+    expect(replayed).not.toContain("your export carries the stored one");
+    expect(savedPackHref("a/b?c")).toBe("/studio/saved/a%2Fb%3Fc");
+    // THE PROJECTION carries the operation's own attempt id onto every finished
+    // state — so the link is built from the server's value, never the browser's.
+    const minimalKillTest = {
+      outcome: "passed", attempts: 1, rewritten: false, creatorRulesScored: false,
+      creatorRuleVerdicts: [], traceabilityLimitNote: "L", finalAttempt: { traceability: [], claims: [] },
+    };
+    const generation = { id: "g", mode: "hooks", outcome: "usable", weakestPoint: "W", refusalReason: null, parentId: null };
+    const base = { attemptId: "att-proj", generation, creditsChargedNow: 1, balanceAfter: 2, frameworkOffer: null };
+    const fresh = studioStateFor({
+      ...base,
+      replayed: false,
+      run: { status: "usable", killTest: minimalKillTest, output: { hooks: [{ text: "H", mechanic: "M" }], whyThisPerforms: { reasoning: "R", weakestPoint: "W" }, disclosure: { platform: "P", guidance: "G" } } },
+    } as never, "Hooks");
+    const refusedRun = studioStateFor({
+      ...base,
+      replayed: false,
+      run: { status: "refused", killTest: minimalKillTest, refusal: { headline: "h", why: [], sharperAngle: "s" } },
+    } as never, "Hooks");
+    const replay = studioStateFor({ ...base, replayed: true, run: null } as never, "Hooks");
+    for (const s of [fresh, refusedRun, replay]) {
+      expect(s.status === "usable" || s.status === "honest_refusal" || s.status === "replayed" ? s.attemptId : null, s.status).toBe("att-proj");
+    }
+  });
+
+  it("the RECENT list on /studio links each saved draft, says when it cannot be read, and is absent with no profile", () => {
+    const listed = decoded(renderView({ recentPacks: [{ attemptId: "att-1", modeLabel: "Hooks", createdAt: "2026-10-04T14:03:00.000Z", outcome: "usable", title: "the first hook" }] }));
+    expect(listed).toContain(`href="${savedPackHref("att-1")}"`);
+    expect(listed).toContain("the first hook");
+    expect(listed).toContain("2026-10-04 14:03 UTC");
+    expect(decoded(renderView({ recentPacks: null }))).toContain(RECENT_PACKS_UNAVAILABLE);
+    expect(decoded(renderView({ recentPacks: [] }))).toContain(RECENT_PACKS_EMPTY);
+    expect(decoded(renderView({ profileName: null, recentPacks: [] }))).not.toContain('data-testid="studio-recent-packs"');
+  });
+
+  it("'USE THIS VERSION' redirects back with a status, or with the refusal CODE — and decides nothing itself", async () => {
+    actionMocks.requireUser.mockResolvedValue({ id: "user-1", email: "a@example.test", name: "A" });
+    actionMocks.scopeForUser.mockResolvedValue({ workspaceId: "ws-1", role: "owner" });
+    const target = async (run: () => Promise<unknown>) => {
+      try {
+        await run();
+        return "no redirect";
+      } catch (e) {
+        const digest = (e as { digest?: string }).digest ?? "";
+        if (!digest.startsWith("NEXT_REDIRECT")) throw e;
+        return digest.split(";")[2];
+      }
+    };
+    const spy = vi.spyOn(respinCredits, "selectSavedVersion").mockResolvedValue({ pieceId: "piece-1", version: 4 });
+    const fd = new FormData();
+    fd.set("version", "3");
+    expect(await target(() => selectSavedVersionAction("profile-1", "att-rev-1", "piece-1", fd))).toBe(`${savedPackHref("att-rev-1")}?selected=1`);
+    expect(spy.mock.calls.at(-1)![2]).toEqual({ attemptId: "att-rev-1", pieceId: "piece-1", expectedVersion: 3 });
+    // A non-numeric token is passed on as NaN for the capability to refuse.
+    const bad = new FormData();
+    bad.set("version", "3; drop");
+    spy.mockRejectedValueOnce(new CreativePieceError("stale"));
+    expect(await target(() => selectSavedVersionAction("profile-1", "att-rev-1", "piece-1", bad))).toBe(`${savedPackHref("att-rev-1")}?e=creative_piece_stale`);
+    expect(Number.isNaN(spy.mock.calls.at(-1)![2].expectedVersion)).toBe(true);
+    spy.mockRestore();
+  });
+
+  it("A REVISION PRESS mints its own id, sends the preset as wire input, and returns the money facts or a code", async () => {
+    actionMocks.requireUser.mockResolvedValue({ id: "user-1", email: "a@example.test", name: "A" });
+    actionMocks.scopeForUser.mockResolvedValue({ workspaceId: "ws-1", role: "owner" });
+    const spy = vi.spyOn(respinCredits, "reviseSaved").mockImplementation(async (_s, _p, params) => ({
+      attemptId: params.attemptId,
+      replayed: false,
+      run: { status: "usable" } as never,
+      generation: { id: "g-new", mode: "ideaToScript", outcome: "usable", parentId: "g-parent", promptBundleVersion: "b", rewriteCount: 0 } as never,
+      creditsChargedNow: 2,
+      balanceAfter: 8,
+      freeClaimRefusal: false,
+      configVersion: 1,
+      resolvedTier: "creator",
+      frameworkOffer: null,
+    }));
+    const fd = new FormData();
+    fd.set("preset", "shorter");
+    fd.set("quote", "7");
+    const one = await reviseSavedAction("profile-1", "att-rev-1", { status: "idle" }, fd);
+    const two = await reviseSavedAction("profile-1", "att-rev-1", { status: "idle" }, fd);
+    expect(one.status).toBe("done");
+    expect(spy.mock.calls[0][2]).toMatchObject({ parentAttemptId: "att-rev-1", preset: "shorter", quotedConfigVersion: 7 });
+    expect(spy.mock.calls[0][2].attemptId).not.toBe(spy.mock.calls[1][2].attemptId);
+    expect(one).toMatchObject({ status: "done", outcome: "usable", creditsChargedNow: 2, balanceAfter: 8 });
+    expect(two.status === "done" && one.status === "done" && two.attemptId !== one.attemptId).toBe(true);
+    spy.mockRejectedValueOnce(new RevisionPresetError());
+    const refused = await reviseSavedAction("profile-1", "att-rev-1", { status: "idle" }, fd);
+    expect(refused).toEqual({ status: "refused", code: "revision_preset" });
+    // THE QUOTE IS A CLOSED FORMAT: absent or garbage reaches the package as NaN, to be refused there.
+    for (const raw of [null, "", "7; drop", "-1", "1e3"]) {
+      const bad = new FormData();
+      bad.set("preset", "shorter");
+      if (raw !== null) bad.set("quote", raw);
+      await reviseSavedAction("profile-1", "att-rev-1", { status: "idle" }, bad);
+      expect(Number.isNaN(spy.mock.calls.at(-1)![2].quotedConfigVersion), String(raw)).toBe(true);
+    }
+    spy.mockRestore();
+  });
+
+  // ---------------------------------------------------------------- L4 gate fixes (R-153 amendment)
+
+  const SPIN_REFERENCE = {
+    kind: "spin" as const,
+    summary: { source: "YouTube" as const, title: "A permitted shared reference", mechanismSummary: "open on a visible renovation regret" },
+  };
+
+  it("B1/B3 MARKDOWN, EVERY SHAPE PLANTED: a value at a line or list-item start cannot open a reference definition, footnote, fence, heading, quote, list or table, and a bare URL is not an autolink", () => {
+    // THE ONE BUILDER, PLANT BY PLANT. Each value lands at a line start (the
+    // caption, the thesis's why) or a list-item start (a shot, a check line).
+    // A LINE START, or a list-item start (`- `, `1. `, a task box) before it.
+    const ITEM = String.raw`^\s*(?:(?:[-*+]|\d{1,9}[.)])\s+(?:\[ \]\s+)?)?`;
+    const at = (tail: string) => new RegExp(ITEM + tail, "m");
+    const plants: { name: string; value: string; raw: RegExp }[] = [
+      { name: "reference definition", value: "[check]: https://attacker.example \"Confirm\"", raw: at(String.raw`\[check\]:`) },
+      { name: "footnote definition", value: "[^1]: see https://attacker.example", raw: /(^|[^\\])\[\^1\]/m },
+      { name: "tilde fence", value: "~~~", raw: at("~~~") },
+      { name: "backtick fence", value: "```", raw: at("```") },
+      { name: "heading", value: "# Forged heading", raw: at(String.raw`#\sForged`) },
+      { name: "block quote", value: "> forged quote", raw: at(String.raw`>\sforged`) },
+      { name: "bullet", value: "- forged item", raw: at(String.raw`-\sforged`) },
+      { name: "ordered item", value: "1. forged item", raw: at(String.raw`1\.\sforged`) },
+      { name: "ordered paren", value: "1) forged item", raw: at(String.raw`1\)\sforged`) },
+      { name: "setext underline", value: "===", raw: at("===") },
+      { name: "table row", value: "| a | b |", raw: /(^|[^\\])\|\sa\s/m },
+      { name: "task box", value: "[ ] forged task", raw: at(String.raw`\[ \] forged`) },
+    ];
+    for (const plant of plants) {
+      const base = savedView();
+      const out = base.output as unknown as {
+        caption: { text: string; hashtags: string[] };
+        thesis: { statement: string; why: string };
+        hooks: { text: string; mechanic: string }[];
+        shotMap: { beatIndex: number; shot: string; note: string }[];
+      };
+      // MULTI-LINE too: the plant on its own line inside a longer value.
+      out.caption.text = `${plant.value}\n${plant.value}`;
+      out.thesis.why = plant.value;
+      out.shotMap[0].shot = plant.value;
+      out.hooks[0].text = plant.value;
+      const md = recordingPackMarkdown(savedPackFor(base));
+      expect(md, plant.name).not.toMatch(plant.raw);
+    }
+    // [check] STAYS PLAIN TEXT: the planted definition is escaped (`]\:`), so
+    // no line of the file is a definition and `[check]` cannot resolve.
+    const view = savedView();
+    (view.output as unknown as { caption: { text: string } }).caption.text = "[check]: https://attacker.example \"Confirm\"";
+    const md = recordingPackMarkdown(savedPackFor(view));
+    expect(md).toContain("\\[check]\\: https\\://attacker.example");
+    expect(md).not.toMatch(/\]:\s*https?:/);
+    expect(md).toContain("kitchen [check]");
+    // B3: bare URLs and an e-mail are broken; the text still reads the same.
+    const urls = savedView();
+    (urls.output as unknown as { caption: { text: string } }).caption.text = "see https://a.example and http://b.example and www.c.example or me@d.example";
+    const urlMd = recordingPackMarkdown(savedPackFor(urls));
+    expect(urlMd).toContain("https\\://a.example");
+    expect(urlMd).toContain("http\\://b.example");
+    expect(urlMd).toContain("www\\.c.example");
+    expect(urlMd).toContain("me\\@d.example");
+    expect(urlMd).not.toMatch(/(^|[^\\])https?:\/\//m);
+    // `md` itself: a leading marker is escaped once, an inner one is not a marker.
+    expect(md_("# a # b")).toBe("\\# a # b");
+    expect(md_("12) twelve")).toBe("12\\) twelve");
+    expect(md_("plain words")).toBe("plain words");
+  });
+
+  it("A1 THE CREATOR'S RULE, NEVER THE SCORING MODEL'S NOTE: page, copied script and export name the rule by its own text", () => {
+    const view = savedView();
+    const pack = savedPackFor(view);
+    const html = renderSaved(packProps(view));
+    for (const out of [html, scriptText(pack), recordingPackMarkdown(pack)]) {
+      expect(out).toContain('your rule "it must not sound like an advert"');
+    }
+    // A rule whose text cannot be read is said, not invented.
+    const unread = savedView({
+      killTest: { ...savedView().killTest!, creatorRuleVerdicts: [{ ruleId: "/rules/9", passed: false, ruleText: null }] },
+    });
+    expect(recordingPackMarkdown(savedPackFor(unread))).toContain("one of your rules (its wording could not be read back");
+  });
+
+  it("A2 A REOPENED SPIN keeps its original beside the draft, says it passed the similarity check, and the export carries the attribution", () => {
+    const spin = savedView({ modeId: "analyseAndSpin", modeLabel: "Analyse and spin", piece: null, lineage: { parent: null, source: null }, reference: SPIN_REFERENCE });
+    const html = renderSaved(packProps(spin));
+    // SIDE BY SIDE: the reference is a column of the same grid as the script.
+    expect(html).toMatch(/data-testid="saved-columns"[^>]*>[\s\S]*data-testid="saved-reference"[\s\S]*data-testid="saved-script"/);
+    expect(html).toContain("YouTube: A permitted shared reference");
+    expect(html).toContain("open on a visible renovation regret");
+    expect(html).toContain(SPIN_GATE_PASSED);
+    expect(html).toContain(ORIGINAL_NOTE);
+    expect(ORIGINAL_NOTE).toBe("Not a revision of another version.");
+    expect(html).not.toContain("original draft");
+    const md = recordingPackMarkdown(savedPackFor(spin));
+    expect(md).toContain("## What this was made from");
+    expect(md).toContain("Spun from a reference (YouTube): A permitted shared reference.");
+    expect(md).toContain(SPIN_GATE_PASSED);
+    // A LEGACY row with no readable reference: an honest line, no crash, no gate claim.
+    const legacy = savedView({ modeId: "analyseAndSpin", modeLabel: "Analyse and spin", piece: null, reference: { kind: "spin", summary: null } });
+    const legacyHtml = renderSaved(packProps(legacy));
+    expect(legacyHtml).toContain(REFERENCE_UNAVAILABLE);
+    expect(legacyHtml).not.toContain(SPIN_GATE_PASSED);
+    expect(recordingPackMarkdown(savedPackFor(legacy))).toContain(REFERENCE_UNAVAILABLE);
+    // A SOURCE REEL: the creator's source beside it, and which text the check read.
+    const reel = savedView({ modeId: "sourceToReel", modeLabel: "Source to reel", piece: null, lineage: { parent: null, source: null }, reference: { kind: "source", text: "the source the creator pasted", truncated: false, checkedAgainst: "source" } });
+    const reelHtml = renderSaved(packProps(reel));
+    expect(reelHtml).toContain("the source the creator pasted");
+    expect(reelHtml).toContain(SOURCE_CHECKED_SOURCE);
+    const reelMd = recordingPackMarkdown(savedPackFor(reel));
+    expect(reelMd).toContain(SOURCE_ATTRIBUTION);
+    expect(reelMd).not.toContain("the source the creator pasted");
+    const revisedReel = savedView({ modeId: "sourceToReel", modeLabel: "Source to reel", piece: null, reference: { kind: "source", text: "the source the creator pasted", truncated: true, checkedAgainst: "revised_draft" } });
+    const revisedHtml = renderSaved(packProps(revisedReel));
+    expect(revisedHtml).toContain(SOURCE_CHECKED_REVISED);
+    expect(revisedHtml).not.toContain(SOURCE_CHECKED_SOURCE);
+    // Every other mode carries no reference section.
+    expect(renderSaved(packProps(savedView()))).not.toContain('data-testid="saved-reference"');
+  });
+
+  it("A4 the three 'as saved' sentences claim only what is true", () => {
+    const html = renderSaved(packProps(savedView()));
+    const md = recordingPackMarkdown(savedPackFor(savedView()));
+    for (const text of [SAVED_READ_FREE, CHECK_LEGEND, EXPORT_FOOTER, html, md]) {
+      expect(text).not.toMatch(/exactly as it was saved|Nothing in this saved draft was changed/);
+    }
+    expect(html).toContain(CHECK_LEGEND);
+    expect(md).toContain("with line breaks inside a line joined");
+  });
+
+  it("A6 an honest refusal whose only hard-rule reasons were in the model's disclosure SAYS so", () => {
+    const view = savedView({
+      outcome: "honest_refusal",
+      output: null,
+      weakestPoint: null,
+      killTest: {
+        ...savedView().killTest!,
+        outcome: "failed",
+        attempts: 2,
+        finalAttempt: { traceability: [], claims: [], hardRules: [] },
+        disclosureHardRulesWithheld: true,
+        refusal: { headline: "This one did not survive the kill test", sharperAngle: "Try the smaller claim" },
+      },
+      revision: { revisable: false, blocked: "honest_refusal", credits: 2, quoteConfigVersion: 7, inPlan: true },
+    });
+    const html = renderSaved(packProps(view, { reviseBlock: REVISE_REFUSED_ONLY, selectAction: null }));
+    expect(html).toContain('data-testid="saved-refusal-disclosure-withheld"');
+    expect(html).toContain(DISCLOSURE_ADVICE_WITHHELD);
+    expect(recordingPackMarkdown(savedPackFor(view))).toContain("The draft's own disclosure advice broke one of the hard rules");
+    // And not when nothing was withheld.
+    expect(renderSaved(packProps(savedView()))).not.toContain(DISCLOSURE_ADVICE_WITHHELD);
+  });
+
+  it("M1 THE QUOTE TRAVELS WITH THE PRESS: the form carries the quote's config version, and no quote means no press", () => {
+    const html = renderSaved(packProps(savedView()));
+    expect(html).toMatch(/<input type="hidden" name="quote" value="7"\/>/);
+    expect(reviseCostSentence(2, "2026-10-04T14:03:00.000Z")).toMatch(/^A revision currently costs 2 credits\. If that price changes before you press, nothing is made and nothing is charged\./);
+    const noQuote = savedView({ revision: { revisable: true, blocked: null, credits: null, quoteConfigVersion: null, inPlan: true } });
+    const blocks = savedPressBlocks({ blocked: null, credits: null, inPlan: true, isViewer: false, paused: false });
+    expect(blocks.revise).toBe(REVISE_PRICE_UNREADABLE);
+    const noQuoteHtml = renderSaved(packProps(noQuote, { reviseBlock: blocks.revise, reviseCostSentence: reviseCostSentence(null, noQuote.createdAt) }));
+    expect(noQuoteHtml).not.toContain('name="preset"');
+    expect(noQuoteHtml).not.toContain('name="quote"');
+    // Even with no block passed, a missing quote renders no form.
+    expect(renderSaved(packProps(noQuote))).not.toContain('name="preset"');
+    // The saved page's quote-refusal copy names THIS page's remedy.
+    expect(SAVED_QUOTE_CHANGED.detail).toContain("Reload this page");
+    expect(SAVED_QUOTE_CHANGED.detail).not.toContain("New generation");
+  });
+
+  it("M2 A VERSION'S OWN REVISIONS are listed, and the presses say one already exists, with a link to it", () => {
+    const view = savedView({
+      piece: null,
+      revisions: [
+        { attemptId: "att-r2", createdAt: "2026-10-04T15:10:00.000Z", outcome: "usable" },
+        { attemptId: "att-r1", createdAt: "2026-10-04T15:00:00.000Z", outcome: "honest_refusal" },
+      ],
+    });
+    const html = renderSaved(packProps(view));
+    expect(html).toContain('data-testid="saved-revisions"');
+    expect(html).toContain(`href="${savedPackHref("att-r2")}"`);
+    expect(html).toContain(`href="${savedPackHref("att-r1")}"`);
+    const already = html.match(/data-testid="saved-already-revised"[\s\S]*?<\/p>/)?.[0] ?? "";
+    expect(already).toContain(alreadyRevisedSentence("2026-10-04T15:10:00.000Z"));
+    expect(already).toContain(`href="${savedPackHref("att-r2")}"`);
+    // ABOVE the presses.
+    expect(html.indexOf('data-testid="saved-already-revised"')).toBeLessThan(html.indexOf('name="preset"'));
+    expect(renderSaved(packProps(savedView()))).not.toContain('data-testid="saved-already-revised"');
+  });
+
+  it("B2 / C3 / C4: version links carry an ordinal, the recent list is a labelled section with distinct refusal links", () => {
+    const html = renderSaved(packProps(savedView()));
+    expect(html).toContain(versionLinkLabel(1, "2026-10-04T13:00:00.000Z"));
+    expect(html).toContain(versionLinkLabel(2, "2026-10-04T14:03:00.000Z"));
+    expect(versionLinkLabel(2, "2026-10-04T14:03:00.000Z")).toBe("Version 2, saved 2026-10-04 14:03 UTC");
+    const recent = decoded(renderView({
+      recentPacks: [
+        { attemptId: "r-1", modeLabel: "Hooks", createdAt: "2026-10-04T14:03:00.000Z", outcome: "honest_refusal", title: null },
+        { attemptId: "r-2", modeLabel: "Hooks", createdAt: "2026-10-04T14:09:00.000Z", outcome: "honest_refusal", title: null },
+      ],
+    }));
+    expect(recent).toMatch(/<section class="panel" aria-labelledby="studio-recent-packs-heading" data-testid="studio-recent-packs">/);
+    expect(recent).toContain('id="studio-recent-packs-heading"');
+    const texts = [...recent.matchAll(/href="\/studio\/saved\/r-\d"[^>]*>([^<]*)<\/a>/g)].map((m) => m[1]);
+    expect(texts).toHaveLength(2);
+    expect(new Set(texts).size).toBe(2);
+    expect(texts[0]).toBe("Hooks honest refusal, saved 2026-10-04 14:03 UTC");
+  });
+
+  it("C1 / C2: each refused copy names the box that holds its text, both boxes exist, and a repeated press is announced again", () => {
+    const html = renderSaved(packProps(savedView()));
+    expect(html).toMatch(/<label for="saved-script-text"[^>]*>The script as plain text<\/label>/);
+    expect(html).toMatch(/<label for="saved-pack-text"[^>]*>The recording pack as Markdown<\/label>/);
+    expect(COPY_SCRIPT_FAILED_STATUS).toContain(`"${SCRIPT_TEXT_LABEL}"`);
+    expect(COPY_PACK_FAILED_STATUS).toContain(`"${PACK_TEXT_LABEL}"`);
+    // CLEAR, THEN SET: two presses of the same control are four writes.
+    const writes: string[] = [];
+    const queue: (() => void)[] = [];
+    const schedule = (run: () => void) => queue.push(run);
+    announce((t) => writes.push(t), COPIED_SCRIPT_STATUS, schedule);
+    queue.shift()!();
+    announce((t) => writes.push(t), COPIED_SCRIPT_STATUS, schedule);
+    queue.shift()!();
+    expect(writes).toEqual(["", COPIED_SCRIPT_STATUS, "", COPIED_SCRIPT_STATUS]);
+  });
+
+  it("C5 the saved pack's files take their spacing from the --sp-* tokens (a planted raw value is caught)", () => {
+    const RAW_SPACING = /\b(?:padding|margin|gap)[A-Za-z]*:\s*"[^"]*\d(?:\.\d+)?(?:rem|px)\b/;
+    expect(RAW_SPACING.test('padding: "0.6rem 1rem"')).toBe(true);
+    expect(RAW_SPACING.test('gap: "var(--sp-2)"')).toBe(false);
+    for (const rel of [
+      "app/(product)/studio/saved/saved-view.tsx",
+      "app/(product)/studio/saved/pack-actions.tsx",
+      "app/(product)/studio/saved/revise-panel.tsx",
+    ]) {
+      const lines = read(rel).split(/\r?\n/).filter((l) => RAW_SPACING.test(l));
+      expect(lines, rel).toEqual([]);
+    }
+  });
+
+  it("WHICH PRESSES: an unreadable price, a Spin without its reference and a Source-to-reel draft offer no paid press", () => {
+    const open = { blocked: null, credits: 2, inPlan: true, isViewer: false, paused: false } as const;
+    expect(savedPressBlocks({ ...open, credits: null }).revise).toBe(REVISE_PRICE_UNREADABLE);
+    expect(savedPressBlocks({ ...open, blocked: "reference_unavailable" }).revise).toBe(REVISE_REFERENCE_UNAVAILABLE);
+    expect(savedPressBlocks({ ...open, blocked: "source_to_reel" }).revise).toBe(REVISE_SOURCE_TO_REEL);
+    for (const b of ["reference_unavailable", "source_to_reel"] as const) {
+      expect(savedPressBlocks({ ...open, blocked: b }).select).toBeNull();
+    }
+  });
+
+
+  it("BN-2: 'Find concepts' and the piece confirmation carry the SEQUEL box, and their actions send it only as the box's own value", async () => {
+    const entrances = decoded(renderToStaticMarkup(<StudioEntrances {...L4_ENTRANCES} />));
+    const findBox = entrances.match(/<input[^>]*data-testid="studio-find-sequel"[^>]*>/)?.[0] ?? "";
+    for (const attr of ['type="checkbox"', 'name="sequel"', 'value="1"', 'aria-describedby="studio-find-sequel-help"']) {
+      expect(findBox, attr).toContain(attr);
+    }
+    expect(entrances).toContain('id="studio-find-sequel-help"');
+    expect(entrances).toContain(SEQUEL_LABEL);
+    const piece = decoded(renderToStaticMarkup(<PieceConfirmation {...L4_PIECE} />));
+    const pieceBox = piece.match(/<input[^>]*data-testid="studio-piece-sequel"[^>]*>/)?.[0] ?? "";
+    for (const attr of ['type="checkbox"', 'name="sequel"', 'value="1"', 'aria-describedby="studio-piece-sequel-help"']) {
+      expect(pieceBox, attr).toContain(attr);
+    }
+    expect(piece).toContain(SEQUEL_HELP);
+    // Unchecked by default, everywhere.
+    expect(`${findBox}${pieceBox}`).not.toMatch(/checked/);
+
+    actionMocks.requireUser.mockResolvedValue({ id: "user-1", email: "a@example.test", name: "A" });
+    actionMocks.scopeForUser.mockResolvedValue({ workspaceId: "ws-1", role: "owner" });
+    const find = vi.spyOn(respinCredits, "findConcept").mockRejectedValue(new CreativeRequestError("unknown_form"));
+    const commission = vi.spyOn(respinCredits, "commissionPiece").mockRejectedValue(new CreativeRequestError("unknown_form"));
+    const send = async (which: "find" | "piece", sequel: string | null) => {
+      const fd = new FormData();
+      fd.set("platform", "TikTok");
+      fd.set("hint", "a part two of last week");
+      fd.set("input", "a part two of last week");
+      fd.set("operationId", "op-1");
+      if (sequel !== null) fd.set("sequel", sequel);
+      if (which === "find") {
+        await findConceptAction("profile-1", IDLE_ACTION_STATE, fd);
+        return find.mock.calls.at(-1)![2] as { sequel?: boolean };
+      }
+      await commissionPieceAction("profile-1", "piece-1", IDLE_ACTION_STATE, fd);
+      return commission.mock.calls.at(-1)![2] as { sequel?: boolean };
+    };
+    for (const which of ["find", "piece"] as const) {
+      expect((await send(which, "1")).sequel, which).toBe(true);
+      expect("sequel" in (await send(which, null)), which).toBe(false);
+      expect("sequel" in (await send(which, "yes")), which).toBe(false);
+      expect("sequel" in (await send(which, "true")), which).toBe(false);
+    }
+    find.mockRestore();
+    commission.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1-R5 (audit REG-29): `FEEDBACK_TODAY` IS PINNED TO THE READERS OF FEEDBACK.
+//
+// The sentence used to say nothing read a creator's feedback while two paths
+// did. Launch L3 rewrote it; what was still owed is the PIN — a sentence about
+// who reads feedback is a claim about a population, and a population changes
+// by somebody adding a reader. So every accessor that reads
+// `generation_feedback` is classified here, BY NAME, as a USE the sentence
+// discloses (with the clause that discloses it) or a read that derives
+// nothing (with why) — and EVERY accessor, use or not, carries the measured
+// list of its production consumers, per file and counted (gate M4). A new
+// accessor, or a new consumer of any of them, is red until this table — and,
+// if it is a new use, the sentence — is edited deliberately (Respin rule 7).
+type FeedbackAccessor = Readonly<{
+  /** The `FEEDBACK_TODAY` clause that discloses this use, or `null` for a non-use. */
+  clause: string | null;
+  /** Why a non-use derives nothing from what the creator said. */
+  why?: string;
+  /** Production consumers: file → number of call or destructure sites. Measured 2026-10-05. */
+  consumers: Readonly<Record<string, number>>;
+}>;
+
+const FEEDBACK_ACCESSORS: Readonly<Record<string, FeedbackAccessor>> = {
+  // USE 1 — the proposal path: `buildFeedbackProposalDraft` reads these rows.
+  promotionFeedbackInputs: {
+    clause: "repeated reactions of the same kind across comparable drafts may be turned into a suggested edit to one of your brain documents",
+    consumers: { "packages/db/src/promotion-ops.ts": 1 },
+  },
+  // USE 2 — the recent-work prompt channel (launch L3, R-152), built by
+  // `packages/credits/src/recent-context.ts`.
+  recentContextCandidates: {
+    clause: "Your next concept and script drafts are shown some of your recent work as labelled history",
+    consumers: { "packages/credits/src/generate.ts": 1 },
+  },
+  feedbackPage: {
+    clause: null,
+    why: "the creator's own record of what they said, shown back to them and in their export — nothing is derived",
+    consumers: { "packages/db/src/with-workspace.ts": 2 },
+  },
+  brainAssetSummary: {
+    clause: null,
+    why: "a bare row count on the Brain and Usage pages; reads no reaction or note (KNOWN_FEEDBACK_AGGREGATES)",
+    consumers: {
+      "app/(product)/brain/page.tsx": 1,
+      "app/(product)/usage/page.tsx": 1,
+      "packages/db/src/app-server.ts": 1,
+      "packages/db/src/with-workspace.ts": 1,
+    },
+  },
+  recentContextPresent: {
+    clause: null,
+    why: "the settlement's ids-only presence check for the recent-work channel above; reads no reaction or note",
+    consumers: { "packages/credits/src/generate.ts": 1 },
+  },
+  // Phase 6 tenancy gate (R-174): the correlated subquery inside
+  // `recentContextCandidates` that withholds a draft every reaction on which
+  // was left out. Part of USE 2's read, disclosed by its clause.
+  reactionOn: {
+    clause: null,
+    why: "the leave-out condition inside recentContextCandidates: an EXISTS over whether a draft's reactions were left out, selecting a constant — it reads no reaction value and no note",
+    consumers: { "packages/db/src/with-workspace.ts": 2 },
+  },
+  // Audit P6-A1 (R-174): the "Leave this out of future drafts" write. It
+  // narrows USE 2 rather than being a use, and it is disclosed by the
+  // sentence's own clause about the control.
+  excludeGenerationFeedbackFromHistory: {
+    clause: "Once you record a reaction to a concept or script, you can leave it out of future drafts",
+    consumers: { "packages/db/src/feedback-ops.ts": 1 },
+  },
+  promotionProposalReview: {
+    clause: null,
+    why: "shows a proposal's own evidence to the creator reviewing it — the suggestion the proposal USE produces; and (R-171, audit Phase 2 P2-A2) the refresh's family guard reads a REJECTED proposal's evidence ids, so a family re-proposes only on evidence sharing no member with it — ids only, never a reaction or a note",
+    consumers: {
+      "app/(product)/brain/page.tsx": 1,
+      "app/(product)/results/actions.ts": 1,
+      "app/(product)/results/page.tsx": 1,
+      "packages/db/src/promotion-ops.ts": 5,
+    },
+  },
+};
+
+/**
+ * Every production consumer of a listed accessor: `{ name: { file: count } }`.
+ *
+ * THREE SHAPES, so no spelling of "a consumer" slips past (gate M4):
+ *   - a MEMBER call — `scope.accessors.promotionFeedbackInputs(tx)`;
+ *   - a BARE call — `promotionFeedbackInputs(tx)`, after an import or a
+ *     destructure;
+ *   - a DESTRUCTURE — `const { promotionFeedbackInputs: read } = …`, counted
+ *     at the pattern, because an aliased call afterwards no longer names it.
+ * A declaration (`function name(`, `name: async (`, `const name = (`) is not a
+ * consumer. RegExp LITERALS only: an assembled pattern is one lost backslash
+ * from matching nothing (CLAUDE.md 2026-08-26; this block's first draft did).
+ */
+function feedbackConsumers(
+  files: readonly { file: string; text: string }[]
+): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  const add = (name: string, file: string): void => {
+    if (!Object.hasOwn(FEEDBACK_ACCESSORS, name)) return;
+    const perFile = (out[name] ??= {});
+    perFile[file] = (perFile[file] ?? 0) + 1;
+  };
+  for (const { file, text } of files) {
+    const code = blankComments(text);
+    for (const m of code.matchAll(/(?<!\bfunction\s+)\b(\w+)\s*\(/g)) add(m[1], file);
+    for (const m of code.matchAll(/\{([^{}]*)\}\s*=(?![=>])/g)) {
+      for (const name of m[1].matchAll(/\b(\w+)\b/g)) add(name[1], file);
+    }
+  }
+  return out;
+}
+
+describe("P1-R5: FEEDBACK_TODAY is pinned to the list of feedback readers", () => {
+  it("every accessor that reads generation_feedback is classified, and the list is the measured one", () => {
+    // THE POPULATION IS `FEEDBACK_READERS` in `tests/feedback-readers.test.ts`,
+    // which asserts it equal to a scan of the DB layer. Read as TEXT, because
+    // importing a test file would re-register its suite in this one.
+    const readersFile = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "feedback-readers.test.ts"),
+      "utf8"
+    ).replace(/\r\n/g, "\n");
+    const block = /export const FEEDBACK_READERS[\s\S]*?\n\];/.exec(readersFile)?.[0] ?? "";
+    const owners = [...new Set([...block.matchAll(/owner: "(\w+)"/g)].map((m) => m[1]))].sort();
+    expect(owners.length, "FEEDBACK_READERS was not found — the pin would be vacuous").toBeGreaterThan(4);
+    expect(Object.keys(FEEDBACK_ACCESSORS).sort()).toEqual(owners);
+    for (const [owner, { clause, why }] of Object.entries(FEEDBACK_ACCESSORS)) {
+      if (clause === null) expect(why?.length ?? 0, `${owner} is a non-use with no reason`).toBeGreaterThan(30);
+    }
+  });
+
+  it("the sentence discloses every use, and says what is true today", () => {
+    for (const [owner, { clause }] of Object.entries(FEEDBACK_ACCESSORS)) {
+      if (clause !== null) expect(FEEDBACK_TODAY, `${owner}'s use is not disclosed`).toContain(clause);
+    }
+    // ...and the sentence it replaced stays gone.
+    expect(FEEDBACK_TODAY).not.toMatch(/nothing reads/i);
+  });
+
+  it("every accessor — use or not — is consumed exactly where listed, per file and counted", () => {
+    // A new consumer of a NON-use is a change too: it may start deriving from
+    // what the creator said, and only a person reading it can tell.
+    const production = sourceFilesUnder(PRODUCTION_ROOTS).filter(
+      ({ file }) => !file.split("/").includes("tests")
+    );
+    const expected = Object.fromEntries(
+      Object.entries(FEEDBACK_ACCESSORS).map(([name, { consumers }]) => [name, consumers])
+    );
+    expect(feedbackConsumers(production)).toEqual(expected);
+  });
+
+  it("NON-VACUITY: a member, a bare and a destructured consumer are each found; a comment is not", () => {
+    expect(
+      feedbackConsumers([
+        { file: "worker/member.ts", text: "const rows = await scope.accessors.promotionFeedbackInputs(tx);" },
+        { file: "app/bare.ts", text: "import { brainAssetSummary } from \"@respin/db\";\nawait brainAssetSummary(db, scope, id);" },
+        { file: "lib/destructured.ts", text: "const { recentContextPresent: present } = scope.accessors;\nawait present(ids);" },
+        { file: "worker/comment.ts", text: "// scope.accessors.feedbackPage(conn, 1, 0)\n" },
+        { file: "worker/declaration.ts", text: "export async function feedbackPage(conn: unknown) {}\nconst x = { promotionProposalReview: async (id: string) => id };" },
+      ])
+    ).toEqual({
+      promotionFeedbackInputs: { "worker/member.ts": 1 },
+      brainAssetSummary: { "app/bare.ts": 1 },
+      recentContextPresent: { "lib/destructured.ts": 1 },
+    });
   });
 });

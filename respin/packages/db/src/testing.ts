@@ -4,8 +4,9 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
+import { readMigrationFiles, type MigrationMeta } from "drizzle-orm/migrator";
 import * as schema from "./schema";
 
 const migrationsFolder = resolve(
@@ -14,10 +15,79 @@ const migrationsFolder = resolve(
   "migrations"
 );
 
+let committedMigrations: MigrationMeta[] | null = null;
+
+/**
+ * The committed migrations, read once — refused unless their journal `when`
+ * values strictly increase. Drizzle applies only the migrations whose `when`
+ * is newer than the last one it recorded, so an out-of-order or repeated
+ * `when` would be skipped SILENTLY by the loop below.
+ */
+function loadCommittedMigrations(): MigrationMeta[] {
+  const loaded = readMigrationFiles({ migrationsFolder });
+  for (let i = 1; i < loaded.length; i += 1) {
+    if (loaded[i]!.folderMillis <= loaded[i - 1]!.folderMillis) {
+      throw new Error(
+        `migration journal entry ${i} has a \`when\` (${loaded[i]!.folderMillis}) not after entry ${i - 1}'s (${loaded[i - 1]!.folderMillis}); drizzle would skip it`
+      );
+    }
+  }
+  return loaded;
+}
+
+/** Yield to the MACROTASK queue (timers, I/O, worker messages). */
+const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * A fresh in-process database with every committed migration applied — ONE
+ * MIGRATION AT A TIME, YIELDING TO THE EVENT LOOP BETWEEN THEM (audit Phase 3,
+ * 2026-10-06).
+ *
+ * WHY. PGlite runs in-process and its promises settle as microtasks, so
+ * `migrate()` applying every committed migration in one call never let the worker reach
+ * its macrotask queue: measured with a 50 ms interval timer, one database
+ * build blocked the event loop for 8.3 s on an idle machine (three builds,
+ * 20.8 s). Under the full suite's contention that block grows several-fold,
+ * and a worker that cannot run its macrotasks cannot process the reply to its
+ * own `onTaskUpdate` RPC — so birpc's hard 60 s timeout fired and the run
+ * exited 1 with every test passing (`vitest.config.ts` records that symptom).
+ * Yielding between migrations bounds each block to one migration.
+ *
+ * THE SAME SCHEMA AS `migrate()`, ONE DIFFERENCE IN ATOMICITY: drizzle's
+ * dialect applies every migration newer than the last one it recorded, so
+ * handing it the list one prefix longer each time applies exactly one new
+ * migration per call, in order — the call `drizzle-orm/pglite/migrator` makes,
+ * repeated. Each call is its own transaction, so here EACH MIGRATION commits
+ * alone, where a production fresh install (`migrate()` once) applies them all
+ * in one transaction. A migration that needs its predecessor COMMITTED first
+ * (an enum value added by the previous file and used by this one, say) would
+ * pass here and fail a fresh install — which is why `createDockerTestDb` below
+ * keeps the production shape, one `migrate()` call, and the live run is where
+ * that shape is proven.
+ *
+ * NOTHING SKIPPED, ASSERTED: the journal's `when` values must strictly
+ * increase (`loadCommittedMigrations`), and after the loop the migrations
+ * table must hold exactly one row per committed migration.
+ */
 export async function createTestDb() {
   const client = new PGlite();
   const db = drizzle(client, { schema });
-  await migrate(db, { migrationsFolder });
+  committedMigrations ??= loadCommittedMigrations();
+  const internals = db as unknown as {
+    dialect: { migrate: (m: MigrationMeta[], session: unknown, config: { migrationsFolder: string }) => Promise<void> };
+    session: unknown;
+  };
+  for (let i = 1; i <= committedMigrations.length; i += 1) {
+    await internals.dialect.migrate(committedMigrations.slice(0, i), internals.session, { migrationsFolder });
+    await yieldToEventLoop();
+  }
+  const recorded = await db.execute(sql`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`);
+  const n = Number((recorded.rows[0] as { n: number } | undefined)?.n ?? -1);
+  if (n !== committedMigrations.length) {
+    throw new Error(
+      `createTestDb applied ${n} migrations but ${committedMigrations.length} are committed`
+    );
+  }
   return db;
 }
 

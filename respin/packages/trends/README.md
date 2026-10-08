@@ -6,7 +6,20 @@ caption downloader, database client, scheduler, email sender, or vendor SDK.
 
 YouTube discovery is pinned to the official Data API origin and is metadata/views only.
 An API key is not caption authority. Third-party transcript text enters only through the
-injected Slice 4 reference-intake port; a quote-budget refusal propagates unchanged.
+injected Slice 4 reference-intake port, which has no refusal arm: every refusal is a typed
+error thrown through (audit Phase 2, P2-R11).
+
+## The source registry is inventory, not the production ingest path
+
+`TREND_SOURCE_ADAPTERS` (`src/sources.ts`) and its fail-closed guard
+`assertExactlyCompliantAdapters` are **not on the production ingest path**. Measured
+2026-10-06: no production module under `app/`, `packages/*/src`, `worker/`, `lib/` or
+`scripts/` imports `@respin/trends`. The product ingests through `@respin/db`'s scoped
+storage (`trends-storage.ts`, typed by the `trend_source_kind` enum) and `@respin/credits`'
+`pastedReferenceIntakePort`. The registry stays as the package's statement of the two
+compliant sources, and `tests/trends.test.ts` holds `TREND_SOURCE_NAMES` equal to the
+database enum's values so the two vocabularies cannot drift. Revisit when a worker or app
+module first imports this package to ingest.
 
 ## Outlier baseline (R5–R7, REQ-E02)
 
@@ -33,8 +46,10 @@ that differs from the derivation is recorded as open in
 
 `measureSaturation` validates a caller-supplied count; **no production code counts a
 population over stored rows and no `methodVersion` exists.** Every `trend_items` row the
-product can write today is therefore `unmeasured: incomplete_provenance`, which the
-storage CHECK and the feed UI render honestly. The `measured` shape is reachable only from
+product can write today is therefore `unmeasured` — `no_population` for a pasted reference
+(no channel baseline) and `incomplete_provenance` otherwise, each reason tied to its cause
+by the storage CHECK — which the feed UI renders honestly. `SATURATION_UNMEASURED_REASONS`
+is asserted equal to the CHECK's set. The `measured` shape is reachable only from
 fixtures. A counting query, its population definition and a named method constant are not
 built and are not claimed.
 

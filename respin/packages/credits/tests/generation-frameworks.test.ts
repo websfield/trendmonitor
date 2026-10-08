@@ -241,6 +241,7 @@ describe("frameworkVersionsUsed agrees with framework_eligibility (R9a)", () => 
       output,
       input: "some input the creator typed",
       frameworks: asPrompt,
+      creative: null,
     }).filter((f) => f.rule === "framework_not_offered");
 
   /**
@@ -464,6 +465,8 @@ describe("R17: what the library costs the prompt, MEASURED", () => {
     // An ORIGINAL. Required rather than defaulted, so this measurement cannot
     // silently be taken against a context a revision could not produce.
     unvouchedSpecifics: [],
+    creative: null,
+    recentWork: null,
   });
 
   it("the whole seeded library adds a MEASURED, BOUNDED amount to one call", () => {

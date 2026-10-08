@@ -435,6 +435,62 @@
       "when": 1788929988898,
       "tag": "0061_vengeful_eternity",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1791076712030,
+      "tag": "0062_sparkling_purifiers",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1791200790254,
+      "tag": "0063_chilly_imperial_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1791226683661,
+      "tag": "0064_skinny_quicksilver",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1791256870334,
+      "tag": "0065_wakeful_red_hulk",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1791257971861,
+      "tag": "0066_powerful_wild_child",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1791268595542,
+      "tag": "0067_shallow_mercury",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1791279539565,
+      "tag": "0068_curious_christian_walker",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1791309890609,
+      "tag": "0069_overconfident_mephistopheles",
+      "breakpoints": true
     }
   ]
 }

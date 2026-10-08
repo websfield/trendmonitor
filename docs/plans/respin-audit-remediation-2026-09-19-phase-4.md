@@ -1,6 +1,6 @@
 # Phase 4 — Money: ledger invariants, scoped reads, cost
 
-Depends on: Phase 3 (takes migration `0062`; this phase takes `0063`). Owner: `respin-engineer`. Est. 5–7 h.
+Depends on: Phase 3 (takes migration `0062`; this phase takes `0063`). Owner: `respin-engineer`. Est. 5–7 h; **10–13 h with the 2026-10-05 additions** (an estimate). **Amended 2026-10-05:** the landing ordinal is the next free one on disk. Under the amended order Phases 3, 5, 2 and 6 land migrations first, so this phase's ledger trigger is expected at `0067`, matching the master's *Database* landing map.
 **Read first:** the codebase review §2's *Ledger* paragraph — three triggers on `credit_ledger`, **all INSERT-time**, and no `CREATE RULE` anywhere in the migration set.
 
 ## Objective
@@ -41,6 +41,72 @@ Two verdicts, both full gates. Row 21 (`trends-storage.ts`'s four pre-vendor ref
 - **P4-R6 (D12, MEDIUM).** `spinReferenceForProfile`'s four refusal sites (`trends-storage.ts:1018,1026,1033,1036` — the register's `:1012,1023` were the query starts, not the throws) throw the typed error its immediate neighbour on the same path already throws (`generate.ts:1036-1043`), so the similarity-gated mode's pre-vendor refusals reach the creator as themselves rather than as "Something went wrong".
 - **P4-R7 (D12's LOW half).** `generate.ts`'s ORDER block names step 2 as a denylist where `inference.ts:575` is an allowlist; the numbered list omits the similarity-gated reference resolution although it is the only step with its own refusal code; `CANDIDATE_VERSION = 3` (`:1740`) is documented by a block explaining the move to 2; four docblocks are orphaned onto the wrong symbols (`:1742`, `:1964`, `:2007`, `:2367`). Each is corrected against the file **in the same action that records it**.
 
+### 2026-10-05 register additions
+
+Homed here from `docs/progress/audit/2026-10-05.md`. Every `file:line` below was re-read on 2026-10-05.
+
+**Amendments to the requirements above (lines moved through L0–L4):**
+- **P4-R1** is register item 24, re-confirmed. Migrations `0048`/`0049` still add INSERT-time triggers only, and the registry-driven UPDATE is still the pseudonymiser's.
+- **P4-R3** is item 42's unscoped-read sub-item. The ledger reads keyed on `autoTopupAttemptId` alone are now at `auto-topup.ts:643,888`, `webhooks.ts:2432`, `auto-topup-v1-reconcile.ts:173,219,245,276,706` and `auto-topup-rollout.ts:329`. All are within a line or two of the cites above.
+- **P4-R5** is item 41's `frameworkOffer` sub-item: `GenerateResult.frameworkOffer` at `generate.ts:355`, set at `:1253`, and the zero-cost path at `:1360`.
+- **P4-R6** is item 41's spin-reference sub-item. The four throws are now at `trends-storage.ts:1030,1038,1045,1048`.
+- **P4-R7** takes item 45's `generate.ts` tails as well:
+  - `CANDIDATE_VERSION` is now **6** (`:2135`), so the stale block is re-read against that value;
+  - `refusalCodeFor`'s "named by `name` … not a dependency this module may narrow against" (`:1993-1997`) sits under an `instanceof` branch at `:1990`;
+  - the dead "CLAUDE.md's 2026-08-29 lesson" citation (`:788-789`: no such lesson exists in CLAUDE.md's Lessons);
+  - the two `as RespinConfigV1` casts against the file's own doctrine: `:595` (the quoted config version read through `configVersionContents`) and `:1712`. `grep -n "as RespinConfigV1" generate.ts` on 2026-10-05 finds exactly these two.
+
+  Each is corrected against the file in the same edit. The register's step-numbering mismatch and "replay tier at `view.asOf`" are re-located by the build, because this addendum did not pin their lines.
+
+**New requirements:**
+- **P4-A1 (item 20 — MEDIUM; REQ-G08). Pause is not checked at mint. The population is every mint producer**, measured 2026-10-05 with `grep -rn "grantCredits(\|purchasePackCredits(\|adjustCredits(\|refundCredits(\|mintFreeAllowanceIfDue(" packages/credits/src app worker scripts`:
+  - `webhooks.ts:1271`: a pack checkout. The handler `:1160-1282` has no pause check.
+  - `webhooks.ts:2168`: the invoice allowance.
+  - `webhooks.ts:2399`, `:2452` and `:2494`: the auto-top-up `payment_intent.succeeded` mints.
+  - `balance.ts:70`: the Free mint, already pause-gated at `:263-264`.
+  - `pasted-reference.ts:508`: a refund. That is a return of the creator's own debit, not a new grant, so it is recorded and exempt.
+
+  Checkout **creation** already refuses during a pause (`stripe/actions.ts:972-973`, `:1004-1005`). The open path is a payment that settles **after** a pause began.
+
+  **Fix:** one predicate, `pauseAtMint(tx, workspaceId)`, reads both pause truths and is called by every listed grant producer. A payment Stripe has settled during a pause is **minted, never dropped** — REQ-G08: credits frozen, not lost — and its lot's expiry starts at the pause's end. A source scan asserts each listed producer calls the predicate and that the list equals the grep, two-way. Proof: AC11.
+- **P4-A2 (item 21 — MEDIUM). A checkout's partial bind can repoint a live mirror to a different subscription.** The plain bind path (`webhooks.ts:1407-1415`) lacks the refusal its sibling enforces at `:1448-1457`: `hasLiveStripeSubscription(mirror) && mirror.stripeSubscriptionId !== sub.id` throws. That turns the loud duplicate refusal into silent acceptance, and the orphaned subscription's renewals become `ignored` 200s. **Fix:** the same guard on the plain path, through one helper both sites call. Proof: AC12.
+- **P4-A3 (item 23 — MEDIUM; Stripe's anchor-day return is `[UNVERIFIED]` in the register). Grant expiry can land before the next period end.** The expiry is `addMonthsUtc(servicePeriodEnd, 1)` (`webhooks.ts:2174`). `months.ts` clamps to the target month's last day (`:6-13`). So a 29th–31st anchor whose period ended on a short month's last day gets an expiry 1–3 days before the next period end. **Fix:** the expiry steps from the subscription's **anchor day** (`billing_cycle_anchor`), not from the clamped period end, so the result never precedes the next period end at any anchor. Tests cover anchors 28–31 across February and 30-day months. The live confirmation of Stripe's anchor behaviour is a deferral row in the master (trigger: the money track unparks). Proof: AC13.
+- **P4-A4 (item 41's tracked-niche sub-item — MEDIUM). Six tracked-niche refusals throw bare `Error`, which renders "Something went wrong".** Measured 2026-10-05 with `grep -n 'throw new Error("tracked niche' packages/db/src/trends-storage.ts`, which finds six sites in two functions. The register's evidence named only the first four.
+  - `trackNicheForProfile` (`:793`): `:798` ("entitlement is invalid"), `:801` (blank), `:802` (over 80 characters), `:824` ("entitlement exhausted").
+  - `untrackNicheForProfile` (`:854`): `:860` ("id is required") and `:877` ("not accessible to this profile").
+  The `:813` pause refusal is already typed. **Fix:** typed errors on the P4-R6 pattern for all six, each mapped by `billingErrorCode` and given copy. `:877` keeps the foreign-or-absent indistinguishability the export route uses. The grep is pinned as the population, two-way, in row 32. Proof: AC14.
+- **P4-A5 (item 41's `reviseSaved` sub-item — MEDIUM). `reviseSaved` does not enforce the block it computes.** `revisionBlockOf` (`packages/credits/src/saved-generation.ts:645`) feeds the view's `revisable`/`blocked` (`:705-706`), but `reviseSaved` (`:794`) never consults it. **Fix:** `reviseSaved` refuses with the same block code before any claim or spend. A test drives each block kind to the action and asserts no claim row. Proof: AC15.
+- **P4-A6 (item 42's remaining money LOWs).**
+  - **`refType` is a free string**, so it can squat mint keys: `GrantParams.refType: string` (`ledger.ts:64`). Fix: a closed union of the literals the callers pass.
+  - **The refund count includes refunds the balance never sees.** `creditsReturned` adds the full amount (`pasted-reference.ts:515`), including refunds born already expired. Fix: count only the portion the fold sees, and say so on screen.
+  - **A dead branch.** The auto-top-up disable-clear branch (`stripe/actions.ts:1360-1364`, `autoTopupAttemptDispatchedAt === null`) is unreachable, because `auto-topup.ts:593` stamps `dispatchedAt` at reservation. Fix: delete the branch, or move the stamp to real dispatch; the build chooses by reading which one `auto-topup.ts:143`'s reconcile relies on.
+
+  `maybeAutoTopup`'s recursion and the reconciliation metric are P3-R7. Proof: AC16.
+- **P4-A7 (item 45's `webhooks.ts` tails — LOW).** Fix each against the file:
+  - the `ACTIVE_STATUSES` comment (`:111-112`) describes removed behaviour;
+  - log lines interpolate payload enums (`:1168-1170`, `:1524-1526`) beyond what the file's own logging rule claims;
+  - "see subscriptionLineOf" (`:1862`) names no symbol in the tree (grep 2026-10-05: one hit, the comment itself);
+  - **item 45's monthly-band branch:** the `invoice.paid` guard at `:2108-2114` throws when the service period falls outside `monthlyPeriodDays`, and its message names a remedy. The build proves the branch reachable with a test, by planting a line whose period is outside the band, and makes the message's remedy the one an operator can act on. If no input the handler admits can reach the branch, it is deleted with the reason recorded. Either way the card records which.
+
+  Proof: AC17.
+- **P4-A8 (item 47's sign-up-farming sub-item — LOW; owner-delegated decision R-162; rewritten after the addendum's plan review). An unverified email receives Free credits.**
+  - **The defect.** `create-auth.ts` sets no `requireEmailVerification`; only `sendVerificationEmail` exists (`:453`). `mintFreeAllowanceIfDue` (`balance.ts:233`) mints for any Free workspace.
+  - **The decision (R-162).** The Free monthly mint requires the workspace owner's verified email (`emailVerified`; Google sign-ins arrive verified), and joins P4-A1's producer list.
+  - **The consequence the first draft missed.** With the mint withheld, an unverified creator's first paid press meets a short balance. Today that renders as "insufficient credits" — false, and with no way forward. First Ideas, for example, spends `ideationBatch` = 3 credits (`packages/db/src/seed.ts:48`; `app/(product)/onboarding/first-ideas/actions.ts:66`).
+  - **The producers of the short-balance refusal** (measured with `grep -rn "new InsufficientCreditsError" packages/credits/src`): the three **pre-call** gates are `generate.ts:730`, `inference.ts:740` and `pasted-reference.ts:295`. `ledger.ts:199,418` are in-lock and post-call, and become `PostCallDebitError`.
+  - **The surfaces where a Free balance is first spent** (measured with `grep -rnE "respinCredits\.(generate|inferVoice|findConcept|commissionPiece|reviseSaved|submitPastedReference)\(" app`): **eight** —
+    - `onboarding/actions.ts:289` (`inferVoice`);
+    - `onboarding/first-ideas/actions.ts:66`;
+    - `studio/actions.ts:140,261,390`;
+    - `studio/saved/actions.ts:102`;
+    - `trends/actions.ts:178,261`.
+  - **Fix.**
+    - Each of the three pre-call gates, when short **and** the workspace's Free mint is being withheld for verification, throws a typed `EmailVerificationRequiredError` instead of `InsufficientCreditsError`. The check is one predicate beside the mint gate, `freeAllowanceWithheldForVerification`.
+    - The error is re-exported as a value from the `@respin/credits/app-server` facade, with its own `billingErrorCode`. The copy says what to do: verify your email, with a resend link that posts to `/send-verification-email` (rate-limited by P1-R9). It says the credits arrive on verification.
+    - All eight surfaces render it, and `/usage` names it. The per-screen refusal-code lists that admit `insufficient_credits`, measured with `grep -rn '"insufficient_credits"' app --include=*.ts --include=*.tsx`, are two besides the master `BILLING_ERROR_CODES` (`billing-errors.ts:246`): `ONBOARDING_ERROR_CODES` (`app/(product)/onboarding/copy.ts:128`, entry at `:170`) and `STUDIO_ERROR_CODES` (`app/(product)/studio/copy.ts:148`, entry at `:171`). Each gains `email_verification_required`. A third list that admits `insufficient_credits` without the new code is red in row 36.
+  - Proof: AC18.
+- **P4-A9 (item 48's trend-feed sub-item — LOW). The scoped trend feed is unbounded, with N+1 reads** (`trends-storage.ts:895-951`). **Fix:** a page limit and one grouped read for the per-item joins, the P4-R4 shape. The query count is asserted for a 50-item feed. Proof: AC19.
+
 ## Tasks
 
 | Task | Work | File rows |
@@ -50,6 +116,7 @@ Two verdicts, both full gates. Row 21 (`trends-storage.ts`'s four pre-vendor ref
 | 3 | Scope every request-path ledger read; annotate the intended sweeps | 13–15 |
 | 4 | `reconcileSpend` as one grouped statement; assert the query count | 16–17 |
 | 5 | The three `generate.ts` contracts and their consumer; the four typed refusals; the ORDER-block and docblock corrections | 18–22 |
+| 6 | 2026-10-05 additions: pause at every mint (A1); the bind guard (A2); anchor-day expiry (A3); typed niche refusals (A4); `reviseSaved` enforcement (A5); the money LOWs (A6); the `webhooks.ts` tails (A7); the verified-email Free mint (A8); the bounded feed (A9) | 14, 18–19, 21, 22, 26–37 |
 
 ## Files to create / modify
 
@@ -80,6 +147,20 @@ Two verdicts, both full gates. Row 21 (`trends-storage.ts`'s four pre-vendor ref
 | 23 | `packages/credits/src/stripe/customers.ts` | M | Exemption stated at `:105-130`: insert-if-absent, the unique constraint serialises |
 | 24 | `packages/credits/src/stripe/deletion-commands.ts` | M | `auto_topup_disable`'s mirror write (`:191-194`) takes `takeWorkspaceLock` in its own transaction; lock order stated |
 | 25 | `packages/credits/tests/deletion-commands.test.ts` | M | The disarm write holds the lock (a stub `takeWorkspaceLock` that records it was called before the write) |
+| 26 | `packages/credits/src/pause.ts`, `packages/credits/src/balance.ts` | M | P4-A1: `pauseAtMint` beside `hasOpenPause`, and the lot's expiry starting at the pause's end; P4-A8: the verified-email gate in `mintFreeAllowanceIfDue` (`balance.ts:233`). One row: the predicate and its two in-package consumers. **The additions' `webhooks.ts` work rides row 14:** P4-A1 at `:1271`, `:2168`, `:2399`, `:2452` and `:2494`; P4-A2 at `:1407-1415`; P4-A3 at `:2174`; P4-A7's tails. **The `trends-storage.ts` work rides row 21:** P4-A4 and P4-A9. **The `billing-errors.ts` copy rides row 22:** P4-A4 and P4-A8 |
+| 27 | `packages/credits/src/months.ts` | M | P4-A3: the anchor-preserving month step beside `addMonthsUtc` |
+| 28 | `packages/credits/tests/stripe.test.ts` | M | P4-A1: each listed producer under an open pause mints with frozen expiry; P4-A2: a plain-path bind onto a mirror with a different live subscription throws; P4-A3: anchors 28–31 never expire before the next period end |
+| 29 | `packages/credits/tests/mint-producers.test.ts` | N | P4-A1: the producer list equals the grep two-way, and each listed producer calls `pauseAtMint`; a planted sixth producer is red |
+| 30 | `packages/credits/src/saved-generation.ts`, `packages/credits/tests/saved-generation.test.ts` | M | P4-A5: `reviseSaved` (`:794`) refuses on `revisionBlockOf` (`:645`) before any claim; the test drives each block kind. One row: the action and its test |
+| 31 | `packages/credits/src/ledger.ts`, `packages/credits/src/pasted-reference.ts`, `packages/credits/src/stripe/actions.ts` | M | P4-A6: the closed `refType` union (`ledger.ts:64`); the fold-visible `creditsReturned` (`pasted-reference.ts:515`); the dead disable branch (`actions.ts:1360-1364`). One row: three one-site LOW fixes |
+| 32 | `packages/db/tests/trends-storage.test.ts` | M | P4-A4 and P4-A9: each of the six typed refusals is asserted by class, and the six-site grep is pinned two-way; a 50-item feed runs a bounded query count |
+| 33 | `packages/credits/src/inference.ts` | M | P4-A8: the `inference.ts:740` pre-call gate throws `EmailVerificationRequiredError` when the mint is withheld (`generate.ts:730` is row 18, `pasted-reference.ts:295` is row 31) |
+| 34 | `packages/credits/src/errors.ts`, `packages/credits/src/app-server.ts` | M | P4-A8: `EmailVerificationRequiredError`, re-exported as a value by the facade so `billing-errors.ts` (row 22) can `instanceof` it. One row: the class and its one route to `app/**` |
+| 35 | `packages/credits/tests/email-verification-gate.test.ts` | N | P4-A8: the three pre-call gates each refuse with the typed error while the mint is withheld, and pass once it lands |
+| 36 | `tests/onboarding-verify-email.test.tsx` | N | P4-A8: AC18's onboarding walk; the eight-surface code mapping; every per-screen list carrying `insufficient_credits` also carries `email_verification_required` (the grep, two-way) |
+| 37 | `app/(product)/onboarding/copy.ts`, `app/(product)/studio/copy.ts` | M | P4-A8: `email_verification_required` added to `ONBOARDING_ERROR_CODES` (`:128`, beside `:170`) and `STUDIO_ERROR_CODES` (`:148`, beside `:171`), with each screen's copy. One row: the two measured lists |
+
+**2026-10-05 addendum: 37 rows (25 + 12), above the 25-row target; the overage is accepted under the owner's 2026-10-05 delegation (master Plan review log).** Every new row is a file the nine additions edit. Rows 14, 18–19, 21 and 22 carry addendum work on files already listed. The §11 signal is recorded in the master.
 
 **25 rows; at the target.** Three rows added on the batch-0 billing gate's writer census (the two unlocked writers the plan missed and the test that pins the one that gains a lock). The task→row ranges above are derived from the table.
 
@@ -109,6 +190,15 @@ Two verdicts, both full gates. Row 21 (`trends-storage.ts`'s four pre-vendor ref
 | AC8 | `pnpm -C respin db:check` clean; entry gate clean; `TEST_DATABASE_URL=… pnpm -C respin test` green with the Docker concurrency suites live | card quotes all three |
 | AC9 | The migration's trigger exempts exactly `SPLIT_TABLE_FIELD_SETS.credit_ledger[0].columns` — the Docker suite reads the column name from `0063`'s SQL and asserts equality; a planted second column in the trigger's exemption turns it red | card quotes the assertion and the plant |
 | AC10 | `generate.ts`'s ORDER block names step 2 as an allowlist, lists the similarity-gated reference resolution, `CANDIDATE_VERSION = 3`'s block explains 3, and the four docblocks sit on the symbols they describe — each asserted by re-reading the file after the edit, quoted in the card | card quotes the five diffs |
+| AC11 | Each listed mint producer, driven under an open pause, mints a lot whose expiry starts at the pause's end. `mint-producers.test.ts` reddens on a planted sixth producer and on a listed producer that stops calling `pauseAtMint` | card quotes the five producer runs and both plants |
+| AC12 | A plain-path `checkout.session.completed` naming a different subscription while the mirror holds a live one throws, as the sibling path does. Red today | card quotes the throw |
+| AC13 | Anchors 28, 29, 30 and 31 across a February and a 30-day month: every grant's expiry is at or after the next period end | card quotes the eight expiries |
+| AC14 | Each of the six tracked-niche refusals reaches its own `billingErrorCode`, never `unknown`. A planted seventh bare `throw new Error("tracked niche` is red | card quotes the four codes |
+| AC15 | `reviseSaved` against each `revisionBlockOf` kind refuses with that code, and no `generation_attempts` row is written | card quotes the refusals |
+| AC16 | A planted unknown `refType` is a type error. A refund over a born-expired lot reports only the fold-visible credits. The disable-clear branch is gone, or reachable with a test that reaches it | card quotes the three |
+| AC17 | The three `webhooks.ts` tails are re-read against the file after the edit, quoted in the card | card quotes the diffs |
+| AC18 | **The onboarding walk, unverified.** An email sign-up that has not verified completes the interview and inference, then presses First Ideas. It gets `EmailVerificationRequiredError`, rendered as the verify copy with the resend control, and **not** insufficient-credits copy. After verification the mint lands once and the same press succeeds. Each of the other seven surfaces maps the error to the same code, never to insufficient credits. A verified or Google identity is unchanged | card quotes the walk's three screens and the eight-surface mapping |
+| AC19 | A 50-item scoped feed runs a bounded number of queries, asserted, and is paged | card quotes the count |
 
 ### Requirement → AC mapping
 
@@ -123,6 +213,15 @@ Every requirement has an AC (tabulated 2026-09-21). AC8 is the entry gate and ma
 | P4-R5 | AC6 |
 | P4-R6 | AC7 |
 | P4-R7 | AC10 (added — it had none) |
+| P4-A1 | AC11 |
+| P4-A2 | AC12 |
+| P4-A3 | AC13 |
+| P4-A4 | AC14 |
+| P4-A5 | AC15 |
+| P4-A6 | AC16 |
+| P4-A7 | AC17 |
+| P4-A8 | AC18 |
+| P4-A9 | AC19 |
 
 ## Definition of done
 

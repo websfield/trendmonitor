@@ -4,6 +4,8 @@ import { ensureUserWorkspace } from "../src/bootstrap";
 import { brainDocs, creatorProfiles } from "../src/brain-schema";
 import { onboardingInputs } from "../src/onboarding-schema";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
+import { pausePeriods } from "../src/billing-schema";
+import { memberships } from "../src/schema";
 import {
   BrainEditEmptyError,
   BrainEditUnchangedError,
@@ -12,8 +14,10 @@ import {
   BrainDocumentLimitError,
   BrainVersionLimitError,
   OnboardingInputLimitError,
+  ProfileRoleError,
   ProvenanceError,
   ReferenceEchoError,
+  WorkspacePausedError,
 } from "../src/errors";
 import { ECHO_MIN_SEGMENTS } from "../src/echo";
 import {
@@ -43,6 +47,7 @@ import {
   replacementVersionFor,
   withBrainEditSlot,
 } from "../src/brain-ops";
+import { rememberForFutureDrafts } from "../src/feedback-ops";
 
 describe("REQ-B02 / REQ-C05 creator brain edits and history", () => {
   let db: TestDb;
@@ -1104,5 +1109,158 @@ describe("REQ-B02 / REQ-C05 creator brain edits and history", () => {
     expect(
       await readBrainHistory(db, workspaceScope, profileId, "strategy")
     ).toHaveLength(1);
+  });
+
+  // ------------------------------------------------------------------------
+  // LAUNCH L3 (R-152 item a): "REMEMBER THIS FOR FUTURE DRAFTS" is THIS path —
+  // the creator-edit composer — pointed at one fixed position. Every assertion
+  // below is about what it may NOT do: write an active version, invent a
+  // position, overwrite a rule, or take its position, status or provenance
+  // from the caller.
+
+  async function seedKillTest(rules: string[]) {
+    const workspaceScope = await withWorkspace(db, { authUserId: "edit_user" });
+    const profileScope = await ProfileScope.mint(db, workspaceScope, profileId);
+    const caps = writeCapabilities(profileScope);
+    const evidence: SourceEvidenceEntry[] = [];
+    for (const [i, rule] of rules.entries()) {
+      const input = await caps.appendOnboardingInput({
+        inputClass: "creator_authored",
+        content: rule,
+        fieldKey: `/rules/${i}`,
+      });
+      evidence.push({ field: `/rules/${i}`, quote: rule, inputId: input.id, startUtf16: 0, endUtf16: rule.length });
+    }
+    const doc = await db.transaction((tx) =>
+      caps.writeBrainDoc(
+        { kind: "killtest", content: { rules }, sourceEvidence: evidence, reason: { code: "onboarding_inference" } },
+        tx
+      )
+    );
+    return { workspaceScope, doc };
+  }
+
+  it("L3 REMEMBER: appends the creator's words as the NEXT rule of a PROPOSED Kill Test version, cited verbatim, every other rule's evidence carried forward", async () => {
+    const { workspaceScope, doc } = await seedKillTest(["it must not sound like an advert"]);
+    const words = "every shot is filmed by me alone at my desk";
+    const { doc: proposed, pointer } = await rememberForFutureDrafts(db, workspaceScope, profileId, { text: words });
+    expect(pointer).toBe("/rules/1");
+    expect(proposed.kind).toBe("killtest");
+    expect(proposed.status).toBe("proposed");
+    expect(proposed.version).toBe(doc.version + 1);
+    expect(proposed.reason).toMatch(/you edited this document/);
+    expect((proposed.content as { rules: string[] }).rules).toEqual(["it must not sound like an advert", words]);
+    const evidence = proposed.sourceEvidence as SourceEvidenceEntry[];
+    const carried = evidence.find((e) => e.field === "/rules/0")!;
+    expect(carried).toEqual((doc.sourceEvidence as SourceEvidenceEntry[])[0]);
+    const added = evidence.find((e) => e.field === "/rules/1")!;
+    expect(added.quote).toBe(words);
+    const [input] = await db.select().from(onboardingInputs).where(eq(onboardingInputs.id, added.inputId));
+    expect(input.inputClass).toBe("creator_authored");
+    expect(input.content.slice(added.startUtf16, added.endUtf16)).toBe(words);
+    // NOTHING WAS ACTIVATED: the seeded base was itself only proposed, so the
+    // remember supersedes that draft (the edit path's own rule) and no Kill
+    // Test version is in force — activation stays the creator's act on /brain.
+    const killtests = await db.select().from(brainDocs).where(eq(brainDocs.kind, "killtest"));
+    expect(killtests.map((d) => d.status).sort()).toEqual(["proposed", "superseded"]);
+    // A SECOND remember lands on the PROPOSED version (the editable one), at
+    // the next position — never a second branch off the old base.
+    const second = await rememberForFutureDrafts(db, workspaceScope, profileId, { text: "no music under the voice" });
+    expect(second.pointer).toBe("/rules/2");
+    expect(second.doc.version).toBe(proposed.version + 1);
+  });
+
+  it("L3 REMEMBER: position, status and provenance are SERVER-DERIVED — smuggled through a cast, none of them lands", async () => {
+    const { workspaceScope, doc } = await seedKillTest(["it must not sound like an advert"]);
+    const { doc: proposed, pointer } = await rememberForFutureDrafts(db, workspaceScope, profileId, {
+      text: "keep it under a minute",
+      pointer: "/rules/0",
+      status: "active",
+      kind: "voice",
+      sourceEvidence: [],
+      reason: { code: "brain_promotion" },
+    } as unknown as { text: string });
+    // Rule 0 was NOT overwritten, the version is NOT active, the kind is the
+    // fixed one, and the reason is the creator-edit code.
+    expect(pointer).toBe("/rules/1");
+    expect((proposed.content as { rules: string[] }).rules[0]).toBe("it must not sound like an advert");
+    expect(proposed.status).toBe("proposed");
+    expect(proposed.kind).toBe("killtest");
+    expect(proposed.reason).toMatch(/you edited this document/);
+    expect(proposed.id).not.toBe(doc.id);
+  });
+
+  it("L3 REMEMBER: refused under an open pause — the creator-edit write's own gate — and the creator's words are rolled back with it", async () => {
+    const { workspaceScope } = await seedKillTest(["it must not sound like an advert"]);
+    const inputsBefore = (await db.select().from(onboardingInputs)).length;
+    await db.insert(pausePeriods).values({ workspaceId, startedAt: new Date() });
+    await expect(
+      rememberForFutureDrafts(db, workspaceScope, profileId, { text: "film it alone" })
+    ).rejects.toBeInstanceOf(WorkspacePausedError);
+    expect(await db.select().from(onboardingInputs)).toHaveLength(inputsBefore);
+    expect(await readBrainHistory(db, workspaceScope, profileId, "killtest")).toHaveLength(1);
+  });
+
+  it("L3 REMEMBER: a replayed or double-submitted press writes NOTHING — the same rule, trimmed and NFC-normalised, returns the version that already holds it (L3 gate, C-L1)", async () => {
+    const { workspaceScope, doc: base } = await seedKillTest(["it must not sound like an advert"]);
+    // NFC-composed on the first press, DECOMPOSED and padded on the replay.
+    const words = "caf\u00e9 shots only, filmed at my desk";
+    const replay = "  cafe\u0301 shots only, filmed at my desk \n";
+    expect(replay).not.toBe(words);
+    const first = await rememberForFutureDrafts(db, workspaceScope, profileId, { text: words });
+    expect(first.written).toBe(true);
+    expect(first.pointer).toBe("/rules/1");
+    const inputsAfterFirst = (await db.select().from(onboardingInputs)).length;
+    const versionsAfterFirst = await readBrainHistory(db, workspaceScope, profileId, "killtest");
+
+    const again = await rememberForFutureDrafts(db, workspaceScope, profileId, { text: replay });
+    expect(again.written).toBe(false);
+    expect(again.doc.id).toBe(first.doc.id);
+    expect(again.doc.status).toBe("proposed");
+    expect(again.pointer).toBe("/rules/1");
+    // NOTHING WAS WRITTEN: no second creator_authored input, no new version.
+    expect(await db.select().from(onboardingInputs)).toHaveLength(inputsAfterFirst);
+    expect(await readBrainHistory(db, workspaceScope, profileId, "killtest")).toEqual(versionsAfterFirst);
+    // A rule the version ALREADY HELD before any remember answers the same way,
+    // at its own position.
+    const held = await rememberForFutureDrafts(db, workspaceScope, profileId, {
+      text: "it must not sound like an advert",
+    });
+    expect(held).toMatchObject({ written: false, pointer: "/rules/0" });
+    expect(held.doc.id).toBe(first.doc.id);
+    expect(held.doc.id).not.toBe(base.id);
+    // CONTROL (non-vacuity): a DIFFERENT rule still writes.
+    const other = await rememberForFutureDrafts(db, workspaceScope, profileId, { text: "no music under the voice" });
+    expect(other.written).toBe(true);
+    expect(other.pointer).toBe("/rules/2");
+  });
+
+  it("L3 REMEMBER: the no-write answer is not a non-owner's way past the owner gate", async () => {
+    const { workspaceScope: ownerScope } = await seedKillTest(["it must not sound like an advert"]);
+    const inputsBefore = (await db.select().from(onboardingInputs)).length;
+    for (const role of ["editor", "viewer"] as const) {
+      await db.update(memberships).set({ role }).where(eq(memberships.workspaceId, workspaceId));
+      const demoted = await withWorkspace(db, { authUserId: "edit_user" });
+      await expect(
+        rememberForFutureDrafts(db, demoted, profileId, { text: "it must not sound like an advert" })
+      ).rejects.toBeInstanceOf(ProfileRoleError);
+    }
+    expect(await db.select().from(onboardingInputs)).toHaveLength(inputsBefore);
+    expect(await readBrainHistory(db, ownerScope, profileId, "killtest")).toHaveLength(1);
+  });
+
+  it("L3 REMEMBER: nothing to say, or no Kill Test at all, writes nothing", async () => {
+    const workspaceScope = await withWorkspace(db, { authUserId: "edit_user" });
+    // No Kill Test document yet: a named refusal, not a crash and not a write.
+    await expect(
+      rememberForFutureDrafts(db, workspaceScope, profileId, { text: "film it alone" })
+    ).rejects.toBeInstanceOf(ProvenanceError);
+    await seedKillTest(["it must not sound like an advert"]);
+    for (const text of ["", " \n ", "[check]", 42 as unknown as string]) {
+      await expect(
+        rememberForFutureDrafts(db, workspaceScope, profileId, { text })
+      ).rejects.toBeInstanceOf(BrainEditUnchangedError);
+    }
+    expect(await readBrainHistory(db, workspaceScope, profileId, "killtest")).toHaveLength(1);
   });
 });

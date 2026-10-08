@@ -3,11 +3,14 @@
 //
 // THE DEFECT THIS FILE IS THE WITNESS FOR, measured by the compliance gate on
 // the real pipeline: `whyThisPerforms.reasoning`, hook text and
-// `disclosure.guidance` are rendered verbatim on `/studio`, and nothing checked
+// `disclosure.guidance` were rendered verbatim on `/studio`, and nothing checked
 // any of them. A disclosure section reading "Most people skip the label on a
-// short like this." was returned with `hardRules: []` and would have appeared
-// under a **Disclosure** heading as the product's own advice. By this package's
-// own R5 logic a prompt line is a BRIEF, NOT A GATE.
+// short like this." was returned with `hardRules: []` and appeared under a
+// **Disclosure** heading as the product's own advice. By this package's own R5
+// logic a prompt line is a BRIEF, NOT A GATE. (Since audit P1-R1 the model's
+// disclosure section is presented on no surface — R-154 — so it is a gate
+// input stored at flag level, not displayed text; `whyThisPerforms` and the
+// hooks are still displayed.)
 //
 // Every shape carries a specimen that MUST match (CLAUDE.md, 2026-08-21), and
 // every family has TRUE NEGATIVES, because a suite that only plants violations
@@ -26,16 +29,27 @@ import { describe, expect, it } from "vitest";
 import { FORBIDDEN_CLAIMS } from "../../../tests/support/forbidden-claims";
 import { claimHits, specimensFor } from "../../../tests/support/claim-scan";
 import {
+  ADMISSION_CLAIM_FIELDS,
   CLAIM_CONTEXT_GUARDS,
+  CLAIM_HEDGE_ALLOWLIST,
+  CLAIM_HEDGE_TAILS,
   HARD_CLAIM_FIELD_PREFIXES,
   KNOWN_VOCABULARY_GAPS,
+  NOT_PRESENTED_FIELD_PREFIXES,
   OUTPUT_CLAIM_SHAPES,
   claimContextGuard,
+  claimFieldsFor,
+  claimRefusesOn,
   claimRemedyFor,
+  refusalIsClaimOnly,
   scanOutputClaims,
   type ClaimFamily,
 } from "../src/claims";
-import { outputTextUnits, type ScriptOutput } from "../src/output";
+import {
+  outputTextPointers,
+  outputTextUnits,
+  type ScriptOutput,
+} from "../src/output";
 import { type TextUnit } from "../src/text";
 import { EVERY_SECTION } from "./support/fixtures";
 
@@ -208,22 +222,18 @@ describe("the enforcement split: BOTH the shape and the field must allow a refus
     expect(found[0].enforcement).toBe("hard");
   });
 
-  it("a CONCEALMENT line keeps its full strength wherever it lands", () => {
-    // THIS TEST WAS NAMED FOR THE PROPERTY AND PINNED ITS ABSENCE: it asserted
-    // `flag` for `/disclosure/guidance`, which is the ONLY field concealment
-    // vocabulary ever lands on, so the whole family's hard half was witnessed
-    // by a synthetic `whyThisPerforms` fixture and nothing else (CLAUDE.md,
-    // 2026-07-30 — a comment, or a title, claiming a property is not the
-    // property). Both halves are asserted now, and the guidance half is the
-    // one the compliance gate measured being DISPLAYED under the product's own
-    // **Disclosure** heading with `hardRules: []`.
-    for (const at of [why, guidance]) {
-      const found = scanOutputClaims([
-        at("Most people skip the label on a short like this."),
-      ]);
-      expect(found.map((f) => f.shape)).toEqual(["skip the label"]);
-      expect(found[0].enforcement).toBe("hard");
-    }
+  it("a CONCEALMENT line refuses in `whyThisPerforms` and only FLAGS in the unpresented disclosure section (R-154)", () => {
+    // The disclosure half of this test asserted `hard` while Studio rendered
+    // the model's disclosure under the product's own **Disclosure** heading.
+    // Audit P1-R1 stopped every presentation of that section, so a refusal
+    // there would debit a creator for text nobody reads: the field is
+    // flag-only now (R-154), and the finding is still recorded.
+    const inWhy = scanOutputClaims([why("Most people skip the label on a short like this.")]);
+    expect(inWhy.map((f) => f.shape)).toEqual(["skip the label"]);
+    expect(inWhy[0].enforcement).toBe("hard");
+    const inDisclosure = scanOutputClaims([guidance("Most people skip the label on a short like this.")]);
+    expect(inDisclosure.map((f) => f.shape)).toEqual(["skip the label"]);
+    expect(inDisclosure[0].enforcement).toBe("flag");
   });
 
   it("a BARE METRIC NOUN is flag-only EVEN IN `whyThisPerforms`", () => {
@@ -231,17 +241,15 @@ describe("the enforcement split: BOTH the shape and the field must allow a refus
     // refusal is debited. Every one of them is the product doing what REQ-I04
     // asks — naming the thing it has not checked.
     //
-    // THE SHAPES ARE NAMED, NOT COUNTED, because "Nothing here makes it go
-    // viral." now matches TWO of them: the bare adjective, which can only
-    // flag, and `goes viral`, which is hard by shape and demoted by the
-    // negated-clause guard. A count would have hidden which one softened.
+    // THE SHAPES ARE NAMED, NOT COUNTED. ("Nothing here makes it go viral."
+    // was the third row: it matches `goes viral` too, which R-173's closed
+    // allowlist no longer softens — it refuses, free, and is pinned below.)
     for (const [sentence, shapes] of [
       [
         "Nothing here has been checked against how your views actually behave.",
         ["views"],
       ],
       ["This is a structure, not an engagement trick.", ["engagement"]],
-      ["Nothing here makes it go viral.", ["viral", "goes viral"]],
     ] as const) {
       const found = scanOutputClaims([why(sentence)]);
       expect(found.map((f) => f.shape), sentence).toEqual(shapes);
@@ -298,17 +306,15 @@ describe("the enforcement split: BOTH the shape and the field must allow a refus
   });
 });
 
-describe("the concealment family's LIVE PATH (REQ-I05 / S5)", () => {
-  // THE BLOCK THIS SUITE MISSED. Every concealment shape is `hard` at the shape
-  // level, and `/disclosure/guidance` is the only field concealment vocabulary
-  // will ever land on. With `/whyThisPerforms/` as the sole hard field the
-  // entire family was `flag` on its only live path, and its hard half was
-  // witnessed by a `why(...)` fixture — a hard rule with no live path is the
-  // vacuous witness (CLAUDE.md, 2026-08-21).
-  it("the sentence the gate MEASURED being displayed is now refused", () => {
-    // Measured on the real pipeline before this pass: `status: usable`,
-    // `drafts: 1`, `hardRules: []`, and this text rendered under the product's
-    // own **Disclosure** heading.
+describe("the concealment family after audit P1-R1 (R-154): the disclosure section is not presented", () => {
+  // `/disclosure/` was a hard field because Studio DISPLAYED the model's
+  // disclosure under the product's own heading — the measured sentence below
+  // rendered there with `hardRules: []`. P1-R1 removed every presentation of
+  // that section (`/studio`, first-ideas and `/trends` render the product's
+  // sentence for the disclosure kind; the saved pack overwrites it; the Sample
+  // Spin filters it). A refusal is debited, so refusing over it would charge a
+  // creator for text nobody reads. The finding is kept, at flag level.
+  it("the sentence the gate measured is still FOUND, and only flagged", () => {
     const found = scanOutputClaims([
       guidance(
         "Most people skip the label on a short like this, and nobody needs to know a tool helped."
@@ -318,31 +324,34 @@ describe("the concealment family's LIVE PATH (REQ-I05 / S5)", () => {
       "skip the label",
       "nobody needs to know",
     ]);
-    for (const f of found) expect(f.enforcement, f.shape).toBe("hard");
+    for (const f of found) expect(f.enforcement, f.shape).toBe("flag");
   });
 
-  it("EVERY concealment shape refuses on the field it actually lands on", () => {
-    // Per shape, on `/disclosure/guidance` — not on a `whyThisPerforms`
-    // fixture. One shape left `hard` in a section it can never reach is the
-    // defect this whole describe exists for.
+  it("EVERY concealment shape is still found on `/disclosure/guidance` (flag) and still REFUSES on a hard field", () => {
+    // Both halves per shape: the vocabulary did not shrink, and the family's
+    // hard half keeps a live field — `whyThisPerforms` is presented on every
+    // surface that shows a draft.
     for (const shape of OUTPUT_CLAIM_SHAPES.filter(
       (s) => s.family === "concealment"
     )) {
-      const found = scanOutputClaims([guidance(shape.specimen + ".")]);
-      const mine = found.find((f) => f.shape === shape.id);
-      expect(mine, shape.id + ": " + shape.specimen).toBeDefined();
-      expect(mine!.enforcement, shape.id).toBe("hard");
+      const inDisclosure = scanOutputClaims([guidance(shape.specimen + ".")]).find((f) => f.shape === shape.id);
+      expect(inDisclosure, shape.id + ": " + shape.specimen).toBeDefined();
+      expect(inDisclosure!.enforcement, shape.id).toBe("flag");
+      const inWhy = scanOutputClaims([why(shape.specimen + ".")]).find((f) => f.shape === shape.id);
+      expect(inWhy, shape.id + " (why)").toBeDefined();
+      expect(inWhy!.enforcement, shape.id + " (why)").toBe("hard");
     }
   });
 
-  it("the hard-field list names BOTH sections, and every mode emits both", () => {
-    // `output.ts` requires `whyThisPerforms` and `disclosure` of every mode
-    // (`assertUniversalSections`), which is what makes neither prefix a dead
+  it("the hard-field list is `whyThisPerforms` alone, and every mode emits it", () => {
+    // `output.ts` requires `whyThisPerforms` of every mode
+    // (`assertUniversalSections`), which is what makes the prefix a live
     // string. Derived from the fixture's own pointers, never hand-written.
-    expect([...HARD_CLAIM_FIELD_PREFIXES]).toEqual([
-      "/whyThisPerforms/",
-      "/disclosure/",
-    ]);
+    // R-173 after its verification: the whole section again. The weakest
+    // point is an ADMISSION field — an unhedged claim refuses there, a hedged
+    // one flags (`ADMISSION_CLAIM_FIELDS`).
+    expect([...HARD_CLAIM_FIELD_PREFIXES]).toEqual(["/whyThisPerforms/"]);
+    expect([...ADMISSION_CLAIM_FIELDS]).toEqual(["/whyThisPerforms/weakestPoint"]);
     const units = outputTextUnits(EVERY_SECTION as unknown as ScriptOutput);
     for (const prefix of HARD_CLAIM_FIELD_PREFIXES) {
       expect(
@@ -364,10 +373,10 @@ describe("THE THIRD CEILING: the context guard", () => {
         ["specimen", guard.specimen],
         ["counter", guard.counterSpecimen],
       ] as const) {
-        const field =
-          guard.families[0] === "concealment"
-            ? "/disclosure/guidance"
-            : "/whyThisPerforms/reasoning";
+        // THE ONE HARD FIELD (R-154). A guard can only be measured where a
+        // refusal is possible; on the flag-only disclosure section both
+        // directions would read `flag` and this case would prove nothing.
+        const field = "/whyThisPerforms/reasoning";
         const found = scanOutputClaims([at(field, probe.sentence)]);
         const mine = found.find((f) => f.shape === probe.shape);
         expect(
@@ -399,7 +408,9 @@ describe("THE THIRD CEILING: the context guard", () => {
     "Avoid hiding that a tool helped; the label costs you nothing.",
     "Nobody needs to know your exact process, but you must tag the AI assistance.",
   ])("HONEST GUIDANCE does not refuse: %s", (sentence) => {
-    const found = scanOutputClaims([guidance(sentence)]);
+    // Read on the hard field, so the `flag` below is the GUARD's doing — on the
+    // flag-only disclosure section it would hold whatever the guard did.
+    const found = scanOutputClaims([why(sentence)]);
     // NON-VACUITY: each of these really does carry a concealment shape, so
     // this is measuring the guard rather than a sentence nothing matched.
     expect(found.length, sentence + " matched no shape at all").toBeGreaterThan(
@@ -412,8 +423,8 @@ describe("THE THIRD CEILING: the context guard", () => {
     "Skip the tag; the algorithm punishes it.",
     "No need to label this as AI.",
     "Nobody needs to know a tool helped.",
-  ])("...and REAL concealment advice still refuses: %s", (sentence) => {
-    const found = scanOutputClaims([guidance(sentence)]);
+  ])("...and REAL concealment advice still refuses on a hard field: %s", (sentence) => {
+    const found = scanOutputClaims([why(sentence)]);
     expect(found.some((f) => f.enforcement === "hard"), sentence).toBe(true);
   });
 
@@ -424,10 +435,7 @@ describe("THE THIRD CEILING: the context guard", () => {
     // a clean sentence — and `generation-outcome.tsx` renders flag-level
     // findings, so demoting keeps the line in front of the creator.
     for (const guard of CLAIM_CONTEXT_GUARDS) {
-      const field =
-        guard.families[0] === "concealment"
-          ? "/disclosure/guidance"
-          : "/whyThisPerforms/reasoning";
+      const field = "/whyThisPerforms/reasoning";
       const found = scanOutputClaims([at(field, guard.specimen.sentence)]);
       expect(
         found.map((f) => f.shape),
@@ -441,9 +449,13 @@ describe("THE THIRD CEILING: the context guard", () => {
     // window that clears a concealment shape leaves a performance shape hard,
     // and the pattern itself is shown to match — so this measures the family
     // list rather than a pattern that happens not to fire.
-    const conceal = scanOutputClaims([guidance("Never skip the label.")]);
+    const conceal = scanOutputClaims([why("Never skip the label.")]);
     expect(conceal[0].enforcement).toBe("flag");
-    const perform = scanOutputClaims([why("Never outperform your last post.")]);
+    // `avoid` is a prohibition the concealment guard reads and the negator
+    // vocabulary does not, so this isolates the family list (since the
+    // clause analysis, a `never` would be read as negation by the
+    // performance guard on its own).
+    const perform = scanOutputClaims([why("Avoid outperforming your last post.")]);
     expect(perform.map((f) => f.shape)).toEqual(["outperform"]);
     expect(perform[0].enforcement, "a concealment guard softened a forecast").toBe(
       "hard"
@@ -452,47 +464,49 @@ describe("THE THIRD CEILING: the context guard", () => {
     expect(
       claimContextGuard({
         family: "concealment",
-        sentence: "never outperform your last post.",
-        matchStart: "never ".length,
-        matchEnd: "never outperform".length,
+        sentence: "avoid outperforming your last post.",
+        matchStart: "avoid ".length,
+        matchEnd: "avoid outperform".length,
       })
     ).toBe("prohibited-just-before");
 
-    // ...and the same in the other direction: the negated-clause guard is for
-    // the honest weakest point (`performance`, `certainty`) and does not reach
-    // concealment advice.
-    const hedged = scanOutputClaims([
-      guidance("Nothing here says you can skip the label."),
-    ]);
-    expect(hedged.map((f) => f.shape)).toEqual(["skip the label"]);
-    expect(hedged[0].enforcement).toBe("hard");
+    // ...and the same in the other direction: the hedge allowlist governs
+    // only the performance and certainty families, so a concealment shape
+    // inside an allowlisted wording is not softened by it.
     expect(
       claimContextGuard({
-        family: "performance",
-        sentence: "nothing here says you can skip the label.",
-        matchStart: "nothing here says you can ".length,
-        matchEnd: "nothing here says you can skip the label".length,
+        family: "concealment",
+        shape: "guarantee",
+        sentence: "there is no guarantee.",
+        matchStart: "there is no ".length,
+        matchEnd: "there is no guarantee".length,
       })
-    ).toBe("negated-clause");
+    ).toBeNull();
+    expect(
+      claimContextGuard({
+        family: "certainty",
+        shape: "guarantee",
+        sentence: "there is no guarantee.",
+        matchStart: "there is no ".length,
+        matchEnd: "there is no guarantee".length,
+      })
+    ).toBe("hedge-no-guarantee");
   });
 
   it("the directive vocabulary cannot be satisfied by the SHAPE'S OWN WORDS", () => {
     // "no need to disclose" is made of the words a disclosure directive is
-    // made of, so the risk is a guard the phrase satisfies itself. TWO
-    // independent things stop that, and only one of them is witnessed by a
-    // mutation, which is why this test says which:
+    // made of, so the risk is a guard the phrase satisfies itself. TWO things
+    // stop that, and BOTH are load-bearing:
     //
     //   1. THE VOCABULARY. `need to` is deliberately absent from the directive
     //      list and `still need to` is deliberately present. Asserted against
     //      the WHOLE sentence below, so it holds however the window is sliced.
     //   2. The `outside` window excludes the matched span.
     //
-    // MEASURED: with (1) in place, mutating (2) to read the whole sentence
-    // leaves every test in this repo green — the two are redundant today, and
-    // (2) is the one that would still hold if a shape whose own text carries
-    // `must`/`should` were ever added. Recorded rather than claimed, because a
-    // comment asserting a property no test can see is the defect this pass
-    // spent its round on.
+    // THIS COMMENT USED TO SAY (2) WAS NOT LOAD-BEARING, from a measurement
+    // whose numbers were right and whose conclusion was wrong (audit R3-6): no
+    // test then carried a directive word OUTSIDE the match with the guard's
+    // object noun INSIDE it. The next test does, and deleting (2) turns it red.
     const directive = CLAIM_CONTEXT_GUARDS.find(
       (g) => g.id === "disclosure-directive"
     )!;
@@ -514,6 +528,309 @@ describe("THE THIRD CEILING: the context guard", () => {
         matchEnd: "there is no need to disclose".length,
       })
     ).toBeNull();
+  });
+});
+
+describe("the span exclusion is load-bearing (audit R3-6)", () => {
+  // Each counterexample has a directive word OUTSIDE the match (`always`,
+  // `make sure`) and the guard's object noun INSIDE it (`label`). Read whole,
+  // `disclosure-directive` matches and would demote the concealment shape;
+  // read with the match excluded, it refuses.
+  it.each([
+    ["Always skip the label on a short like this.", "skip the label"],
+    ["Make sure you leave the label out.", "leave it out"],
+  ])("REFUSES: %s", (sentence, shape) => {
+    const found = scanOutputClaims([why(sentence)]);
+    expect(found.find((f) => f.shape === shape)?.enforcement, sentence).toBe("hard");
+    // ...and the whole-sentence reading the exclusion prevents WOULD clear it,
+    // so this is the exclusion's witness, not a sentence nothing matched.
+    const directive = CLAIM_CONTEXT_GUARDS.find((g) => g.id === "disclosure-directive")!;
+    expect(directive.pattern.test(sentence.toLowerCase()), sentence).toBe(true);
+  });
+});
+
+describe("the round-3 escapes and the generator's three further classes (P2-R3, P2-R4)", () => {
+  it("AC3: a hedge before an em dash does not soften the claim after it", () => {
+    const found = scanOutputClaims([
+      why("Nothing is guaranteed — this will perform better than your last post."),
+    ]);
+    // R-173's endpoint rule: the sentence is not the hedge phrase, so BOTH
+    // refuse — the hedge admits only a sentence that IS it.
+    expect(found.find((f) => f.shape === "guarantee")?.enforcement).toBe("hard");
+    expect(found.find((f) => f.shape === "will perform")?.enforcement).toBe("hard");
+  });
+
+  it("AC3: a guarded first occurrence does not hide an unguarded second", () => {
+    const found = scanOutputClaims([
+      why("Nothing here makes it go viral, but this hook goes viral anyway."),
+    ]);
+    const goesViral = found.filter((f) => f.shape === "goes viral");
+    // ONE finding per shape per sentence, at the strictest enforcement.
+    expect(goesViral).toHaveLength(1);
+    expect(goesViral[0].enforcement).toBe("hard");
+  });
+
+  it.each([
+    ["colon", "Nothing here is certain: this will perform."],
+    ["bare but", "Nothing here is certain but this will perform."],
+    ["spaced hyphen", "Nothing here is certain - this will perform."],
+    ["en dash", "Nothing here is certain – this will perform."],
+  ])("every separator ends the negated clause: %s", (_name, sentence) => {
+    expect(
+      scanOutputClaims([why(sentence)]).find((f) => f.shape === "will perform")?.enforcement
+    ).toBe("hard");
+  });
+
+  it.each([
+    "Honestly, there is no guarantee this works.",
+    "To be clear, I can't guarantee it lands.",
+    "In short; this isn't proven to work.",
+  ])("THE ENDPOINT RULE: a lead-in makes the sentence something other than the hedge, so it refuses (free): %s", (sentence) => {
+    const found = scanOutputClaims([why(sentence)]);
+    expect(found.some((f) => f.enforcement === "hard"), sentence).toBe(true);
+  });
+
+  it.each([
+    ["/caption/text", "There's no guarantee like this hook."],
+    ["/caption/text", "No guarantee comes close to this hook."],
+    ["/caption/text", "I don't guarantee results, the hook does."],
+    ["/caption/text", "Nothing is guaranteed; this hook is."],
+    ["/caption/text", "No guarantee, it just works every time."],
+    ["/caption/text", "I can't guarantee anything less than results."],
+    ["/caption/text", "Results aren't guaranteed, they're inevitable."],
+    ["/caption/text", "Nothing here is guaranteed... except results."],
+    ["/caption/text", "Nothing here is guaranteed! Results are."],
+    ["/caption/text", "Except this hook. Nothing is guaranteed."],
+  ])("THE ENDPOINT RULE (final verification): %s — %s REFUSES", (field, sentence) => {
+    const found = scanOutputClaims([at(field, sentence)]);
+    expect(found.find((f) => f.shape === "guarantee")?.enforcement, sentence).toBe("hard");
+  });
+
+  it.each([
+    "This won't fail.",
+    "It never fails.",
+    "This will not miss.",
+  ])("`cannot fail` widened: %s is a finding, and refuses in the explanation", (sentence) => {
+    expect(scanOutputClaims([why(sentence)]).find((f) => f.shape === "cannot fail")?.enforcement, sentence).toBe("hard");
+  });
+
+  it("the closed tail list is data with no claim shape and no negator in it", () => {
+    for (const tail of CLAIM_HEDGE_TAILS) {
+      expect(scanOutputClaims([why("x" + tail + ".")]), JSON.stringify(tail)).toEqual([]);
+      expect(tail, JSON.stringify(tail)).not.toMatch(/\b(?:not|no|never|nothing|nobody|none|without)\b|n't\b/);
+    }
+    expect(CLAIM_HEDGE_TAILS).toContain("");
+  });
+});
+
+describe("STRICT + FREE REFUSAL (owner decision 2026-10-07, R-173): the gate's specimens", () => {
+  // A hard shape refuses unless an ALLOWLISTED hedge governs it directly.
+  // Everything else refuses — which is affordable because a refusal caused
+  // only by this scan costs the creator nothing (`refusalIsClaimOnly`).
+  it.each([
+    ["/caption/text", "I can't guarantee this works for you."],
+    ["/hooks/0/text", "No guarantees, just what worked for me."],
+    ["/beats/0/vo", "This isn't proven to work for everyone."],
+    ["/caption/text", "There's no guarantee this works."],
+    ["/thesis/statement", "Nothing in this draft is guaranteed."],
+    ["/whyThisPerforms/reasoning", "Results aren't guaranteed."],
+    ["/caption/text", "I can\u2019t guarantee this works for you."],
+  ])("ALLOWLISTED, FLAGS: %s — %s", (field, sentence) => {
+    const found = scanOutputClaims([at(field, sentence)]);
+    expect(found.length, sentence + " matched nothing").toBeGreaterThan(0);
+    for (const f of found) expect(f.enforcement, sentence + " / " + f.shape).toBe("flag");
+  });
+
+  it.each([
+    // The compliance gate's under-refusals.
+    ["/caption/text", "Don't miss this guaranteed growth hack.", "guarantee"],
+    ["/hooks/0/text", "Never post again without this guaranteed hook.", "guarantee"],
+    ["/beats/0/vo", "No more guessing with this guaranteed method.", "guarantee"],
+    ["/caption/text", "Not everyone knows this method is proven to work.", "proven to"],
+    ["/hooks/0/text", "You won't believe how this is guaranteed to work.", "guarantee"],
+    ["/caption/text", "Nothing but guaranteed growth.", "guarantee"],
+    ["/whyThisPerforms/reasoning", "Nothing is certain-this will perform.", "will perform"],
+    ["/caption/text", "Nothing beats a method that is guaranteed to work.", "guarantee"],
+    ["/hooks/0/text", "Nobody talks about this and it's proven to work.", "proven to"],
+    ["/whyThisPerforms/reasoning", "Nothing else matters and this hook goes viral.", "goes viral"],
+    // The billing gate's over-refusals: OFF the allowlist, so they refuse —
+    // free (R-173), never debited.
+    ["/whyThisPerforms/reasoning", "Nothing — and I mean nothing — is guaranteed here.", "guarantee"],
+    ["/whyThisPerforms/reasoning", "Nobody but you can guarantee it lands.", "guarantee"],
+    ["/whyThisPerforms/reasoning", "Nothing in this draft, as written, is guaranteed.", "guarantee"],
+    ["/caption/text", "Zero guarantees here.", "guarantee"],
+    ["/caption/text", "Without any guarantee, this is how I shoot it.", "guarantee"],
+    ["/hooks/0/text", "Is this guaranteed to work?", "guarantee"],
+    ["/beats/0/vo", "If this were guaranteed to work, everyone would do it.", "guarantee"],
+    ["/caption/text", "They say it's proven to work.", "proven to"],
+    ["/whyThisPerforms/reasoning", "Nothing about this low-key hook will perform.", "will perform"],
+    // The verification BLOCK: factive and reporting verbs are never a hedge.
+    ["/whyThisPerforms/reasoning", "Nobody tells you this hook is guaranteed to work.", "guarantee"],
+    ["/caption/text", "Nothing says growth like this guaranteed hook.", "guarantee"],
+    ["/whyThisPerforms/reasoning", "Nothing makes it go viral faster than this hook.", "goes viral"],
+    ["/caption/text", "Nothing shows this is the best-performing hook like the numbers do.", "best-performing"],
+    ["/whyThisPerforms/reasoning", "Nothing here makes it go viral.", "goes viral"],
+    // The verification High: an allowlisted wording negated, questioned or excepted.
+    ["/caption/text", "Who says this isn't guaranteed?", "guarantee"],
+    ["/caption/text", "Nothing here means the results aren't guaranteed.", "guarantee"],
+    ["/caption/text", "Never not guaranteed.", "guarantee"],
+    ["/caption/text", "Nothing is ever guaranteed, except this hook.", "guarantee"],
+    ["/hooks/0/text", "No guarantee here?", "guarantee"],
+  ])("REFUSED: %s — %s", (field, sentence, shape) => {
+    const found = scanOutputClaims([at(field, sentence)]);
+    expect(found.find((f) => f.shape === shape)?.enforcement, sentence).toBe("hard");
+  });
+
+  it.each([
+    "It's unlikely to go viral.",
+    "It is not guaranteed that this will perform.",
+    "This will not outperform your last post on its own.",
+    "There is no guarantee this lands.",
+    "It\u2019s unlikely to go viral!",
+  ])("the WEAKEST POINT flags only an EXACT admission or hedge sentence: %s", (sentence) => {
+    const found = scanOutputClaims([at("/whyThisPerforms/weakestPoint", sentence)]);
+    expect(found.length, sentence + " matched nothing").toBeGreaterThan(0);
+    for (const f of found) expect(f.enforcement, sentence + " / " + f.shape).toBe("flag");
+  });
+
+  it.each([
+    ["Results are guaranteed.", "guarantee"],
+    ["This one can't miss.", "cannot fail"],
+    ["Who says this isn't guaranteed?", "guarantee"],
+    ["Never not guaranteed.", "guarantee"],
+    ["Nothing is ever guaranteed, except this hook.", "guarantee"],
+    ["Nothing is certain: this will perform.", "will perform"],
+    ["It's unlikely to fail, and it will perform.", "will perform"],
+    ["Nobody tells you this hook is guaranteed to work.", "guarantee"],
+    ["It's unlikely this won't go viral.", "goes viral"],
+    ["Honestly, it's unlikely to go viral.", "goes viral"],
+    ["This might not perform as well as it will perform.", "will perform"],
+  ])("...and every other weakest point with a hard shape REFUSES there (free): %s", (sentence, shape) => {
+    const found = scanOutputClaims([at("/whyThisPerforms/weakestPoint", sentence)]);
+    expect(found.find((f) => f.shape === shape)?.enforcement, sentence).toBe("hard");
+  });
+
+  it("EVERY allowlist entry clears its specimen, refuses its counter-specimen, and is a closed phrase list", () => {
+    for (const hedge of CLAIM_HEDGE_ALLOWLIST) {
+      for (const [kind, probe] of [["specimen", hedge.specimen], ["counter", hedge.counterSpecimen]] as const) {
+        const mine = scanOutputClaims([why(probe.sentence)]).find((f) => f.shape === probe.shape);
+        expect(mine, hedge.id + " / " + kind + ": " + probe.sentence).toBeDefined();
+        expect(mine!.enforcement, hedge.id + " / " + kind).toBe(kind === "specimen" ? "flag" : "hard");
+      }
+      for (const phrase of hedge.phrases) {
+        // Lowercase, straight apostrophes, single spaces, and ending with a
+        // word of the shape it governs — so the negator governs the shape.
+        expect(phrase, hedge.id).toBe(phrase.toLowerCase().replace(/\s+/g, " ").trim());
+        expect(phrase, hedge.id).not.toMatch(/\u2019/);
+        expect(
+          hedge.shapes.some((id) => OUTPUT_CLAIM_SHAPES.find((x) => x.id === id)!.pattern.test(phrase)),
+          hedge.id + ": " + phrase
+        ).toBe(true);
+        // No reporting or factive verb anywhere in the list (the BLOCK's class).
+        expect(phrase, hedge.id).not.toMatch(/\b(?:says?|means?|makes?|shows?|tells?|suggests?|claims?|promises?)\b/);
+      }
+    }
+  });
+
+  it("refusalIsClaimOnly: true only when EVERY final hard rule is the claim scan's", () => {
+    const killTest = (rules: string[]) => ({ outcome: "failed", finalAttempt: { hardRules: rules.map((rule) => ({ rule })) } });
+    expect(refusalIsClaimOnly(killTest(["forbidden_claim"]))).toBe(true);
+    expect(refusalIsClaimOnly(killTest(["forbidden_claim", "forbidden_claim"]))).toBe(true);
+    expect(refusalIsClaimOnly(killTest(["forbidden_claim", "similarity"]))).toBe(false);
+    expect(refusalIsClaimOnly(killTest(["invented_specific"]))).toBe(false);
+    expect(refusalIsClaimOnly(killTest([]))).toBe(false);
+    expect(refusalIsClaimOnly({ outcome: "passed", finalAttempt: { hardRules: [{ rule: "forbidden_claim" }] } })).toBe(false);
+    expect(refusalIsClaimOnly(null)).toBe(false);
+  });
+});
+
+describe("THE PER-FIELD × PER-SHAPE TABLE (P2-R2, R-168)", () => {
+  // THE DECISION, PINNED. The field axis is the schema-derived pointer set
+  // (`outputTextPointers`, P2-R5), never a hand list. The Phase 2 generator
+  // chose these three for every presented field from its count (441 escapes
+  // in 1,500 across the seven certainty/own-baseline shapes, and 0 would-refuse
+  // units in the fixtures and the local stored generations); the other four
+  // stayed explanation-only because its synthetic vocabulary found an ordinary
+  // non-claim reading of each. Editing this list is a visible edit here.
+  const EVERY_PRESENTED = ["best-performing", "proven to", "guarantee"];
+
+  it("exactly the three R3-2 shapes refuse on every presented field", () => {
+    expect(
+      OUTPUT_CLAIM_SHAPES.filter((s) => s.enforcement === "hard" && s.fields === "presented").map((s) => s.id)
+    ).toEqual(EVERY_PRESENTED);
+    // A flag ceiling never carries a scope that means anything.
+    for (const s of OUTPUT_CLAIM_SHAPES.filter((x) => x.enforcement === "flag")) {
+      expect(s.fields, s.id).toBe("explanation");
+      expect(claimFieldsFor(s), s.id).toEqual([]);
+    }
+  });
+
+  it("the table, cell by cell, over every schema pointer", () => {
+    const pointers = outputTextPointers();
+    expect(pointers.length).toBeGreaterThan(20);
+    for (const pointer of pointers) {
+      const field = pointer.replace(/\*/g, "0");
+      // The creator's own quote is presented but outside the refusal scope
+      // (audit Phase 2 gate): their words, never the product's claim.
+      // The weakest point is an admission field (R-173): the UNHEDGED
+      // specimens below refuse there like anywhere in `whyThisPerforms`.
+      const presented =
+        !NOT_PRESENTED_FIELD_PREFIXES.some((x) => pointer.startsWith(x)) &&
+        !/\/basis\/excerpt$/.test(pointer);
+      const explanation = HARD_CLAIM_FIELD_PREFIXES.some((x) => pointer.startsWith(x));
+      for (const shape of OUTPUT_CLAIM_SHAPES) {
+        const expected =
+          shape.enforcement === "flag"
+            ? "flag"
+            : explanation || (presented && EVERY_PRESENTED.includes(shape.id))
+              ? "hard"
+              : "flag";
+        const found = scanOutputClaims([at(field, shape.specimen + ".")]).find((f) => f.shape === shape.id);
+        expect(found?.enforcement, pointer + " × " + shape.id).toBe(expected);
+      }
+    }
+  });
+
+  it("the `/disclosure/*` row: not presented, so FLAG for every shape — stored, never rendered (R-154)", () => {
+    // The concealment family keeps a live hard field (`/whyThisPerforms/`),
+    // so retiring the disclosure row leaves no family with nothing to refuse.
+    for (const pointer of outputTextPointers().filter((p) => p.startsWith("/disclosure/"))) {
+      for (const shape of OUTPUT_CLAIM_SHAPES) {
+        expect(claimRefusesOn(shape, pointer), pointer + " × " + shape.id).toBe(false);
+      }
+    }
+    for (const family of ["performance", "certainty", "concealment"] as const) {
+      expect(
+        OUTPUT_CLAIM_SHAPES.some((s) => s.family === family && claimRefusesOn(s, "/whyThisPerforms/reasoning")),
+        family
+      ).toBe(true);
+    }
+  });
+
+  it("AC4: a `guarantee` in the caption and in a hook REFUSES, and is not merely flagged", () => {
+    for (const field of ["/caption/text", "/hooks/0/text", "/beats/0/vo", "/thesis/statement"]) {
+      for (const sentence of [
+        "Results are guaranteed.",
+        "It is proven to work for this audience.",
+        "Your best-performing hook shape is this one.",
+      ]) {
+        const found = scanOutputClaims([at(field, sentence)]);
+        expect(found.some((f) => f.enforcement === "hard"), field + ": " + sentence).toBe(true);
+      }
+    }
+  });
+
+  it("...while the explanation-only four stay flags on a hook, where their ordinary readings live", () => {
+    for (const sentence of [
+      "You can't miss the switch on the left side.",
+      "Want more views? Cut the first second.",
+      "Try to beat your best take from yesterday.",
+      "Here is how to do better than your last take.",
+    ]) {
+      const found = scanOutputClaims([hook(sentence)]);
+      expect(found.length, sentence).toBeGreaterThan(0);
+      for (const f of found) expect(f.enforcement, sentence).toBe("flag");
+    }
   });
 });
 
@@ -584,10 +901,11 @@ describe("the vocabulary's STATED LIMITS are measured, not asserted", () => {
     expect([...directions].sort()).toEqual(["false-fire", "miss"]);
     for (const gap of KNOWN_VOCABULARY_GAPS) {
       expect(gap.why.length, gap.id).toBeGreaterThan(40);
-      // On a HARD field, so "no finding" is a fact about the vocabulary rather
-      // than about a field that could only ever flag anyway.
+      // On a field where SOME hard shape can refuse, so "no finding" is a fact
+      // about the vocabulary rather than about a field that could only ever
+      // flag anyway (R-168 made that a per-shape population).
       expect(
-        HARD_CLAIM_FIELD_PREFIXES.some((p) => gap.field.startsWith(p)),
+        OUTPUT_CLAIM_SHAPES.some((s) => claimRefusesOn(s, gap.field)),
         gap.id + " is pinned on a field that cannot refuse"
       ).toBe(true);
     }
@@ -659,6 +977,16 @@ describe("the remedy copy", () => {
       // alone, could never have seen it.
       expect(claimHits(remedy, FORBIDDEN_CLAIMS), family).toEqual([]);
     }
+  });
+
+  it("the performance remedy makes no claim about the creator's history (P2-R7)", () => {
+    // It read "no result of yours has been logged" — false for every creator
+    // who has logged one, from a package that holds no scope and no count.
+    // Phase 6 AC9 consumes this as its fourth "none logged" site.
+    const remedy = claimRemedyFor("performance");
+    expect(remedy).not.toMatch(/has been logged|none logged|no result of yours/i);
+    expect(remedy).toContain("until a verified analytics connector exists");
+    expect(remedy).not.toMatch(/\d/);
   });
 
   // The plant this file was recorded as owing (`PLANT_OWED`). Per ENTRY: a

@@ -27,6 +27,7 @@ import {
   journalEnablementDecision,
   type JournalUsageBasis,
 } from "@respin/db";
+import { isEntrypoint } from "./entrypoint";
 
 const SNAPSHOT_PREFIX = "price-snapshot.";
 const SNAPSHOT_SUFFIX = ".json";
@@ -139,6 +140,7 @@ export function main(
 
 // `import.meta.url` guard so the module can be imported by a test without
 // running and without setting a process exit code.
-if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"))) {
+// Resolved paths, not URL-suffix matching: see ./entrypoint.ts (R-155).
+if (isEntrypoint(import.meta.url, process.argv[1])) {
   process.exitCode = main(process.argv.slice(2), process.env, new Date());
 }

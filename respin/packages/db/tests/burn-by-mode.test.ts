@@ -123,6 +123,8 @@ describe("burnByMode (R17a): the mode comes from the join, never from ref_type",
           purpose: "generation",
           mode: args.mode,
           payloadSha256: sha(args.attemptId),
+          intentSha256: sha(args.attemptId),
+          requestSnapshot: { v: 1 },
         },
         tx
       )
@@ -162,6 +164,7 @@ describe("burnByMode (R17a): the mode comes from the join, never from ref_type",
           killTest: { outcome: "passed" },
           rewriteCount: 0,
           debitLedgerId: null,
+          usageIsSystemSpend: false,
         },
         tx
       )
@@ -179,6 +182,8 @@ describe("burnByMode (R17a): the mode comes from the join, never from ref_type",
           purpose: "generation",
           mode,
           payloadSha256: sha(attemptId),
+          intentSha256: sha(attemptId),
+          requestSnapshot: { v: 1 },
         },
         tx
       )
@@ -371,6 +376,8 @@ describe("burnByMode (R17a): the mode comes from the join, never from ref_type",
           purpose: "generation",
           mode: "caption",
           payloadSha256: sha("att_b"),
+          intentSha256: sha("att_b"),
+          requestSnapshot: { v: 1 },
         },
         tx
       )
@@ -410,6 +417,7 @@ describe("burnByMode (R17a): the mode comes from the join, never from ref_type",
           killTest: { outcome: "passed" },
           rewriteCount: 0,
           debitLedgerId: null,
+          usageIsSystemSpend: false,
         },
         tx
       )
@@ -464,6 +472,8 @@ describe("burnByMode (R17a): the mode comes from the join, never from ref_type",
           purpose: "generation",
           mode: "caption",
           payloadSha256: sha("att_b_only"),
+          intentSha256: sha("att_b_only"),
+          requestSnapshot: { v: 1 },
         },
         tx
       )
@@ -503,6 +513,7 @@ describe("burnByMode (R17a): the mode comes from the join, never from ref_type",
           killTest: { outcome: "passed" },
           rewriteCount: 0,
           debitLedgerId: null,
+          usageIsSystemSpend: false,
         },
         tx
       )

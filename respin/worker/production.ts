@@ -24,7 +24,10 @@ import {
   priceFor,
   type LlmProvider,
 } from "@respin/llm";
-import { createStripeExternalCommandPort } from "@respin/credits/deletion-server";
+import {
+  createStripeExternalCommandPort,
+  replayHeldStripeEventsForActiveWorkspaces,
+} from "@respin/credits/deletion-server";
 import { createAutopsyVendor } from "./autopsy-vendor";
 import {
   createDeletionLifecycleTick,
@@ -172,6 +175,19 @@ function effectiveDailyCapMicroUsd(
     : configured;
 }
 
+/**
+ * `min(config, the compiled ceiling)` — and the COMPILED ceiling when the
+ * configured value is not a positive safe integer. A parsed document always
+ * carries one (`.int().min(1)`, defaulted); a cast-in `undefined` would make
+ * `Math.min` return `NaN`, and `bytes > NaN` is false — the stage bound would
+ * vanish. Falling back to the compiled ceiling keeps it bounded.
+ */
+function tightenedInputCeiling(configured: number): number {
+  return Number.isSafeInteger(configured) && configured > 0
+    ? Math.min(configured, SYSTEM_AUTOPSY_INPUT_TOKEN_CODE_CEILING)
+    : SYSTEM_AUTOPSY_INPUT_TOKEN_CODE_CEILING;
+}
+
 export function buildProductionAutopsyCommand(input: {
   active: ActiveConfig;
   operational: SystemWorkerOperationalState;
@@ -211,7 +227,13 @@ export function buildProductionAutopsyCommand(input: {
     businessDate: input.scheduledAt.toISOString().slice(0, 10),
     modelCode,
     maxCostMicroUsd,
-    maxInputTokens: SYSTEM_AUTOPSY_INPUT_TOKEN_CODE_CEILING,
+    // THE SHARED INPUT CEILING (audit P3-R2, R-158): `llm.maxInputTokens`
+    // read DEFAULTED off the document already resolved (it joins no
+    // required-path list — a defaulted ceiling still bounds), and config may
+    // only TIGHTEN the compiled R-123 ceiling. `autopsy-vendor.ts`'s per-stage
+    // check is this site's bound. The reservation above stays priced at the
+    // compiled ceiling, the conservative direction.
+    maxInputTokens: tightenedInputCeiling(input.active.content.llm.maxInputTokens),
     maxOutputTokens,
     configuredDailyCapMicroUsd,
   };
@@ -307,6 +329,9 @@ export async function createProductionWorker(input: {
     const deletionLifecycle = createDeletionLifecycleTick({
       db,
       env: process.env,
+      // R-165: money held while a workspace was tombstoned is replayed on the
+      // tick once the workspace is active again.
+      heldMoney: (tickDb) => replayHeldStripeEventsForActiveWorkspaces(tickDb),
       workerName: input.runtime.workerName,
       migrations: loadMigrationInventory(),
       ports: {

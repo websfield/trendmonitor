@@ -101,6 +101,7 @@ describeLive("deletion executor lease on real PostgreSQL", () => {
       expiresAt: new Date(Date.now() + 3_600_000),
       updatedAt: new Date(),
       reauthenticatedAt: new Date(),
+      reauthenticatedMethod: "password",
     });
     const scope = await withWorkspace(db, { authUserId: "owner-auth" });
     const log = journal();

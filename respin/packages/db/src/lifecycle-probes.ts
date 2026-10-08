@@ -216,10 +216,10 @@ function probeSubjectAndPredicateFor(
     scope === "identity" &&
     (table === "deletion_operations" || table === "deletion_operation_transitions") &&
     columns.length === 1 &&
-    columns[0] === "requester_user_id"
+    (columns[0] === "requester_user_id" || columns[0] === "cancelled_by_user_id")
   ) return {
     subject: probeSubjectForScope("identity", subjects),
-    predicate: { kind: "direct", matches: [{ column: "requester_user_id", subjectField: "userId" }] },
+    predicate: { kind: "direct", matches: [{ column: columns[0], subjectField: "userId" }] },
   };
   if (scope === "profile" && subjects.activeOperation.scope === "workspace") return {
     subject: probeSubjectForScope("workspace", subjects),

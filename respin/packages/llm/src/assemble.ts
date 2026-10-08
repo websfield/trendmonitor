@@ -80,7 +80,67 @@ export type ClaimSpec = {
 export type AssembledPrompt = {
   system: string;
   prompt: string;
+  /**
+   * THE UTF-8 BYTE SIZE OF EVERY PART THE PRODUCER JOINED (audit P3-R2) —
+   * `system` included. REQUIRED, so a producer that returns a bare
+   * `{ system, prompt }` into a receiver typed to this is a compile error.
+   * Filled by `composePrompt` from the SAME segments the prompt text is joined
+   * from, so `partSizes.system === byteLength(system)` and
+   * Σ(parts but `system`) + `separatorBytes` === byteLength(prompt) hold by
+   * construction — and are asserted per producer, because a segment joined
+   * outside the helper would be unbounded silently.
+   */
+  partSizes: Readonly<Record<string, number>>;
+  /**
+   * The parts the input ceiling may skip — declared by the producer, and only
+   * honoured for a name in `EXEMPTABLE_PROMPT_PARTS` (`input-ceiling.ts`).
+   */
+  exemptParts: readonly string[];
+  /** The bytes of the newline joins between parts, counted from the join array. */
+  separatorBytes: number;
 };
+
+/**
+ * One element of a prompt's join array: a NAMED part (its lines are joined
+ * with newlines and recorded under `part`), or `""` — a blank line, which
+ * names nothing and carries nothing. A part with no lines is dropped, exactly
+ * as spreading an empty array into the join would drop it.
+ */
+export type PromptSegment = { readonly part: string; readonly lines: readonly string[] } | "";
+
+/**
+ * Join named parts into a prompt and record each part's byte size (audit
+ * P3-R2). The ONE way a producer builds a prompt the input ceiling can read:
+ * the text and the sizes come from the same array, so neither can describe a
+ * different prompt from the other. A repeated part name is refused — two
+ * segments under one key would hide one of them from `largestPart`.
+ */
+export function composePrompt(segments: readonly PromptSegment[]): {
+  text: string;
+  partSizes: Record<string, number>;
+  separatorBytes: number;
+} {
+  const elements: string[] = [];
+  const partSizes: Record<string, number> = {};
+  for (const segment of segments) {
+    if (segment === "") {
+      elements.push("");
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(partSizes, segment.part)) {
+      throw new Error(`prompt part '${segment.part}' was recorded twice`);
+    }
+    if (segment.lines.length === 0) continue;
+    const text = segment.lines.join("\n");
+    partSizes[segment.part] = Buffer.byteLength(text, "utf8");
+    elements.push(text);
+  }
+  return {
+    text: elements.join("\n"),
+    partSizes,
+    separatorBytes: Math.max(0, elements.length - 1),
+  };
+}
 
 /** One value the model produced, with the citation that grounds it. */
 export type AssembledValue = {
@@ -121,6 +181,7 @@ export const ASSEMBLY_KINDS = [
   "post_not_supplied",
   "quote_not_found",
   "fields_unfilled",
+  "nothing_grounded",
 ] as const;
 
 export type AssemblyKind = (typeof ASSEMBLY_KINDS)[number];
@@ -219,6 +280,14 @@ const replySchema = z.strictObject({
 });
 
 /**
+ * `<post` and `</post` (any case) inside a post's content, with the `<`
+ * written as `&lt;`. Exported for its witness in `assemble.test.ts`.
+ */
+export function neutralisePostTags(content: string): string {
+  return content.replace(/<(\/?post\b)/gi, "&lt;$1");
+}
+
+/**
  * Build the system and user prompts for the voice inference.
  *
  * @throws NotEnoughPostsError below `minPosts` — R6, and it throws rather than
@@ -274,8 +343,19 @@ export function assembleVoicePrompt(params: {
     'The object has one key, `fields`: an array of `{key, values}`, where each value is `{value, inputId, quote}`. A "single" field has exactly one value. A "list" field has between one and its stated maximum.',
   ].join("\n");
 
+  // THE POST'S OWN TEXT CANNOT FORGE A POST BOUNDARY (audit Phase 8, P8-R2).
+  // The content was interpolated raw between `<post>` tags: bounded today only
+  // because the corpus is the creator's own SQL-filtered posts, but a post
+  // containing `</post>` would end its own block and open text the prompt
+  // presents as ours. Every `<post` / `</post` opener inside the content has
+  // its `<` written as `&lt;` — the ONLY rewrite, so every post without such a
+  // tag reaches the model byte-for-byte and its quotes still match the stored
+  // text exactly; a quote copied from a neutralised tag does not appear in
+  // the stored post, so `parseVoiceReply` refuses it (`quote_not_found`) before
+  // any write — `assemble.test.ts` "gate L5" — and `validateSourceEvidence`
+  // would refuse it again at the write.
   const postBlock = posts
-    .map((p, i) => `<post id="${p.id}" n="${i + 1}">\n${p.content}\n</post>`)
+    .map((p, i) => `<post id="${p.id}" n="${i + 1}">\n${neutralisePostTags(p.content)}\n</post>`)
     .join("\n\n");
 
   const fieldBlock = fields
@@ -286,19 +366,32 @@ export function assembleVoicePrompt(params: {
     )
     .join("\n");
 
-  const prompt = [
-    "Here are posts the creator wrote themselves.",
+  // NAMED PARTS (audit P3-R2): the same strings, joined by `composePrompt`, so
+  // the prompt text is byte-identical to the inline join it replaced and every
+  // part's size is recorded. None is exempt — the voice prompt carries no
+  // vendor-authored part.
+  const composed = composePrompt([
+    { part: "intro", lines: ["Here are posts the creator wrote themselves."] },
     "",
-    postBlock,
+    { part: "posts", lines: [postBlock] },
     "",
-    "Fill exactly these fields, one entry each:",
+    { part: "fieldsHeader", lines: ["Fill exactly these fields, one entry each:"] },
     "",
-    fieldBlock,
+    { part: "fields", lines: [fieldBlock] },
     "",
-    `Reply with the JSON object only. Use "${CHECK}" for anything the posts do not support.`,
-  ].join("\n");
+    {
+      part: "replyInstruction",
+      lines: [`Reply with the JSON object only. Use "${CHECK}" for anything the posts do not support.`],
+    },
+  ]);
 
-  return { system, prompt };
+  return {
+    system,
+    prompt: composed.text,
+    partSizes: { system: Buffer.byteLength(system, "utf8"), ...composed.partSizes },
+    exemptParts: [],
+    separatorBytes: composed.separatorBytes,
+  };
 }
 
 /**
@@ -630,6 +723,23 @@ export function parseVoiceReply(params: {
   // into array indices that become claim pointers, so a model reordering its
   // reply must not reorder a creator's signature moves.
   return fields.map((f) => out.find((o) => o.key === f.key)!);
+}
+
+/**
+ * THE REPLY GROUNDED NOTHING (audit P3-A1, decisions R-156).
+ *
+ * `parseVoiceReply` admits one placeholder per field, so a reply in which
+ * EVERY value is the placeholder parses — and then `writeBrainDoc` refuses it
+ * on empty evidence, AFTER the debit had committed. The inference's `validate`
+ * predicate now refuses that reply with this error, inside the one-retry
+ * budget and before any debit. Constructed here so the kind's throw site
+ * lives with every other `AssemblyKind`'s.
+ */
+export function nothingGroundedError(): AssemblyError {
+  return new AssemblyError(
+    "nothing_grounded",
+    "every value in the reply is a placeholder, so there is no quoted evidence to build a voice document from",
+  );
 }
 
 /**

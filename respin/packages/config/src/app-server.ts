@@ -1,6 +1,6 @@
 // Read-only app-facing facade for runtime config (the respinDb precedent).
 // The WRITE surface lives in ./admin-server, import-restricted to app/(admin).
-import { getServerDb } from "@respin/db";
+import { getMarketingReadDb, getServerDb } from "@respin/db";
 import {
   configVersionContents,
   getActiveConfig,
@@ -14,6 +14,16 @@ export { ConfigUnavailableError } from "./index";
 
 export function getActiveConfigServer(): Promise<ActiveConfig> {
   return getActiveConfig(getServerDb());
+}
+
+/**
+ * THE ACTIVE CONFIG, FOR A PUBLIC PAGE (Phase 6 billing gate, R-175): the same
+ * read, on the marketing pool (`getMarketingReadDb`, 2 connections, a
+ * statement timeout) rather than the query pool webhooks and debits use, so
+ * anonymous landing traffic cannot starve a money path in this process.
+ */
+export function getActiveConfigForPublicPage(): Promise<ActiveConfig> {
+  return getActiveConfig(getMarketingReadDb());
 }
 
 // THE HISTORICAL DOCUMENTS, for the ONE reader that judges past attempts:

@@ -32,13 +32,23 @@ import {
   type TestDb,
   type WorkspaceScope,
 } from "@respin/db";
-import { respinConfigV1 } from "@respin/config";
-import { LlmUnavailableError } from "@respin/llm";
+import { appendConfigVersion, getActiveConfig, respinConfigV1 } from "@respin/config";
+import { AssemblyError, LlmInputTooLargeError, LlmUnavailableError } from "@respin/llm";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { ProvenanceError, creditLedger, firstBillableAttempts, modelUsage } from "@respin/db";
+import { runInference } from "../src/inference";
 import type { InferenceRequest, LlmProvider } from "@respin/llm";
 import { createProfile } from "../src/profiles";
 import { grantCredits } from "../src/ledger";
 import { inferVoice, VOICE_CORPUS_MAX_POSTS } from "../src/infer-voice";
 import { anySlots } from "./support/run-slots";
+import { dbThatFailsWhen } from "./support/crash-db";
+import {
+  setIncludedBuildReleaseFailedMetricSink,
+  type IncludedBuildReleaseFailedMetric,
+} from "../src/metrics";
 
 /** A provider that records what it was asked, and answers with valid JSON. */
 const capturing = (reply: string) => {
@@ -502,4 +512,208 @@ describe("inferVoice — R4: only the creator's OWN posts reach a vendor", () =>
       "one claim, on the attempt the creator actually pressed"
     ).toEqual(["att-both-bad"]);
   });
+
+  // ---------------------------------------- audit P3-A1 (R-156) and P3-R2
+
+  /** An all-`[check]` reply: it PARSES (one placeholder per field is legal). */
+  const ALL_CHECK = JSON.stringify({
+    fields: ["register", "sentenceRhythm", "signatureMoves", "avoid"].map((key) => ({
+      key,
+      values: [{ value: "[check]", inputId: null, quote: null }],
+    })),
+  });
+  const debitsFor = async (attemptId: string) =>
+    (await db.select().from(creditLedger)).filter((r) => r.kind === "debit" && r.refId === attemptId);
+  /** Spend the included first build, so the next build is PRICED and would debit. */
+  const spendIncludedBuild = async () => {
+    const rows = await paste([
+      { content: OWN_A, inputClass: "own_post" },
+      { content: OWN_B, inputClass: "own_post" },
+      { content: OWN_C, inputClass: "own_post" },
+    ]);
+    const first = capturing(replyCiting(rows[0]!.id, OWN_A.slice(0, 20)));
+    const included = await inferVoice(db, owner, profileId, first.provider, anySlots(), "att-included", 3, VOICE_CORPUS_MAX_POSTS, new Date());
+    expect(included.run.creditsCharged).toBe(0);
+  };
+
+  it("P3-A1: a reply whose EVERY value is [check] is refused BEFORE any debit — inside the one-retry budget — and writes no document", async () => {
+    await spendIncludedBuild();
+    const docsBefore = (await db.select().from(brainDocs)).length;
+    const { provider, calls } = capturing(ALL_CHECK);
+    const err = await inferVoice(db, owner, profileId, provider, anySlots(), "att-all-check", 3, VOICE_CORPUS_MAX_POSTS, new Date()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AssemblyError);
+    expect((err as AssemblyError).kind).toBe("nothing_grounded");
+    // One retry, then the refusal — never an unbounded loop.
+    expect(calls).toHaveLength(2);
+    // THE PROPERTY: no debit row exists for this attempt. (Before audit P3-A1
+    // the reply parsed, the debit committed, and the write then refused.)
+    expect(await debitsFor("att-all-check")).toHaveLength(0);
+    expect((await db.select().from(brainDocs)).length).toBe(docsBefore);
+    // The vendor was paid for both calls, and both are recorded.
+    expect((await db.select().from(modelUsage)).filter((u) => u.attemptId === "att-all-check")).toHaveLength(2);
+  });
+
+  it("P3-A1: a write refused INSIDE persist(tx) rolls the debit back — the `provenance` copy's \"no credits were spent\" is true by construction", async () => {
+    await spendIncludedBuild();
+    const { provider } = capturing("anything — the predicate accepts it");
+    const err = await runInference(
+      db,
+      owner,
+      profileId,
+      provider,
+      anySlots(),
+      {
+        attemptId: "att-persist-refused",
+        system: "s",
+        prompt: "p",
+        promptBundleVersion: "test-bundle",
+        // THE PLANT: the output's write refuses inside the debit transaction.
+        persist: async () => {
+          throw new ProvenanceError("planted inside persist");
+        },
+      },
+      new Date()
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProvenanceError);
+    expect(await debitsFor("att-persist-refused")).toHaveLength(0);
+    // NON-VACUITY: the same attempt shape WITH a persist that succeeds debits.
+    const ok = await runInference(db, owner, profileId, capturing("fine").provider, anySlots(), {
+      attemptId: "att-persist-ok",
+      system: "s",
+      prompt: "p",
+      promptBundleVersion: "test-bundle",
+      persist: async () => undefined,
+    }, new Date());
+    expect(ok.creditsCharged).toBeGreaterThan(0);
+    expect(await debitsFor("att-persist-ok")).toHaveLength(1);
+  });
+
+  it("billing note (Phase 3 gate): the FREE first build whose store is refused gives its included-build claim back — the next build is still free", async () => {
+    const run = (attemptId: string, persist: () => Promise<void>) =>
+      runInference(db, owner, profileId, capturing("anything").provider, anySlots(), {
+        attemptId, system: "s", prompt: "p", promptBundleVersion: "test-bundle", persist,
+      }, new Date());
+    const err = await run("att-free-refused", async () => {
+      throw new ProvenanceError("planted inside the free build's persist");
+    }).catch((e: unknown) => e);
+    // The store's own refusal goes out unchanged...
+    expect(err).toBeInstanceOf(ProvenanceError);
+    // ...no debit, and the claim step 8b committed is gone again.
+    expect(await debitsFor("att-free-refused")).toHaveLength(0);
+    expect((await db.select().from(firstBillableAttempts)).map((r) => r.attemptId)).toEqual([]);
+    // THE PROPERTY: the creator's next build is the free one.
+    const next = await run("att-free-next", async () => undefined);
+    expect(next.creditsCharged).toBe(0);
+    expect((await db.select().from(firstBillableAttempts)).map((r) => r.attemptId)).toEqual(["att-free-next"]);
+  });
+
+  it("billing note: a failed claim release never replaces the store's refusal — it is emitted for an operator", async () => {
+    const seen: IncludedBuildReleaseFailedMetric[] = [];
+    setIncludedBuildReleaseFailedMetricSink((m) => seen.push(m));
+    try {
+      let persistCalled = false;
+      // Every transaction AFTER the refused store fails — including the release.
+      const down = dbThatFailsWhen(db, async () => persistCalled, "always");
+      const err = await runInference(down, owner, profileId, capturing("anything").provider, anySlots(), {
+        attemptId: "att-release-fails", system: "s", prompt: "p", promptBundleVersion: "test-bundle",
+        persist: async () => {
+          persistCalled = true;
+          throw new ProvenanceError("planted");
+        },
+      }, new Date()).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ProvenanceError);
+      expect(seen).toEqual([{ attemptId: "att-release-fails", purpose: "onboarding_brain" }]);
+    } finally {
+      setIncludedBuildReleaseFailedMetricSink(null);
+    }
+  });
+
+  it("P3-A1: the three debitCredits( callers each share ONE transaction with the output they charge for", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const read = (f: string) =>
+      readFileSync(resolve(here, "../src", f), "utf8")
+        .replace(/\r\n/g, "\n")
+        // LINE comments first (the AC-9 trap `tests/support/app-surface.ts`
+        // records): a `/*` inside a line comment must not open a block.
+        .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length))
+        .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+    /** The body of the `transaction(async (tx) => { … })` callback enclosing `index`. */
+    const enclosingTransaction = (text: string, index: number): string => {
+      const start = text.lastIndexOf("transaction(async (tx) => {", index);
+      expect(start, "a debit outside any transaction callback").toBeGreaterThan(-1);
+      let depth = 0;
+      for (let i = text.indexOf("{", start); i < text.length; i += 1) {
+        if (text[i] === "{") depth += 1;
+        if (text[i] === "}") depth -= 1;
+        if (depth === 0) {
+          expect(i, "the debit is inside the callback it was matched to").toBeGreaterThan(index);
+          return text.slice(start, i + 1);
+        }
+      }
+      throw new Error("unbalanced callback");
+    };
+    // THE POPULATION, by list (CLAUDE.md rule 7): file -> the write that must
+    // share the debit's transaction.
+    const CALLERS: Record<string, RegExp> = {
+      "generate.ts": /caps\.settleGeneration\(/,
+      "inference.ts": /params\.persist\(tx\)/,
+      "pasted-reference.ts": /intakePastedReference\(tx,/,
+    };
+    const srcDir = resolve(here, "../src");
+    const files = [
+      ...readdirRecursive(srcDir).filter((f) => f.endsWith(".ts") && f !== "ledger.ts"),
+    ];
+    const found = files.filter((f) => /\bdebitCredits\(/.test(read(f)));
+    expect(found.sort()).toEqual(Object.keys(CALLERS).sort());
+    for (const [file, write] of Object.entries(CALLERS)) {
+      const text = read(file);
+      const calls = [...text.matchAll(/\bdebitCredits\(/g)].map((m) => m.index!);
+      expect(calls.length, file).toBeGreaterThan(0);
+      for (const at of calls) {
+        expect(enclosingTransaction(text, at), file).toMatch(write);
+      }
+    }
+    // PLANTED: the R-41 shape this entry revised — the write in a SECOND
+    // transaction after the debit's — is not matched.
+    const planted = [
+      "await db.transaction(async (tx) => {",
+      "  await debitCredits(tx, {});",
+      "});",
+      "await db.transaction(async (tx) => {",
+      "  await params.persist(tx);",
+      "});",
+    ].join("\n");
+    expect(enclosingTransaction(planted, planted.indexOf("debitCredits("))).not.toMatch(CALLERS["inference.ts"]!);
+  });
+
+  it("P3-R2: a voice prompt over llm.maxInputTokens is refused before the slot and the call — zero vendor calls, zero spend rows, the included build untouched", async () => {
+    await paste([
+      { content: OWN_A, inputClass: "own_post" },
+      { content: OWN_B, inputClass: "own_post" },
+      { content: OWN_C, inputClass: "own_post" },
+    ]);
+    const { content } = await getActiveConfig(db);
+    await appendConfigVersion(db, { ...content, llm: { ...content.llm, maxInputTokens: 100 } }, "test-admin");
+    // The raw stub that throws if invoked is the proof of zero calls.
+    const err = await inferVoice(db, owner, profileId, never(), anySlots(), "att-too-big", 3, VOICE_CORPUS_MAX_POSTS, new Date()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmInputTooLargeError);
+    // The whole `system + prompt` is bounded on this path, so no part is named.
+    expect(err).toMatchObject({ ceiling: 100, largestPart: null, partSizes: null });
+    expect((await db.select().from(modelUsage)).filter((u) => u.attemptId === "att-too-big")).toHaveLength(0);
+    expect(await db.select().from(firstBillableAttempts)).toEqual([]);
+  });
 });
+
+/** Every file under `dir`, relative to it, with forward slashes. */
+function readdirRecursive(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (sub: string) => {
+    for (const entry of readdirSync(resolve(dir, sub), { withFileTypes: true })) {
+      const rel = sub === "" ? entry.name : `${sub}/${entry.name}`;
+      if (entry.isDirectory()) walk(rel);
+      else out.push(rel);
+    }
+  };
+  walk("");
+  return out;
+}

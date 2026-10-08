@@ -327,6 +327,56 @@ describe("@respin/config", () => {
       (omitting.parse(undefined) as Record<string, unknown>).b,
       "zod re-parsed the default literal — then this whole rule is unnecessary, and the comment above is wrong"
     ).toBeUndefined();
+
+    // AUDIT P3-R2 / P3-R3 (R-158): the same rule for `llm`. A stored document
+    // with no `llm` key at all must parse the input ceiling to a NUMBER — a
+    // key missing from the `llm` object default would be `undefined`, and
+    // `bytes > undefined` is false: the ceiling would never bind.
+    const noLlm: Record<string, unknown> = { ...CONFIG_V1_SEED };
+    delete noLlm.llm;
+    const parsedNoLlm = respinConfigV1.parse(noLlm);
+    expect(parsedNoLlm.llm.maxInputTokens).toBe(104_323);
+    for (const [key, value] of Object.entries(parsedNoLlm.llm)) {
+      expect(value, `llm.${key} is undefined — the object default omits it`).toBeDefined();
+    }
+    // ...and the window-total key rides the `generation` default too.
+    expect(parsed.generation.maxBillableCostMicroUsdPerWindow).toBe(60_000_000);
+  });
+
+  it("audit P3-A3: the schema refuses a deadline the autopsy worker would refuse, and a ZERO paid-tier allowance — from the ONE constant, never a copy", async () => {
+    const { AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS } = await import("@respin/db");
+    const withLlm = (overallDeadlineMs: number) =>
+      respinConfigV1.safeParse({ ...CONFIG_V1_SEED, llm: { ...CONFIG_V1_SEED.llm, overallDeadlineMs } });
+    expect(withLlm(180_000).success).toBe(false);
+    expect(withLlm(AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS + 1).success).toBe(false);
+    expect(withLlm(AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS).success).toBe(true);
+    const withAllowances = (over: Record<string, number>) =>
+      respinConfigV1.safeParse({ ...CONFIG_V1_SEED, allowances: { ...CONFIG_V1_SEED.allowances, ...over } });
+    expect(withAllowances({ pro: 0 }).success).toBe(false);
+    expect(withAllowances({ creator: 0 }).success).toBe(false);
+    expect(withAllowances({ studio: 0 }).success).toBe(false);
+    // Free MAY be zero — no monthly mint is a real operator choice.
+    expect(withAllowances({ free: 0 }).success).toBe(true);
+    // ONE COPY: no second 135000 literal anywhere in the config package's source.
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const src = join(dirname(fileURLToPath(import.meta.url)), "../src");
+    const NUMERIC_135000 = /\b135_?000\b/;
+    for (const file of readdirSync(src).filter((f) => f.endsWith(".ts"))) {
+      // Comment-blanked: a comment may cite the number; a LITERAL may not exist.
+      const code = readFileSync(join(src, file), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/[^\n]*/g, "");
+      // A NUMERIC literal (`135000` or `135_000`); prose like "135,000 ms" is not one.
+      expect(code, file).not.toMatch(NUMERIC_135000);
+    }
+    // NON-VACUITY (CLAUDE.md 2026-08-26): the pattern catches a planted copy
+    // in both spellings, and does not fire on the prose form.
+    expect("const ceiling = 135_000;").toMatch(NUMERIC_135000);
+    expect("const ceiling = 135000;").toMatch(NUMERIC_135000);
+    expect('why: "the 135,000 ms ceiling"').not.toMatch(NUMERIC_135000);
+    expect(AUTOPSY_STAGE_DEADLINE_CODE_CEILING_MS).toBe(135_000);
   });
 
   /**

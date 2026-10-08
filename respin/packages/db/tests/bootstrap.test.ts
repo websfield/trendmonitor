@@ -1,7 +1,9 @@
-import { count, eq } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bootstrapInTx, ensureUserWorkspace } from "../src/bootstrap";
 import { memberships, users, workspaces } from "../src/schema";
+import { deletionOperations } from "../src/lifecycle-schema";
+import { LockOrderError, lockWorkspaceMembershipGraph } from "../src/membership-lifecycle";
 import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 
 // The conflict tests here are the SERIALIZED approximation (pre-seeded winner)
@@ -117,7 +119,11 @@ describe("ensureUserWorkspace bootstrap", () => {
     });
   });
 
-  it("repairs a tombstoned-only bootstrap graph with a fresh active workspace", async () => {
+  // RE-DECIDED (R-161, P5-R2), not deleted: this pin is now the case with NO
+  // undecided deletion — a tombstoned workspace whose deletion completed or
+  // never existed is not an authority, and a fresh workspace is minted. The
+  // case WITH a non-terminal deletion is the next test: no replacement.
+  it("repairs a tombstoned-only bootstrap graph with NO undecided deletion with a fresh active workspace", async () => {
     const first = await ensureUserWorkspace(db, PARAMS);
     await db
       .update(workspaces)
@@ -140,6 +146,38 @@ describe("ensureUserWorkspace bootstrap", () => {
       workspaces: 2,
       memberships: 2,
     });
+  });
+
+  it("R-161: a tombstoned workspace whose deletion is NOT terminal is the existing authority — no replacement is minted", async () => {
+    const first = await ensureUserWorkspace(db, PARAMS);
+    await db
+      .update(workspaces)
+      .set({ lifecycleState: "tombstoned", lifecycleVersion: first.workspace.lifecycleVersion + 1 })
+      .where(eq(workspaces.id, first.workspace.id));
+    for (const state of ["journal_pending", "tombstoned", "external_actions_pending", "grace", "blocked", "erasing"] as const) {
+      await db.delete(deletionOperations);
+      await db.insert(deletionOperations).values({
+        scope: "workspace",
+        targetKey: `workspace:${first.workspace.id}`,
+        workspaceId: first.workspace.id,
+        requesterUserId: first.user.id,
+        requesterDigest: "a".repeat(64),
+        requestSessionDigest: "b".repeat(64),
+        requestMembershipVersion: 1,
+        requestWorkspaceLifecycleVersion: 1,
+        idempotencyKey: `bootstrap-${state}`,
+        payloadHash: "c".repeat(64),
+        state,
+        ...(state === "blocked" ? { blockedResumeState: "external_actions_pending" as const } : {}),
+      });
+      const result = await ensureUserWorkspace(db, PARAMS);
+      expect(result, state).toMatchObject({
+        created: false,
+        workspace: { id: first.workspace.id, lifecycleState: "tombstoned" },
+        membership: { id: first.membership.id },
+      });
+      expect(await tableCounts(), state).toEqual({ users: 1, workspaces: 1, memberships: 1 });
+    }
   });
 
   it("serialized-conflict: a pre-seeded existing user resolves, creates nothing (AC-2)", async () => {
@@ -187,6 +225,101 @@ describe("ensureUserWorkspace bootstrap", () => {
       workspaces: 0,
       memberships: 0,
     });
+  });
+
+  // AUDIT PHASE 8 (P8-A3, R-177): the no-mint path every product page runs is a
+  // READER — it holds the membership-graph locks only in the SHARED form — and
+  // the mint path never upgrades in place.
+  it("P8-A3: the NO-MINT path's transaction lock ledger records exactly two keys, both shared (the pg_locks modes are asserted on real Postgres)", async () => {
+    const first = await ensureUserWorkspace(db, PARAMS);
+    const held = await db.transaction(async (tx) => {
+      const result = await bootstrapInTx(tx, PARAMS, "shared");
+      expect(result.created).toBe(false);
+      const r = (await tx.execute(
+        sql`SELECT current_setting('respin.membership_keys', true) AS keys`
+      )) as unknown as { rows: { keys: string }[] };
+      return JSON.parse(r.rows[0].keys) as Record<string, string>;
+    });
+    expect(held).toEqual({
+      [`identity-membership:${first.user.id}`]: "shared",
+      [`workspace-membership:${first.workspace.id}`]: "shared",
+    });
+  });
+
+  // The pg_locks half of gate L6 (the lock MODE Postgres records) is on real
+  // Postgres: PGlite's pg_locks lists no advisory locks.
+  // `tests/render-under-stripe-lock.docker.test.ts` "gate L6".
+
+  it("P8-A3 (gate L6): ensureUserWorkspace's FIRST transaction is the READ ONLY shared path — its lock statements are the shared form, none exclusive", async () => {
+    await ensureUserWorkspace(db, PARAMS);
+    // Record every transaction ensureUserWorkspace opens: its config, and the
+    // text of every lock statement it executes.
+    const opened: { config: unknown; locks: string[] }[] = [];
+    const recording = new Proxy(db, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        if (prop !== "transaction") {
+          return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+        }
+        return (fn: (tx: unknown) => Promise<unknown>, config?: unknown) => {
+          const entry = { config, locks: [] as string[] };
+          opened.push(entry);
+          return target.transaction(
+            (tx) =>
+              fn(
+                new Proxy(tx, {
+                  get(t, p, r) {
+                    const v = Reflect.get(t, p, r) as unknown;
+                    if (p !== "execute") return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+                    return (query: unknown) => {
+                      const text = JSON.stringify(query);
+                      if (text.includes("pg_advisory")) entry.locks.push(text);
+                      return (v as (q: unknown) => unknown).call(t, query);
+                    };
+                  },
+                })
+              ),
+            config as never
+          );
+        };
+      },
+    });
+    const result = await ensureUserWorkspace(recording as typeof db, PARAMS);
+    expect(result.created).toBe(false);
+    // One transaction: the bounded, read-only shared attempt found the authority.
+    expect(opened).toHaveLength(1);
+    expect(opened[0].config).toEqual({ accessMode: "read only" });
+    expect(opened[0].locks.length).toBe(2);
+    for (const lock of opened[0].locks) {
+      expect(lock).toContain("pg_advisory_xact_lock_shared");
+    }
+  });
+
+  it("P8-A3: with no authority, the shared attempt MINTS NOTHING and signals; the mint runs in a FRESH exclusive transaction", async () => {
+    // The shared attempt alone: it refuses to mint (and rolls back its user row).
+    await expect(
+      db.transaction((tx) => bootstrapInTx(tx, PARAMS, "shared"))
+    ).rejects.toThrow(/mint in a fresh exclusive transaction/);
+    expect(await tableCounts()).toEqual({ users: 0, workspaces: 0, memberships: 0 });
+    // The public entry retries exclusively and mints exactly once.
+    const minted = await ensureUserWorkspace(db, PARAMS);
+    expect(minted.created).toBe(true);
+    expect(await tableCounts()).toEqual({ users: 1, workspaces: 1, memberships: 1 });
+  });
+
+  it("P8-A3: an IN-PLACE upgrade after the shared path is refused by the lock-order guard (why the mint never does it)", async () => {
+    const first = await ensureUserWorkspace(db, PARAMS);
+    let caught: unknown;
+    await db.transaction(async (tx) => {
+      await bootstrapInTx(tx, PARAMS, "shared");
+      try {
+        await lockWorkspaceMembershipGraph(tx, first.workspace.id, "exclusive");
+      } catch (e) {
+        caught = e;
+      }
+    });
+    expect(caught).toBeInstanceOf(LockOrderError);
+    expect((caught as LockOrderError).reason).toBe("upgrade");
   });
 
   it("stores the auth identity it was given (and nothing else — no email copy, D-M1-5)", async () => {

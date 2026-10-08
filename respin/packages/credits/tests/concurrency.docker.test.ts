@@ -1,7 +1,7 @@
 // Real-Postgres race suite (Phase 2 task 9). Loud skip without
 // TEST_DATABASE_URL (CI always provides the service container).
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { sql } from "drizzle-orm";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
+import { eq, sql } from "drizzle-orm";
 import {
   CONFIG_V1_SEED,
   createDockerTestDb,
@@ -20,7 +20,8 @@ import {
   grantCredits,
 } from "../src/ledger";
 import { ensurePauseStarted } from "../src/pause";
-import { handleStripeEvent, DuplicateStripeEvent } from "../src/stripe/webhooks";
+import { handleStripeEvent, DuplicateStripeEvent, replayHeldStripeEvents } from "../src/stripe/webhooks";
+import type Stripe from "stripe";
 import { appendConfigVersion } from "@respin/config";
 import { deriveBalance } from "../src/balance";
 import { getWorkspaceBillingState } from "../src/state";
@@ -849,3 +850,166 @@ async function eventRowExists(
   const rows = await db.select().from(stripeEvents);
   return rows.some((r) => r.id === id);
 }
+
+// ---------------------------------------------------------------------------
+// R-165 (audit P5-A1, AC14) on REAL Postgres: the held-money replay's gate is
+// a row lock taken first, so two replays — or a replay and a new webhook
+// carrying the same invoice — mint exactly once.
+// ---------------------------------------------------------------------------
+describe.skipIf(!MAINTENANCE_URL)("held money replay under REAL concurrency (R-165)", () => {
+  let harness: Awaited<ReturnType<typeof createDockerTestDb>>;
+
+  beforeAll(async () => {
+    harness = await createDockerTestDb(MAINTENANCE_URL as string, "respin_test_heldmoney");
+  }, 60_000);
+
+  afterAll(async () => {
+    await harness?.pool.end();
+  });
+
+  async function heldWorkspace(customer: string): Promise<VerifiedWorkspaceId> {
+    const { db } = harness;
+    const [w] = await db.insert(schema.workspaces).values({ name: customer }).returning();
+    const ws = trustWorkspaceId(w!.id);
+    await db.insert(subscriptions).values({ workspaceId: ws, stripeCustomerId: customer, status: "none" });
+    return ws;
+  }
+
+  function invoicePaid(id: string, customer: string, invoiceId: string): Stripe.Event {
+    const sec = Math.floor(Date.now() / 1000);
+    return {
+      id,
+      object: "event",
+      type: "invoice.paid",
+      created: sec,
+      data: {
+        object: {
+          id: invoiceId,
+          object: "invoice",
+          customer,
+          billing_reason: "subscription_cycle",
+          parent: { subscription_details: { subscription: `sub_${customer}` } },
+          lines: {
+            object: "list",
+            data: [
+              {
+                id: `il_${invoiceId}`,
+                object: "line_item",
+                period: { start: sec, end: sec + 30 * 86400 },
+                pricing: { price_details: { price: "price_creator" } },
+                parent: {
+                  type: "subscription_item_details",
+                  subscription_item_details: { subscription: `sub_${customer}` },
+                },
+              },
+            ],
+          },
+        },
+      },
+    } as unknown as Stripe.Event;
+  }
+
+  async function prewarm(): Promise<void> {
+    await Promise.all(Array.from({ length: 6 }, () => harness.db.execute(sql`SELECT pg_sleep(0.01)`)));
+  }
+
+  it("two replays racing the SAME held event: exactly one mint, one replayed, the other finds no held row", { timeout: 120_000 }, async () => {
+    const { db } = harness;
+    await seedAuthUser(db, "held_race_user");
+    await seedDb(db);
+    await appendConfigVersion(db, { ...CONFIG_V1_SEED, stripePriceMap: { price_creator: "creator" } }, "test-admin");
+    const ws = await heldWorkspace("cus_held_race");
+    await db.update(schema.workspaces).set({ lifecycleState: "tombstoned" }).where(eq(schema.workspaces.id, ws));
+    expect(await handleStripeEvent(db, invoicePaid("evt_held_race", "cus_held_race", "in_held_race"))).toBe(
+      "held_tombstoned"
+    );
+    await db.update(schema.workspaces).set({ lifecycleState: "active" }).where(eq(schema.workspaces.id, ws));
+    await prewarm();
+    const [first, second] = await Promise.all([replayHeldStripeEvents(db, ws), replayHeldStripeEvents(db, ws)]);
+    expect(first.failed + second.failed).toBe(0);
+    expect(first.replayed + second.replayed).toBe(1);
+    const grants = (await db.select().from(creditLedger)).filter((row) => row.refId === "in_held_race");
+    expect(grants).toHaveLength(1);
+    const [row] = await db.select().from(stripeEvents).where(eq(stripeEvents.id, "evt_held_race"));
+    expect(row!.outcome).toBe("processed");
+  });
+
+  it("DETERMINISTIC OVERLAP: replay B is inside its transaction, waiting, while replay A holds the row — exactly one dispatches, the other observes it settled", { timeout: 120_000 }, async () => {
+    const { db } = harness;
+    const ws = await heldWorkspace("cus_held_barrier");
+    await db.update(schema.workspaces).set({ lifecycleState: "tombstoned" }).where(eq(schema.workspaces.id, ws));
+    expect(await handleStripeEvent(db, invoicePaid("evt_held_barrier", "cus_held_barrier", "in_held_barrier"))).toBe(
+      "held_tombstoned"
+    );
+    await db.update(schema.workspaces).set({ lifecycleState: "active" }).where(eq(schema.workspaces.id, ws));
+    await prewarm();
+
+    // THE BARRIER. A's dispatch runs INSIDE A's transaction, after A took the
+    // workspace locks and the row lock; it parks there until released.
+    const reached: string[] = [];
+    let releaseA!: () => void;
+    const aMayCommit = new Promise<void>((resolve) => (releaseA = resolve));
+    let aInside!: () => void;
+    const aIsInside = new Promise<void>((resolve) => (aInside = resolve));
+    const dispatchA = vi.fn(async () => {
+      reached.push("A:holding-row-lock");
+      aInside();
+      await aMayCommit;
+      return "processed" as const;
+    });
+    const dispatchB = vi.fn(async () => "processed" as const);
+    const replayA = replayHeldStripeEvents(db, ws, { dispatch: dispatchA });
+    await aIsInside;
+    const replayB = replayHeldStripeEvents(db, ws, { dispatch: dispatchB });
+    // B is INSIDE its transaction and BLOCKED on A's lock — observed on the
+    // server, not assumed: a backend of this database waiting on a lock.
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const waiting = (await db.execute(sql`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock' AND state = 'active'
+      `)) as unknown as { rows: { n: number }[] };
+      if (waiting.rows[0]!.n >= 1) {
+        reached.push("B:waiting-on-lock");
+        break;
+      }
+      if (Date.now() > deadline) throw new Error("replay B never reached the barrier");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(reached).toEqual(["A:holding-row-lock", "B:waiting-on-lock"]);
+    releaseA();
+    const [a, b] = await Promise.all([replayA, replayB]);
+    // Exactly one dispatched; the other read the row after A committed and
+    // found it settled — through the conditional row-lock gate, not by luck.
+    expect(a).toEqual({ replayed: 1, alreadySettled: 0, failed: 0, stillHeld: 0 });
+    expect(b).toEqual({ replayed: 0, alreadySettled: 1, failed: 0, stillHeld: 0 });
+    expect(dispatchA).toHaveBeenCalledTimes(1);
+    expect(dispatchB).not.toHaveBeenCalled();
+    const [row] = await db.select().from(stripeEvents).where(eq(stripeEvents.id, "evt_held_barrier"));
+    expect(row!.outcome).toBe("processed");
+  });
+
+  it("a replay racing a NEW webhook for the same invoice: one grant, and each receipt records the outcome its own dispatch returned", { timeout: 120_000 }, async () => {
+    const { db } = harness;
+    const ws = await heldWorkspace("cus_held_vs_live");
+    await db.update(schema.workspaces).set({ lifecycleState: "tombstoned" }).where(eq(schema.workspaces.id, ws));
+    expect(await handleStripeEvent(db, invoicePaid("evt_held_first", "cus_held_vs_live", "in_held_vs_live"))).toBe(
+      "held_tombstoned"
+    );
+    await db.update(schema.workspaces).set({ lifecycleState: "active" }).where(eq(schema.workspaces.id, ws));
+    await prewarm();
+    const [replay, live] = await Promise.allSettled([
+      replayHeldStripeEvents(db, ws),
+      handleStripeEvent(db, invoicePaid("evt_held_second", "cus_held_vs_live", "in_held_vs_live")),
+    ]);
+    expect(replay.status).toBe("fulfilled");
+    expect(live.status, String((live as PromiseRejectedResult).reason)).toBe("fulfilled");
+    const grants = (await db.select().from(creditLedger)).filter((row) => row.refId === "in_held_vs_live");
+    expect(grants).toHaveLength(1);
+    const outcomes = (await db.select().from(stripeEvents))
+      .filter((row) => row.id === "evt_held_first" || row.id === "evt_held_second")
+      .map((row) => row.outcome)
+      .sort();
+    expect(outcomes).toEqual(["ignored", "processed"]);
+  });
+});

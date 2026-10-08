@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -725,5 +728,169 @@ describe("the subject axis matches a long term the old rule could not", () => {
         configuredStrictness: CODE_SPIN_STRICTNESS_FLOOR,
       }).failed,
     ).toContain("subject");
+  });
+});
+
+// ------------------------------------------------------------------
+// AUDIT PHASE 2, P2-A4 (register item 37): an all-stopword hook scored 0 and
+// passed the hard pre-display gate.
+// ------------------------------------------------------------------
+describe("a stopword-only reference hook is compared as a word sequence (P2-A4)", () => {
+  const STOPWORD_REFERENCE: SpinReference = { ...REFERENCE, hook: "If this is you" };
+  const withHook = (text: string) =>
+    withSpin({ hooks: [{ text, mechanic: "cold open" }, ...SCRIPT_OUTPUT.hooks.slice(1)] });
+  const failed = (output: ReturnType<typeof withSpin>, reference = STOPWORD_REFERENCE) =>
+    evaluateSpinSimilarity({ output, reference, configuredStrictness: 0 }).failed;
+
+  it("NON-VACUITY: the hook really is wholly stopwords", () => {
+    expect(contentWords(STOPWORD_REFERENCE.hook)).toEqual([]);
+  });
+
+  it("'If this is you', verbatim from the source, is REFUSED (it scored 0 and passed)", () => {
+    expect(failed(withHook("If this is you"))).toContain("hook");
+  });
+
+  it.each([
+    ["a substitution, word 1", "Since this is you"],
+    ["a substitution, word 2", "If that is you"],
+    ["a substitution, word 3", "If this was you"],
+    ["a substitution, word 4", "If this is me"],
+    ["an insertion", "If this is really you"],
+    ["a deletion", "If this you"],
+  ])("near-verbatim on the HOOK unit is refused: %s — %s", (_name, hook) => {
+    expect(failed(withHook(hook))).toContain("hook");
+  });
+
+  it.each([
+    ["at the start", "If this is you, here's what nobody tells you about mornings"],
+    ["in the middle", "Honestly, if this is you, stop scrolling"],
+    ["at the end", "Read this twice if this is you"],
+  ])("the reference CONTAINED in a longer hook is refused: %s", (_where, hook) => {
+    expect(failed(withHook(hook))).toContain("hook");
+  });
+
+  it("containment survives a contraction difference: 'If it is you' inside 'If it's you, read on'", () => {
+    const reference: SpinReference = { ...REFERENCE, hook: "If it is you" };
+    expect(failed(withHook("If it's you, read on before you film"), reference)).toContain("hook");
+  });
+
+  it("the reference split by one inserted word falls to the edit-distance rule: 'If this really is you' is REFUSED (one insertion, k = 1)", () => {
+    expect(failed(withHook("If this really is you"))).toContain("hook");
+  });
+
+  it("'Ask what you would do if this is the only take' in a VO beat is NOT refused — it does not hold the whole reference, and edit distance is hook-only", () => {
+    const prose = withSpin({
+      beats: SCRIPT_OUTPUT.beats.map((beat, i) => (i === 0 ? { ...beat, vo: "Ask what you would do if this is the only take" } : beat)),
+    });
+    expect(failed(prose)).not.toContain("hook");
+  });
+
+  it("a contraction is the same words: 'If it's you' against 'If it is you'", () => {
+    const reference: SpinReference = { ...REFERENCE, hook: "If it is you" };
+    expect(contentWords(reference.hook)).toEqual([]);
+    expect(failed(withHook("If it's you"), reference)).toContain("hook");
+    expect(failed(withHook("If it’s you"), reference)).toContain("hook");
+  });
+
+  it("ordinary prose sharing a 3-word stopword run is NOT refused — containment needs the WHOLE reference, and near-copy is hook-only", () => {
+    const prose = withSpin({
+      beats: SCRIPT_OUTPUT.beats.map((beat, i) => (i === 0 ? { ...beat, vo: "if this is the only take you get, keep it" } : beat)),
+    });
+    expect(failed(prose)).not.toContain("hook");
+    // THE NEAR-COPY TEST IS HOOK-ONLY: one word changed in a beat is prose.
+    // Measured, a mutation that ran edit distance on every unit left the case
+    // above green, so this one pins it.
+    const nearWordsInABeat = withSpin({
+      beats: SCRIPT_OUTPUT.beats.map((beat, i) => (i === 0 ? { ...beat, vo: "If this was you" } : beat)),
+    });
+    expect(failed(nearWordsInABeat)).not.toContain("hook");
+    expect(failed(withHook("This is it"))).not.toContain("hook");
+    expect(failed(withHook("You can see if the light is flat"))).not.toContain("hook");
+    expect(failed(CLEAN)).not.toContain("hook");
+  });
+
+  it.each([
+    ["the caption", (text: string) => withSpin({ caption: { ...SCRIPT_OUTPUT.caption, text } })],
+    ["the thesis", (text: string) => withSpin({ thesis: { ...SCRIPT_OUTPUT.thesis, statement: text } })],
+    ["a beat VO", (text: string) => withSpin({ beats: SCRIPT_OUTPUT.beats.map((beat, i) => (i === 0 ? { ...beat, vo: text } : beat)) })],
+  ] as const)("the reference copied VERBATIM into %s is refused (R-173: containment on every presented unit)", (_where, build) => {
+    expect(failed(build("Honestly, if this is you, keep watching"))).toContain("hook");
+  });
+
+  it("'What if' against the hook 'What if you shot it in one take?' is NOT refused — two words are identity-only", () => {
+    const reference: SpinReference = { ...REFERENCE, hook: "What if" };
+    expect(contentWords(reference.hook)).toEqual([]);
+    expect(failed(withHook("What if you shot it in one take?"), reference)).not.toContain("hook");
+    expect(failed(withHook("What if"), reference)).toContain("hook");
+  });
+
+  // COMPLIANCE VERIFICATION, 2026-10-07: apostrophe spellings, contractions
+  // decided before "stopword-only", `cannot`, and hyphenated tokens.
+  const withField = (where: "hook" | "beat" | "caption", text: string) =>
+    where === "hook"
+      ? withHook(text)
+      : where === "beat"
+        ? withSpin({ beats: SCRIPT_OUTPUT.beats.map((beat, i) => (i === 0 ? { ...beat, vo: text } : beat)) })
+        : withSpin({ caption: { ...SCRIPT_OUTPUT.caption, text } });
+  it.each([
+    ["It's not you", "hook", "It’s not you"],
+    ["It's not you", "beat", "It is not you, it is the lens"],
+    ["Don't do this", "beat", "Do not do this before a shoot"],
+    ["If it's you", "caption", "If it is you, keep watching"],
+    ["I can't even", "hook", "I cannot even"],
+  ] as const)("reference %j copied into the %s as %j is REFUSED", (hook, where, text) => {
+    const reference: SpinReference = { ...REFERENCE, hook };
+    expect(failed(withField(where, text), reference)).toContain("hook");
+  });
+
+  it("the MAIN path splits hyphens too: 'you know who did this' against the reference 'you-know-who did this' is REFUSED", () => {
+    const reference: SpinReference = { ...REFERENCE, hook: "you-know-who did this" };
+    expect(failed(withHook("you know who did this"), reference)).toContain("hook");
+  });
+
+  it("a subject term is matched across apostrophe spellings and hyphenation", () => {
+    const reference: SpinReference = { ...REFERENCE, subjectTerms: ["kitchen renovation", "mum's garden"] };
+    expect(failed(withHook("Before my kitchen-renovation day"), reference)).toContain("subject");
+    expect(failed(withHook("Back in mum’s garden again"), reference)).toContain("subject");
+  });
+
+  it("'Is it just me' against 'Is it just the light or the lens?' is NOT refused", () => {
+    const reference: SpinReference = { ...REFERENCE, hook: "Is it just me" };
+    expect(contentWords(reference.hook)).toEqual([]);
+    expect(failed(withHook("Is it just the light or the lens?"), reference)).not.toContain("hook");
+  });
+
+  it("k is DERIVED from the configured strictness: a stricter gate allows fewer edits", () => {
+    // At strictness 0.95, k = floor(4 x 0.05) = 0, so a one-word change passes
+    // while the verbatim copy is still refused.
+    const strict = (output: ReturnType<typeof withSpin>) =>
+      evaluateSpinSimilarity({ output, reference: STOPWORD_REFERENCE, configuredStrictness: 0.95 }).failed;
+    expect(strict(withHook("If this was you"))).not.toContain("hook");
+    expect(strict(withHook("If this is you"))).toContain("hook");
+  });
+
+  it("THE EMPTY-INPUT RETURNS ARE A LIST: exactly two, by enclosing function, and a planted third is red", () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "src", "similarity.ts"),
+      "utf8"
+    ).replace(/\r\n/g, "\n");
+    const sites = (text: string) => {
+      const lines = text.split("\n");
+      return lines.flatMap((line, i) => {
+        if (!/=== 0.*return 0/.test(line)) return [];
+        for (let j = i; j >= 0; j--) {
+          const fn = lines[j]!.match(/^(?:export )?function (\w+)/);
+          if (fn) return [fn[1]!];
+        }
+        return ["<top level>"];
+      });
+    };
+    expect(sites(source)).toEqual(["sequenceSimilarityOf", "scoreSpan"]);
+    const planted = source.replace(
+      "function hookSimilarityOf(rawSource: string, unit: TextUnit, strictness: number): number {\n",
+      "function hookSimilarityOf(rawSource: string, unit: TextUnit, strictness: number): number {\n  if (source.length === 0) return 0;\n"
+    );
+    expect(planted).not.toBe(source);
+    expect(sites(planted)).not.toEqual(["sequenceSimilarityOf", "scoreSpan"]);
   });
 });

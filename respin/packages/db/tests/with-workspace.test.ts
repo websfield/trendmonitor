@@ -14,12 +14,32 @@ import { createTestDb, seedAuthUser, type TestDb } from "../src/testing";
 import { creditLedger, subscriptions } from "../src/billing-schema";
 import { creatorProfiles } from "../src/brain-schema";
 import {
+  assertReadScoped,
+  assertScoped,
+  isReadGradeScope,
   LEDGER_PAGE_MAX,
+  ProfileAccessError,
+  ProfileScope,
+  ReadGradeProfileScope,
+  ReadGradeWorkspaceScope,
+  ScopeForgeryError,
   WorkspaceAccessError,
+  WorkspacePendingDeletionError,
   WRITE_PAUSE_POLICY,
   withWorkspace,
+  workspaceWriteCapabilities,
+  writeCapabilities,
   type WorkspaceScope,
 } from "../src/with-workspace";
+import { session } from "../src/auth-schema";
+import { membershipProfileSelections as selections } from "../src/brain-schema";
+import { readBrainHistory } from "../src/brain-ops";
+import { requestWorkspaceDeletion, transitionDeletionOperation } from "../src/deletion-lifecycle";
+import { journalReceiptDigest, journalRequestChecksum, type DeletionJournalPort } from "../src/deletion-ports";
+import { openBrainExport } from "../src/export";
+import { deletionOperations } from "../src/lifecycle-schema";
+import { selectedProfileForMember } from "../src/profile-selection";
+import { memberships } from "../src/schema";
 
 const HOUR = 3_600_000;
 
@@ -542,5 +562,174 @@ describe("REQ-G08: the pause policy covers every capability, derived from source
     const members = classifyCapabilities(ungated);
     const brain = members.find((m) => m.name === "writeBrainDoc");
     expect(isGated(brain!, members), "the classifier still calls it gated").toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R-163 (audit P5-R3, row 17): the READ GRADE — minted inside the cage, refused
+// by every writer by type AND at runtime, re-checked on every read.
+// ---------------------------------------------------------------------------
+
+function readGradeJournal(): DeletionJournalPort {
+  return {
+    appendTransition: async (request) => {
+      const object = {
+        objectKey: `test/deletion-journal/${request.operationId}/${String(request.version).padStart(8, "0")}.json`,
+        objectVersionId: `version-${request.version}`,
+        checksumSha256: journalRequestChecksum(request),
+      };
+      return { outcome: "confirmed" as const, ...request, ...object, receiptDigest: journalReceiptDigest(request, object) };
+    },
+  };
+}
+
+describe("R-163: the read grade", () => {
+  let db: TestDb;
+  let workspaceId: string;
+  let profileId: string;
+  let operationId: string;
+  const journal = readGradeJournal();
+
+  beforeEach(async () => {
+    db = await createTestDb();
+    await seedAuthUser(db, "rg_owner");
+    const boot = await ensureUserWorkspace(db, { authUserId: "rg_owner", name: "Read Grade" });
+    workspaceId = boot.workspace.id;
+    await db.insert(session).values({
+      id: "session-rg",
+      token: "token-rg",
+      userId: "rg_owner",
+      expiresAt: new Date(Date.now() + HOUR),
+      updatedAt: new Date(),
+      reauthenticatedAt: new Date(),
+      reauthenticatedMethod: "password",
+    });
+    const [profile] = await db
+      .insert(creatorProfiles)
+      .values({ workspaceId, displayName: "RG Creator" })
+      .returning();
+    profileId = profile!.id;
+    const scope = await withWorkspace(db, { authUserId: "rg_owner" });
+    const writer = writeCapabilities(await ProfileScope.mint(db, scope, profileId));
+    await writer.appendOnboardingInput({ inputClass: "own_post", content: "RG-OWN-POST" });
+    await db
+      .insert(selections)
+      .values({ id: boot.membership.id, userId: boot.user.id, workspaceId, profileId });
+    const op = await requestWorkspaceDeletion(
+      db,
+      scope,
+      { sessionId: "session-rg", idempotencyKey: "rg-delete", typedName: boot.workspace.name },
+      journal
+    );
+    await transitionDeletionOperation(db, op.id, "external_actions_pending", journal);
+    await transitionDeletionOperation(db, op.id, "grace", journal);
+    operationId = op.id;
+  });
+
+  async function drain(source: AsyncIterable<string>): Promise<string> {
+    let text = "";
+    for await (const chunk of source) text += chunk;
+    return text;
+  }
+
+  it("mints ONLY for a tombstoned workspace in the read window; the write grade refuses with the way forward", async () => {
+    await expect(withWorkspace(db, { authUserId: "rg_owner" })).rejects.toBeInstanceOf(WorkspacePendingDeletionError);
+    await expect(withWorkspace(db, { authUserId: "rg_owner" })).rejects.toThrow("/settings/account");
+    const read = await withWorkspace(db, { authUserId: "rg_owner" }, { grade: "read" });
+    expect(isReadGradeScope(read)).toBe(true);
+    expect(read).toBeInstanceOf(ReadGradeWorkspaceScope);
+    expect((await read.accessors.workspace())[0]!.lifecycleState).toBe("tombstoned");
+    expect((await read.accessors.creatorProfiles()).map((p) => p.id)).toEqual([profileId]);
+    // AC4: the export streams under the read grade (the route answers 200)...
+    const exported = await drain(await openBrainExport(db, read, profileId, "json"));
+    expect(exported).toContain("RG-OWN-POST");
+    // ...and history reads.
+    expect(await readBrainHistory(db, read, profileId, "voice")).toEqual([]);
+    expect((await selectedProfileForMember(db, read))?.id).toBe(profileId);
+    // Erasing: no grade mints.
+    await db.update(deletionOperations).set({ state: "erasing" }).where(eq(deletionOperations.id, operationId));
+    await expect(withWorkspace(db, { authUserId: "rg_owner" }, { grade: "read" })).rejects.toThrow(/being erased/);
+  });
+
+  it("R-166 (gate M2): `blocked` admits the read grade only while its resume state is before irreversible work", async () => {
+    await db
+      .update(deletionOperations)
+      .set({ state: "blocked", blockedResumeState: "external_actions_pending" })
+      .where(eq(deletionOperations.id, operationId));
+    expect(isReadGradeScope(await withWorkspace(db, { authUserId: "rg_owner" }, { grade: "read" }))).toBe(true);
+    for (const resume of ["erasing", "verifying"] as const) {
+      await db
+        .update(deletionOperations)
+        .set({ state: "blocked", blockedResumeState: resume })
+        .where(eq(deletionOperations.id, operationId));
+      await expect(withWorkspace(db, { authUserId: "rg_owner" }, { grade: "read" })).rejects.toThrow(/being erased/);
+    }
+  });
+
+  it("a writer refuses it by TYPE, and smuggled through `as unknown as` the cage-has class refuses at runtime", async () => {
+    const read = await withWorkspace(db, { authUserId: "rg_owner" }, { grade: "read" });
+    if (!isReadGradeScope(read)) throw new Error("expected the read grade");
+    // @ts-expect-error a ReadGradeWorkspaceScope is not a WorkspaceScope: no writer's signature accepts it.
+    expect(() => workspaceWriteCapabilities(read)).toThrow(ScopeForgeryError);
+    // (a) the cage-`has` class: smuggled past the type, refused by the cage.
+    expect(() => workspaceWriteCapabilities(read as unknown as WorkspaceScope)).toThrow(ScopeForgeryError);
+    // The `assertScoped`-only class's own fence is byte-identical, so it refuses...
+    expect(() => assertScoped(read)).toThrow(ScopeForgeryError);
+    // ...while the readers' assertion admits it.
+    expect(() => assertReadScoped(read)).not.toThrow();
+    // A profile scope minted from it is the read grade too, never a ProfileScope.
+    const profileRead = await ReadGradeProfileScope.mint(db, read, profileId);
+    expect(() => writeCapabilities(profileRead as unknown as ProfileScope)).toThrow(ScopeForgeryError);
+    expect(() => assertScoped(profileRead)).toThrow(ScopeForgeryError);
+  });
+
+  it("(c) the lifecycle re-read: minted in grace, the operation then ERASING — every read refuses at the read sibling", async () => {
+    const read = await withWorkspace(db, { authUserId: "rg_owner" }, { grade: "read" });
+    if (!isReadGradeScope(read)) throw new Error("expected the read grade");
+    const profileRead = await ReadGradeProfileScope.mint(db, read, profileId);
+    await db.update(deletionOperations).set({ state: "erasing" }).where(eq(deletionOperations.id, operationId));
+    const refusal = "lifecycle_refused:workspace_access_tombstoned_or_suspended";
+    await expect(read.accessors.creatorProfiles()).rejects.toThrow(refusal);
+    await expect(profileRead.accessors.brainDocsByKind("voice")).rejects.toThrow(refusal);
+    await expect(selectedProfileForMember(db, read)).rejects.toThrow(refusal);
+    await expect(readBrainHistory(db, read, profileId, "voice")).rejects.toBeInstanceOf(ProfileAccessError);
+    await expect(openBrainExport(db, read, profileId, "json")).rejects.toBeInstanceOf(ProfileAccessError);
+  });
+
+  it("(d) the epoch: a membership-version bump after the mint makes the next read refuse scope_stale", async () => {
+    const read = await withWorkspace(db, { authUserId: "rg_owner" }, { grade: "read" });
+    if (!isReadGradeScope(read)) throw new Error("expected the read grade");
+    const profileRead = await ReadGradeProfileScope.mint(db, read, profileId);
+    await db
+      .update(memberships)
+      .set({ version: read.membershipVersion + 1 })
+      .where(eq(memberships.workspaceId, workspaceId));
+    await expect(read.accessors.creatorProfiles()).rejects.toThrow("lifecycle_refused:scope_stale");
+    await expect(profileRead.accessors.brainDocsByKind("voice")).rejects.toThrow("lifecycle_refused:scope_stale");
+    await expect(readBrainHistory(db, read, profileId, "voice")).rejects.toThrow("lifecycle_refused:scope_stale");
+  });
+
+  it("assertScoped is BYTE-IDENTICAL to its pre-R-163 body: two cages, never the read grade's", () => {
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../src/with-workspace.ts"),
+      "utf8"
+    ).replace(/\r\n/g, "\n");
+    const start = source.indexOf("export function assertScoped(");
+    const body = source.slice(start, source.indexOf("\n}\n", start) + 2);
+    expect(body).toBe(
+      [
+        "export function assertScoped(",
+        "  s: unknown",
+        "): asserts s is ProfileScope | WorkspaceScope {",
+        "  if (",
+        '    typeof s !== "object" ||',
+        "    s === null ||",
+        "    !(profileCage.has(s) || workspaceCage.has(s))",
+        "  ) {",
+        '    throw new ScopeForgeryError("This value");',
+        "  }",
+        "}",
+      ].join("\n")
+    );
   });
 });

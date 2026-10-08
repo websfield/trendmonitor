@@ -25,6 +25,7 @@ import { describe, expect, it } from "vitest";
 import { scratchDir } from "./support/scratch-dir";
 
 import {
+  CHECK,
   RESULT_AUDIENCE_CLASSES,
   RESULT_CONFOUNDER_CODES,
   RESULT_EVIDENCE_STATES,
@@ -395,12 +396,11 @@ describe("contract C4: a result with no draft is baseline-only, and the form say
   it("...and states the consequence rather than leaving it to be discovered", () => {
     const text = renderPanel().replace(/<[^>]+>/g, " ");
     expect(text).toContain("never joins a treatment group");
-    // THE BASELINE HALF IS CONDITIONAL, and it used to be stated flat: "counts
-    // towards your own baseline" is false for an UNQUANTIFIED result, which
-    // this same form excludes from every comparison two fields away. A
-    // draft-less result with no numbers counts towards nothing.
-    expect(text).toContain("If you give it numbers it can also count towards your own baseline");
-    expect(text).toContain("with no numbers it counts towards nothing");
+    // THE BASELINE HALF: it said "if you give it numbers it can also count
+    // towards your own baseline" — false since R-115 for every result this
+    // form can write (audit Phase 2, P2-A1). Stored and shown, never counted.
+    expect(text).toContain("Numbers you type in are kept with it and never counted into a baseline");
+    expect(text).not.toMatch(/can also count towards your own baseline/);
   });
 
   it("an empty picker is still a usable form (a creator with no drafts can log)", () => {
@@ -865,7 +865,9 @@ describe("proposal decisions require a review action's current document", () => 
     mergedContent: "The refreshed complete document.",
     claims: [
       { pointer: "/rules/0", displayedValue: "observed", sourceEvidence: { quote: "observed", inputClass: "result_summary" } },
-      { pointer: "/rules/1", displayedValue: "[check]", sourceEvidence: { absence: "No source value was available." } },
+      // THE CONSTANT, not the literal (audit Phase 2, P2-R8): the panel's
+      // placeholder decision reads the marker the page hands it.
+      { pointer: "/rules/1", displayedValue: CHECK, sourceEvidence: { absence: "No source value was available." } },
     ],
     freshnessToken: "fresh-1",
   } as unknown as PromotionPanelProps["reviews"][number];
@@ -879,6 +881,7 @@ describe("proposal decisions require a review action's current document", () => 
         refreshAction={async () => ({ status: "idle" })}
         reviewAction={async () => ({ status: "idle" })}
         decideAction={async () => ({ status: "idle" })}
+        checkMarker={CHECK}
       />
     );
     expect(beforeReview).not.toContain('data-testid="promotion-merged-document"');
@@ -889,6 +892,7 @@ describe("proposal decisions require a review action's current document", () => 
         review={review}
         access={{ kind: "full" }}
         decideAction={async () => ({ status: "idle" })}
+        checkMarker={CHECK}
       />
     );
     expect(afterReview).toContain('data-testid="promotion-merged-document"');
@@ -898,20 +902,38 @@ describe("proposal decisions require a review action's current document", () => 
     expect(afterReview).toContain('name="rejectConfirmedFields"');
     expect(afterReview).toContain('data-testid="promotion-claim-confirmations"');
     expect((afterReview.match(/type="checkbox"/g) ?? [])).toHaveLength(2);
+    // PROSE, not a decision (P2-R8): the panel's sentence names the product
+    // term, so it reads `[check]` whatever the constant's value is.
     expect(afterReview).toContain("decided this [check] position");
     expect(afterReview).toContain('aria-disabled="true"');
   });
 
   it("serializes only the claims explicitly checked, including a [check] decision", () => {
-    expect(confirmedFieldsFor(review.claims, new Set())).toEqual([]);
-    expect(confirmedFieldsFor(review.claims, new Set(["/rules/0"]))).toEqual([
+    expect(confirmedFieldsFor(review.claims, new Set(), CHECK)).toEqual([]);
+    expect(confirmedFieldsFor(review.claims, new Set(["/rules/0"]), CHECK)).toEqual([
       { pointer: "/rules/0", asPlaceholder: false },
     ]);
     expect(
-      confirmedFieldsFor(review.claims, new Set(["/rules/0", "/rules/1"]))
+      confirmedFieldsFor(review.claims, new Set(["/rules/0", "/rules/1"]), CHECK)
     ).toEqual([
       { pointer: "/rules/0", asPlaceholder: false },
       { pointer: "/rules/1", asPlaceholder: true },
+    ]);
+  });
+
+  it("the placeholder decision FOLLOWS the marker it is handed — it holds no literal (P2-R8)", () => {
+    // The merged-C-1 mutation, as a test: were the home's value "[verify]",
+    // the panel's `asPlaceholder` would follow it, because the decision reads
+    // the prop and nothing else.
+    const MOVED = `${CHECK}-moved`;
+    const moved = review.claims.map((c) =>
+      c.displayedValue === CHECK ? { ...c, displayedValue: MOVED } : c
+    );
+    expect(confirmedFieldsFor(moved, new Set(["/rules/1"]), MOVED)).toEqual([
+      { pointer: "/rules/1", asPlaceholder: true },
+    ]);
+    expect(confirmedFieldsFor(moved, new Set(["/rules/1"]), CHECK)).toEqual([
+      { pointer: "/rules/1", asPlaceholder: false },
     ]);
   });
 

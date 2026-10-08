@@ -6,3 +6,6 @@ export {
   createStripeExternalCommandPort,
   type DeletionStripeClient,
 } from "./stripe/deletion-commands";
+// R-165: the deletion tick replays money held while a workspace was
+// tombstoned, for every workspace that is active again.
+export { replayHeldStripeEventsForActiveWorkspaces } from "./stripe/webhooks";

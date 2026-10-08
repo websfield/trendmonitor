@@ -34,6 +34,15 @@ const updatedAt = () =>
   timestamp("updated_at", { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date());
 
 export const trendSourceKind = pgEnum("trend_source_kind", ["youtube", "submitted"]);
+/**
+ * THE ONE AUTHORITY for a trend source's kind in `@respin/db` (audit Phase 2,
+ * P2-R11). Every hand-typed union in `trends-storage.ts` reads this, so a
+ * third name is a compile error at the union rather than a silent widening,
+ * and `packages/trends/tests/trends.test.ts` asserts `@respin/trends`'
+ * `TREND_SOURCE_NAMES` equals the enum's values (read from this file — that
+ * package depends on nothing).
+ */
+export type TrendSourceKind = (typeof trendSourceKind.enumValues)[number];
 export const trendRightsScope = pgEnum("trend_rights_scope", ["profile_private", "shared_analysis"]);
 export const transcriptState = pgEnum("trend_transcript_state", [
   "transcript_required",

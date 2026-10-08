@@ -15,10 +15,13 @@
 //   - nothing here says the rules are right, that the product learned them, or
 //     that they will improve. They are a draft the creator confirms.
 import {
-  BILLING_ERROR_COPY,
+  billingErrorCopy,
   type BillingErrorCode,
   type BillingErrorCopy,
 } from "../billing-errors";
+// R-176 (plan label R-159): the support address and the sentence that names it.
+import { supportContact } from "../../support-contact";
+import { withContact } from "../../support-copy";
 // THE SHARED DISPLAY VOCABULARY IS RE-EXPORTED, NEVER REDECLARED (slice 5
 // stage 2, G0 — closing stage 1's handoff).
 //
@@ -168,6 +171,15 @@ export const PROPOSED_INTRO: Record<ProposedKind, (profileName: string) => strin
     `These are the words and vibes this draft says ${profileName} never wants used. Nothing here is in force. Read each one next to the words it rests on, and confirm it — or leave it unconfirmed and it stays out.`,
 };
 
+/**
+ * R-163: the decide block `/brain` renders under the READ grade — the
+ * workspace is tombstoned by a pending deletion. It names the page that can
+ * act on it, and only what is true during grace: history readable, export
+ * available, nothing editable.
+ */
+export const BRAIN_PENDING_DELETION_REASON =
+  "This workspace is scheduled for deletion, so brain edits, confirmations and activation are closed. You can still read this history and export your data. Cancel the deletion on /settings/account to make changes again.";
+
 export const BRAIN_EXPORT_JSON_COPY =
   "JSON is the complete machine-readable record from the creator-data registry.";
 
@@ -278,36 +290,63 @@ const BRAIN_OVERRIDES: Partial<Record<BillingErrorCode, BillingErrorCopy>> = {
   brain_content_schema: {
     title: "Those edits do not fit this brain document",
     detail:
-      "One or more edited values do not fit the fixed fields for this Brain document, so no replacement draft was created and the version already in force is unchanged. Review the field formats shown here and try again. If the same values are refused again, contact support so the document shape can be checked.",
+      "One or more edited values do not fit the fixed fields for this Brain document, so no replacement draft was created and the version already in force is unchanged. Review the field formats shown here and try again. If the same values are refused again, the refusal is recorded so an operator can check the document shape.",
   },
   brain_kind_not_writable: {
     title: "That brain document cannot be edited here",
     detail:
-      "This screen edits Voice, Strategy and Kill Test documents only. The requested stored document is not one of those editable kinds, so nothing was changed. Reload the page and try the current version; contact support if the refusal repeats.",
+      "This screen edits Voice, Strategy and Kill Test documents only. The requested stored document is not one of those editable kinds, so nothing was changed. Reload the page and try the current version.",
   },
   brain_claim_walk: {
     title: "This brain document needs support",
     detail:
-      "The server could not match the stored document to the claim fields this screen must show, so it refused the edit before creating a replacement. The version already in force is unchanged. Reload once, then contact support if it repeats.",
+      "The server could not match the stored document to the claim fields this screen must show, so it refused the edit before creating a replacement. The version already in force is unchanged. Reload once; the refusal is recorded.",
   },
   brain_reason: {
     title: "The replacement draft could not be recorded",
     detail:
-      "The server could not assign the replacement one of the fixed reasons a Brain version is allowed to carry, so nothing was created and the version already in force is unchanged. Try once more, then contact support if it repeats.",
+      "The server could not assign the replacement one of the fixed reasons a Brain version is allowed to carry, so nothing was created and the version already in force is unchanged. Try once more; the refusal is recorded.",
   },
   onboarding_input_limit: {
     title: "That replacement cannot fit this creator's record",
     detail:
-      "A Brain edit records its changed rules as creator-authored evidence, and that input is too large or this creator's retained-input record is full. Nothing was changed. Shorten the edited text and try again; if the profile is full, contact support before making more revisions.",
+      "A Brain edit records its changed rules as creator-authored evidence, and that input is too large or this creator's retained-input record is full. Nothing was changed. Shorten the edited text and try again; if the profile is full, it cannot take more revisions.",
   },
 };
 
-/** The copy `/brain` renders for a `?e=` code — closed set, overrides applied. */
-export function brainErrorFor(raw: string | undefined): BillingErrorCopy | null {
+/**
+ * THE `/brain` OVERRIDES WHOSE REMEDY ENDS WITH A PERSON (audit P6-R6
+ * amendment, R-176). Each sent the creator to support with no channel (measured
+ * 2026-10-05: 5 lines in this file); the text above keeps only the remedy the
+ * creator can act on, and `brainErrorFor` appends the contact line when
+ * `RESPIN_SUPPORT_EMAIL` is set. A list, pinned by
+ * `tests/support-contact.test.tsx`.
+ */
+export const BRAIN_SUPPORT_CONTACT_CODES: readonly BillingErrorCode[] = [
+  "brain_content_schema",
+  "brain_kind_not_writable",
+  "brain_claim_walk",
+  "brain_reason",
+  "onboarding_input_limit",
+];
+
+/**
+ * The copy `/brain` renders for a `?e=` code — closed set, overrides applied.
+ * `support` defaults to the server read (this module imports
+ * `../billing-errors`, so it is server-only); a test passes it explicitly.
+ */
+export function brainErrorFor(
+  raw: string | undefined,
+  support: string | null = supportContact()
+): BillingErrorCopy | null {
   if (!raw) return null;
   // An unrecognised code falls back to `unknown`, never to nothing — the
   // silent-nothing failure mode `onboardingErrorFor` was already corrected for.
   const known = (BRAIN_ERROR_CODES as readonly string[]).includes(raw);
   const code = (known ? raw : "unknown") as BillingErrorCode;
-  return BRAIN_OVERRIDES[code] ?? BILLING_ERROR_COPY[code];
+  const override = BRAIN_OVERRIDES[code];
+  if (override === undefined) return billingErrorCopy(code, support);
+  return BRAIN_SUPPORT_CONTACT_CODES.includes(code)
+    ? { title: override.title, detail: withContact(override.detail, support) }
+    : override;
 }

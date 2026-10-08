@@ -55,6 +55,19 @@ function caughtKind(run: () => unknown): AssemblyKind {
   }
 }
 
+// ONE PARSE PER (file, text), REUSED (audit Phase 3, 2026-10-06 — harness
+// only): every containment plant below re-scans the whole tracked tree, and the
+// containment walk only reads the tree it is given. A cache keyed on path and
+// text returns what a re-parse would.
+const parsedSources = new Map<string, { source: string; parsed: ts.SourceFile }>();
+function parsedSourceOf(file: string, source: string): ts.SourceFile {
+  const hit = parsedSources.get(file);
+  if (hit && hit.source === source) return hit.parsed;
+  const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  parsedSources.set(file, { source, parsed });
+  return parsed;
+}
+
 describe("AssemblyError kinds", () => {
   const cases: ReadonlyArray<readonly [AssemblyKind, () => unknown]> = [
     ["no_fields_supplied", () => assembleVoicePrompt({ posts: POSTS, fields: [], minPosts: 1 })],
@@ -117,6 +130,27 @@ describe("AssemblyError kinds", () => {
   for (const [kind, run] of cases) {
     it(`produces ${kind}`, () => expect(caughtKind(run)).toBe(kind));
   }
+
+  // KINDS WHOSE PRODUCER IS NOT IN THIS PACKAGE, with the test that drives the
+  // real producer. `nothing_grounded` is raised by the voice build's
+  // `validate` in `@respin/credits` once `isAllPlaceholders` holds (audit
+  // P3-A1) — a package this one cannot import — so its witness runs
+  // `inferVoice` on an all-`[check]` reply there. A case here that threw
+  // `nothingGroundedError()` itself would prove only the constructor.
+  const WITNESSED_ELSEWHERE: Readonly<Record<string, string>> = {
+    nothing_grounded: "packages/credits/tests/infer-voice.test.ts",
+  };
+
+  it("every kind has a witness: a case above, or the named test that drives its real producer", () => {
+    const here = new Set(cases.map(([kind]) => kind));
+    expect([...here, ...Object.keys(WITNESSED_ELSEWHERE)].sort()).toEqual([...ASSEMBLY_KINDS].sort());
+    for (const [kind, file] of Object.entries(WITNESSED_ELSEWHERE)) {
+      expect(here.has(kind as AssemblyKind), kind).toBe(false);
+      const witness = readFileSync(resolve(RESPIN_ROOT, file), "utf8");
+      expect(witness, file).toContain(`.toBe("${kind}")`);
+      expect(witness, file).toContain("inferVoice(");
+    }
+  });
 
   it("keeps the closed union equal to the kinds at every throw site", () => {
     const source = readFileSync(ASSEMBLE_PATH, "utf8");
@@ -210,14 +244,25 @@ describe("canonical quote location", () => {
     "\u000a": " ",
   });
 
-  it("folds exactly the independently pinned table over every Unicode scalar value", () => {
+  // MISMATCHES COLLECTED, ONE ASSERTION, A YIELD PER PLANE (audit Phase 3,
+  // 2026-10-06 — harness only). The same 1,112,064 comparisons; one `expect`
+  // per code point held this worker off its event loop for one 17.5 s block
+  // alone and 38 s under the full suite, close to birpc's hard 60 s
+  // `onTaskUpdate` timeout that fails a run whose tests all passed.
+  it("folds exactly the independently pinned table over every Unicode scalar value", async () => {
     expect(CANON_CODE_POINT_TABLE).toEqual(EXPECTED_CANON_FOLDS);
+    const mismatches: string[] = [];
+    let compared = 0;
     for (let cp = 0; cp <= 0x10ffff; cp += 1) {
+      if (cp % 0x10000 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
       if (cp >= 0xd800 && cp <= 0xdfff) continue;
       const point = String.fromCodePoint(cp);
       const expected = EXPECTED_CANON_FOLDS[point] ?? point;
-      expect(canon(`a${point}b`)).toBe(`a${expected}b`);
+      compared += 1;
+      if (canon(`a${point}b`) !== `a${expected}b`) mismatches.push(`U+${cp.toString(16).toUpperCase()}`);
     }
+    expect(mismatches).toEqual([]);
+    expect(compared).toBe(0x110000 - 0x800);
   });
 
   it("contains no broad whitespace class or trim call in the canonicaliser", () => {
@@ -415,7 +460,7 @@ function mapperContainment(files: ReadonlyArray<readonly [string, string]>): Con
   let inferVoiceParseWithoutOverride = 0;
 
   for (const [file, source] of files) {
-    const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const parsed = parsedSourceOf(file, source);
     const isInjectionTest = file.replaceAll("\\", "/").includes("packages/llm/tests/");
     const aliases = new Map<string, SeamTarget>();
     const namespaceAliases = new Set<string>();

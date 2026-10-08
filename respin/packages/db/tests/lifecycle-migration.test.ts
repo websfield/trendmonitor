@@ -740,4 +740,72 @@ describe("Phase 10b-1 lifecycle migration upgrades", () => {
       `)
     ).rejects.toThrow("subscriptions_tier_checkout_fence_shape");
   });
+
+  describe("0063: the dunning episode marker and its backfill (audit P3-R4, R-159)", () => {
+    const DUNNING = "('past_due')";
+    async function before0063(): Promise<{ client: PGlite; migration: string }> {
+      const client = new PGlite();
+      const files = readdirSync(MIGRATIONS).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
+      const migration = files.find((name) => name.startsWith("0063_"));
+      expect(migration, "migration 0063 is missing").toBeDefined();
+      for (const name of files.filter((name) => name < migration!)) {
+        await applyMigration(client, name);
+      }
+      return { client, migration: migration! };
+    }
+    async function seedSubscription(client: PGlite, n: number, status: string, graceSql: string): Promise<string> {
+      const workspaceId = `019b0d7a-86df-7000-8000-0000000063${String(n).padStart(2, "0")}`;
+      await client.exec(`
+        INSERT INTO "workspaces" (id, name) VALUES ('${workspaceId}', 'W${n}');
+        INSERT INTO "subscriptions" (id, workspace_id, stripe_customer_id, status, grace_expires_at)
+        VALUES ('019b0d7a-86df-7000-8000-0000000064${String(n).padStart(2, "0")}', '${workspaceId}', 'cus_0063_${n}', '${status}', ${graceSql});
+      `);
+      return workspaceId;
+    }
+    const markerOf = async (client: PGlite, workspaceId: string) =>
+      ((await client.query<{ d: string | null; g: string | null }>(
+        `SELECT dunning_started_at::text AS d, grace_expires_at::text AS g FROM subscriptions WHERE workspace_id = '${workspaceId}'`
+      )).rows[0])!;
+    const unmarkedLive = async (client: PGlite) =>
+      Number((await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM subscriptions WHERE dunning_started_at IS NULL AND grace_expires_at > now() AND status IN ${DUNNING}`
+      )).rows[0]!.n);
+
+    it("stamps every past_due row with a deadline — live AND lapsed — at grace_expires_at minus graceDays from the STORED document; no null marker is left beside a live deadline", async () => {
+      const { client, migration } = await before0063();
+      // graceDays 5, deliberately not the seed's 7: the number must come from
+      // the stored document, never a literal.
+      await client.exec(`INSERT INTO "config_versions" (content, created_by) VALUES ('{"graceDays": 3}'::jsonb, 'older');`);
+      await client.exec(`INSERT INTO "config_versions" (content, created_by) VALUES ('{"graceDays": 5}'::jsonb, 'newest');`);
+      const live = await seedSubscription(client, 1, "past_due", "now() + interval '2 days'");
+      const lapsed = await seedSubscription(client, 2, "past_due", "now() - interval '1 day'");
+      const healthy = await seedSubscription(client, 3, "active", "NULL");
+      const noDeadline = await seedSubscription(client, 4, "past_due", "NULL");
+      expect(await unmarkedLive(client).catch(() => -1)).toBe(-1); // the column does not exist yet
+      await applyMigration(client, migration);
+      for (const ws of [live, lapsed]) {
+        const row = await markerOf(client, ws);
+        expect(row.d, ws).not.toBeNull();
+        const diff = Date.parse(row.g!) - Date.parse(row.d!);
+        expect(diff).toBe(5 * 24 * 60 * 60 * 1000);
+      }
+      expect((await markerOf(client, healthy)).d).toBeNull();
+      // A past_due row with NO deadline has nothing to derive a start from.
+      expect((await markerOf(client, noDeadline)).d).toBeNull();
+      expect(await unmarkedLive(client)).toBe(0);
+    });
+
+    it("REFUSES rather than guesses when live-grace dunning rows exist and no config document does — naming the count and the remedy", async () => {
+      const { client, migration } = await before0063();
+      await seedSubscription(client, 5, "past_due", "now() + interval '2 days'");
+      await expect(applyMigration(client, migration)).rejects.toThrow(/0063 refuses.*1 past_due.*config:migrate/s);
+    });
+
+    it("a database with ZERO dunning rows migrates clean with config_versions EMPTY — the condition is conjunctive", async () => {
+      const { client, migration } = await before0063();
+      await seedSubscription(client, 6, "active", "NULL");
+      await expect(applyMigration(client, migration)).resolves.toBeUndefined();
+      expect(await unmarkedLive(client)).toBe(0);
+    });
+  });
 });

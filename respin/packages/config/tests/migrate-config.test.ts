@@ -85,6 +85,9 @@ describe("AC-14 — migrate-config merges into the ACTIVE version, by appending"
     if (result.status !== "migrated") throw new Error("unreachable");
     expect(result.fromVersion).toBe(v2);
     expect(result.addedKeys).toEqual([
+      // Audit P3-R7 (R-158 point 6): a NESTED addition — the operator's other
+      // pack values stay theirs, and only the new key is merged in.
+      "pack.autoTopupMaxAttemptsPerMonth",
       "profileCaps",
       "trackedNiches",
       "performanceLearning",
@@ -106,7 +109,7 @@ describe("AC-14 — migrate-config merges into the ACTIVE version, by appending"
     const active = await getActiveConfig(db);
     expect(active.version).toBe(result.toVersion);
     expect(active.content.stripePriceMap).toEqual(CUSTOMISED.stripePriceMap);
-    expect(active.content.pack).toEqual(CUSTOMISED.pack);
+    expect(active.content.pack).toEqual({ ...CUSTOMISED.pack, autoTopupMaxAttemptsPerMonth: 100 });
     expect(active.content.profileCaps).toEqual({
       free: 1,
       creator: 1,
@@ -231,7 +234,7 @@ describe("AC-14 — the three wrong implementations are RED", () => {
 
     const active = await getActiveConfig(db);
     expect(active.content.stripePriceMap).toEqual(CUSTOMISED.stripePriceMap);
-    expect(active.content.pack).toEqual(CUSTOMISED.pack);
+    expect(active.content.pack).toEqual({ ...CUSTOMISED.pack, autoTopupMaxAttemptsPerMonth: 100 });
     expect(active.content.profileCaps).toBeDefined();
 
     // ...and the two assertions that catch it. `config_versions` is append-only

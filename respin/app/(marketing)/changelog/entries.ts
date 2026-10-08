@@ -1,9 +1,25 @@
 // The changelog's entries. Newest first. Each entry states what exists in the
 // product; `tests/changelog.test.ts` scans every line against the forbidden
 // claims canon, so an entry cannot promise learning, accuracy or results.
+import { changelogDeletionSummary } from "../deletion-status";
+
 export type ChangelogEntry = Readonly<{ date: string; title: string; summary: string }>;
 
-export const CHANGELOG: readonly ChangelogEntry[] = [
+type DeletionScopes = Parameters<typeof changelogDeletionSummary>[0];
+
+/**
+ * The entries, with the 2026-09-08 deletion entry DERIVED from the request
+ * flag (P5-R1's amendment): the page passes the deployment's open scopes, so
+ * the entry cannot say "not open" on a deployment that opened a scope, or the
+ * reverse. `CHANGELOG` below is the launch state (no scope open), which is
+ * what `tests/changelog.test.ts` scans; `tests/marketing-claims.test.tsx`
+ * renders the enabled form too.
+ */
+export function changelogFor(openScopes: DeletionScopes): readonly ChangelogEntry[] {
+  return entries(changelogDeletionSummary(openScopes));
+}
+
+const entries = (deletionSummary: string): readonly ChangelogEntry[] => [
   {
     date: "2026-09-09",
     title: "Sample Spin on the landing page",
@@ -19,8 +35,10 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
   {
     date: "2026-09-08",
     title: "Account, profile and workspace deletion",
-    summary:
-      "Deletion requests with a recovery window, an external append-only journal, and retention clocks for every table. Erasure is enabled per deployment.",
+    // P1-A1 wrote the not-yet-open sentence; P5-R1's amendment derives it
+    // from RESPIN_DELETION_REQUEST_SCOPES (`../deletion-status`), so it is
+    // rewritten by the flag, never by a person remembering to.
+    summary: deletionSummary,
   },
   {
     date: "2026-09-05",
@@ -41,3 +59,6 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "Six Studio modes — the seventh, Spin, lives on Trends — plus the Kill Test, traceability and the [check] marker for specifics the product will not invent; a versioned, confirmable Creator Brain with export.",
   },
 ];
+
+/** The launch state: no deletion request scope open. */
+export const CHANGELOG: readonly ChangelogEntry[] = changelogFor([]);

@@ -22,7 +22,7 @@ import {
   compareRestoredState,
   journalPurgeCandidates,
   journalReplayAction,
-  listJournalOperationIds,
+  listJournalOperations,
   loadJournalChain,
   parseJournalRecord,
   planJournalRestore,
@@ -317,7 +317,32 @@ describe("restore verifier — planted damage must be found", () => {
     expect(chain.records.map((r) => r.receiptDigest)).toEqual(digests);
     // Four legal hops from `requested` land on `grace`, not `complete`.
     expect(chain.latest.record.toState).toBe("grace");
-    expect(await listJournalOperationIds(s3.verifier, CONFIG)).toEqual([OPERATION_ID]);
+    expect(await listJournalOperations(s3.verifier, CONFIG)).toEqual({
+      operationIds: [OPERATION_ID],
+      unparseableKeys: [],
+    });
+  });
+
+  it("COUNTS a key it cannot parse instead of dropping it (register 2026-10-05 item 44, planted)", async () => {
+    // An operation whose only object is mis-keyed used to vanish from the
+    // listing — and so from every check the restore verifier and the purge run.
+    const s3 = fake();
+    await appendChain(s3, 1);
+    const strays = [
+      `${CONFIG.environment}/deletion-journal/01J8ZQ0000000000000000000B/1.json`, // unpadded version
+      `${CONFIG.environment}/deletion-journal/${OPERATION_ID}/000002.txt`, // wrong leaf
+      `${CONFIG.environment}/deletion-journal/stray.json`, // too few segments
+    ];
+    const listedWithStrays = {
+      ...s3.verifier,
+      listVersions: async (bucket: string, prefix: string) => [
+        ...(await s3.verifier.listVersions(bucket, prefix)),
+        ...strays.map((key, i) => ({ key, versionId: `stray-${i}`, isDeleteMarker: false, size: 2, lastModified: REQUESTED_AT })),
+      ],
+    };
+    const listing = await listJournalOperations(listedWithStrays, CONFIG);
+    expect(listing.operationIds).toEqual([OPERATION_ID]);
+    expect(listing.unparseableKeys).toEqual([...strays].sort());
   });
 
   const damage: readonly [string, (s3: FakeS3, key: string) => void, string][] = [

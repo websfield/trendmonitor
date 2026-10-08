@@ -28,7 +28,7 @@ import {
   respinCredits,
 } from "@respin/credits/app-server";
 import { rethrowNextControlFlow } from "../../../../lib/next-control-flow";
-import { logRefusal, logSpend } from "../../safe-log";
+import { logRefusal, logSpend, wireId } from "../../safe-log";
 import type { BillingErrorCode } from "../../billing-errors";
 import { scopeForUser } from "../../workspace-scope";
 import { studioStateFor } from "../../studio/projection";
@@ -74,8 +74,8 @@ export async function firstIdeasAction(
     // log line (see `../../safe-log.ts`).
     logSpend("[first-ideas-action] generation completed", {
       workspaceId: scope.workspaceId,
-      profileId,
-      attemptId,
+      profileId: wireId(profileId),
+      attemptId: wireId(attemptId),
       generationId: result.generation.id,
       mode: result.generation.mode,
       outcome: result.generation.outcome,
@@ -97,8 +97,8 @@ export async function firstIdeasAction(
       status: "refused",
       code: logRefusal("[first-ideas-action] generation refused", err, {
         ...(scope ? { workspaceId: scope.workspaceId } : {}),
-        profileId,
-        attemptId,
+        profileId: wireId(profileId),
+        attemptId: wireId(attemptId),
         // NOT CLAMPED, and it does not need to be: unlike `/studio`'s, this
         // mode is a server-side constant rather than wire input, so there is no
         // attacker-supplied string on this path to sanitise.

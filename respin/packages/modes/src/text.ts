@@ -14,7 +14,10 @@
 //
 // EVERY REGEX HERE IS A LITERAL, never assembled from a string. One lost
 // backslash turns `\s` into `s` and the scan silently matches nothing, which is
-// the fail-open shape CLAUDE.md's 2026-08-21 lesson names.
+// the fail-open shape CLAUDE.md's 2026-08-21 lesson names. `CLAUSE_SEPARATOR`
+// is a literal too; its consumers in `hard-rules.ts` splice its `.source` into
+// `String.raw` templates (raw, so no backslash is consumed), and every pattern
+// built that way is held to a specimen it must match.
 
 /**
  * One piece of the model's output, addressed by where it came from.
@@ -41,6 +44,26 @@ export type TextUnit = {
 const SENTENCE_END = /[.!?…]+/;
 
 /**
+ * A CLAUSE SEPARATOR inside one sentence — the ONE spelling of the concept
+ * (audit Phase 2, P2-R3). It had three copies in `hard-rules.ts` (`[,;—–-]`)
+ * and a fourth, narrower one in `claims.ts`'s negated-clause guard (`[^,;]`),
+ * and the narrower one let "Nothing is guaranteed — this will perform."
+ * through: the em dash is how a model hedges, and `assemble.ts` tells it to.
+ *
+ * THE MEMBERS: comma, semicolon, colon, em dash, en dash, and a hyphen USED AS
+ * A DASH. A hyphen inside a word ("low-key", "well-lit") is not a clause
+ * break — read as one, an honest "Nothing about this low-key hook will
+ * perform." would detach its negator and refuse, a debited false-fire. The
+ * colon was added by the Phase 2 generator's measurement (50 escapes in 1,500
+ * on the negated-clause guard); in `hard-rules.ts` it makes "It's not luck:
+ * it's reps." the same tic it already was with a comma.
+ *
+ * NO CAPTURING GROUP, because `hard-rules.ts` composes it into patterns that
+ * use backreferences (`\1`), and a group here would renumber them.
+ */
+export const CLAUSE_SEPARATOR = /\s*(?:[,;:—–]|(?<!\w)-|-(?!\w))\s*/;
+
+/**
  * A word-like token: letters or digits, plus the apostrophes and hyphens that
  * live INSIDE a word. Deliberately not `\S+`, which counts a bare em dash as a
  * word and would inflate a hook's length past 14 for punctuation.
@@ -50,6 +73,19 @@ const WORDLIKE = /[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu;
 /** Every word-like token of a string, in order. */
 export function words(text: string): string[] {
   return text.match(WORDLIKE) ?? [];
+}
+
+/**
+ * Every word-like token with where it sits — the same tokens `words` returns,
+ * in the same order, so a run found over `words` can be mapped back onto the
+ * text it came from.
+ */
+export function wordSpans(text: string): { word: string; start: number; end: number }[] {
+  return [...text.matchAll(WORDLIKE)].map((m) => ({
+    word: m[0],
+    start: m.index ?? 0,
+    end: (m.index ?? 0) + m[0].length,
+  }));
 }
 
 export function wordCount(text: string): number {

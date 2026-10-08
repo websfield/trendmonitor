@@ -30,6 +30,102 @@
   - **Production blocker (plan R3):** before the first production deploy — a scheduled backup to storage independent of the database host, least-privilege credentials, failure **and absence** alerting, and one real restore drill recorded here with its date and result.
   - **Last production drill: NEVER.** Update this line the first time one runs; a drill nobody recorded is a drill nobody can point at.
 
+### Restore drill — the commands (R-155; amends R-124's plan C4)
+
+Every input is an environment variable; neither script takes a positional argument. `respin/tests/shell-scripts.test.ts` pins every command block below against the scripts' own required inputs, so a block that drops one is a red test.
+
+**Host tools.** `backup.sh`: `pg_dump`, `psql`, `gpg`, `gzip`, `sha256sum`, `node` (each checked before anything is written). `restore-drill.sh`: `pg_restore`, `psql`, `gpg`, `gunzip`, `sha256sum`, `node`, `pnpm`. **The restore target server needs `max_locks_per_transaction` raised** (the Docker service runs `512`): the drill runs every pending migration in one transaction, and at the default 64 a schema this size fails with "out of shared memory" — this repo hit exactly that at ~55 migrations. A managed Postgres that forbids the setting needs a target with fewer pending migrations (a fresher backup) instead.
+
+**Backup** (writes `<stamp>.dump.gz.gpg`, a `.sha256` naming the file alone, and a manifest with `createdAt`, `expiresAt`, the source host/port/database, the journal bucket/environment from its shell, and `activeTombstones`; the expiry prune — on the earlier of `expiresAt` and `createdAt` + 21 days — runs on every exit once `BACKUP_DIR` is set, and a null tombstone manifest exits non-zero). Every manifest field a script reads is bound to a value the manifest does not control, in `respin/scripts/backup-manifest.mjs` (decisions.md R-155 §8). **Name the journal in the backup's shell:** a manifest that records it is tied to that journal, and the drill refuses to verify it against any other. One that records none is a *legacy* manifest, and an empty journal on it is stamped `JOURNAL-EMPTY`:
+
+```bash
+DATABASE_URL='postgres://<backup-role>:<password>@<host>:5432/respin' \
+BACKUP_DIR=/mnt/backups/respin \
+BACKUP_PASSPHRASE_FILE=/etc/respin/backup.pass \
+RESPIN_DELETION_JOURNAL_BUCKET=<BUCKET> \
+RESPIN_DELETION_JOURNAL_ENVIRONMENT=<ENVIRONMENT> \
+  bash respin/scripts/backup.sh
+```
+
+**Drill, production-shaped** (the same command as `docs/operator/aws.md` Step 6). The order is manifest checks (missing, expired or null-tombstone manifest → refused; the way forward is a fresh backup) → isolated restore → content assertions (`config_versions`, `subscriptions`, `credit_ledger`, `stripe_events` all non-empty; no negative ledger) → **`db:migrate` on the drill database** → journal verification, which passes only on exit 0 **and** the verifier's `RESTORE-VERIFY: JOURNAL VERIFIED` line:
+
+```bash
+RESTORE_SERVING_DISABLED=confirmed \
+BACKUP_FILE=/mnt/backups/respin/respin-<stamp>.dump.gz.gpg \
+BACKUP_PASSPHRASE_FILE=/etc/respin/backup.pass \
+MAINTENANCE_URL='postgres://<user>:<password>@<host>:5432/postgres' \
+RESPIN_DELETION_JOURNAL_BUCKET=<BUCKET> \
+RESPIN_DELETION_JOURNAL_REGION=<REGION> \
+RESPIN_DELETION_JOURNAL_ENVIRONMENT=<ENVIRONMENT> \
+  bash respin/scripts/restore-drill.sh
+```
+
+### Restore drill — local (no cloud account)
+
+The same script and the same S3 verifier, against an S3-compatible journal on loopback (MinIO, `respin/docker-compose.yml` profile `drill`). Every assertion runs; what changes is where the journal lives. **A local transcript closes nothing about production** (todos.md T-23), and one carrying `EMPTY-MONEY-ALLOWED (local drill)` never does.
+
+**The env block** is step 0 of the walk below. Export it in **every** shell involved — the app, the worker and the drill — because the app and the worker each build their own journal writer from these names (all three of bucket/region/environment, or none), and the drill's verifier reads them in its own shell.
+
+- **The AWS keys are MinIO's throwaway local root user.** Neither the writer nor the verifier passes credentials, so the SDK's default chain must find them in the environment — on all three processes.
+- **The endpoint is the IP form on purpose.** The SDK addresses a bucket virtual-host style (`<bucket>.<host>`) unless the host is an IP literal, when it uses path style. `http://127.0.0.1:9000` works as written; `http://localhost:9000` would resolve `respin-deletion-journal-local.localhost` and fail. `createS3JournalClient` accepts `forcePathStyle` for a hostname endpoint, but nothing here sets it. `--allow-empty-money` also requires exactly this endpoint.
+- **The app additionally needs `RESPIN_DELETION_REQUEST_SCOPES=workspace`**; unset, `/settings/account` renders the deletion controls closed and nothing can be requested.
+
+**The walk.** Never against the dev database — the seed below requests a real deletion.
+
+```bash
+# 0. THE ENV BLOCK — in EVERY shell below: the app, the worker, the backup and the drill
+#    (the backup records the journal bucket/environment in its manifest, and
+#    --allow-empty-money refuses a dump whose recorded journal is not the drill's)
+export RESPIN_DELETION_JOURNAL_BUCKET=respin-deletion-journal-local
+export RESPIN_DELETION_JOURNAL_REGION=us-east-1
+export RESPIN_DELETION_JOURNAL_ENVIRONMENT=local
+export RESPIN_DELETION_JOURNAL_ENDPOINT=http://127.0.0.1:9000
+export AWS_ACCESS_KEY_ID=respinlocal
+export AWS_SECRET_ACCESS_KEY=respin_local_drill
+
+# 1. Postgres and the loopback journal (the bucket is created with versioning + Object Lock)
+docker compose -f respin/docker-compose.yml up -d postgres
+docker compose -f respin/docker-compose.yml --profile drill up -d minio minio-init
+
+# 2. A scratch SOURCE database, migrated and seeded
+docker exec respin-postgres psql -U respin -d postgres -c 'CREATE DATABASE respin_drill_source'
+export DATABASE_URL=postgres://respin:respin_local_dev@127.0.0.1:5435/respin_drill_source
+pnpm -C respin db:migrate && pnpm -C respin db:seed
+
+# 3. App and worker against it (each shell: the env block + DATABASE_URL + BETTER_AUTH_SECRET/BETTER_AUTH_URL;
+#    the app shell also RESPIN_DELETION_REQUEST_SCOPES=workspace; the worker refuses to start without
+#    ANTHROPIC_API_KEY — any placeholder, a fresh database queues no model work). If ~/.aws exists, also
+#    export AWS_SHARED_CREDENTIALS_FILE and AWS_CONFIG_FILE pointing at a path that does not exist, so the
+#    SDK can never fall back to a real profile. A variable set blank in the shell beats respin/.env.local.
+pnpm -C respin dev            # shell A
+pnpm -C respin worker:start   # shell B
+
+# 4. THE SEED: sign up at http://localhost:8000/sign-up, open /settings/account, request the
+#    WORKSPACE's deletion (type the workspace name, re-enter the password). Then list the journal:
+docker exec respin-minio sh -c 'mc alias set l http://127.0.0.1:9000 respinlocal respin_local_drill >/dev/null && mc ls --recursive --versions l/respin-deletion-journal-local'
+#    Stop the app and the worker.
+
+# 5. Back up the source (BACKUP_DIR and the passphrase file are yours; any local path)
+DATABASE_URL=postgres://respin:respin_local_dev@127.0.0.1:5435/respin_drill_source \
+BACKUP_DIR="$HOME/respin-drill-backups" \
+BACKUP_PASSPHRASE_FILE="$HOME/respin-drill.pass" \
+  bash respin/scripts/backup.sh
+
+# 6. The drill (the env block exported in this shell too). A fresh local database has no
+#    subscription, ledger or webhook rows, hence the flag — accepted only in this mode.
+RESTORE_SERVING_DISABLED=confirmed \
+BACKUP_FILE="$HOME/respin-drill-backups/respin-<stamp>.dump.gz.gpg" \
+BACKUP_PASSPHRASE_FILE="$HOME/respin-drill.pass" \
+MAINTENANCE_URL=postgres://respin:respin_local_dev@127.0.0.1:5435/postgres \
+  bash respin/scripts/restore-drill.sh --allow-empty-money
+
+# 7. Clean up
+docker exec respin-postgres psql -U respin -d postgres -c 'DROP DATABASE respin_restore_drill WITH (FORCE)' -c 'DROP DATABASE respin_drill_source WITH (FORCE)'
+docker compose -f respin/docker-compose.yml --profile drill rm -sf minio minio-init   # the bucket has no volume; this empties it
+```
+
+A drill run this way was recorded on 2026-10-05: `docs/progress/audit/evidence/restore-drill-local-2026-10-05.md`. The run at the top of that file is on the current scripts, after the gate's round-2 changes the same day (every manifest field bound, R-155 §8). It shows, as the scripts printed them, the manifest's fields and bindings line, the effective expiry, a journal mismatch refused without the flag, an edited future `createdAt` refused, and the marker-gated pass. The two earlier runs are kept below it under *Superseded*. `JOURNAL-EMPTY` did not appear: the manifest records its journal, so that legacy-only stamp does not apply. The stamp is witnessed by `respin/tests/shell-scripts.test.ts`.
+
 ## Accounts (outside dependencies — where each login lives, never values · Last reviewed: 2026-08-17)
 
 | Account | For | Credential location | Renewal / status |
@@ -64,11 +160,33 @@ pnpm -C respin journal:purge --apply     # delete expired versions (Object Lock 
 
 **No price is compiled into the code.** The prices that decide whether public launch is allowed are facts about a vendor's price list on a date, so they are an operator-recorded artefact (`price-snapshot.<region>.json`), and a missing or stale one withholds the forecast rather than inventing a number. The shipped template is named `price-snapshot.EXAMPLE.json` and is excluded by name so its zero prices can never price anything.
 
-**Restore ordering is fixed and fail-closed** (`respin/scripts/restore-drill.sh`, plan C4): isolated target → serving disabled (`RESTORE_SERVING_DISABLED=confirmed`, refused otherwise) → restore → migration-ledger count comparison (`db:check` is offline and was removed from this step) → **external journal verification** (`scripts/restore-verify.ts`: duplicate version, delete marker, gap, digest/checksum conflict, wrong retention, unreadable object, database-ahead-of-journal all refuse) → replay plan printed → **the drill never enables traffic**. Running the replay is the deletion worker's job with the journal configured; the drill's closing message says so explicitly rather than reading as a green light.
+**Restore ordering is fixed and fail-closed** (`respin/scripts/restore-drill.sh`, plan C4 as amended by R-155): isolated target → serving disabled (`RESTORE_SERVING_DISABLED=confirmed`, refused otherwise) → manifest checks (missing, expired or null-tombstone → refused) → restore → content assertions (config and all three money tables non-empty) → migration-ledger comparison, and **`db:migrate` on the drill database** when the dump is behind (a dump ahead is refused; `db:check` is offline and was removed from this step) → **external journal verification** (`scripts/restore-verify.ts`: duplicate version, delete marker, gap, digest/checksum conflict, wrong retention, unreadable object, unparseable key, database-ahead-of-journal all refuse; the drill also requires the verifier's success marker, not just exit 0) → replay plan printed → **the drill never enables traffic**. The commands are under Respin → *Restore drill — the commands*. Running the replay is the deletion worker's job with the journal configured; the drill's closing message says so explicitly rather than reading as a green light.
 
 **Backup retention is capped at 21 days** (R-119) and `backup.sh` now **refuses** a higher `RETENTION_DAYS` rather than clamping it, and writes an immutable creation/expiry manifest beside each dump naming the tombstones active at backup time (ids, scope and state only — no email, no name, no content). `activeTombstones: null` means the query could not run, and the drill refuses on it: absence of an answer is not absence of tombstones.
 
 **Evidence still owed before deletion or public launch** (none of it obtainable from this repository): bucket ARN, AWS region, rendered policy sha256, Versioning/Object-Lock/default-encryption status, the AWS SDK version from the lockfile, a reviewed regional price snapshot, and a real restore-walk transcript.
+
+## Held generation drafts — Respin (audit Phase 3, R-157) · Last reviewed: 2026-10-06
+
+**What a held draft is.** A generation the model finished whose candidate is stored but not settled: the attempt sits at `vendor_complete`. The workspace was paused, the balance was short, saving hit a transient database error, or the process died between storing and settling. Nothing has been charged. The creator sees it under **Held drafts** on `/studio` with the UTC time it is removed, and can press **Finish this draft**. Nothing settles a held draft automatically.
+
+**When the operator steps in.** The worker pages `retention_alert_critical_generation_unsettled_aging` when the oldest held draft is more than 18 hours old (the event carries `generationOldestUnsettledMs` and `generationSettleable`). That leaves six hours before the worker's 24-hour clear removes the candidate (`generation_candidates_cleared`). If the creator has not finished it, settle it by attempt id:
+
+```bash
+pnpm -C respin settle:candidate --help          # every refusal it can print, and the exit codes
+pnpm -C respin settle:candidate <attempt-id>    # settle ONE held draft (needs DATABASE_URL)
+```
+
+**What it does.** It acts as the workspace's longest-standing active owner, through the same settlement as "Finish this draft". One debit, under the workspace lock, at the price the draft was quoted. It never calls a model.
+
+**What it prints.** It prints the attempt id, a state and a code, never the draft's text:
+- `code=settled credits_charged=N tier=… config_version=…` (exit 0);
+- `code=already_settled credits_charged=0` on a second run (exit 0). The command is idempotent;
+- a refusal (exit 1). **A paused workspace is refused (`code=paused`)**; the draft stays held. Settle again after the pause ends.
+
+The other refusals: `insufficient_balance` (held; settle after a top-up), `transient` (held; run it again), `workspace_unavailable` (tombstoned or being erased), `recovery_required` (the candidate is gone: cleared at 24 hours or unreadable; nothing was charged, so reconcile the vendor spend from `model_usage` by attempt id), `refused`, `in_flight`, `profile_unavailable`, `no_active_owner`, `not_found`.
+
+A tier change since the draft was claimed is not a refusal; the output names the tier the debit was taken under. Exit 2 means bad usage.
 
 ## Deploy — UGC Intelligence ONLY (how a change goes live)
 

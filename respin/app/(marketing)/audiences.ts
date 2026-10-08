@@ -6,6 +6,14 @@
 // only while the real Sample Spin (REQ-H02, Phase 10a) is closed by its
 // rollout flag; unverifiable specifics in the shot lines render as [check]
 // tokens, per REQ-I03.
+//
+// THE SOLO-FILMING PROMISE IS SCOPED (audit P6-A2, register item 33). The
+// women's variant said every idea becomes "shots you can film solo". What
+// ships is narrower: concept and script drafts (the two modes whose checks
+// include `filming_limits`) are checked against the limits a creator declares,
+// and that check has recorded misses (`mode-checks.ts`: `shot-map-kit-not-in-list`,
+// `kit-named-in-narrative`). The copy says so; `tests/landing-pricing.test.ts`
+// pins "concept and script drafts" to the modes that run the check.
 
 export type DemoCopy = {
   slop: [string, string];
@@ -33,11 +41,11 @@ export const AUDIENCES: Audience[] = [
     navLabel: "For women creators",
     metaTitle: "Respin for women creators",
     metaDescription:
-      "Scripts that sound like you, mapped to shots you can film solo. Respin builds your voice rules from your own posts and nothing activates until you confirm it.",
+      "Scripts that sound like you, with the shots each one suggests to check against how you film. Respin builds your voice rules from your own posts and nothing activates until you confirm it.",
     heroClass: "hero-women",
     h1Lead: "A script that sounds like you,",
     h1Turn: "not like the feed.",
-    sub: "Respin builds your voice rules from your own posts and turns every idea into shots you can film solo. Nothing activates until you confirm it.",
+    sub: "Respin builds your voice rules from your own posts. Tell it you film alone and your concept and script drafts are checked against that before you see them; the check can miss things, so read the suggested shots before you film. Nothing activates until you confirm it.",
     demo: {
       slop: [
         "“Hey besties! Today I’m spilling my number one glow-up secret that will literally change your life…”",
@@ -61,11 +69,11 @@ export const AUDIENCES: Audience[] = [
     navLabel: "For small business",
     metaTitle: "Respin for small business",
     metaDescription:
-      "Turn what happened at work into a shot-mapped script in your voice. Film it on your phone before close. No marketing team.",
+      "Turn what happened at work into a timed script in your voice, with suggested shots. Film it on your phone before close. No marketing team.",
     heroClass: "hero-business",
     h1Lead: "Content from your workday,",
     h1Turn: "not a content calendar.",
-    sub: "Respin turns what happened at the shop into a shot-mapped script in your voice. Film it on your phone before close. No marketing team.",
+    sub: "Respin turns what happened at the shop into a timed script in your voice, with suggested shots. Film it on your phone before close. No marketing team.",
     demo: {
       slop: [
         "“Welcome back to our small business journey! Today we’re sharing 5 tips every entrepreneur needs to know…”",

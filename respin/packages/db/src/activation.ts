@@ -176,7 +176,8 @@ export async function queryActivation(
   userId: string,
   exclusions: ActivationExclusions,
 ): Promise<ActivationContribution | null> {
-  await lockIdentityMembershipGraph(tx, userId);
+  // A READER (audit Phase 8, P8-A3): the shared form this docblock always named.
+  await lockIdentityMembershipGraph(tx, userId, "shared");
   const signals = await loadActivationSignals(tx, userId);
   return signals ? classifyActivation(userId, signals, exclusions) : null;
 }

@@ -7,6 +7,11 @@
 import type { Metadata } from "next";
 import { LandingFooter, LandingHeader } from "../landing-sections";
 import { SAMPLE_SPIN_RETENTION } from "../sample-spin/disclosure";
+import { legalDeletionSentence, openDeletionScopes } from "../deletion-status";
+
+// Rendered per request (P5-R1 amendment): the deletion sentence reads the
+// deployment's request flag, which a build-time render would bake in.
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Respin terms and privacy",
@@ -27,7 +32,13 @@ export default function LegalPage() {
         <ul className="legal-list">
           <li>The Sample Spin on the landing page keeps neither the idea you type nor the output it shows you &mdash; {SAMPLE_SPIN_RETENTION.toLowerCase()} That provider receives the text in order to answer; this product stores none of it. It records the cost of the model calls, with the request&rsquo;s random id, as a financial record kept for the period the law requires, and a keyed hash of your connection address for twenty-four hours, to allow one run per day.</li>
           <li>A signed-in creator&rsquo;s brain is context handed to the model with each request; it is never used to build or update a model, and nothing in it changes without an explicit confirmation.</li>
-          <li>Account deletion has a recovery window, after which erasure is irreversible; financial records are kept pseudonymously for the period the law requires.</li>
+          {/*
+            DERIVED FROM THE REQUEST FLAG (audit P1-A1, then P5-R1's
+            2026-10-05 amendment): RESPIN_DELETION_REQUEST_SCOPES unset renders
+            P1-A1's not-yet-open sentence; an open scope renders the enabled
+            one. `tests/marketing-claims.test.tsx` pins both renders.
+          */}
+          <li>{legalDeletionSentence(openDeletionScopes())}</li>
         </ul>
       </section>
       <LandingFooter />

@@ -15,7 +15,16 @@
 // value each href carries.
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { PLAN_KEYS, PRICING, isPlanKey } from "../app/(marketing)/pricing-copy";
+import { CONFIG_V1_SEED } from "@respin/db";
+import { tierPricesCents } from "@respin/credits/app-server";
+import { PLAN_KEYS, isPlanKey, pricingFor } from "../app/(marketing)/pricing-copy";
+
+// The cards the page renders under a config (R-175 builds them per request
+// from the ACTIVE version; the seed stands in for it here), and the
+// number-free set the page falls back to when that read fails. Both carry
+// the tier through the CTA.
+const PRICING = pricingFor(CONFIG_V1_SEED, tierPricesCents());
+const NUMBER_FREE = pricingFor(null, tierPricesCents());
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@respin/auth/client", () => ({
@@ -38,19 +47,26 @@ const render = async (
   );
 
 describe("a pricing CTA's tier reaches the signup form", () => {
-  it("every card links to /sign-up carrying its own plan key", () => {
-    const html = renderToStaticMarkup(<PricingSection />);
-    // Derived from PRICING, so a fifth card is covered with no edit here.
-    expect(PRICING.length).toBeGreaterThan(0);
-    for (const tier of PRICING) {
-      expect(isPlanKey(tier.plan), `${tier.name} carries a plan key`).toBe(true);
-      expect(html, `${tier.name}'s CTA drops its plan`).toContain(
-        `href="/sign-up?plan=${tier.plan}"`
+  it("every card links to /sign-up carrying its own plan key — with the numbers, and on the number-free fallback", () => {
+    for (const [tiers, configVersion] of [
+      [PRICING, 1],
+      [NUMBER_FREE, null],
+    ] as const) {
+      const html = renderToStaticMarkup(
+        <PricingSection pricing={{ tiers, terms: null, configVersion }} />
       );
+      // Derived from the cards, so a fifth card is covered with no edit here.
+      expect(tiers.length).toBeGreaterThan(0);
+      for (const tier of tiers) {
+        expect(isPlanKey(tier.plan), `${tier.name} carries a plan key`).toBe(true);
+        expect(html, `${tier.name}'s CTA drops its plan`).toContain(
+          `href="/sign-up?plan=${tier.plan}"`
+        );
+      }
+      // NON-VACUOUS FROM THE OTHER SIDE: the bare link is the defect, so its
+      // absence is asserted rather than inferred from the presence above.
+      expect(html).not.toContain('href="/sign-up"');
     }
-    // NON-VACUOUS FROM THE OTHER SIDE: the bare link is the defect, so its
-    // absence is asserted rather than inferred from the presence above.
-    expect(html).not.toContain('href="/sign-up"');
   });
 
   it.each(PLAN_KEYS.filter((plan) => plan !== "free"))(

@@ -72,6 +72,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
+  // An Error's own message is the operator's remedy (the missing-env and
+  // price-divergence refusals); anything else is not printed as a value
+  // (gate L4: a non-Error could carry anything).
+  console.error(err instanceof Error ? err.message : "stripe:setup failed");
   process.exitCode = 1;
 });

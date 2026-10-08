@@ -19,14 +19,17 @@
 // pipeline.
 import { useActionState } from "react";
 import { buttonClass } from "../../../ui/button";
-import { NO_STREAM_NOTE, PLATFORM_OPTIONS } from "../../studio/run-copy";
+import {
+  NO_STREAM_NOTE,
+  PLATFORM_OPTIONS,
+  resultsBasisSentence,
+} from "../../studio/run-copy";
 import type { StudioRunState } from "../../studio/run-state";
 import { SubmitButton } from "../submit-button";
 import { FirstIdeasResult } from "./first-ideas-result";
 import {
   FIRST_IDEAS_BUTTON,
   FIRST_IDEAS_INTRO,
-  FIRST_IDEAS_NO_RESULTS_BASIS,
   FIRST_IDEAS_PENDING_LABEL,
 } from "./copy";
 
@@ -46,6 +49,18 @@ export type FirstIdeasPanelProps = {
   costSentence: string;
   /** Why the control is unavailable, if it is. Role, pause, plan, or no brain. */
   block: { reason: string } | null;
+  /**
+   * HOW MANY RESULTS THIS CREATOR HAS LOGGED (audit P6-R6): the page's scoped
+   * `respinDb.countResults` read, or `null` when it failed — which says so
+   * and never falls back to "none".
+   */
+  resultCount: number | null;
+  /**
+   * The labels of the modes on this screen that read recent work as labelled
+   * history (R-152, R-174), resolved server-side from the mode's own
+   * `takesCreativeForm` flag; empty when this screen's mode reads none.
+   */
+  historyModeLabels: readonly string[];
   /** @internal Static-render fixture state; no app call site passes this. */
   initialState?: StudioRunState;
   refusalCopy: Readonly<Record<string, { title: string; detail: string }>>;
@@ -58,6 +73,8 @@ export function FirstIdeasPanel({
   action,
   costSentence,
   block,
+  resultCount,
+  historyModeLabels,
   initialState,
   refusalCopy,
   fallbackCopy,
@@ -77,7 +94,7 @@ export function FirstIdeasPanel({
         {costSentence}
       </p>
       <p className="muted" data-testid="first-ideas-no-results-basis">
-        {FIRST_IDEAS_NO_RESULTS_BASIS}
+        {resultsBasisSentence(resultCount, historyModeLabels)}
       </p>
       <p className="muted" data-testid="first-ideas-no-stream">
         {NO_STREAM_NOTE}

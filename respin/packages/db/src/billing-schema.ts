@@ -2,6 +2,7 @@
 // Free tier is the ABSENCE of a subscriptions row (skill B6) — never a $0 price.
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
   index,
@@ -98,6 +99,13 @@ export const subscriptions = pgTable(
     }),
     currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
     graceExpiresAt: timestamp("grace_expires_at", { withTimezone: true }),
+    // THE UNPAID EPISODE'S START (audit P3-R4, decisions R-159). Stamped with
+    // Stripe's own event time when an episode opens and cleared when it ends,
+    // so the webhook writers can tell "a second failure inside the same
+    // episode" (no new deadline) from "a new episode" (a fresh `graceDays`
+    // window). NULL = no open episode. Its writers and clearers are listed in
+    // `packages/credits/src/stripe/webhooks.ts` beside `opensDunningEpisode`.
+    dunningStartedAt: timestamp("dunning_started_at", { withTimezone: true }),
     pausedAt: timestamp("paused_at", { withTimezone: true }),
     resumesAt: timestamp("resumes_at", { withTimezone: true }),
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
@@ -904,12 +912,40 @@ export const stripeEvents = pgTable(
       .defaultNow()
       .notNull(),
     processedAt: timestamp("processed_at", { withTimezone: true }),
+    // R-165 (gate H1/M1): the DURABLE refund-owed record. A `held_tombstoned`
+    // receipt whose workspace is erased becomes `refund_owed` in the erasure
+    // transaction, BEFORE that transaction clears the payload, carrying the
+    // amount and currency the payload held and the erasing operation's id. The
+    // operator's refund list is `WHERE outcome = 'refund_owed'`. Financial
+    // facts only — no person.
+    refundOwedAmount: bigint("refund_owed_amount", { mode: "number" }),
+    refundOwedCurrency: text("refund_owed_currency"),
+    refundOwedOperationId: uuid("refund_owed_operation_id"),
+    // R-166 (billing follow-up): when the held-money sweep last TRIED this
+    // receipt's workspace. The sweep takes never-tried workspaces first, then
+    // the least recently tried, so twenty stuck workspaces cannot starve a
+    // new one behind them.
+    heldReplayAttemptedAt: timestamp("held_replay_attempted_at", { withTimezone: true }),
+    // R-166 (billing follow-up): money that needs an OPERATOR, flagged at
+    // receipt — a late `refund_owed` (it settled after its workspace was
+    // erased) or money no workspace could take (refused, or detached). The
+    // sweep pages each such row once, stamping `money_needs_operator_paged_at`.
+    moneyNeedsOperator: boolean("money_needs_operator").notNull().default(false),
+    moneyNeedsOperatorPagedAt: timestamp("money_needs_operator_paged_at", { withTimezone: true }),
   },
   (t) => [
     // The Phase-3 handoff vocabulary, made structural (review round 1).
+    // `held_tombstoned` (R-165, migration 0064): money Stripe collected for a
+    // tombstoned workspace — held, replayed if the deletion is cancelled,
+    // listed as refund owed if it completes. It is the ONE non-final outcome:
+    // 0064's trigger refuses every other outcome change.
     check(
       "stripe_events_outcome",
-      sql`${t.outcome} IN ('processed','refused_unknown_customer','refused_identity_mismatch','ignored')`
+      sql`${t.outcome} IN ('processed','refused_unknown_customer','refused_identity_mismatch','ignored','held_tombstoned','refund_owed')`
+    ),
+    check(
+      "stripe_events_refund_owed_shape",
+      sql`(${t.outcome} = 'refund_owed') = (${t.refundOwedOperationId} IS NOT NULL)`
     ),
     check(
       "stripe_events_receipt_attribution_shape",

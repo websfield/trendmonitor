@@ -39,7 +39,12 @@ import {
   writeCapabilities,
   type RecordResultParams,
 } from "../src/with-workspace";
-import { declaredMetricForProfile, listResults, recordResult } from "../src/results-ops";
+import {
+  countResults,
+  declaredMetricForProfile,
+  listResults,
+  recordResult,
+} from "../src/results-ops";
 import { resultComparisons } from "../src/results-comparison-ops";
 import { saveInterviewDraft, submitInterview } from "../src/interview-ops";
 import { enumerateClaimFields, readPointer } from "../src/brain-content";
@@ -412,16 +417,13 @@ describe("recordResult — the one writer of `results`", () => {
 
     // 3. R-115 (Phase 10a C1), ON THE REAL WRITER: the three rows the only
     //    production writer can mint are self-reported, and self-reported never
-    //    enters a population. The composition still resolves the declared
-    //    metric — the group exists, carries the unit — but both populations
-    //    are `none`. This is the "verified analytics are not connected"
-    //    state the page renders, proven from the write path.
+    //    enters a population. SINCE R-170 (audit Phase 2, P2-A1) NO GROUP IS
+    //    BUILT AT ALL: a group headed by a self-reported row could never be
+    //    filled, and the page said "N more results would make one" under the
+    //    notice that verified analytics are not connected. This is that state,
+    //    proven from the write path.
     const selfReportedGroups = await resultComparisons(db, workspaceScope, pA1);
-    expect(selfReportedGroups.length, "no group was produced from three real results").toBeGreaterThan(0);
-    const selfReportedReach = selfReportedGroups[0]!.comparisons.find((c) => c.lever === "reach")!;
-    expect(selfReportedReach.treatment.state).toBe("none");
-    expect(selfReportedReach.baseline.state).toBe("none");
-    expect(selfReportedReach.effectPer1k).toBeNull();
+    expect(selfReportedGroups, "a group was built that no self-reported result could ever fill").toEqual([]);
 
     // 3b. VERIFIED ROWS, inserted directly because no production writer can
     //     mint them (R-115: only the future connector seam may): same stratum,
@@ -479,15 +481,16 @@ describe("recordResult — the one writer of `results`", () => {
       unit: "saves per 1k views",
       direction: "higher_is_better",
     });
-    // ...and the population really is the three logged results, so the group is
-    // not an empty shell that happens to carry the right labels. The state is
-    // asserted BEFORE the count because `Population` is a discriminated union
-    // whose `truncated` arm carries no `n` — narrowing through the state is
-    // what makes this a real assertion rather than a cast.
-    expect(reach!.treatment.state).toBe("present");
-    if (reach!.treatment.state === "present") {
-      expect(reach!.treatment.n).toBe(3);
-      expect(reach!.treatment.resultIds).toHaveLength(3);
+    // ...and the population is the logged POST, so the group is not an empty
+    // shell that happens to carry the right labels. THREE ROWS OF ONE
+    // GENERATION OVER NESTED WINDOWS ARE ONE POST (R-170, audit Phase 2
+    // P2-A1): this read `present`, n = 3 until n counted distinct posts. The
+    // state is asserted BEFORE the count because `Population` is a
+    // discriminated union whose `truncated` arm carries no `n`.
+    expect(reach!.treatment.state).toBe("short");
+    if (reach!.treatment.state === "short") {
+      expect(reach!.treatment.n).toBe(1);
+      expect(reach!.treatment.resultIds).toHaveLength(1);
     }
   });
 
@@ -803,6 +806,41 @@ describe("recordResult — the one writer of `results`", () => {
     ).toEqual([pA2]);
     // NON-VACUITY: the sibling's row exists and is visible to its OWN scope.
     expect((await db.select().from(results)).length).toBe(2);
+  });
+
+  // AUDIT P6-R6 (register item 8): THE CROSS-PROFILE WITNESS for the count
+  // behind Studio's and first ideas' results sentence. A count that leaked a
+  // sibling's or a foreign workspace's rows would tell a creator "you have
+  // logged N results" about rows that are not theirs.
+  it("countResults counts THIS profile's results only: a sibling in the same workspace and a foreign workspace both count zero for A", async () => {
+    // B-side rows only: the same-workspace sibling (pA2) logs two, the
+    // foreign workspace's profile (pB) logs one, and A has logged nothing.
+    await write(pA2, params({ generationId: generationA2 }));
+    await write(
+      pA2,
+      params({ generationId: generationA2, observedTo: new Date("2026-08-15T00:00:00Z") })
+    );
+    await write(pB, params(), "res_b");
+    expect((await db.select().from(results)).length, "the fixture rows exist").toBe(3);
+
+    const workspaceA = await withWorkspace(db, { authUserId: "res_a" });
+    const workspaceB = await withWorkspace(db, { authUserId: "res_b" });
+    // Through the ops facade (mint, then the scope's own accessor) ...
+    expect(await countResults(db, workspaceA, pA1)).toBe(0);
+    // ... and through the accessor directly, on the same profile.
+    expect(await (await scopeFor(pA1)).accessors.countResults()).toBe(0);
+    // The sibling counts its own two, and only those.
+    expect(await countResults(db, workspaceA, pA2)).toBe(2);
+    // The foreign profile counts its own one through its own workspace...
+    expect(await countResults(db, workspaceB, pB)).toBe(1);
+    // ...and workspace A's scope cannot count it at all: the mint refuses.
+    await expect(countResults(db, workspaceA, pB)).rejects.toThrow();
+
+    // A's own row moves A from the zero branch to one, and nobody else moves.
+    await write(pA1, params({ generationId: generationA1 }));
+    expect(await countResults(db, workspaceA, pA1)).toBe(1);
+    expect(await countResults(db, workspaceA, pA2)).toBe(2);
+    expect(await countResults(db, workspaceB, pB)).toBe(1);
   });
 
   it("the ops facade writes through the same capability, in its own transaction", async () => {

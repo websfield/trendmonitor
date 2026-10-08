@@ -379,6 +379,26 @@ export function checkWorkflowSet(files: Record<string, string>): WorkflowViolati
     }
     // ...and the key never FLOWS out of those steps through the runner's relay files or their outputs (B2-TEN-3)
     for (const p of keyFlowProblems(job, [...new Set([...expected, ...steps])])) v.push(`journeys: ${p}`);
+    // The dev-scope audit, blocking, before any dependency code runs and so
+    // before the key is issued to any step (P9-A3, register item 38).
+    {
+      const all = jobSteps(job);
+      const at = (id: string) => all.findIndex((st) => st.id === id);
+      const devAudit = at("dev-audit");
+      if (devAudit < 0) v.push("journeys: no `dev-audit` step — the job that holds the vendor key runs devDependencies no blocking audit has read");
+      else {
+        if (!all[devAudit].lines.some((l) => l.trim() === JOURNEYS_DEV_AUDIT_RUN)) {
+          v.push(`journeys: the dev-audit step does not run exactly \`${JOURNEYS_DEV_AUDIT_RUN.slice(5)}\` (dev scope: no --prod)`);
+        }
+        if (all[devAudit].lines.some((l) => /continue-on-error|\|\|\s*true/.test(l) || /^\s+if:/.test(l))) {
+          v.push("journeys: the dev-audit step is conditional or non-blocking");
+        }
+        for (const later of ["install", "vendor-key", "start"]) {
+          const i = at(later);
+          if (i < 0 || i < devAudit) v.push(`journeys: dev-audit must run before \`${later}\``);
+        }
+      }
+    }
     // an unconditional upload is a violation: every upload-artifact step is gated on cleanup's output
     for (let i = 0; i < job.length; i += 1) {
       if (!/uses: actions\/upload-artifact@/.test(job[i])) continue;
@@ -420,6 +440,7 @@ export function checkWorkflowSet(files: Record<string, string>): WorkflowViolati
     v.push("respin.yml does not run on workflow-file changes, so nothing in this file gates a workflow-only pull request");
   }
   v.push(...checkVisualWorkflow(files));
+  v.push(...checkRespinWorkflow(files));
   return v;
 }
 
@@ -513,6 +534,131 @@ export function checkVisualWorkflow(files: Record<string, string>): WorkflowViol
     v.push(`${VISUAL_FILE} installs no browser; the matrix would fail for an environment reason, not a product one`);
   }
   return v;
+}
+
+/** The blocking audit line `respin.yml` must carry, exactly (P9-A3). */
+export const RESPIN_AUDIT_RUN = "run: pnpm audit --audit-level high --prod";
+/** Its condition: run after a red earlier step, but not on a cancelled run (gate round 1). */
+export const RESPIN_AUDIT_CONDITION = "if: ${{ !cancelled() }}";
+/** The dev-scope audit line the journeys job must carry, exactly (P9-A3). */
+export const JOURNEYS_DEV_AUDIT_RUN = "run: pnpm -C respin audit --audit-level high";
+
+/**
+ * THE CODE GATE'S AUDIT HAS A WITNESS (P9-A3, register 2026-10-05 item 13).
+ *
+ * Before this, deleting `respin.yml`'s blocking audit step left the whole suite
+ * green, and `respin.yml` — the one workflow that runs on every push and pull
+ * request — answered to none of the SHA-pin and token-floor rules this file
+ * already applied to the visual workflow. Each clause below is planted red in
+ * the `planted variants` table.
+ */
+export function checkRespinWorkflow(files: Record<string, string>): WorkflowViolation[] {
+  const name = "respin.yml";
+  const text = files[name];
+  if (!text) return [`${name} is missing — the code gate and its dependency audit do not exist`];
+  const v: WorkflowViolation[] = [];
+  const lines = text.split("\n");
+  const kinds = classifyLines(lines);
+  const code = lines.filter((_, i) => kinds[i] !== "comment").join("\n");
+  if (!/^permissions:\n {2}contents: read\n/m.test(code)) {
+    v.push(`${name} does not pin \`permissions: contents: read\``);
+  }
+  const used = usedActions(text);
+  if (used.length === 0) v.push(`${name}: no \`uses:\` line was read — the pin check would be vacuous`);
+  for (const a of used) if (!ALLOWED_ACTIONS.includes(a)) v.push(`${name} uses an action outside the allowed list: ${a}`);
+  lines.forEach((l, i) => {
+    if (kinds[i] !== "yaml" || !/^\s+-?\s*uses:/.test(l)) return;
+    if (!/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40}( #.*)?$/.test(l)) v.push(`${name}: action is not pinned by a 40-hex commit SHA: ${l.trim()}`);
+  });
+  for (const l of yamlIndirectionLines(text)) v.push(`${name}: YAML anchor/alias/merge key is not readable here: ${l.trim()}`);
+  const on = topLevelBlockEntries(text, "on");
+  if (!on) v.push(`${name}: \`on:\` is not a readable block`);
+  else if ([...on].sort().join("|") !== "pull_request|push|schedule") {
+    v.push(`${name}: \`on:\` is [${on.join(", ")}]; it must be exactly [push, pull_request, schedule] — the schedule is what sees a newly published advisory`);
+  }
+  if (!/^ {4}- cron: "[^"]+"\s*$/m.test(code)) v.push(`${name}: the schedule carries no \`- cron:\` entry`);
+  const job = jobLines(text, "gate");
+  if (!job) v.push(`${name}: no \`gate\` job`);
+  else {
+    // A JOB-level `continue-on-error` makes every step in the job, the audit
+    // included, unable to fail the run (gate round 1). Steps sit at 6 spaces,
+    // so a 4-space key is the job's own.
+    if (job.some((l) => /^ {4}continue-on-error\s*:/.test(l))) {
+      v.push(`${name}: the gate job sets continue-on-error, so the blocking audit cannot fail the run`);
+    }
+    const audit = jobSteps(job).filter((st) => st.lines.some((l) => l.trim() === RESPIN_AUDIT_RUN));
+    if (audit.length !== 1) {
+      v.push(`${name}: ${audit.length} steps run \`${RESPIN_AUDIT_RUN.slice(5)}\`; the blocking audit step must exist exactly once`);
+    } else {
+      const step = audit[0];
+      if (!step.lines.some((l) => l.trim() === RESPIN_AUDIT_CONDITION)) {
+        v.push(`${name}: the blocking audit step lacks \`${RESPIN_AUDIT_CONDITION}\`, so any earlier red step skips it`);
+      }
+      if (step.lines.some((l) => /continue-on-error/.test(l) || /\|\|\s*true/.test(l))) {
+        v.push(`${name}: the blocking audit step is made non-blocking`);
+      }
+    }
+  }
+  if (/ignoreCves/.test(text)) v.push(`${name} names \`ignoreCves\`; the mechanism in use is \`pnpm.auditConfig.ignoreGhsas\``);
+  if (!/ignoreGhsas/.test(text)) v.push(`${name} does not name \`ignoreGhsas\` where it explains the exception process`);
+  return v;
+}
+
+/** A `YYYY-MM-DD` in UTC. */
+export const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
+
+/**
+ * EVERY IGNORED ADVISORY HAS A ROW, AND NO ROW HAS LAPSED (P9-A3).
+ *
+ * `respin/package.json`'s `pnpm.auditConfig.ignoreGhsas` against the table
+ * under `SECURITY-EXCEPTIONS.md`'s `## Active exceptions` heading, both ways:
+ * an ignored id with no row is an unreviewed exception, and a row whose id is
+ * no longer ignored is a stale one. Each row's `Review by` date must not have
+ * passed — the file's previous trigger ("M2 entry") fired on 2026-08-19 and
+ * nothing noticed for seven weeks, because a trigger written in prose has no
+ * reader. This test is that reader, and with `respin.yml`'s daily schedule a
+ * lapsed date turns CI red on the day.
+ */
+export function exceptionProblems(packageJsonText: string, exceptionsText: string, today: string): string[] {
+  const p: string[] = [];
+  const pkg = JSON.parse(packageJsonText) as { pnpm?: { auditConfig?: { ignoreGhsas?: unknown } } };
+  const raw = pkg.pnpm?.auditConfig?.ignoreGhsas;
+  const ignored = Array.isArray(raw) ? raw.map(String) : [];
+  if (!Array.isArray(raw)) p.push("package.json has no pnpm.auditConfig.ignoreGhsas array");
+  const lines = exceptionsText.replace(/\r\n/g, "\n").split("\n");
+  const start = lines.findIndex((l) => /^## Active exceptions\b/.test(l));
+  if (start < 0) return [...p, "SECURITY-EXCEPTIONS.md has no `## Active exceptions` section"];
+  const tableLines: string[] = [];
+  for (let i = start + 1; i < lines.length && !/^## /.test(lines[i]); i += 1) {
+    if (/^\|/.test(lines[i])) tableLines.push(lines[i]);
+  }
+  const cells = (l: string) => l.split("|").slice(1, -1).map((c) => c.trim());
+  const header = tableLines[0] ? cells(tableLines[0]) : [];
+  const reviewCol = header.findIndex((c) => /^review by$/i.test(c));
+  if (reviewCol < 0) return [...p, "the Active exceptions table has no `Review by` column"];
+  const rows = new Map<string, string>();
+  for (const l of tableLines.slice(2)) {
+    const c = cells(l);
+    const id = /`?(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4})`?/.exec(c[0] ?? "")?.[1];
+    if (!id) {
+      p.push(`an Active exceptions row does not start with a GHSA id: ${l.trim()}`);
+      continue;
+    }
+    if (rows.has(id)) p.push(`${id} has two Active exceptions rows`);
+    rows.set(id, c[reviewCol] ?? "");
+  }
+  for (const id of ignored) {
+    const review = rows.get(id);
+    if (review === undefined) {
+      p.push(`${id} is in ignoreGhsas with no Active exceptions row — an unreviewed exception`);
+      continue;
+    }
+    const date = /\b(\d{4}-\d{2}-\d{2})\b/.exec(review)?.[1];
+    if (!date) p.push(`${id}'s Review by cell carries no YYYY-MM-DD date: "${review}"`);
+    else if (date < today) p.push(`${id}'s review-by date ${date} has passed (today ${today}) — re-review it, record the miss, and set a new date`);
+  }
+  for (const id of rows.keys()) if (!ignored.includes(id)) p.push(`${id} has an Active exceptions row but is not in ignoreGhsas — a stale row`);
+  return p;
 }
 
 function readWorkflowSet(): Record<string, string> {
@@ -747,6 +893,24 @@ describe("respin-journeys.yml: manual-or-nightly only, environment-protected key
       ["a YAML anchor in the visual workflow", (f: Record<string, string>) => (f[VISUAL_FILE] = f[VISUAL_FILE].replace("permissions:\n  contents: read\n", "permissions: &p\n  contents: read\n")), /anchor\/alias\/merge key/],
       ["respin.yml's path filter narrowed back to its own file only", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace(/ {6}- "\.github\/workflows\/\*\*"/g, '      - ".github/workflows/respin.yml"')), /workflow-file changes/],
       ["the visual workflow deleted outright", (f: Record<string, string>) => { delete f[VISUAL_FILE]; }],
+      // P9-A3 — respin.yml's dependency audit and its supply-chain floor. Each
+      // row names the message its own clause emits.
+      ["respin.yml's blocking audit step deleted", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace(`      - name: Dependency audit (high/critical fails)\n        ${RESPIN_AUDIT_CONDITION}\n        ${RESPIN_AUDIT_RUN}\n`, "")), /the blocking audit step must exist exactly once/],
+      ["respin.yml's blocking audit loses its `!cancelled()` condition", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace(`      - name: Dependency audit (high/critical fails)\n        ${RESPIN_AUDIT_CONDITION}\n`, "      - name: Dependency audit (high/critical fails)\n")), /lacks `if: \$\{\{ !cancelled\(\) \}\}`/],
+      ["respin.yml's blocking audit's condition reverted to always()", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace(`      - name: Dependency audit (high/critical fails)\n        ${RESPIN_AUDIT_CONDITION}\n`, "      - name: Dependency audit (high/critical fails)\n        if: always()\n")), /lacks `if: \$\{\{ !cancelled\(\) \}\}`/],
+      ["respin.yml's blocking audit made non-blocking", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace(`        ${RESPIN_AUDIT_CONDITION}\n        ${RESPIN_AUDIT_RUN}\n`, `        ${RESPIN_AUDIT_CONDITION}\n        continue-on-error: true\n        ${RESPIN_AUDIT_RUN}\n`)), /made non-blocking/],
+      ["respin.yml's gate job made continue-on-error", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace("  gate:\n    runs-on: ubuntu-latest\n", "  gate:\n    runs-on: ubuntu-latest\n    continue-on-error: true\n")), /gate job sets continue-on-error/],
+      ["respin.yml's checkout unpinned to a tag", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace(/uses: actions\/checkout@[0-9a-f]{40}[^\n]*/, "uses: actions/checkout@v4")), /respin\.yml: action is not pinned by a 40-hex commit SHA/],
+      ["respin.yml's permissions block deleted", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace("permissions:\n  contents: read\n", "")), /respin\.yml does not pin `permissions: contents: read`/],
+      ["respin.yml's schedule deleted", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace(/ {2}schedule:\n {4}- cron: "[^"]+"\n/, "")), /must be exactly \[push, pull_request, schedule\]/],
+      ["respin.yml's exception comment back to `ignoreCves`", (f: Record<string, string>) => (f["respin.yml"] = f["respin.yml"].replace("`pnpm.auditConfig.ignoreGhsas`", "`pnpm.auditConfig.ignoreCves`")), /names `ignoreCves`/],
+      ["journeys' dev-scope audit deleted", (f: Record<string, string>) => (f[JOURNEYS_FILE] = text.replace(/ {6}- name: Dependency audit, dev scope included \(high\/critical fails\)\n {8}id: dev-audit\n {8}run: pnpm -C respin audit --audit-level high\n/, "")), /no `dev-audit` step/],
+      ["journeys' dev-scope audit narrowed to --prod", (f: Record<string, string>) => (f[JOURNEYS_FILE] = text.replace("        run: pnpm -C respin audit --audit-level high\n", "        run: pnpm -C respin audit --audit-level high --prod\n")), /dev scope: no --prod/],
+      ["journeys' dev-scope audit moved after Install", (f: Record<string, string>) => {
+        const step = "      - name: Dependency audit, dev scope included (high/critical fails)\n        id: dev-audit\n        run: pnpm -C respin audit --audit-level high\n\n";
+        const moved = text.replace(step, "");
+        f[JOURNEYS_FILE] = moved.replace("      # (3)\n", `${step}      # (3)\n`);
+      }, /dev-audit must run before `install`/],
     ])("%s", (_name, mutate, expected?: RegExp) => {
       const before = { ...files };
       mutate(before);
@@ -773,6 +937,39 @@ describe("respin-journeys.yml: manual-or-nightly only, environment-protected key
       "respin/playwright-report/**",
       "!respin/playwright-report/*/data/*.zip",
     ]);
+  });
+});
+
+describe("ignoreGhsas ↔ SECURITY-EXCEPTIONS.md, both ways, no lapsed review (P9-A3)", () => {
+  const pkgText = readFileSync(resolve(__dirname, "../package.json"), "utf8");
+  const exceptionsText = readFileSync(resolve(__dirname, "../SECURITY-EXCEPTIONS.md"), "utf8");
+  const today = isoDay(new Date());
+
+  it("every ignored id has an Active exceptions row with an unexpired Review by date, and every row is ignored", () => {
+    expect(exceptionProblems(pkgText, exceptionsText, today)).toEqual([]);
+    // Non-vacuous: the populations it compared are the real ones.
+    const ignored = (JSON.parse(pkgText) as { pnpm: { auditConfig: { ignoreGhsas: string[] } } }).pnpm.auditConfig.ignoreGhsas;
+    expect(ignored.length).toBeGreaterThan(0);
+    for (const id of ignored) expect(exceptionsText).toContain(`\`${id}\``);
+  });
+
+  describe("planted variants each FAIL (lesson 2026-08-26)", () => {
+    const withIgnored = (ids: (list: string[]) => string[]) => {
+      const pkg = JSON.parse(pkgText) as { pnpm: { auditConfig: { ignoreGhsas: string[] } } };
+      pkg.pnpm.auditConfig.ignoreGhsas = ids([...pkg.pnpm.auditConfig.ignoreGhsas]);
+      return JSON.stringify(pkg);
+    };
+    const firstId = (JSON.parse(pkgText) as { pnpm: { auditConfig: { ignoreGhsas: string[] } } }).pnpm.auditConfig.ignoreGhsas[0]!;
+    it.each([
+      ["an ignoreGhsas id with no exception row", () => exceptionProblems(withIgnored((l) => [...l, "GHSA-zzzz-zzzz-zzzz"]), exceptionsText, today), /GHSA-zzzz-zzzz-zzzz is in ignoreGhsas with no Active exceptions row/],
+      ["an exception row whose id is no longer ignored", () => exceptionProblems(withIgnored((l) => l.filter((x) => x !== firstId)), exceptionsText, today), /a stale row/],
+      ["a lapsed review-by date (run as if a year from now)", () => exceptionProblems(pkgText, exceptionsText, isoDay(new Date(Date.now() + 366 * 86_400_000))), /review-by date .* has passed/],
+      ["the Review by column deleted", () => exceptionProblems(pkgText, exceptionsText.replace(/\| Review by \|/, "| Revisit |"), today), /no `Review by` column/],
+      ["the Active exceptions heading renamed", () => exceptionProblems(pkgText, exceptionsText.replace("## Active exceptions", "## Exceptions"), today), /no `## Active exceptions` section/],
+    ] as const)("%s", (_name, run, expected) => {
+      const problems = run();
+      expect(problems.join(" | "), problems.join(" | ")).toMatch(expected);
+    });
   });
 });
 

@@ -17,11 +17,11 @@ import type { AssemblyKind } from "@respin/credits/app-server";
 
 export const ASSEMBLY_KIND_COPY: Readonly<Record<AssemblyKind, string>> = {
   no_fields_supplied:
-    "The product prepared no voice checks before the run. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+    "The product prepared no voice checks before the run. Nothing was sent to the model and nothing was spent. This is our fault, and the refusal is recorded so it can be investigated.",
   duplicate_post:
-    "The product prepared the same saved post more than once. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+    "The product prepared the same saved post more than once. Nothing was sent to the model and nothing was spent. This is our fault, and the refusal is recorded so it can be investigated.",
   duplicate_field_request:
-    "The product prepared the same voice check more than once. Nothing was sent to the model and nothing was spent. This is our fault; tell us so we can investigate it.",
+    "The product prepared the same voice check more than once. Nothing was sent to the model and nothing was spent. This is our fault, and the refusal is recorded so it can be investigated.",
   not_json: "The model reply was not readable as the required data.",
   bad_shape: "The model reply did not have the required voice-draft structure.",
   unknown_field: "The model reply included a voice section the product did not request.",
@@ -35,6 +35,7 @@ export const ASSEMBLY_KIND_COPY: Readonly<Record<AssemblyKind, string>> = {
   post_not_supplied: "The model reply cited material that was not supplied to this run.",
   quote_not_found: "The model reply cited words that did not match the supplied post.",
   fields_unfilled: "The model reply left a requested voice section unfilled.",
+  nothing_grounded: "The model reply quoted nothing from your posts for any voice section, so there was nothing to build a voice draft from.",
 };
 
 /**

@@ -24,11 +24,13 @@ import type { DbLike } from "./db-like";
 import type { BrainDoc, BrainDocStatus, BrainKind } from "./brain-schema";
 import type { OnboardingInput, StoredInputClass } from "./onboarding-schema";
 import {
+  mintReadableProfileScope,
   ProfileScope,
   STALE_BRAIN_EDIT_DETAIL,
   authoritativeEditableBrainDoc,
   writeCapabilities,
   type ActivateBrainDocCoherentResult,
+  type ReadGradeWorkspaceScope,
   type SourceEvidenceEntry,
   type WorkspaceScope,
 } from "./with-workspace";
@@ -695,11 +697,15 @@ export function replacementVersionFor(
 /** All versions and statuses of one kind, newest version first. */
 export async function readBrainHistory(
   db: DbLike,
-  scope: WorkspaceScope,
+  // EITHER GRADE (R-163): a reader. Under the read grade the profile scope is
+  // a read-grade one, and `brainDocsByKind`/`onboardingInputsByIds` run
+  // through fence 5's read sibling, so the history stops reading the moment
+  // the workspace's deletion reaches `erasing`.
+  scope: WorkspaceScope | ReadGradeWorkspaceScope,
   profileId: string,
   kind: BrainKind
 ): Promise<BrainVersionView[]> {
-  const profileScope = await ProfileScope.mint(db, scope, profileId);
+  const profileScope = await mintReadableProfileScope(db, scope, profileId);
   const docs = await profileScope.accessors.brainDocsByKind(kind);
   const cited = new Set<string>();
   for (const doc of docs) {

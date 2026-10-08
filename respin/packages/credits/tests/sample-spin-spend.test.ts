@@ -390,15 +390,20 @@ describe("runPublicSampleSpin", () => {
     expect(daily!.knownCostMicroUsd).toBeGreaterThan(0n);
   });
 
-  it("a gate-passed draft too long for the scorer's bound is an UNUSABLE DRAFT (draft_too_large), one paid call, never a 503 (lean gate round 1 R-4; witnessed round 2)", async () => {
+  it("audit P3-R2: a gate-passed draft LONGER than the scorer's byte bound is SCORED, not refused — the draft is the vendor's own reply, exempt from the input ceiling, and two paid calls buy a served Spin", async () => {
+    // This case used to pin `draft_too_large`: the scoring prompt was bounded
+    // WHOLE, so a long admitted draft — already paid for — was refused at the
+    // scorer and the visitor got nothing for a billed call. The draft is now an
+    // exempt part (`assembleKillTestPrompt` declares it), so what the 16,000
+    // scoring bound measures is the fixture's rules and two headers.
     const long = { ...ACCEPTED_OUTPUT, whyThisPerforms: { ...ACCEPTED_OUTPUT.whyThisPerforms, reasoning: "the stretcher nobody checks is the joint that moved ".repeat(600) } };
+    expect(JSON.stringify(long).length).toBeGreaterThan(16_000);
     const { provider, requests } = stubProvider([JSON.stringify(long), scoringReply()]);
     const result = await runPublicSampleSpin(depsFor(db, content, version, provider), { requestId: REQUEST, canonicalIp: "203.0.113.7", body: { idea: "A chair." } });
-    expect(result).toMatchObject({ status: "refused", reason: "draft_unusable" });
-    expect(requests).toHaveLength(1);
+    expect(result.status).toBe("accepted");
+    expect(requests).toHaveLength(2);
     const [usage] = await db.select().from(schema.systemModelUsage);
-    expect(usage).toMatchObject({ outcome: "analysis_invalid", errorCode: "draft_too_large", costState: "measured", callCount: 1 });
-    expect(JSON.stringify(result)).not.toContain("the stretcher nobody checks is the joint");
+    expect(usage).toMatchObject({ outcome: "succeeded", costState: "measured", callCount: 2 });
   });
 
   it("an error that is neither the vendor's answer nor its absence names no cause: could_not_complete, live and on replay", async () => {

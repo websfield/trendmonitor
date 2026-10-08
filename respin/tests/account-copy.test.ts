@@ -23,6 +23,9 @@ describe("account copy is pinned to shipped behaviour", () => {
   it("quotes the executor's grace period, not a typed number", () => {
     expect(DELETION_GRACE_DAYS).toBe(Math.round(DELETION_GRACE_MS / 86_400_000));
     expect(copy.WORKSPACE_DELETE_COPY).toContain(`${DELETION_GRACE_DAYS}-day`);
+    // R-166 (gate M3): the export promise is scoped to the person it is true for.
+    expect(copy.WORKSPACE_DELETE_COPY).toContain("anyone for whom it is their only workspace can still export its brain");
+    expect(copy.WORKSPACE_DELETE_COPY).not.toContain("your brain export and its history stay available");
     expect(copy.IDENTITY_DELETE_COPY).toContain(`${DELETION_GRACE_DAYS} days`);
   });
 
@@ -104,9 +107,12 @@ describe("account refusal codes reach a sentence", () => {
 
   it("the billing-contact and request-flag sentences describe shipped behaviour", () => {
     // The identity sentence names BOTH release rules the lifecycle asserts
-    // together (`assertWorkspacesReleasable`): last owner, billing contact.
-    expect(copy.IDENTITY_DELETE_COPY).toMatch(/last owner/);
-    expect(copy.IDENTITY_DELETE_COPY).toMatch(/billing contact/);
+    // together (`assertWorkspacesReleasable`): the last-owner CASCADE (R-160 —
+    // a sole-owned workspace is scheduled with the account, never a refusal)
+    // and the billing contact, which binds only workspaces that stay.
+    expect(copy.IDENTITY_DELETE_COPY).toMatch(/last owner of is scheduled for deletion with your account/);
+    expect(copy.IDENTITY_DELETE_COPY).not.toMatch(/cannot delete your account while you are the last owner/);
+    expect(copy.IDENTITY_DELETE_COPY).toMatch(/billing contact of a workspace that is not being deleted/);
     // The handover promise is the provider-first order `acceptBillingContact` keeps.
     expect(copy.BILLING_CONTACT_COPY).toMatch(/before anything changes here/);
     expect(copy.REQUESTS_CLOSED_COPY).toMatch(/can still be cancelled/);
@@ -114,7 +120,7 @@ describe("account refusal codes reach a sentence", () => {
     // to owners (tenancy and compliance gates, independent round 2).
     expect(copy.BILLING_CONTACT_UNKNOWN_COPY).toContain("no member of this workspace");
     expect(copy.BILLING_CONTACT_UNKNOWN_COPY).not.toContain("no owner");
-    expect(copy.IDENTITY_DELETE_COPY).toMatch(/any workspace you belong to/);
+    expect(copy.IDENTITY_DELETE_COPY).toMatch(/a workspace you belong to that is not being deleted/);
     // The accepted notice lives in copy.ts so the forbidden-claims scan sees it.
     expect(copy.BILLING_CONTACT_ACCEPTED_NOTICE).toMatch(/billing contact/);
   });

@@ -33,11 +33,39 @@ export type PromotionPanelProps = {
   refreshAction: PromotionAction;
   reviewAction: PromotionAction;
   decideAction: PromotionAction;
+  /**
+   * THE `[check]` MARKER, HANDED DOWN (audit Phase 2, P2-R8). This file is
+   * "use client", so it may not import `@respin/db` at all
+   * (`tests/client-bundle-boundary.test.ts`); the server parent
+   * `results/page.tsx` reads `CHECK` and passes it here — the
+   * `results/copy.ts` "takes the number rather than holding one" precedent.
+   * Every decision and mint below reads this prop; the file holds no literal.
+   */
+  checkMarker: string;
 };
 
-function display(value: unknown): string {
+/**
+ * What the refresh status line says. The count is the PROPOSED rows only
+ * (audit Phase 2, P2-A3) — the action computes it; this only words it.
+ */
+export function refreshedSentence(count: number): string {
+  return `${count} proposal${count === 1 ? "" : "s"} available after refresh.`;
+}
+
+/**
+ * What a decision's status line says. An accept of a value the document
+ * already holds wrote nothing, and says so (R-171).
+ */
+export function decidedSentence(state: { decision: "accepted" | "rejected"; alreadyPresent: boolean }): string {
+  if (state.decision === "accepted" && state.alreadyPresent) {
+    return "Proposal accepted. That rule is already in the document it targets, so no new version was written.";
+  }
+  return `Proposal ${state.decision}.`;
+}
+
+function display(value: unknown, checkMarker: string): string {
   if (typeof value === "string") return value;
-  if (value === null || value === undefined) return "[check]";
+  if (value === null || value === undefined) return checkMarker;
   return JSON.stringify(value);
 }
 
@@ -95,7 +123,8 @@ function Refusal({ state }: { state: PromotionActionState }) {
   ) : null;
 }
 
-function ProposalFacts({ review }: { review: Review }) {
+function ProposalFacts({ review, checkMarker }: { review: Review; checkMarker: string }) {
+  const show = (value: unknown) => display(value, checkMarker);
   const rule = payloadValue(review.proposal.payload, ["rule"]);
   const metricLabel = payloadValue(rule, ["metric", "label"]);
   const metricKey = payloadValue(rule, ["metric", "key"]);
@@ -116,23 +145,23 @@ function ProposalFacts({ review }: { review: Review }) {
       {review.proposal.source === "results" ? (
         <>
           <p>
-            Metric: <span data-testid="promotion-metric-label" data-creator-authored="true">{display(metricLabel)}</span>{" "}
-            <span style={mono}>({display(metricKey)})</span>. The metric label is creator-authored data.
+            Metric: <span data-testid="promotion-metric-label" data-creator-authored="true">{show(metricLabel)}</span>{" "}
+            <span style={mono}>({show(metricKey)})</span>. The metric label is creator-authored data.
           </p>
           <p>
-            Treatment: n {display(payloadValue(treatment, ["n"]))}, median {display(payloadValue(treatment, ["medianPer1k"]))}. Baseline: n {display(payloadValue(baseline, ["n"]))}, median {display(payloadValue(baseline, ["medianPer1k"]))}. Signed effect: {display(effect)} per 1,000.
+            Treatment: n {show(payloadValue(treatment, ["n"]))}, median {show(payloadValue(treatment, ["medianPer1k"]))}. Baseline: n {show(payloadValue(baseline, ["n"]))}, median {show(payloadValue(baseline, ["medianPer1k"]))}. Signed effect: {show(effect)} per 1,000.
           </p>
           <p>
-            Evidence states: {display(selfReportedN)} self reported and {display(connectorVerifiedN)} connector verified. <span data-testid="promotion-evidence-meaning">{evidenceMeaning(review.learningEligibility)}</span>
+            Evidence states: {show(selfReportedN)} self reported and {show(connectorVerifiedN)} connector verified. <span data-testid="promotion-evidence-meaning">{evidenceMeaning(review.learningEligibility)}</span>
           </p>
-          <p>Structured confounders: {Array.isArray(confounders) && confounders.length ? confounders.map(display).join(", ") : "none recorded"}.</p>
-          <p>Exact result evidence IDs: {resultIds.length ? resultIds.join(", ") : "[check]"}.</p>
+          <p>Structured confounders: {Array.isArray(confounders) && confounders.length ? confounders.map(show).join(", ") : "none recorded"}.</p>
+          <p>Exact result evidence IDs: {resultIds.length ? resultIds.join(", ") : checkMarker}.</p>
           <OutcomeDisclosure effect={effect} />
         </>
       ) : <>
         <p>Feedback evidence population: n {feedbackIds.length} records across {feedbackGenerations.size} distinct generations.</p>
         <p><span data-testid="promotion-evidence-meaning">{evidenceMeaning(review.learningEligibility)}</span></p>
-        <p>Exact feedback evidence IDs: {feedbackIds.length ? feedbackIds.join(", ") : "[check]"}.</p>
+        <p>Exact feedback evidence IDs: {feedbackIds.length ? feedbackIds.join(", ") : checkMarker}.</p>
       </>}
     </div>
   );
@@ -159,13 +188,14 @@ function DecisionButton({ decision }: { decision: "accept" | "reject" }) {
 
 export function confirmedFieldsFor(
   claims: Review["claims"],
-  checkedPointers: ReadonlySet<string>
+  checkedPointers: ReadonlySet<string>,
+  checkMarker: string
 ) {
   return claims
     .filter((claim) => checkedPointers.has(claim.pointer))
     .map((claim) => ({
       pointer: claim.pointer,
-      asPlaceholder: claim.displayedValue === "[check]",
+      asPlaceholder: claim.displayedValue === checkMarker,
     }));
 }
 
@@ -198,7 +228,7 @@ function AcceptButton({
   );
 }
 
-export function PromotionReviewDocument({ review, access, decideAction }: { review: Review; access: PromotionPanelProps["access"]; decideAction: PromotionAction }) {
+export function PromotionReviewDocument({ review, access, decideAction, checkMarker }: { review: Review; access: PromotionPanelProps["access"]; decideAction: PromotionAction; checkMarker: string }) {
   const [decisionState, decisionAction] = useActionState(
     decideAction,
     IDLE_PROMOTION_ACTION_STATE
@@ -207,7 +237,7 @@ export function PromotionReviewDocument({ review, access, decideAction }: { revi
     () => new Set()
   );
   const [acceptAttempted, setAcceptAttempted] = useState(false);
-  const confirmations = confirmedFieldsFor(review.claims, checkedPointers);
+  const confirmations = confirmedFieldsFor(review.claims, checkedPointers, checkMarker);
   const allClaimsConfirmed = confirmations.length === review.claims.length;
   const toggleConfirmation = (pointer: string) => {
     setCheckedPointers((current) => {
@@ -221,15 +251,20 @@ export function PromotionReviewDocument({ review, access, decideAction }: { revi
     <section className="panel" data-testid={`promotion-review-${review.proposal.id}`} aria-labelledby={`promotion-review-heading-${review.proposal.id}`}>
       <h3 id={`promotion-review-heading-${review.proposal.id}`}>Full proposal review</h3>
       <p>Every field and its source is shown below before a decision control.</p>
-      <pre data-testid="promotion-merged-document" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{display(review.mergedContent)}</pre>
+      <pre data-testid="promotion-merged-document" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{display(review.mergedContent, checkMarker)}</pre>
       <ul data-testid="promotion-review-claims">
         {review.claims.map((claim) => (
           <li key={claim.pointer}>
-            <span style={mono}>{claim.pointer}</span>: {display(claim.displayedValue)}. {"quote" in claim.sourceEvidence ? `Source ${claim.sourceEvidence.inputClass ?? "record"}: ${claim.sourceEvidence.quote}` : claim.sourceEvidence.absence}
+            <span style={mono}>{claim.pointer}</span>: {display(claim.displayedValue, checkMarker)}. {"quote" in claim.sourceEvidence ? `Source ${claim.sourceEvidence.inputClass ?? "record"}: ${claim.sourceEvidence.quote}` : claim.sourceEvidence.absence}
           </li>
         ))}
       </ul>
-      <ProposalFacts review={review} />
+      <ProposalFacts review={review} checkMarker={checkMarker} />
+      {review.alreadyPresent ? (
+        <p data-testid="promotion-already-present">
+          This rule is already in the document it targets. Accepting records your decision and writes no new version.
+        </p>
+      ) : null}
       {access.kind === "full" && review.proposal.status === "proposed" ? (
         <form
           action={decisionAction}
@@ -252,7 +287,7 @@ export function PromotionReviewDocument({ review, access, decideAction }: { revi
             <legend>Confirm every current field before accepting</legend>
             {review.claims.map((claim) => {
               const checkId = `promotion-confirm-${review.proposal.id}-${claim.pointer.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-              const needsDecision = claim.displayedValue === "[check]";
+              const needsDecision = claim.displayedValue === checkMarker;
               return (
                 <label key={claim.pointer} htmlFor={checkId} style={{ display: "flex", gap: "var(--sp-2)", alignItems: "center", minHeight: "44px" }}>
                   <input
@@ -272,7 +307,7 @@ export function PromotionReviewDocument({ review, access, decideAction }: { revi
               Confirm every current field, including every [check] position, before accepting this proposal.
             </p>
           ) : null}
-          <p role="status" aria-live="polite">{decisionState.status === "decided" ? `Proposal ${decisionState.decision}.` : ""}</p>
+          <p role="status" aria-live="polite">{decisionState.status === "decided" ? decidedSentence(decisionState) : ""}</p>
           <AcceptButton complete={allClaimsConfirmed} onIncomplete={() => setAcceptAttempted(true)} />{" "}
           <DecisionButton decision="reject" />
           <Refusal state={decisionState} />
@@ -282,7 +317,7 @@ export function PromotionReviewDocument({ review, access, decideAction }: { revi
   );
 }
 
-function ProposalCard({ review, access, reviewAction, decideAction }: { review: Review; access: PromotionPanelProps["access"]; reviewAction: PromotionAction; decideAction: PromotionAction }) {
+function ProposalCard({ review, access, reviewAction, decideAction, checkMarker }: { review: Review; access: PromotionPanelProps["access"]; reviewAction: PromotionAction; decideAction: PromotionAction; checkMarker: string }) {
   const [reviewState, reviewedAction] = useActionState(reviewAction, IDLE_PROMOTION_ACTION_STATE);
   // The card's facts are the page-load record. A decision, however, must be
   // against the current review the action just reconstructed, never that
@@ -292,18 +327,18 @@ function ProposalCard({ review, access, reviewAction, decideAction }: { review: 
   return (
     <article className="panel panel-1" data-testid={`promotion-card-${review.proposal.id}`}>
       <h3>{review.proposal.source === "results" ? "Results proposal" : "Feedback proposal"}</h3>
-      <ProposalFacts review={review} />
+      <ProposalFacts review={review} checkMarker={checkMarker} />
       <form action={reviewedAction}>
         <input type="hidden" name={PROMOTION_FIELD.proposalId} value={review.proposal.id} />
         <SubmitButton className={buttonClass("secondary")} style={control} pendingLabel="Opening full review…">Open full review</SubmitButton>
         <Refusal state={reviewState} />
       </form>
-      {visibleReview ? <PromotionReviewDocument review={visibleReview} access={access} decideAction={decideAction} /> : null}
+      {visibleReview ? <PromotionReviewDocument review={visibleReview} access={access} decideAction={decideAction} checkMarker={checkMarker} /> : null}
     </article>
   );
 }
 
-export function PromotionPanel({ access, reviews, historyState = "complete", refreshAction, reviewAction, decideAction }: PromotionPanelProps) {
+export function PromotionPanel({ access, reviews, historyState = "complete", refreshAction, reviewAction, decideAction, checkMarker }: PromotionPanelProps) {
   const [refreshState, refreshedAction] = useActionState(refreshAction, IDLE_PROMOTION_ACTION_STATE);
   return (
     <section data-testid="results-promotions" aria-labelledby="results-promotions-heading">
@@ -312,13 +347,13 @@ export function PromotionPanel({ access, reviews, historyState = "complete", ref
       {access.kind === "full" ? (
         <form action={refreshedAction}>
           <SubmitButton className={buttonClass("secondary")} style={control} pendingLabel="Refreshing proposals…">Refresh proposals</SubmitButton>
-          <p role="status" aria-live="polite">{refreshState.status === "refreshed" ? `${refreshState.count} proposal${refreshState.count === 1 ? "" : "s"} available after refresh.` : ""}</p>
+          <p role="status" aria-live="polite">{refreshState.status === "refreshed" ? refreshedSentence(refreshState.count) : ""}</p>
           <Refusal state={refreshState} />
         </form>
       ) : <p className="muted" role="status">{access.reason}</p>}
       {historyState === "unavailable" ? <p className="panel" role="alert" data-testid="promotion-history-unavailable">Proposal history could not be read. Results history remains available, but this section cannot say whether proposals exist.</p> : null}
       {historyState === "partial" ? <p className="panel" role="alert" data-testid="promotion-history-partial">Some proposal records could not be read. The cards below are not a complete proposal history.</p> : null}
-      {historyState === "complete" && reviews.length === 0 ? <p className="panel">No proposals are recorded yet. Your result history remains available.</p> : reviews.map((review) => <ProposalCard key={review.proposal.id} review={review} access={access} reviewAction={reviewAction} decideAction={decideAction} />)}
+      {historyState === "complete" && reviews.length === 0 ? <p className="panel">No proposals are recorded yet. Your result history remains available.</p> : reviews.map((review) => <ProposalCard key={review.proposal.id} review={review} access={access} reviewAction={reviewAction} decideAction={decideAction} checkMarker={checkMarker} />)}
     </section>
   );
 }

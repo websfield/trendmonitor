@@ -17,6 +17,8 @@
 //   (itself derived from the mode spec, so widening a mode's sections moves the
 //   version), the rewrite instruction, the kill-test system prompt, and the
 //   gate constants, pattern sources AND ENFORCEMENTS that decide what survives.
+//   Since audit Phase 8 also the universal laws a generation renders (P8-A4)
+//   and the untrusted-input fences with their encoding's behaviour (P8-R2).
 //
 //   OUT — the creator's brain, their input, the frameworks. A version that
 //   changed per creator would be unique to every generation and would diagnose
@@ -29,20 +31,68 @@
 import { createHash } from "node:crypto";
 
 import {
+  AUTO_FORM_INSTRUCTION,
+  CONSTRAINT_LABELS,
+  CREATIVE_BLOCK_HEADER,
+  CREATIVE_RULES,
+  FENCE_MARKERS,
+  FINDINGS_LABEL,
+  KILL_TEST_ANSWER_INSTRUCTION,
+  KILL_TEST_CRITERIA_LABEL,
+  MODE_BRIEFS,
+  FORM_INSTRUCTIONS,
+  FORM_REQUESTED_NOTE,
   FRAMEWORK_BLOCK_EMPTY,
   FRAMEWORK_BLOCK_HEADER,
   FRAMEWORK_EVIDENCE_LABEL,
   FRAMEWORK_EVIDENCE_NOTE,
   GENERATION_SYSTEM,
+  GenerationAssemblyError,
   HARD_RULE_BRIEF,
+  INPUT_FENCE_CLOSE,
+  NO_CONSTRAINTS_LINE,
+  PEOPLE_LABELS,
+  RECENT_WORK_AVOID_NOTE,
+  RECENT_WORK_BLOCK_HEADER,
+  RECENT_WORK_BLOCK_NOTE,
+  RECENT_WORK_EMPTY,
+  RECENT_WORK_LABELS,
+  RECENT_WORK_NOTE_PREFIX,
+  RECENT_WORK_SEQUEL_NOTE,
   REFERENCE_BLOCK_HEADER,
   REFERENCE_BLOCK_NOTE,
   REFERENCE_MECHANISM_LABELS,
   REWRITE_INSTRUCTION,
+  UNIVERSAL_LAWS,
+  encodeUntrusted,
+  neutraliseFenceMarkers,
   modeBriefText,
+  universalLawLines,
   outputContractFor,
 } from "./assemble";
-import { OUTPUT_CLAIM_SHAPES } from "./claims";
+import {
+  ADMISSION_CLAIM_FIELDS,
+  ADMISSION_HEDGE_PHRASES,
+  CLAIM_CONTEXT_GUARDS,
+  CLAIM_HEDGE_ALLOWLIST,
+  CLAIM_HEDGE_TAILS,
+  OUTPUT_CLAIM_SHAPES,
+  claimFieldsFor,
+  scanOutputClaims,
+} from "./claims";
+import {
+  CONSTRAINT_ITEM_MAX_CODE_POINTS,
+  CONSTRAINT_LIST_MAX,
+  FILMING_MINUTES_MAX,
+  FILMING_MINUTES_MIN,
+  FOOTAGE_MAX_CODE_POINTS,
+  BASIS_EXCERPT_MIN_CONTENT_WORDS,
+  BASIS_EXCERPT_MIN_WORDS,
+  BASIS_RELATED_MIN_CONTENT_WORDS,
+  EVENT_FIELDS,
+  PIVOT_FOR_FORM,
+  takesCreativeForm,
+} from "./creative";
 import {
   ANTITHESIS_SHAPES,
   FRAGMENT_MAX_WORDS,
@@ -52,6 +102,11 @@ import {
 } from "./hard-rules";
 import { KILL_TEST_SYSTEM } from "./kill-test";
 import {
+  CONTINUATION_SHAPE,
+  EVENT_SCAN_POPULATION,
+  EVENT_SHAPES,
+  SHOT_HELPER_SHAPES,
+  SHOT_KIT_SHAPES,
   HOOK_SPREAD_MAX_OVERLAP,
   HOOK_SPREAD_MIN_CONTENT_WORDS,
   IDEA_THESIS_MIN_WORDS,
@@ -72,6 +127,26 @@ export const PROMPT_BUNDLE_NAMESPACE = "modes";
 
 /** How much of the digest goes in the version string. */
 const DIGEST_CHARS = 12;
+
+/**
+ * The fixed probes `claimOccurrence=` runs the claim scan over: two
+ * occurrences under one guard, a hedge before a dash, a lead-in clause, a
+ * presented field, an undecidable "except" `but`, and a claim after a relative
+ * pronoun. A change invisible to every probe moves nothing — the
+ * `EXTENT_PROBES` residual, stated here too.
+ */
+export const CLAIM_PROBES: readonly (readonly [string, string])[] = [
+  ["/whyThisPerforms/reasoning", "Nothing here makes it go viral, but this hook goes viral anyway."],
+  ["/whyThisPerforms/reasoning", "Nothing is guaranteed — this will perform."],
+  ["/whyThisPerforms/reasoning", "Honestly, nothing here says it goes viral."],
+  ["/whyThisPerforms/reasoning", "Who says this isn't guaranteed?"],
+  ["/whyThisPerforms/weakestPoint", "It's unlikely to go viral."],
+  ["/whyThisPerforms/weakestPoint", "Results are guaranteed."],
+  ["/caption/text", "Nothing here is guaranteed! Results are."],
+  ["/caption/text", "Results are guaranteed."],
+  ["/caption/text", "Nobody but you can guarantee it lands."],
+  ["/caption/text", "Nothing beats a method that is guaranteed to work."],
+];
 
 /**
  * The gate description that goes into the hash.
@@ -121,6 +196,39 @@ function gateDescription(): string {
     // pattern changing.
     "claimEnforcement=" +
       OUTPUT_CLAIM_SHAPES.map((s) => s.id + "=" + s.enforcement).join(","),
+    // THE FIELD POPULATION EACH SHAPE REFUSES ON (audit Phase 2, P2-R2/R-168).
+    // Measured 2026-09-21: neither `HARD_CLAIM_FIELD_PREFIXES` nor the guards
+    // were in this description, so moving `guarantee` onto every presented
+    // field — or `/disclosure/` off the hard list — would have left the version
+    // where it was. The line carries the RESOLVED pointer set per shape, so a
+    // scope edit, a prefix edit and a new `line()` in the schema all move it.
+    "claimFields=" +
+      OUTPUT_CLAIM_SHAPES.filter((s) => s.enforcement === "hard")
+        .map((s) => s.id + "=" + claimFieldsFor(s).join(","))
+        .join("|"),
+    // THE CONTEXT GUARDS — the concealment guards with each one's window,
+    // families and pattern source; the R-173 closed hedge allowlist, every
+    // phrase written out; and the admission fields.
+    "claimGuards=" +
+      CLAIM_CONTEXT_GUARDS.map(
+        (g) => g.id + ":" + g.reads + ":" + g.families.join("+") + "~" + g.pattern.source
+      ).join("|") +
+      " hedges~" +
+      CLAIM_HEDGE_ALLOWLIST.map((h) => h.id + ":" + h.shapes.join("+") + "=" + h.phrases.join(",")).join("|") +
+      " tails~" + CLAIM_HEDGE_TAILS.map((t) => JSON.stringify(t)).join(",") +
+      " admission~" + ADMISSION_CLAIM_FIELDS.join(",") + "=" + ADMISSION_HEDGE_PHRASES.join(","),
+    // THE OCCURRENCE POLICY, AS BEHAVIOUR (the `specificExtent=` model): the
+    // scan's OUTPUT on a fixed probe set. Reading only the first match, or
+    // taking the most lenient occurrence instead of the strictest, changes
+    // these outputs with no constant changing.
+    "claimOccurrence=" +
+      CLAIM_PROBES.map(
+        ([field, text]) =>
+          field + ":" + text + "=>" +
+          scanOutputClaims([{ field, text, isHook: false }])
+            .map((f) => f.shape + "=" + f.enforcement)
+            .join("/")
+      ).join("|"),
     // THE PER-MODE CHECKS' CONSTANTS AND PATTERN SOURCES, for the reason every
     // other line here exists: moving the hook-overlap threshold or the thesis
     // word floor changes which drafts reach a creator without touching a single
@@ -132,6 +240,108 @@ function gateDescription(): string {
       ),
     "namesNothing=" +
       NAMES_NOTHING_SHAPES.map((s) => s.id + "~" + s.pattern.source).join("|"),
+    // R-148 (launch L1): the creative checks' constants. Which basis quote is
+    // long enough, which pivot each form takes, where an unconfirmed event must
+    // carry its marker and how far a declared limit reaches all decide which
+    // version-2 drafts survive, so they move the version like every line above.
+    `basis=minWords${BASIS_EXCERPT_MIN_WORDS}/minContent${BASIS_EXCERPT_MIN_CONTENT_WORDS}/related${BASIS_RELATED_MIN_CONTENT_WORDS}`,
+    // Round-1 compliance gate: the event guard and the shot-map marker lists
+    // decide which v2 drafts survive as surely as any pattern above.
+    "events=" +
+      EVENT_SHAPES.map(
+        (s) => s.id + "~" + s.pattern.source + (s.context ? "@" + s.context.source : "")
+      ).join("|"),
+    "continuation=" + CONTINUATION_SHAPE.pattern.source,
+    // R-150 point 1: WHICH FIELDS the event scan reads decides which drafts
+    // survive as surely as the shapes do.
+    "eventScan=" + EVENT_SCAN_POPULATION.join(","),
+    "shotKit=" + SHOT_KIT_SHAPES.map((s) => s.id + "~" + s.pattern.source).join("|"),
+    "shotHelper=" + SHOT_HELPER_SHAPES.map((s) => s.id + "~" + s.pattern.source).join("|"),
+    "pivotForForm=" +
+      Object.entries(PIVOT_FOR_FORM)
+        .map(([form, pivot]) => form + ":" + pivot)
+        .join(","),
+    "eventFields=" +
+      Object.entries(EVENT_FIELDS)
+        .map(([form, fields]) => form + ":" + fields.join("+"))
+        .join(","),
+    `constraintBounds=item${CONSTRAINT_ITEM_MAX_CODE_POINTS}/list${CONSTRAINT_LIST_MAX}/footage${FOOTAGE_MAX_CODE_POINTS}/minutes${FILMING_MINUTES_MIN}-${FILMING_MINUTES_MAX}`,
+  ].join("\n");
+}
+
+/**
+ * The version-2 creative block's STATIC words (R-148): the header, every form
+ * instruction, the "Choose for me" line, the rules, the constraint labels and
+ * the empty case. The creator's choice and limits are per generation and stay
+ * out, exactly as the framework list and the reference mechanism do.
+ */
+function creativeBlockStatics(): string {
+  return [
+    CREATIVE_BLOCK_HEADER,
+    FORM_REQUESTED_NOTE,
+    ...Object.values(FORM_INSTRUCTIONS),
+    AUTO_FORM_INSTRUCTION,
+    ...CREATIVE_RULES,
+    ...Object.values(CONSTRAINT_LABELS),
+    ...Object.values(PEOPLE_LABELS),
+    NO_CONSTRAINTS_LINE,
+  ].join("\n");
+}
+
+/**
+ * The recent-work block's STATIC words (launch L3, R-152): the header, the
+ * history-not-facts note, both sequel instructions, the empty case, every
+ * label and the reaction-note prefix. The entries are per generation and stay
+ * out, exactly as the framework list and the reference mechanism do. Only the
+ * modes that READ history carry this part, so the five other modes' versions
+ * do not move for a block they never render.
+ */
+function recentWorkBlockStatics(): string {
+  return [
+    RECENT_WORK_BLOCK_HEADER,
+    RECENT_WORK_BLOCK_NOTE,
+    RECENT_WORK_AVOID_NOTE,
+    RECENT_WORK_SEQUEL_NOTE,
+    RECENT_WORK_EMPTY,
+    RECENT_WORK_NOTE_PREFIX,
+    ...Object.entries(RECENT_WORK_LABELS).map(([id, text]) => id + ":" + text),
+  ].join("\n");
+}
+
+/**
+ * A fixed probe through the untrusted-input encoding: a quote, a backslash, a
+ * line break, a tab and a forged closing marker. Its ENCODED OUTPUT is hashed
+ * (the `specificExtent=` model), so changing how fenced text is escaped moves
+ * the version even when no marker string changed.
+ */
+export const UNTRUSTED_ENCODING_PROBE = 'say "hi" \\ end\n\tnext ' + INPUT_FENCE_CLOSE;
+
+/**
+ * The fences' STATIC words and the encoding's behaviour (audit Phase 8,
+ * P8-R2). `contextBlock`, the rewrite prompt and the kill test's prompt emit
+ * these as function output, which nothing else hashes.
+ */
+function untrustedFencesStatics(): string {
+  return [
+    ...FENCE_MARKERS,
+    "encoding=" + encodeUntrusted(UNTRUSTED_ENCODING_PROBE),
+    // The neutraliser's BEHAVIOUR on every marker, each behind a run of `<`
+    // (gate M4), so a change to how markers are broken moves the version.
+    "draftMarkers=" +
+      neutraliseFenceMarkers(FENCE_MARKERS.map((m) => "<<<<" + m).join(" ")),
+  ].join("\n");
+}
+
+/**
+ * The static labels around per-generation text (gate note): the mode's input
+ * label, the findings label and the kill test's two. Not creator text.
+ */
+function promptLabelsStatics(mode: ModeId): string {
+  return [
+    MODE_BRIEFS[mode].inputLabel,
+    FINDINGS_LABEL,
+    KILL_TEST_CRITERIA_LABEL,
+    KILL_TEST_ANSWER_INSTRUCTION,
   ].join("\n");
 }
 
@@ -141,11 +351,42 @@ function gateDescription(): string {
  * A PLAIN RECORD so the hash's input is inspectable in a test and in a log,
  * rather than a string nobody can decompose when a version moves unexpectedly.
  */
-export function bundlePartsFor(mode: ModeId): Record<string, string> {
+export function bundlePartsFor(
+  mode: ModeId,
+  /**
+   * WHICH OUTPUT CONTRACT the bundle describes (R-148). A version-2 generation
+   * runs a different output contract and an extra block of instructions, so
+   * its bundle is a different set of strings and gets a different version — a
+   * v1 and a v2 ideation draft are never booked against one digest. The default
+   * is the legacy contract every mode has; `promptBundleVersion` callers that
+   * run a v2 generation pass `contractOf(context).version`.
+   */
+  version: 1 | 2 = 1,
+  /**
+   * THE LAWS THIS GENERATION RENDERS (audit Phase 8, P8-A4). Both producers of
+   * the version — `generate.ts` and `pipeline.ts` — pass the context's own
+   * `universalLaws`, so the digest names the laws that actually ran; the
+   * default is the product's constant, which every production context carries.
+   */
+  universalLaws: readonly string[] = UNIVERSAL_LAWS
+): Record<string, string> {
+  if (version === 2 && !takesCreativeForm(mode)) {
+    throw new GenerationAssemblyError(
+      `the ${mode} mode has no version-2 prompt bundle`
+    );
+  }
   return {
+    ...(version === 2 ? { creativeBlock: creativeBlockStatics() } : {}),
+    ...(takesCreativeForm(mode) ? { recentWorkBlock: recentWorkBlockStatics() } : {}),
     generationSystem: GENERATION_SYSTEM,
+    // P8-A4: layer one of the three-layer IP, hashed at last. One law per line.
+    // The block EXACTLY as rendered — label and "- " bullets (gate note).
+    universalLaws: universalLawLines(universalLaws).join("\n"),
+    promptLabels: promptLabelsStatics(mode),
+    // P8-R2: the untrusted-input fences and the encoding's behaviour.
+    untrustedFences: untrustedFencesStatics(),
     modeBrief: modeBriefText(mode),
-    outputContract: outputContractFor(mode),
+    outputContract: outputContractFor(mode, version),
     hardRuleBrief: HARD_RULE_BRIEF,
     rewriteInstruction: REWRITE_INSTRUCTION,
     killTestSystem: KILL_TEST_SYSTEM,
@@ -215,7 +456,11 @@ export function hashBundleParts(parts: Record<string, string>): string {
  * The mode is in the string as well as in the hash so a spend row is readable
  * without a lookup: `modes/hooks@1f4a…`.
  */
-export function promptBundleVersion(mode: ModeId): string {
-  const digest = hashBundleParts(bundlePartsFor(mode));
+export function promptBundleVersion(
+  mode: ModeId,
+  version: 1 | 2 = 1,
+  universalLaws: readonly string[] = UNIVERSAL_LAWS
+): string {
+  const digest = hashBundleParts(bundlePartsFor(mode, version, universalLaws));
   return `${PROMPT_BUNDLE_NAMESPACE}/${mode}@${digest.slice(0, DIGEST_CHARS)}`;
 }

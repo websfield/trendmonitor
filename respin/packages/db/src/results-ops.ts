@@ -17,6 +17,13 @@
 // the whole slice rests on, and the reason it must be one function is that the
 // baseline's two exclusions (the cohort's ids AND every row carrying the
 // treatment key) are exactly what a second implementation gets half right.
+//
+// A COUNT OF THE CREATOR'S OWN ROWS IS NONE OF THOSE, and `countResults` below
+// is here on that basis (audit P6-R6): it compares nothing, selects no cohort,
+// reads no verification state and feeds no proposal. It exists so a screen can
+// say whether this creator has logged any result at all. A count NARROWED by
+// lever, stratum or evidence state would be the first step of a comparison and
+// belongs in `@respin/brain`, not here.
 import type { DbLike } from "./db-like";
 import {
   ProfileScope,
@@ -74,6 +81,25 @@ export async function listResults(
 ): Promise<ResultRow[]> {
   const profileScope = await ProfileScope.mint(db, scope, profileId);
   return profileScope.accessors.results(page);
+}
+
+/**
+ * HOW MANY RESULTS THIS CREATOR HAS LOGGED (audit P6-R6, register item 8).
+ *
+ * The `listResults` shape: mint the profile scope (which asserts the
+ * workspace scope first), then the scope's own accessor. The number is every
+ * stored row of this profile in this workspace, whatever its evidence state,
+ * and nothing is derived from it here.
+ *
+ * NO ROLE GATE — a viewer may read, like `listResults`.
+ */
+export async function countResults(
+  db: DbLike,
+  scope: WorkspaceScope,
+  profileId: string
+): Promise<number> {
+  const profileScope = await ProfileScope.mint(db, scope, profileId);
+  return profileScope.accessors.countResults();
 }
 
 /**

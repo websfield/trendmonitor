@@ -2,7 +2,9 @@
 // lazy expiry materialization keeps sum(delta) of ALL rows literally equal to
 // it. Lock composition: given a caller tx (debit path — lock already held) the
 // materialization JOINS that tx; given a bare db it opens its own tx under the
-// per-workspace advisory lock (usage-page path).
+// per-workspace advisory lock (the money path's pre-call reads). Product pages
+// read through `getDisplayBalance` instead (audit Phase 8, P8-R1), which never
+// waits on the lock.
 //
 // SLICE 6, R17 — THIS FILE NOW MINTS AS WELL AS EXPIRES, WHICH IS THE SAME
 // MECHANISM POINTING THE OTHER WAY. `allowances.free = 25` has been in the
@@ -14,12 +16,19 @@
 // the workspace advisory lock, already writes idempotently through a partial
 // unique index, and is already the mechanism R-20 chose so that "the ledger is
 // the balance" stays literally true with no cron.
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, getTableColumns, sql, type Column } from "drizzle-orm";
 import type { DbLike, TxLike, VerifiedWorkspaceId } from "@respin/db";
-import { creditLedger, hasOpenPause, pausePeriods } from "@respin/db";
+import {
+  creditLedger,
+  hasOpenPause,
+  pausePeriods,
+  RenderLockTimeoutError,
+  withRenderTransaction,
+} from "@respin/db";
 import { ConfigUnavailableError, getActiveConfig } from "@respin/config";
 import { foldLedger, type FoldResult, type LotView } from "./fold";
-import { getDbNow, takeWorkspaceLock } from "./clock";
+import { takeWorkspaceLock, tryWorkspaceLock } from "./clock";
+import { BalanceIsolationError } from "./errors";
 import { emitFoldMetric } from "./metrics";
 import { getWorkspaceBillingState } from "./state";
 
@@ -28,6 +37,21 @@ export type BalanceView = {
   lots: LotView[];
   asOf: Date;
 };
+
+/**
+ * What a product page renders (audit Phase 8, P8-R1). `settling: false` is the
+ * locked derive's number — minted, materialised, final as of `asOf`.
+ * `settling: true` is the COMMITTED FOLD: the same `foldLedger` over the rows
+ * already committed, with the under-lock writes skipped, so a due-but-unminted
+ * Free allowance is not in it yet, and neither is anything the lock holder (a
+ * money path, or another request's display read) may be writing. (A lot past its effective expiry is already
+ * out of the number either way: `foldLedger` counts only live lots, so a
+ * skipped expiry row changes the stored history, not the balance.) A page renders it
+ * with a settling indication, never as final, and never decides
+ * "insufficient" from it (that is decided only inside `generate.ts`, on the
+ * money path's own locked read).
+ */
+export type DisplayBalanceView = BalanceView & { settling: boolean };
 
 async function loadHistory(tx: TxLike, workspaceId: VerifiedWorkspaceId) {
   const rows = await tx
@@ -48,6 +72,20 @@ async function loadHistory(tx: TxLike, workspaceId: VerifiedWorkspaceId) {
  * holds (or now takes — same-session re-acquire is a no-op) the workspace
  * advisory lock. Writes are keyed to DB now(); `at` shapes the returned view
  * only (a historical `at` is a pure read).
+ *
+ * READ COMMITTED ONLY (audit Phase 8, P8-A2; register 2026-10-05 item 11). The
+ * clock guarantee this function rests on (`getDbNow`, clock.ts) is that every
+ * row committed before the lock was granted is visible to the reads after it —
+ * true under READ COMMITTED, where each statement takes a fresh snapshot, and
+ * FALSE under REPEATABLE READ or SERIALIZABLE, where the snapshot was fixed at
+ * the transaction's first statement, before the lock. The usage-page runway
+ * ran this under REPEATABLE READ: a debit committed while it waited was
+ * invisible to the fold, the expiry row it then wrote claimed a remainder that
+ * no longer existed, and every later fold threw `materialization drifted` on
+ * an append-only ledger nothing can repair. So the isolation is read in the
+ * same statement as the clock and anything else is refused BEFORE either
+ * write (`BalanceIsolationError`). A read-only caller that wants one snapshot
+ * uses `committedFoldInTx`, which writes nothing.
  */
 export async function deriveBalanceInTx(
   tx: TxLike,
@@ -60,7 +98,7 @@ export async function deriveBalanceInTx(
   // puts concurrent generations on one multi-seat workspace.
   const startedAt = Date.now();
   await takeWorkspaceLock(tx, workspaceId);
-  const dbNow = await getDbNow(tx);
+  const dbNow = await readClockRequiringReadCommitted(tx);
 
   // R17 — THE FREE-TIER MINT, BEFORE THE FOLD THAT HAS TO COUNT IT. Placed
   // after the lock and after `dbNow` for both of the reasons those two lines
@@ -108,8 +146,10 @@ export async function deriveBalanceInTx(
     viewAt === dbNow ? fold : foldLedger(rows, pauses, viewAt);
   // Emitted from the ONE balance authority, so every fold in the system is
   // measured by construction — there is no second place a fold can happen and
-  // go uncounted. `rows` is post-materialization, i.e. the history a subsequent
-  // fold will actually replay.
+  // go uncounted (the committed fold below is the same `foldLedger`, emitting
+  // through this same function with `settling: true`). `rows` is
+  // post-materialization, i.e. the history a subsequent fold will actually
+  // replay.
   emitFoldMetric({
     workspaceId,
     rowCount: rows.length,
@@ -118,13 +158,182 @@ export async function deriveBalanceInTx(
   return { balance: view.balance, lots: view.lots, asOf: viewAt };
 }
 
-/** Bare-db entry (usage page): opens its own locked transaction. */
+/** Bare-db entry (the money path's pre-call reads): opens its own locked transaction. */
 export async function deriveBalance(
   db: DbLike,
   workspaceId: VerifiedWorkspaceId,
   at?: Date
 ): Promise<BalanceView> {
   return db.transaction((tx) => deriveBalanceInTx(tx, workspaceId, at));
+}
+
+/**
+ * `clock_timestamp()` (the same instant `getDbNow` reads) and the
+ * transaction's isolation level, in ONE statement; anything but
+ * `read committed` is refused. See `deriveBalanceInTx`.
+ */
+async function readClockRequiringReadCommitted(tx: TxLike): Promise<Date> {
+  const result = (await tx.execute(
+    sql`SELECT clock_timestamp() AS now, current_setting('transaction_isolation') AS isolation`
+  )) as unknown as { rows: { now: Date | string; isolation: string }[] };
+  const row = result.rows[0];
+  if (row.isolation !== "read committed") {
+    throw new BalanceIsolationError(row.isolation);
+  }
+  return row.now instanceof Date ? row.now : new Date(row.now);
+}
+
+type LedgerRow = typeof creditLedger.$inferSelect;
+type PauseRow = typeof pausePeriods.$inferSelect;
+
+/**
+ * A row `json_agg` produced (snake_case keys, timestamps as ISO strings) back
+ * into drizzle's row shape, driven by the table's OWN column list so a column
+ * added later is mapped without anyone remembering this function.
+ */
+function fromJsonRow<T>(columns: Record<string, Column>, json: Record<string, unknown>): T {
+  const row: Record<string, unknown> = {};
+  for (const [key, column] of Object.entries(columns)) {
+    const value = json[column.name];
+    row[key] =
+      value === null || value === undefined
+        ? null
+        : column.dataType === "date"
+          ? new Date(value as string)
+          : value;
+  }
+  return row as T;
+}
+
+function jsonArray(value: unknown): Record<string, unknown>[] {
+  const parsed = typeof value === "string" ? (JSON.parse(value) as unknown) : value;
+  return Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : [];
+}
+
+/**
+ * THE COMMITTED HISTORY IN ONE STATEMENT (P8-R1 (iii)). `loadHistory` above is
+ * two statements, so under READ COMMITTED a `pause_periods` row committed
+ * between them could shift a lot's `effectiveExpiresAt` against a ledger read
+ * an instant earlier. Here the ledger rows, the pause periods and the clock come
+ * back from ONE `SELECT` — one snapshot, no isolation change (which a render
+ * transaction could not make anyway: its first statement is `SET LOCAL`).
+ *
+ * `pause_periods` is the PAUSE AUTHORITY (the table `hasOpenPause` reads and
+ * `/studio`'s picker reads, `studio/page.tsx`). No mirror
+ * (`subscriptions.paused_at`) is read on this path: the only mirror consumer on
+ * the fold path is the free-mint gate, which this path skips (P8-R1, AC10 —
+ * the choice the "pause's two stored truths" deferral asked its first new
+ * consumer to name).
+ */
+async function loadCommittedHistory(
+  tx: TxLike,
+  workspaceId: VerifiedWorkspaceId
+): Promise<{ rows: LedgerRow[]; pauses: PauseRow[]; asOf: Date }> {
+  const result = (await tx.execute(sql`
+    SELECT
+      clock_timestamp() AS now,
+      (SELECT coalesce(json_agg(l ORDER BY l.created_at, l.id), '[]'::json)
+         FROM ${creditLedger} AS l
+        WHERE l.workspace_id = ${workspaceId}) AS ledger_rows,
+      (SELECT coalesce(json_agg(p ORDER BY p.started_at), '[]'::json)
+         FROM ${pausePeriods} AS p
+        WHERE p.workspace_id = ${workspaceId}) AS pause_rows
+  `)) as unknown as {
+    rows: { now: Date | string; ledger_rows: unknown; pause_rows: unknown }[];
+  };
+  const row = result.rows[0];
+  const ledgerColumns = getTableColumns(creditLedger) as Record<string, Column>;
+  const pauseColumns = getTableColumns(pausePeriods) as Record<string, Column>;
+  return {
+    asOf: row.now instanceof Date ? row.now : new Date(row.now),
+    rows: jsonArray(row.ledger_rows).map((r) => fromJsonRow<LedgerRow>(ledgerColumns, r)),
+    pauses: jsonArray(row.pause_rows).map((p) => fromJsonRow<PauseRow>(pauseColumns, p)),
+  };
+}
+
+/**
+ * THE COMMITTED FOLD (audit Phase 8, P8-R1): a pure read of the balance from
+ * the rows already committed. Takes NO lock and writes NOTHING, so it can
+ * never wait on the money path and can run in any isolation level (the
+ * usage-page runway runs it inside its one REPEATABLE READ snapshot, P8-A2).
+ *
+ * Its four structural claims, each with a witness (AC8):
+ *  (i)   it calls `foldLedger` — never a second summation — so the claim below
+ *        that there is no second, uncounted fold place stays true;
+ *  (ii)  it skips BOTH writes `deriveBalanceInTx` makes under the lock, the
+ *        Free mint (`mintFreeAllowanceIfDue`) and the expiry materialisation —
+ *        a due allowance is missing from its number, and it was read while
+ *        another transaction held the billing lock and may have been writing,
+ *        which is why it is SETTLING, never final;
+ *  (iii) rows, pauses and the clock come from one statement
+ *        (`loadCommittedHistory`);
+ *  (iv)  it emits through `emitFoldMetric` with `settling: true`.
+ *
+ * `at` shapes the view exactly as it does in `deriveBalanceInTx`: an `at`
+ * earlier than the statement's clock is folded AS OF `at` (the runway passes
+ * its own snapshot instant so its balance and its debit window share one
+ * `asOf`); a later or absent one folds as of the clock.
+ */
+export async function committedFoldInTx(
+  tx: TxLike,
+  workspaceId: VerifiedWorkspaceId,
+  at?: Date
+): Promise<BalanceView> {
+  const startedAt = Date.now();
+  const { rows, pauses, asOf } = await loadCommittedHistory(tx, workspaceId);
+  const viewAt = at && at.getTime() < asOf.getTime() ? at : asOf;
+  const fold = foldLedger(rows, pauses, viewAt);
+  emitFoldMetric({
+    workspaceId,
+    rowCount: rows.length,
+    durationMs: Date.now() - startedAt,
+    settling: true,
+  });
+  return { balance: fold.balance, lots: fold.lots, asOf: viewAt };
+}
+
+/**
+ * THE PRODUCT PAGES' BALANCE READ (audit Phase 8, P8-R1) — a page render never
+ * blocks on the money lock.
+ *
+ * Inside `withRenderTransaction` (`SET LOCAL lock_timeout = 5000`), it TRIES
+ * the billing lock (`pg_try_advisory_xact_lock`):
+ *  - got it → exactly `getBalance`'s work (mint, materialise, fold, emit),
+ *    `settling: false`;
+ *  - did not → the committed fold, `settling: true`; nothing waited.
+ * And if, having got the lock, a row lock inside the mint or the
+ * materialisation reaches the 5 000 ms budget (`55P03` →
+ * `RenderLockTimeoutError`), the transaction is gone, so the committed fold
+ * runs in a fresh render transaction, `settling: true` — the same outcome as a
+ * failed try-lock. Contention is NEVER `null` and never a hang; `null` on
+ * the rail stays the refusal render for a genuine failure
+ * (`LedgerIntegrityError`, an access refusal), which still propagates.
+ *
+ * The brand is the one `getBalance` takes: a display read is still a read of
+ * one verified workspace's ledger.
+ *
+ * ONE render-transaction wrap (`read` below), run at most twice: once trying
+ * the lock, and — only after a `RenderLockTimeoutError` — once more without
+ * trying, which is the committed fold alone. `balance-contention.docker.test.ts`
+ * scans `packages/credits` for exactly this one `withRenderTransaction(` call.
+ */
+export async function getDisplayBalance(
+  db: DbLike,
+  workspaceId: VerifiedWorkspaceId
+): Promise<DisplayBalanceView> {
+  const read = (tryLock: boolean): Promise<DisplayBalanceView> =>
+    withRenderTransaction(db, async (tx) => {
+      if (tryLock && (await tryWorkspaceLock(tx, workspaceId))) {
+        return { ...(await deriveBalanceInTx(tx, workspaceId)), settling: false };
+      }
+      return { ...(await committedFoldInTx(tx, workspaceId)), settling: true };
+    });
+  try {
+    return await read(true);
+  } catch (error) {
+    if (!(error instanceof RenderLockTimeoutError)) throw error;
+  }
+  return read(false);
 }
 
 /**

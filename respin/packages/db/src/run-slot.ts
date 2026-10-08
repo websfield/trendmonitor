@@ -44,7 +44,14 @@
 //   either takes the lock or does not, atomically, and no arithmetic derived
 //   from a stale count can hand out an (N+1)th slot.
 import type pg from "pg";
-import type { VerifiedWorkspaceId } from "./with-workspace";
+import type { ReadGradeWorkspaceId, VerifiedWorkspaceId } from "./with-workspace";
+
+/**
+ * The slot key's workspace id: either brand `withWorkspace` mints (R-163).
+ * A read-grade export takes the same per-workspace export slot as a
+ * write-grade one — the slot bounds concurrency, it grants nothing.
+ */
+type SlotWorkspaceId = VerifiedWorkspaceId | ReadGradeWorkspaceId;
 import { poolErrorFields } from "./client";
 
 /**
@@ -86,7 +93,7 @@ export type RunSlotNamespace = "generation" | "brain-edit" | "export";
  * whole class of defect this file exists to close.
  */
 export function runSlotKeyName(
-  workspaceId: VerifiedWorkspaceId,
+  workspaceId: SlotWorkspaceId,
   index: number,
   namespace: RunSlotNamespace = "generation"
 ): string {
@@ -142,7 +149,7 @@ export type RunSlots = {
    * `RUN_SLOT_CONNECT_TIMEOUT_MS` and reported as `server_capacity`.
    */
   acquire(
-    workspaceId: VerifiedWorkspaceId,
+    workspaceId: SlotWorkspaceId,
     limit: number,
     namespace?: RunSlotNamespace
   ): Promise<RunSlotOutcome>;

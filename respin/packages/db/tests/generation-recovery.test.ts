@@ -17,6 +17,8 @@ import {
   VENDOR_COMPLETE_HARD_CLEAR_MS,
   VENDOR_COMPLETE_SETTLE_MS,
   VENDOR_STARTED_GRACE_MS,
+  UNSETTLED_CANDIDATE_ALERT_MS,
+  isPastVendorCompleteHardClear,
 } from "../src/generation-recovery";
 
 const now = new Date("2026-09-08T12:00:00.000Z");
@@ -108,10 +110,32 @@ describe("generation-attempt receiver", () => {
 
     const outcome = await tick();
 
-    expect(outcome.settlementAttempted).toBe(1);
+    expect(outcome.settleableCandidates).toBe(1);
     // Untouched. A second writer on the debit path would be a second chance to
     // charge for one build, so this receiver only reports.
     expect((await stateOf(settleable.id)).state).toBe("vendor_complete");
+  });
+
+  it("P3-R1(a): reports the age of the OLDEST unsettled candidate, under the clear, and null when none waits", async () => {
+    expect((await tick()).oldestUnsettledMs).toBeNull();
+    const ageMs = UNSETTLED_CANDIDATE_ALERT_MS + 60_000;
+    await attempt({
+      state: "vendor_complete",
+      candidate: { text: "a draft hook" },
+      vendorStartedAt: ago(ageMs + 60_000),
+      vendorCompletedAt: ago(ageMs),
+    });
+    await attempt({
+      state: "vendor_complete",
+      candidate: { text: "a younger draft" },
+      vendorStartedAt: ago(VENDOR_COMPLETE_SETTLE_MS + 60_000),
+      vendorCompletedAt: ago(VENDOR_COMPLETE_SETTLE_MS + 1000),
+    });
+    const outcome = await tick();
+    expect(outcome.settleableCandidates).toBe(2);
+    expect(outcome.oldestUnsettledMs).toBe(ageMs);
+    // The alert threshold sits BELOW the clear, which is the whole point.
+    expect(UNSETTLED_CANDIDATE_ALERT_MS).toBeLessThan(VENDOR_COMPLETE_HARD_CLEAR_MS);
   });
 
   it("hard-clears an unsettled candidate at 24 h — no candidate survives it", async () => {
@@ -134,7 +158,37 @@ describe("generation-attempt receiver", () => {
     expect(cleared.candidate).toBeNull();
     // ...and it is NOT also counted as settleable: the clear runs first, so a
     // candidate that has just crossed 24 h is reported cleared, not settleable.
-    expect(outcome.settlementAttempted).toBe(0);
+    expect(outcome.settleableCandidates).toBe(0);
+  });
+
+  it("L2 (P3-R1): the settlement's 24-hour predicate and the worker's hard clear draw the SAME line", async () => {
+    // `isPastVendorCompleteHardClear` is what the same-id settle path checks
+    // under the claim row's lock; the worker clears with the SQL form of the
+    // same cutoff. Driven on both sides of the line, with rows the worker
+    // either clears or leaves — so the two enforcers cannot drift apart.
+    const justInside = ago(VENDOR_COMPLETE_HARD_CLEAR_MS - 1000);
+    const exactly = ago(VENDOR_COMPLETE_HARD_CLEAR_MS);
+    const justPast = ago(VENDOR_COMPLETE_HARD_CLEAR_MS + 1000);
+    expect(isPastVendorCompleteHardClear(justInside, now)).toBe(false);
+    expect(isPastVendorCompleteHardClear(exactly, now)).toBe(false);
+    expect(isPastVendorCompleteHardClear(justPast, now)).toBe(true);
+    const rows = await Promise.all(
+      [justInside, exactly, justPast].map((vendorCompletedAt) =>
+        attempt({
+          state: "vendor_complete",
+          candidate: { text: "a draft hook" },
+          vendorStartedAt: ago(VENDOR_COMPLETE_HARD_CLEAR_MS + 120_000),
+          vendorCompletedAt,
+        })
+      )
+    );
+    await tick();
+    const states = await Promise.all(rows.map((r) => stateOf(r.id)));
+    expect(states.map((s) => s.state)).toEqual(
+      [justInside, exactly, justPast].map((at) =>
+        isPastVendorCompleteHardClear(at, now) ? "recovery_required" : "vendor_complete"
+      )
+    );
   });
 
   it("is idempotent — a second tick moves nothing", async () => {
@@ -193,7 +247,7 @@ describe("generation-attempt receiver", () => {
       abandonedBeforeVendor: 0,
       startedPastDeadline: 0,
       hardCleared: 0,
-      settlementAttempted: 0,
+      settleableCandidates: 0,
       failureCode: null,
     });
     expect((await stateOf(settled.id)).state).toBe("refused");

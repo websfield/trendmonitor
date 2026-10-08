@@ -18,6 +18,7 @@ import { type AssembledPrompt } from "@respin/llm";
 import {
   assembleGenerationPrompt,
   assembleRewritePrompt,
+  contractOf,
   type GenerationContext,
 } from "./assemble";
 import { promptBundleVersion } from "./bundle";
@@ -34,6 +35,7 @@ import {
   type HonestRefusal,
   type KillTestResult,
 } from "./kill-test";
+import { stampServerChecks } from "./mode-checks";
 import { modeSpec, type ModeId } from "./modes";
 import {
   parseScriptOutput,
@@ -130,7 +132,13 @@ export async function runGeneration(params: {
 }): Promise<GenerationRun> {
   const { mode, context, generate, scoreCreatorRules } = params;
   const creatorRules = params.creatorRules ?? [];
-  const bundle = promptBundleVersion(mode);
+  // ONE CONTRACT for the whole run (R-148), derived from the context the
+  // prompt is built from: both drafts are parsed under it and the bundle
+  // version names it, so a v2 run cannot book its spend against the v1 digest
+  // or have one of its two drafts read under the other contract.
+  const contract = contractOf(context);
+  // The laws THIS context renders are part of the digest (audit Phase 8, P8-A4).
+  const bundle = promptBundleVersion(mode, contract.version, context.universalLaws);
   if (modeSpec(mode).similarityGated && !params.spinSimilarity) {
     throw new SpinSimilarityError(
       "a similarity-gated mode requires its trusted structured reference",
@@ -161,7 +169,10 @@ export async function runGeneration(params: {
     assembleGenerationPrompt({ mode, context }),
     1
   );
-  const firstOutput = parseScriptOutput({ text: firstReply, mode });
+  const firstOutput = serverMarked(
+    parseScriptOutput({ text: firstReply, mode, contract }),
+    context
+  );
   const firstFindings = withSpinSimilarity({
     output: firstOutput,
     findings: runKillTest({ output: firstOutput, mode, context }),
@@ -192,7 +203,10 @@ export async function runGeneration(params: {
     }),
     2
   );
-  const secondOutput = parseScriptOutput({ text: secondReply, mode });
+  const secondOutput = serverMarked(
+    parseScriptOutput({ text: secondReply, mode, contract }),
+    context
+  );
   const secondFindings = withSpinSimilarity({
     output: secondOutput,
     findings: runKillTest({ output: secondOutput, mode, context }),
@@ -239,6 +253,18 @@ export async function runGeneration(params: {
       refusal,
     },
   };
+}
+
+/**
+ * THE SERVER'S DECISION ON UNDECLARED FILMING RESOURCES (R-148 point 3; R-150
+ * point 2), stamped on each parsed v2 draft BEFORE the kill test as the
+ * structural `serverChecks` field — the model's words are not changed, so every
+ * scanner reads them as written, and the decision costs the creator no rewrite.
+ * A legacy draft is returned untouched.
+ */
+function serverMarked(output: ScriptOutput, context: GenerationContext): ScriptOutput {
+  if (output.contractVersion !== 2 || context.creative === null) return output;
+  return stampServerChecks(output, context.creative.constraints);
 }
 
 /**
